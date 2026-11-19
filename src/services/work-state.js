@@ -1579,20 +1579,32 @@ const changeLock = (id) => `change:${Number(id)}`;
  * the lock, so whatever this caller wrote is either in what the holder reads
  * or marked the item for the drain after the holder's commit (every fact the
  * derive reads marks its item: work-state-marks-all-inputs.sql). Taking it
- * again in the same transaction succeeds. Waiting instead could deadlock: a
- * machine's transition holds its change's chat_sessions row FOR UPDATE when
- * it stores its rows, and a holder's bell row needs a key share on that row
- * (notifications.session_id).
+ * again in the same transaction succeeds. Waiting on the lock could
+ * deadlock: a machine's transition holds its change's chat_sessions row FOR
+ * UPDATE when it stores its rows, and a holder's bell row needs a key share
+ * on that row (notifications.session_id); the drain holds the marks it took.
+ *
+ * `wait`: a caller that holds nothing else (a route's own refresh, a
+ * reader's, the sweep: each on a pool) tries again for a moment
+ * (TAKE_TRIES, TAKE_PAUSE_MS), so the row it was about is written by it once
+ * the holder commits; it never blocks on a lock, so it cannot deadlock.
  */
-async function takeItems(db, keys) {
-  const list = [...new Set(keys)];
-  if (!list.length) return new Set();
-  const { rows } = await db.query(
-    `SELECT t.k FROM (SELECT k FROM unnest($2::text[]) WITH ORDINALITY AS u(k, n) ORDER BY n OFFSET 0) t
-      WHERE NOT pg_try_advisory_xact_lock($1::int, hashtext(t.k))`,
-    [WORK_STATE_ITEM_LOCK, list],
-  );
-  return new Set((rows || []).map((r) => r.k));
+const TAKE_TRIES = 10;
+const TAKE_PAUSE_MS = 100;
+async function takeItems(db, keys, { wait = false } = {}) {
+  let list = [...new Set(keys)];
+  for (let tries = 1; ; tries += 1) {
+    if (!list.length) return new Set();
+    const { rows } = await db.query(
+      `SELECT t.k FROM (SELECT k FROM unnest($2::text[]) WITH ORDINALITY AS u(k, n) ORDER BY n OFFSET 0) t
+        WHERE NOT pg_try_advisory_xact_lock($1::int, hashtext(t.k))`,
+      [WORK_STATE_ITEM_LOCK, list],
+    );
+    const busy = new Set((rows || []).map((r) => r.k));
+    if (!busy.size || !wait || tries >= TAKE_TRIES) return busy;
+    list = list.filter((k) => busy.has(k));
+    await new Promise((resolve) => setTimeout(resolve, TAKE_PAUSE_MS));
+  }
 }
 
 /**
@@ -1608,13 +1620,13 @@ async function takeItems(db, keys) {
  * transaction, so a write can never put back what an older reading of the
  * facts said over a row derived from a newer one (which rang its bell a
  * second time when the newer reading came round again). On a pool it runs
- * in a transaction of its own, so the locks mean something. An item another
- * writer holds is skipped, and named in `skipped` (an array the caller
- * passes) as { appId, issueNumber } or { sessionId }: the drain puts its
- * mark back.
+ * in a transaction of its own, so the locks mean something, and waits a
+ * moment for an item another writer holds (`wait`, takeItems). An item
+ * still held is skipped, and named in `skipped` (an array the caller passes)
+ * as { appId, issueNumber } or { sessionId }: the drain puts its mark back.
  */
-async function refresh(db, items, { now = new Date(), touch = false, skipped = null } = {}) {
-  if (isPool(db)) return unit(db, (tx) => refresh(tx, items, { now, touch, skipped }));
+async function refresh(db, items, { now = new Date(), touch = false, skipped = null, wait = false } = {}) {
+  if (isPool(db)) return unit(db, (tx) => refresh(tx, items, { now, touch, skipped, wait: true }));
   const requests = new Map();
   const changes = new Set();
   for (const it of items || []) {
@@ -1630,7 +1642,7 @@ async function refresh(db, items, { now = new Date(), touch = false, skipped = n
   const busy = await takeItems(db, [
     ...[...requests.values()].sort((a, b) => a.appId - b.appId || a.issueNumber - b.issueNumber).map(requestLock),
     ...[...changes].sort((a, b) => a - b).map(changeLock),
-  ]);
+  ], { wait });
   const skip = (item) => { if (Array.isArray(skipped)) skipped.push(item); };
   for (const [k, r] of requests) {
     if (busy.has(requestLock(r))) { requests.delete(k); skip({ appId: r.appId, issueNumber: r.issueNumber }); }
@@ -1658,7 +1670,7 @@ async function refresh(db, items, { now = new Date(), touch = false, skipped = n
   // B3: the change rows its requests draw are stored under their own locks
   // too, taken now, before the changes' facts are read. One another writer
   // holds is still read, for the requests that draw it, and not stored here.
-  const busyLeads = await takeItems(db, [...leads].filter((id) => !changes.has(id)).sort((a, b) => a - b).map(changeLock));
+  const busyLeads = await takeItems(db, [...leads].filter((id) => !changes.has(id)).sort((a, b) => a - b).map(changeLock), { wait });
   for (const id of leads) {
     if (busyLeads.has(changeLock(id))) skip({ sessionId: id });
   }
@@ -2075,9 +2087,12 @@ async function unit(db, fn) {
 async function refreshUnits(db, items, { now = new Date(), touch = false } = {}) {
   const list = (items || []).filter(Boolean);
   if (!list.length) return { changed: [], pushes: [], failed: [], skipped: [] };
+  // B3: on a pool (a route, a reader, the sweep) nothing else is held, so a
+  // held item is waited for a moment; the drain's client holds its marks.
+  const wait = isPool(db);
   const run = async (tx, these) => {
     const skipped = [];
-    const changed = await refresh(tx, these, { now, touch, skipped });
+    const changed = await refresh(tx, these, { now, touch, skipped, wait });
     return { changed, skipped, pushes: await pushesOf(tx, changed, { cards: false }) };
   };
   try {

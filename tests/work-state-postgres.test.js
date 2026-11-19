@@ -863,6 +863,23 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal((await marks()).includes(140), false, 'taken, and not marked again');
   });
 
+  // A route's own refresh (on a pool, holding nothing else) waits a moment
+  // for a holder rather than leaving its row to the drain.
+  await t.test('B3: a route\'s refresh waits a moment for the holder, then writes its row', async () => {
+    await ask(145, ada, 'Seed swap trades');
+    await ws.refresh(pool, [req(145)]);
+    const holder = await pool.connect();
+    await holder.query('BEGIN');
+    assert.equal((await ws.takeItems(holder, [`request:${app.id}:145`])).size, 0);
+    await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority) VALUES ($1, 145, 1)', [app.id]);
+    const released = new Promise((resolve) => {
+      setTimeout(() => { holder.query('COMMIT').finally(() => { holder.release(); resolve(); }); }, 250);
+    });
+    const out = await ws.touched(pool, [req(145)]);
+    await released;
+    assert.deepEqual(out.filter((c) => c.kind === 'request').map((c) => [c.ref, c.state.line && c.state.line.code]), [[145, 'queued']]);
+  });
+
   await t.test('B3: a moment rings once while its bell is unread, and a real return to it rings again', async () => {
     await ask(141, ada, 'Swap shelf');
     const up = await change(bot, 641, [141], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
