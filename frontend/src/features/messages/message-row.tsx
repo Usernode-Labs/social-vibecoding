@@ -75,17 +75,31 @@ import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking } from '
  * rather than an inline form of its own (issue #2721).
  */
 
-function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
-  const t = useMessages('messages');
-  const image = attachment.contentType.startsWith('image/');
-  const html = attachment.contentType === 'text/html' || /\.html?$/i.test(attachment.name);
+/**
+ * A picture in a conversation (#6862): above its bubble, on its own, at its
+ * own shape — no filename or size under it, since the picture already says
+ * what it is. The name stays in the alt and in the viewer.
+ */
+function ImageAttachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
   // #3286: a plain tap opens the picture in the app's own viewer, which has
   // a way out (../image-viewer/image-viewer.tsx).
   const [viewing, setViewing] = useState(false);
+  const src = attachment.viewUrl || attachment.url;
+  return (
+    <>
+      <a className="messages-message-image" href={attachment.url} target="_blank" rel="noopener noreferrer" data-image-open="" onClick={(event) => openInViewer(event, () => setViewing(true))}><img src={src} alt={attachment.name} loading="lazy" /></a>
+      {viewing ? <ImageViewer src={src} alt={attachment.name} onClose={() => setViewing(false)} /> : null}
+    </>
+  );
+}
+
+/** A file that is not a picture: the card under the bubble, as it was. */
+function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
+  const t = useMessages('messages');
+  const html = attachment.contentType === 'text/html' || /\.html?$/i.test(attachment.name);
   return (
     <div className="messages-attachment">
-      {image ? <a href={attachment.url} target="_blank" rel="noopener noreferrer" data-image-open="" onClick={(event) => openInViewer(event, () => setViewing(true))}><img src={attachment.url} alt={attachment.name} loading="lazy" /></a> : <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>}
-      {viewing ? <ImageViewer src={attachment.url} alt={attachment.name} onClose={() => setViewing(false)} /> : null}
+      <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>
       <div className="min-w-0 flex-1"><a className="font-medium truncate block" href={attachment.url} download>{attachment.name}</a><span>{fileSize(attachment.size)}</span></div>
       {html && attachment.viewUrl ? <a className="messages-attachment-view" href={attachment.viewUrl} target="_blank" rel="noopener noreferrer">{t('messages:row.attachmentPreview')}</a> : null}
     </div>
@@ -231,6 +245,9 @@ export const MessageRow = memo(function MessageRow({
   // one is known only once asked; asking re-renders the row so the menu's
   // Download line can appear.
   const images = (message.attachments || []).filter((att) => att.contentType.startsWith('image/'));
+  // #6862: pictures sit above the bubble; every other file keeps its card
+  // under it, with its name and size as before.
+  const fileAttachments = (message.attachments || []).filter((att) => !att.contentType.startsWith('image/'));
   useCanSaveImage(images[0]?.url || '');
   const longPress = useLongPress(() => setSheet(true), { disabled: !live || editing });
 
@@ -473,6 +490,15 @@ export const MessageRow = memo(function MessageRow({
   // 1 Nov 2026: a version of the thread's design, said by the bot, drawn
   // small under its words with Open preview (./design-card.tsx).
   const designVersion = inThread && message.threadRootId && !message.deleted ? designVersionOf(message) : null;
+  // #6862: the pictures, on their own above the bubble. A message that is
+  // only pictures has no words, so it gets no empty bubble under them.
+  const imageList = images.length ? (
+    <div className="messages-message-images">
+      {images.map((attachment) => <ImageAttachment key={attachment.id} attachment={attachment} />)}
+    </div>
+  ) : null;
+  const imagesOnly = images.length > 0 && !message.content && !message.reply && !editing && !message.deleted;
+
   const extras = (
     <>
       {designVersion && message.threadRootId ? (
@@ -485,7 +511,7 @@ export const MessageRow = memo(function MessageRow({
       {liveWork ? <BotLiveCard work={liveWork} objects={message.objects} /> : null}
       {/* Homeroom bot parity (P1-P9): a card the bot put under its reply (./bot-cards/). */}
       {botCardOf(message) ? <BotRichCard message={message} conversationId={conversationId} /> : null}
-      {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
+      {fileAttachments.length ? <div className="messages-attachments">{fileAttachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {objects.length ? <div className="messages-object-list">{objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the
           card it names — for this reader, and never one already above. */}
@@ -599,7 +625,8 @@ export const MessageRow = memo(function MessageRow({
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
         {/* Task 2020: a laid-out answer takes the bubble's full width (app.css .messages-bubble-rich). */}
-        {sided ? <div className={richHtml && !translatedBody && !editing ? 'messages-bubble messages-bubble-rich' : 'messages-bubble'} dir="auto">{translatedBody || body}</div> : translatedBody || body}
+        {imageList}
+        {imagesOnly ? null : sided ? <div className={richHtml && !translatedBody && !editing ? 'messages-bubble messages-bubble-rich' : 'messages-bubble'} dir="auto">{translatedBody || body}</div> : translatedBody || body}
         {/* #6081: under the words, the way back to them, or why they stayed. */}
         {canTranslate ? <TranslateNote view={translation} className="mt-1" /> : null}
         {extras}

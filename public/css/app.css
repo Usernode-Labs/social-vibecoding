@@ -1213,6 +1213,10 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-bubble.messages-bubble-rich { width: 100%; max-width: min(100%, 720px); }
 .messages-message-bubble .messages-attachments,
 .messages-message-bubble .messages-object-list { width: 100%; max-width: 78%; }
+/* The pictures take their own width, capped, and line up on the sender's
+   side like the bubble above them (#6862). */
+.messages-message-bubble .messages-message-images { max-width: 78%; }
+.messages-message-bubble.messages-message-self .messages-message-images { justify-content: flex-end; }
 /* A saved message in a bubble is outlined in the accent: the inset bar a
    flat row wears excludes bubble rows (below). */
 .messages-message-bubble.messages-message-saved .messages-bubble {
@@ -1810,7 +1814,26 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   text-decoration: none;
   transition: background 150ms;
 }
-.messages-attachment img { width: 160px; max-height: 120px; border-radius: 10px; object-fit: cover; }
+/* #6862: a picture in a conversation sits above the bubble, on its own, at
+   its own shape — up to 300px wide and 320px tall, with the filename in the
+   alt and the viewer rather than under it. */
+.messages-message-images { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; }
+.messages-message-image {
+  display: block;
+  max-width: min(300px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.15);
+  line-height: 0;
+}
+.messages-message-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 320px;
+}
 .messages-attachment span { color: var(--text-muted); font-size: 13px; }
 .messages-file-icon,
 .messages-object-icon {
@@ -8698,16 +8721,73 @@ body:has(#platform-header.hidden) #app-frame-host {
   max-width: 100%;
 }
 
+/* #6862: an image is its picture — a square thumbnail, cropped to fill. */
+.dc-attach-image {
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 14px;
+}
+.dc-attach-thumb-link {
+  position: relative;
+  display: block;
+  width: 104px;
+  height: 104px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-tertiary);
+}
 .dc-attach-thumb {
   display: block;
-  height: 48px;
-  max-width: 96px;
-  object-fit: contain;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.25);
+  width: 104px;
+  height: 104px;
+  object-fit: cover;
+  border-radius: 14px;
 }
+/* In flight: the picture waits, dimmed, under a ring, with no × yet. */
+.dc-attach-image-uploading .dc-attach-thumb { opacity: .45; }
+.dc-attach-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dc-attach-progress svg { width: 34px; height: 34px; }
 
-.dc-attach-chip { padding: 4px 8px; font-size: 12px; }
+/* A file that is not a picture: a card the height of a thumbnail. */
+.dc-attach-file {
+  height: 104px;
+  min-width: 132px;
+  max-width: 220px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 14px;
+}
+.dc-attach-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  flex: 0 0 auto;
+}
+.dc-attach-file-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.dc-attach-file .dc-attach-name { max-width: 100%; font-size: 12px; }
+.dc-attach-file .dc-attach-remove { position: absolute; top: 8px; inset-inline-end: 8px; }
 
 .dc-attach-name {
   color: var(--text-secondary);
@@ -8745,6 +8825,23 @@ body:has(#platform-header.hidden) #app-frame-host {
   flex: 0 0 auto;
 }
 .dc-attach-remove:hover { color: #ef4444; }
+
+/* #6862: on a thumbnail the × sits on the corner, dark on the picture and
+   ringed white so it reads on any image in either look. */
+.dc-attach-image .dc-attach-remove {
+  position: absolute;
+  top: -6px;
+  inset-inline-end: -6px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  line-height: 24px;
+  font-size: 15px;
+  color: #fff;
+  background: rgba(17, 17, 17, .9);
+  box-shadow: 0 0 0 2px #fff;
+}
+.dc-attach-image .dc-attach-remove:hover { color: #fff; background: #111; }
 
 .dc-attach-uploading { color: var(--text-muted); font-size: 12px; padding: 0 4px; }
 

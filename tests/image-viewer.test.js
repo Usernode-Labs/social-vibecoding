@@ -82,11 +82,16 @@ test('the channel and a conversation both open their thumbnails in it, and keep 
   assert.match(image, /\{viewing \? <ImageViewer src=\{att\.url\} alt=\{att\.name\} onClose=\{\(\) => setViewing\(false\)\} \/> : null\}/);
 
   const row = read('frontend/src/features/messages/message-row.tsx');
-  const attachment = row.slice(row.indexOf('function Attachment('), row.indexOf('\n}\n', row.indexOf('function Attachment(')));
-  assert.match(attachment, /<a href=\{attachment\.url\} target="_blank" rel="noopener noreferrer" data-image-open="" onClick=\{\(event\) => openInViewer\(event, \(\) => setViewing\(true\)\)\}><img/);
-  assert.match(attachment, /\{viewing \? <ImageViewer src=\{attachment\.url\} alt=\{attachment\.name\} onClose=\{\(\) => setViewing\(false\)\} \/> : null\}/);
+  const picture = row.slice(row.indexOf('function ImageAttachment('), row.indexOf('\n}\n', row.indexOf('function ImageAttachment(')));
+  assert.match(picture, /<a className="messages-message-image" href=\{attachment\.url\} target="_blank" rel="noopener noreferrer" data-image-open="" onClick=\{\(event\) => openInViewer\(event, \(\) => setViewing\(true\)\)\}><img src=\{src\} alt=\{attachment\.name\} loading="lazy" \/><\/a>/);
+  assert.match(picture, /const src = attachment\.viewUrl \|\| attachment\.url;/, 'the picture opens the copy it shows');
+  assert.match(picture, /\{viewing \? <ImageViewer src=\{src\} alt=\{attachment\.name\} onClose=\{\(\) => setViewing\(false\)\} \/> : null\}/);
+  // A file that is not a picture keeps its own card under the bubble.
+  const file = row.slice(row.indexOf('function Attachment('), row.indexOf('\n}\n', row.indexOf('function Attachment(')));
+  assert.match(file, /messages-file-icon/);
+  assert.doesNotMatch(file, /data-image-open/, 'no picture, no viewer');
 
   const dapp = JSON.parse(read('dapp.json'));
-  assert.ok(dapp.tests.some((t) => /\.messages-attachment a\[data-image-open\]\[href\*=/.test(t.expectSelector || '')),
+  assert.ok(dapp.tests.some((t) => /\.messages-message-image\[data-image-open\]\[href\*=/.test(t.expectSelector || '')),
     'a declared check sees the thumbnail wired to the viewer');
 });
