@@ -1468,4 +1468,9 @@ test('T2.12: a card on the newest look reads its request\'s stored row', () => {
   assert.equal(act.outcomeFor({ run_id: 40, verdict: 'empty' }, { stage: 'waiting_for_you', why: 'needs_detail', cause: 'blocked', runId: 40 }), 'blocked');
   assert.equal(act.outcomeFor({ run_id: 40, verdict: 'ready', proposal_session_id: 9, proposal_status: 'archived' },
     { stage: 'stopped', reason: 'change_closed', runId: 40 }), 'closed');
+  // A build that became a change keeps its ending while a second look on the
+  // same card reads (B4, WP1): work still going never undoes a change's state.
+  const proposedRun = { run_id: 40, verdict: 'ready', build_ok: true, proposal_session_id: 9, proposal_status: 'promoted', told: false };
+  assert.equal(act.outcomeFor(proposedRun, { stage: 'reading', runId: 40 }), 'checking');
+  assert.equal(act.outcomeFor({ ...proposedRun, told: true }, { stage: 'building', runId: 40 }), 'proposed');
 });

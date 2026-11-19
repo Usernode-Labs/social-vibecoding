@@ -645,6 +645,9 @@ function outcomeOf(row) {
 // T2.12 (19 Nov 2026): the stages in which a request's work is still going.
 const STILL_GOING = new Set(['reading', 'planning', 'building']);
 const WORKING = Symbol('working');
+// What a card's run came to once its build became a change (outcomeOf): the
+// change's own states, which the request's work still going never undoes.
+const CHANGE_OUTCOMES = new Set(['proposed', 'checking', 'needs_look', 'going_live', 'live', 'closed']);
 
 /**
  * Pure (T2.12): what a card's request's stored work state says the card came
@@ -684,7 +687,11 @@ function outcomeFor(row, work = null) {
   const newest = !!work && Number(work.runId) > 0 && Number(work.runId) === Number(row.run_id) && !row.next_at;
   if (!newest) return own;
   const said = outcomeFromWork(work);
-  if (said === WORKING) return null;
+  // Work still going on the request overrides a stop or a hand-back (a reply
+  // being read, a claim, a retried plan), never a build that became a change:
+  // a second look on the same card (B4) reads while its change is checked,
+  // and the card still ends in what its build came to (WP1).
+  if (said === WORKING) return CHANGE_OUTCOMES.has(own) ? own : null;
   return said || own;
 }
 

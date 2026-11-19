@@ -152,8 +152,10 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await send(request.MACHINE, requestKey(app.id, 1), 'NotOwed', { appId: app.id, issueNumber: 1, quiet: false });
     assert.equal((await inst(request.MACHINE, requestKey(app.id, 1))).state, 'queued');
     // The answer a caller gets (enqueueFront): queued, and its look's card key.
+    // T1.1 (19 Nov 2026): `owed` says a look is owed after this, whether it
+    // waits its turn or is kept for when the work under way ends.
     const r = await owe(app.id, 1, { reason: 'asked', priority: 0 });
-    assert.deepEqual(r.reply, { queued: true, looking: false, jobKey: lookCardKey(app.id, 1, 1) });
+    assert.deepEqual(r.reply, { queued: true, looking: false, owed: true, jobKey: lookCardKey(app.id, 1, 1) });
     i = await inst(request.MACHINE, requestKey(app.id, 1));
     assert.equal(i.data.n, 0, 'no look yet: the bot is off');
   });
