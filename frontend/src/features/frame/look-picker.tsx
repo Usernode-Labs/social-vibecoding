@@ -50,6 +50,15 @@ const TOKENS_NAME: Record<WipTokens, string> = {
   current: 'settings:experimental.wipTokens.current',
   brand: 'settings:experimental.wipTokens.brand',
   brand2: 'settings:experimental.wipTokens.brand2',
+  window: 'settings:experimental.wipTokens.window',
+  denim: 'settings:experimental.wipTokens.denim',
+  afterdark: 'settings:experimental.wipTokens.afterdark',
+  hands: 'settings:experimental.wipTokens.hands',
+  shipped: 'settings:experimental.wipTokens.shipped',
+  frontpage: 'settings:experimental.wipTokens.frontpage',
+  logosheet: 'settings:experimental.wipTokens.logosheet',
+  greenhill: 'settings:experimental.wipTokens.greenhill',
+  highlighter: 'settings:experimental.wipTokens.highlighter',
 };
 
 // The platform header's own disc, as its bell wears it (#2798: no fill at rest).

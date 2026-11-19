@@ -316,3 +316,29 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   // A recent thread is its title, its project and when.
   assert.match(css, /html\[data-skin-wip\] #home-needs-card \.wip-item-kind \{ display: none; \}/);
 });
+
+test('Standard (WIP): nine more token sets, each whole in light and in dark, and offered by the menu', () => {
+  const css = read('public/css/app.css');
+  const ids = ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill', 'highlighter'];
+  const names = (body) => [...body.matchAll(/(--(?:wip|lit)-[a-z0-9-]+)\s*:/g)].map((m) => m[1]).sort();
+  for (const id of ids) {
+    const light = css.match(new RegExp(`html\\[data-skin-wip\\]\\[data-wip-tokens="${id}"\\] \\{([^}]*)\\}`));
+    const dark = css.match(new RegExp(`html\\[data-skin-wip\\]\\[data-wip-tokens="${id}"\\]\\.dark \\{([^}]*)\\}`));
+    assert.ok(light && dark, `${id} has a light rule and a dark rule`);
+    // A light value never shows through in the dark: the dark rule names every token the light one does.
+    assert.deepEqual(names(dark[1]), names(light[1]), `${id}: the same tokens in both`);
+    for (const token of ['--wip-page-bg', '--wip-card-bg', '--wip-ink', '--wip-cta-from', '--wip-nav-bg', '--wip-nav-on-bg', '--lit-tint']) {
+      assert.ok(names(light[1]).includes(token), `${id} sets ${token}`);
+    }
+    assert.equal(typeof message(`settings:experimental.wipTokens.${id}`), 'string', `${id} has its name in the menu`);
+  }
+  // The three lists that must agree: the boot script's, the look module's, the picker's names.
+  const boot = read('frontend/src/head.html').match(/const TOKEN_SETS = \[([^\]]*)\];/)[1].replace(/['\s]/g, '').split(',');
+  assert.deepEqual(boot, ['brand', 'brand2', ...ids]);
+  const mod = read('frontend/src/lib/skin.ts').match(/export const WIP_TOKEN_SETS = \[([\s\S]*?)\] as const;/)[1];
+  assert.deepEqual([...mod.matchAll(/'([a-z0-9]+)'/g)].map((m) => m[1]), ['current', 'brand', 'brand2', ...ids]);
+  const picker = read('frontend/src/features/frame/look-picker.tsx');
+  for (const id of ids) assert.ok(picker.includes(`${id}: 'settings:experimental.wipTokens.${id}',`), `${id} is named in the picker`);
+  // The sidebar's logotype is drawn in the menu's own ink, over nothing of the bar's glass.
+  assert.match(css, /html\[data-skin-wip\] #platform-tabs::before \{[^}]*background: var\(--wip-nav-ink-strong\);/);
+});
