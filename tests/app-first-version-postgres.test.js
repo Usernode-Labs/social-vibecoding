@@ -54,6 +54,7 @@ const conversations = require('../src/services/conversations');
 const governance = require('../src/services/governance');
 const activeUsers = require('../src/services/active-users');
 const { appRoutes } = require('../src/routes/apps');
+const { settleWorkStates } = require('./lib/work-states');
 
 test('the first version being built, from the records the bot leaves', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -92,7 +93,9 @@ test('the first version being built, from the records the bot leaves', { timeout
     [ada.id],
   );
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
-  const state = () => dm.firstVersionState(pool, app.id);
+  // 19 Nov 2026: once filed, a first version stands where its request's
+  // stored work state says, read once the drain has run, as its clock does.
+  const state = async (opts) => (await settleWorkStates(pool), dm.firstVersionState(pool, app.id, opts));
   const steps = (s) => s && { step: s.step, of: s.of, line: s.line, question: s.question, ready: s.ready };
   let proposal = null;
 
@@ -146,7 +149,7 @@ test('the first version being built, from the records the bot leaves', { timeout
     );
     assert.deepEqual(steps(await state()), { step: 2, of: 7, line: 'planning', question: true, ready: false },
       'the bot waits on an answer from its creator; anyone else reads that it is planning');
-    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: ada.id })).line, 'question',
+    assert.equal((await state({ viewerId: ada.id })).line, 'question',
       '#4053: its creator reads that it has a question for them');
     await pool.query(`UPDATE homeroom_bot_dm_messages SET question_status = 'answered' WHERE message_id = $1`, [asked.messageId]);
 
@@ -324,7 +327,7 @@ test('the first version being built, from the records the bot leaves', { timeout
     );
     const where = { conversationId: opened.conversationId, messageId: said.messageId, threadRootId: card.messageId };
     assert.deepEqual((await state()).stopped, where);
-    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: sam.id })).line, 'stopped', 'for everyone');
+    assert.equal((await state({ viewerId: sam.id })).line, 'stopped', 'for everyone');
 
     let viewer = ada;
     const server = express();
@@ -376,6 +379,9 @@ test('the first version being built, from the records the bot leaves', { timeout
       assert.equal(await state(), null, error);
     }
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
+    // A run is never deleted but here, so nothing marks its request: the
+    // fixture derives it again itself.
+    await require('../src/services/work-state').refresh(pool, [{ appId: app.id, issueNumber: 1 }]);
     assert.equal((await state()).step, 2, 'with nothing recorded it waits to be read again');
     await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'failed' WHERE app_id = $1`, [app.id]);
     assert.equal(await state(), null, 'filing gave up');

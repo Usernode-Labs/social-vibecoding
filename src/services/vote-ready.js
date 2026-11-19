@@ -15,20 +15,18 @@
 // open for votes off its stored work state (work_states.vote_open), which
 // services/work-state.js derives with syncWaits/syncStand below beside the
 // rest of what holds a vote (its first version, an update on its way, a
-// merge GitHub holds, its shots). The SQL predicate is still read by
-// workflow/rules/proposal-notifications.ts, the "new proposal to vote on"
-// ping, sent when the checks pass rather than at promotion, inside the
-// proposal machine's own transition.
-//
-// The predicate itself is one copy, in src/workflow/rules/vote-ready.ts, so
-// the proposal machine and the preview machine read the same words.
+// merge GitHub holds, its shots). 19 Nov 2026: so does the "new proposal to
+// vote on" ping (workflow/rules/proposal-notifications.ts), rung when a
+// change's row opens for votes (services/work-state.js votePings); the SQL
+// predicate it read before is gone (workflow/rules/vote-ready.ts).
 
-const { syncWaitSql, voteReadySql, awaitingYesSql } = require('../workflow/rules/vote-ready.ts');
+const { awaitingYesSql } = require('../workflow/rules/vote-ready.ts');
 
 /**
- * Pure: whether one facts row is still waiting to sync with main. The same
- * test as syncWaitSql, on a row's columns (`check_phase`,
- * `merge_conflict_state`, `integration_merges_clean`).
+ * Pure: whether one facts row is still waiting to sync with main: its
+ * checks are deferred until it merges cleanly, a conflict with main was
+ * recorded, or a measured merge did not come out clean (`check_phase`,
+ * `merge_conflict_state`, `integration_merges_clean`). Unknown is no wait.
  */
 function syncWaits(row) {
   if (!row) return false;
@@ -64,4 +62,4 @@ function syncStand(row) {
   return 'syncing';
 }
 
-module.exports = { syncWaitSql, voteReadySql, awaitingYesSql, syncWaits, awaitsYes, syncStand };
+module.exports = { awaitingYesSql, syncWaits, awaitsYes, syncStand };

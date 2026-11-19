@@ -164,10 +164,36 @@ proposal):
   facts read the rows. Gone: ai-work's fallback, the chat card's own
   derivation, progressFor, progressText, proposalFacts, botWorkByIssue,
   statusOf, and the track's own reads of holds, tries and who shipped it.
-- Left for later: requestStates (with progress.outcomeOf) still drives a
-  first version's App tab steps (homeroom-bot-dm.js firstVersionStateOf)
-  and the activity cards' catch-up keys; the "new proposal" ping still reads
-  the SQL predicate inside the proposal machine's transition.
+- Finished 19 Nov 2026 (what was left for later):
+  - A first version's App tab steps (homeroom-bot-dm.js firstVersionStateOf,
+    read by the App tab, the hub, the made screen and the Home tile) draw
+    its request's stored row: `progress.firstVersionStageOf` names the work
+    state in the steps' own vocabulary, and the shared per-request record
+    gives only when each step began. Where the old decider disagreed, the
+    row wins: a build that stalled (Building before), the bot stopping its
+    fixes (no step), a failed look and a closed change (the starter app)
+    say Stopped; a check being fixed for it (#6807, no step) is Testing;
+    a question its look asked with none open in the chat is its maker's.
+    A hand-back the steps have no line for (decide, already works, needs
+    detail, a build skipped) is the app, as before.
+  - The activity cards' catch-up (homeroom-bot-activity.js catchUpCards)
+    finds the work under way from the person's rows (`busyNow`, less a
+    follow-up on the change), keyed by the same records as before.
+  - The "new proposal to vote on" ping is rung from the row
+    (work-state.js `votePings`) when a change's row opens for votes, and
+    reads `vote_open`; the machines (proposal, preview, merge queue) and
+    rename-pr no longer ring it, and `voteReadySql` / `syncWaitSql` are
+    gone. It no longer asks while shots, an update on its way, GitHub's
+    hold or votes already in keep the change off Needs you.
+  - The bot's own stopped build no longer reads as somebody building it:
+    its session (paused, linking the request) is not the request's change
+    (deriveFacts), so the bot page says Stopped too and its Try again
+    stays.
+  - Gone with no reader left: requestStates, progress.outcomeOf and what
+    only they read (requestRows and its cap, attachAttempts,
+    attemptOutcome, buildUnderWay, projectsBusy, queuedWait, buildWait,
+    the first-version and plan holds' words, QUEUE_NEXT). Nothing of step
+    1's list is left.
 
 ## Step 4: posting rules
 

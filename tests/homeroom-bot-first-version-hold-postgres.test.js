@@ -24,8 +24,8 @@
 //     failed, left to the group, build failed, change closed, request
 //     closed, a background look only), and one taken up again holds again;
 //   - a project with no first version the bot builds is never held;
-//   - what the person reads (homeroom-bot-progress.js requestStates) says
-//     what the request waits for.
+//   - what the person reads (the request's stored work state,
+//     services/work-state.js) says what the request waits for.
 //
 // Like the repository's other postgres tests it skips when no database is
 // reachable, unless TEST_DATABASE_URL insists on one.
@@ -38,7 +38,6 @@ const { Pool } = require('pg');
 
 const bot = require('../src/services/homeroom-bot');
 const rules = require('../src/workflow/rules/bot-loop.ts');
-const progress = require('../src/services/homeroom-bot-progress');
 const logger = require('../src/services/logger');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -187,16 +186,20 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 2, $2, 'Bin day'), ($1, 5, $2, 'Mark as done')`,
       [app.id, invitee.id],
     );
-    const settings = { mode: 'shadow', perPerson: 2 };
-    const states = await progress.requestStates(pool, { userId: invitee.id, settings });
-    const byNumber = new Map(states.filter((s) => Number(s.row.app_id) === Number(app.id))
-      .map((s) => [Number(s.row.issue_number), s.state]));
-    assert.equal(byNumber.get(5).stage, 'queued');
-    assert.equal(byNumber.get(5).doing, progress.FIRST_VERSION_WAIT);
-    assert.deepEqual(byNumber.get(5).waitingFor, { reason: 'first_version_pending', number: 1 });
-    assert.equal(byNumber.get(2).stage, 'build_queued');
-    assert.equal(byNumber.get(2).doing, progress.FIRST_VERSION_BUILD_WAIT);
-    assert.deepEqual(byNumber.get(2).waitingFor, { reason: 'first_version_pending', number: 1 });
+    // 19 Nov 2026: their stored work state (services/work-state.js), which
+    // every one of those reads, derived again here as a write to either
+    // request's records would.
+    const ws = require('../src/services/work-state');
+    const theirs = async () => {
+      await ws.refresh(pool, [2, 5].map((n) => ({ appId: Number(app.id), issueNumber: n })));
+      return new Map((await ws.forRequester(pool, invitee.id))
+        .filter((w) => w.kind === 'request' && Number(w.appId) === Number(app.id))
+        .map((w) => [Number(w.issueNumber), w]));
+    };
+    const byNumber = await theirs();
+    assert.deepEqual([byNumber.get(5).stage, byNumber.get(5).line], ['reading', { code: 'first_version_wait' }]);
+    assert.equal(ws.says(byNumber.get(5)), 'Not started yet · Waiting for the first version to go live');
+    assert.deepEqual([byNumber.get(2).stage, byNumber.get(2).line?.code], ['building', 'queued'], 'ready to build, waiting its turn');
 
     // The first version merges: the waiting requests come back in their
     // usual order, and the merge asks the lane to refresh the project.
@@ -223,10 +226,8 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     assert.equal(await held(app), false);
     assert.deepEqual(await readable(app), [5], 'the fix is read now, on the new main');
     assert.deepEqual(await buildable(app), [2], 'and the idea\'s build starts');
-    const after = await progress.requestStates(pool, { userId: invitee.id, settings });
-    const fixState = after.find((s) => Number(s.row.app_id) === Number(app.id) && Number(s.row.issue_number) === 5).state;
-    assert.notEqual(fixState.doing, progress.FIRST_VERSION_WAIT, 'and it no longer says it waits for the first version');
-    assert.equal(fixState.waitingFor?.reason === 'first_version_pending', false);
+    const fixState = (await theirs()).get(5);
+    assert.deepEqual([fixState.stage, fixState.line?.code], ['reading', 'queued'], 'and it no longer says it waits for the first version');
   });
 
   await t.test('what is not held: the first version itself, a follow-up on a change already up, an admin\'s Run now', async () => {

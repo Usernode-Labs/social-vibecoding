@@ -60,6 +60,7 @@ const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const conversations = require('../src/services/conversations');
 const { appRoutes } = require('../src/routes/apps');
+const { settleWorkStates } = require('./lib/work-states');
 
 const BRIEF = 'Plan hikes around Geneva with friends. Pick a trail, a date and who is coming, '
   + 'and see the weather for the day.';
@@ -120,7 +121,10 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     if (typeof listening.closeAllConnections === 'function') listening.closeAllConnections();
     listening.close();
   });
+  // 19 Nov 2026: a filed first version stands where its request's stored
+  // work state says, read once the drain has run, as its clock does.
   const get = async () => {
+    await settleWorkStates(pool);
     const res = await fetch(`http://127.0.0.1:${listening.address().port}/api/apps/${app.slug}/community`);
     assert.equal(res.status, 200);
     return res.json();
@@ -131,7 +135,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
   });
   // #4053: the build line as firstVersionState says it for this viewer: what
   // the App tab and the made screen say.
-  const named = async (who) => (await dm.firstVersionState(pool, app.id, { viewerId: who.id })).line;
+  const named = async (who) => (await settleWorkStates(pool), await dm.firstVersionState(pool, app.id, { viewerId: who.id })).line;
 
   await t.test('a project made with no description says nothing about what it is, and has no build to show', async () => {
     const body = await get();

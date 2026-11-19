@@ -7,7 +7,8 @@
 // on a busy day once 25 newer runs exist. The bot page's rows and a
 // request's track now also read every request whose records look live, and
 // both read its newest LIVE run (a shadow trial's newer run is not the
-// request's stage), through one shared fragment.
+// request's stage), through one shared fragment. 19 Nov 2026: both read the
+// request's stored work state, derived from that fragment.
 //
 // Against the full PostgreSQL schema; skips when no database is reachable,
 // unless TEST_DATABASE_URL insists on one.
@@ -18,7 +19,6 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 
-const progress = require('../src/services/homeroom-bot-progress');
 const track = require('../src/services/homeroom-bot-track');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -91,15 +91,16 @@ test('#6280: a request being built is read past the 25-request cap, with the sta
     [app.id],
   );
 
-  await t.test('the bot page reads #6251\'s stage however old it is, and the cap still holds finished work', async () => {
-    const states = await progress.requestStates(pool, { userId: evan.id });
-    const byNumber = new Map(states.map((s) => [Number(s.row.issue_number), s.state]));
+  await t.test('the bot page reads #6251\'s stage however old it is', async () => {
+    // 19 Nov 2026: the bot page reads each request's stored work state
+    // (services/work-state.js), one row per request, so no window of recent
+    // runs can leave out one under way; requestRows and its cap are gone.
+    await require('./lib/work-states').settleWorkStates(pool);
+    const ws = require('../src/services/work-state');
+    const mine = (await ws.forRequester(pool, evan.id)).filter((w) => w.kind === 'request');
+    const byNumber = new Map(mine.map((w) => [Number(w.issueNumber), w]));
     assert.equal(byNumber.get(6251)?.stage, 'building', 'a request under way is never "Nobody on it"');
-    // The 25 newest finished requests (1 to 25) and #6251: the oldest
-    // finished one (request 26) is past the cap and left out.
-    assert.equal(states.length, 26);
-    assert.equal(byNumber.has(26), false, 'a finished request past the newest 25 is not read');
-    for (let n = 1; n <= 25; n += 1) assert.ok(byNumber.has(n), `request ${n} is inside the cap`);
+    for (let n = 1; n <= 26; n += 1) assert.ok(byNumber.has(n), `request ${n} has its row`);
   });
 
   await t.test('the request page\'s track reads the same records and says the same stage', async () => {

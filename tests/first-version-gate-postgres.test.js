@@ -203,6 +203,13 @@ test('the first version skips the vote; the bot\'s later changes wait for a pers
     );
     assert.deepEqual(await notifications.createPrProposedNotifications(pool, { appId: club.id, sessionId: first, proposerId: bot.id }), [],
       'nobody is asked to come and vote on it');
+    // 19 Nov 2026: the ping is rung when a change's stored row opens for
+    // votes (work-state.js votePings, in the drain here), and a first
+    // version's never does.
+    const pinged = async (id) => (await settleWorkStates(pool), await pool.query(
+      `SELECT user_id FROM notifications WHERE session_id = $1 AND kind = 'pr_proposed' ORDER BY id`, [id],
+    )).rows.map((r) => Number(r.user_id));
+    assert.deepEqual(await pinged(first), [], 'nor by its row: it goes live without a vote');
 
     // A later change of the bot's is owed, counted and pinged as before.
     const later = await proposal(club, bot);
@@ -210,8 +217,9 @@ test('the first version skips the vote; the bot\'s later changes wait for a pers
     assert.equal(await owed(ada), 1);
     assert.equal(await owed(sam), 1);
     assert.ok((await digest()).some((r) => r.user_id === sam.id));
-    const pinged = await notifications.createPrProposedNotifications(pool, { appId: club.id, sessionId: later, proposerId: bot.id });
-    assert.deepEqual(pinged.map((r) => r.user_id), [sam.id]);
+    assert.deepEqual(await pinged(later), [Number(sam.id)], 'asked once its row opened for votes');
+    assert.deepEqual(await notifications.createPrProposedNotifications(pool, { appId: club.id, sessionId: later, proposerId: bot.id }), [],
+      'and never twice');
   });
 
   await t.test('D1 ends once a change for the request is live: the next one goes to the vote', async () => {

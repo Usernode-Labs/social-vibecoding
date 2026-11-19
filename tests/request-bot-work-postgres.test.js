@@ -179,8 +179,8 @@ test('a request the Homeroom bot is reading or building, by issue, through the r
 
   await t.test('a build waiting for the project\'s build slot is the bot building it, since it began to wait', async () => {
     // Request 6's verdict came in while request 4's build held the slot: it
-    // waits its turn, with no build session yet. projectsBusy does not count
-    // it (it holds nothing up yet), and the request page used to read
+    // waits its turn, with no build session yet. It holds nothing up yet,
+    // and the request page used to read
     // "Unassigned" and offer Claim for as long as it waited.
     const waitingSince = new Date(Date.now() - 25 * 60 * 1000);
     await run(plantPal, 6, { live_build_waiting_at: waitingSince, created_at: new Date(Date.now() - 26 * 60 * 1000) });

@@ -52,6 +52,9 @@ const repoRef = require('./repo-ref');
 const timeline = require('./first-version-timeline');
 const notifyCopy = require('./homeroom-bot-notify-copy');
 const botVerified = require('./homeroom-bot-verified');
+// The shared per-request record (requestRecordJoinsSql), for the SQL read at
+// load; its module requires nothing of this one's.
+const recordJoins = require('./homeroom-bot-progress');
 
 const BOT_USERNAME = 'homeroom_bot';
 const META = conversations.BOT_METADATA_KEY;
@@ -6834,9 +6837,12 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  * Building while the bot builds it (`bot_builds`) and either the request is
  * not filed yet (waiting or filing: the project is being set up), or it is
  * filed and no proposal for it has merged. Null once one has, once filing
- * failed, once the project failed to set up, and once the request came to
- * something other than a merge (the bot left it to the group, its proposal
- * was closed): then the app is what there is. A build that stopped is not
+ * failed, once the project failed to set up, and once its request is
+ * closed or handed back to its maker for something these steps have no line
+ * for (the bot left it to them to decide, found it already there, or needs
+ * more detail): then the app is what there is. Once filed, where it stands
+ * is its request's stored work state (services/work-state.js; 19 Nov 2026,
+ * progress.firstVersionStageOf), the one every surface draws. Stopped is not
  * that (14 Oct 2026): `line` 'stopped', with `stopped` saying where its
  * maker was told (stoppedThreadOf), until Try again starts it over, or (15
  * Oct 2026) proposes what was built (finishOnTryAgain): its run is then
@@ -6964,90 +6970,23 @@ async function firstVersionStateOf(pool, row, deps = {}) {
     if (progress.setupOf(row).outcome) return null;
     return { ...base, ...at('setting_up'), question: false, ready: false, ...starting, ...early, ...steps(null) };
   }
-  const states = await progress.requestStates(pool, { userId: row.user_id });
-  const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
-    && Number(s.row.issue_number) === Number(row.issue_number));
-  if (found?.state) {
-    // B6: the plan it waits on, for the creator to build from the App tab too.
-    const plan = found.state.stage === 'plan'
-      ? await waitingPlan(pool, { userId: row.user_id, appId: row.app_id, issueNumber: row.issue_number }).catch(() => null)
-      : null;
-    // A plan its creator asked to change is read again (changePlan puts it
-    // first in line as 'plan_change'). That read is the plan being redone,
-    // not the description being read for the first time, so it stays on the
-    // plan's step rather than going back one. Its line is planning either way.
-    const replanning = found.row?.queue_reason === 'plan_change'
-      && (found.state.stage === 'queued' || found.state.stage === 'reading');
-    const question = found.state.stage === 'question' && found.state.waitingOn === 'them';
-    // N5: ready to try by the rule its ready card goes out on
-    // (changeReadiness: its checks passed on its head, and its before &
-    // after shots settled), never off the vote step alone: a follow-up
-    // queued or running on it (a fix of its failing checks, say) is not
-    // ready, and neither is a pass its shots still hold back. A read that
-    // fails is not ready.
-    const proposalId = Number(found.row?.proposal_session_id) || null;
-    const readiness = found.state.stage === 'vote' && proposalId
-      ? await (deps.readiness || changeReadiness)(pool, proposalId).catch((err) => {
-        log.warn('homeroom-bot-dm', 'Could not read whether a first version is ready to try', { appId: row.app_id, err: err.message });
-        return null;
-      })
-      : null;
-    const ready = found.state.stage === 'vote' && readiness?.ready === true;
-    const stage = progress.firstVersionStage(found.state.stage, { ready });
-    // Ready to try: who it waits on, for the App tab to say. A read that
-    // fails leaves the screen as it was before it said so.
-    const approval = ready && found.row?.proposal_session_id
-      ? await firstVersionApproval(pool, found.row.proposal_session_id, deps.viewerId).catch((err) => {
-        log.warn('homeroom-bot-dm', 'Could not read who a first version waits on', { appId: row.app_id, err: err.message });
-        return null;
-      })
-      : null;
-    const where = replanning ? { ...at('reading'), step: progress.stepNumber('plan', true) } : at(stage, { question });
-    // N4: the stage named, with when it began, and the App tab's steps.
-    const firstLookAt = found.row?.run_id && !ready && LOOKED_STAGES.has(found.state.stage)
-      ? await firstLookAtOf(pool, found.row.run_id).catch(() => null)
-      : null;
-    const phase = !replanning && !ready ? progress.firstVersionPhase({ ...found.state, stage }, found.row, { firstLookAt }) : null;
-    // Run five (13 Oct 2026, fix 7): merged and not live yet, its steps
-    // stay done and Live is under way. With no phase they were drawn from
-    // the start ("Plan written: now") for the half minute until live_at.
-    const goingLive = found.state.stage === 'merging';
-    const listed = ready ? {} : steps(goingLive ? progress.GOING_LIVE : phase, {
-      decided: row.answered_at || (phase ? found.row.build_started_at : null),
-      firstLook: firstLookAt,
-      spec: found.row.spec_at,
-      review: found.row.review_started_at,
-      proposal: found.row.proposal_at,
-    });
-    // #4396: the plan its maker chose, while it is built and tested, for
-    // the members waiting on it (routes/apps.js sharedPlan cuts it). Build
-    // it (homeroom-bot.js goAhead) keeps the plan on its run and marks it
-    // `chosen`; nothing is read before the build step or once it is ready.
-    const chosenPlan = !ready && !plan && !replanning
-      && where.step >= progress.FIRST_VERSION_STEPS.indexOf('Building it') + 1
-      ? await chosenPlanOf(pool, row.app_id, row.issue_number).catch(() => null)
-      : null;
-    return {
-      ...base,
-      ...where,
-      question,
-      ready,
-      ...(plan ? { plan } : {}),
-      ...(chosenPlan ? { chosenPlan } : {}),
-      ...(approval ? { approval } : {}),
-      ...(phase ? { phase } : {}),
-      ...listed,
-      ...(plan ? {} : early),
-    };
-  }
+  // 19 Nov 2026 (docs/plans/bot-one-model.md): where it stands is its
+  // request's stored work state (services/work-state.js), the one every
+  // surface draws, so the App tab and the bot page cannot disagree
+  // (progress.firstVersionStageOf names it in the steps' own words). Its
+  // records say only when each step began (FIRST_VERSION_TIMES_SQL).
+  const ws = deps.workState || require('./work-state');
+  const [work = null] = await ws.forItems(pool, [{ appId: Number(row.app_id), issueNumber: Number(row.issue_number) }]);
+  const stageNow = progress.firstVersionStageOf(work);
   // 14 Oct 2026 (newcomer run eight, Club Votes): its build stopped, and
-  // nothing is live yet (progress.firstVersionStopped). This answered null
-  // here, so the App tab showed the starter template its repo was made from
-  // ("Welcome to your new app!") with nothing to say that anything had gone
-  // wrong. It says Stopped on every screen that draws the line, and where
-  // Try again is: the build's thread in its maker's chat with Homeroom bot
-  // (stoppedThreadOf). No steps: nothing is under way.
-  if (found && progress.firstVersionStopped(found.row)) {
+  // nothing is live yet. This answered null here, so the App tab showed the
+  // starter template its repo was made from ("Welcome to your new app!")
+  // with nothing to say that anything had gone wrong. It says Stopped on
+  // every screen that draws the line, and where Try again is: the build's
+  // thread in its maker's chat with Homeroom bot (stoppedThreadOf). No
+  // steps: nothing is under way. 19 Nov 2026: whatever stopped it (the work
+  // state's reason), as the bot page says it.
+  if (stageNow === 'stopped') {
     const thread = await stoppedThreadOf(pool, {
       userId: row.user_id, appId: row.app_id, issueNumber: row.issue_number,
     }).catch((err) => {
@@ -7064,11 +7003,107 @@ async function firstVersionStateOf(pool, row, deps = {}) {
       stopped: thread || {},
     };
   }
-  // Filed, and nothing in progress: either it came to something, or the bot
-  // has not picked it up yet (filing wakes it, and it reads it next).
-  if (found && progress.outcomeOf(found.row)) return null;
-  return { ...base, ...at('queued'), question: false, ready: false, ...starting, ...early, ...steps(null) };
+  // Filed, and the bot has not picked it up yet (filing wakes it, and it
+  // reads it next). So too with no row to read, one that could not be made.
+  const nextToRead = () => ({ ...base, ...at('queued'), question: false, ready: false, ...starting, ...early, ...steps(null) });
+  if (!work) return nextToRead();
+  // Live, closed, or handed back to its maker for something the App tab
+  // has no line for: the app is what there is.
+  if (!stageNow) return null;
+  const { rows: [times = {}] } = await pool.query(FIRST_VERSION_TIMES_SQL, [Number(row.app_id), Number(row.issue_number)]);
+  // Waiting to be read (`waiting`) is either of two: nothing recorded of it
+  // yet, which is next to be read; or read with nothing come of it (a build
+  // skipped: its plan waited a week for Build it, say), which these steps
+  // have no line for, so the app is what there is, as before.
+  if (stageNow === 'queued' && work.line?.code === 'waiting') return times.run_id ? null : nextToRead();
+  // B6: the plan it waits on, for the creator to build from the App tab too.
+  const plan = stageNow === 'plan'
+    ? await waitingPlan(pool, { userId: row.user_id, appId: row.app_id, issueNumber: row.issue_number }).catch(() => null)
+    : null;
+  // A plan its creator asked to change is read again (changePlan puts it
+  // first in line as 'plan_change'). That read is the plan being redone,
+  // not the description being read for the first time, so it stays on the
+  // plan's step rather than going back one. Its line is planning either way.
+  const replanning = times.queue_reason === 'plan_change' && (stageNow === 'queued' || stageNow === 'reading');
+  const question = stageNow === 'question';
+  // N5: ready to try by the rule its ready card goes out on
+  // (changeReadiness: its checks passed on its head, and its before &
+  // after shots settled), never off the vote step alone: a follow-up
+  // queued or running on it (a fix of its failing checks, say) is not
+  // ready, and neither is a pass its shots still hold back. A read that
+  // fails is not ready. Its change is the work state's own.
+  const proposalId = Number(work.leadChangeId) || null;
+  const readiness = stageNow === 'vote' && proposalId
+    ? await (deps.readiness || changeReadiness)(pool, proposalId).catch((err) => {
+      log.warn('homeroom-bot-dm', 'Could not read whether a first version is ready to try', { appId: row.app_id, err: err.message });
+      return null;
+    })
+    : null;
+  const ready = stageNow === 'vote' && readiness?.ready === true;
+  const stage = progress.firstVersionStage(stageNow, { ready });
+  // Ready to try: who it waits on, for the App tab to say. A read that
+  // fails leaves the screen as it was before it said so.
+  const approval = ready && proposalId
+    ? await firstVersionApproval(pool, proposalId, deps.viewerId).catch((err) => {
+      log.warn('homeroom-bot-dm', 'Could not read who a first version waits on', { appId: row.app_id, err: err.message });
+      return null;
+    })
+    : null;
+  const where = replanning ? { ...at('reading'), step: progress.stepNumber('plan', true) } : at(stage, { question });
+  // N4: the stage named, with when it began, and the App tab's steps.
+  const firstLookAt = times.run_id && !ready && LOOKED_STAGES.has(stageNow)
+    ? await firstLookAtOf(pool, times.run_id).catch(() => null)
+    : null;
+  const phase = !replanning && !ready ? progress.firstVersionPhase({ stage, since: work.since }, times, { firstLookAt }) : null;
+  // Run five (13 Oct 2026, fix 7): merged and not live yet, its steps
+  // stay done and Live is under way. With no phase they were drawn from
+  // the start ("Plan written: now") for the half minute until live_at.
+  const goingLive = stageNow === 'merging';
+  const listed = ready ? {} : steps(goingLive ? progress.GOING_LIVE : phase, {
+    decided: row.answered_at || (phase ? times.build_started_at : null),
+    firstLook: firstLookAt,
+    spec: times.spec_at,
+    review: times.review_started_at,
+    proposal: times.proposal_at,
+  });
+  // #4396: the plan its maker chose, while it is built and tested, for
+  // the members waiting on it (routes/apps.js sharedPlan cuts it). Build
+  // it (homeroom-bot.js goAhead) keeps the plan on its run and marks it
+  // `chosen`; nothing is read before the build step or once it is ready.
+  const chosenPlan = !ready && !plan && !replanning
+    && where.step >= progress.FIRST_VERSION_STEPS.indexOf('Building it') + 1
+    ? await chosenPlanOf(pool, row.app_id, row.issue_number).catch(() => null)
+    : null;
+  return {
+    ...base,
+    ...where,
+    question,
+    ready,
+    ...(plan ? { plan } : {}),
+    ...(chosenPlan ? { chosenPlan } : {}),
+    ...(approval ? { approval } : {}),
+    ...(phase ? { phase } : {}),
+    ...listed,
+    ...(plan ? {} : early),
+  };
 }
+
+/**
+ * 19 Nov 2026: the records a filed first version's App tab steps are timed
+ * from, over ($1 app id, $2 request number): its queue row's reason, its
+ * newest live run, that run's build session and its plan for the build, and
+ * its newest proposal. They are the shared per-request record
+ * (homeroom-bot-progress.js requestRecordJoinsSql) its work state is derived
+ * from; where it stands is the work state's, and these say only when.
+ */
+const FIRST_VERSION_TIMES_SQL = `
+  SELECT q.reason AS queue_reason, run.id AS run_id, run.created_at AS run_at,
+         run.live_build_waiting_at AS build_waiting_at,
+         run.review_started_at, run.review_round, run.review_max_rounds,
+         bs.created_at AS build_started_at, spec.created_at AS spec_at,
+         COALESCE(cs.promoted_at, cs.created_at) AS proposal_at
+    FROM (SELECT $1::int AS app_id, $2::int AS issue_number) it
+    ${recordJoins.requestRecordJoinsSql({ appId: 'it.app_id', issueNumber: 'it.issue_number' })}`;
 
 /**
  * 14 Oct 2026: where Homeroom bot told the maker of a first version that its

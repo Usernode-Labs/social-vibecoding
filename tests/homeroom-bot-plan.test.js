@@ -521,9 +521,12 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   });
 
   await t.test('its progress waits on her, and the App tab carries the plan to build from', async () => {
-    const states = await progress.requestStates(pool, { userId: maya.id });
-    const state = states.find((s) => Number(s.row.issue_number) === 1).state;
-    assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
+    // Where it stands is its stored work state (work-state.js), as the
+    // drain stores it, and the App tab draws that row (19 Nov 2026).
+    const ws = require('../src/services/work-state');
+    await require('./lib/work-states').settleWorkStates(pool);
+    const [row1] = await ws.forItems(pool, [{ appId: app.id, issueNumber: 1 }]);
+    assert.deepEqual([row1.stage, row1.why, row1.whoseMove], ['waiting_for_you', 'plan', 'requester']);
     assert.equal(progress.stepNumber('plan', true), 3, 'Step 3 of 7, the plan\'s step');
     // #4053: its build line, for whoever reads it (buildLineOf).
     const fv = await dm.firstVersionState(pool, app.id);
@@ -531,10 +534,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).line, 'plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
-    // Its page's `bot`, read off its stored row (work-state.js botWorkOf).
-    const ws = require('../src/services/work-state');
-    await ws.refresh(pool, [{ appId: app.id, issueNumber: 1 }]);
-    const [row1] = await ws.forItems(pool, [{ appId: app.id, issueNumber: 1 }]);
+    // Its page's `bot`, read off the same row (work-state.js botWorkOf).
     assert.equal(ws.botWorkOf(row1).what, 'queued', 'nobody else starts it');
   });
 
@@ -596,7 +596,9 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const closed = await planMessage(second);
     assert.deepEqual([closed.meta.status, closed.meta.changing], ['closed', true]);
     // Redoing the plan is not reading the description for the first time:
-    // the App tab and the made screen keep it on the plan's step.
+    // the App tab and the made screen keep it on the plan's step (its
+    // stored work state, read once the drain has run).
+    await require('./lib/work-states').settleWorkStates(pool);
     const fv = await dm.firstVersionState(pool, app.id);
     assert.deepEqual([fv.step, fv.of, fv.line], [3, 7, 'planning']);
     assert.equal(fv.plan, undefined, 'no plan waits while the new one is written');

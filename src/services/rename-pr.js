@@ -141,8 +141,8 @@ async function createManifestPR(config, pool, app, actor, opts) {
   // Drop the rename PR straight into the vote panel as a promoted
   // session, mirroring the normal promote path (POST
   // /api/sessions/:id/promote in routes/votes.js): set promoted_at
-  // (anchors the stale-PR sweeper), emit pr_promoted, fan out
-  // pr_proposed notifications.
+  // (anchors the stale-PR sweeper), emit pr_promoted. Its pr_proposed
+  // notifications go out once it opens for votes (below).
   // #5379: a manifest PR is a settings proposal, not agent work — no agent
   // conversation backs it, so stamp `source = 'settings'` to keep it out of
   // the lists of a person's own work (the Improve panel). It still goes to the vote and the project's board like
@@ -200,8 +200,7 @@ async function createManifestPR(config, pool, app, actor, opts) {
   if (steps.has('announced')) {
     return { sessionId, prNumber: prData.number, prUrl: prData.html_url, branch };
   }
-  const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
-  const notifications = require('./notifications');
+  const { sendSystemMessage, pushVoteUpdate } = require('./ws');
   const { getActiveUserStats } = require('./active-users');
   const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
 
@@ -224,36 +223,10 @@ async function createManifestPR(config, pool, app, actor, opts) {
     metadata: { prNumber: prData.number, ...(opts.eventMetadata || {}) },
   });
 
-  // Vote-request fan-out — same as the normal promote path. Non-fatal:
-  // the rename PR is already open, so a notification hiccup must not
-  // poison the result.
-  try {
-    const notifRows = await notifications.createPrProposedNotifications(pool, {
-      appId: app.id,
-      sessionId,
-      proposerId: actor.id || null,
-    });
-    for (const row of notifRows) {
-      pushNotificationToUser(row.user_id, {
-        type: 'notification_new',
-        notification: notifications.serialize({
-          ...row,
-          app_slug: app.slug,
-          app_name: app.name,
-          pr_title: prTitle,
-          pr_number: prData.number,
-          source_username: actor.username,
-        }),
-      });
-    }
-    if (notifRows.length) {
-      log.info('rename-pr', 'Manifest-PR pr_proposed notifications sent', {
-        sessionId, count: notifRows.length,
-      });
-    }
-  } catch (err) {
-    log.warn('rename-pr', 'Manifest-PR pr_proposed notify failed', { sessionId, err: err.message });
-  }
+  // The vote requests go out as every change's do: when its stored work
+  // state opens it for votes (19 Nov 2026: services/work-state.js
+  // votePings), once its checks have passed. Asked here, before them, the
+  // fan-out asked nobody.
 
   await steps.set('announced', true);
   log.info('rename-pr', 'Manifest PR opened', {

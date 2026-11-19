@@ -1,17 +1,18 @@
 // What the bell says as a proposal moves through its lifecycle: the vote
 // requests when it goes up for a vote (pr_proposed), its author's "your agent
 // put it up" when an agent did (connector_submitted), and the "gone quiet"
-// warning (stale_pr). The proposal machine writes them in the transition that
-// makes the move; services/notifications.js re-exports them, so there is one
-// copy. A notification row rings the phone through its own trigger, and the
-// machine pushes its id (the relaying process reads it for the open tabs).
+// warning (stale_pr). The proposal machine writes the last two in the
+// transition that makes the move; the vote requests go out when the change's
+// stored work state opens it for votes (19 Nov 2026: services/work-state.js
+// votePings, rung with the stage, as the requester's bell is).
+// services/notifications.js re-exports them, so there is one copy. A
+// notification row rings the phone through its own trigger, and the writer
+// pushes its id (the relaying process reads it for the open tabs).
 
 import type { Queryable } from './db.ts';
 import { activeUserIds } from './electorate.ts';
 import { appMetaFromRow } from './governance-gate.ts';
 import { allowsKind, filterUsersByCategory } from './notification-preferences.ts';
-import { firstVersionSql } from './first-version.ts';
-import { voteReadySql } from './vote-ready.ts';
 
 export interface NotificationRow {
   id: number; user_id: number; app_id: number | null; session_id: number | null; source_user_id: number | null;
@@ -51,11 +52,21 @@ async function onlyCollaborators(db: Queryable, appId: number, userIds: number[]
 // the proposer. The platform's own app asks only its creator and
 // favoriters: everyone active anywhere counts as active on it, and asking
 // them all would ping the whole platform on every self-edit. Muted
-// recipients (the new_proposals category, off by default) are left out, a
-// recipient already asked about this proposal is not asked again, nobody is
-// asked to vote on a project's first version (it goes live without one), and
-// nobody is asked before its checks pass and it merges cleanly with main
-// (#6402; the preview machine calls this when the verdict settles).
+// recipients (the new_proposals category, off by default) are left out, and
+// a recipient already asked about this proposal is not asked again.
+//
+// Nobody is asked before the change is open for votes, which is its stored
+// work state's (work_states.vote_open, services/work-state.js; 19 Nov 2026,
+// docs/plans/bot-one-model.md): its checks passed on the head up for a vote
+// and it merges cleanly with main (or only a yes can move it), and it is not
+// its project's first version (it goes live without one), an update is not
+// on its way, GitHub is not holding an approved merge, its votes are not
+// already in, and its before & after shots are not still being taken. Needs
+// you and the vote digest read the same row, so the ping never asks for a
+// vote they do not list. It read its own predicate before (#6402: the checks
+// and the merge alone), inside the transitions that settled them, and asked
+// while the shots, an update or GitHub still held the vote. The work state
+// rings it when the row opens (votePings), in the transaction that stores it.
 export async function createPrProposedNotifications(
   db: Queryable, { appId, sessionId, proposerId }: { appId: number; sessionId: number; proposerId: number | null },
   deps: FanOutDeps = {},
@@ -82,17 +93,10 @@ export async function createPrProposedNotifications(
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
       )
-        AND NOT EXISTS (
-          SELECT 1 FROM chat_sessions cs WHERE cs.id = $3 AND ${firstVersionSql('cs')}
-        )
-        -- #6402: ask for a vote only once the change is ready to be reviewed:
-        -- its checks passed (or it had nothing to test) and it merges
-        -- cleanly with main. The proposal machine's proposed write at
-        -- promotion is then a no-op, and the preview machine calls this
-        -- again when the verdict settles.
+        -- Only once its stored work state opens it for votes (above).
         AND EXISTS (
-          SELECT 1 FROM chat_sessions cs
-           WHERE cs.id = $3 AND cs.status = 'promoted' AND ${voteReadySql('cs')}
+          SELECT 1 FROM work_states ws
+           WHERE ws.app_id = $2 AND ws.item_kind = 'change' AND ws.item_ref = $3 AND ws.vote_open
         )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [ids, appId, sessionId, proposerId ?? null]);

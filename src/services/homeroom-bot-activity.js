@@ -88,6 +88,9 @@ const appAccess = require('./app-access');
 const { HOMEROOM_BOT_CARDS_LOCK } = require('./advisory-locks');
 const { changeHref } = require('./change-destination');
 const { firstVersionSql } = require('./first-version-rule');
+// The shared per-request record (requestRecordJoinsSql), for the SQL read at
+// load; its module requires nothing of this one's.
+const recordJoins = require('./homeroom-bot-progress');
 
 const KIND = 'activity';
 // The most cards one read answers for, newest first. An older card keeps
@@ -1187,23 +1190,31 @@ async function activityCards(pool, { user, userId, settings, config, deps, now }
 
 // ── Work already under way without a card ──
 
-// The stages of a request's own look (homeroom-bot-progress.js stageOf) in
-// which the bot is working on it this minute: reading it, then the plan and
-// the build a ready verdict starts. Each is one the tray lists under Now
-// (homeroom-bot-tray.js, as 'looking' or 'building'). Not a request waiting
-// in the queue (its card comes when its look starts) or a ready verdict
-// waiting its turn to be built (when its build starts), not a follow-up on
-// its proposal or a merge (the card before them ended at "proposal up"),
-// and nothing waiting on the person, the group or a cap.
-const UNDER_WAY_STAGES = Object.freeze(['reading', 'starting', 'planning', 'building', 'reviewing', 'proposing']);
+// A request's own look in which the bot is working on it this minute, as
+// its stored work state says it (services/work-state.js; 19 Nov 2026, in
+// place of the stages requestStates read): reading it, then the plan and
+// the build a ready verdict starts (busyNow: not waiting its turn, held, or
+// a person's). Each is one the tray lists under Now (homeroom-bot-tray.js,
+// as 'looking' or 'building'). Not a request waiting in the queue (its card
+// comes when its look starts) or a ready verdict waiting its turn to be
+// built (when its build starts), not a follow-up on its change (a fix of
+// its checks, an update asked for) or a merge (the card before them ended
+// at "proposal up"), and nothing waiting on the person, the group or a cap.
+const FOLLOW_UP_LINES = new Set(['fixing', 'revising']);
 // The most of the person's cards looked through for the one that already
 // follows a request. Their work under way is recent, and so is its card.
 const COVER_LIMIT = 100;
 
+/** Pure: whether a request's stored work state is a piece of work under way that a card follows. */
+function workUnderWay(work) {
+  if (!work || work.kind !== 'request') return false;
+  return require('./work-state').busyNow(work) && !FOLLOW_UP_LINES.has(work.line?.code);
+}
+
 /**
- * Pure: the piece of work one of the person's requests is (a `requestStates`
- * row and its stage), when it is under way and a card follows it:
- * `{ key, startedAt }`, or null.
+ * Pure: the piece of work one of the person's requests is (its stored work
+ * state, and its records' ids: underWayRecords), when it is under way and a
+ * card follows it: `{ key, startedAt }`, or null.
  *
  *   - a look being read is its claimed queue row, keyed as the loop keys the
  *     card it sends when that look starts (startCard), so the two can only
@@ -1214,9 +1225,9 @@ const COVER_LIMIT = 100;
  *     row is gone by then). That look began before the run was recorded, by
  *     the time it took (duration_ms).
  */
-function pieceOf(row, state, { quietReasons = [] } = {}) {
-  if (!row || !state || state.waitingOn || !UNDER_WAY_STAGES.includes(state.stage)) return null;
-  if (state.stage === 'reading') {
+function pieceOf(row, work, { quietReasons = [] } = {}) {
+  if (!row || !workUnderWay(work)) return null;
+  if (work.stage === 'reading') {
     if (!row.queue_id || !row.started_at || quietReasons.includes(row.queue_reason)) return null;
     return { key: jobCardKey(row.queue_id), startedAt: iso(row.started_at) };
   }
@@ -1224,6 +1235,26 @@ function pieceOf(row, state, { quietReasons = [] } = {}) {
   const ran = Math.max(0, Number(row.run_duration_ms) || 0);
   const at = new Date(new Date(row.run_at).getTime() - ran);
   return { key: `hrbot-activity-run-${Number(row.run_id)}`, startedAt: iso(at) };
+}
+
+// The records the pieces of work under way are keyed by, for ($1 app ids, $2
+// request numbers): each request's queue row and its newest live run, read
+// with the shared per-request record its work state is derived from.
+const UNDER_WAY_RECORDS_SQL = `
+  SELECT it.app_id, it.issue_number, q.id AS queue_id, q.started_at, q.reason AS queue_reason,
+         run.id AS run_id, run.created_at AS run_at, run.duration_ms AS run_duration_ms
+    FROM unnest($1::int[], $2::int[]) AS it(app_id, issue_number)
+    ${recordJoins.requestRecordJoinsSql({ appId: 'it.app_id', issueNumber: 'it.issue_number' })}`;
+
+/**
+ * The records the pieces of `works` (stored request work states) are keyed
+ * by (UNDER_WAY_RECORDS_SQL): Map(`${appId}#${issueNumber}` -> row).
+ */
+async function underWayRecords(pool, works) {
+  if (!works.length) return new Map();
+  const { rows } = await pool.query(UNDER_WAY_RECORDS_SQL,
+    [works.map((w) => Number(w.appId)), works.map((w) => Number(w.issueNumber))]);
+  return new Map(rows.map((r) => [`${Number(r.app_id)}#${Number(r.issue_number)}`, r]));
 }
 
 /**
@@ -1263,7 +1294,7 @@ async function whileHolding(pool, userId, work) {
  * and the loop's own card for the same look, add nothing. Never throws.
  * Resolves { added }.
  */
-async function catchUpCards(pool, { user, settings = null, deps = {}, now = new Date() }) {
+async function catchUpCards(pool, { user, settings = null, deps = {} }) {
   const none = { added: 0 };
   const userId = Number(user?.id);
   if (!Number.isInteger(userId) || userId <= 0 || user.isSynthetic) return none;
@@ -1276,11 +1307,23 @@ async function catchUpCards(pool, { user, settings = null, deps = {}, now = new 
     // staging copy, which never acts.
     if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, user)) || s.mode === 'off' || liveSvc.isStaging()) return none;
     const added = await whileHolding(pool, userId, async () => {
-      const states = await progressModule(deps).requestStates(pool, { userId, settings: s, now });
+      // Which of their requests the bot is at this minute is each one's
+      // stored work state (19 Nov 2026), the one every surface draws; its
+      // records only key the card (underWayRecords).
+      const ws = deps.workState || require('./work-state');
+      const works = (await ws.forRequester(pool, userId)).filter(workUnderWay);
+      if (!works.length) return 0;
+      const records = await underWayRecords(pool, works);
       const quietReasons = [botSvc.APP_AGAIN_REASON].filter(Boolean);
-      let wanted = states
-        .map(({ row, state }) => ({ row, piece: pieceOf(row, state, { quietReasons }) }))
-        .filter(({ row, piece }) => piece && liveSvc.isLiveFor(s, { slug: row.slug }));
+      let wanted = works
+        .map((work) => {
+          const record = records.get(`${Number(work.appId)}#${Number(work.issueNumber)}`) || null;
+          const row = record && {
+            ...record, slug: work.app?.slug || null, name: work.app?.name || work.app?.slug || null,
+          };
+          return { row, piece: pieceOf(row, work, { quietReasons }) };
+        })
+        .filter(({ row, piece }) => piece && row.slug && liveSvc.isLiveFor(s, { slug: row.slug }));
       if (!wanted.length) return 0;
       // Recorded as theirs, the way the loop decides whose card it is (an
       // issue they filed that the loop has not recorded yet is not, yet).
@@ -1450,7 +1493,8 @@ module.exports = {
   KIND,
   OUTCOMES,
   MAX_CARDS,
-  UNDER_WAY_STAGES,
+  workUnderWay,
+  underWayRecords,
   DEMO_CARD_KEYS,
   DEMO_UNDER_WAY,
   cardText,

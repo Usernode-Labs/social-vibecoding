@@ -7617,7 +7617,8 @@ const FINISH_STALE_MINUTES = 10;
 /**
  * The run Try again would finish, with what deciding it reads: its build
  * session; the request's newest run; the fields progress.firstVersionStopped
- * reads, as homeroom-bot-progress.js requestRows reads them (the request's
+ * reads, as the per-request record (homeroom-bot-progress.js
+ * REQUEST_RECORD_COLUMNS) reads them (the request's
  * newest proposal's state, whether the request is closed); whether it is in
  * the queue (a start over asked for already); its project; and the maker of
  * the project's first version when this request is it. Null when no run.
@@ -9892,8 +9893,8 @@ function liveDeps(deps = {}) {
 // else on that project: no other request is read (rules/bot-loop.ts
 // READ_CANDIDATES_SQL) and no other build starts (BUILD_CANDIDATES_SQL). The request waits in the queue
 // in its place, neither failed nor closed, and its card says what it waits
-// for (homeroom-bot-activity.js cardText, homeroom-bot-progress.js
-// queuedWait). Once the first version merges it is picked up in its usual
+// for (homeroom-bot-activity.js cardText, and its stored work state's
+// `first_version_wait`). Once the first version merges it is picked up in its usual
 // order, from the new main (noteRequestMerged wakes the loop for it).
 //
 // Not held: the first version's own request; a follow-up on a change of the

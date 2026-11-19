@@ -73,8 +73,8 @@ const REPLY_WAIT_MS = 2 * MINUTE_MS;
  * #6228: the newest message a person wrote in a request's own thread after
  * the run that decided about it: what tells whether the bot has a reply
  * waiting to be read. `$`-free SQL, so progress and track can share one
- * definition: the aliases are the caller's (`m.app_id` in requestRows,
- * `a.id` in the track's read).
+ * definition: the aliases are the caller's (`it.app_id` in work-state.js
+ * REQUEST_FACTS_SQL, `a.id` in the track's read).
  */
 function replyLateralSql({
   appId = 'm.app_id', issueNumber = 'm.issue_number', runAt = 'run.created_at',
@@ -124,7 +124,8 @@ function planWaitingSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } =
 }
 
 /**
- * Pure (#6246): whether a requestRows row is a plan waiting for Build it:
+ * Pure (#6246): whether a request's record row (REQUEST_RECORD_COLUMNS) is a
+ * plan waiting for Build it:
  * its newest run is live and ready with nothing built from it, the plan still
  * waits (plan_waiting_at), no build is queued or under way, no limit held it,
  * and the request is not closed. planWaitingSql is the same test in SQL.
@@ -165,7 +166,7 @@ const HOLD_IS_ALLOWANCE_SQL = `(q.held_reason = 'allowance' OR (q.held_reason IS
 
 /**
  * Pure (#6228): whether a person's reply on a request is newer than the
- * bot's last look and still waiting to be read, from a requestRows row (with
+ * bot's last look and still waiting to be read, from a request's record row (with
  * the `reply` lateral). A read that has started, or a queue row not on hold,
  * is a read coming. Otherwise the reply only counts for REPLY_WAIT_MS: a
  * reply the refresh did not queue goes back to what it was.
@@ -185,20 +186,8 @@ function replyWaits(row, { now = new Date() } = {}) {
   }
   return now.getTime() - at <= REPLY_WAIT_MS;
 }
-// What finished lately, for "is it ready yet?".
-const FINISHED_WITHIN_DAYS = 14;
-const MAX_REQUESTS = 25;
 // #3771: the bot's account, whose follow-ups run beside a project's other work.
 const BOT_USERNAME = 'homeroom_bot';
-// A live build older than this is not holding its project up any more (the
-// longest one, a platform build's plan and build turn, is under two hours).
-const BUSY_BUILD_HOURS = 4;
-// How many of one project's builds run at once: BUILDS_PER_APP, or the
-// project's own number (homeroom-bot.js appCapsOf). Lazy, as every read of
-// that module here is.
-function buildCapOf(settings, appId) {
-  return require('./homeroom-bot').appCapsOf(settings, appId).building;
-}
 
 // #4053: a first version's steps are named for what is happening, never as
 // an instruction: "Step 4 of 7: Build it" read to an invited member as if
@@ -350,7 +339,7 @@ const FIRST_VERSION_PHASES = Object.freeze(['starting', 'drawing', 'writing', 'b
 
 /**
  * Pure: the phase of a first version whose plan is decided, from its stage
- * (stageOf), its request row (requestRows) and when its first look was
+ * (stageOf), its request's record (REQUEST_RECORD_COLUMNS) and when its first look was
  * drawn: `{ key, since, round?, rounds? }`, or null for a stage before or
  * after the build (setting up, reading, the plan waiting, ready to try).
  */
@@ -450,12 +439,6 @@ function iso(value) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-function minutesSince(value, now) {
-  if (!value) return null;
-  const ms = now.getTime() - new Date(value).getTime();
-  return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / MINUTE_MS)) : null;
-}
-
 function plural(n, one, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -527,7 +510,7 @@ function leftOverQueue(row) {
 /**
  * Pure (N5): whether a proposal's check verdict is about the head up for
  * approval: its reviewed head (an imported pull request's own head), from a
- * requestRows row. True when either is not recorded, as before this was
+ * request's record row. True when either is not recorded, as before this was
  * read. The merge queue asks the same (src/workflow/merge-queue/facts.ts).
  */
 function checksOnHead(row) {
@@ -689,9 +672,81 @@ function firstVersionStage(stage, { ready = false } = {}) {
   return stage;
 }
 
+// The building lines (services/work-state.js) that name one of stageOf's
+// stages of the bot's own build; any other line (none, or a person who has
+// it: `claimed`) is the build itself.
+const BUILDING_LINE_STAGE = Object.freeze({
+  queued: 'build_queued', starting: 'starting', held_builds: 'held', held_waiting: 'held',
+  reviewing: 'reviewing', proposing: 'proposing', fixing: 'fixing', revising: 'revising', update_queued: 'followup_queued',
+});
+
 /**
- * Pure: the stage of one of the person's requests, from one row of
- * requestRows below, or null when nothing about it is in progress.
+ * Pure (19 Nov 2026, docs/plans/bot-one-model.md step 1's last reader): the
+ * stage a first version's App tab steps are drawn at, from its request's
+ * stored work state (services/work-state.js, the one decider every surface
+ * reads), in the vocabulary its steps, its build line and its phase read
+ * (STEP_OF_STAGE, buildLineOf, firstVersionPhase, firstVersionStage):
+ *
+ *   reading (its reply, or under way)    'reading'
+ *   reading (waiting its turn, a hold)   'queued'
+ *   planning                             'planning'; a plan to write again
+ *                                        ('retry_plan') or one its requester
+ *                                        is writing ('planning_with_you')
+ *                                        waits to be read: 'queued', or
+ *                                        'build_queued' when a build waits
+ *                                        behind the hold
+ *   waiting_for_you: plan / question     'plan' / 'question'
+ *   building                             its line's stage (BUILDING_LINE_STAGE),
+ *                                        else 'building'
+ *   checking                             'checks'
+ *   up_for_vote; going_live as a first   'vote' (its readiness decides Ready
+ *   version's (`first_version`)          to try or Testing it)
+ *   going_live                           'merging'
+ *   stopped (any reason)                 'stopped'
+ *
+ * Null for what is no step of a first version on its way: it is live or
+ * closed, or handed back to its maker for something the App tab has no line
+ * for (decide, already works, needs detail), as it always was. Its own
+ * deciders (requestStates, outcomeOf and firstVersionStopped, read through
+ * them; the first two are gone) read the same records before; where they
+ * disagreed with the work state the App tab now
+ * follows the work state: a build that stalled, the bot stopped fixing its
+ * checks, its look failed, or its change was closed is Stopped (the App tab
+ * said Building, said nothing, or showed the starter), a check being fixed
+ * for it (#6807) is Testing, and a question its look asked with none open in
+ * the chat is its maker's question.
+ */
+function firstVersionStageOf(work) {
+  if (!work || !work.stage) return null;
+  const code = (work.line && work.line.code) || null;
+  switch (work.stage) {
+    case 'reading':
+      return !code || code === 'reply' ? 'reading' : 'queued';
+    case 'planning':
+      if (code === 'planning_with_you') return work.line.ready ? 'build_queued' : 'queued';
+      return code === 'retry_plan' ? 'queued' : 'planning';
+    case 'waiting_for_you':
+      return work.why === 'plan' || work.why === 'question' ? work.why : null;
+    case 'building':
+      return BUILDING_LINE_STAGE[code] || 'building';
+    case 'checking':
+      return 'checks';
+    case 'up_for_vote':
+      return 'vote';
+    case 'going_live':
+      return code === 'first_version' ? 'vote' : 'merging';
+    case 'stopped':
+      return 'stopped';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Pure: the bot's own step on a request, from its record row
+ * (REQUEST_RECORD_COLUMNS, as work-state.js REQUEST_FACTS_SQL reads it), or
+ * null when nothing about it is in progress. The work state's derive maps it
+ * to the ten stages every surface draws.
  * `{ stage, since, doing, waitingOn?, limit? }`, where `limit` names which
  * clock applies ('reading', 'plan' or 'build').
  */
@@ -811,8 +866,8 @@ function stageOf(input, { now = new Date() } = {}) {
     // #4539, 30 Oct 2026: on a closed request nothing waits to be built any
     // more. The bot's refresh reads open requests only, so a build held back
     // by a limit, a plan waiting for Build it, or one waiting its turn never
-    // starts; it reads as not built because the request was closed
-    // (outcomeOf). Main said "held back" of four closed requests while the
+    // starts; it reads as not built because the request was closed. Main
+    // said "held back" of four closed requests while the
     // bot tab rightly left them out. A build already under way builds on.
     if (closed && !row.build_session_id) return null;
     if (row.cap_suppressed) {
@@ -890,7 +945,7 @@ function stageOf(input, { now = new Date() } = {}) {
       };
     }
     // Not its number in the queue: that counts every project's requests, and
-    // the per-project and per-person limits decide more (queuedWait).
+    // the per-project and per-person limits decide more.
     // #6228: a reply waiting for the read the bot has queued reads as that
     // read about to happen, not as a request waiting its turn.
     if (replyWaits(row, { now })) {
@@ -920,7 +975,7 @@ function planFailed(row) {
 
 /**
  * Pure (14 Oct 2026, newcomer run eight): whether a first version's build
- * stopped, from its request row (requestRows) while nothing about it is in
+ * stopped, from its request's record row while nothing about it is in
  * progress (stageOf answered null): its newest look went ahead to build it
  * and the build came to nothing (build_ok false: it did not finish, or it
  * was built and not proposed), on a request still open, with no proposal of
@@ -938,7 +993,7 @@ function firstVersionStopped(row) {
 
 /**
  * Pure (30 Oct 2026): a request Homeroom bot looked at and handed back to
- * the person, from its row (requestRows) while nothing about it is in
+ * the person, from its record row while nothing about it is in
  * progress (stageOf answered null), or null. 'decide' when its newest look
  * left it for a person to decide (verdict 'person', the Go ahead its DM
  * offers); 'already_works' when that look found the ask already there (its
@@ -957,31 +1012,6 @@ function handedBack(row) {
   if (row.verdict === 'person') return 'decide';
   return firstVersionStopped(row) ? 'build_stopped' : null;
 }
-
-/** Pure: what a request that is not in progress came to, or null. */
-function outcomeOf(row) {
-  if (row.proposal_status === 'merged') return 'approved and live';
-  if (row.proposal_status === 'closed') return 'the change was closed without going live';
-  if (row.mode !== 'live') return null;
-  // #4539: the request was closed while it was still to be built (its plan
-  // waited for Build it, a limit held it back, or it waited its turn): it
-  // was not built because the request was closed.
-  if (row.request_closed === true && row.verdict === 'ready' && row.build_ok == null
-    && !row.run_proposal && !row.build_session_id) {
-    return 'not built: the request was closed';
-  }
-  if (row.build_ok === false && /^skipped:/.test(String(row.build_error || ''))) {
-    return `not built: ${String(row.build_error).replace(/^skipped:\s*/, '').slice(0, 200)}`;
-  }
-  if (row.build_ok === false) return `the build did not succeed${row.build_error ? `: ${String(row.build_error).slice(0, 200)}` : ''}`;
-  switch (row.verdict) {
-    case 'person': return 'left for the group to decide';
-    case 'empty': return 'nothing to build was found in it';
-    case 'failed': return 'the last look at it failed';
-    default: return null;
-  }
-}
-
 
 // #19 (WP3, D5): how long each step usually takes, in minutes, by stage: a
 // fixed range for now, to be read from recent runs later. "How long will it
@@ -1142,12 +1172,13 @@ function requestClosedSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' }
  * (the one stageOf reads: a shadow build's newer run is not this request's
  * stage), the build session that run started, its newest plan post, its
  * newest proposal and change, the newest reply after that run, and an open
- * question about it. The bot page (requestRows below) and a request's own
- * track (homeroom-bot-track.js REQUEST_ROWS_SQL) read one source, so their
- * stages cannot disagree. `userIdSql` narrows the open question to one
- * person's (the bot page's); left out, any open question counts (a track).
+ * question about it (anybody's). Its stored work state (work-state.js
+ * REQUEST_FACTS_SQL), the times of a first version's steps and the keys of
+ * its activity cards (homeroom-bot-dm.js, homeroom-bot-activity.js) and a
+ * request's own track (homeroom-bot-track.js REQUEST_ROWS_SQL) read one
+ * source, so their stages cannot disagree.
  */
-function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_number', userIdSql = null } = {}) {
+function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
   return `LEFT JOIN homeroom_bot_queue q ON q.app_id = ${appId} AND q.issue_number = ${issueNumber}
        LEFT JOIN LATERAL (
          SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
@@ -1178,7 +1209,6 @@ function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_numb
        LEFT JOIN LATERAL (
          SELECT created_at FROM homeroom_bot_dm_messages
           WHERE app_id = ${appId} AND issue_number = ${issueNumber} AND question_status = 'open'
-            ${userIdSql ? `AND user_id = ${userIdSql}` : ''}
           ORDER BY created_at DESC LIMIT 1
        ) oq ON TRUE`;
 }
@@ -1229,161 +1259,6 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             ${flaky().flakeFixingSql('prop.proposal_session_id')} AS flake_fixing,
             reply.reply_id, reply.reply_at, reply.reply_user_id`;
 
-// #6280: a row beyond the newest MAX_REQUESTS whose record looks live, so
-// requestStates can read its stage before applying the cap to finished work.
-// Generous on purpose: a row it picks that stageOf reads as finished is
-// dropped below.
-const REQUEST_RECORD_LIVE_SQL = `(queue_id IS NOT NULL
-             OR question_at IS NOT NULL
-             OR proposal_status IN ('promoted', 'merging')
-             -- ready with nothing finished from it: plan waiting, build
-             -- queued or under way, reviewing, and a build handed back.
-             OR (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL)
-             OR (mode = 'live' AND verdict IN ('person', 'failed'))
-             OR (mode = 'live' AND verdict = 'ready' AND build_ok = FALSE
-                 AND build_error NOT LIKE 'skipped:%' AND build_error NOT LIKE 'blocked:%')
-             -- a reply nobody has queued a read for yet, while it counts.
-             OR (reply_at IS NOT NULL
-                 AND reply_at > NOW() - make_interval(secs => ${Math.round(REPLY_WAIT_MS / 1000)})))`;
-
-/**
- * Every request recorded as the person's (homeroom_bot_requesters), and
- * anything of theirs waiting in the bot's queue, with each record the steps
- * above read. Newest first.
- *
- * #6280 (4 Nov 2026, #6251): MAX_REQUESTS is a cap on the requests FINISHED
- * work is read from, never on work under way. A request being built, fixed,
- * reviewed or handed back, a plan waiting for Build it, and an open question
- * drop out of a plain 25-row window on a busy day (the platform's requester
- * had more than 25 newer runs), and the bot page then said "Nobody on it"
- * while the request's own page said Building. So every row whose record
- * looks live is read too, whatever its age; requestStates drops the ones
- * stageOf reads as finished, and only the newest MAX_REQUESTS of those stay.
- */
-async function requestRows(pool, userId) {
-  const { rows } = await pool.query(
-    `WITH mine AS (
-       SELECT r.app_id, r.issue_number, r.issue_title, r.first_version
-         FROM homeroom_bot_requesters r WHERE r.user_id = $1
-       UNION
-       SELECT q.app_id, q.issue_number, i.title, FALSE
-         FROM homeroom_bot_queue q
-         JOIN issues i ON i.app_id = q.app_id AND i.github_issue_number = q.issue_number
-        WHERE i.created_by = $1
-          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r2
-                           WHERE r2.app_id = q.app_id AND r2.issue_number = q.issue_number)
-     ), recs AS (
-       SELECT m.app_id, a.slug, a.name, a.repo_url, m.issue_number, m.issue_title, m.first_version,
-            ${REQUEST_RECORD_COLUMNS},
-            -- #4539: the request's own state (requestClosedSql).
-            ${requestClosedSql({ appId: 'm.app_id', issueNumber: 'm.issue_number' })} AS request_closed,
-            ROW_NUMBER() OVER (
-              ORDER BY GREATEST(COALESCE(run.created_at, 'epoch'::timestamptz),
-                                COALESCE(q.enqueued_at, 'epoch'::timestamptz),
-                                COALESCE(q.started_at, 'epoch'::timestamptz)) DESC
-            ) AS record_rank
-       FROM mine m
-       JOIN apps a ON a.id = m.app_id
-       ${requestRecordJoinsSql({ appId: 'm.app_id', issueNumber: 'm.issue_number', userIdSql: '$1' })}
-     )
-     SELECT * FROM recs
-      WHERE record_rank <= ${MAX_REQUESTS} OR ${REQUEST_RECORD_LIVE_SQL}
-      ORDER BY record_rank`,
-    [userId],
-  );
-  return rows;
-}
-
-/** Pure (WP1): a live ready run whose build waits its turn or runs. */
-function buildUnderWay(run) {
-  return run.build_ok == null && !run.proposal_session_id && !run.cap_suppressed
-    && ((!!run.live_build_waiting_at && !run.build_session_id) || run.build_status === 'active' || run.build_status === 'paused');
-}
-
-/** Pure (WP1): what one earlier build of a request came to, in words. */
-function attemptOutcome(run) {
-  const why = (prefix) => String(run.build_error || '').replace(prefix, '').slice(0, 200);
-  if (run.proposal_session_id) {
-    if (run.proposal_status === 'merged') return 'built; approved and live';
-    if (run.proposal_status === 'promoted') return 'built; it\'s waiting for approval';
-    if (run.proposal_status === 'merging') return 'built; it\'s going live now';
-    return 'built; the change was closed';
-  }
-  if (run.build_ok === true) return 'built';
-  if (run.build_ok === false) {
-    if (/^skipped:/.test(String(run.build_error || ''))) return `stopped before it was built: ${why(/^skipped:\s*/)}`;
-    if (/^blocked:/.test(String(run.build_error || ''))) return `found it cannot be built as written: ${why(/^blocked:\s*/)}`;
-    return `the build did not succeed${run.build_error ? `: ${why('')}` : ''}`;
-  }
-  if (run.cap_suppressed) return 'held back by a limit, never built';
-  if (run.build_error) return `never built: ${why(/^superseded:\s*/)}`;
-  return 'nothing recorded about how it ended';
-}
-
-/**
- * WP1 (#10): the request's other live builds beside the one its stage
- * describes (its open proposal's, else its newest look's), set on each row
- * in place: `also_building`, another build of the same request that waits
- * or runs, and `earlier_attempt`, the build before the described one and
- * what it came to. The stage reads the newest look and the newest proposal
- * only, so a second build of one request was invisible to the bot's answers
- * ("Nothing broke", Plant Pal, 3 October). Never throws.
- */
-async function attachAttempts(pool, rows) {
-  const keyed = rows.filter((r) => r.app_id && r.issue_number);
-  if (!keyed.length) return;
-  let runs;
-  try {
-    ({ rows: runs } = await pool.query(
-      `SELECT r.id, r.app_id, r.issue_number, r.created_at, r.build_ok, r.build_error, r.cap_suppressed,
-              r.live_build_waiting_at, r.build_session_id, r.proposal_session_id,
-              bs.status AS build_status, bs.created_at AS build_started_at,
-              CASE WHEN ps.status = 'merged' AND ps.live_at IS NULL THEN 'merging' ELSE ps.status END AS proposal_status
-         FROM homeroom_bot_runs r
-         LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
-         LEFT JOIN chat_sessions ps ON ps.id = r.proposal_session_id
-        WHERE r.mode = 'live' AND r.verdict = 'ready'
-          AND (r.app_id, r.issue_number) IN (SELECT * FROM UNNEST($1::int[], $2::int[]))
-          AND r.created_at > NOW() - make_interval(days => $3)
-        ORDER BY r.id DESC`,
-      [keyed.map((r) => Number(r.app_id)), keyed.map((r) => Number(r.issue_number)), FINISHED_WITHIN_DAYS],
-    ));
-  } catch {
-    return;
-  }
-  const byRequest = new Map();
-  for (const run of runs || []) {
-    const key = `${Number(run.app_id)}#${Number(run.issue_number)}`;
-    if (!byRequest.has(key)) byRequest.set(key, []);
-    byRequest.get(key).push(run);
-  }
-  for (const row of keyed) {
-    const list = byRequest.get(`${Number(row.app_id)}#${Number(row.issue_number)}`) || [];
-    if (!list.length) continue;
-    const open = row.proposal_status === 'promoted' || row.proposal_status === 'merging';
-    const proposalRun = open ? list.find((r) => Number(r.proposal_session_id) === Number(row.proposal_session_id)) : null;
-    const described = Number(proposalRun?.id ?? row.run_id) || null;
-    const other = list.find((r) => Number(r.id) !== described && buildUnderWay(r));
-    if (other) {
-      const waiting = !other.build_session_id;
-      row.also_building = {
-        doing: waiting
-          ? 'another build of this same request is waiting its turn'
-          : 'another build of this same request is under way',
-        since: iso(other.build_started_at || other.live_build_waiting_at || other.created_at),
-      };
-    }
-    const earlier = described ? list.find((r) => Number(r.id) < described && !buildUnderWay(r)) : null;
-    if (earlier) {
-      row.earlier_attempt = {
-        outcome: attemptOutcome(earlier),
-        when: iso(earlier.created_at),
-        ...(earlier.proposal_session_id ? { proposal: Number(earlier.proposal_session_id) } : {}),
-      };
-    }
-  }
-}
-
 /** Where each of `rows`' waiting requests is in the live queue, by queue id. */
 async function queuePositions(pool, rows, settings) {
   const position = new Map();
@@ -1400,219 +1275,11 @@ async function queuePositions(pool, rows, settings) {
   return position;
 }
 
-/**
- * #3771: what the bot is busy with on each project where a request of the
- * person's waits: a request it is reading now (a claimed queue row, other
- * than a follow-up on its own proposal, which runs beside it), or one it is
- * building (a live ready run with no proposal yet, whose queue row is gone).
- * A read holds the project's other reads (its one session); builds hold its
- * other builds once the project's build number (appCapsOf) are under way. By
- * app id:
- * [{ issueNumber, since, what }], newest first.
- */
-async function projectsBusy(pool, rows) {
-  const appIds = [...new Set(rows.filter((r) => (r.queue_id && !r.started_at) || (r.build_waiting_at && !r.build_session_id))
-    .map((r) => Number(r.app_id)))];
-  if (!appIds.length) return new Map();
-  const { rows: found } = await pool.query(
-    `(SELECT q.app_id, q.issue_number, q.started_at AS since, 'reading' AS what
-        FROM homeroom_bot_queue q
-       WHERE q.app_id = ANY($1::int[]) AND q.started_at IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
-            WHERE cs.app_id = q.app_id AND q.issue_number = ANY(cs.linked_issues)
-              AND cs.status = 'promoted' AND u.username = $2 AND u.is_synthetic = TRUE))
-     UNION ALL
-     (SELECT DISTINCT ON (r.app_id, r.issue_number) r.app_id, r.issue_number,
-             COALESCE(bs.created_at, r.created_at) AS since, 'building' AS what
-        FROM homeroom_bot_runs r
-        LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
-       WHERE r.app_id = ANY($1::int[]) AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL
-         AND r.cap_suppressed IS NULL AND r.proposal_session_id IS NULL AND r.live_build_waiting_at IS NULL
-         -- B6: a plan waiting for its Build it holds nothing up.
-         AND r.awaiting_go_at IS NULL
-         AND r.created_at > NOW() - make_interval(hours => $3)
-         AND (bs.id IS NULL OR bs.status = 'active')
-       ORDER BY r.app_id, r.issue_number, r.id DESC)`,
-    [appIds, BOT_USERNAME, BUSY_BUILD_HOURS],
-  );
-  const out = new Map();
-  for (const b of found) {
-    const list = out.get(Number(b.app_id)) || [];
-    list.push({ issueNumber: Number(b.issue_number), since: b.since, what: b.what });
-    out.set(Number(b.app_id), list);
-  }
-  for (const list of out.values()) list.sort((a, b) => new Date(b.since) - new Date(a.since));
-  return out;
-}
-
-// 2026-10-05: what a request held by its project's first version is doing,
-// in the bot's words (its card, the tray, "how far along are you?"), and a
-// ready one whose build is held the same way.
-const FIRST_VERSION_WAIT = 'waiting for the first version to go live; I\'ll start on this as soon as it does';
-const FIRST_VERSION_BUILD_WAIT = 'ready to build; I\'ll start as soon as the first version goes live';
 // 13 Nov 2026: what a request waiting to be read waits for, in the bot's
-// words. It is the bot's own line (per project), and it starts by itself: a
-// tester read "waiting for a free builder" as waiting for another person,
-// and wondered whether the project had to be made public for one.
+// words (stageOf's `queued`). It is the bot's own line (per project), and it
+// starts by itself: a tester read "waiting for a free builder" as waiting for
+// another person, and wondered whether the project had to be made public for one.
 const QUEUE_WAIT = 'waiting its turn in my own line; I\'ll start on it by myself when I have a free slot';
-const QUEUE_NEXT = 'next in my own line; I\'ll start on it by myself as soon as I have a free slot';
-
-/**
- * Pure: whether `row` waits for its project's first version, from `holds`
- * (homeroom-bot.js firstVersionHolds: app id → the first version's request
- * number, or null before it is filed): `{ reason, number? }`, or null.
- */
-function firstVersionWait(row, holds, { reason = null } = {}) {
-  if (!(holds instanceof Map) || !holds.size) return null;
-  const bot = require('./homeroom-bot');
-  if (!bot.heldForFirstVersion(holds, {
-    appId: row.app_id, issueNumber: row.issue_number, firstVersion: !!row.first_version, reason,
-  })) return null;
-  const number = holds.get(Number(row.app_id));
-  return { reason: bot.FIRST_VERSION_HOLD, ...(number != null ? { number: Number(number) } : {}) };
-}
-
-/**
- * The first-version holds (firstVersionWait) on the projects of the staged
- * rows still waiting to be read or built. Best-effort: a read that fails
- * holds nothing here, and the loop's own read decides.
- */
-async function waitingHolds(pool, staged) {
-  const appIds = staged
-    .filter((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
-    .map((s) => Number(s.row.app_id));
-  if (!appIds.length) return new Map();
-  try {
-    return await require('./homeroom-bot').firstVersionHolds(pool, appIds);
-  } catch {
-    return new Map();
-  }
-}
-
-// 1 Nov 2026: a request whose requester works on it with the bot in a
-// private thread waits for their plan (rules/bot-loop.ts planHoldSql).
-// 13 Nov 2026: whatever it had reached before a build started: waiting to
-// be read, its build waiting its turn, or held at one of the project's
-// limits (the lane takes none of them up while the thread holds it).
-const PLAN_HELD_STAGES = new Set(['queued', 'build_queued', 'held']);
-const PLAN_WAIT = 'waiting for your plan: you are working on it with me in a private thread; I\'ll start once a plan is posted on it, or once you tap Let the bot build it now on its page';
-
-/**
- * The requests `userId`'s own private threads hold the bot on now, as
- * `appId:issueNumber` keys. Best-effort: a read that fails holds nothing
- * here, and the loop's own read decides.
- */
-async function planHolds(pool, userId) {
-  try {
-    const { planHoldActiveSql } = require('../workflow/rules/bot-loop.ts');
-    const { rows } = await pool.query(
-      `SELECT p.app_id, p.about_number FROM private_threads p
-        WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`,
-      [userId],
-    );
-    return new Set(rows.map((r) => `${Number(r.app_id)}:${Number(r.about_number)}`));
-  } catch {
-    return new Set();
-  }
-}
-
-/**
- * Pure (#3771): what a request in the queue waits for, as the `queued`
- * stage's words and `waitingFor`. Its project reading as many other
- * requests as it may at once (`readsPerApp`, the bot's setting: each read
- * runs on a triage session of its own; a build runs on a session of its own
- * and holds no read up); the most the bot does for one person at once
- * already under way; or, with nothing in the way, its place in the queue.
- * "Waiting in the queue (number 4)" said none of that, and "when will you
- * pick it up?" had no answer.
- */
-function queuedWait(row, {
-  busy = new Map(), working = 0, perPerson = 2, queuePosition = null, now = new Date(), holds = null, readsPerApp = 1,
-} = {}) {
-  // 2026-10-05: its project's first version is not live yet, and nothing
-  // else on the project starts until it is (homeroom-bot.js
-  // FIRST_VERSION_PENDING_SQL). That is what it waits for, whatever else is.
-  const firstVersion = firstVersionWait(row, holds, { reason: row.queue_reason });
-  if (firstVersion) return { doing: FIRST_VERSION_WAIT, waitingFor: firstVersion };
-  const most = Math.max(1, Math.floor(Number(readsPerApp) || 1));
-  const reading = (busy.get(Number(row.app_id)) || [])
-    .filter((b) => b.what === 'reading' && b.issueNumber !== Number(row.issue_number));
-  const ahead = reading[0];
-  if (ahead && reading.length >= most) {
-    // How long the other one has run is its own; the entry's time so far is
-    // this request's wait.
-    const minutes = minutesSince(ahead.since, now);
-    const numbers = reading.map((b) => `#${b.issueNumber}`);
-    const words = most === 1
-      ? `request #${ahead.issueNumber} first (one read per project at a time)`
-      : `requests ${numbers.length > 1 ? `${numbers.slice(0, -1).join(', ')} and ${numbers[numbers.length - 1]}` : numbers[0]} first (${most} reads per project at a time)`;
-    return {
-      doing: `waiting its turn: ${row.name || row.slug} is reading ${words}`,
-      waitingFor: {
-        reason: 'project_busy', number: ahead.issueNumber, doing: 'reading', ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
-        ...(most > 1 ? { reading: reading.length, most } : {}),
-      },
-    };
-  }
-  if (working >= perPerson) {
-    return {
-      doing: `waiting its turn: ${plural(working, 'thing')} of theirs ${working === 1 ? 'is' : 'are'} in progress, the most at once for one person`,
-      waitingFor: { reason: 'person_limit', inProgress: working, most: perPerson },
-    };
-  }
-  if (queuePosition === 1) return { doing: QUEUE_NEXT, waitingFor: { reason: 'queue', ahead: 0 } };
-  if (Number.isInteger(queuePosition) && queuePosition > 1) {
-    // How many are ahead stays in `waitingFor`, for the model to answer
-    // "how long?" with; the words say what it waits for.
-    return {
-      doing: QUEUE_WAIT,
-      waitingFor: { reason: 'queue', ahead: queuePosition - 1 },
-    };
-  }
-  return {};
-}
-
-/**
- * Pure: what a build waiting its turn waits for, as the `build_queued`
- * stage's words and `waitingFor`: its project's other builds, once its
- * build number (homeroom-bot.js appCapsOf(settings, appId).building) are
- * under way, the most the bot does for one person at once, or nothing: it
- * starts next.
- */
-function buildWait(row, {
-  busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null,
-  perProject = require('./homeroom-bot').BUILDS_PER_APP,
-} = {}) {
-  // 2026-10-05: no build on a project starts while its first version is
-  // not live (rules/bot-loop.ts BUILD_CANDIDATES_SQL).
-  const firstVersion = firstVersionWait(row, holds);
-  if (firstVersion) return { doing: FIRST_VERSION_BUILD_WAIT, waitingFor: firstVersion };
-  const building = (busy.get(Number(row.app_id)) || [])
-    .filter((b) => b.what === 'building' && b.issueNumber !== Number(row.issue_number));
-  if (building.length >= perProject) {
-    // The one that started first is the one likely to finish first; the
-    // list is newest first.
-    const ahead = building[building.length - 1];
-    const minutes = minutesSince(ahead.since, now);
-    const numbers = [...building].reverse().map((b) => `#${b.issueNumber}`).join(', ');
-    return {
-      doing: `ready to build; ${row.name || row.slug} is building ${building.length === 1 ? 'request' : 'requests'} ${numbers} first (up to ${plural(perProject, 'build')} per project at a time)`,
-      waitingFor: {
-        reason: 'project_building', number: ahead.issueNumber, building: building.length, most: perProject,
-        ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
-      },
-    };
-  }
-  if (working >= perPerson) {
-    return {
-      doing: `ready to build; ${plural(working, 'thing')} of theirs ${working === 1 ? 'is' : 'are'} in progress, the most at once for one person`,
-      waitingFor: { reason: 'person_limit', inProgress: working, most: perPerson },
-    };
-  }
-  return { doing: 'ready to build; its build starts next', waitingFor: { reason: 'next' } };
-}
-
 
 /**
  * The first versions the bot is to build for this person whose request is
@@ -1656,67 +1323,6 @@ function inFlight(item) {
 }
 
 
-/**
- * Each of the person's requests (requestRows), newest first, beside the
- * stage it is at (stageOf; null when nothing about it is in progress):
- * `{ row, state }`. What the activity cards read (homeroom-bot-activity.js
- * catchUpCards) to find the work under way that has no card yet, and a
- * first version's App tab steps (homeroom-bot-dm.js firstVersionStateOf).
- * 11 Nov 2026: no surface words a request's status from it any more: where
- * a request stands is its stored work state (services/work-state.js).
- */
-async function requestStates(pool, { userId, settings = null, now = new Date(), working = 0 }) {
-  // #3734: a queue row is the bot's work only on a project it acts on for
-  // real. On any other the queue is its background triage, which says
-  // nothing to anybody, so it is neither "waiting in the queue" nor "reading
-  // it" for them. Whether the bot is switched on is said apart (botIsOn).
-  const acts = actsScope(settings);
-  const rows = (await requestRows(pool, userId)).map((row) => (!acts || live().inScope(acts, row.slug) ? row : {
-    ...row, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null,
-  }));
-  await attachAttempts(pool, rows);
-  const position = await queuePositions(pool, rows, settings);
-  // #6280: a row read past MAX_REQUESTS only because its record looked live
-  // is kept when it really is: a stage, or a request handed back to them. A
-  // finished one is dropped, so the cap still applies to finished work.
-  const staged = rows.map((row) => {
-    const queuePosition = row.queue_id ? position.get(Number(row.queue_id)) || null : null;
-    return { row, state: stageOf({ ...row, queue_position: queuePosition }, { now }), queuePosition };
-  }).filter((s) => s.row.record_rank == null || Number(s.row.record_rank) <= MAX_REQUESTS || s.state || handedBack(s.row));
-  // #3771: what a request still in the queue waits for, in words. `working`
-  // is the work already under way that does not come from these requests.
-  const busyCount = working
-    + staged.filter((s) => s.state && BUSY_STAGES.has(s.state.stage) && !s.state.waitingOn).length;
-  const busy = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
-    ? await projectsBusy(pool, rows) : new Map();
-  const perPerson = Number(settings?.perPerson) || 2;
-  const readsPerApp = Number(settings?.readsPerApp) || require('./homeroom-bot').DEFAULTS.readsPerApp;
-  const holds = await waitingHolds(pool, staged);
-  const plans = staged.some((s) => PLAN_HELD_STAGES.has(s.state?.stage))
-    ? await planHolds(pool, userId) : new Set();
-  return staged.map((s) => {
-    // Their plan comes first, whatever else it would wait for.
-    if (PLAN_HELD_STAGES.has(s.state?.stage) && !s.row.first_version
-      && plans.has(`${Number(s.row.app_id)}:${Number(s.row.issue_number)}`)) {
-      return { row: s.row, state: { ...s.state, doing: PLAN_WAIT, waitingOn: 'them', waitingFor: { reason: 'awaiting_plan' } } };
-    }
-    if (s.state?.stage === 'queued') {
-      return {
-        row: s.row,
-        state: {
-          ...s.state,
-          ...queuedWait(s.row, { busy, working: busyCount, perPerson, queuePosition: s.queuePosition, now, holds, readsPerApp }),
-        },
-      };
-    }
-    if (s.state?.stage === 'build_queued') {
-      const perProject = buildCapOf(settings, s.row.app_id);
-      return { row: s.row, state: { ...s.state, ...buildWait(s.row, { busy, working: busyCount, perPerson, now, holds, perProject }) } };
-    }
-    return { row: s.row, state: s.state };
-  });
-}
-
 module.exports = {
   FIRST_VERSION_STEPS,
   REQUEST_STEPS,
@@ -1738,7 +1344,7 @@ module.exports = {
   holdOf,
   HOLD_IS_ALLOWANCE_SQL,
   replyLateralSql,
-  // #6280: one record read for the bot page's rows and a request's track.
+  // #6280: one record read for the work state and a request's track.
   requestClosedSql,
   requestRecordJoinsSql,
   REQUEST_RECORD_COLUMNS,
@@ -1766,28 +1372,16 @@ module.exports = {
   // #6521: the same rule for a change page's own row shape.
   sessionChecksOnHead,
   firstVersionStage,
+  firstVersionStageOf,
   firstVersionStopped,
   handedBack,
-  buildUnderWay,
-  attemptOutcome,
-  attachAttempts,
-  queuedWait,
-  buildWait,
-  FIRST_VERSION_WAIT,
   QUEUE_WAIT,
-  QUEUE_NEXT,
-  PLAN_WAIT,
-  FIRST_VERSION_BUILD_WAIT,
-  firstVersionWait,
-  projectsBusy,
-  outcomeOf,
   setupOf,
   firstVersionRows,
   stepNumber,
   checksWords,
   failedCount,
   links,
-  requestStates,
   // #8, #19 (WP3)
   TYPICAL_MINUTES,
   leftOverQueue,

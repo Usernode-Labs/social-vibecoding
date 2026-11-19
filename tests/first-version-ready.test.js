@@ -54,7 +54,7 @@ test('a verdict about another commit than the head up for approval is not its ow
   assert.equal(progress.stageOf({ ...open, check_state: 'failing', reviewed_head_sha: HEAD, checks_sha: HEAD }, { now }).stage, 'checks_failed');
 });
 
-test('requestRows reads which commit the verdict is about, and the head up for approval', () => {
+test('the per-request record reads which commit the verdict is about, and the head up for approval', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-progress'), 'utf8');
   assert.match(src, /cs\.checks_commit_sha AS checks_sha, cs\.reviewed_head_sha, cs\.imported_pr_head_sha,\s+cs\.source AS proposal_source,/);
 });
@@ -71,6 +71,64 @@ test('the App tab\'s stage: ready to try only when ready, never while a follow-u
   }
   assert.equal(progress.buildLineOf(progress.firstVersionStage('revising')), 'testing');
   assert.equal(progress.stepNumber(progress.firstVersionStage('followup_queued'), true), 5);
+});
+
+// 19 Nov 2026 (docs/plans/bot-one-model.md): the App tab draws its
+// request's stored work state (services/work-state.js), not stageOf through
+// requestStates. Each stage of the bot's own step, as the work state stores
+// it (fromStage), is drawn at the step, build line and phase it was before,
+// wherever the two deciders agreed.
+test('firstVersionStageOf: the App tab\'s stage is the work state\'s, at the step it always was', () => {
+  const ws = require('../src/services/work-state');
+  const facts = { first_version: true, check_state: 'pending', review_round: 1, review_max_rounds: 3 };
+  const stored = (step, row = facts) => ws.fromStage(step, row, now);
+  const same = (step, row) => {
+    const mapped = progress.firstVersionStageOf(stored(step, row));
+    const label = `${step.stage}${step.reply ? ' (reply)' : ''}${step.retry ? ' (retry)' : ''}`;
+    assert.equal(progress.stepNumber(progress.firstVersionStage(mapped), true), progress.stepNumber(progress.firstVersionStage(step.stage), true), `${label}: its step`);
+    for (const forCreator of [true, false]) {
+      assert.equal(progress.buildLineOf(progress.firstVersionStage(mapped), { forCreator, question: true }),
+        progress.buildLineOf(progress.firstVersionStage(step.stage), { forCreator, question: true }), `${label}: its line`);
+    }
+    assert.deepEqual(progress.firstVersionPhase({ stage: progress.firstVersionStage(mapped), since: '2026-10-12T20:00:00Z' }, facts),
+      progress.firstVersionPhase({ stage: progress.firstVersionStage(step.stage), since: '2026-10-12T20:00:00Z' }, facts), `${label}: its phase`);
+    return mapped;
+  };
+  for (const stage of ['reading', 'queued', 'on_hold', 'planning', 'plan', 'question', 'build_queued', 'starting', 'held',
+    'reviewing', 'proposing', 'building', 'fixing', 'revising', 'followup_queued', 'fix_queued', 'checks', 'checks_failed', 'merging']) {
+    same({ stage });
+  }
+  same({ stage: 'reading', reply: true });
+  assert.equal(same({ stage: 'queued', retry: 'plan' }), 'queued', 'a plan to write again waits to be read');
+  // A first version whose checks passed goes live without a vote: Ready to
+  // try once its readiness says so (firstVersionStage), as before.
+  assert.equal(same({ stage: 'vote' }, { ...facts, check_state: 'passing' }), 'vote');
+  assert.equal(progress.firstVersionStageOf({ stage: 'up_for_vote' }), 'vote');
+  assert.equal(progress.firstVersionStageOf({ stage: 'going_live', line: { code: 'github_checks' } }), 'merging');
+
+  // Where the old decider disagreed, the work state wins: a build that never
+  // started (stalled: step 3, Planning before), Homeroom bot's fixing of its
+  // checks stopped (fix_stopped: no step at all before) and every other stop
+  // are Stopped; a check being fixed for it (#6807: no step before) is its
+  // checks.
+  assert.equal(progress.firstVersionStageOf(stored({ stage: 'stalled' })), 'stopped');
+  assert.equal(progress.firstVersionStageOf(stored({ stage: 'fix_stopped' })), 'stopped');
+  assert.equal(progress.stepNumber('fix_stopped', true), null, 'it had no step before');
+  assert.equal(progress.firstVersionStageOf(stored({ stage: 'flake_fixing' })), 'checks');
+  assert.equal(progress.stepNumber('flake_fixing', true), null, 'nor had a check being fixed for it');
+  for (const reason of ['build_failed', 'look_failed', 'change_closed']) {
+    assert.equal(progress.firstVersionStageOf({ stage: 'stopped', reason }), 'stopped', reason);
+  }
+  // A person building it, a plan written with its requester.
+  assert.equal(progress.firstVersionStageOf({ stage: 'building', line: { code: 'claimed', by: 'ada' } }), 'building');
+  assert.equal(progress.firstVersionStageOf({ stage: 'planning', line: { code: 'planning_with_you' } }), 'queued');
+  assert.equal(progress.firstVersionStageOf({ stage: 'planning', line: { code: 'planning_with_you', ready: true } }), 'build_queued');
+  // No step of a first version on its way: live, closed, or handed back
+  // for something the App tab has no line for.
+  for (const work of [{ stage: 'live' }, { stage: 'closed' }, { stage: 'waiting_for_you', why: 'decide' },
+    { stage: 'waiting_for_you', why: 'already_works' }, { stage: 'waiting_for_you', why: 'needs_detail' }, null, {}]) {
+    assert.equal(progress.firstVersionStageOf(work), null, JSON.stringify(work));
+  }
 });
 
 // ── The DM's rule, on the change's head ─────────────────────────────────
@@ -122,16 +180,31 @@ function fakePool() {
   };
 }
 
+// 19 Nov 2026 (docs/plans/bot-one-model.md): its request's stored work
+// state (services/work-state.js), the row the bot page reads, as each of the
+// stages below reaches it: a first version whose checks passed is going
+// live without a vote (`first_version`), merged and not live yet is going
+// live, an update queued or under way is the bot's building, and a fix
+// waiting its turn is its checks failing.
+const WORK = Object.freeze({
+  vote: { stage: 'going_live', line: { code: 'first_version' } },
+  up_for_vote: { stage: 'up_for_vote' },
+  followup_queued: { stage: 'building', line: { code: 'update_queued' } },
+  revising: { stage: 'building', line: { code: 'revising' } },
+  fix_queued: { stage: 'checking', line: { code: 'checks_failing', failing: 1 } },
+  fixing: { stage: 'building', line: { code: 'fixing' } },
+  merging: { stage: 'going_live' },
+});
+
 async function stateAt(stage, { readiness = null, proposal = 31, throws = false } = {}) {
   const asked = [];
   const pool = fakePool();
   const state = await dm.firstVersionState(pool, 5, {
     viewerId: 7,
-    progress: {
-      ...progress,
-      requestStates: async () => [{
-        row: { app_id: 5, issue_number: 1, queue_reason: null, proposal_session_id: proposal }, state: { stage },
-      }],
+    workState: {
+      async forItems() {
+        return [{ kind: 'request', appId: 5, issueNumber: 1, why: null, reason: null, line: null, leadChangeId: proposal, ...WORK[stage] }];
+      },
     },
     readiness: async (_pool, id) => {
       asked.push(id);
@@ -145,7 +218,7 @@ async function stateAt(stage, { readiness = null, proposal = 31, throws = false 
 test('firstVersionState: Ready to try by changeReadiness, else Testing it', async () => {
   const ready = await stateAt('vote', { readiness: { ready: true, epoch: 1, waitingOnShots: false, broken: [], skipped: [] } });
   assert.deepEqual([ready.state.step, ready.state.line, ready.state.ready], [6, 'ready', true]);
-  assert.deepEqual(ready.asked, [31], 'read for its proposal');
+  assert.deepEqual(ready.asked, [31], 'read for its proposal, the work state\'s own change');
 
   // Held on its shots (or a pass about another head): its checks, not ready.
   const held = await stateAt('vote', { readiness: { ready: false, epoch: 1, waitingOnShots: true, broken: [], skipped: [] } });
@@ -157,6 +230,11 @@ test('firstVersionState: Ready to try by changeReadiness, else Testing it', asyn
   assert.deepEqual([failed.state.line, failed.state.ready], ['testing', false]);
   const none = await stateAt('vote', { readiness: null });
   assert.equal(none.state.ready, false);
+  // Up for a vote reads the same rule (a first version never is: D1).
+  assert.deepEqual((await stateAt('up_for_vote', { readiness: { ready: true } })).asked, [31]);
+  // With no change of its own there is nothing to try.
+  const noChange = await stateAt('vote', { proposal: null, readiness: { ready: true } });
+  assert.deepEqual([noChange.state.ready, noChange.asked], [false, []]);
 });
 
 test('firstVersionState: never ready while a follow-up is queued or running on it', async () => {
@@ -164,6 +242,7 @@ test('firstVersionState: never ready while a follow-up is queued or running on i
     const { state, asked } = await stateAt(stage, { readiness: { ready: true } });
     assert.deepEqual([state.step, state.line, state.ready], [5, 'testing', false], stage);
     assert.deepEqual(asked, [], `${stage}: not even asked`);
+    assert.equal(state.phase?.key, 'testing', `${stage}: its checks, by name`);
   }
   // Approved and going live is not a follow-up: it stays where it was.
   const merging = await stateAt('merging', { readiness: { ready: true } });

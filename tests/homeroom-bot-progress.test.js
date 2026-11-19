@@ -81,7 +81,6 @@ test('a request being read, asked about, or waiting in the queue', () => {
   // for a free builder" read as a wait for another person).
   assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).doing, progress.QUEUE_WAIT);
   assert.equal(progress.QUEUE_WAIT, 'waiting its turn in my own line; I\'ll start on it by myself when I have a free slot');
-  assert.equal(progress.QUEUE_NEXT, 'next in my own line; I\'ll start on it by myself as soon as I have a free slot');
   assert.equal(stage({ verdict: 'person', mode: 'live' }), null, 'nothing in progress');
 });
 
@@ -140,12 +139,6 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(stage({ ...open, check_state: 'passing', question_at: ago(2) }).stage, 'question');
   assert.equal(stage({ proposal_status: 'merging', proposal_at: ago(2) }).stage, 'merging');
   assert.equal(stage({ proposal_status: 'merged' }), null, 'live is finished, not in progress');
-  assert.equal(progress.outcomeOf({ proposal_status: 'merged' }), 'approved and live');
-  assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'the build ran past its time limit' }),
-    'the build did not succeed: the build ran past its time limit');
-  assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'skipped: the request was closed before its build started' }),
-    'not built: the request was closed before its build started');
-  assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 
 // #6528: a passing change is still Checking while its before & after shots
@@ -252,45 +245,6 @@ test('the records, said in plain words when the model could not answer', () => {
   assert.doesNotMatch(text, /—/, 'no em dash in what the bot says');
 });
 
-test('#3771: a request in the queue says what it waits for', () => {
-  const row = { app_id: 7, issue_number: 14, name: 'Ear Trainer', slug: 'ear-trainer' };
-  const now = new Date('2026-10-03T12:40:00Z');
-  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'reading' }]]]);
-  assert.deepEqual(progress.queuedWait(row, { busy, now }), {
-    doing: 'waiting its turn: Ear Trainer is reading request #12 first (one read per project at a time)',
-    waitingFor: { reason: 'project_busy', number: 12, doing: 'reading', minutesSoFar: 14 },
-  });
-  // A build runs on a session of its own: it holds no read up.
-  const building = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }]]]);
-  assert.equal(progress.queuedWait(row, { busy: building, queuePosition: 1 }).doing, progress.QUEUE_NEXT);
-  // Its own row being read is not something it waits for.
-  const self = new Map([[7, [{ issueNumber: 14, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
-  assert.equal(progress.queuedWait(row, { busy: self, queuePosition: 1 }).doing, progress.QUEUE_NEXT);
-  assert.deepEqual(progress.queuedWait(row, { working: 2, perPerson: 2 }).waitingFor, { reason: 'person_limit', inProgress: 2, most: 2 });
-  assert.equal(progress.queuedWait(row, { working: 2, perPerson: 2 }).doing,
-    'waiting its turn: 2 things of theirs are in progress, the most at once for one person');
-  assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, progress.QUEUE_WAIT);
-  assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
-  // 3 Nov 2026: a project reads up to readsPerApp requests at once, each on
-  // a session of its own: one read ahead holds nothing up then.
-  assert.equal(progress.queuedWait(row, { busy, now, readsPerApp: 3, queuePosition: 1 }).doing, progress.QUEUE_NEXT);
-  const three = new Map([[7, [
-    { issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'reading' },
-    { issueNumber: 13, since: '2026-10-03T12:30:00Z', what: 'reading' },
-    { issueNumber: 9, since: '2026-10-03T12:20:00Z', what: 'building' },
-    { issueNumber: 11, since: '2026-10-03T12:35:00Z', what: 'reading' },
-  ]]]);
-  assert.equal(progress.queuedWait(row, { busy: three, now, readsPerApp: 4, queuePosition: 1 }).doing, progress.QUEUE_NEXT,
-    'three reads of four: a build is not one of them');
-  assert.deepEqual(progress.queuedWait(row, { busy: three, now, readsPerApp: 3 }), {
-    doing: 'waiting its turn: Ear Trainer is reading requests #12, #13 and #11 first (3 reads per project at a time)',
-    waitingFor: { reason: 'project_busy', number: 12, doing: 'reading', minutesSoFar: 14, reading: 3, most: 3 },
-  });
-  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-progress.js'), 'utf8');
-  assert.match(src, /queuedWait\(s\.row, \{ busy, working: busyCount, perPerson, queuePosition: s\.queuePosition, now, holds, readsPerApp \}\)/,
-    'the bot\'s own setting, as the lane reads it');
-});
-
 test('a ready request waiting for its build slot says so, and what it waits for', () => {
   const now = new Date('2026-10-03T12:40:00Z');
   const row = {
@@ -305,66 +259,10 @@ test('a ready request waiting for its build slot says so, and what it waits for'
     'in the bot\'s hands, not this minute');
   // Its session exists: it is under way, not waiting.
   assert.notEqual(progress.stageOf({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).stage, 'build_queued');
-
-  // Newest first, as projectsBusy lists them.
-  const five = [
-    { issueNumber: 13, since: '2026-10-03T12:35:00Z', what: 'building' },
-    { issueNumber: 11, since: '2026-10-03T12:30:00Z', what: 'building' },
-    { issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' },
-    { issueNumber: 16, since: '2026-10-03T12:22:00Z', what: 'building' },
-    { issueNumber: 17, since: '2026-10-03T12:18:00Z', what: 'building' },
-  ];
-  const busy = new Map([[7, [...five, { issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
-  assert.deepEqual(progress.buildWait(row, { busy, now }), {
-    doing: 'ready to build; Ear Trainer is building requests #17, #16, #12, #11, #13 first (up to 5 builds per project at a time)',
-    waitingFor: { reason: 'project_building', number: 17, building: 5, most: 5, minutesSoFar: 22 },
-  }, 'five under way hold the next; the one started first is the one it waits on');
-  const four = new Map([[7, five.slice(0, 4)]]);
-  assert.equal(progress.buildWait(row, { busy: four, now }).doing, 'ready to build; its build starts next',
-    'four under way leave room for a fifth');
-  assert.equal(progress.buildWait(row, { busy: new Map([[7, five.slice(2)]]), now, perProject: 2 }).doing,
-    'ready to build; Ear Trainer is building requests #17, #16, #12 first (up to 2 builds per project at a time)',
-    'a project\'s own number is the one it says');
-  const reading = new Map([[7, [{ issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
-  assert.equal(progress.buildWait(row, { busy: reading, now }).doing, 'ready to build; its build starts next',
-    'a request being read on the project does not hold a build');
-  assert.equal(progress.buildWait(row, { working: 2, perPerson: 2 }).waitingFor.reason, 'person_limit');
   // Every screen draws it as ready to build, waiting its turn (services/work-state.js).
   const ws = require('../src/services/work-state');
   assert.deepEqual(ws.fromStage({ stage: 'build_queued' }, {}).line, { code: 'queued' });
   assert.equal(ws.stageSays(ws.fromStage({ stage: 'build_queued' }, {})), 'Ready to build');
-});
-
-test('#6216: a person\'s request says its project\'s own build number, not the default', async () => {
-  const requested = {
-    app_id: 7, slug: 'ear-trainer', name: 'Ear Trainer', repo_url: null, issue_number: 14, issue_title: 'Practice',
-    first_version: false, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null, held_until: null,
-    run_id: 1, mode: 'live', verdict: 'ready', run_at: '2026-10-03T12:30:00Z', run_duration_ms: null,
-    cap_suppressed: null, build_ok: null, build_error: null, build_session_id: null, run_proposal: null,
-    build_waiting_at: '2026-10-03T12:31:00Z', plan_waiting_at: null,
-    review_state: null, review_started_at: null, review_round: null, review_max_rounds: null, review_minutes: null,
-    build_status: null, build_started_at: null, build_last_activity: null, build_turn_mode: null, build_turn_at: null,
-    spec_at: null, proposal_session_id: null, proposal_status: null, check_state: null, check_phase: null,
-    checks_progress: null, checks_at: null, test_results: null, checks_sha: null, reviewed_head_sha: null,
-    imported_pr_head_sha: null, proposal_source: null, proposal_at: null, merged_at: null,
-    request_closed: false, question_at: null,
-  };
-  // Two builds under way on the project, and the project's own number is 2:
-  // the third waits, and the words use the project's number, not the default.
-  const building = [13, 12].map((issueNumber, i) => ({ app_id: 7, issue_number: issueNumber, since: `2026-10-03T12:3${5 - i}:00Z`, what: 'building' }));
-  const pool = {
-    async query(sql) {
-      const s = String(sql);
-      if (/WITH mine AS \(/.test(s)) return { rows: [requested] };
-      if (/'building' AS what/.test(s)) return { rows: building };
-      return { rows: [] };
-    },
-  };
-  const settings = { mode: 'live', perPerson: 3, readsPerApp: 3, appCaps: { 7: { building: 2 } } };
-  const [, state] = (await progress.requestStates(pool, { userId: 5, settings }))
-    .map((s) => [s, s.state]).find(([s]) => Number(s.row.issue_number) === 14);
-  assert.equal(state.waitingFor?.most, 2, 'the project\'s own number');
-  assert.match(state.doing, /up to 2 builds per project at a time/);
 });
 
 // #4539: a request closed while its plan waited for Build it, or while the
@@ -388,9 +286,9 @@ test('#4539: on a closed request the plan and the question stop waiting, and the
   // A build already begun is unchanged.
   assert.equal(stage({ ...waiting, request_closed: true, build_session_id: 7, build_status: 'active', build_started_at: ago(40) }).stage,
     'planning', 'a build under way builds on');
-  // What it came to, for finishedLately and the DM's answer.
-  assert.equal(progress.outcomeOf({ ...waiting, request_closed: true }), 'not built: the request was closed');
-  assert.equal(progress.outcomeOf({ ...waiting }), null, 'open: nothing has come of it yet');
+  // Where it stands: closed, on every surface (services/work-state.js).
+  assert.equal(require('../src/services/work-state').derive({ ...waiting, request_closed: true }).stage, 'closed');
+  assert.equal(require('../src/services/work-state').derive({ ...waiting }).why, 'plan', 'open: its plan waits');
 });
 
 // 30 Oct 2026: Main said four closed requests were "ready to build, held
@@ -409,40 +307,11 @@ test('#4539: on a closed request no build still to start reads as in progress', 
   for (const [name, extra] of Object.entries(toStart)) {
     assert.notEqual(stage({ ...ready, ...extra }), null, `${name}: in progress while the request is open`);
     assert.equal(stage({ ...ready, ...extra, request_closed: true }), null, `${name}: not in progress once it is closed`);
-    assert.equal(progress.outcomeOf({ ...ready, ...extra, request_closed: true }), 'not built: the request was closed', name);
-    assert.equal(progress.outcomeOf({ ...ready, ...extra }), null, `${name}: open, nothing has come of it yet`);
+    assert.equal(require('../src/services/work-state').derive({ ...ready, ...extra, request_closed: true }).stage, 'closed', name);
   }
   // A change already up for a vote still shows its own state.
   assert.equal(stage({ ...ready, cap_suppressed: 'proposals_per_app', request_closed: true,
     proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20) }).stage, 'vote');
-});
-
-// WP1 (#10): a second build of one request was invisible to the bot's
-// answers, which read the request's newest look and newest proposal only.
-// The PostgreSQL side is tests/homeroom-bot-activity-postgres.test.js.
-test('WP1: another build of a request, and the build before, in plain words', () => {
-  assert.equal(progress.buildUnderWay({ live_build_waiting_at: ago(3) }), true, 'waiting its turn');
-  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'active' }), true, 'under way');
-  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'paused' }), true, 'being proposed');
-  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'archived' }), false, 'put away');
-  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'active', build_ok: false }), false, 'ended');
-  assert.equal(progress.buildUnderWay({ live_build_waiting_at: ago(3), cap_suppressed: 'proposals_per_app' }), false, 'held');
-  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'promoted', proposal_session_id: 5 }), false, 'proposed');
-
-  const said = (run) => progress.attemptOutcome(run);
-  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'promoted' }), 'built; it\'s waiting for approval');
-  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merged' }), 'built; approved and live');
-  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merging' }), 'built; it\'s going live now');
-  assert.equal(said({ proposal_session_id: 6191, proposal_status: 'archived' }), 'built; the change was closed');
-  assert.equal(said({ build_ok: true }), 'built');
-  assert.equal(said({ build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
-    'stopped before it was built: the request already has a proposal (6190)', 'a skip stopped; it did not fail');
-  assert.equal(said({ build_ok: false, build_error: 'blocked: needs a paid API' }), 'found it cannot be built as written: needs a paid API');
-  assert.equal(said({ build_ok: false, build_error: 'the build ran past its time limit' }), 'the build did not succeed: the build ran past its time limit');
-  assert.equal(said({ build_ok: false }), 'the build did not succeed');
-  assert.equal(said({ cap_suppressed: 'proposals_per_app' }), 'held back by a limit, never built');
-  assert.equal(said({ build_error: 'superseded: a later verdict on the same issue' }), 'never built: a later verdict on the same issue');
-  assert.equal(said({}), 'nothing recorded about how it ended');
 });
 
 // #6219 (3 Nov 2026): #6210's plan waited for Build it, but a question left
