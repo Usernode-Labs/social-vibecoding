@@ -3624,10 +3624,10 @@ async function seedStagingBotPlanWaiting(pool) {
 // #6860 (19 Nov 2026): the plan card said "Building it" for as long as its
 // request stayed open, whatever became of that build (Gym Tracker #78). The
 // card now says what became of the plan instead, and a fresh staging copy has
-// no run whose build is over: these two, on mock issues 900009 and 900013
-// (stagingMockIssues), are the states the before & after shots need. Filed by
-// the shots' member fixture (usernode-capture), obviously fake, idempotent,
-// and strictly a no-op outside staging.
+// no run whose build is over: these two, on their own request numbers 9117
+// and 9118 (no mock and no other seed's), are the states the before & after
+// shots need. Filed by the shots' member fixture (usernode-capture),
+// obviously fake, idempotent, and strictly a no-op outside staging.
 async function seedStagingBotPlanSettled(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -3664,7 +3664,7 @@ async function seedStagingBotPlanSettled(pool) {
       );
     };
     // Its change was closed without merging: set aside, and the card names it.
-    const built = 900009;
+    const built = 9117;
     await request(built, 'Staging demo: a plan whose change was set aside');
     // A closed change is the workflow machine's to write, as at merge time.
     const tx = await pool.connect();
@@ -3693,7 +3693,7 @@ async function seedStagingBotPlanSettled(pool) {
       [appId, built, JSON.stringify(plan), change.rows[0] ? change.rows[0].id : null],
     );
     // Its build stopped: the card says so, in the page's own words.
-    const stopped = 900013;
+    const stopped = 9118;
     await request(stopped, 'Staging demo: a plan whose build stopped');
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, plan, go_ahead_at, build_ok, build_error, created_at)
