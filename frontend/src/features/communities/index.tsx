@@ -267,8 +267,14 @@ export function CommunitiesScreen() {
         {state.ready && q && !pinned.length && !joined.length ? (
           <p id="communities-no-match" className="communities-note" role="status">{t('communities:page.noMatch', { query: q })}</p>
         ) : null}
-        {state.ready && !q && total === 0 ? (
+        {/* "Not in a community yet" only from an answer that says so: a read
+            with no answer and nothing saved on this phone says what will
+            happen instead (the native-offline proposal, 18 Nov 2026). */}
+        {state.ready && !q && total === 0 && !state.failed ? (
           <p id="communities-empty" className="communities-note">{t('communities:page.empty')}</p>
+        ) : null}
+        {state.ready && !q && total === 0 && state.failed ? (
+          <p id="communities-not-saved" className="communities-note" role="status">{t('communities:page.notSaved')}</p>
         ) : null}
 
         <section id="communities-discover-section" className="px-3">

@@ -72,6 +72,8 @@ import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
+import { connectionStatusStore } from '../../../lib/offline';
+import { freshnessStore, savedAtLabel, showsAge } from '../../../lib/freshness';
 import { useVisibility } from '../../../lib/visibility-store';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
@@ -949,6 +951,15 @@ type DashStage = 'open' | 'unclaimed' | 'shipped';
 
 function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: number; pending?: boolean; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
+  // The native-offline proposal: drawn from what this phone saved while
+  // Homeroom cannot be reached, the vote figures say when they are from —
+  // the one number here that misleads when old (an item may have been
+  // decided since). The header's status says it for the screen as a whole.
+  const { status } = useStoreState(connectionStatusStore);
+  const { savedAt } = useStoreState(freshnessStore);
+  const asOf = status !== 'online' && status !== 'updating' && savedAt !== null && showsAge(savedAt)
+    ? t('project:workshop.dash.asOf', { time: savedAtLabel(savedAt) })
+    : null;
   const rate = !d.partial && d.shippedPrevWeekToDate > 0 ? (d.shippedWeek > d.shippedPrevWeekToDate ? 'up' : d.shippedWeek < d.shippedPrevWeekToDate ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
     { key: 'open', n: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
@@ -1010,6 +1021,7 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
               <span>{c.label}</span>
             </span>
             {waiting ? null : c.sub}
+            {c.key === 'votes' && asOf ? <span className="dev-ws-dash-sub" data-ws-dash-sub="asof">{asOf}</span> : null}
           </>
         );
         if (tappable && c.key === 'votes') {

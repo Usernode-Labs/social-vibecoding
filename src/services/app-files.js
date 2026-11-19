@@ -325,7 +325,43 @@ function fileUrl(id) {
 // `storage_unavailable` error instead of crashing. Bucket creation is
 // lazy and retried per call so a MinIO that comes up after the platform
 // (depends_on is service_started, not service_healthy) heals itself.
-function createObjectStore(config, { client: injectedClient } = {}) {
+// How long a read waits for the store's first byte. A healthy store answers
+// in well under a second; on a bad day its gateway held a read for 60 s
+// before a 504, and the client's one retry made it two minutes. Past this
+// the read fails as unavailable, which a caller can retry, instead of
+// holding a page or a job that long. The body itself has no deadline: a
+// video paused by its player may leave the stream idle for minutes.
+const READ_FIRST_BYTE_MS = 10_000;
+const READ_METHODS = new Set(['GET', 'HEAD']);
+
+// The http(s) module with that deadline on reads. Uploads have none: their
+// answer comes only after the whole body is sent.
+function deadlineTransport(base, firstByteMs) {
+  return {
+    request(opt, onResponse) {
+      const req = base.request(opt, onResponse);
+      if (!READ_METHODS.has(String(opt.method || 'GET').toUpperCase())) return req;
+      const timer = setTimeout(() => {
+        const err = new Error(`object store sent nothing for ${firstByteMs} ms`);
+        err.code = 'StoreTimeout';
+        req.destroy(err);
+      }, firstByteMs);
+      timer.unref?.();
+      const clear = () => clearTimeout(timer);
+      req.once('response', clear);
+      req.once('close', clear);
+      return req;
+    },
+  };
+}
+
+// A read that failed because the object is not there, as opposed to a
+// store that could not answer (a timeout, a 5xx after the client's retry).
+function isMissingObject(err) {
+  return !!err && (err.code === 'NoSuchKey' || err.code === 'NotFound');
+}
+
+function createObjectStore(config, { client: injectedClient, readFirstByteMs = READ_FIRST_BYTE_MS } = {}) {
   const endpoint = config?.storageEndpoint;
   const accessKey = config?.storageAccessKey;
   const secretKey = config?.storageSecretKey;
@@ -340,12 +376,14 @@ function createObjectStore(config, { client: injectedClient } = {}) {
     return null;
   }
   const Minio = require('minio');
+  const useSSL = url.protocol === 'https:';
   const client = injectedClient || new Minio.Client({
     endPoint: url.hostname,
-    port: url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80),
-    useSSL: url.protocol === 'https:',
+    port: url.port ? parseInt(url.port, 10) : (useSSL ? 443 : 80),
+    useSSL,
     accessKey,
     secretKey,
+    transport: deadlineTransport(useSSL ? require('https') : require('http'), readFirstByteMs),
   });
 
   let bucketReady = false;
@@ -375,7 +413,7 @@ function createObjectStore(config, { client: injectedClient } = {}) {
       try {
         return await client.statObject(bucket, key);
       } catch (err) {
-        if (err.code === 'NoSuchKey' || err.code === 'NotFound') return null;
+        if (isMissingObject(err)) return null;
         throw err;
       }
     },
@@ -742,6 +780,8 @@ module.exports = {
   objectKey,
   fileUrl,
   createObjectStore,
+  deadlineTransport,
+  isMissingObject,
   getStore,
   usageSums,
   appCapBytes,

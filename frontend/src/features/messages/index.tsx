@@ -883,7 +883,9 @@ function ConversationList({ drawer = false }: {
         </div>
         <NewMessageButton />
       </div>
-      {!snap.online ? <div className="messages-network-banner">{t('messages:inbox.offline')}</div> : null}
+      {/* No offline strip of its own (the native-offline proposal): the
+          header's connection status says it for every screen, and a message
+          written meanwhile says it was queued on its own row. */}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
           would in a desktop mail client. Only the list itself counts
@@ -900,7 +902,7 @@ function ConversationList({ drawer = false }: {
         }}
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
-        {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>{t('core:common.tryAgain')}</button></div> : null}
+        {snap.error ? <div className={snap.errorOffline ? 'messages-state' : 'messages-state messages-state-error'}><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>{t('core:common.tryAgain')}</button></div> : null}
         {/* Nothing in the list: what the list draws, not what was read.
             #general is always read (every account is in it) and is drawn on
             Homeroom's hub, never here (./inbox.ts), so a new account's
@@ -1767,7 +1769,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
             here is said plainly, in the ordinary state colour: it is what
             the viewer asked for, not an error. */}
         {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p>{t('messages:thread.left')}</p><button type="button" onClick={() => messagesController.open(null)}>{t('messages:thread.backToMessages')}</button></div> : null}
-        {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p>{snap.threadGone === 'missing'
+        {snap.threadError && !snap.messages.length ? <div className={snap.threadErrorOffline ? 'messages-state' : 'messages-state messages-state-error'}><p>{snap.threadError}</p>{snap.threadGone === 'missing'
           ? <button type="button" onClick={() => messagesController.open(null)}>{t('messages:thread.backToMessages')}</button>
           : <button type="button" onClick={() => messagesController.route(conversationId)}>{t('core:common.tryAgain')}</button>}</div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>{t('messages:thread.emptyConversation')}</p></div> : null}

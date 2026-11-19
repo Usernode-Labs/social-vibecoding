@@ -146,11 +146,13 @@ function changeBotAtWork(item: ThreadItem, view: ChangeView | null): boolean {
  * card said its votes open once it is put up without offering a way to do
  * it. Who may: its author, signed in on a screen that is not read-only — the
  * promote route loads the session by `user_id`, so an admin who is not its
- * author would only be refused. A draft still being built, or whose checks
- * do not pass, has nothing to put up (`item.ready`, services/threads.js).
+ * author would only be refused. A draft still being built or checked has
+ * nothing to put up. One whose checks failed may go up, as the promote route
+ * allows: it merges only once they pass, and the line under the button says
+ * so (`item.promotable`, services/threads.js).
  */
 function canPropose(item: ThreadItem): boolean {
-  if (item.state !== 'underway' || !item.ready || !item.mine) return false;
+  if (item.state !== 'underway' || !(item.promotable ?? item.ready) || !item.mine) return false;
   if (typeof window === 'undefined') return false;
   const w = window as any;
   return !!w.App?.user && !w.App.user.isSynthetic && !w.AppView?.readOnly;
@@ -802,8 +804,8 @@ function ChangeBody({ item, view, plan = null, ballot = false, request, tail = n
             >
               {t(propose.busy ? 'project:topic.thread.page.proposing' : 'project:topic.thread.page.proposeAction')}
             </button>
-            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting="ready">
-              {t('project:topic.thread.page.readyMine')}
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'failing'}>
+              {t(item.ready ? 'project:topic.thread.page.readyMine' : 'project:topic.thread.page.failingMine')}
             </p>
             {propose.error ? (
               <p className="mt-1 text-[13px] text-[color:var(--state-blocked)]" role="alert" data-thread-change-propose-error>

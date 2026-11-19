@@ -280,7 +280,10 @@ function FreshBadge({ count, className = '' }: { count: number; className?: stri
   const t = useMessages('messages');
   if (count <= 0) return null;
   return (
-    <span className={`inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-bold ${className}`} data-ai-fresh="">
+    // `relative` holds the spoken label (sr-only, absolute) inside the badge:
+    // a chip scrolled past the rail's end would otherwise let its label sit
+    // past the screen's edge and widen the whole list (#6838).
+    <span className={`relative inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-bold ${className}`} data-ai-fresh="">
       <span aria-hidden="true">{count}</span>
       <span className="sr-only">{t('messages:ai.filter.fresh', { count })}</span>
     </span>

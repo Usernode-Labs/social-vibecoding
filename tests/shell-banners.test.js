@@ -1,10 +1,12 @@
-// The shell's two amber banners after #1078 chunk A converted them to React
-// islands. They are the proof slice of step 2, and they are the only place in
-// this chunk where BEHAVIOUR changed owner, so they get their own guard rails:
+// The shell's banners after #1078 chunk A converted them to React islands,
+// and the header's connection status that replaced the offline strip (the
+// native-offline proposal, 18 Nov 2026). Their guard rails:
 //
-//  1. `#offline-banner`'s visibility comes from the visibility store, and its
+//  1. `#connection-status` follows lib/offline.ts's status store, and its
 //     `hidden` class is written through a ref — not rendered — because
 //     public/js/platform-ui.js and app.css also write classes onto shell nodes.
+//     It shows nothing of the state until mounted, so the hydrating render
+//     matches the prerender even under a ?shot=offline pin.
 //  2. `#view-as-non-admin-banner`'s "Switch back" control moved out of
 //     settings.js (which bound it by id) into the component. Exactly one owner:
 //     if settings.js binds it again, the admin gets two reloads for one click.
@@ -27,46 +29,40 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const BANNERS = read('frontend/src/features/shell/banners.tsx');
-const ALERT = read('frontend/@/components/ui/alert.tsx');
+const STATUS = read('frontend/src/features/header/connection-status.tsx');
+const SHELL = read('frontend/src/Shell.tsx');
 const SETTINGS = read('frontend/src/features/settings/settings.js');
 const INDEX_HTML = read('public/index.html');
 
-test('the offline banner reads the visibility store and writes its class by ref', () => {
-  assert.match(BANNERS, /useVisibility\(OFFLINE_BANNER_ID/,
-    'the offline banner subscribes to the store lib/offline.ts publishes into');
-  assert.match(BANNERS, /useHiddenClass\(ref, !visible\)/,
+test("the header's connection status follows the status store and writes its class by ref", () => {
+  assert.match(STATUS, /useStoreState\(connectionStatusStore\)/,
+    'it subscribes to the store lib/offline.ts publishes into');
+  assert.match(STATUS, /useHiddenClass\(ref, !shown\)/,
     'and applies `hidden` through a ref, so a re-render never rewrites `class`');
-  // The initial value has to come from the store too, or a ?shot=offline deep
-  // link (which pins the state during App.init) renders one frame online.
-  assert.match(BANNERS, /offlineBannerVisible\(\)/);
+  assert.match(STATUS, /const shown = mounted && status !== 'online'/,
+    'nothing of the state shows before it has mounted: the first render matches the prerender');
+  assert.match(SHELL, /<Island name="ConnectionStatus"><ConnectionStatus \/><\/Island>/,
+    'the shell renders it beside the header, which is clipped to its own box on most screens');
+  assert.match(STATUS, /fixed left-1\/2[\s\S]*top-\[calc\(var\(--browser-banner-h,0px\)\+var\(--platform-header-h\)\+var\(--platform-safe-top\)/,
+    'fixed at the header\'s foot');
+  assert.doesNotMatch(BANNERS, /OFFLINE_BANNER_ID|offline-banner"/, 'the strip is gone from the banners');
 });
 
-test('a planned restart shows the update words in the same banner', () => {
-  // Issue #6403: a release's 1012 close is not an outage. The banner reads
-  // the restart key, clears its minute-long timer on reconnect, and swaps the
-  // text without a second element or id.
-  assert.match(BANNERS, /useVisibility\(RESTART_NOTICE_ID/);
-  assert.match(BANNERS, /restartNoticeVisible\(\)/);
-  assert.match(BANNERS, /core:banner\.restart\.text/);
-  assert.match(BANNERS, /visible = offline \|\| restarting/);
+test('the status says connecting, no internet, or updating, never as an error', () => {
+  assert.equal(message('core:status.connecting'), 'Connecting…');
+  assert.equal(message('core:status.noInternet'), 'No internet');
   assert.equal(message('core:banner.restart.text'), 'Updating Homeroom...');
-  assert.equal(message('core:banner.offline.text'), 'Reconnecting to Homeroom. Showing saved content');
+  assert.equal(message('core:status.updatedAt', { time: '12:41' }), 'Updated 12:41');
+  assert.doesNotMatch(STATUS, /\b(red|amber|rose)-\d/, 'being offline is a condition, not an error');
 });
 
-test('the offline banner prerenders hidden, with `hidden` leading the class string', () => {
-  // `startHidden` is a cva variant declared BEFORE `variant` precisely so the
-  // class order matches the hand-written markup byte for byte.
-  assert.match(BANNERS, /startHidden/);
-  assert.match(ALERT, /startHidden: \{ true: 'hidden', false: '' \}/);
-  const decl = ALERT.indexOf('    startHidden:');
-  const variant = ALERT.indexOf('    variant: {');
-  assert.ok(decl > -1 && variant > -1);
-  assert.ok(decl < variant,
-    'startHidden must be declared before `variant` — cva emits groups in declaration order');
-  const m = INDEX_HTML.match(/<div[^>]*id="offline-banner"[^>]*>/);
-  assert.ok(m, 'public/index.html has no #offline-banner — run npm run build:shell');
-  assert.match(m[0], /class="hidden shrink-0 /,
-    'the prerendered class string should still start `hidden shrink-0 …`');
+test('the connection status prerenders hidden, saying "Connecting…"', () => {
+  const m = INDEX_HTML.match(/<div[^>]*id="connection-status"[^>]*>[\s\S]*?<\/div>/);
+  assert.ok(m, 'public/index.html has no #connection-status — run npm run build:shell');
+  assert.match(m[0], /class="connection-status hidden /, '`hidden` from the first byte');
+  assert.match(m[0], /data-status="online"/);
+  assert.match(m[0], /Connecting…/);
+  assert.doesNotMatch(INDEX_HTML, /id="offline-banner"/, 'the old strip is not in the shell');
 });
 
 test('"Switch back" is owned by the banner component, and only by it', () => {

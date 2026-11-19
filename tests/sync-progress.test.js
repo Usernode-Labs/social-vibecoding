@@ -576,6 +576,78 @@ test('POST /sync-main: a sync still running is never reported done; an exhausted
   });
 });
 
+// The CLI aborts a request after 30 s, and a sync can take minutes. A
+// client says how long it can wait (RFC 7240 `Prefer: wait=N`, sent by
+// src/cli/http.js), and is answered 202, still running, when that is up,
+// instead of losing the connection. A browser sends none and keeps the
+// route's own wait.
+test('POST /sync-main: waits only as long as the client prefers', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/FROM chat_sessions cs JOIN apps a/.test(sql)) return { rows: [activeSessionRow(45)] };
+    return { rows: [] };
+  };
+  const asked = [];
+  const joined = [];
+  const answers = [{ status: 'accepted' }, { status: 'rejected', reason: 'in_progress' }, { status: 'accepted' }];
+  await withPlatform({
+    requestSync: async (p) => { asked.push(p); return answers.shift(); },
+    syncUnderWay: async () => ({ n: 4 }),
+    waitForSync: async (id, n, waitMs) => { joined.push(waitMs); return null; },
+  }, async () => {
+    const server = await startServer();
+    try {
+      const port = server.address().port;
+      const post = (headers) => fetch(`http://127.0.0.1:${port}/api/sessions/45/sync-main`, { method: 'POST', headers });
+      const bounded = await post({ Prefer: 'wait=25' });
+      assert.equal(bounded.status, 202);
+      assert.equal(bounded.headers.get('preference-applied'), 'wait=25');
+      assert.equal((await bounded.json()).pending, true);
+      assert.equal(asked[0].waitMs, 25000);
+
+      const joining = await post({ Prefer: 'respond-async, wait=10' });
+      assert.equal(joining.status, 202);
+      assert.deepEqual(joined, [10000], 'a sync already under way is joined for the same time');
+
+      const browser = await post({});
+      assert.equal(browser.status, 202);
+      assert.equal(browser.headers.get('preference-applied'), null);
+      assert.equal('waitMs' in asked[2], false, 'no preference: the machine\'s own wait');
+    } finally {
+      server.close();
+    }
+  });
+});
+
+test('Prefer: wait is read as RFC 7240 has it, capped, and the CLI sends one under its deadline', async () => {
+  const { preferredWaitMs, MAX_WAIT_SECONDS } = require('../src/services/prefer-wait');
+  assert.equal(preferredWaitMs(undefined), null);
+  assert.equal(preferredWaitMs('respond-async'), null);
+  assert.equal(preferredWaitMs('wait=25'), 25000);
+  assert.equal(preferredWaitMs('respond-async, WAIT = "7"'), 7000);
+  assert.equal(preferredWaitMs('wait=abc'), null);
+  assert.equal(preferredWaitMs('wait=9999999'), MAX_WAIT_SECONDS * 1000);
+
+  const { requestJson, preferWaitSeconds } = require('../src/cli/http');
+  assert.equal(preferWaitSeconds(30000), 25, 'the default deadline asks for 25 s');
+  assert.equal(preferWaitSeconds(5000), 1, 'never less than a second');
+  const http = require('http');
+  let seen = null;
+  const server = http.createServer((req, res) => {
+    seen = req.headers.prefer;
+    res.setHeader('Content-Type', 'application/json');
+    res.end('{"ok":true}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const out = await requestJson(origin, '/api/sessions/45/sync-main', { method: 'POST', body: {}, deadlineMs: 20000 });
+    assert.equal(out.status, 200);
+    assert.equal(seen, 'wait=15');
+  } finally {
+    server.close();
+  }
+});
+
 test('GET /status: exposes the in-flight sync state, and null when idle', async () => {
   poolQueryHandler = async (sql) => {
     if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)) {

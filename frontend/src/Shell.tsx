@@ -95,7 +95,8 @@ import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
-import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
+import { ViewAsNonAdminBanner } from './features/shell/banners';
+import { ConnectionStatus } from './features/header/connection-status';
 import { LanguageNotice } from './features/shell/language-notice';
 import { LegacyPortals } from './lib/legacy-portals';
 import { IllustrationEditorHost } from './features/apps/illustration-editor-bridge';
@@ -121,12 +122,13 @@ export function Shell() {
       */}
       <Island name="PlatformHeader"><PlatformHeader /></Island>
       {/*
-          Offline indicator (#487) — a React island since #1078. Shown while
-          the /health connectivity probe in src/lib/offline.ts fails;
-          everything on screen is the last version that loaded successfully.
-          Hidden the moment the probe succeeds.
+          The connection's word (#487), in place of the offline strip: a
+          small pill fixed just under the header while Homeroom cannot be
+          reached (features/header/connection-status.tsx, the native-offline
+          proposal, 18 Nov 2026). Beside the header rather than inside it,
+          because the header is clipped to its own box on most screens.
       */}
-      <Island name="OfflineBanner"><OfflineBanner /></Island>
+      <Island name="ConnectionStatus"><ConnectionStatus /></Island>
       {/*
           "Showing Homeroom in Español · Switch to English": shown once, the
           first time the language was picked from the device, fixed above

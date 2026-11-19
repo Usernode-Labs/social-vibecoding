@@ -659,6 +659,10 @@
     "text": "waiting on a vote",
     "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
   },
+  "workshop.dash.asOf": {
+    "text": "as of {{time}}",
+    "description": "A small line under the Workshop's waiting-on-votes figure while Homeroom cannot be reached and the figure was saved on this device earlier: when it is from. {{time}} is a time of day such as 12:41, or a short date such as Nov 17. Lower case, no full stop."
+  },
   "workshop.dash.votes_other": {
     "text": "waiting on votes",
     "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
@@ -6130,6 +6134,10 @@
   "topic.thread.page.readyMine": {
     "text": "Built, and its checks pass.",
     "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building and its checks pass."
+  },
+  "topic.thread.page.failingMine": {
+    "text": "Built, but its checks don't pass. It can go up for a vote, and it merges only once they pass.",
+    "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building, and its checks ran and failed."
   },
   "topic.thread.page.proposeAction": {
     "text": "Put it up for a vote",
