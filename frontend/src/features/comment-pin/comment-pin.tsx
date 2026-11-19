@@ -1328,13 +1328,17 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (confirm) { setConfirm(null); return; }
     if (draft && draft.active == null && draft.comments.length) { openComment(draft.comments[draft.comments.length - 1].key); return; }
     if (draft) { if (!draft.sending) requestDiscard(); return; }
-    leave();
-  }, [cropping, open, confirm, draft, openComment, requestDiscard, leave]);
+    requestExit();
+  }, [cropping, open, confirm, draft, openComment, requestDiscard, requestExit]);
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       e.preventDefault();
+      // Stopped here as well: the mode's root is marked `data-owns-escape`, so
+      // the kit's capture listener stands aside, and nothing else in the page
+      // treats the same press as its own.
+      e.stopPropagation();
       escape();
     };
     window.addEventListener('keydown', onKey);
@@ -1738,6 +1742,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     <div
       className={leaving ? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'}
       style={{ zIndex: 2147483000, ['--comment-band' as string]: `${inset ? band : safeTop}px` }}
+      // The kit's Escape listener (usernode-native/v1/native.js) dismisses the
+      // top modal unless an element marked this way is open. The mode is that
+      // element: the form it was opened from, or switched from, stays on the
+      // stack while the mode is up, and Escape must leave the mode (and the
+      // grey ground and bar with it), not close the dialog behind it.
+      data-owns-escape=""
     >
       {/* Measure the status bar's height and the home indicator's (see `safeTop`). */}
       <div ref={safeRef} aria-hidden="true" className="pointer-events-none invisible absolute start-0 top-0 w-px" style={{ height: 'var(--platform-safe-top, 0px)' }} />
