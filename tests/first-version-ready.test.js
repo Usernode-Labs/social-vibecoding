@@ -52,9 +52,11 @@ test('a verdict about another commit than the head up for approval is not its ow
   const voteOf = (row) => at({ ...row, first_version: false });
   assert.equal(voteOf({ ...open, check_state: 'passing', reviewed_head_sha: HEAD, checks_sha: HEAD }), 'up_for_vote');
   assert.equal(voteOf({ ...open, check_state: 'skipped', reviewed_head_sha: HEAD, checks_sha: HEAD }), 'up_for_vote');
-  // A failure about its own head is its failure. (One about another commit
-  // reads as the change's own row reads it: review B2's list of differences.)
+  // A failure about its own head is its failure. One about another commit
+  // reads as checks still to come (decided 19 Nov 2026), on the change's
+  // own row and so on its request's.
   assert.equal(voteOf({ ...open, check_state: 'failing', reviewed_head_sha: HEAD, checks_sha: HEAD }), 'checking checks_failing');
+  assert.equal(voteOf({ ...open, check_state: 'failing', reviewed_head_sha: HEAD, checks_sha: FIX }), 'checking');
 });
 
 test('the per-request record reads which commit the verdict is about, and the head up for approval', () => {

@@ -150,21 +150,33 @@ function votesIn(row) {
  * votes, only while it could take one (vote_open): its checks
  * passed (or had nothing to test) on the head up for a vote, it is not its
  * project's first version, and its before & after shots are not still being
- * taken. Until then it is checking: its failing checks when they fail, else
- * what a yes will do once it can be given. `onHead` and `held` are the
- * caller's (a request's facts row and a change's name their columns
- * differently).
+ * taken. Until then it is checking: its failing checks when they fail on
+ * its head (failedOnHead), else what a yes will do once it can be given.
+ * `onHead` and `held` are the caller's (a request's facts row and a change's
+ * name their columns differently).
  */
 function yesOnlyState(row, since, { onHead, held }) {
   const passed = row.check_state === 'passing' || row.check_state === 'skipped';
   if (passed && onHead && row.first_version !== true && !held) {
     return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
   }
-  if (row.check_state === 'failing' || row.check_state === 'error') {
+  if (failedOnHead(row, onHead)) {
     const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
     return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
   }
   return state('checking', { since, line: { code: 'conflict_on_yes' } });
+}
+
+/**
+ * Pure: whether a change's checks failed on the head up for a vote. A
+ * failing verdict about another commit (a fix the restart recovery rolled
+ * back, say) is not its own: decided 19 Nov 2026, it reads as its checks
+ * still to come, as a verdict of unknown or none yet on its head reads, the
+ * way a pass about another commit already did (N5). `onHead` is the caller's
+ * reading of the head (changeChecksOnHead).
+ */
+function failedOnHead(row, onHead) {
+  return (row.check_state === 'failing' || row.check_state === 'error') && onHead;
 }
 
 /** The stage word plus the two lines a checking change can carry (#6402). */
@@ -675,7 +687,7 @@ function promotedChange(row, now) {
   if (stand === 'vote') return changeOnYes(row, since, now);
   if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
   if (stand === 'author') {
-    const failed = row.check_state === 'failing' || row.check_state === 'error';
+    const failed = failedOnHead(row, changeChecksOnHead(row));
     return state('checking', { since, line: { code: failed ? 'checks_failing' : 'sync_wait' } });
   }
   // #6546: approved, and GitHub is holding its merge: going live (or its
@@ -683,7 +695,9 @@ function promotedChange(row, now) {
   const hold = githubHold(row);
   if (hold) return state(hold.stage, { since: row.promoted_at, line: { code: hold.code } });
   if (row.check_state !== 'passing' && row.check_state !== 'skipped') {
-    const failing = row.check_state === 'failing' || row.check_state === 'error';
+    // Decided 19 Nov 2026: a failing verdict about another commit than the
+    // one up for a vote is not its failure; it reads as checks still to come.
+    const failing = failedOnHead(row, changeChecksOnHead(row));
     if (failing && row.flake_fixing === true) {
       // #6807: it fails a check that is not its own, and the fix for that
       // check is under way: the bot is working, not the change's author.

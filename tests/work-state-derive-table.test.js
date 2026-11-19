@@ -23,14 +23,17 @@ const cases = require('./lib/work-state-cases');
 const BEFORE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/work-state-derive.before.json'), 'utf8'));
 
 // The intended differences from the recording, most particular first (a case
-// is explained by the first entry that fits it). All of them are one change:
-// a request whose change is up for a vote or past it now reads that change's
-// own derived state (deriveChange) unless Homeroom bot is doing something
-// about it (work-state.js withBot), where it had a second copy of the rules
-// in another order (homeroom-bot-progress.js stageOf and fromStage, both
-// gone). No change's own row says anything it did not say before, and no
-// request without a change of the bot's up for a vote does either: the test
-// below holds them to the recording with no entry here.
+// is explained by the first entry that fits it). All of them but one are one
+// change: a request whose change is up for a vote or past it now reads that
+// change's own derived state (deriveChange) unless Homeroom bot is doing
+// something about it (work-state.js withBot), where it had a second copy of
+// the rules in another order (homeroom-bot-progress.js stageOf and
+// fromStage, both gone). The other is a product decision of 19 Nov 2026: a
+// failing verdict about another commit than the head reads as checks still
+// running, on a change's own row too. No change's own row says anything else
+// it did not say before, and no request without a change of the bot's up for
+// a vote does either: the test below holds them to the recording with no
+// entry here.
 const CONFLICT = ['yes', 'syncing', 'author', 'deferred'];
 const GITHUB = ['github_stuck', 'github_checks_failing', 'github_checks', 'github_refused'];
 const WHOLE = ['stage', 'line', 'whoseMove', 'since', 'words', 'place', 'bot', 'busy'];
@@ -66,13 +69,13 @@ const INTENDED = [
     group: ['request', 'request-alone'], where: { check: 'unknown' }, fields: WHOLE,
   },
   {
-    id: 'a failing verdict about another commit',
-    why: 'A request read a failing verdict about a commit that is not its head as checks still to come (N5); a change reads the failure. Kept as the change reads it, since its order wins; see the report.',
-    group: ['request', 'request-alone'], where: { head: 'off', check: ['failing', 'error'] }, fields: ['line', 'words', 'since'],
+    id: 'a failing verdict about another commit reads as checks still running (decided 19 Nov 2026)',
+    why: 'A failing verdict about a commit that is not the head up for a vote (a fix the restart recovery rolled back) is not the change\'s failure. A change read it as one ("N tests failing", or "Tests failing" on a conflict, or "Fixing" a check that is not its own); it now reads as a verdict still to come on its head reads: Checking, Approved and checking, Waiting to sync with main, or what a yes will do. A request read it so already (N5), and now differs only where the change\'s order puts something else first.',
+    group: ['request', 'request-alone', 'change'], where: { head: 'off', check: ['failing', 'error'] }, fields: ['line', 'words', 'since'],
   },
   {
     id: 'a conflict only its author can move',
-    why: 'On a conflict only its author (or the bot) can move, a failing change says "Tests failing" with no count, as the change always did, and one whose verdict is about another commit says the failure, not "Waiting to sync".',
+    why: 'On a conflict only its author (or the bot) can move, a failing change says "Tests failing" with no count, as the change always did.',
     group: ['request', 'request-alone'], where: { merge: 'author' }, fields: ['line', 'words', 'since'],
   },
   {
@@ -143,6 +146,65 @@ test('what Homeroom bot is doing about a change is said on its request, never on
   assert.equal(said('fix_stopped'), 'stopped fix_stopped checks_failing');
   // A closed request's open question waits on nobody: it reads as the change.
   assert.equal(said('question_closed'), 'checking checks_failing checks_failing');
+});
+
+// Decided 19 Nov 2026: a failing verdict is the change's own failure only
+// when it is about the head up for a vote. About the previous commit (a fix
+// the restart recovery rolled back, say) it reads as its checks still to
+// come, exactly as a verdict of unknown on its head reads, on the change's
+// row and on its request's, which is composed from it.
+test('a failing verdict on the head is its failure; one about the previous commit reads as checks still running', () => {
+  const HEAD = 'c'.repeat(40);
+  const PREV = 'd'.repeat(40);
+  const change = (extra = {}) => ({
+    id: 61, app_id: 1, status: 'promoted', source: 'native', reviewed_head_sha: HEAD, imported_pr_head_sha: null,
+    check_state: 'failing', checks_commit_sha: HEAD, failed_checks: 2, check_phase: null,
+    checks_at: cases.T.checks_at, promoted_at: cases.T.proposal_at,
+    merge_conflict_state: null, integration_merges_clean: true, integration_block_reasons: [], ...extra,
+  });
+  const said = (row) => {
+    const s = ws.deriveChange(row, { now: cases.NOW });
+    return [s.stage, s.line ? s.line.code : null, (s.line && s.line.failing) || null].filter((v) => v !== null).join(' ');
+  };
+  const prev = { checks_commit_sha: PREV };
+  // On its head: its failure, with its count, as always. About the previous
+  // commit: checking, with nothing failing, as an unknown verdict reads.
+  assert.equal(said(change()), 'checking checks_failing 2');
+  assert.equal(said(change(prev)), 'checking');
+  assert.equal(said(change(prev)), said(change({ check_state: 'unknown' })));
+  assert.equal(said(change({ check_state: 'error' })), 'checking checks_failing 2');
+  assert.equal(said(change({ ...prev, check_state: 'error' })), 'checking');
+  // Its votes in: approved, its checks what it waits on.
+  assert.equal(said(change({ ...prev, votes_in: true })), 'checking approved_checking');
+  // A check that is not its own being fixed (#6807) is said only of a
+  // failure on its head.
+  assert.equal(said(change({ flake_fixing: true })), 'checking fixing_check');
+  assert.equal(said(change({ ...prev, flake_fixing: true })), 'checking');
+  // A conflict keeps its place first; what it says of the verdict follows the head.
+  const author = { integration_merges_clean: false, integration_block_reasons: ['unresolvable'] };
+  assert.equal(said(change(author)), 'checking checks_failing');
+  assert.equal(said(change({ ...author, ...prev })), 'checking sync_wait');
+  const yes = { merge_conflict_state: 'conflict', integration_merges_clean: false, integration_block_reasons: ['awaiting_approval'] };
+  assert.equal(said(change(yes)), 'checking checks_failing 2');
+  assert.equal(said(change({ ...yes, ...prev })), 'checking conflict_on_yes');
+  // An imported pull request is judged on its own head.
+  assert.equal(said(change({ source: 'imported', imported_pr_head_sha: PREV, checks_commit_sha: PREV })), 'checking checks_failing 2');
+  assert.equal(said(change({ source: 'imported', imported_pr_head_sha: PREV })), 'checking');
+
+  // Its request reads what the change reads, and Homeroom bot has not
+  // stopped fixing a failure that is not the change's.
+  const request = (extra = {}) => ({
+    app_id: 1, issue_number: 7, mode: 'live', verdict: 'ready', build_ok: true, run_at: cases.T.run_at,
+    proposal_session_id: 61, run_proposal: 61, proposal_status: 'promoted', proposal_source: 'native',
+    reviewed_head_sha: HEAD, checks_sha: HEAD, check_state: 'failing', fix_stopped: true, ...extra,
+  });
+  const read = (row, ch) => {
+    const s = ws.derive(row, { now: cases.NOW, change: ch });
+    return [s.stage, s.reason || (s.line && s.line.code) || null].filter(Boolean).join(' ');
+  };
+  assert.equal(read(request(), change()), 'stopped fix_stopped');
+  assert.equal(read(request({ checks_sha: PREV }), change(prev)), 'checking');
+  assert.equal(read(request({ fix_stopped: false }), change()), 'checking checks_failing');
 });
 
 test('the cases reach every stage, why, reason and line the derive writes', () => {
