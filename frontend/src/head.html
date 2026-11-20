@@ -305,8 +305,11 @@
     // Storage contract (the same head-blocking pattern as window.Theme
     // above: a deferred React bundle is several frames too late to size the
     // page, so the stored choice lands on <html> before first paint):
-    //   'homeroom:text-size'  → 'large' | 'larger'
+    //   'homeroom:text-size'  → 'large' | 'larger' | 'xlarge' | 'xxlarge'
     //                         → key removed for Normal (the default)
+    //                           ('large' and 'larger' are the two presets
+    //                           of #3969; the slider of #6510 added the
+    //                           two steps past them)
     //   'homeroom:contrast'   → 'more'
     //                         → key removed for off (the default)
     //   'homeroom:motion'     → 'reduce'
@@ -323,11 +326,13 @@
       // it applies even when the browser refuses to store it (or to forget
       // it); null until a pick, and again when another tab writes the key.
       let _motionChosen = null;
+      // Every stored size, smallest first; app.css has one rule for each.
+      const SIZES = ['large', 'larger', 'xlarge', 'xxlarge'];
 
       function getTextSize() {
         try {
           const val = window.localStorage.getItem(SIZE_KEY);
-          if (val === 'large' || val === 'larger') return val;
+          if (SIZES.indexOf(val) !== -1) return val;
           return 'normal';
         } catch {
           return 'normal';
@@ -395,7 +400,7 @@
 
       function setTextSize(size) {
         try {
-          if (size === 'large' || size === 'larger') {
+          if (SIZES.indexOf(size) !== -1) {
             window.localStorage.setItem(SIZE_KEY, size);
           } else {
             window.localStorage.removeItem(SIZE_KEY);

@@ -569,7 +569,7 @@ const ADDED_IDS = {
   // Theme (features/settings/sections/accessibility.tsx); nothing in
   // settings.js binds inside it.
   'settings-accessibility-section': '#3969: the Accessibility page root, inside its [data-settings-section="accessibility"] wrapper.',
-  'settings-text-size-track': '#3969: the Normal / Large / Larger segmented control. Reuses the .theme-seg classes app.css keys the recessed track off; deliberately no caret — --theme-caret-index belongs to the theme control.',
+  'settings-text-size-track': '#3969: the text size control. Since #6510 it holds a slider of five stops (a native range input) in place of the Normal / Large / Larger segments.',
   'settings-contact-privacy-section': '#5104: the Privacy page root, inside its [data-settings-section="contact-privacy"] wrapper.',
   'settings-who-can-message': '#5104: the "Who can message or invite me" radio group (People in projects I\'m in, the default, or Anyone).',
   'settings-profile-discoverable': '#5104: the "Let people find my profile" switch, off by default.',

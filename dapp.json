@@ -814,7 +814,7 @@
       "name": "Accessibility settings ship text size and contrast controls (#3969)",
       "path": "/?demo=1#settings/accessibility",
       "expectText": "High contrast",
-      "expectSelector": "#settings-accessibility-section #settings-text-size-track[role=\"radiogroup\"] [data-text-size-option=\"larger\"]"
+      "expectSelector": "#settings-accessibility-section #settings-text-size-track input[type=\"range\"][max=\"4\"]"
     },
     {
       "name": "Guest back arrow returns to the app directory (#1028)",
