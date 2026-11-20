@@ -426,12 +426,12 @@ test('replay the cold-worker burst: the newer verified run publishes while the o
   // GitHub Actions runs 44758420838 and 44758569359. Replay observed
   // per-run elapsed time from the plan step, with the later plan starting
   // at its merge instead of after the previous publisher had finished.
-  const earlier = { run: 5490, planAt: 3, publishCheckAt: 365 };
+  const earlier = { run: 5490, workerFinishedAt: 326, publishCheckAt: 358 };
   const tip = { run: 5491, mergeAt: 56, planAt: 370, promotedAt: 627 };
   const phaseSeconds = tip.promotedAt - tip.planAt;
   const replayPromotion = tip.mergeAt + phaseSeconds;
   assert.equal(tip.promotedAt - replayPromotion, 314);
-  assert.ok(replayPromotion < earlier.publishCheckAt);
+  assert.ok(replayPromotion < earlier.workerFinishedAt);
 
   assert.notEqual(earlier.run % 2, tip.run % 2, 'their worker and PostgreSQL checks can overlap');
   const tipResult = run({ revision: TIP, runNumber: tip.run, now: NOW + replayPromotion, chartVersion: '0.1.5491001',
