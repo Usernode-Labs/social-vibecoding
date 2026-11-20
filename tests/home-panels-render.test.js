@@ -170,6 +170,12 @@ function makeHomePanels({
 // the tests below still assert on real markup produced by the real components
 // rather than on a description of it.
 const SECTIONS = 'frontend/src/features/home/panels/sections.tsx';
+// The panels as every look but the kit's Home draws them (the cards these
+// tests hold): since 20 Nov 2026 the standard look's Home is the kit's
+// (lib/skin.ts isKitHome), which draws Challenges as posters instead, held by
+// tests/home-needs-you-card.test.js. "Paper, simplified, with brand styling"
+// still draws these, so the panels are loaded here as that look sees them.
+const STANDARD_PANELS = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
 // The renderers, as text, for the handful of assertions that are about the
 // SOURCE rather than the output (a class that must be written as a literal, a
 // helper that must be reached through Home).
@@ -183,7 +189,7 @@ const SECTION_VIEWS = {
 };
 
 function paintHosts(sandbox, hosts) {
-  const mod = loadTsx(SECTIONS);
+  const mod = loadTsx(SECTIONS, { stubs: STANDARD_PANELS });
   const state = sandbox.panelsStore.get();
   for (const host of hosts) {
     const key = host.dataset.panelSlot;
@@ -1017,7 +1023,7 @@ test('render: See all replaces "Open challenges" and the in-place toggle', () =>
 // with no link, which is what the prerender holds too. The skeleton under it
 // is tests/home-first-paint.test.js's.
 test('the heading is the prerender\'s own until the data lands', () => {
-  const mod = loadTsx(SECTIONS);
+  const mod = loadTsx(SECTIONS, { stubs: STANDARD_PANELS });
   const before = renderToHtml(createElement(mod.ChallengesSectionView, { painted: false, discover: null, challenges: null }));
   assert.match(before, /^<section id="home-challenges-section" data-panel-slot="challenges" class="home-section-pending px-3 pb-3">/,
     'not hidden before the first paint');
@@ -1754,9 +1760,10 @@ test('index.html stacks the two section hosts below the grid, in order', () => {
   const grid = INDEX.indexOf('id="app-list"');
   assert.ok(grid > 0, 'the launcher grid is there');
   const at = (id) => INDEX.indexOf(`id="${id}"`);
-  // One Home (#6361): Pinned communities, Challenges, then Communities to
+  // One Home (#6361), as the kit's Home stacks it (the prerendered one since 20
+  // Nov 2026): Challenges, the Pinned communities host, then Communities to
   // join. Discover's lane is no section of Home's any more.
-  const order = ['home-communities-section', 'home-challenges-section', 'home-join-section'];
+  const order = ['home-challenges-section', 'home-communities-section', 'home-join-section'];
   let prev = grid;
   for (const id of order) {
     const here = at(id);

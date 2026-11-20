@@ -849,6 +849,67 @@ test('a turn that really ran and gave nothing usable is still unreadable', async
   assert.equal(out.error, 'its answer could not be read');
 });
 
+// Review A2 (19 Nov 2026): the takeover turn had no class for a failure at
+// all: out of credit and a provider error both read "the turn failed" or "its
+// answer could not be read". Fed the worker's own result shapes.
+const CREDIT_STUB = (noted) => ({
+  creditState: async () => ({ out: false, since: null, words: null }),
+  noteOutage: async (_pool, what) => { noted.push(what.words); return { since: '2026-11-19T09:00:00.000Z', fresh: true }; },
+});
+
+test('an update whose turn met OpenRouter\'s 402 for credit is an outage: noted once, said as credit, nothing called unreadable', async () => {
+  for (const result of [
+    { lastResultText: '', agentErrorCode: 'insufficient_credits', agentError: 'Insufficient credits', agentExit: 1 },
+    { agentHarness: 'claude', ccExit: 0, exitCode: 1, lastResultText: 'API Error: 402 {"error":{"message":"Insufficient credits","code":402}}' },
+  ]) {
+    const pool = runPool();
+    const noted = [];
+    const deps = { ...startDeps(pool, [{ routed: { result }, result, stopped: false, stoppedBy: null, costUsd: null }]), credit: CREDIT_STUB(noted) };
+    const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+    assert.deepEqual({ ok: out.ok, code: out.code }, { ok: false, code: 'credit' }, JSON.stringify(result));
+    assert.equal(noted.length, 1, 'the outage is recorded');
+    const said = voice.plainReport(takeover.outcomeOf(out).outcome);
+    assert.match(said, /I couldn't make that change: I'm out of building credit right now, so nothing was changed\./);
+    assert.doesNotMatch(said, /could not be read|the turn failed/);
+  }
+});
+
+test('an update the platform failed under says so as Homeroom\'s failure, and is counted as an incident', async () => {
+  for (const [name, turn] of [
+    ['a provider error where its answer should be', { routed: { result: { agentHarness: 'claude', ccExit: 0, exitCode: 1, lastResultText: 'API Error: 503 {"error":{"message":"Provider returned error","code":503}}' } } }],
+    ['a worker that ran out of memory', { routed: { result: { agentHarness: 'claude', exitCode: -1, markerlessCause: 'oom_killed', lastResultText: '' } } }],
+    ['a turn that could not be dispatched', { routed: { error: 'dispatch:worker_gone', result: {} } }],
+  ]) {
+    const pool = runPool();
+    const incidents = [];
+    const real = pool.query.bind(pool);
+    pool.query = async (sql, params) => {
+      if (/INSERT INTO events/.test(String(sql)) && /bot_turn_platform/.test(JSON.stringify(params))) incidents.push(params);
+      return real(sql, params);
+    };
+    const deps = { ...startDeps(pool, [{ ...turn, result: turn.routed.result, stopped: false, stoppedBy: null, costUsd: null }]), credit: CREDIT_STUB([]) };
+    const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+    assert.deepEqual({ ok: out.ok, code: out.code }, { ok: false, code: 'platform' }, name);
+    assert.equal(incidents.length, 1, `${name}: counted once`);
+    const said = voice.plainReport(takeover.outcomeOf(out).outcome);
+    assert.match(said, /I couldn't make that change: Homeroom had a problem on its side while I worked on it, so nothing was changed\./, name);
+    assert.doesNotMatch(said, /could not be read|the turn failed/, name);
+  }
+});
+
+test('while the stored credit outage stands, an update is not started: the gate asks first', async () => {
+  const pool = runPool();
+  const turns = [];
+  const deps = {
+    ...startDeps(pool, [{ routed: { result: {} }, result: {}, stopped: false }], { turns }),
+    credit: { creditState: async () => ({ out: true, since: '2026-11-19T09:00:00.000Z', words: null }), noteOutage: async () => null },
+  };
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+  assert.deepEqual({ ok: out.ok, code: out.code }, { ok: false, code: 'credit' });
+  assert.match(out.error, /out of building credit just now/);
+  assert.equal(turns.length, 0, 'no turn is started to meet the 402');
+});
+
 test('outcomeOf says a start failure as its own action', () => {
   const started = takeover.outcomeOf({ ok: false, code: 'start_failed', error: 'GitHub didn\'t answer when I tried to start, so nothing was changed' });
   assert.equal(started.outcome.action, 'start_failed');

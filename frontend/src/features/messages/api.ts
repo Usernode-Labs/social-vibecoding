@@ -1,4 +1,4 @@
-import { normalizeWorkState } from '../../lib/work-state';
+import { normalizeWorkState, wordsOf } from '../../lib/work-state';
 import type {
   BotLiveWork,
   BotOutcome,
@@ -18,6 +18,7 @@ import type {
   HomeroomBotPlan,
   HomeroomBotPlanQuestion,
   HomeroomBotReadyNow,
+  HomeroomBotWaits,
   HomeroomBotWork,
   BotFiledLimit,
   BotFiledNext,
@@ -221,13 +222,31 @@ export function normalizeGoesLive(input: unknown): HomeroomBotGoesLive | null {
   if (pick(row, 'soon') === true) return { soon: true, at: null, missing: 0, waitingOn: [], more: 0 };
   if (pick(row, 'soon') !== false) return null;
   const at = text(pick(row, 'at'));
+  const waits = waitsOf(pick(row, 'waits'));
   return {
     soon: false,
     at: at && Number.isFinite(Date.parse(at)) ? at : null,
     missing: Math.max(Math.floor(Number(pick(row, 'missing')) || 0), 0),
     waitingOn: array(pick(row, 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Math.floor(Number(pick(row, 'more')) || 0), 0),
+    ...(waits ? { waits } : {}),
   };
+}
+
+/**
+ * Review A3: what an approved change's stored work state says it still
+ * waits on (services/homeroom-bot-dm.js waitsBeforeLive): its stage, its
+ * line's code and the row's own words. Null without a stage and words.
+ */
+function waitsOf(input: unknown): HomeroomBotWaits | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  const stage = text(pick(row, 'stage'));
+  const words = wordsOf(pick(row, 'words'));
+  if (!stage || !words) return null;
+  const lineRow = pick(row, 'line');
+  const code = lineRow && typeof lineRow === 'object' && !Array.isArray(lineRow) ? text(pick(record(lineRow), 'code')) : '';
+  return { stage, line: code ? { code } : null, words };
 }
 
 /**
@@ -982,6 +1001,12 @@ export async function sendMessage(id: number, input: { content: string; replyToI
 
 /** A design thread as its pane reads it (routes/conversations.js). */
 export interface DesignThread {
+  /**
+   * Artifacts (docs/plans/artifacts.md): what the thread's artifact is. A
+   * design is drawn with its project's stylesheets and can be requested as a
+   * plan; a plain page is self-contained and stays in its thread.
+   */
+  kind: 'design' | 'page';
   rootId: number;
   conversationId: number;
   state: string;
@@ -1057,6 +1082,7 @@ export async function getDesign(rootId: number): Promise<DesignThread> {
   const data = record(await request<unknown>(`${DESIGNS}/${rootId}`));
   const app = record(pick(data, 'app'));
   return {
+    kind: pick(data, 'artifactKind') === 'page' ? 'page' : 'design',
     rootId: strictId(pick(data, 'rootId')) || rootId,
     conversationId: strictId(pick(data, 'conversationId')) || 0,
     state: text(pick(data, 'state')) || 'open',
@@ -1553,7 +1579,10 @@ export async function listBlocks(): Promise<ConversationUser[]> {
   }).filter((user) => user.id);
 }
 
-const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
+// What an activity card can come to: the server's endings
+// (services/homeroom-bot-activity.js OUTCOME_LABELS, which
+// tests/work-stages-client.test.js holds this to). Any other reads as stopped.
+export const ACTIVITY_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
   'checking', 'needs_look', 'going_live',
@@ -1618,9 +1647,13 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
 const ASK_KINDS = new Set([
   'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
 ]);
-// T2.9: every cause the one decoder names a stop by (services/bot-stop-cause.js).
-const JOB_STOP_CAUSES = new Set([
+// T2.9: every cause the one decoder names a stop by (services/bot-stop-cause.js
+// BUILD_CAUSES, which tests/work-stages-client.test.js holds this to). A
+// stop for building credit was dropped here, and its card said only that
+// the build didn't finish.
+export const JOB_STOP_CAUSES: ReadonlySet<string> = new Set([
   'time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other', 'plan', 'push', 'push_permanent', 'push_gave_up', 'stopped',
+  'credit',
 ]);
 
 /**

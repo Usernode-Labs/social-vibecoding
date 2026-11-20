@@ -798,3 +798,140 @@ test('T2.5: a change in review wears its stored row\'s words, not "Waiting for a
   assert.ok(brief.tags.some((t) => t.label === 'Taking screenshots · maya'), JSON.stringify(brief.tags));
   assert.ok(!brief.tags.some((t) => /Waiting for votes/.test(t.label)));
 });
+
+// ── The one rule (frontend/src/lib/work-state.ts) ───────────────────────
+//
+// The chip preferred any member's active session over the request's stored
+// row: a request Homeroom bot was building, or one waiting on its requester,
+// read "Being worked on · maya" from a session that said nothing about where
+// it stood. The row leads unless it says the same as the person's work, or
+// that nobody has started. Each request here carries the row the server
+// sends (tests/lib/stored-row.js).
+test('the request chip never prefers a member\'s session over the stored row', () => {
+  const { storedRow, storedChange } = require('./lib/stored-row');
+  const { message } = require('./lib/platform-i18n');
+  const AppView = makeAppView();
+  const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [sess()], target: null, ...over });
+  const chip = (standing, over) => AppView._issueWorkState(baseIssue({ in_progress: ip(over), standing }));
+
+  // Homeroom bot is building it: its own state, as on a request nobody else touched.
+  const bot = chip(storedRow({ stage: 'building', whoseMove: 'bot' }, { mine: false }));
+  assert.equal(bot.key, 'bot');
+  assert.equal(bot.label, 'Homeroom bot is building this');
+  assert.equal(bot.who, null);
+
+  // Waiting on its requester for an answer: the row's words, naming nobody.
+  const asked = storedRow({ stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' }, { mine: false });
+  const waiting = chip(asked);
+  assert.equal(waiting.label, message('core:work.whyOthers.question'), 'as somebody who did not ask reads it');
+  assert.equal(waiting.rowLeads, true);
+  assert.equal(waiting.spinner, false, 'nothing is running');
+  assert.equal(waiting.tone, 'zinc');
+  assert.equal(waiting.key, 'working', 'the person\'s state still orders it');
+  assert.match(waiting.note, /maya/, 'and who started what stays, as the detail');
+  const html = workChipHtml(AppView, baseIssue({ in_progress: ip(), standing: asked }));
+  assert.ok(html.includes(message('core:work.whyOthers.question')), html);
+  assert.ok(!html.includes('Being worked on'), 'never the session\'s word over the row\'s');
+  assert.ok(!html.includes(' · maya'), 'the row\'s words are not about maya');
+  // Its requester reads their own wording.
+  assert.equal(chip(storedRow({ stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' })).label, message('core:work.why.question'));
+
+  // Its change's tests are running: the row says so, and it is busy.
+  const checking = chip(storedRow({ stage: 'checking', change: storedChange() }, { mine: false }), { sessions: [sess({ status: 'paused' })] });
+  assert.equal(checking.label, 'Checking');
+  assert.equal(checking.spinner, true);
+  assert.equal(checking.key, 'paused');
+  // A bare claim, while the row says it stopped.
+  const stopped = chip(storedRow({ stage: 'stopped', reason: 'build_failed' }, { mine: false }),
+    { count: 0, users: [], sessions: [], claims: [{ username: 'bob', userId: 8, mine: false, claimedAt: '2026-08-12T00:00:00Z' }] });
+  assert.equal(stopped.label, message('core:work.reason.buildFailed'));
+  assert.equal(stopped.key, 'claimed');
+  // The claim's lapse is detail the row does not carry: the note still says
+  // the day it opens up for others again, as it does with no row at all.
+  const lapse = Date.parse('2026-08-19T00:00:00Z');
+  const claimed = chip(storedRow({ stage: 'stopped', reason: 'build_failed' }, { mine: false }),
+    { count: 0, users: [], sessions: [], claims: [{ username: 'bob', userId: 8, mine: false, claimedAt: '2026-08-12T00:00:00Z', expiresAt: '2026-08-19T00:00:00Z' }] });
+  assert.equal(claimed.clearAt, lapse);
+  assert.equal(claimed.clearAt, chip(null, { count: 0, users: [], sessions: [], claims: [{ username: 'bob', userId: 8, mine: false, claimedAt: '2026-08-12T00:00:00Z', expiresAt: '2026-08-19T00:00:00Z' }] }).clearAt);
+  assert.match(claimed.note, /opens up for others again on/, claimed.note);
+  // So does a paused session's.
+  const idle = chip(storedRow({ stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' }, { mine: false }),
+    { sessions: [sess({ status: 'paused', lastActivityAt: '2026-08-12T00:00:00Z' })] });
+  assert.equal(idle.key, 'paused');
+  assert.ok(idle.clearAt > 0);
+  assert.match(idle.note, /clears itself on/, idle.note);
+
+  // The row says a person is building it: their session words the chip.
+  const theirs = chip(storedRow({ stage: 'building', line: { code: 'claimed', by: 'maya' }, whoseMove: 'builder' }, { mine: false }));
+  assert.equal(theirs.label, 'Being worked on · maya');
+  assert.equal(theirs.rowLeads, undefined);
+  // Nobody has started on it, by the row: the session is the truest thing to say.
+  assert.equal(chip(storedRow({ stage: 'reading', line: { code: 'waiting' } }, { mine: false })).label, 'Being worked on · maya');
+  // No stored row (an older payload): the order it always had.
+  assert.equal(chip(null).label, 'Being worked on · maya');
+
+  // The Workshop's row says the row's words too, and names nobody.
+  const brief = AppView._workshopBrief('issue', baseIssue({ in_progress: ip(), standing: asked }), null);
+  assert.ok(brief.tags.some((t) => t.label === message('core:work.whyOthers.question')), JSON.stringify(brief.tags));
+  assert.ok(!brief.tags.some((t) => /maya|Being worked on/.test(t.label)), JSON.stringify(brief.tags));
+});
+
+// Review B5 (19 Nov 2026): the chip of a request Homeroom bot is on named
+// the bot's work from its own reading (_botOn), whatever the row said. A
+// request whose plan waits for its OK read "Homeroom bot will build this",
+// spinning, while its row, its foot and the bot tab said "Waiting for the
+// plan to be OK'd". The chip names the bot only in the stage the row says;
+// any other stage is the row's own word. Fed the row the server stores and
+// sends (tests/lib/stored-row.js), as each viewer reads it.
+test('a request waiting for its plan\'s OK: the chip says the row\'s word, not that the bot will build it', () => {
+  const { storedRow } = require('./lib/stored-row');
+  const { message } = require('./lib/platform-i18n');
+  const AppView = makeAppView();
+  const plan = { question: null, plan: { version: 2, sessionId: 9, at: '2026-11-19T10:00:00Z', waitingGo: true }, closeVote: null, draft: null, offers: [], reports: 0 };
+  const row = (viewer) => storedRow({ stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester', asks: plan }, viewer);
+
+  // Anybody but its requester.
+  const theirs = baseIssue({ standing: row({ mine: false }) });
+  const st = AppView._issueWorkState(theirs);
+  assert.equal(st.key, 'bot', 'still the bot\'s: nothing to start beside it');
+  assert.equal(st.label, message('core:work.whyOthers.plan'));
+  assert.notEqual(st.label, message('changes:chips.work.botQueued'));
+  assert.equal(st.spinner, false, 'nothing runs while it waits for an OK');
+  assert.equal(st.tone, 'zinc');
+  assert.equal(st.who, null, 'and it names nobody');
+  assert.match(st.note, /It starts once the plan is OK'd\./, st.note);
+  assert.doesNotMatch(st.note, /as soon as a builder is free/);
+  const chip = workChipHtml(AppView, theirs);
+  // (The markup escapes its apostrophe.)
+  assert.ok(chip.includes(message('core:work.whyOthers.plan').replace(/'/g, '&#x27;')), chip);
+  assert.match(chip, /data-work-state="bot"/);
+  assert.doesNotMatch(chip, /will build this/);
+  // The Workshop's row says it too.
+  const brief = AppView._workshopBrief('issue', theirs, null);
+  assert.ok(brief.tags.some((t) => t.label === message('core:work.whyOthers.plan')), JSON.stringify(brief.tags));
+
+  // Its requester reads their own wording.
+  assert.equal(AppView._issueWorkState(baseIssue({ standing: row() })).label, message('core:work.why.plan'));
+
+  // Every other stage the bot is on: the bot, named in the row's own stage.
+  const named = (state) => AppView._issueWorkState(baseIssue({ standing: storedRow(state, { mine: false }) }));
+  const cases = [
+    [{ stage: 'reading', whoseMove: 'bot' }, 'changes:chips.work.botReading'],
+    [{ stage: 'reading', line: { code: 'queued', asked: true }, whoseMove: 'bot' }, 'changes:chips.work.botQueued'],
+    [{ stage: 'planning', whoseMove: 'bot' }, 'changes:chips.work.botPlanning'],
+    [{ stage: 'building', whoseMove: 'bot' }, 'changes:chips.work.botBuilding'],
+    [{ stage: 'building', line: { code: 'held_builds' }, whoseMove: 'bot' }, 'changes:chips.work.botQueued'],
+    // T2.2: waiting for building credit is Ready to build, never building.
+    [{ stage: 'building', line: { code: 'credit_wait' }, whoseMove: 'bot' }, 'changes:chips.work.botQueued'],
+  ];
+  for (const [state, id] of cases) {
+    const got = named(state);
+    assert.equal(got.key, 'bot', JSON.stringify(state));
+    assert.equal(got.label, message(id), JSON.stringify(state));
+    assert.equal(got.rowWords, undefined, JSON.stringify(state));
+  }
+  // A credit wait is in the bot's queue, as the server reads it.
+  const credit = baseIssue({ standing: storedRow({ stage: 'building', line: { code: 'credit_wait' }, whoseMove: 'bot' }, { mine: false }) });
+  assert.equal(AppView._botOn(credit).what, 'queued');
+  assert.match(AppView._issueWorkState(credit).note, /as soon as a builder is free/);
+});

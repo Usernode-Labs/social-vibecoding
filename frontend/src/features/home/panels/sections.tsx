@@ -41,7 +41,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { LoadingCaption } from '../../apps/tile-skeleton';
 import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-store';
 import { ChallengesPanel } from './challenges';
-import { useLiveSkin } from '../../../lib/skin';
+import { useLiveSkin, isKitHome } from '../../../lib/skin';
 import { WipHeadMore } from '../wip-kit';
 import { SectionHeading, SeeAllLink, stampProps } from './ui';
 
@@ -161,7 +161,7 @@ function ChallengesSkeleton() {
 export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
   const t = useMessages('home');
   // Standard (WIP) (lib/skin.ts): the label itself, with a chevron after it, is the way to all of them.
-  const wip = useLiveSkin() === 'wip';
+  const wip = isKitHome(useLiveSkin());
   return (
     <Section
       id="home-challenges-section"

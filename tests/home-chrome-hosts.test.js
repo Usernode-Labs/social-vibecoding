@@ -179,7 +179,9 @@ test('the initial chrome renders exactly what the prerendered shell ships', () =
   );
   // The document the prerender wrote agrees, both ways round.
   const index = read('public/index.html');
-  assert.match(index, /<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"><\/div>/);
+  // The prerendered Home is the standard look's, which is the kit's since 20 Nov
+  // 2026: its grid folds from the heading's own link, so no expander host is drawn.
+  assert.doesNotMatch(index, /id="home-apps-more"/);
   assert.match(index, /<section id="home-widget-strip-section" class="hidden px-3 pt-2"><\/section>/);
 });
 

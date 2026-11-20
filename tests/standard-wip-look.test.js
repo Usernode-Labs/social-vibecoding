@@ -19,14 +19,12 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 
 /** What Standard (WIP) deliberately does not display, by selector. */
 const WIP_HIDES = [
-  // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
-  'html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
   // Home has no Pinned communities section under the look.
-  'html[data-skin-wip] #home-communities-section',
+  'html:not([data-skin]) #home-communities-section',
   // A pinned project's tile has no description under the look (asked 19 Nov 2026).
-  'html[data-skin-wip] #app-list .app-card-desc',
+  'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
-  'html[data-skin-wip] #app-list .app-card-people',
+  'html:not([data-skin]) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
@@ -36,8 +34,37 @@ const WIP_HIDES = [
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
-  'html[data-skin-wip] #app-list .app-card-opened',
+  'html:not([data-skin]) #app-list .app-card-opened',
 ];
+
+/**
+ * The left menu and the top bar were drawn for this look first and are the
+ * standard look's too since 20 Nov 2026: their rules moved to a block of
+ * their own, after this look's, scoped to the two together
+ * (html:not([data-skin])). The same rules hold there: every value a token,
+ * declared once, and nothing hidden but what MENU_HIDES lists.
+ */
+const MENU_SCOPE = 'html:not([data-skin])';
+const MENU_HIDES = [
+  // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
+  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
+  // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
+  'html:not([data-skin]) #platform-tabs::before',
+  'html:not([data-skin]) body #platform-header#platform-header::before',
+  // Folded, the menu is a strip of icons and logos: the mark heads it, so the top bar does not say the logo there either,
+  'html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
+  // and the words, counts, headings, pins and nested places are the open menu's (asked 20 Nov 2026).
+  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x)',
+];
+
+function menuBlock() {
+  const css = read('public', 'css', 'app.css');
+  const start = css.indexOf('── THE LEFT MENU AND THE TOP BAR');
+  const end = css.indexOf('END OF THE LEFT MENU AND THE TOP BAR.');
+  assert.ok(start > 0 && end > start, 'app.css has the menu and top bar block, start to end');
+  assert.ok(start > css.indexOf('END OF STANDARD (WIP).'), 'after the look\'s own block, which it is no part of');
+  return css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, '');
+}
 
 function wipBlock() {
   const css = read('public', 'css', 'app.css');
@@ -87,7 +114,8 @@ test('it is the standard look: the head sets data-skin-wip and no data-skin', ()
 test('every rule of its block is scoped to the look or is a component of its kit', () => {
   for (const { selector } of rules(wipBlock())) {
     for (const one of topLevel(selector)) {
-      assert.match(one, /data-skin-wip|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle the standard look`);
+      // Home's rules are the standard look's too since 20 Nov 2026 (html:not([data-skin]): the two looks, and no other).
+      assert.match(one, /data-skin-wip|^html:not\(\[data-skin\]\)|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle another look`);
     }
   }
 });
@@ -95,7 +123,7 @@ test('every rule of its block is scoped to the look or is a component of its kit
 test('colours are written once, as tokens in the block\'s first rule', () => {
   const all = rules(wipBlock());
   // The token rules: the look's own (the config called Current) and each other config's, in light and dark.
-  const tokens = all.filter((r) => /^html\[data-skin-wip\](\[data-wip-tokens="[a-z0-9]+"\])?(\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
+  const tokens = all.filter((r) => /^html(\[data-skin-wip\]|:not\(\[data-skin\]\))(\[data-wip-tokens="[a-z0-9]+"\])?(\.dark)?$/.test(r.selector) && /--(wip|lit)-/.test(r.body));
   assert.ok(tokens.length >= 1, 'the block declares its tokens');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
@@ -110,6 +138,103 @@ test('colours are written once, as tokens in the block\'s first rule', () => {
   }
 });
 
+test('the menu and the top bar: one block for the standard look and this one, every value a token', () => {
+  const all = rules(menuBlock());
+  assert.ok(all.length > 30, 'the block holds the menu\'s rules');
+  for (const { selector } of all) {
+    for (const one of topLevel(selector)) {
+      assert.ok(one.startsWith(MENU_SCOPE), `"${one}" is not scoped to the standard look and its brand drawing`);
+      assert.doesNotMatch(one, /data-skin-wip|data-skin="/, `"${one}" names a look: the block is the two together`);
+    }
+  }
+  // Colours are written in the token rules alone (light, then dark), and every token a rule reads is declared there.
+  const tokens = all.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-nav-/.test(r.body));
+  assert.equal(tokens.length, 2, 'one rule in light and one in dark');
+  const declared = new Set();
+  for (const r of tokens) for (const m of r.body.matchAll(/(--wip-nav-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
+  for (const r of all) {
+    if (tokens.includes(r)) continue;
+    assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector} writes a colour of its own; make it a --wip-nav-* token`);
+    for (const m of r.body.matchAll(/var\((--wip-[a-z0-9-]+)/g)) {
+      assert.ok(declared.has(m[1]), `${m[1]} (used by ${r.selector}) is declared in the block's token rule`);
+    }
+  }
+  // The standard look has none of the brand kit's own tokens, so the block's token rules read the shell's only.
+  for (const r of tokens) assert.doesNotMatch(r.body, /var\(--wip-(?!nav-)/, 'a token here points at the shell, never at the brand kit');
+  // The menu's colours are the brand kit's in both looks (asked 20 Nov 2026): its sky, and the sun for the place you are on.
+  assert.match(tokens[0].body, /--wip-nav-bg: #3c7bd8;[\s\S]*--wip-nav-on-bg: #ffee6f;\s*[^\n]*\n\s*--wip-nav-on-ink: #121a0e;/);
+  assert.match(tokens[1].body, /--wip-nav-bg: #122a52;/);
+  // The brand kit's block only points the page-side tokens at its own values.
+  assert.match(wipBlock(), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{\s*--wip-nav-font: var\(--wip-font\);[^}]*--wip-nav-bar-ink: var\(--wip-ink\);/);
+  assert.doesNotMatch(wipBlock(), /--wip-nav-bg:/, 'the panel\'s colour is written once, in the menu\'s block');
+  // Nothing of the old menu and bar is hidden but what MENU_HIDES lists.
+  const hidden = all.filter((r) => /display:\s*none|visibility:\s*hidden|content:\s*none/.test(r.body)).map((r) => r.selector);
+  assert.deepEqual(hidden.sort(), [...MENU_HIDES].sort());
+  // A folded sidebar opens from its arrow alone, in both.
+  assert.match(read('frontend', 'src', 'features', 'nav', 'rail-peek.ts'),
+    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
+});
+
+test('folded, the menu is a strip of icons and logos, and a medium display starts on it', () => {
+  const css = read('public', 'css', 'app.css');
+  const block = menuBlock();
+  const STRIP = 'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
+  const FOLDED = 'html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden))';
+  // It is still drawn (the shell's own rule takes a folded rail away), at the strip's width, which the page keeps clear.
+  assert.ok(block.includes(`${STRIP} { display: flex; }`));
+  assert.ok(block.includes(`${FOLDED} {\n    --platform-rail-full: var(--wip-nav-mini-w);\n    --platform-rail-w: var(--wip-nav-mini-w);`));
+  assert.ok(block.includes(`${FOLDED} #app-view {\n    padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));`));
+  // Homeroom's mark heads it, and a hairline parts the places from the communities' logos.
+  assert.ok(block.includes(`${STRIP}::before {`));
+  assert.match(block, /background: var\(--wip-nav-brand-mark\) center \/ contain no-repeat;/);
+  assert.ok(block.includes(`${STRIP} :is(.platform-rail-pinned, .platform-rail-communities)::before {`));
+  // The fold button: inside the panel at the end of the logo's line, and beside the strip, in the bar's ink, once folded.
+  assert.match(block, /#platform-header #sidebar-toggle \{\s*position: absolute;[^}]*inset-inline-start: calc\(var\(--wip-nav-w\) - var\(--wip-nav-fold-inset\) - var\(--wip-nav-fold\)\);[^}]*background: transparent;[^}]*color: var\(--wip-nav-ink\);/);
+  assert.ok(block.includes(`${FOLDED} #platform-header #sidebar-toggle {\n    position: static;\n    color: var(--wip-nav-bar-ink);`));
+  // Nothing slides away: the strip stays, so the rail's leaving slide is skipped where <html> has no data-skin.
+  const slide = read('frontend', 'src', 'features', 'nav', 'rail-slide.ts');
+  assert.match(slide, /const strip = !document\.documentElement\.hasAttribute\('data-skin'\);\s*if \(!open && !fromPeek && !strip\) bar\.classList\.add\('platform-tabs-leaving'\);/);
+  assert.match(slide, /if \(fromPeek \|\| strip\) return;/);
+  // A medium display starts on the strip, and only where a folded menu is a strip.
+  const auto = read('frontend', 'src', 'features', 'nav', 'rail-auto.ts');
+  assert.match(auto, /export const RAIL_MEDIUM = '\(min-width: 768px\) and \(max-width: 1023\.98px\)';/);
+  assert.match(auto, /if \(document\.documentElement\.hasAttribute\('data-skin'\)\) return;/);
+  assert.match(read('frontend', 'src', 'features', 'nav', 'tab-bar.tsx'), /useEffect\(\(\) => followDisplaySize\(\), \[\]\);/);
+  // A phone's bar keeps the shell's height: the lit pill's inset comes out of the tab, so the resume strip is not covered.
+  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
+});
+
+test('buttons: the Sticker drawing, one block for the standard look and this one, every value a token', () => {
+  const css = read('public', 'css', 'app.css');
+  const start = css.indexOf('── BUTTONS (20 Nov 2026)');
+  const end = css.indexOf('END OF BUTTONS.');
+  assert.ok(start > css.indexOf('END OF THE LEFT MENU AND THE TOP BAR.') && end > start, 'its own block, after the menu\'s');
+  const all = rules(css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, ''));
+  assert.ok(all.length > 15);
+  for (const { selector } of all) {
+    for (const one of topLevel(selector)) {
+      assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
+      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|#home-new-project-top/, `"${one}" leaves the admin console alone`);
+    }
+  }
+  // Colours are written in the token rules alone, and every token a rule reads is declared there.
+  const tokens = all.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body));
+  assert.equal(tokens.length, 3, 'the levels in light and in dark, then the vote pair');
+  const declared = new Set();
+  for (const r of tokens) for (const m of r.body.matchAll(/(--wip-btn-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
+  for (const r of all) {
+    if (tokens.includes(r)) continue;
+    assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector.slice(0, 80)} writes a colour of its own; make it a --wip-btn-* token`);
+    for (const m of r.body.matchAll(/var\((--wip-[a-z0-9-]+)/g)) assert.ok(declared.has(m[1]), `${m[1]} is declared in the block's token rules`);
+  }
+  // The levels: the main action in the sun, the secondary in white, the destructive in red, a press onto the edge.
+  assert.match(tokens[0].body, /--wip-btn-1-bg: #ffee6f;[\s\S]*--wip-btn-2-bg: #ffffff;[\s\S]*--wip-btn-bad-ink: #a3281a;/);
+  assert.match(tokens[0].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-line\);/);
+  assert.match(tokens[0].body, /--wip-btn-font: 'Source Serif 4',/);
+  // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
+  assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
+});
+
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {
   const hidden = rules(wipBlock())
     .filter((r) => /display:\s*none|visibility:\s*hidden/.test(r.body))
@@ -122,7 +247,7 @@ test('nothing of the standard look is hidden under it but what WIP_HIDES lists',
 
 test('Home places what it does not name last, so a new standard section is drawn', () => {
   const block = wipBlock();
-  assert.match(block, /html\[data-skin-wip\] #home-screen \.home-main > \* \{ order: 4; \}/);
+  assert.match(block, /html:not\(\[data-skin\]\) #home-screen \.home-main > \* \{ order: 4; \}/);
 });
 
 test('its pieces come from the kit, not from classes spelled in place', () => {

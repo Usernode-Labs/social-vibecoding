@@ -16,9 +16,11 @@
  *     the shape the challenge illustrations already allow, plus text.
  *
  *   - THE SCREENS (each `<template data-screen>` of a `<figure data-screens>`)
- *     are not sanitised into the page at all. Each is drawn in its own
- *     sandboxed frame (`sandbox=""`: no scripts, no forms, no navigation, an
- *     origin of its own) with a content security policy that lets it load
+ *     are not sanitised into the page at all. Each is drawn in the one
+ *     frame every page the bot writes is drawn in, static
+ *     (../features/artifact/frame.tsx; `sandbox=""`: no scripts, no forms,
+ *     no navigation, an origin of its own) under the one policy
+ *     (../features/artifact/policy.ts), which lets it load
  *     nothing but this site's stylesheets, fonts and images. That is what lets
  *     a screen use the app's real classes and stylesheet and look like the app.
  *     Which stylesheets is stamped on the article by the server
@@ -39,6 +41,8 @@
 
 import { useEffect, type RefObject } from 'react';
 
+import { staticFrameHtml } from '../features/artifact/frame-doc';
+import { cspFor } from '../features/artifact/policy';
 import { htmlRich, t } from './i18n/runtime';
 
 export interface SpecHtmlDoc {
@@ -200,7 +204,10 @@ function frameDoc(markup: string, side: 'before' | 'after', styles: SpecStyles):
     .filter((href) => styles === 'platform' || href.startsWith(`${origin}/usernode-native/`))
     .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}">`)
     .join('');
-  const csp = `default-src 'none'; style-src 'unsafe-inline' ${origin}; img-src data: ${origin}; font-src data: ${origin}`;
+  // The one policy every page the bot writes is drawn under, static: nothing
+  // runs, and nothing loads but this site's stylesheets, fonts and images
+  // (../features/artifact/policy.ts).
+  const csp = cspFor('static', { site: origin });
   return `<!doctype html><html${dark ? ' class="dark"' : ''} data-side="${side}"><head><meta charset="utf-8">`
     + `<meta http-equiv="Content-Security-Policy" content="${escapeAttr(csp)}">${links}<style>${FRAME_CSS}</style></head>`
     + `<body>${markup}</body></html>`;
@@ -220,8 +227,9 @@ function sideHtml(
   return `<span class="shots-flip-side ${cls} spec-frame-side" style="--shots-shape:${crop[2]} / ${crop[3]}"`
     + ` role="img" aria-label="${escapeAttr(label)}" data-spec-frame=""`
     + ` data-spec-full="${g.width} ${g.height}" data-spec-focus="${g.focus ? g.focus.join(' ') : ''}">`
-    + `<iframe sandbox="" referrerpolicy="no-referrer" tabindex="-1" aria-hidden="true" title="${escapeAttr(label)}"`
-    + ` data-srcdoc="${escapeAttr(frameDoc(markup, which, styles))}"></iframe></span>`;
+    // The one frame, static (../features/artifact/frame-doc.ts): its
+    // document waits in data-srcdoc until its screen is the one showing.
+    + `${staticFrameHtml({ doc: frameDoc(markup, which, styles), title: label, lazy: true })}</span>`;
 }
 
 function screensHtml(figure: Element, key: string, styles: SpecStyles): string {

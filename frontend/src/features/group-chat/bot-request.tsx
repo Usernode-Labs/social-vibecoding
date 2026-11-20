@@ -125,8 +125,15 @@ function filedWords(card: BotRequestCard, now: number): string {
 }
 
 // Every stage filedWords has a sentence of its own for; any other stage
-// reads as a request just taken.
-const FILED_STAGES = new Set(['waiting_first_version', 'waiting', 'waiting_plan', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped']);
+// reads as a request just taken. The stages are the server's card stages
+// (services/homeroom-bot-chat.js CARD_STAGES, from the row by
+// cardStageOfWork): tests/work-stages-client.test.js holds that every one a
+// filed request's row can reach, over every state of the one table, is here
+// or is one that reads as just taken (FILED_JUST_TAKEN).
+export const FILED_STAGES: ReadonlySet<string> = new Set(['waiting_first_version', 'waiting', 'waiting_plan', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped']);
+// A request waiting to be read or being read: "Got it", how long it usually
+// takes. The bot may still ask a question, so it is never "Building it now".
+export const FILED_JUST_TAKEN: ReadonlySet<string> = new Set(['reading']);
 
 // The stages of a filed request whose card also says, on a person's first
 // request (WP-C), that it stays in the project's requests under their name.

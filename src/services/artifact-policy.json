@@ -1,0 +1,48 @@
+{
+  "version": 2,
+  "modes": {
+    "run": {
+      "sandbox": "allow-scripts",
+      "directives": [
+        ["default-src", "'none'"],
+        ["style-src", "'unsafe-inline'", "{site}"],
+        ["img-src", "data:", "{site}"],
+        ["font-src", "data:", "{site}"],
+        ["script-src", "'unsafe-inline'"],
+        ["connect-src", "'none'"],
+        ["frame-src", "'none'"],
+        ["form-action", "'none'"],
+        ["base-uri", "'none'"]
+      ]
+    },
+    "static": {
+      "sandbox": "",
+      "directives": [
+        ["default-src", "'none'"],
+        ["style-src", "'unsafe-inline'", "{site}"],
+        ["img-src", "data:", "{site}"],
+        ["font-src", "data:", "{site}"],
+        ["script-src", "'none'"],
+        ["connect-src", "'none'"],
+        ["frame-src", "'none'"],
+        ["form-action", "'none'"],
+        ["base-uri", "'none'"]
+      ]
+    },
+    "helper": {
+      "sandbox": "allow-scripts",
+      "directives": [
+        ["default-src", "'none'"],
+        ["style-src", "'unsafe-inline'", "{site}"],
+        ["img-src", "data:", "{site}"],
+        ["font-src", "data:", "{site}"],
+        ["script-src", "'nonce-{nonce}'"],
+        ["connect-src", "'none'"],
+        ["frame-src", "'none'"],
+        ["form-action", "'none'"],
+        ["base-uri", "'none'"]
+      ]
+    }
+  },
+  "attachmentView": "sandbox allow-scripts"
+}

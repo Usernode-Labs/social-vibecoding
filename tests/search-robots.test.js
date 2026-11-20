@@ -49,6 +49,40 @@ test('an app’s own X-Robots-Tag is kept, and noindex is added once', () => {
   assert.equal(robots.withRobots('nofollow', null), 'nofollow');
 });
 
+test('the shell asks search engines in on the front page, and out of every other address', () => {
+  assert.equal(robots.shellRobots({ path: '/' }), null);
+  for (const path of ['/app/x', '/app/x/workshop', '/thread/1', '/invite/abc', '/needs', '/messages']) {
+    assert.equal(robots.shellRobots({ path }), 'noindex', path);
+  }
+  assert.equal(robots.shellRobots({}), 'noindex', 'no path is not the front page');
+});
+
+test('server.js’s catch-all sends that header, and the shell has one description and no canonical', () => {
+  const source = read('server.js');
+  const at = source.indexOf("app.get('*', (req, res)");
+  assert.ok(at > 0);
+  const handler = source.slice(at, source.indexOf('\n});', at));
+  assert.match(handler, /shellRobots\(\{ path: req\.path \}\)/);
+  assert.match(handler, /res\.setHeader\('X-Robots-Tag', robots\)/);
+
+  const head = read('frontend/src/head.html');
+  assert.equal((head.match(/<meta name="description"/g) || []).length, 1);
+  assert.match(head, /<meta name="description" content="Homeroom is where people make apps together: suggest a change, vote on it, and see it go live\.">/);
+  assert.doesNotMatch(head, /rel="canonical"/, 'the front page’s canonical stays a Link header');
+});
+
+test('an invite link asks search engines out from its own route, not the catch-all', () => {
+  for (const file of ['src/routes/community-invites.js', 'src/routes/access-links.js']) {
+    assert.match(read(file), /res\.setHeader\('X-Robots-Tag', require\('\.\.\/services\/search-robots'\)\.NOINDEX\)/, file);
+  }
+});
+
+test('a new app says it was made on Homeroom, in a tag only browsers and crawlers read', () => {
+  const files = template.getTemplateFiles('Demo', { slug: 'demo-1' });
+  const index = (Array.isArray(files) ? files : Object.values(files)).find((f) => f.path === 'public/index.html').content;
+  assert.match(index, /<meta name="generator" content="Homeroom">/);
+});
+
 test('the shell’s front page names one address; nothing else, and nothing on a staging copy', () => {
   const link = (over) => robots.shellCanonicalLink({ method: 'GET', path: '/', origin: 'https://app.onhomeroom.com', ...over });
   assert.equal(link(), '<https://app.onhomeroom.com/>; rel="canonical"');

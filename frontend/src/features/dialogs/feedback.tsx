@@ -675,6 +675,8 @@ export function FeedbackDialog() {
                 Shown by the controller when the post says where it went. */}
             <Button id="feedback-sent-work" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.workWithBot')}</Button>
             <Button id="feedback-sent-chat" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
+            {/* #6897: the posted request's own page, where its status, votes and replies are. Shown wherever the post says where it went. */}
+            <Button id="feedback-sent-request" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.request')}</Button>
             <div className="flex items-center justify-center [&:not(:has(>:not(.hidden)))]:hidden">
               <Button id="feedback-sent-mine" type="button" variant="unstyled" size="inline" ink="none" className="min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.sent.mine')}</Button>
               <span aria-hidden="true" className="hidden text-sm text-zinc-500 dark:text-zinc-400 [:not(.hidden)+&:has(+:not(.hidden))]:inline">·</span>

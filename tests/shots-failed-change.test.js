@@ -468,6 +468,10 @@ test('what the bot says about it is plain, and never about checks that passed', 
   for (const t of [person, revised]) assert.ok(!/—|PR #|proposal/.test(t), t);
 });
 
+// Review A3: ready to try is the change's stored work state, so the pool
+// answers forChanges with the row the derive stores for these columns.
+const { storedChange, readsStoredChange } = require('./lib/stored-change');
+
 function readinessPool(row, { run = { run_id: 50, issue_number: 1, id: 9, slug: 'flat-4b-chores-e98ecd', name: 'Flat 4B Chores' } } = {}) {
   const asked = [];
   return {
@@ -476,6 +480,7 @@ function readinessPool(row, { run = { run_id: 50, issue_number: 1, id: 9, slug: 
       const s = String(sql);
       asked.push(s);
       if (/FROM chat_sessions WHERE id = \$1/.test(s)) return { rows: [row] };
+      if (readsStoredChange(s)) return { rows: [storedChange(row, { id: 6269, appId: 9 })] };
       if (/FROM homeroom_bot_runs r JOIN apps a/.test(s)) return { rows: run ? [run] : [] };
       return { rows: [] };
     },
@@ -493,20 +498,25 @@ function sessionRow(extra = {}) {
 }
 
 test('ready to try waits for the shots on its head, and carries what they show failing', async () => {
-  const waiting = await dm.changeReadiness(readinessPool(sessionRow({
+  // Its shots on its head still being taken: its stored row says so
+  // (Checking, Taking screenshots), so it is not ready.
+  const waiting = await dm.changeReadyFacts(readinessPool(sessionRow({
     shots_state: 'exploring', shots_detail: { headSha: HEAD, required: true, intent: chores() },
   })), 6269);
-  assert.deepEqual(waiting, { ready: false, checked: true, epoch: 3, waitingOnShots: true, broken: [], skipped: [], title: null });
+  const { work, ...said } = waiting;
+  assert.deepEqual(said, { ready: false, epoch: 3, waitingOnShots: true, broken: [], skipped: [], title: null });
+  assert.deepEqual([work.stage, work.line && work.line.code], ['checking', 'shots']);
   // #3870: what the change is, for its card: the proposal's title unless it
   // is the placeholder, else the session's.
-  const titled = (extra) => dm.changeReadiness(readinessPool(sessionRow(extra)), 6269).then((s) => s.title);
+  const titled = (extra) => dm.changeReadyFacts(readinessPool(sessionRow(extra)), 6269).then((s) => s.title);
   assert.equal(await titled({ pr_title: 'Undo  for done chores', session_title: 'Chores' }), 'Undo for done chores');
   assert.equal(await titled({ pr_title: "maya's changes", pr_title_fallback: true, session_title: 'Chores' }), 'Chores');
-  const settled = await dm.changeReadiness(readinessPool(sessionRow()), 6269);
+  const settled = await dm.changeReadyFacts(readinessPool(sessionRow()), 6269);
   assert.equal(settled.ready, true);
+  assert.equal(settled.work.stage, 'up_for_vote');
   assert.equal(settled.broken.length, 1);
   assert.deepEqual(dm.brokenWords(settled.broken), ['Tapping "mark as done" ticks a chore off and offers undo.']);
-  const failing = await dm.changeReadiness(readinessPool(sessionRow({ check_state: 'failing' })), 6269);
+  const failing = await dm.changeReadyFacts(readinessPool(sessionRow({ check_state: 'failing' })), 6269);
   assert.equal(failing.ready, false);
   assert.deepEqual(failing.broken, [], 'a change that fails its checks is the checks\' round, as before');
 });
@@ -516,9 +526,7 @@ test('a change its shots show failing goes back to the bot first; once that roun
   // row, with the rules every caller reads (src/workflow/rules/bot-readiness.ts).
   const rules = require('../src/workflow/rules/bot-readiness.ts');
   const row = sessionRow();
-  const r = rules.readiness(row, Date.now());
-  assert.equal(r.checked, true);
-  assert.equal(r.broken.length, 1);
+  assert.equal(rules.brokenOnHead(row, rules.visualHeadForSession(row)).length, 1);
   assert.ok(rules.checksDue({ ...row, looked: false }), 'a fix round is due: it goes back to the bot first');
   assert.equal(rules.checksDue({ ...row, looked: true }), null, 'once the round looked at the head, none is: its card goes out, saying what is wrong');
   const fine = { ...row, shots_detail: { ...row.shots_detail, shotResults: [{ id: 'invite-suggestions', status: 'ready' }] } };

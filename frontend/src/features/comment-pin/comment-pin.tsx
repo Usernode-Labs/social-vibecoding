@@ -128,6 +128,12 @@ const HEADER_BAND = 60;
 const KEYBOARD_SETTLE_MS = 800;
 /** How long the mode takes to leave: the picture growing back over the page (app.css `.comment-mode-leaving`). */
 const LEAVE_MS = 200;
+/**
+ * How long the bar waits for the first picture before it stands in its band
+ * without one. The sheet the mode was opened from has left by then
+ * (`overlaysGone`), and a picture drawn ahead has landed.
+ */
+const BAR_WAIT_MS = 600;
 /** Whether this screen is a phone: the same narrow-touch test the shell's
  *  keyboard handling uses. A narrow desktop window keeps the desktop flow. */
 function isPhone(): boolean {
@@ -815,6 +821,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   }, [host, takeViewShot]);
 
   useEffect(() => () => {
+    // A picture still drawing when the mode closes finds its key stale and
+    // lets go of its own URL (`show`).
+    viewShotKeys.current += 1;
     if (viewShotUrl.current) URL.revokeObjectURL(viewShotUrl.current);
   }, []);
 
@@ -833,10 +842,24 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // bare grey ground, and the picture shrinks into its frame once it lands
   // (#4665). `intro` below is the note about the mode; this is the shot's.
   const shotIntro = viewShot?.state === 'drawing' && !viewShot.url;
+  // A first picture that is slow to land (an app that does not answer holds
+  // it for APP_PICTURE_TIMEOUT_MS): the bar stops waiting for it, says the
+  // screenshot is being taken, and Form and Done work, so the wait is never
+  // a screen that shows nothing and takes no press (#5834).
+  const [introSlow, setIntroSlow] = useState(false);
+  useEffect(() => {
+    if (!shotIntro) return undefined;
+    const timer = setTimeout(() => setIntroSlow(true), BAR_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [shotIntro]);
+  const barWaits = shotIntro && !introSlow;
   // The word that names the picture, "Screenshot", leads the bar in the band
   // above it whenever the picture is on show: in the bar, never over the
   // picture, where it covered the page's own header (#4774).
   const shotLabel = !!inset && !shotIntro;
+  // Words lead the bar (that word, or "Taking a screenshot…" before it): on
+  // a phone the bar's glyphs step aside for them.
+  const barWords = shotLabel || shotIntro;
   // While cropping, the frame the crop happens over: the picture's own inset
   // frame when there is one, else the frame the picture would sit in — a
   // failed view keeps the mode over the live page, and the crop still works
@@ -1580,7 +1603,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   };
 
   const postedCount = posted.length;
-  const hint = draft
+  const hint = shotIntro ? t('devchat:commentPin.hint.taking') : draft
     ? (viewShot?.state === 'drawing' ? t('devchat:commentPin.hint.taking')
       : draft.active == null ? t('devchat:commentPin.hint.next') : t('devchat:commentPin.hint.writing'))
     : carry ? t('devchat:commentPin.hint.carry') : postedCount ? t('devchat:commentPin.hint.another') : t('devchat:commentPin.hint.start');
@@ -2415,8 +2438,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           !barFrame && !barPlace ? 'left-1/2 -translate-x-1/2' : '',
           // Not over the live page while the first picture draws: drawn there
           // it covered the page's own header for a few frames, then the
-          // picture shrank in under it. It fades in with the picture.
-          shotIntro ? 'pointer-events-none opacity-0' : 'comment-bar-in',
+          // picture shrank in under it. It fades in with the picture, or on
+          // its own once the picture has kept it waiting (`barWaits`), so
+          // the mode can always be left.
+          barWaits ? 'pointer-events-none opacity-0' : 'comment-bar-in',
         ].filter(Boolean).join(' ')}
         style={barFrame
           ? {
@@ -2523,10 +2548,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           </>
         ) : (
           <>
-            <span className={`${shotLabel ? 'hidden sm:inline-flex' : 'inline-flex'} shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300`}>
+            <span className={`${barWords ? 'hidden sm:inline-flex' : 'inline-flex'} shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300`}>
               <ChatIcon className="h-[18px] w-[18px]" />
             </span>
-            <span className="hidden min-w-0 truncate text-sm font-bold text-violet-700 sm:inline dark:text-violet-300">{hint}</span>
+            {/* A phone has room for the words only while the first picture
+                draws, which is when it needs them: the bar is all there is
+                to say the mode is on. */}
+            <span className={`${shotIntro ? 'inline ps-1.5 sm:ps-0' : 'hidden sm:inline'} min-w-0 truncate text-sm font-bold text-violet-700 dark:text-violet-300`}>{hint}</span>
             {postedCount ? (
               <span className="hidden shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-bold tabular-nums text-zinc-600 md:inline dark:bg-zinc-800 dark:text-zinc-300">
                 {t('devchat:commentPin.bar.posted', { count: postedCount })}
@@ -2542,7 +2570,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 onClick={() => { void toForm(); }}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full ps-2 pe-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
               >
-                <DescriptionIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
+                <DescriptionIcon className={`${barWords ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.form')}
               </button>
               <button
@@ -2552,7 +2580,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 title={t('devchat:commentPin.bar.commentTitle')}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white ps-2 pe-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
               >
-                <ChatIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
+                <ChatIcon className={`${barWords ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.comment')}
               </button>
             </span>

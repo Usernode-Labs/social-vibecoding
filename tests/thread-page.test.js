@@ -295,10 +295,19 @@ test('the bar\'s pill says where the request\'s work stands', () => {
   assert.equal(requestPill(layoutOf([]), readyToBuild).key, 'ready_to_build', 'ready, and waiting its turn: the server\'s Ready to build');
   assert.equal(requestPill(layoutOf([]), readyToBuild).spinner, undefined, 'a waiting build does not turn');
   assert.equal(requestPill(layoutOf([]), readyToBuild).tone, 'neutral', 'the plain tone of Ready for a vote');
+  // 19 Nov 2026, the one rule: a stored row's word wins over the thread's
+  // items. A change underway beside a row that says Ready to build is
+  // somebody else's work; the row the server stores for a person building
+  // it says so itself ("Building", their claim), and that is what is drawn.
   assert.equal(
     requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), readyToBuild).key,
+    'ready_to_build',
+    'the row\'s word, not the thread\'s',
+  );
+  assert.equal(
+    requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), withWords({ stage: 'building', line: { code: 'claimed', by: 'maya' }, whoseMove: 'builder' })).key,
     'building',
-    'a change underway still wins over a queued build',
+    'a person building it, as the row says',
   );
   assert.equal(requestPill(layoutOf([{ ...review, state: 'merged', liveAt: '2026-11-03T10:00:00.000Z' }]), null).tone, 'ok');
   assert.equal(message('project:topic.thread.pill.choosing'), 'Pick one');
@@ -350,7 +359,9 @@ test('#6139: a change that finished building reads as ready, with no spinner, an
   assert.equal(still.key, 'building', 'another change is still being built');
   assert.equal(still.spinner, true);
   assert.equal(requestPill(layoutOf([ready]), withWords({ stage: 'building' })).key, 'building', 'the bot is really building for it');
-  assert.equal(requestPill(layoutOf([ready]), withWords({ stage: 'reading', line: { code: 'queued' } })).key, 'ready', 'a build that has not started says nothing');
+  // A build that has not started never says Being built. With a stored row
+  // the word is the row's (the one rule): Homeroom bot is to read it first.
+  assert.equal(requestPill(layoutOf([ready]), withWords({ stage: 'reading', line: { code: 'queued' } })).key, 'reading', 'the row\'s word');
   assert.equal(requestPill(layoutOf([ready, { ...building, id: 53, status: 'promoted', state: 'review' }]), null).key, 'vote', 'one up for a vote still leads');
 
   const [row] = threadRows(payload([ready]), null);

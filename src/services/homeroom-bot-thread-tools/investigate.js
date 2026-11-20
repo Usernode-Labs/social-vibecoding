@@ -94,6 +94,8 @@ function lastRanAt(checkins) {
 const SKIP_LINES = Object.freeze({
   allowance: 'Skipped: your building time for the week is used up.',
   bot_budget: 'Skipped: Homeroom bot has used its own time for the week.',
+  // Review A2: an outage skips a check-in; it never counts as a failure.
+  credit: 'Skipped: Homeroom bot is out of building credit right now.',
 });
 
 // Its end, as the bot says it in the chat (none for a Stop: they did it).
@@ -196,6 +198,9 @@ async function checkIn(ctx, { pool, config, deps = {} }) {
     const row = await L.finishLook(pool, started.id, out);
     return {
       lookId: started.id, ok: !!out.ok, appName: app.name || app.slug, appSlug: app.slug,
+      // Whose failure a look that did not finish was (look-into.js
+      // `failure`): credit's or the platform's is held, not counted.
+      held: !out.ok && (out.failure === 'credit' || out.failure === 'platform') ? out.failure : null,
       summary: out.ok ? out.summary : null, line: out.ok ? out.line : clip(out.error || '', MAX_LINE_CHARS),
       answered: !!(out.ok && out.answered), worth: !!(out.ok && out.worth),
       costUsd: Number.isFinite(out.costUsd) ? out.costUsd : (row?.cost_usd != null ? Number(row.cost_usd) : null),
@@ -232,7 +237,13 @@ async function checkIn(ctx, { pool, config, deps = {} }) {
     });
     return sent?.messageId ?? null;
   });
-  return { ran: true, failed: !done.ok, answered: done.answered, worth: done.worth, costCents };
+  // Review A2: three failures in a row end an investigation. One that was
+  // OpenRouter's credit or the platform failing is no failure of its own: a
+  // few hours without credit used to end every running investigation.
+  return {
+    ran: true, failed: !done.ok && !done.held, ...(done.held ? { held: done.held } : {}),
+    answered: done.answered, worth: done.worth, costCents,
+  };
 }
 
 /** `investigation.card`: the card drawn from what the machine decided, with the row's check-ins and notes. */

@@ -39,6 +39,11 @@ const KINDS = Object.freeze({
   // paused until the balance read shows credit again
   // (services/openrouter-credit.js). The provider's own words are the why.
   CREDIT_OUT: 'credit_out',
+  // A bot turn that Homeroom or its provider failed under, past its retries
+  // (bot-turn-failure.js recordPlatformIncident): a reply, a checks fix, a
+  // takeover or an investigation that a provider error or a lost worker
+  // ended. { where, cause }: which turn, and the platform's own short word.
+  BOT_TURN_PLATFORM: 'bot_turn_platform',
 });
 
 // How far back the console looks, and how many it lists.

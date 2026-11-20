@@ -380,9 +380,15 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   const { Home, model, moreCount, sandbox } = makeHome();
   sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 1280px)' });
   Home._apps = mine(12);
-  // The column is Standard (WIP)'s: Standard keeps the tile at every width.
+  // The button is the kit's Home's (Standard (WIP), and the standard look since
+  // 20 Nov 2026): the brand look keeps the tile under 768px, where its search row
+  // waits to be pulled into view.
+  sandbox.Skin = { get: () => 'brand' };
   Home.render();
-  assert.equal(model().create.inCard, false, 'no card under Standard');
+  assert.equal(model().create.inCard, false, 'the tile stays on a phone under the brand look');
+  sandbox.Skin = { get: () => 'standard' };
+  Home.render();
+  assert.equal(model().create.inCard, true, 'the standard look has the button at every width');
   sandbox.Skin = { get: () => 'wip' };
   Home.render();
   const state = model();

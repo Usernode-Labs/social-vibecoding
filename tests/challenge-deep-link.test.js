@@ -611,10 +611,12 @@ test('per-viewer progress on the public row drives the rail, blocks included', (
 
 const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
 
-// The Semi design (2026-10-16): no card and no page says how long is left,
-// when it ends or when the scorer next counts (#3185's "next count" went with
-// the rest), whatever the payload carries.
-test('a card and its page tell no time, whatever the payload carries', () => {
+// The Semi design (2026-10-16): no card says how long is left or when it
+// ends, and neither does a page, whatever the payload carries. #6895 brought
+// back one time line, in plain words and only on the page: a challenge counted
+// on a schedule says when its progress was last counted and when the next
+// count is due.
+test('a card tells no time; the page tells only when progress is next counted (#6895)', () => {
   const { pane, context } = loadPane({ challenges: CH, eventId: 900500 });
   context.selectedEvent = () => ({ id: 900500, ends_at: inHours(71) });
   const timed = {
@@ -625,14 +627,79 @@ test('a card and its page tell no time, whatever the payload carries', () => {
   };
   const card = pane.cardView(timed, 0);
   for (const key of ['deadline', 'cadence']) assert.equal(key in card, false, `no ${key} on the card`);
+  assert.doesNotMatch(JSON.stringify(card), /left|next count|counting now|last count|ends /,
+    'the card stays one short line');
   pane._detailChallenge = timed;
   const page = pane.detailView();
   for (const key of ['deadline', 'ends', 'cadence', 'eyebrow']) assert.equal(key in page, false, `no ${key} on the page`);
+  assert.match(page.scoringNote,
+    /^Progress is counted every 15 minutes\. Last counted 1 minute ago, next count in about 14 minutes\.$/,
+    'the page’s one time line is the scheduled count’s, in plain words');
   pane._detailChallenge = null;
-  assert.doesNotMatch(JSON.stringify(card) + JSON.stringify(page), /left|next count|counting now|last count|ends /);
   for (const gone of ['_timeLeft', '_deadlineOf', '_cadenceOf', '_endsText', '_weekEnd']) {
     assert.equal(pane[gone], undefined, `${gone} is gone`);
   }
+});
+
+// #6895: the scheduled-count line, pinned to a fixed clock. Only a challenge
+// something counts on a schedule gets one, and only while it is open.
+test('#6895: the scheduled-count line says when progress was last counted and when the next count is due', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const MIN = 60000;
+  const now = Date.parse('2026-11-20T12:00:00.000Z');
+  const scheduled = (interval, msAgo, extra = {}) => ({
+    id: 900500, completed: false, card_preview: { goal: 'Try Three Apps' },
+    scoring: { interval_minutes: interval, last_scored_at: new Date(now - msAgo).toISOString() },
+    ...extra,
+  });
+
+  assert.equal(pane._scoringNoteOf(scheduled(10, 4 * MIN), now),
+    'Progress is counted every 10 minutes. Last counted 4 minutes ago, next count in about 6 minutes.');
+  assert.equal(pane._scoringNoteOf(scheduled(10, 20000), now),
+    'Progress is counted every 10 minutes. Last counted just now, next count in about 10 minutes.',
+    'a count less than a minute ago reads as just now');
+  assert.equal(pane._scoringNoteOf(scheduled(10, 14 * MIN), now),
+    'Progress is counted every 10 minutes. Last counted 14 minutes ago. '
+    + 'The next count is due now, so recent progress may not show yet.',
+    'due or overdue: it says so instead of a next time');
+  assert.equal(pane._scoringNoteOf(scheduled(120, 5 * MIN), now),
+    'Progress is counted every 2 hours. Last counted 5 minutes ago, next count in about 2 hours.',
+    'an interval of hours reads in hours');
+  assert.equal(pane._scoringNoteOf(scheduled(2880, 5 * MIN), now),
+    'Progress is counted every 2 days. Last counted 5 minutes ago, next count in about 2 days.',
+    'and one of days in days');
+  assert.equal(pane._scoringNoteOf(scheduled(1, MIN), now),
+    'Progress is counted every 1 minute. Last counted 1 minute ago. '
+    + 'The next count is due now, so recent progress may not show yet.',
+    'a one-minute schedule due at the minute');
+  assert.equal(pane._scoringNoteOf({ ...scheduled(10, MIN), completed: true }, now), null,
+    'a closed challenge is never counted again, so no line');
+  assert.equal(pane._scoringNoteOf(
+    { ...scheduled(10, MIN), effective: { schedule_end: new Date(Date.now() - 60000).toISOString() } }, now), null,
+    'nor is one whose schedule window has passed');
+
+  const NONE = [
+    [{ id: 1, completed: false }, 'no scoring at all: counted on the spot, or an older payload'],
+    [{ id: 1, completed: false, scoring: null }, 'the server sends null'],
+    [scheduled(0, MIN), 'a zero interval counts nothing'],
+    [scheduled(-5, MIN), 'nor does a negative one'],
+    [{ id: 1, completed: false, scoring: { interval_minutes: 'x', last_scored_at: new Date(now).toISOString() } },
+      'a non-numeric interval'],
+    [{ id: 1, completed: false, scoring: { interval_minutes: 10, last_scored_at: 'not a date' } },
+      'an invalid last-scored time'],
+    [{ id: 1, completed: false, scoring: { interval_minutes: 10 } }, 'no last-scored time: never ran'],
+  ];
+  for (const [c, why] of NONE) assert.equal(pane._scoringNoteOf(c, now), null, why);
+
+  // A clock behind the server's (skew) reads as just now, never as a negative time.
+  assert.match(pane._scoringNoteOf(scheduled(10, -3 * MIN), now), /Last counted just now/);
+
+  pane._detailChallenge = scheduled(10, 4 * MIN);
+  assert.equal(pane.detailView().scoringNote, pane._scoringNoteOf(scheduled(10, 4 * MIN)),
+    'the page carries the helper’s line');
+  pane._detailChallenge = CH[0];
+  assert.equal(pane.detailView().scoringNote, null);
+  pane._detailChallenge = null;
 });
 
 // The template's illustration rides both descriptors as a slug of the

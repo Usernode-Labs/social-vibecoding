@@ -82,6 +82,25 @@ function StatusLine({ id, status, okClass }: { id: string; status: Status | null
 // as its placeholder, and "Use MAX_APPS" clears a stored value. When the
 // deploy has switched the cap off (MAX_APPS=0) there is nothing to set, and
 // the card says so instead of offering a field the server would refuse.
+// #6901: when the run of refusals began, in the viewer's own time zone
+// ("13 Nov, 17:31"), beside the count Admin → Limits shows.
+function turnedAwayTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const day = date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${day}, ${time}`;
+}
+
+// The turned-away line's figures, or null when nobody has been refused since
+// the server last had room (nothing is drawn then).
+export function turnedAwayLine(data: any): { count: number; when: string } | null {
+  const count = Number(data && data.turnedAway) || 0;
+  if (count <= 0 || !data.turnedAwaySince) return null;
+  const when = turnedAwayTime(data.turnedAwaySince);
+  return when ? { count, when } : null;
+}
+
 function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   const console_ = () => (window as any).AdminConsole;
   const [data, setData] = useState<any>(null);
@@ -136,6 +155,7 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   };
 
   const off = data && data.source === 'disabled';
+  const turnedAway = turnedAwayLine(data);
   const usage = !data ? 'Loading…'
     : off ? `${data.used} live apps · no limit`
       : `${data.used} of ${data.limit} live apps`;
@@ -156,12 +176,18 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
         <h2 className={AdminUI.cardTitle}>App limit</h2>
         <span id="admin-app-limit-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
       </div>
+      {turnedAway ? (
+        <p id="admin-app-limit-turned-away"
+          className={`${AdminUI.muted} mb-3 font-semibold text-amber-700 dark:text-amber-400`}>
+          {turnedAway.count} {turnedAway.count === 1 ? 'person' : 'people'} turned away since {turnedAway.when}
+        </p>
+      ) : null}
       <p className={`${AdminUI.muted} mb-3`}>
         How many live apps the whole server allows. At the limit, everyone but full admins is
         told the server is full when they create or fork an app. Apps that failed to build
         do not count. Full admins are notified at {data ? data.warnPercent : 80}% of the limit
-        and again when it is reached. A change applies to every server within ten seconds,
-        with no deploy.
+        and again when it is reached. While it is full, they are also told when someone is
+        turned away. A change applies to every server within ten seconds, with no deploy.
       </p>
       {off ? null : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">

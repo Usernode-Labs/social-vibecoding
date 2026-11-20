@@ -554,6 +554,7 @@ const ADDED_IDS = {
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
   // ── 1 Nov 2026 (threads, one loop: phase B): plan it with the bot ───────
   'feedback-sent-work': 'Work on it with Homeroom bot, the quiet button under Done on the filed-request confirmation: a thread only the person can see, about the request just filed, on the Homeroom bot tab (lib/thread-about.ts); the bot waits for their plan. Ships hidden; the controller shows it when the post says where the request went (`filed`).',
+  'feedback-sent-request': '#6897: Open this request, the quiet button under the other buttons of the filed-request confirmation: opens the request\'s own page, where its status, votes and replies are. Ships hidden; the controller shows it when the post says where the request went (`filed`), so the private request kept only for you, which has no page on the board, never shows it.',
   'feedback-first-work': 'The same Work on it with Homeroom bot on the first-request confirmation, above Done. Ships hidden; shown where the request has a board.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
   'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
@@ -1039,7 +1040,7 @@ const ADDED_IDS = {
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
   'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
-  'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
+  'home-row': 'The row under Pinned projects that holds Recent threads and Challenges. The standard look\'s Home is the kit\'s since 20 Nov 2026, so the prerendered document draws it.',
   // #home-discover-section (area 2) left this map when One Home (#6361) took
   // Discover's lane off Home; #home-join-section, below #home-challenges-section,
   // is the directory there now.

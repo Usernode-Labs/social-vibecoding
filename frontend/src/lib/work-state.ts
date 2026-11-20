@@ -10,7 +10,9 @@
  * sent, and a `work_state` push carries the whole standing when it moves.
  * Nothing here decides a stage or picks words: the mapping from a stage, a
  * why, a reason and a line to its phrase exists once, on the server
- * (work-state.js phrasesOf).
+ * (work-state.js phrasesOf), and the vocabulary it maps (the stages, whys,
+ * reasons and line codes, and a stage's own word) is the one table both
+ * sides read (./work-stages.ts, src/services/work-stages.json).
  *
  * Ten stages: reading, planning, waiting_for_you (always with a why),
  * building, checking, up_for_vote, going_live, live, stopped (with a
@@ -18,15 +20,37 @@
  * around its words: its change (checks, votes, whether its vote is open), what
  * it asks of people (a question, a plan, a vote to close, ...) and what the
  * bot last said about it.
+ *
+ * THE RULE (19 Nov 2026), for every surface that draws an item:
+ *
+ *   The stored row gives the stage word and the tone. Live gates (the vote
+ *   count, the tests' figure, the merge card) may add detail under it. They
+ *   never change the word.
+ *
+ * So a pill, a foot, a timeline's last step, a chip and a card read the
+ * row's `words` for what they call the stage and its stage for how they tint
+ * it, and what the page knows more freshly (how many said yes, what the
+ * merge waits on, who can vote) goes on the line under that word. A surface
+ * that words a stage from its own reading of the live facts is the bug this
+ * rule names: it is how one screen said "Vote" while another said "Taking
+ * screenshots". Two things stay the live facts': what a press does (a
+ * button never depends on a row a few seconds old), and a change that has
+ * since merged or closed, whose own status is newer than any row.
  */
 
-export type Stage =
-  | 'reading' | 'planning' | 'waiting_for_you' | 'building' | 'checking'
-  | 'up_for_vote' | 'going_live' | 'live' | 'stopped' | 'closed';
+import { isStage, stagePhrase, STAGES, type KnownReason, type KnownWhy, type Stage } from './work-stages';
 
-export type Why = 'question' | 'plan' | 'decide' | 'already_works' | 'needs_detail';
+export { isStage, STAGES, type Stage };
 
-export type Reason = 'build_failed' | 'fix_stopped' | 'look_failed' | 'change_closed' | 'stalled';
+/**
+ * Why it waits for its requester, and why it stopped. The ones this build
+ * knows are the table's (./work-stages.ts); a newer server may send one it
+ * does not, and that code is kept as it came (normalizeWorkState), since the
+ * row's `words` already say it.
+ */
+export type Why = KnownWhy | (string & {});
+
+export type Reason = KnownReason | (string & {});
 
 export interface WorkLine {
   code: string;
@@ -148,40 +172,16 @@ export interface Standing extends WorkState {
   myVote?: 'yes' | 'no' | null;
 }
 
-export const STAGES: readonly Stage[] = Object.freeze([
-  'reading', 'planning', 'waiting_for_you', 'building', 'checking',
-  'up_for_vote', 'going_live', 'live', 'stopped', 'closed',
-]);
-
-// A payload with no words (an older server, a copy kept from before) says
-// only its plain stage word. Each id is written whole, so the language
-// inventory can find it; this is no mapping of whys, reasons or lines.
-const PLAIN_STAGE: Record<Stage, string> = {
-  reading: 'core:work.stage.reading',
-  planning: 'core:work.stage.planning',
-  waiting_for_you: 'core:work.stage.waitingForYou',
-  building: 'core:work.stage.building',
-  checking: 'core:work.stage.checking',
-  up_for_vote: 'core:work.stage.upForVote',
-  going_live: 'core:work.stage.goingLive',
-  live: 'core:work.stage.live',
-  stopped: 'core:work.stage.stopped',
-  closed: 'core:work.stage.closed',
-};
-
-/** Pure: whether a value is a stage this build knows. */
-export function isStage(value: unknown): value is Stage {
-  return typeof value === 'string' && (STAGES as readonly string[]).includes(value);
-}
-
 /**
  * Pure: the stage's words, as the server chose them: the requester's
- * (`yours`) or anyone else's. With no words, the plain stage word.
+ * (`yours`) or anyone else's. With no words (an older server, a copy kept
+ * from before), the stage's own word from the table both sides read; this
+ * is no mapping of whys, reasons or lines.
  */
 export function stageWords(state: WorkState, { yours = true }: { yours?: boolean } = {}): Phrase {
   const words = state.words;
   const said = words ? (yours ? words.stage : words.stageOthers) : null;
-  return said || { id: PLAIN_STAGE[state.stage] || PLAIN_STAGE.reading };
+  return said || { id: stagePhrase(state.stage) };
 }
 
 /** Pure: the second line's words, as the server chose them, or null. */
@@ -217,8 +217,6 @@ export function waitsForPlan(state: WorkState | null | undefined): boolean {
   return !!state && state.stage === 'waiting_for_you' && state.why === 'plan';
 }
 
-const WHYS: ReadonlySet<string> = new Set(['question', 'plan', 'decide', 'already_works', 'needs_detail']);
-const REASONS: ReadonlySet<string> = new Set(['build_failed', 'fix_stopped', 'look_failed', 'change_closed', 'stalled']);
 const MOVES: ReadonlySet<string> = new Set(['bot', 'requester', 'group', 'builder']);
 const CODE = /^[a-z_]{1,40}$/;
 const PHRASE_ID = /^[a-z][A-Za-z-]*:[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+$/;
@@ -242,7 +240,8 @@ function phraseOf(input: unknown): Phrase | null {
   return Object.keys(values).length ? { id: text(row.id), values } : { id: text(row.id) };
 }
 
-function wordsOf(input: unknown): WorkWords | null {
+/** Pure: a row's words as the server sent them (phrasesOf), or null; also read by a card that carries them. */
+export function wordsOf(input: unknown): WorkWords | null {
   const row = recordOf(input);
   const stage = row ? phraseOf(row.stage) : null;
   if (!row || !stage) return null;
@@ -313,6 +312,13 @@ function saidOf(input: unknown): StandingSaid | null {
 /**
  * Pure: a standing as the server sent it, field by field, or null for a
  * stage this client does not know (drawn nowhere rather than guessed at).
+ *
+ * A `why` or a `reason` this build has no name for is kept, as long as it is
+ * shaped like a code. It used to be dropped, and with it went what the row
+ * meant: a stop for a reason added on the server read here as a stop with no
+ * reason at all, so a screen that looks at the code (the plan card, the bot
+ * tab's pill) took it for a different state while the row's own words, which
+ * the server sends with it, said the new one.
  */
 export function normalizeWorkState(input: unknown): WorkState | null {
   const row = recordOf(input);
@@ -338,8 +344,8 @@ export function normalizeWorkState(input: unknown): WorkState | null {
   const said = saidOf(row.said);
   return {
     stage: row.stage,
-    why: WHYS.has(text(row.why)) ? text(row.why) as Why : null,
-    reason: REASONS.has(text(row.reason)) ? text(row.reason) as Reason : null,
+    why: CODE.test(text(row.why)) ? text(row.why) : null,
+    reason: CODE.test(text(row.reason)) ? text(row.reason) : null,
     line,
     whoseMove: MOVES.has(text(row.whoseMove)) ? text(row.whoseMove) as WorkState['whoseMove'] : null,
     since: text(row.since) || null,

@@ -59,7 +59,7 @@ function hasNow(design) {
  * once this turn is saved (design.latest, plus one for a screen drawn now).
  */
 function compareCard({ design, args = {}, latest = null }) {
-  if (!design?.rootId) return { error: 'There is no screen to compare yet: draw it with write_screen first.' };
+  if (!design?.rootId) return { error: 'There is no screen to compare yet: draw it with write_artifact first.' };
   const newest = Number(latest ?? design.latest) || 0;
   const asked = Array.isArray(args.versions) ? args.versions : [];
   const labels = Array.isArray(args.labels) ? args.labels : [];

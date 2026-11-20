@@ -141,6 +141,11 @@ async function migrate(config) {
   // nearly full, each saying how much is used and what the limit is. Staging
   // runs no sweep against a growing database, so they are seeded.
   await seedStagingStorageNotices(pool);
+  // #6901's shots: while the server is full, Admin → Limits says how many
+  // people were turned away, and the bell has a refusal notice. A fresh
+  // staging copy has no run of refusals at all, and staging notifies nobody,
+  // so both are seeded with obviously fake people.
+  await seedStagingLimitRefusals(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -448,6 +453,8 @@ async function migrate(config) {
   await moveMainChatToThreads(pool);
   await moveOldChatsToThreads(pool);
   await backfillPlanRows(pool);
+  // Artifacts, stage 0: a plan an older build posted during a rollout names its design.
+  await require('../services/plan-design-source').backfill(pool);
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
@@ -2868,6 +2875,79 @@ async function seedStagingFoldedLiveNotifications(pool) {
 // for the same project, so a real bell holds one per project. The one at
 // half full has only the early notice, and the one nearly full has only the
 // warning (a sweep that jumped past both lines sends the highest alone).
+// #6901's shots: the run of refusals Admin → Limits counts, and the bell's
+// refusal notices. Obviously fake people, staging only, idempotent.
+async function seedStagingLimitRefusals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = (await pool.query(
+      `SELECT id FROM users
+        WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'staging-demo-user')
+        ORDER BY id`
+    )).rows;
+    if (!people.length) return;
+    const refusals = people.slice(0, 3);
+    await pool.query(
+      `INSERT INTO platform_limit_alerts
+         (limit_key, level, used, cap, measured_at, refusals_since, refusals_notified_at)
+       VALUES ('apps', 'full', 50, 50, NOW(), NOW() - interval '4 hours', NOW() - interval '4 hours')
+       ON CONFLICT (limit_key) DO UPDATE
+         SET refusals_since = COALESCE(platform_limit_alerts.refusals_since, NOW() - interval '4 hours'),
+             refusals_notified_at = COALESCE(platform_limit_alerts.refusals_notified_at, NOW() - interval '4 hours')`
+    );
+    for (const person of refusals) {
+      await pool.query(
+        `INSERT INTO platform_limit_refusals (limit_key, user_id, day, refused_at)
+         VALUES ('apps', $1, (NOW() AT TIME ZONE 'UTC')::date, NOW() - interval '2 hours')
+         ON CONFLICT DO NOTHING`,
+        [person.id]
+      );
+    }
+    // The bell's two notices, as the code writes them: the first refusal of
+    // the run, then a count a few hours later. The shots pair's own full admin
+    // (services/shots-fixtures.js) is inserted AFTER boot, so a seed here
+    // cannot write to it by lookup. On a shots copy only, make the row it will
+    // claim, unable to sign in and not an admin; installFullAdminFixture then
+    // promotes it in place. SHOTS_PHONE_TEST_CODE is set on the self app's
+    // pair and never on production or an ordinary staging preview, so no
+    // other copy grows this account. An ordinary staging copy still seeds the
+    // notices for the administrators it has, which is what the Admin → Limits
+    // card reads.
+    const shotsCopy = !!require('../config').shotsPhoneTestCodeFrom(process.env).code;
+    let fixtureUsername = null;
+    if (shotsCopy) {
+      const shotsFixtures = require('../services/shots-fixtures');
+      fixtureUsername = shotsFixtures.FULL_ADMIN_USERNAME;
+      await pool.query(
+        `INSERT INTO users (id, username, password, is_admin, admin_readonly,
+                            can_create_apps, has_platform_access)
+         VALUES ($1, $2, '__shots_not_a_login__', FALSE, FALSE, FALSE, FALSE)
+         ON CONFLICT DO NOTHING`,
+        [shotsFixtures.FULL_ADMIN_USER_ID, fixtureUsername]
+      );
+    }
+    const notices = [
+      { detail: 'apps_away:1:50:0', minutesAgo: 4 * 60 },
+      { detail: `apps_away:${refusals.length}:50:230`, minutesAgo: 10 },
+    ];
+    for (const notice of notices) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, source_user_id, kind, detail, created_at)
+         SELECT u.id, NULL, 'platform_limit', $1::varchar(32), NOW() - make_interval(mins => $2::int)
+           FROM users u
+          WHERE ((u.is_admin = TRUE AND u.admin_readonly = FALSE) OR u.username = $3)
+            AND NOT EXISTS (
+              SELECT 1 FROM notifications n
+               WHERE n.user_id = u.id AND n.kind = 'platform_limit' AND n.detail = $1::varchar(32)
+            )`,
+        [notice.detail, notice.minutesAgo, fixtureUsername]
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging limit refusals seed failed', { message: err.message });
+  }
+}
+
 async function seedStagingStorageNotices(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -3534,7 +3614,7 @@ async function seedStagingBotReportReply(pool) {
       rootId = root.rows[0].id;
       const filed = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Filed as #6564 on Homeroom''s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
+         VALUES ($1, $2, 'Filed as #6564 in Homeroom''s Workshop, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
@@ -3545,7 +3625,7 @@ async function seedStagingBotReportReply(pool) {
       );
       const again = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Already filed as #6564 on Homeroom''s requests board. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
+         VALUES ($1, $2, 'Already filed as #6564 in Homeroom''s Workshop. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
@@ -10772,7 +10852,7 @@ async function seedSizedCopies(pool, file) {
   for (const name of ['thumb', 'screen']) {
     const copy = copies[name];
     if (!copy) continue;
-    await withStagingMedia(pool, copy.data, 'image/webp', (tx, m) => Promise.resolve(m));
+    await withStagingMedia(pool, copy.data, copy.contentType || 'image/webp', (tx, m) => Promise.resolve(m));
     keys[name] = copy;
   }
   if (!keys.thumb && !keys.screen && !copies.placeholder) return;
@@ -10780,14 +10860,14 @@ async function seedSizedCopies(pool, file) {
     `UPDATE shot_artifacts
         SET thumb_object_key = $2, thumb_width = $3, thumb_height = $4, thumb_bytes = $5, thumb_sha256 = $6,
             screen_object_key = $7, screen_width = $8, screen_height = $9, screen_bytes = $10, screen_sha256 = $11,
-            placeholder = $12
+            placeholder = $12, thumb_content_type = $13, screen_content_type = $14
       WHERE id = $1`,
     [file.id,
       keys.thumb ? media.objectKey(keys.thumb.data) : null, keys.thumb?.width ?? null, keys.thumb?.height ?? null,
       keys.thumb?.bytes ?? null, keys.thumb?.sha256 ?? null,
       keys.screen ? media.objectKey(keys.screen.data) : null, keys.screen?.width ?? null, keys.screen?.height ?? null,
       keys.screen?.bytes ?? null, keys.screen?.sha256 ?? null,
-      copies.placeholder]
+      copies.placeholder, keys.thumb?.contentType ?? null, keys.screen?.contentType ?? null]
   );
 }
 
@@ -15920,18 +16000,27 @@ async function seedStagingInviteChallengeStatuses(pool) {
     );
     // The rule it is scored by: three joined people, 250 points each, on the
     // event's running window (no schedule of its own). The invite status
-    // reader resolves the same rule row.
+    // reader resolves the same rule row. It also carries the scheduled
+    // count's times (#6895), which is what a challenge's page reads to say
+    // when progress was last counted and when the next count is due: an
+    // interval of ten minutes and a count four minutes ago, so a fresh
+    // preview shows the line without waiting for the scorer's first beat.
+    // The timestamps are filled only when absent, so a reboot (or a real
+    // pass) never rewinds them.
     await pool.query(
       `INSERT INTO challenge_scoring_rules
          (id, name, measure, challenge_template_id, challenge_id, target,
-          points, enabled, notes, created_at, updated_at)
+          points, interval_minutes, last_scored_at, enabled, notes, created_at, updated_at)
        VALUES (900900, 'Staging demo: invite three participants',
-               'INVITES_JOINED', NULL, 900730, 3, 250, TRUE,
+               'INVITES_JOINED', NULL, 900730, 3, 250, 10,
+               NOW() - INTERVAL '4 minutes', TRUE,
                'Staging demo: backs the invite challenge''s per-person list.',
                NOW(), NOW())
        ON CONFLICT (id) DO UPDATE SET
          challenge_id = EXCLUDED.challenge_id, measure = EXCLUDED.measure,
-         target = EXCLUDED.target, points = EXCLUDED.points, enabled = TRUE`
+         target = EXCLUDED.target, points = EXCLUDED.points, enabled = TRUE,
+         interval_minutes = COALESCE(challenge_scoring_rules.interval_minutes, EXCLUDED.interval_minutes),
+         last_scored_at = COALESCE(challenge_scoring_rules.last_scored_at, EXCLUDED.last_scored_at)`
     );
     const { rows: viewerRows } = await pool.query(
       "SELECT id FROM users WHERE username = 'usernode-capture'");

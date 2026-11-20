@@ -282,6 +282,9 @@ export const INCIDENT_KIND: Record<string, string> = {
   // The leaked-link guard (services/community-invites.js GUARD).
   invite_link_busy: 'Invite link brought in many people',
   invite_link_paused: 'Invite link paused',
+  // services/openrouter-credit.js noteOutage, bot-turn-failure.js.
+  credit_out: 'Building credit ran out',
+  bot_turn_platform: 'Bot turn failed on Homeroom\'s side',
 };
 
 export const INCIDENT_OUTCOME: Record<string, string> = {

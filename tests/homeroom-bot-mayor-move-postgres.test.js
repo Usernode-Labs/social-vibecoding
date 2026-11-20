@@ -399,7 +399,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
   // bot's note in the request's thread carries it instead (homeroom-bot.js:
   // a platform note's thread offer is `move_request` for its requester), and
   // a tap there moves it as the DM's did (homeroom-bot-move.js
-  // moveToHomeroom).
+  // moveRequest).
   await t.test('a triage that says it is about Homeroom offers the move under its note in the request\'s thread', async () => {
     await request(13, { title: 'Invite message wording' });
     await pool.query(

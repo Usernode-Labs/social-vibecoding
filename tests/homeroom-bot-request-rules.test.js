@@ -89,15 +89,22 @@ test('#6766: a service that needs a key is ready, not a person', () => {
 test('#6766, #6869: operator work is the project\'s own setup, and names who can act', () => {
   const md = read('src/prompts/homeroom-bot-triage.md');
   const service = read('src/services/homeroom-bot.js');
-  // The operator-work example is work outside the app, such as a DNS or
-  // infrastructure change; a key the app declares in dapp.json is not that
-  // work (the `ready` rule says so).
-  assert.match(md, /`operator_work` \(work outside this app, such as a DNS or infrastructure change/);
-  assert.match(md, /a key the app declares in `dapp\.json` `secrets` is not operator work/);
+  // Review C (19 Nov 2026): the two lines contradicted each other (a
+  // declared key "is not operator work", then a secret's value as the
+  // example of it). One statement now: operator work is the project's own
+  // setup outside its code, a secret's VALUE among it; DECLARING a key is a
+  // code change (the `ready` rule says so).
+  assert.match(md, /`operator_work` \(the project's own setup outside its code: a secret's value, an outside account, a domain or DNS change; declaring a key in `dapp\.json` `secrets` is a code change, not operator work\)/);
+  assert.equal(md.match(/a secret's value/g).length, 1, 'said once');
   // #6869: the project's own setup (a secret's value, an outside account, a
   // domain) is operator work only when no code change does it, and the note
   // names who can act: the control and who has it, never a coding agent.
-  assert.match(md, /`operator_work` is only the project's own setup outside its code/);
+  assert.match(md, /`operator_work` is only that setup, never work no code change can do: it goes with `who_acts`/);
+  // And `platform` is set by where the cause is: true with a smaller
+  // app-side part, omitted when the platform is the smaller part.
+  assert.match(md, /set it true even with a smaller app-side part, which goes in `first_step`/);
+  assert.match(md, /Omit it otherwise, and when the platform is only the smaller part\./);
+  assert.doesNotMatch(md, /when only part of the request is about the platform/);
   assert.match(md, /`who_acts`: at most 100 characters naming who and where/);
   assert.match(md, /an admin of this project, in Settings › Secrets/);
   assert.match(md, /Never send a project's owner to a coding agent/);

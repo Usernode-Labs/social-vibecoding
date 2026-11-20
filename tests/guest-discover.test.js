@@ -401,7 +401,10 @@ const MANY = Array.from({ length: 20 }, (_, i) => ({
 }));
 
 test('Featured is the first strip of Communities to join, signed in or out: the chosen kind of it, none while searching, and the rest under a More communities heading', () => {
-  const { CommunitiesToJoin } = loadTsx(JOIN);
+  // As every drawing but the kit's signed-in Home has it (the visitor's landing,
+  // the Communities page, "Paper, simplified"): the standard look's own Home
+  // names Featured its own way since 20 Nov 2026 (lib/skin.ts isKitHome).
+  const { CommunitiesToJoin } = loadTsx(JOIN, { stubs: { '../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } });
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
     apps: APPS, exclude: new Set(), signedIn: true, query: '', ...over,

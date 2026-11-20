@@ -2347,6 +2347,38 @@ function parsePlatformLimitDetail(detail) {
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
 }
 
+// #6901: services/platform-limit-alerts.js refusalToken():
+// "apps_away:<people>:<cap>:<ago>", ago in minutes from the run's start (0
+// means someone was just turned away).
+const PLATFORM_REFUSAL_DETAIL_RE = /^apps_away:(\d{1,5}):(\d{1,7}):(\d{1,4})$/;
+
+function parsePlatformRefusalDetail(detail) {
+  const m = PLATFORM_REFUSAL_DETAIL_RE.exec(String(detail || ''));
+  return m ? { people: Number(m[1]), cap: Number(m[2]), agoMinutes: Number(m[3]) } : null;
+}
+
+// #6901: the clock time a run of refusals began, in the reader's own zone and
+// language: "9:00 AM", with the day in front when it was not today ("13 Nov,
+// 9:00 AM"), the shape lib/timestamp.ts's messageStamp prints. Spelled here
+// rather than importing that second helper: the bell's suites evaluate this
+// file as a classic script in a vm and strip its one import, so a second one
+// would be left in the source they run. The zone is the account's pick,
+// published on PlatformI18n (#6479); the vm harness has none, which is the
+// device's zone, the same fallback as Auto.
+function clockStamp(at) {
+  if (!at || Number.isNaN(at.getTime())) return '';
+  const zone = typeof PlatformI18n.timeZone === 'function' ? PlatformI18n.timeZone() : undefined;
+  const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
+  const inZone = (options) => (zone ? { ...options, timeZone: zone } : options);
+  const time = new Intl.DateTimeFormat(locale, inZone({ hour: 'numeric', minute: '2-digit' })).format(at);
+  const day = (date) => new Intl.DateTimeFormat(locale,
+    inZone({ year: 'numeric', month: 'numeric', day: 'numeric' })).format(date);
+  if (day(at) === day(new Date())) return time;
+  const date = new Intl.DateTimeFormat(locale,
+    inZone({ month: 'short', day: 'numeric' })).format(at);
+  return `${date}, ${time}`;
+}
+
 // services/platform-incident-alerts.js tokens (#4296): "digest:<total>:<kind>=<n>,..."
 // (the previous UTC day, per kind) or "hour:<kind>:<n>" (one kind past its
 // hourly line).
@@ -3290,6 +3322,27 @@ function rowWords(n) {
   // two kinds above. `detail` is "<limit>_<level>:<used>:<cap>"; a token this
   // build cannot read still says which kind of alert it is.
   if (n.kind === 'platform_limit') {
+    // #6901: somebody was turned away at the app limit, told at once for the
+    // first and then as a count every few hours. ago is minutes back from
+    // the row's own stamp; 0 is the "just now" notice.
+    const refusal = parsePlatformRefusalDetail(n.detail);
+    if (refusal) {
+      const at = new Date(new Date(n.createdAt).getTime() - refusal.agoMinutes * 60000);
+      const since = clockStamp(at);
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F6A8}',
+        label: refusal.agoMinutes === 0
+          ? t('notifications:row.limit.appsAway.just.label')
+          : t('notifications:row.limit.appsAway.count.label'),
+        // One message each: the figures, strong, then what follows from them.
+        segments: refusal.agoMinutes === 0
+          ? messageSegments('notifications:row.limit.appsAway.just.body', { count: refusal.cap })
+          : messageSegments('notifications:row.limit.appsAway.count.body', { count: refusal.people, time: since }),
+      };
+    }
     const limit = parsePlatformLimitDetail(n.detail);
     if (!limit) {
       return { ...base, appLine: t('notifications:row.source.admin'), wrap: true, icon: '\u26A0\uFE0F',

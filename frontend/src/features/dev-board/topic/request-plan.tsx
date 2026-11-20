@@ -26,6 +26,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { changeHref } from '../../../lib/change-href';
+import { WAITING_LINES } from '../../../lib/work-stages';
 import { PlanCardView, type PlanCardState } from '../../messages/bot-plan-view';
 import { WORK_CHANGED_EVENT } from '../../messages/bot-shared';
 import { PlanCrops } from '../../messages/plan-crops';
@@ -130,17 +131,12 @@ export function planWorkLineOf(plan: RequestBotPlan): Array<{ id: string; values
   const words = plan.state !== 'waiting' ? plan.work?.words : null;
   if (!words) return null;
   // Under way (reading, planning, building, starting, reviewing): the card's
-  // own "Building it" says that. Only a wait has words of its own here.
-  if (plan.state === 'building' && !PLAN_WAITS.has(plan.work?.line?.code || '')) return null;
+  // own "Building it" says that. Only a wait has words of its own here: the
+  // row's second lines that say the bot waits rather than works, the table's
+  // (work-stages.json `waits`, lib/work-stages.ts WAITING_LINES).
+  if (plan.state === 'building' && !WAITING_LINES.has(plan.work?.line?.code || '')) return null;
   return [words.stage, ...(words.line ? [words.line] : [])];
 }
-
-// The row's second lines that say a pressed plan's build waits rather than
-// runs (services/work-state.js WAITING_LINES).
-const PLAN_WAITS: ReadonlySet<string> = new Set([
-  'queued', 'held_builds', 'held_waiting', 'credit_wait', 'retry_plan', 'update_queued', 'claimed',
-  'planning_with_you', 'waiting', 'on_hold', 'cooldown', 'first_version_wait',
-]);
 
 /** Pure: the card's state, from what the plan waits for. */
 export function planCardState(plan: RequestBotPlan): PlanCardState {

@@ -416,6 +416,10 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       [app.id, first.id],
     );
     // The bot's change machine decided it is ready (src/workflow/bot-change/): its card.
+    // Review A3: "ready" is the change's stored work state, which the
+    // workflow's hook stores first (services/work-state.js), so it is stored here.
+    const ws = require('../src/services/work-state');
+    await ws.pushesOf(pool, await ws.refresh(pool, [{ sessionId: first.id }]));
     const { rows: [{ approval_epoch: epoch }] } = await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [first.id]);
     await dm.tellReady(pool, first.id, { epoch, deps: { bot, domain: 'app.example.test' } });
     const { rows: [sent] } = await pool.query(
