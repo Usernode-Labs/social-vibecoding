@@ -21,6 +21,18 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 // Tailwind v4 changes utility semantics and would silently restyle the shell,
 // which is exactly what step 1 must not do.
 export default defineConfig({
+  // Pin the project root to this directory and never copy a public folder into
+  // the build output. Vite's `root` defaults to `process.cwd()` and its
+  // `publicDir` to `<root>/public`, which it copies into `outDir` on a client
+  // build. The usual build runs Vite with the frontend directory as its cwd,
+  // and there is no `frontend/public`, so nothing was copied. A Vite run
+  // started from the repository root (PR 6917, 20 Nov 2026) took the
+  // repository's own `public/` as its publicDir and copied it into
+  // `public/shell/`, 127 files committed by the worker's `git add -A`. Pinned
+  // and turned off, so the copy cannot depend on the caller's working
+  // directory.
+  root: dirname,
+  publicDir: false,
   base: '/shell/',
   server: { host: '127.0.0.1' },
   plugins: [react()],
