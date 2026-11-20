@@ -179,4 +179,6 @@ test('OpenRouter\'s refusal (its 402 for credit) reaches the caller as it came',
   assert.equal(out.status, 402);
   assert.match(out.text, /Insufficient credits/);
   assert.equal(out.result.costCents, 0);
+  // #6898's one reading, for the relay to record the outage by.
+  assert.equal(out.result.refusal, 'credit_out');
 });

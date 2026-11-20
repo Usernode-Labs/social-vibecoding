@@ -355,53 +355,49 @@ function recordAnthropicResponse({
 }) {
   if (!llmTelemetry.isCollectionEnabled()) return 1;
   try {
-    const outerUsage = response && response.usage;
-    const usageRows = [outerUsage || null];
+    // One provider request, one event: OpenRouter serves no server-side
+    // fallback iterations (that was an Anthropic beta, task 2275).
+    const effectiveUsage = (response && response.usage) || null;
     const responseMetrics = anthropicResponseMetrics(response);
-
-    usageRows.forEach((entry, index) => {
-      const isLast = true;
-      const iterationModel = safeTelemetryModel(response && response.model) || requestedModel;
-      const stopReason = (response && response.stop_reason) || null;
-      const effectiveUsage = entry;
-      const eventAttempt = attemptNumber + index;
-      const reportedUsd = Number(effectiveUsage && effectiveUsage.cost);
-      const providerReported = !!effectiveUsage && typeof effectiveUsage.cost === 'number'
-        && Number.isFinite(reportedUsd) && reportedUsd >= 0;
-      const costUsd = providerReported ? reportedUsd : telemetryCostUsd(effectiveUsage, iterationModel);
-      void llmTelemetry.record(context.pool, {
-        invocationKey: `${context.correlationId}:${eventAttempt}`,
-        timestamp: startedAt,
-        appId: context.appId,
-        sessionId: context.sessionId,
-        provider: 'openrouter',
-        backend: context.backend,
-        component: context.component,
-        requestedModel,
-        servedModel: iterationModel,
-        billingPath: context.billingPath,
-        inputTokens: usageMetric(effectiveUsage, 'input_tokens'),
-        cacheReadInputTokens: usageMetric(effectiveUsage, 'cache_read_input_tokens'),
-        cacheWriteInputTokens: usageMetric(effectiveUsage, 'cache_creation_input_tokens'),
-        outputTokens: usageMetric(effectiveUsage, 'output_tokens'),
-        reasoningOutputTokens: null,
-        ...anthropicUsageDetails(effectiveUsage),
-        providerTurnCount: 1,
-        providerModelCount: 1,
-        costUsd,
-        costSource: costUsd == null ? 'unavailable' : (providerReported ? 'provider_reported' : 'platform_estimate'),
-        durationMs: isLast ? durationMs : null,
-        providerDurationMs: isLast ? durationMs : null,
-        timeToFirstOutputMs: isLast ? timeToFirstOutputMs : null,
-        ...requestMetrics,
-        ...(isLast ? responseMetrics : {}),
-        outcome: anthropicOutcome(stopReason),
-        stopReason,
-        attemptNumber: eventAttempt,
-        correlationId: context.correlationId,
-      });
+    const iterationModel = safeTelemetryModel(response && response.model) || requestedModel;
+    const stopReason = (response && response.stop_reason) || null;
+    const eventAttempt = attemptNumber;
+    const reportedUsd = Number(effectiveUsage && effectiveUsage.cost);
+    const providerReported = !!effectiveUsage && typeof effectiveUsage.cost === 'number'
+      && Number.isFinite(reportedUsd) && reportedUsd >= 0;
+    const costUsd = providerReported ? reportedUsd : telemetryCostUsd(effectiveUsage, iterationModel);
+    void llmTelemetry.record(context.pool, {
+      invocationKey: `${context.correlationId}:${eventAttempt}`,
+      timestamp: startedAt,
+      appId: context.appId,
+      sessionId: context.sessionId,
+      provider: 'openrouter',
+      backend: context.backend,
+      component: context.component,
+      requestedModel,
+      servedModel: iterationModel,
+      billingPath: context.billingPath,
+      inputTokens: usageMetric(effectiveUsage, 'input_tokens'),
+      cacheReadInputTokens: usageMetric(effectiveUsage, 'cache_read_input_tokens'),
+      cacheWriteInputTokens: usageMetric(effectiveUsage, 'cache_creation_input_tokens'),
+      outputTokens: usageMetric(effectiveUsage, 'output_tokens'),
+      reasoningOutputTokens: null,
+      ...anthropicUsageDetails(effectiveUsage),
+      providerTurnCount: 1,
+      providerModelCount: 1,
+      costUsd,
+      costSource: costUsd == null ? 'unavailable' : (providerReported ? 'provider_reported' : 'platform_estimate'),
+      durationMs: durationMs,
+      providerDurationMs: durationMs,
+      timeToFirstOutputMs: timeToFirstOutputMs,
+      ...requestMetrics,
+      ...responseMetrics,
+      outcome: anthropicOutcome(stopReason),
+      stopReason,
+      attemptNumber: eventAttempt,
+      correlationId: context.correlationId,
     });
-    return usageRows.length;
+    return 1;
   } catch {
     // Observation must never turn a successful provider response into a
     // failed user turn, even if a future SDK ships an unexpected usage shape.

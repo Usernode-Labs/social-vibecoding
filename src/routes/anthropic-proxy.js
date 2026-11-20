@@ -177,6 +177,16 @@ async function refreshUserWeeklySpend(pool, userId) {
 // #1788: shown when BOTH caps are switched off for an account. Fails
 // closed by design — an account with no allowance configured has nothing
 // to draw from, so it is refused rather than granted the platform key.
+// #6898: the platform's OpenRouter key ran out of credit. The relay pays
+// with the same key the Homeroom bot builds on, so a 402 for credit here is
+// the one stored outage (openrouter-credit.js noteOutage): recorded, and the
+// full admins told once, as when one of the bot's own turns meets it. Never
+// fails or delays the call it was read from.
+function noteCreditOut(pool, result, words) {
+  if (!result || result.refusal !== 'credit_out') return;
+  void require('../services/openrouter-credit').noteOutage(pool, { words }).catch(() => null);
+}
+
 const NO_ALLOWANCE_MESSAGE =
   'No AI allowance is configured for this account. An admin can set a daily or weekly cap in the admin console.';
 
@@ -361,6 +371,7 @@ function anthropicProxyRoutes(config) {
         shouldKill: (currentCallCents) => (shotsEval.overCap(currentCallCents) ? 'over_budget' : null),
       });
       shotsEval.noteSpend(result.costCents);
+      noteCreditOut(pool, result, 'a before & after shots eval call met OpenRouter\'s 402 for credit');
       return;
     }
 
@@ -542,6 +553,9 @@ function anthropicProxyRoutes(config) {
     noteAgentSpend(pool, {
       sessionId, costCents: result.costCents, isSyncTurn, model: result.model,
     });
+    noteCreditOut(pool, result, isSyncTurn
+      ? 'a Sync with main call met OpenRouter\'s 402 for credit'
+      : 'a before & after shots call met OpenRouter\'s 402 for credit');
     if (result.killed) {
       log.info('anthropic-proxy', 'Killed call settled', {
         sessionId, userId,

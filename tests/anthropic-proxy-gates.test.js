@@ -99,6 +99,7 @@ function makePool({
 function loadProxy(pool, { turnMode = 'build', forwardResult = {}, platformKey = PLATFORM_KEY, path = '/v1/messages' } = {}) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
+    credit: require.resolve('../src/services/openrouter-credit'),
     auth: require.resolve('../src/middleware/anthropic-proxy-auth'),
     stream: require.resolve('../src/services/anthropic-stream'),
     worker: require.resolve('../src/services/worker'),
@@ -109,6 +110,7 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {}, platformKey =
   const state = {
     forwards: [],       // { apiKey, upstreamUrl, shouldKill }
     broadcasts: [],
+    outages: [],        // openrouter-credit.js noteOutage calls
   };
   const previousKey = openrouterMessages._setPlatformKeyForTests(platformKey);
 
@@ -131,6 +133,9 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {}, platformKey =
       getActiveTurnMode: () => turnMode,
       turnModeFor: async () => turnMode,
       getTurnByokCents: () => 0,
+    })],
+    [paths.credit, stubModule(paths.credit, {
+      noteOutage: async (_pool, { words }) => { state.outages.push(words); return { since: 'now', fresh: true }; },
     })],
     [paths.ws, stubModule(paths.ws, {
       broadcastGlobal: (ev) => state.broadcasts.push(ev),
@@ -206,6 +211,40 @@ test('token counts go to OpenRouter\'s count_tokens; any other path is refused b
     assert.equal(pool.issued(/llm_usage/), false, 'refused before any ledger is read');
   } finally {
     other.restore();
+  }
+});
+
+// #6898: the relay pays with the platform's OpenRouter key, the one the
+// bot builds on, so OpenRouter's 402 for credit (forwardCall's refusal, in
+// provider-error.js's one reading) is the one stored outage.
+test('OpenRouter\'s 402 for credit on a relayed call records the credit outage', async () => {
+  const p = loadProxy(makePool({ weeklySpent: 100 }), {
+    forwardResult: { costCents: 0, status: 402, refusal: 'credit_out' },
+  });
+  try {
+    assert.equal((await p.call()).status, 200, 'the stub answered; the refusal is what forwardCall said');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(p.state.outages, ['a before & after shots call met OpenRouter\'s 402 for credit']);
+  } finally {
+    p.restore();
+  }
+  limits.invalidate();
+  const sync = loadProxy(makePool(), { turnMode: 'sync', forwardResult: { costCents: 0, status: 402, refusal: 'credit_out' } });
+  try {
+    await sync.call();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(sync.state.outages, ['a Sync with main call met OpenRouter\'s 402 for credit']);
+  } finally {
+    sync.restore();
+  }
+  limits.invalidate();
+  const shorter = loadProxy(makePool(), { forwardResult: { costCents: 0, status: 402, refusal: 'billing' } });
+  try {
+    await shorter.call();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(shorter.state.outages, [], 'the 402 that asks for a shorter reply is no outage');
+  } finally {
+    shorter.restore();
   }
 });
 

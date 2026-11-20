@@ -3,6 +3,7 @@
 const llm = require('./llm');
 const log = require('./logger');
 const openrouterMessages = require('./openrouter-messages');
+const { refusalCode } = require('./provider-error');
 
 // Shared Messages stream-forwarding mechanics, extracted from
 // routes/anthropic-proxy.js (issue #34) so the worker proxy and the
@@ -119,8 +120,11 @@ function buildForwardHeaders(reqHeaders, apiKey, { origin } = {}) {
 //                    stream (a normal API error to the SDK).
 //   logTag, logCtx — logging identity for warn/error lines.
 //
-// Resolves { costCents, model, killed, status } once the response has
-// ended (normally, by kill, or by client disconnect). Mid-call costs
+// Resolves { costCents, model, killed, status, refusal } once the response
+// has ended (normally, by kill, or by client disconnect). `refusal` is how a
+// refused call was refused, in provider-error.js's one reading (#6898):
+// 'credit_out' for OpenRouter's 402 for credit, so a relay can record the
+// outage; null for a call that went through. Mid-call costs
 // are best-effort estimates (see the output-token estimator below);
 // the final message_delta overwrites the estimate with the provider's
 // exact count, so the settled cost is accurate to one event gap.
@@ -405,6 +409,7 @@ async function forwardCall({
     model: currentModel,
     killed: !!killReason,
     status: upstream.status,
+    refusal: upstream.status >= 400 ? refusalCode(upstream.status, nonStreamingBody || '') : null,
   };
 }
 

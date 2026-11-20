@@ -115,6 +115,24 @@ test('OpenRouter out of credit (its 402) comes back as credit_out, with the prov
   }), (err) => err.status === 402 && err.code === 'credit_out' && /Insufficient credits/.test(err.message));
 });
 
+// #6898: one reading of a refusal for every OpenRouter client
+// (provider-error.js). The 402 that only asks for a shorter reply is the
+// key's billing refusal, not an outage; a 402 carried in a 200's body reads
+// as the 402 it names; the rest of the table is the shared one.
+test('refusals read as provider-error.js reads them: credit, a shorter reply, a body-carried 402, the table', async () => {
+  const call = (respond) => messages.createMessage({
+    apiKey: 'k', params: { model: 'claude-haiku-5-5', max_tokens: 5, messages: [] }, fetchImpl: fakeFetch(respond).impl,
+  });
+  await assert.rejects(call(() => new Response(JSON.stringify({ error: {
+    message: 'This request requires more credits, or fewer max_tokens. You requested up to 4096 tokens, but can only afford 900.', code: 402,
+  } }), { status: 402 })), (err) => err.status === 402 && err.code === 'billing', 'a smaller request gets through: no outage');
+  await assert.rejects(call(() => ok({ error: { code: 402, message: 'Insufficient credits' } })),
+    (err) => err.status === 402 && err.code === 'credit_out', 'a 200 carrying the 402');
+  for (const [status, code] of [[401, 'authentication'], [429, 'rate_limited'], [503, 'provider_unavailable'], [400, 'invalid_request']]) {
+    await assert.rejects(call(() => new Response('{"error":{"message":"no"}}', { status })), (err) => err.code === code, String(status));
+  }
+});
+
 test('a refusal and an answer that is not a message both throw, and no call goes out without a key', async () => {
   const refused = fakeFetch(() => new Response('{"error":{"message":"busy"}}', { status: 503 }));
   await assert.rejects(messages.createMessage({

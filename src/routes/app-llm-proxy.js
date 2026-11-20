@@ -410,6 +410,13 @@ function appLlmProxyRoutes(config) {
         if (liveWeekly) liveWeekly.liveDeltaCents += result.costCents;
       }
     }
+    // #6898: on the platform's key, OpenRouter's 402 for credit is the one
+    // stored outage (openrouter-credit.js noteOutage). On the person's own
+    // key it is theirs, and nothing of the platform's is out.
+    if (!payer.byok && result.refusal === 'credit_out') {
+      void require('../services/openrouter-credit')
+        .noteOutage(pool, { words: 'an app\'s AI call met OpenRouter\'s 402 for credit' }).catch(() => null);
+    }
     if (result.killed) {
       log.info('app-llm-proxy', 'Killed call settled', {
         appId, appSlug, userId,

@@ -27,6 +27,11 @@
 const log = require('./logger');
 const { platformHeaders } = require('./openrouter-client');
 const { withNoTraining } = require('../../worker/openrouter-privacy');
+// One reading of a provider's refusal for every OpenRouter client (#6898):
+// a 402 is out of credit (`credit_out`) unless it only asks for a shorter
+// reply, and the rest of the table is shared too. These calls go through
+// it, so a 402 on a moved call counts as credit, not a generic failure.
+const { refusalCode, bodyErrorCode } = require('./provider-error');
 
 const DEFAULT_BASE = 'https://openrouter.ai/api/v1';
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -205,9 +210,10 @@ function providerErrorMessage(text, status) {
 
 /**
  * One non-streaming Messages call. Resolves the provider's JSON message
- * (content, stop_reason, usage, model). Throws an Error with `status` on a
- * refusal (402 is OpenRouter's "out of credit", `code` 'credit_out'), a
- * timeout or a network failure; an abort keeps its AbortError name.
+ * (content, stop_reason, usage, model). Throws an Error with `status` and
+ * `code` on a refusal (provider-error.js refusalCode: a 402 for credit is
+ * 'credit_out'), a timeout or a network failure; an abort keeps its
+ * AbortError name.
  */
 async function createMessage({
   apiKey, baseUrl, origin, params, signal = null, timeoutMs = DEFAULT_TIMEOUT_MS, fetchImpl = fetch,
@@ -249,17 +255,24 @@ async function createMessage({
   if (!res.ok) {
     throw Object.assign(new Error(providerErrorMessage(text, res.status)), {
       status: res.status,
-      ...(res.status === 402 ? { code: 'credit_out' } : {}),
+      code: refusalCode(res.status, text),
     });
   }
   let message;
   try {
     message = JSON.parse(text);
   } catch {
-    throw Object.assign(new Error('OpenRouter answered with something that is not JSON'), { status: 502 });
+    throw Object.assign(new Error('OpenRouter answered with something that is not JSON'), { status: 502, code: 'invalid_response' });
+  }
+  // A refusal OpenRouter carried in a 200's body ({ error: { code, message } })
+  // reads as the status it names.
+  const carried = message && message.error ? bodyErrorCode(message.error) : null;
+  if (carried) {
+    const status = Number(message.error.code);
+    throw Object.assign(new Error(providerErrorMessage(text, status)), { status, code: carried });
   }
   if (!message || typeof message !== 'object' || !Array.isArray(message.content)) {
-    throw Object.assign(new Error(providerErrorMessage(text, res.status)), { status: 502 });
+    throw Object.assign(new Error(providerErrorMessage(text, res.status)), { status: 502, code: 'invalid_response' });
   }
   return message;
 }
