@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin</title>
+  <script>
+    // Redirect stub (#860): the admin panel is now the SPA's #admin
+    // console — Operations, Users, Activation codes, Spend limits and
+    // Maintenance campaigns are all sections there. This file only exists
+    // so old bookmarks, chat links, and service-worker-cached copies keep
+    // working. Mappings:
+    //   /admin                → /#admin                     (Overview)
+    //   /admin#campaign-<id>  → /#admin/campaigns/<id>       (that campaign expanded)
+    //   /admin?…              → /?…#admin                    (query preserved)
+    //
+    // A CLIENT-side stub rather than a server 302 on purpose: a 302's own
+    // Location fragment (#admin) wins over the request's, so
+    // /admin#campaign-3 would silently lose the campaign id. Only a stub
+    // can see both halves of the URL.
+    (function () {
+      var search = location.search || '';
+      var m = /^#campaign-(\d+)$/.exec(location.hash || '');
+      var route = m ? '#admin/campaigns/' + m[1] : '#admin';
+      location.replace('/' + search + route);
+    })();
+  </script>
+</head>
+<body>
+  <noscript><a href="/#admin">Continue to the admin console</a></noscript>
+</body>
+</html>

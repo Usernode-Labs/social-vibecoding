@@ -4371,6 +4371,14 @@
     "text": "{{label}}, small",
     "description": "Title of the small preview of one version on the card that compares versions of a design. {{label}} is the version's name."
   },
+  "botCards.comparison.frameTitle": {
+    "text": "Comparison: {{title}}",
+    "description": "What screen readers call the frame that draws a comparison Homeroom bot laid out under its reply in a project thread. {{title}} is the comparison's own name, such as Before and after."
+  },
+  "botCards.comparison.note": {
+    "text": "Laid out by Homeroom bot. Nothing in it runs.",
+    "description": "Small grey line under a comparison Homeroom bot laid out under its reply in a project thread: the bot made the picture, and nothing in it can run."
+  },
   "botCards.compare.open": {
     "text": "Open {{label}} beside the chat",
     "description": "Accessible name of a small preview on the card that compares versions of a design: opens that version in the design preview."

@@ -108,6 +108,7 @@ import {
 import { MergedTopicCard } from '../dev-board/workshop/merged-topic-card';
 import { FileManyRows, picksOf, type FileManyRow } from '../messages/bot-cards/file-many';
 import { ChangePictures } from '../messages/bot-cards/gallery';
+import { ThreadComparison } from '../messages/bot-cards/thread-comparison';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
@@ -1025,6 +1026,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
             : <VoteCard msg={msg} />) : null}
           {/* #6533: what a change looks like under Homeroom bot's reply. */}
           {msg.botGallery ? <ChangePictures card={msg.botGallery} /> : null}
+          {/* 20 Nov 2026: the comparison the bot laid out, drawn under its reply. */}
+          {msg.botComparison ? <ThreadComparison comparison={msg.botComparison} /> : null}
           {/* #4238: Homeroom bot's first-version line opens the app. */}
           {msg.openApp ? (
             <Button
