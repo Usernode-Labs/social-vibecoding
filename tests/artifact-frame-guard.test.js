@@ -1,4 +1,4 @@
-// test:changed: always (every shell source, for model or template HTML drawn in its own frame with scripts or this site's origin; scripts/test-changed.js)
+// test:changed: when frontend/src/, public/js/ (every shell source it walks: model or template HTML drawn in its own frame with scripts or this site's origin)
 'use strict';
 
 // Artifacts, stage 1 (docs/plans/artifacts.md): one frame for every page the
