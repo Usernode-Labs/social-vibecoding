@@ -135,7 +135,10 @@ test('the proxy sends an eval trial\'s calls on the platform key, gated by the e
   assert.match(branch, /const evalKey = await openrouterMessages\.platformKey\(config, \{ pool \}\);[\s\S]*apiKey: evalKey/,
     'the platform\'s OpenRouter key pays (task 2275; a separate Anthropic key before)');
   assert.match(branch, /shouldKill: \(currentCallCents\) => \(shotsEval\.overCap\(currentCallCents\)/, 'a call that would pass the cap is cut off');
-  assert.match(branch, /shotsEval\.noteSpend\(result\.costCents\);\s*return;/, 'each priced call is added to the trial, and nothing else');
+  // A 402 on the eval's call still counts as the platform's credit outage
+  // (#6898's one classification); that is a state, not a second ledger.
+  assert.match(branch, /shotsEval\.noteSpend\(result\.costCents\);\s*noteCreditOut\(pool, result, [^;]*\);\s*return;/,
+    'each priced call is added to the trial, and nothing else');
   assert.doesNotMatch(branch, /noteAgentSpend|userBudgetCache|systemBudgetCache|loadUserApiKey/,
     'never the author\'s allowance or key, the system bucket, or the change\'s ledger');
   assert.ok(src.indexOf('let shotsEval = null;') < src.indexOf('limits.resolveCaps('), 'it is decided before any allowance is read');
