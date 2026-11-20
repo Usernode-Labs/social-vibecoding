@@ -5922,6 +5922,10 @@ html:not([data-skin]) {
   --wip-top-cta-press: scale(0.98);
   /* A panel's row of items (Needs you) */
   --wip-item-radius: var(--wip-radius-inner);
+  /* Its ground under the pointer, quiet because such a row is something to
+     open, not something asked of the viewer; a shade deeper while pressed. */
+  --wip-item-hover: color-mix(in srgb, var(--wip-ink) 5%, transparent);
+  --wip-item-press: color-mix(in srgb, var(--wip-ink) 9%, transparent);
   /* A pinned card's scene: the band's height, how far the icon rises onto it, and the brand kit's six backgrounds it takes in turn. */
   --wip-scene-band: 4.75rem;
   --wip-scene-icon-rise: -2.25rem;
@@ -6232,7 +6236,49 @@ html:not([data-skin]) .wip-card[data-tone="goal"] {
   padding: 0.5rem var(--wip-cell-pad);
   border-radius: var(--wip-item-radius);
 }
+/* Under the pointer a row's title takes the action's ink: that is how the
+   brand look's rows answer it, in its sky. In this look's card that asks,
+   that ink is the card's own, so the title stays as it is and the ground
+   below answers instead. */
 .wip-row:hover .wip-item-title { color: var(--wip-ink-action); }
+/* A row that opens something answers the pointer, a press and the keyboard.
+   A soft ground under the whole row, in its own round corners, and a shade
+   deeper while it is pressed, only where a pointer hovers: a tap on a phone
+   can leave a row :hover, and the ground would stay on the row it opened.
+   A ring for the keyboard, inside the row's edge, since the list clips what
+   is drawn outside it. A placeholder on its way is a row too, but not a
+   link, so none of this reaches it. This look and the standard one only:
+   the brand look sets these rows flush with its card's inset, where a ground
+   would start at the icon's edge, and answers with the title's colour (the
+   rule above). */
+html:not([data-skin]) a.wip-row { transition: background-color 120ms ease; }
+@media (hover: hover) {
+  html:not([data-skin]) a.wip-row:hover { background-color: var(--wip-item-hover); }
+  html:not([data-skin]) a.wip-row:active { background-color: var(--wip-item-press); }
+}
+html:not([data-skin]) a.wip-row:focus-visible { outline: 2px solid var(--wip-ink-action); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-skin]) a.wip-row { transition: none; }
+}
+html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none; }
+/* The lines either side of a lit row give way, so no line runs into its
+   round corners. The line above is the row's own. The line under it is
+   drawn by the row a whole line of columns on, which is --wip-cols rows on:
+   one, two from 640px and four from 1024px, the token's own breakpoints.
+   Where a pointer hovers, as the ground is, so a row a tap left :hover on a
+   phone does not lose its lines. */
+@media (hover: hover) {
+  html:not([data-skin]) .wip-rows > li:has(> a.wip-row:is(:hover, :focus-visible)) { box-shadow: none; }
+}
+@media (hover: hover) and (max-width: 639.98px) {
+  html:not([data-skin]) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li { box-shadow: none; }
+}
+@media (hover: hover) and (min-width: 640px) and (max-width: 1023.98px) {
+  html:not([data-skin]) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li { box-shadow: none; }
+}
+@media (hover: hover) and (min-width: 1024px) {
+  html:not([data-skin]) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li + li + li { box-shadow: none; }
+}
 /* A panel: a card's inside, padded, for a list (Needs you). */
 .wip-panel { padding: var(--wip-card-pad); min-width: 0; }
 .wip-count {

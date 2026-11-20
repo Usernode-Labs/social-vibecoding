@@ -14,6 +14,8 @@
 //   3. Beside Pinned apps the column lists as many as fit; everywhere else
 //      it lists NEEDS_ROWS. The heading opens the rest: no count, no "more"
 //      row.
+//   4. Under the standard look a row answers the pointer, a press and the
+//      keyboard (20 Nov 2026); a placeholder row does not.
 //
 // Run with: node --test tests/home-needs-you-card.test.js
 
@@ -179,6 +181,40 @@ test('a row is the thread\'s own page, and the card lists what is in the look\'s
     assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html:not\\(\\[data-skin\\]\\) \\{ --wip-cols: ${n}; \\} \\}`));
   }
   assert.match(css, /\.wip-poster \{\s*display: flex;\s*flex: 0 0 calc\(\(100% - \(var\(--wip-cols, 1\) - 1\) \* var\(--wip-col-gap\)\) \/ var\(--wip-cols, 1\)\);/, 'a challenge is one of the same columns');
+});
+
+test('a row answers the pointer, a press and the keyboard, and a placeholder row does not', () => {
+  const css = read('public/css/app.css');
+  // A soft ground of the ink, quiet because a row here is something to open, and a shade deeper pressed: tokens of the kit's first rule.
+  assert.match(css, /--wip-item-hover: color-mix\(in srgb, var\(--wip-ink\) 5%, transparent\);\s*--wip-item-press: color-mix\(in srgb, var\(--wip-ink\) 9%, transparent\);/);
+  // Only where a pointer hovers: a tap on a phone can leave a row :hover, and the ground would stay on it.
+  assert.match(css, /@media \(hover: hover\) \{\s*html:not\(\[data-skin\]\) a\.wip-row:hover \{ background-color: var\(--wip-item-hover\); \}\s*html:not\(\[data-skin\]\) a\.wip-row:active \{ background-color: var\(--wip-item-press\); \}\s*\}/);
+  // The whole row, in its own corners.
+  assert.match(css, /\.wip-row \{[^}]*border-radius: var\(--wip-item-radius\);/);
+  // A ring for the keyboard inside the row's edge, since the list clips what is outside it.
+  assert.match(css, /\.wip-rows \{[^}]*overflow: hidden;/);
+  assert.match(css, /html:not\(\[data-skin\]\) a\.wip-row:focus-visible \{ outline: 2px solid var\(--wip-ink-action\); outline-offset: -2px; \}/);
+  // The fade is dropped with reduced motion, the device's or the setting's.
+  assert.match(css, /html:not\(\[data-skin\]\) a\.wip-row \{ transition: background-color 120ms ease; \}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*html:not\(\[data-skin\]\) a\.wip-row \{ transition: none; \}\s*\}\s*html:not\(\[data-skin\]\):where\(\[data-motion="reduce"\]\) a\.wip-row \{ transition: none; \}/);
+  // The lines either side of a lit row give way: the row's own above it, and under it the line of the row a whole
+  // line of columns on, so the chain is as long as the look's column count at each width.
+  assert.match(css, /@media \(hover: hover\) \{\s*html:not\(\[data-skin\]\) \.wip-rows > li:has\(> a\.wip-row:is\(:hover, :focus-visible\)\) \{ box-shadow: none; \}\s*\}/);
+  const widths = [['\\(max-width: 639\\.98px\\)', 1], ['\\(min-width: 640px\\) and \\(max-width: 1023\\.98px\\)', 2], ['\\(min-width: 1024px\\)', 4]];
+  for (const [media, cols] of widths) {
+    assert.match(css, new RegExp(`@media \\(hover: hover\\) and ${media} \\{\\s*html:not\\(\\[data-skin\\]\\) \\.wip-rows-cols > li:has\\(> a\\.wip-row:is\\(:hover, :focus-visible\\)\\)${' \\+ li'.repeat(cols)} \\{ box-shadow: none; \\}\\s*\\}`), `${cols} column(s): the row under a lit one is ${cols} on`);
+  }
+  // Those are the look's own counts: one, two from 640px, four from 1024px.
+  assert.match(css, /html:not\(\[data-skin\]\) \{ --wip-cols: 1; \}\n@media \(min-width: 640px\) \{ html:not\(\[data-skin\]\) \{ --wip-cols: 2; \} \}\n@media \(min-width: 1024px\) \{ html:not\(\[data-skin\]\) \{ --wip-cols: 4; \} \}/);
+  // A placeholder is a row too, but a span, not a link: no rule lights a row that is not the link.
+  assert.match(read('frontend/src/features/home/wip-kit.tsx'), /<span className="wip-row" aria-hidden="true">/);
+  assert.doesNotMatch(css, /(?<!a)\.wip-row:(?:is\(|(?:hover|active|focus-visible)\s*[{,)])/, 'a placeholder would light up too');
+  // The standard look and its brand drawing only: the brand look sets these rows flush with its card's inset and
+  // answers the pointer with the title in its sky, the kit's rule it keeps.
+  for (const m of css.matchAll(/^[^\n{}]*a\.wip-row[^\n{]*\{/gm)) {
+    assert.ok(m[0].trim().startsWith('html:not([data-skin])'), `"${m[0].trim()}" reaches another look`);
+  }
+  assert.match(css, /\n\.wip-row:hover \.wip-item-title \{ color: var\(--wip-ink-action\); \}/);
 });
 
 test('a challenge is its picture, then its words beside it, in a row that pages with an arrow at each end', () => {
