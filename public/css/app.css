@@ -9033,6 +9033,16 @@ html:not([data-skin]) .rf-switch.rf-switch-pressed[data-view="before"] .rf-knob 
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request,
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) { max-width: none; margin-inline: 0; padding-inline: var(--wip-gutter); }
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(#gc-thread-head:empty) .dev-request-sheet { background: none; border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* And the sheet the project's page stands every place on (a tinted, edged panel behind everything) is cleared behind
+   this page, as it is behind the hub (asked 20 Nov 2026): the page's cards are the only cards, on the wallpaper. */
+html:not([data-skin]):not(.in-side-panel) body #app-view > #app-content > .dc-lift-strip:has(> .gc-tab-body > #dev-topic-thread:not(.dev-ws-side-page)):not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) {
+  border-radius: 0;
+  border-color: transparent;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
 /* ── THE THREAD PAGE WHILE IT LOADS (20 Nov 2026) ──
    A request's or a change's page is not one card: it is a head, the request's card with its picture and its
    actions, the reply box, and beside them on a wide window "How it got here". The placeholder is that page in
