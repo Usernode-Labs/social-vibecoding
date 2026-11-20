@@ -6090,9 +6090,10 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
 }
 /* How many columns a list of the look has, by the room there is: one, two
    from 640px, and four from 1024px, where Pinned projects' own four columns
-   become rows. Needs you's rows and Challenges' posters read the same
-   number, the same gap and the same padding as that grid, so the three
-   lists' columns fall on the same lines. */
+   become rows. Needs you's rows read the same number, the same gap and the
+   same padding as that grid, so the two lists' columns fall on the same
+   lines. Challenges' posters are cards of their own: the same number, a card
+   gap apart, so their outer edges fall on those two cards' edges. */
 html:not([data-skin]) { --wip-cols: 1; }
 @media (min-width: 640px) { html:not([data-skin]) { --wip-cols: 2; } }
 @media (min-width: 1024px) { html:not([data-skin]) { --wip-cols: 4; } }
@@ -6130,8 +6131,8 @@ html:not([data-skin]) .wip-card[data-tone="ask"] {
   --wip-pill-bg: var(--wip-ask-pill-bg);
   --wip-pill-ink: var(--wip-ask-pill-ink);
 }
-/* A card of things to aim for wears the config's "goal" colours, the same
-   way. */
+/* A card of a thing to aim for (each challenge on Home) wears the config's
+   "goal" colours, the same way. */
 html:not([data-skin]) .wip-card[data-tone="goal"] {
   --wip-card-bg: var(--wip-goal-bg);
   --wip-card-line: var(--wip-goal-line);
@@ -6344,32 +6345,58 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
   background-color: var(--wip-pill-bg);
   color: var(--wip-pill-ink);
 }
-/* Posters: things side by side in one card with no card of their own, each
-   as wide as one of the look's columns; the row scrolls sideways for what
-   does not fit, by a swipe, a wheel or the arrow drawn at whichever end has
-   more (Challenges). A poster is its picture at the side, on the picture's
-   own tone, and its words beside it. */
-.wip-posters-card { position: relative; }
+/* Posters: things side by side, each a card of its own (the markup gives
+   it the look's card, .wip-card), as wide as one of the look's columns and a
+   card gap from the next, so the row's cards fall on the same lines as the
+   cards above it. The row around them draws nothing. It scrolls sideways
+   for what does not fit, by a swipe, a wheel or the arrow drawn at
+   whichever end has more (Challenges). A poster is its picture at the side,
+   on the picture's own tone, and its words beside it. */
+/* The box the row and its arrows are placed in. It holds the row's margins
+   (below), so its height is the cards' own and an arrow's 50% is their
+   middle. */
+.wip-posters-box { position: relative; display: flow-root; }
+/* A scroller clips whatever its cards draw outside their boxes: the shadow
+   under the pointer (8px to a side, 16px below) and the focus ring (4px).
+   So the row reaches that far past the cards, half a card gap to a side,
+   and its margins give the room back: the cards stay on the column's lines,
+   a card scrolled just out of view is half a gap past the row's edge, where
+   none of it shows, and a page of the row (an arrow's press) is exactly the
+   cards on screen. */
 .wip-posters {
   display: flex;
-  gap: var(--wip-col-gap);
-  padding: var(--wip-card-pad);
+  gap: var(--wip-card-gap);
+  margin-block: -0.25rem -1rem;
+  margin-inline: calc(var(--wip-card-gap) / -2);
+  padding-block: 0.25rem 1rem;
+  padding-inline: calc(var(--wip-card-gap) / 2);
   overflow-x: auto;
   scroll-snap-type: x mandatory;
-  scroll-padding-inline: var(--wip-card-pad);
+  scroll-padding-inline: calc(var(--wip-card-gap) / 2);
   scrollbar-width: none;
 }
 .wip-posters::-webkit-scrollbar { width: 0; height: 0; }
+/* Inside, the card's own padding, and 4px more at its end: the row's arrow
+   is drawn over that edge when there is more that way (below), and this
+   keeps what the challenge is worth clear of it. */
 .wip-poster {
   display: flex;
-  flex: 0 0 calc((100% - (var(--wip-cols, 1) - 1) * var(--wip-col-gap)) / var(--wip-cols, 1));
+  flex: 0 0 calc((100% - (var(--wip-cols, 1) - 1) * var(--wip-card-gap)) / var(--wip-cols, 1));
   align-items: center;
   gap: var(--wip-tile-gap);
   min-width: 0;
-  padding: 0.5rem var(--wip-cell-pad);
+  padding: var(--wip-card-pad);
+  padding-inline-end: calc(var(--wip-card-pad) + 0.25rem);
   text-align: start;
   scroll-snap-align: start;
+  transition: box-shadow 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+/* Under the pointer, or reached by the keyboard, a card's edge deepens half
+   a shade and a faint, wide shadow comes up under it, slowly, as a card on
+   the Workshop board does; nothing moves. The keyboard's card also wears
+   the page's focus ring, in its action colour. */
+.wip-poster:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-card-line-hover), 0 8px 22px -14px var(--wip-card-line-hover); }
+.wip-poster:focus-visible { outline: 2px solid var(--wip-ink-action); outline-offset: 2px; }
 .wip-poster:hover .wip-item-title { color: var(--wip-ink-action); }
 .wip-poster-art {
   display: flex;
@@ -6394,8 +6421,8 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
 }
 .wip-poster-art > img { width: 82%; height: 82%; object-fit: contain; transition: transform 200ms; }
 .wip-poster:hover .wip-poster-art > img { transform: scale(1.06); }
-/* The row's arrows: a disc at the card's edge, over the row, at whichever
-   end has more. */
+/* The row's arrows: a disc over the edge of the card at that end of the
+   row, at whichever end has more. */
 .wip-rail-arrow {
   position: absolute;
   top: 50%;
@@ -6412,8 +6439,14 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
   transition: transform 150ms;
 }
 .wip-rail-arrow:hover { transform: scale(1.08); }
-.wip-rail-arrow-back { inset-inline-start: -0.625rem; } /* astride the card's edge, clear of the first picture */
-.wip-rail-arrow-on { inset-inline-end: -0.625rem; }
+/* Centred on the card's edge; on a phone, whose gutter is 12px, a little
+   further in, so all of the disc is on the screen. */
+.wip-rail-arrow-back { inset-inline-start: -1rem; }
+.wip-rail-arrow-on { inset-inline-end: -1rem; }
+@media (max-width: 639.98px) {
+  .wip-rail-arrow-back { inset-inline-start: -0.625rem; }
+  .wip-rail-arrow-on { inset-inline-end: -0.625rem; }
+}
 .wip-rail-arrow-glyph { width: 1rem; height: 1rem; }
 .wip-poster-facts { display: flex; align-items: baseline; gap: 0.5rem; }
 .wip-poster-facts > .wip-item-meta { flex: 1 1 0; min-width: 0; }
@@ -6750,23 +6783,20 @@ html:not([data-skin]) #home-screen [data-home-join-featured] > h3 {
     background-color: var(--wip-skeleton);
   }
 }
-/* Challenges: a card of posters, as many as the look has columns for (the
-   placeholder brings three). */
-html:not([data-skin]) #home-challenges-section.home-section-pending > .home-panel-body {
-  padding: var(--wip-card-pad);
-  border-radius: var(--wip-card-radius);
-  background-color: var(--wip-card-bg);
-  box-shadow: inset 0 0 0 1px var(--wip-card-line);
-}
+/* Challenges: a row of posters, each a card of its own, as many as the look
+   has columns for (the placeholder brings three). Each placeholder is a
+   card's shape in the placeholder's fill, as tall as a poster (its picture
+   and the card's padding), with nothing drawn round the row. */
+html:not([data-skin]) #home-challenges-section.home-section-pending > .home-panel-body { padding: 0; }
 html:not([data-skin]) #home-challenges-section.home-section-pending > .home-panel-body > div {
   flex-direction: row;
-  gap: var(--wip-col-gap);
+  gap: var(--wip-card-gap);
   overflow: hidden;
 }
 html:not([data-skin]) #home-challenges-section.home-section-pending > .home-panel-body > div > div {
-  flex: 0 0 calc((100% - (var(--wip-cols) - 1) * var(--wip-col-gap)) / var(--wip-cols));
-  height: var(--wip-poster-art);
-  border-radius: var(--wip-radius-inner);
+  flex: 0 0 calc((100% - (var(--wip-cols) - 1) * var(--wip-card-gap)) / var(--wip-cols));
+  height: calc(var(--wip-poster-art) + 2 * var(--wip-card-pad));
+  border-radius: var(--wip-card-radius);
   background-color: var(--wip-skeleton);
 }
 /* WHAT THE LOOK LEAVES OUT (rule 3 above; the test's WIP_HIDES names each).
