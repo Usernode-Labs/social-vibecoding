@@ -156,8 +156,12 @@ test('the menu and the top bar: one block for the standard look and this one, ev
   }
   // The standard look has none of the brand kit's own tokens, so the block's token rules read the shell's only.
   for (const r of tokens) assert.doesNotMatch(r.body, /var\(--wip-(?!nav-)/, 'a token here points at the shell, never at the brand kit');
-  // The brand kit names its own values for the same tokens, in its own block.
-  assert.match(wipBlock(), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-nav-bg: #3c7bd8;[^}]*--wip-nav-on-bg: #ffee6f;/);
+  // The menu's colours are the brand kit's in both looks (asked 20 Nov 2026): its sky, and the sun for the place you are on.
+  assert.match(tokens[0].body, /--wip-nav-bg: #3c7bd8;[\s\S]*--wip-nav-on-bg: #ffee6f;\s*[^\n]*\n\s*--wip-nav-on-ink: #121a0e;/);
+  assert.match(tokens[1].body, /--wip-nav-bg: #122a52;/);
+  // The brand kit's block only points the page-side tokens at its own values.
+  assert.match(wipBlock(), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{\s*--wip-nav-font: var\(--wip-font\);[^}]*--wip-nav-bar-ink: var\(--wip-ink\);/);
+  assert.doesNotMatch(wipBlock(), /--wip-nav-bg:/, 'the panel\'s colour is written once, in the menu\'s block');
   // Nothing of the old menu and bar is hidden but what MENU_HIDES lists.
   const hidden = all.filter((r) => /display:\s*none|visibility:\s*hidden|content:\s*none/.test(r.body)).map((r) => r.selector);
   assert.deepEqual(hidden.sort(), [...MENU_HIDES].sort());

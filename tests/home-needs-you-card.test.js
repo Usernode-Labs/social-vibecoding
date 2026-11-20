@@ -294,7 +294,7 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   const css = read('public/css/app.css');
   // The sidebar and the phone's bar are one panel, drawn from the menu's tokens at every width.
   assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \{[^}]*background: var\(--wip-nav-bg\);[^}]*font-family: var\(--wip-nav-font\);/);
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-nav-bg: #3c7bd8;/, 'the brand kit wears the brand\'s own sky');
+  assert.match(css, /html:not\(\[data-skin\]\) \{[^}]*--wip-nav-bg: #3c7bd8;/, 'the menu wears the brand\'s own sky, under the standard look too');
   assert.match(css, /\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);\s*box-shadow: none;\s*color: var\(--wip-nav-on-ink\);/);
   // The brand is the logotype at the panel's top, and the top bar starts beside the panel.
   assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*mask: var\(--wip-nav-brand-logo\) left center \/ contain no-repeat;/);

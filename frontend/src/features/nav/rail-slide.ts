@@ -76,7 +76,12 @@ export function slideRail(commit: () => void): void {
   const fromPeek = bar.classList.contains('platform-tabs-peek');
   const screen = onScreen();
   const before = screen ? screen.mark.getBoundingClientRect().left : null;
-  if (!open && !fromPeek) bar.classList.add('platform-tabs-leaving');
+  // The standard look and the brand kit's drawing of it (no data-skin on
+  // <html>) fold the menu to a strip of icons (app.css, "FOLDED, THE MENU IS
+  // A STRIP"): it never leaves, so nothing of it slides. Its width eases in
+  // CSS, and the screen still plays from where it was.
+  const strip = !document.documentElement.hasAttribute('data-skin');
+  if (!open && !fromPeek && !strip) bar.classList.add('platform-tabs-leaving');
   // The class the fold reads is written in a layout effect, so the new
   // layout is there to measure as soon as this returns.
   flushSync(commit);
@@ -90,7 +95,7 @@ export function slideRail(commit: () => void): void {
   if (screen && dx) {
     screen.root.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], RAIL_SLIDE);
   }
-  if (fromPeek) return;
+  if (fromPeek || strip) return;
   const slide = bar.animate(open
     ? [{ transform: `translateX(${-100 * dirSign()}%)` }, { transform: 'none' }]
     : [{ transform: 'none' }, { transform: `translateX(${-100 * dirSign()}%)` }], RAIL_SLIDE);
