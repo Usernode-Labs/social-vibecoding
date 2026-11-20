@@ -160,6 +160,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
+        id: node
         with:
           node-version: '22.23.4'
           cache: npm
@@ -172,8 +173,34 @@ jobs:
       - name: Generate database initialization SQL
         run: node scripts/build-schema.js
       # Authority fixtures load real workflow handlers that depend on bcrypt.
+      # Compiling its binding takes about 40 seconds, on the job a release
+      # waits on longest, so the compiled binding is kept between runs: one
+      # per runner, Node version and lockfile. A binding that is missing, or
+      # that cannot hash and compare, is compiled as before. Only a push to
+      # main saves one, so no pull request can write a binary that a later
+      # run loads.
+      - name: Restore the compiled bcrypt binding
+        id: bcrypt_binding
+        uses: actions/cache/restore@v6
+        with:
+          path: node_modules/bcrypt/lib/binding
+          key: bcrypt-binding-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json') }}
+      - name: Compile bcrypt unless the restored binding works
+        id: bcrypt_build
+        run: |
+          if node -e "const b = require('bcrypt'); process.exit(b.compareSync('probe', b.hashSync('probe', 4)) ? 0 : 1)" 2>/dev/null; then
+            echo "compiled=false" >> "$GITHUB_OUTPUT"
+          else
+            npm rebuild bcrypt --build-from-source
+            echo "compiled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Keep the compiled bcrypt binding
+        if: steps.bcrypt_build.outputs.compiled == 'true' && steps.bcrypt_binding.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: node_modules/bcrypt/lib/binding
+          key: ${{ steps.bcrypt_binding.outputs.cache-primary-key }}
       - run: |
-          npm rebuild bcrypt --build-from-source
           node --test --test-timeout=60000 tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
           node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
           node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js tests/platform-preview-startup-postgres.test.js
