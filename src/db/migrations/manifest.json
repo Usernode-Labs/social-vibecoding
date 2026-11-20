@@ -482,9 +482,14 @@
       "schemaSha256": "933757d701ecab7769895883fab51f7a807e716507d20017b766bd71776e8a9a"
     },
     {
+      "id": "platform-limit-refusals",
+      "sha256": "40a8ab6559cc2cabfccd4d6452c704363bd5f68219ae840e9b077fdbd213ecb7",
+      "schemaSha256": "075e0e0ccb2fc560922614a69af29a6a90f8e356b53e8cf96eeba7530aad99e4"
+    },
+    {
       "id": "limit-alert-phones",
       "sha256": "efaf4f2dbbe4634641d618c81c939d9cbc42dee4a0aa1d5032ff3c36ae930e2f",
-      "schemaSha256": "7630730d1ed3c4735e88905ce283e2b54ac365fdedbc398952994e784132e313"
+      "schemaSha256": "1d91f658c1ce0a14f21510c096582d20ccc221d856b361c66f500af1b0400ca2"
     }
   ]
 }

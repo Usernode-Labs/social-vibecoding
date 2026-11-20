@@ -139,6 +139,10 @@ async function adminPayload(pool, config) {
     `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
   );
   const limit = defaultLimit <= 0 ? 0 : (setting ? setting.value : defaultLimit);
+  // #6901: how many people were turned away since the server last had room,
+  // and when that run began. The Notifications limits area reads the same
+  // figures (platform-limit-alerts.refusalSummary).
+  const refusals = await require('./platform-limit-alerts').refusalSummary(pool, 'apps');
   return {
     limit,
     source: defaultLimit <= 0 ? 'disabled' : (setting ? 'admin' : 'default'),
@@ -147,6 +151,8 @@ async function adminPayload(pool, config) {
     used: Number(rows[0] && rows[0].n) || 0,
     max: MAX_SETTING,
     warnPercent: require('./platform-limit-alerts').warnPercent(),
+    turnedAway: refusals.turnedAway,
+    turnedAwaySince: refusals.since,
   };
 }
 
