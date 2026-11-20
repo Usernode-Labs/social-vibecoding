@@ -8624,6 +8624,201 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
 }
 /* END OF THE LEFT MENU AND THE TOP BAR. */
+/* ── BUTTONS: STICKER (20 Nov 2026: the standard look's and the brand kit
+   (WIP)'s, from the brand kit's port sheet and option A, "Sticker", of its
+   element levels sheet).
+   A button is a pill with a thin dark outline and a hard edge under it that
+   a press takes up; its label is the serif; the main action is the kit's
+   sun, a secondary is white, a destructive one is white with a red line and
+   label, an action written as text is underlined in blue, and a change's
+   Yes and No are green and salmon of equal weight.
+   It is drawn over the classes the app already writes, so no component and
+   no screen is edited. Paper, simplified, with brand styling keeps its
+   buttons: every rule is scoped to html:not([data-skin]), which is the
+   standard look and the brand kit's drawing of it, and the admin console is
+   left out on every one.
+   EVERY VALUE IS A TOKEN, --sticker-*, declared once here in light and once
+   in dark; no other rule writes a colour of its own. */
+html:not([data-skin]) {
+  --sticker-font: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --sticker-weight: 600;
+  --sticker-h: 40px;
+  --sticker-h-small: 32px;
+  --sticker-pad: 0 20px;
+  --sticker-pad-small: 0 14px;
+  --sticker-radius: 999px;
+  --sticker-outline-w: 1px;
+  --sticker-edge-w: 2px;
+  --sticker-edge-w-small: 1px;
+  --sticker-line: #121a0e;
+  --sticker-main-bg: #ffee6f;
+  --sticker-main-bg-hover: #fff4a0;
+  --sticker-main-ink: #121a0e;
+  --sticker-second-bg: #ffffff;
+  --sticker-second-bg-hover: #fffeea;
+  --sticker-second-ink: #121a0e;
+  --sticker-bad: var(--state-blocked);
+  --sticker-bad-bg-hover: #fff5f5;
+  --sticker-yes-bg: #a9cf97;
+  --sticker-yes-bg-hover: #b9dbaa;
+  --sticker-no-bg: #f4a38c;
+  --sticker-no-bg-hover: #f8b5a2;
+  --sticker-vote-ink: #121a0e;
+  --sticker-text-ink: var(--text-primary);
+  --sticker-text-line: #3090e1;
+  --sticker-focus: #3090e1;
+  --sticker-disabled: 0.5;
+}
+html:not([data-skin]).dark {
+  --sticker-line: rgb(255 254 234 / 0.5);
+  --sticker-main-bg: #f3d920;
+  --sticker-main-bg-hover: #ffee6f;
+  --sticker-second-bg: var(--dc-sheet-solid);
+  --sticker-second-bg-hover: #22242b;
+  --sticker-second-ink: #fffeea;
+  --sticker-bad-bg-hover: #2a1a1a;
+  --sticker-text-line: #5aa9ff;
+  --sticker-focus: #5aa9ff;
+}
+/* The main action: the kit's sun pill. */
+html:not([data-skin]) :is(button, a, label):is(.bg-violet-600):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)) {
+  min-height: var(--sticker-h);
+  padding: var(--sticker-pad);
+  border: 0;
+  border-radius: var(--sticker-radius);
+  background: var(--sticker-main-bg);
+  color: var(--sticker-main-ink);
+  font-family: var(--sticker-font);
+  font-weight: var(--sticker-weight);
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) var(--sticker-line), 0 var(--sticker-edge-w) 0 var(--sticker-line);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 60ms ease, box-shadow 60ms ease;
+}
+/* A secondary action: the same pill in white, the card's colour in dark. */
+html:not([data-skin]) :is(button, a, label):is(.ui-btn:not(.ui-btn-bad), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.rounded-full, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-full)):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)) {
+  min-height: var(--sticker-h);
+  padding: var(--sticker-pad);
+  border: 0;
+  border-radius: var(--sticker-radius);
+  background: var(--sticker-second-bg);
+  color: var(--sticker-second-ink);
+  font-family: var(--sticker-font);
+  font-weight: var(--sticker-weight);
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) var(--sticker-line), 0 var(--sticker-edge-w) 0 var(--sticker-line);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 60ms ease, box-shadow 60ms ease;
+}
+/* A destructive action: white, with a red line, edge and label. */
+html:not([data-skin]) :is(button, a, label):is(.ui-btn-bad, .border-red-400, .bg-red-500\/10):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)) {
+  min-height: var(--sticker-h);
+  padding: var(--sticker-pad);
+  border: 0;
+  border-radius: var(--sticker-radius);
+  background: var(--sticker-second-bg);
+  color: var(--sticker-bad);
+  font-family: var(--sticker-font);
+  font-weight: var(--sticker-weight);
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) var(--sticker-bad), 0 var(--sticker-edge-w) 0 var(--sticker-bad);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 60ms ease, box-shadow 60ms ease;
+}
+/* An action written as text: dark words, underlined in blue. */
+html:not([data-skin]) :is(button, a):is(.ui-link, .text-violet-600, .text-violet-700, .text-\[color\:var\(--accent\)\]):not(.border, [class*="bg-"], .ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain):where(:not(#admin-screen *)) {
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--sticker-text-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--sticker-text-line);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+/* Yes and No on a change: equal pills, green and salmon. */
+html:not([data-skin]) :is(.dev-vote-switch .dev-vote-switch-yes, .dev-vote-switch .dev-vote-switch-no):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain):where(:not(#admin-screen *)) {
+  min-height: var(--sticker-h);
+  padding: var(--sticker-pad);
+  border: 0;
+  border-radius: var(--sticker-radius);
+  color: var(--sticker-vote-ink);
+  font-family: var(--sticker-font);
+  font-weight: var(--sticker-weight);
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) var(--sticker-line), 0 var(--sticker-edge-w) 0 var(--sticker-line);
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 60ms ease, box-shadow 60ms ease;
+}
+html:not([data-skin]) .dev-vote-switch .dev-vote-switch-yes:where(:not(#admin-screen *)) { background: var(--sticker-yes-bg); }
+html:not([data-skin]) .dev-vote-switch .dev-vote-switch-no:where(:not(#admin-screen *)) { background: var(--sticker-no-bg); }
+html:not([data-skin]) .dev-vote-switch :is(.dev-vote-switch-yes, .dev-vote-switch-no) .dev-vote-n:where(:not(#admin-screen *)) {
+  color: var(--sticker-vote-ink);
+  opacity: 0.75;
+}
+/* Under the pointer: a lighter fill. */
+html:not([data-skin]) :is(button, a, label):is(.bg-violet-600):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):hover {
+  background: var(--sticker-main-bg-hover);
+}
+html:not([data-skin]) :is(button, a, label):is(.ui-btn:not(.ui-btn-bad), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.rounded-full, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-full)):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):hover {
+  background: var(--sticker-second-bg-hover);
+  color: var(--sticker-second-ink);
+}
+html:not([data-skin]) :is(button, a, label):is(.ui-btn-bad, .border-red-400, .bg-red-500\/10):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):hover {
+  background: var(--sticker-bad-bg-hover);
+  color: var(--sticker-bad);
+}
+html:not([data-skin]) .dev-vote-switch .dev-vote-switch-yes:where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):hover { background: var(--sticker-yes-bg-hover); }
+html:not([data-skin]) .dev-vote-switch .dev-vote-switch-no:where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):hover { background: var(--sticker-no-bg-hover); }
+/* Pressed: the pill goes down onto its edge. */
+html:not([data-skin]) :is(button, a, label):is(.bg-violet-600):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):active,
+html:not([data-skin]) :is(button, a, label):is(.ui-btn:not(.ui-btn-bad), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.rounded-full, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-full)):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):active {
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) var(--sticker-line), 0 0 0 var(--sticker-line);
+  transform: translateY(var(--sticker-edge-w));
+}
+html:not([data-skin]) :is(button, a, label):is(.ui-btn-bad, .border-red-400, .bg-red-500\/10):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):active {
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) var(--sticker-bad), 0 0 0 var(--sticker-bad);
+  transform: translateY(var(--sticker-edge-w));
+}
+html:not([data-skin]) :is(.dev-vote-switch .dev-vote-switch-yes, .dev-vote-switch .dev-vote-switch-no):where(:not(#admin-screen *)):not(:disabled, [aria-disabled="true"]):active,
+html:not([data-skin]) :is(.dev-vote-switch .dev-vote-switch-yes, .dev-vote-switch .dev-vote-switch-no)[aria-pressed="true"]:where(:not(#admin-screen *)) {
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) var(--sticker-line);
+  transform: translateY(var(--sticker-edge-w));
+}
+/* The keyboard's ring. */
+html:not([data-skin]) :is(button, a, label):is(.bg-violet-600, .ui-btn, :is(.bg-zinc-100, .bg-zinc-200, .bg-white.rounded-full, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-full), .border-red-400, .bg-red-500\/10, .dev-vote-switch-yes, .dev-vote-switch-no):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):focus-visible {
+  outline: 2px solid var(--sticker-focus);
+  outline-offset: 2px;
+}
+/* Disabled: faded, with its outline and no edge. */
+html:not([data-skin]) :is(button, a, label):is(.bg-violet-600, .ui-btn, :is(.bg-zinc-100, .bg-zinc-200, .bg-white.rounded-full, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-full), .border-red-400, .bg-red-500\/10, .dev-vote-switch-yes, .dev-vote-switch-no):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)):is(:disabled, [aria-disabled="true"]) {
+  opacity: var(--sticker-disabled);
+  box-shadow: inset 0 0 0 var(--sticker-outline-w) currentColor;
+  transform: none;
+  cursor: default;
+}
+/* Small buttons: a step shorter, with a thinner edge. */
+html:not([data-skin]) :is(button, a, label):is(.bg-violet-600):is(.text-xs, .py-1, .py-1\.5, .ui-btn-sm):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)) {
+  --sticker-edge-w: var(--sticker-edge-w-small);
+  min-height: var(--sticker-h-small);
+  padding: var(--sticker-pad-small);
+}
+html:not([data-skin]) :is(button, a, label):is(.ui-btn:not(.ui-btn-bad), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.rounded-full, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-full)):is(.text-xs, .py-1, .py-1\.5, .ui-btn-sm):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)) {
+  --sticker-edge-w: var(--sticker-edge-w-small);
+  min-height: var(--sticker-h-small);
+  padding: var(--sticker-pad-small);
+}
+html:not([data-skin]) :is(button, a, label):is(.ui-btn-bad, .border-red-400, .bg-red-500\/10):is(.text-xs, .py-1, .py-1\.5, .ui-btn-sm):not(.ui-lrow, .ui-row, [role="radio"], [role="tab"], .ui-plain, .w-5, .w-6, .w-7, .w-8, .w-9, .w-10, .w-11, .w-12):where(:not(#admin-screen *)) {
+  --sticker-edge-w: var(--sticker-edge-w-small);
+  min-height: var(--sticker-h-small);
+  padding: var(--sticker-pad-small);
+}
+/* The press itself needs no reduced-motion twin: it is 60ms, and the edge
+   change is the information (the pill goes down), which the shrink-and-fade
+   rules this repo twins are not. */
+/* END OF BUTTONS: STICKER. */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
 @keyframes wip-hero-drift {
   from { transform: rotate(0deg) scale(1); }

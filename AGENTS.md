@@ -720,6 +720,10 @@ carry most of them.
 - **One accent, with three jobs kept apart.**
   - `violet-*` (the blue: `tailwind.config.js` overrides it) and `--accent`
     mark an action, or a number that asks for the viewer ("3 to vote").
+    In the Standard look and the brand kit (WIP) look the main action is
+    the yellow sticker pill (the "BUTTONS: STICKER" block in
+    `public/css/app.css`); there `violet-*` marks a number that asks for
+    the viewer and the text actions' underline.
   - `--lit-ink` / `--lit-tint` / `--lit-line` mark where you are: the lit
     tab on the phone bar, the rail row, and the Workshop strip's marker.
   - `--brand-*` periwinkle is the header's own ink (the app chip, the bell,
