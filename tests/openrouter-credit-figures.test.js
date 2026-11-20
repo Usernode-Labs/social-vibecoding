@@ -66,7 +66,13 @@ function database({ state = null, bot = true } = {}) {
     async query(rawSql, params = []) {
       const sql = collapse(rawSql);
       if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
-      if (/^INSERT INTO platform_settings/.test(sql)) { settings.set(params[0], params[1]); return { rows: [] }; }
+      if (/^INSERT INTO platform_settings/.test(sql)) {
+        // The staging seed names its key in the statement; every other writer passes it.
+        const named = /VALUES \('([a-z_]+)', \$1/.exec(sql);
+        if (named) settings.set(named[1], params[0]);
+        else settings.set(params[0], params[1]);
+        return { rows: [] };
+      }
       if (/FROM platform_settings/.test(sql)) {
         const keys = Array.isArray(params[0]) ? params[0] : [params[0]];
         return { rows: keys.filter((k) => settings.has(k)).map((k) => ({ key: k, value: settings.get(k) })) };
@@ -556,4 +562,37 @@ test('a saved weekly budget is taken to the bot\'s key at once, then the figures
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
   assert.match(source, /if \(valid\.weeklyLimitCents !== undefined\) \{[\s\S]*?await syncBudget\(pool, config\)\.catch\(/,
     'saving the budget in Admin, Homeroom bot, Settings does it');
+});
+
+// ── 8. What a staging copy shows (the before and after shots) ───────────
+
+test('the staging sample shows both rows, and a preview with no keys leaves it standing', async () => {
+  const migrate = require('../src/db/migrate');
+  const db = database({ bot: false });
+  const before = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  try {
+    await migrate.seedStagingPlatformLimit(db);
+    // The preview's own sweep: no management key, no bot key, nothing to ask.
+    await withOpenRouter({ credits: null, key: null }, async (or) => {
+      await credit.sweep(db, NO_MANAGEMENT, { platform: noWake });
+      assert.deepEqual(or.calls, []);
+    });
+  } finally {
+    if (before === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = before;
+  }
+  const status = await credit.status(db);
+  const row = view.creditRow(status);
+  assert.deepEqual([row.state, row.urgent, row.balanceCents, row.daysLeft], ['near', true, 18400, 2], 'the account\'s $184, about two days');
+  // Still "just read" hours on: a preview outlives the 45 minutes a read is stood on.
+  assert.equal(view.creditRow(status, { now: Date.now() + 6 * HOUR }).state, 'near');
+  const stored = db.levels.get('bot_budget');
+  assert.deepEqual([stored.level, stored.used, stored.cap], ['warn', 64800, 80000], 'the budget\'s level, measured by its own code');
+  const budgetRow = view.capacityRow('bot_budget', stored, { percent: 80 });
+  assert.deepEqual([budgetRow.state, budgetRow.percent, budgetRow.detail.usedCents], ['near', 81, 64800]);
+  assert.equal(new Date(budgetRow.detail.resetsAt).getUTCDay(), 1);
+  // Off staging the seed writes nothing.
+  const prod = database();
+  await migrate.seedStagingPlatformLimit(prod);
+  assert.equal(prod.stateNow(), null);
 });

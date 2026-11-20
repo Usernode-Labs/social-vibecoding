@@ -13952,14 +13952,18 @@ async function seedStagingRestartEligibleMerge(pool, config) {
 // shows both rows: the account's credit under its $200 line, and Homeroom
 // bot's weekly budget at 81%. Staging only. A preview has no OpenRouter key
 // and no management key, so its own credit sweep has nothing to ask and
-// leaves this standing; once it is 45 minutes old the area says it could
-// not check, which is true. Warnings are never sent from staging
-// (openrouter-credit.js and platform-limit-alerts.js isStaging), so no admin
-// is told.
+// leaves this standing. A read goes stale after 45 minutes (the area then
+// says it could not check), and a preview outlives that, so the sample read
+// is dated twelve hours ahead: it stays "just read" for the preview's life.
+// The readings behind the days estimate stay in the past, where a rate is
+// measured. Warnings are never sent from staging (openrouter-credit.js and
+// platform-limit-alerts.js isStaging), so no admin is told.
+const STAGING_SAMPLE_READ_AHEAD_MS = 12 * 60 * 60 * 1000;
+
 async function seedStagingPlatformLimit(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   const now = Date.now();
-  const at = new Date(now).toISOString();
+  const at = new Date(now + STAGING_SAMPLE_READ_AHEAD_MS).toISOString();
   const state = {
     accountCents: 18400,
     keyCents: 15200,
