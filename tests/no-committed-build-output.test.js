@@ -1,4 +1,4 @@
-// test:changed: always (tracked build output; scripts/test-changed.js)
+// test:changed: when public/ (tracked build output; scripts/test-changed.js)
 //
 // Build output must never be tracked. public/shell/ is the shell build's
 // output folder (frontend/vite.config.ts empties it on every build), and
