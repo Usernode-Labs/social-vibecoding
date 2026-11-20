@@ -8622,6 +8622,7 @@ html:not([data-skin]) {
   --wip-nav-fold-ic: 20px;
   --wip-nav-fold-rest: 0.78;             /* the glyph at rest; whole under the pointer or the keyboard's focus */
   --wip-nav-fold-inset: -4px;            /* the fold button's own air laps the panel's edge, so its glyph sits 2px from it on either side */
+  --wip-nav-settings: 32px;              /* the Settings button at the end of You's row: a square inside the row's height */
   --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
   --wip-nav-ic-size: 20px;
   --wip-nav-ic-size-small: 18px;
@@ -8645,6 +8646,7 @@ html:not([data-skin]) {
   --wip-nav-pad: 10px;
   --wip-nav-row-pad: 12px;
   --wip-nav-row-gap: 12px;
+  --wip-nav-row-space: 2px;              /* between one row and the next */
   --wip-nav-size: 15px;
   --wip-nav-head-size: 12.5px;
   --wip-nav-font: inherit;
@@ -8734,9 +8736,27 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) body { --platform-rail-full: var(--wip-nav-w); }
   html:not([data-skin]) #platform-tabs .platform-tab-glyph { width: var(--wip-nav-ic-size); height: var(--wip-nav-ic-size); }
   html:not([data-skin]) #platform-tabs .platform-rail-settings-glyph { width: var(--wip-nav-ic-size-small); height: var(--wip-nav-ic-size-small); }
-  html:not([data-skin]) #platform-tabs.platform-tabs { padding-inline: var(--wip-nav-pad); gap: 2px; }
-  html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-community, .platform-rail-settings) { min-height: var(--wip-nav-row-h); padding-inline-start: var(--wip-nav-row-pad); gap: var(--wip-nav-row-gap); border-radius: var(--wip-nav-row-radius); font-size: var(--wip-nav-size); font-weight: 600; }
+  html:not([data-skin]) #platform-tabs.platform-tabs { padding-inline: var(--wip-nav-pad); gap: var(--wip-nav-row-space); }
+  html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-community) { min-height: var(--wip-nav-row-h); padding-inline-start: var(--wip-nav-row-pad); gap: var(--wip-nav-row-gap); border-radius: var(--wip-nav-row-radius); font-size: var(--wip-nav-size); font-weight: 600; }
   html:not([data-skin]) #platform-tabs .platform-tab { padding-inline-end: var(--wip-nav-row-pad); }
+  /* SETTINGS IS A BUTTON AT THE END OF YOUR ROW, NOT A ROW (20 Nov 2026).
+     Given a row's height and start padding, it stood 5px above You with its
+     glyph off centre, and its hover and lit fill poked out over the row's
+     corner. It is a square inside the row's height, centred on You's line,
+     its glyph in the middle. Its measures come from the row's tokens, so it
+     stays on that line if the row changes: the air above it and at its end
+     is what the row has to spare; its foot gives back that air, its own
+     height and the space between rows, so it takes no height and You, next
+     in `order`, starts on its line; its corner is the row's less the air,
+     so the two curves run together. Folded, the strip's rule below puts it
+     on a line of its own. */
+  html:not([data-skin]) #platform-tabs .platform-rail-settings {
+    width: var(--wip-nav-settings);
+    height: var(--wip-nav-settings);
+    margin-block: calc((var(--wip-nav-row-h) - var(--wip-nav-settings)) / 2) calc(-1 * (var(--wip-nav-row-h) + var(--wip-nav-settings)) / 2 - var(--wip-nav-row-space));
+    margin-inline: 0 calc((var(--wip-nav-row-h) - var(--wip-nav-settings)) / 2);
+    border-radius: calc(var(--wip-nav-row-radius) - (var(--wip-nav-row-h) - var(--wip-nav-settings)) / 2);
+  }
   html:not([data-skin]) #platform-tabs :is(.platform-tab-label, .platform-rail-community-name) { font-size: var(--wip-nav-size); }
   html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { text-transform: none; letter-spacing: 0; font-size: var(--wip-nav-head-size); font-weight: 600; }
   /* THE BRAND: Homeroom's logotype at the panel's top, the same on
