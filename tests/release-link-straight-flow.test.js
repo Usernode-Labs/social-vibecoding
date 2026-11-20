@@ -224,7 +224,7 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow and ad
     beforeFinish() { return true; },
   });
   // The make screen's root, over the landing, on the wallpaper.
-  assert.match(html, /<div role="dialog" aria-labelledby="welcome-page-title" data-welcome-page="" class="platform-kb-surface fixed inset-0 z-\[60\] flex flex-col text-zinc-900 dark:text-zinc-100" style="background:var\(--home-wallpaper, #f4f2e4\)">/);
+  assert.match(html, /<div role="dialog" aria-labelledby="welcome-page-title" data-welcome-page="" class="platform-kb-surface fixed inset-0 z-\[60\] flex flex-col text-zinc-900 dark:text-zinc-100" style="background:var\(--home-wallpaper, #fffeea\)">/);
   // The wordmark bar, 24px, centred, at least 32px under the status bar.
   assert.match(html, /<div class="relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] translate-y-6 opacity-0[^"]*"><svg class="h-6 w-auto text-zinc-950 dark:text-white"/);
   // The 384px column with the 16px gutter.
@@ -389,8 +389,8 @@ test('its frame is the make screen\'s own literals', () => {
   }
   // The make screen's root, at the landing's own layer.
   assert.equal(welcome.WELCOME_ROOT, loadTsx(MAKE).MAKE_ROOT.replace('z-[9000]', 'z-[60]'));
-  assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
-  assert.match(read(WELCOME), /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
+  assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #fffeea\)' \}\}/);
+  assert.match(read(WELCOME), /style=\{\{ background: 'var\(--home-wallpaper, #fffeea\)' \}\}/);
 });
 
 test('Continue saves the username with the sheet\'s request, then hands off to the make screen only once the shell is ready (#4904)', () => {

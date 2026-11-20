@@ -954,7 +954,7 @@ export function MakeScreen({
       data-first-session-make=""
       data-make-entry={entry}
       className={underHeader ? MAKE_ROOT_UNDER_HEADER : MAKE_ROOT}
-      style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
+      style={{ background: 'var(--home-wallpaper, #fffeea)' }}
     >
       {/* Stays put over the scroller, so nothing scrolls under the status bar.
           At least 32px tall under the status bar's inset, so the whole mark

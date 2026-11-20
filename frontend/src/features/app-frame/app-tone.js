@@ -39,7 +39,7 @@ export const APP_TONE_ATTR = 'data-app-tone';
  * browser chrome above the bar is part of the strip, so it takes the tone
  * too. Keep the two in step.
  */
-export const TONE_GROUND = { light: '#f4f2e4', dark: '#0b0d1b' };
+export const TONE_GROUND = { light: '#fffeea', dark: '#0b0d1b' };
 
 /**
  * The luminance below which a page colour reads as dark.
@@ -48,7 +48,7 @@ export const TONE_GROUND = { light: '#f4f2e4', dark: '#0b0d1b' };
  * colour": white wins when relative luminance is under 0.179, and that is
  * the same question the bar is asking. #808080 (L 0.22) stays light;
  * #4a4a4a (L 0.07) is dark; the platform's two grounds sit far to either
- * side (cream 0.88, night 0.003).
+ * side (cream 0.98, night 0.003).
  */
 export const DARK_LUMINANCE = 0.179;
 

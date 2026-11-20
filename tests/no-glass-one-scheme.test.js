@@ -51,7 +51,7 @@ test('no surface is swapped for a different colour on any platform', () => {
 
 test('the solid plane colours are the fills composited over the wallpaper', () => {
   // The wallpaper grounds the planes sit on: light cream, dark night.
-  const grounds = [[244, 242, 228], [11, 13, 27]];
+  const grounds = [[255, 254, 234], [11, 13, 27]];
   themeBlocks().forEach((block, i) => {
     for (const [fill, solid] of [['dc-sheet-fill', 'dc-sheet-solid'], ['dc-strip-fill', 'dc-strip-solid']]) {
       const [r, g, b, a] = rgba(token(block, fill));

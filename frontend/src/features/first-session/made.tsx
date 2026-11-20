@@ -1998,7 +1998,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       data-first-session-made=""
       data-make-entry={entry}
       className={underHeader ? MADE_ROOT_UNDER_HEADER : MADE_ROOT}
-      style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
+      style={{ background: 'var(--home-wallpaper, #fffeea)' }}
     >
       {underHeader ? (
         // Under the platform header: no mark, only the ✕ from Create, in a

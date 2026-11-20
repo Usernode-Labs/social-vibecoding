@@ -973,7 +973,7 @@ export function WelcomeHeld() {
       aria-label={t('onboarding:firstSession.welcome.opening')}
       data-first-session-welcome="held"
       className="fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
-      style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
+      style={{ background: 'var(--home-wallpaper, #fffeea)' }}
     >
       <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
         <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />

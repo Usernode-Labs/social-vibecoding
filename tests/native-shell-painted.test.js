@@ -131,7 +131,7 @@ function boot(opts = {}) {
     usernode,
     MutationObserver: class { observe() {} disconnect() {} },
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
-    getComputedStyle: () => ({ paddingTop: `${page.inset}px`, backgroundColor: 'rgb(244, 242, 228)' }),
+    getComputedStyle: () => ({ paddingTop: `${page.inset}px`, backgroundColor: 'rgb(255, 254, 234)' }),
     performance: {
       now: opts.manualClock ? () => clock : () => Date.now() - t0,
       getEntriesByType: () => [{ domContentLoadedEventStart: page.dclAt }],

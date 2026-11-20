@@ -133,6 +133,16 @@ test('the three GROUNDS ascend in both themes; the card only has to differ', () 
   // direction flips by theme and only its DISTANCE from the sheet is the
   // invariant. Asserting "lighter" on it is what a first draft of this test
   // did, and light mode caught it.
+  //
+  // What climbs from the PAGE is what the planes paint on it, the `-solid`
+  // colours (each plane's fill over the wallpaper's base): the strip is the
+  // ground's own colour at a fraction of its alpha, so it never sinks below
+  // the page, and the sheet over it is lighter again. The surface values
+  // (--dc-strip, --dc-sheet) climb between themselves; neither is painted on
+  // the page (the planes take their fills, asserted above). The light page
+  // is the export's cream again (#fffeea, 98% luminance), which is lighter
+  // than the neutral #f5f5f7 a card's inset takes, so the page is compared
+  // with the planes that lie on it, not with that inset value.
   const lum = (hex) => {
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -145,14 +155,18 @@ test('the three GROUNDS ascend in both themes; the card only has to differ', () 
   const light = APP_CSS.slice(0, APP_CSS.indexOf('\n.dark {'));
   const dark = APP_CSS.slice(APP_CSS.indexOf('\n.dark {'));
   for (const [theme, block, ground] of [
-    ['light', light, '#f4f2e4'],
+    ['light', light, '#fffeea'],
     ['dark', dark, '#0b0d1b'],
   ]) {
-    const grounds = [ground, val(block, '--dc-strip'), val(block, '--dc-sheet')];
-    for (let i = 1; i < grounds.length; i++) {
-      assert.ok(lum(grounds[i]) > lum(grounds[i - 1]),
-        `${theme}: ${grounds[i]} must be nearer the reader than ${grounds[i - 1]}`);
-    }
+    assert.ok(APP_CSS.includes(`--home-ground: ${ground};`), `${theme}: the wallpaper's ground is ${ground}`);
+    const stripPlane = val(block, '--dc-strip-solid');
+    const sheetPlane = val(block, '--dc-sheet-solid');
+    assert.ok(lum(stripPlane) >= lum(ground),
+      `${theme}: the strip (${stripPlane}) must not sink below the page (${ground})`);
+    assert.ok(lum(sheetPlane) > lum(stripPlane),
+      `${theme}: the sheet (${sheetPlane}) must be nearer the reader than the strip (${stripPlane})`);
+    assert.ok(lum(val(block, '--dc-sheet')) > lum(val(block, '--dc-strip')),
+      `${theme}: the sheet's surface value must be nearer the reader than the strip's`);
     const sheet = val(block, '--dc-sheet');
     const raised = val(block, '--dc-raised');
     assert.ok(Math.abs(lum(raised) - lum(sheet)) >= 8,
