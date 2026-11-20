@@ -9,7 +9,7 @@
  * to html[data-skin="brand"], reading its own tokens (--bl-*). This script
  * writes the same rules a second time, scoped to html:not([data-skin]) and to
  * what is inside #dev-topic-thread, into the block between the two markers
- * below (it stands before the looks' compiled section and the brand look's own block), so the two cannot drift: a rule changed under the brand look changes
+ * below (it stands before the thread rail's block, the bell sheet's, the looks' compiled section and the brand look's own), so the two cannot drift: a rule changed under the brand look changes
  * here on the next run, and tests/thread-look.test.js fails until it is run.
  *
  *   node scripts/thread-look.js          rewrite the block
@@ -129,14 +129,17 @@ function generate(css) {
 
 /**
  * The brand look's block runs to the end of the sheet (tests/brand-look.test.js reads it so), and the frame looks'
- * compiled section stands directly before it (tests/looks-css.test.js), so this block stands before that section.
+ * compiled section stands directly before it (tests/looks-css.test.js), and the bell sheet's hand-written block runs
+ * up to that section (tests/frame-app.test.js), and the thread rail's block runs up to the bell sheet's (tests/thread-rail.test.js): so this
+ * block stands before the thread rail's.
  */
-const BRAND_HEADING = '/* looks:begin';
+const BRAND_HEADING = 'THE THREAD\'S RAIL: "How it got here"';
 
 function build(css) {
   const { outside, block } = generate(css);
-  const at = outside.indexOf(BRAND_HEADING);
-  if (at < 0) throw new Error('app.css: the looks section was not found');
+  const mark = outside.indexOf(BRAND_HEADING);
+  if (mark < 0) throw new Error('app.css: the thread rail\'s block was not found');
+  const at = outside.lastIndexOf('/*', mark);
   return `${outside.slice(0, at).replace(/\n+$/, '\n')}${block}\n${outside.slice(at)}`;
 }
 
