@@ -8231,15 +8231,25 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
    for the same community; pinned-communities.tsx `CommunityLogo`),
    and the app's icon is one small icon in a row of the community's apps,
    with two places after it for the apps to come. */
-/* SOFT (asked 19 Nov 2026): the glow in its pale tints, spread wide, with a faint edge and no lift of its own. */
+.home-community-emblem { display: none; }
+/* THE EMBLEMS (asked 20 Nov 2026): the logo is one of ten drawings in the kit's four colours, on the card's own quiet
+   ground; the soft glow it replaced is gone. A look that draws no emblem hides the drawing (the rule after these). */
+html:not([data-skin]) {
+  --wip-emblem-1: #ffee6f;
+  --wip-emblem-2: #3090e1;
+  --wip-emblem-3: #a9cf97;
+  --wip-emblem-4: #ff9c8a;
+  --wip-emblem-ground: #fffeea;
+}
+html:not([data-skin]).dark { --wip-emblem-ground: #1d1e1a; }
 html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo {
   border-color: transparent;
-  background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-1));
+  background-color: var(--wip-emblem-ground);
+  background-image: none;
   box-shadow: inset 0 0 0 1px var(--wip-soft-line);
+  overflow: hidden;
 }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="2"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-2)); }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="3"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-3)); }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="4"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-4)); }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo > .home-community-emblem { display: block; width: 100%; height: 100%; }
 html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app,
 html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot {
   flex: none;

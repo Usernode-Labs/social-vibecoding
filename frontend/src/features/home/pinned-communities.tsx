@@ -131,18 +131,68 @@ const LOGO_ORBS = 4;
  * a community has no logo of its own yet, and its app's icon is the app's
  * (`CommunityApps` draws that one, small).
  */
+/** The kit's four emblem colours (app.css `--wip-emblem-1` to `-4`: sun, sky, leaf, salmon). */
+const INK = (n: number) => `var(--wip-emblem-${(n % 4) + 1})`;
+
+/**
+ * THE EMBLEMS (20 Nov 2026, from the sheet of twenty the product owner
+ * approved): the ones that need no member's picture, each drawn in a 100 by
+ * 100 square from the kit's four colours. `c` is those colours, turned by the
+ * community's slug, so two communities with the same emblem still differ.
+ */
+const EMBLEMS: Array<(c: string[]) => ReactNode> = [
+  // Overlap: three discs that meet.
+  (c) => (<><circle cx="40" cy="40" r="26" fill={c[0]} fillOpacity=".9" /><circle cx="60" cy="40" r="26" fill={c[1]} fillOpacity=".8" /><circle cx="50" cy="60" r="26" fill={c[2]} fillOpacity=".8" /></>),
+  // Signal: thick quarter rings from one corner.
+  (c) => (<><circle cx="14" cy="86" r="74" fill="none" stroke={c[2]} strokeWidth="11" /><circle cx="14" cy="86" r="52" fill="none" stroke={c[1]} strokeWidth="11" /><circle cx="14" cy="86" r="30" fill="none" stroke={c[0]} strokeWidth="11" /><circle cx="14" cy="86" r="11" fill={c[3]} /></>),
+  // Blocks: four simple shapes.
+  (c) => (<><path d="M48 48H12A36 36 0 0 1 48 12Z" fill={c[1]} /><circle cx="70" cy="30" r="18" fill={c[0]} /><circle cx="30" cy="70" r="18" fill={c[2]} /><path d="M52 52H88A36 36 0 0 1 52 88Z" fill={c[3]} /></>),
+  // Common ground: two circles that overlap.
+  (c) => (<><circle cx="38" cy="50" r="28" fill={c[1]} fillOpacity=".9" /><circle cx="62" cy="50" r="28" fill={c[0]} fillOpacity=".85" /><circle cx="50" cy="50" r="7" fill={c[3]} /></>),
+  // Bloom: four petals meeting in the middle.
+  (c) => (<><path d="M48 48V30A18 18 0 1 0 30 48Z" fill={c[0]} /><path d="M52 48H70A18 18 0 1 0 52 30Z" fill={c[1]} /><path d="M48 52H30A18 18 0 1 0 48 70Z" fill={c[2]} /><path d="M52 52V70A18 18 0 1 0 70 52Z" fill={c[3]} /></>),
+  // Linked: two thick rings.
+  (c) => (<><circle cx="38" cy="50" r="22" fill="none" stroke={c[0]} strokeWidth="10" /><circle cx="62" cy="50" r="22" fill="none" stroke={c[1]} strokeWidth="10" /></>),
+  // Dot grid: three by three.
+  (c) => (<>{[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => <circle key={i} cx={24 + (i % 3) * 26} cy={24 + Math.floor(i / 3) * 26} r="10" fill={c[(i * 3 + Math.floor(i / 3)) % 4]} />)}</>),
+  // Circle up: eight seats in a ring.
+  (c) => (<>{[0, 1, 2, 3, 4, 5, 6, 7].map((i) => { const t = (i / 8) * 2 * Math.PI; return <circle key={i} cx={50 + 30 * Math.cos(t)} cy={50 + 30 * Math.sin(t)} r={i % 3 === 0 ? 10 : 7} fill={c[i % 4]} />; })}<circle cx="50" cy="50" r="9" fill={c[3]} /></>),
+  // Growing: three pillars.
+  (c) => (<><rect x="16" y="52" width="20" height="34" rx="10" fill={c[2]} /><rect x="40" y="34" width="20" height="52" rx="10" fill={c[1]} /><rect x="64" y="16" width="20" height="70" rx="10" fill={c[0]} /></>),
+  // Group chat: one speech bubble, three people in it.
+  (c) => (<><path d="M26 22H74A14 14 0 0 1 88 36V58A14 14 0 0 1 74 72H44L28 86V72H26A14 14 0 0 1 12 58V36A14 14 0 0 1 26 22Z" fill={c[0]} /><circle cx="32" cy="47" r="7" fill={c[1]} /><circle cx="50" cy="47" r="7" fill={c[3]} /><circle cx="68" cy="47" r="7" fill={c[2]} /></>),
+];
+
+/**
+ * A COMMUNITY'S OWN LOGO (20 Nov 2026, fourth drawing): one of the emblems
+ * above on a quiet ground, where a look tells a community from the apps it
+ * holds. Which emblem and which turn of the colours come from the community's
+ * slug, so a community always has the same one. It is a drawing, not a stored
+ * picture: a community has no logo of its own yet, and its app's icon is the
+ * app's (`CommunityApps` draws that one, small). `data-orb` and the two
+ * `--logo-*` values are the third drawing's (a soft glow), still what a look
+ * without the emblems paints.
+ */
 export function CommunityLogo({ slug }: { slug: string; name?: string }) {
   const next = logoRandom(slug);
   const orb = Math.floor(next() * LOGO_ORBS) + 1;
   const at = (n: number) => `${30 + Math.floor(n * 3) * 20}%`;
+  const x = at(next());
+  const y = at(next());
+  const emblem = Math.floor(next() * EMBLEMS.length);
+  const turn = Math.floor(next() * 4);
+  const colours = [0, 1, 2, 3].map((n) => INK(n + turn));
   return (
     <span
       className={`${FACE} home-community-logo`}
       data-scene={String(communityScene(slug))}
       data-orb={String(orb)}
-      style={{ ['--logo-x' as string]: at(next()), ['--logo-y' as string]: at(next()) }}
+      data-emblem={String(emblem + 1)}
+      style={{ ['--logo-x' as string]: x, ['--logo-y' as string]: y }}
       aria-hidden="true"
-    />
+    >
+      <svg className="home-community-emblem" viewBox="0 0 100 100" focusable="false">{EMBLEMS[emblem](colours)}</svg>
+    </span>
   );
 }
 
