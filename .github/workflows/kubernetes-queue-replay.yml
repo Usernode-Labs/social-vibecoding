@@ -1,0 +1,58 @@
+name: Temporary Kubernetes queue replay
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  older:
+    name: Older promotion holding the lock
+    if: github.head_ref == 'codex/overlap-kubernetes-release-builds'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: kubernetes-queue-replay-${{ github.run_id }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Observe the verified waiters without releasing the lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 18); do
+            jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --jq '.jobs[] | [.name, .status] | @tsv')"
+            printf '%s\n' "$jobs"
+            regular="$(printf '%s\n' "$jobs" | awk -F '\t' '$1 == "Regular promotion" {print $2}')"
+            urgent="$(printf '%s\n' "$jobs" | awk -F '\t' '$1 == "Urgent promotion" {print $2}')"
+            if [[ "$regular" =~ ^(queued|pending|waiting)$ && "$urgent" =~ ^(queued|pending|waiting)$ ]]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+  builds:
+    name: Parallel build lane ${{ matrix.lane }}
+    if: github.head_ref == 'codex/overlap-kubernetes-release-builds'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lane: [0, 1]
+    concurrency:
+      group: kubernetes-queue-build-replay-${{ github.run_id }}-${{ matrix.lane }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - run: sleep 12
+  waiters:
+    name: ${{ matrix.kind }} promotion
+    needs: builds
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        kind: [Regular, Urgent]
+    concurrency:
+      group: kubernetes-queue-replay-${{ github.run_id }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - run: date -u
