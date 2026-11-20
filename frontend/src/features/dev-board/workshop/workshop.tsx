@@ -4120,6 +4120,7 @@ export function DevWorkshop(): ReactNode {
           iconUrl={own ? app.iconUrl : null}
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
+          platform={!!actions.selfHosted}
           // Invite is the card after this hero (InviteHeroCard), except
           // under Standard (WIP), where it stays the row's own button.
           inviteCard={!kitHub}

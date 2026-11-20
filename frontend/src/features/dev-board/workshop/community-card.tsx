@@ -990,8 +990,10 @@ export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef
   );
 }
 
-export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false }: {
+export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false, platform = false }: {
   slug: string;
+  /** Homeroom's own community: its hero wears the brand's own page (cream, the people, the three-colour rule). */
+  platform?: boolean;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
   name?: string;
@@ -1337,12 +1339,13 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       {wipLook ? (
         <>
           {/* The brand kit's background this community wears on its pinned card (asked 20 Nov 2026), fading into the card toward the words. */}
-          <span className="wip-hero-wash" data-scene={String(communityScene(slug))} aria-hidden="true" />
+          <span className="wip-hero-wash" data-scene={platform ? 'home' : String(communityScene(slug))} aria-hidden="true" />
           <span className="wip-hero-art" aria-hidden="true">
             <span className="wip-hero-rings" />
             <span className="wip-hero-stage">
-              {data.cover?.illustration_url ? <img className="wip-hero-art-pic" src={data.cover.illustration_url} alt="" loading="lazy" /> : null}
-              <span className="app-icon-tile wip-hero-art-icon" data-icon={appIconKind({ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null })}>
+              {platform ? <img className="wip-hero-people" src="/brand/landing-people.webp" alt="" /> : null}
+              {!platform && data.cover?.illustration_url ? <img className="wip-hero-art-pic" src={data.cover.illustration_url} alt="" loading="lazy" /> : null}
+              <span className="app-icon-tile wip-hero-art-icon" hidden={platform} data-icon={appIconKind({ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null })}>
                 <AppIconContent app={{ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null }} />
               </span>
             </span>
