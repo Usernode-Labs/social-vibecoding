@@ -2316,6 +2316,50 @@ test('Revoke all keeps going past a refusal and never claims more than it did (#
   assert.deepEqual(offline.status, [['Network error: offline', 'error']]);
 });
 
+// #6512 item 5, the dated part: a device permission says when it was allowed,
+// and a revoked one when it was revoked. When it was last USED is not recorded.
+test('a device permission says when it was allowed or revoked, and a row without a stamp says nothing (#6512)', () => {
+  const LIST = 'frontend/src/features/settings/app-permissions-list.tsx';
+  const ago = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const allowedAt = ago(3);
+  const revokedAt = ago(2);
+  const html = renderComponent(LIST, 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'geolocation', label: 'Location', revoked: false, at: allowedAt },
+        { capability: 'camera', label: 'Camera', revoked: true, at: revokedAt },
+        { capability: 'usb', label: 'USB devices', revoked: false, at: null },
+        { capability: 'midi', label: 'MIDI devices', revoked: false },
+      ],
+    }],
+  });
+  const lines = [...html.matchAll(/<time data-role="permission-at" dateTime="([^"]*)" title="[^"]+" class="mt-0\.5 block text-zinc-500 dark:text-zinc-400">([^<]*)<\/time>/g)]
+    .map((m) => [m[1], m[2]]);
+  assert.deepEqual(lines, [[allowedAt, 'Allowed 3d ago'], [revokedAt, 'Revoked 2d ago']]);
+  // The line sits under the permission's name and above its note.
+  assert.ok(html.indexOf('Revoked 2d ago') < html.indexOf('data-role="capability-note"'));
+  assert.equal(message('settings:appPermissions.allowedAt'), 'Allowed {{when}}');
+  assert.equal(message('settings:appPermissions.revokedAt'), 'Revoked {{when}}');
+
+  // The stamp is the one for the row's state: a revoked row's is when it was
+  // revoked; an active row's is when it was last allowed, which for one that
+  // was revoked and re-enabled is the row's last change, not its first grant.
+  const views = new Function(`return ({ ${sliceMethod(settingsJs, '_permissionAppViews')} });`)();
+  const [app] = views._permissionAppViews([
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'geolocation', label: 'Location', status: 'active', createdAt: 'c1', updatedAt: 'u1', revokedAt: null },
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'camera', label: 'Camera', status: 'revoked', createdAt: 'c2', updatedAt: 'u2', revokedAt: 'r2' },
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'usb', label: 'USB devices', status: 'active', createdAt: 'c3', revokedAt: null },
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'midi', label: 'MIDI devices', status: 'active', createdAt: null, revokedAt: null },
+  ]);
+  assert.deepEqual(app.items.map((item) => item.at), ['u1', 'r2', 'c3', null]);
+
+  const route = read('src/routes/app-permissions.js');
+  assert.match(route, /SELECT g\.app_id, g\.capability, g\.status, g\.created_at, g\.updated_at, g\.revoked_at,/, 'the list reads the last-changed stamp');
+  assert.match(route, /updatedAt: row\.updated_at \|\| null,/);
+});
+
 // #6512 item 9: a blocked app says when it was blocked.
 test('a blocked app shows when it was blocked, and a row without a stamp shows nothing (#6512)', () => {
   const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';

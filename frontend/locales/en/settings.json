@@ -1827,6 +1827,14 @@
     "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
     "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
   },
+  "appPermissions.allowedAt": {
+    "text": "Allowed {{when}}",
+    "description": "Small grey line under a permission's name (such as Camera) on an app's row in Settings > App device permissions, saying when the person last allowed it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
+  },
+  "appPermissions.revokedAt": {
+    "text": "Revoked {{when}}",
+    "description": "Small grey line under a revoked permission's name (such as Camera) on an app's row in Settings > App device permissions, saying when the person revoked it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
+  },
   "appPermissions.revokeAll": {
     "text": "Revoke all",
     "description": "Red button beside an app's name in Settings > App device permissions, shown when the app has two or more permissions: takes all of them away from that app in one step."

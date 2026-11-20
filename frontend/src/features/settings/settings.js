@@ -4768,10 +4768,15 @@
             items: [],
           });
         }
+        const revoked = g.status !== 'active';
         byApp.get(appId).items.push({
           capability: String(g.capability ?? ''),
           label: String(g.label ?? g.capability ?? ''),
-          revoked: g.status !== 'active',
+          revoked,
+          // #6512: the stamp for the row's state. Revoked: when it was
+          // revoked. Active: when it was last allowed, which is the row's
+          // last change (a re-enable keeps its first-grant date).
+          at: (revoked ? g.revokedAt : (g.updatedAt || g.createdAt)) || null,
         });
       }
       return [...byApp.values()];
