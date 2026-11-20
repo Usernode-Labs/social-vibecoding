@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*(?:<option value="wip:[a-z0-9]+">\{t\('settings:experimental\.wipTokens\.[a-z0-9]+'\)\}<\/option>\s*)+<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard and its work-in-progress copy (listed once per token set since 19 Nov 2026): it is the one look that redraws the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.wipTokens\.brand'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard and its work-in-progress copy (one entry, the brand kit, since 20 Nov 2026): it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -134,8 +134,9 @@ test('settings.js sets it only through the menu, and paints what is stored', () 
   const src = settingsJs();
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch is wired');
   assert.doesNotMatch(src, /'brand' : 'standard'/, 'nothing sets brand but the menu\'s own value');
-  // An entry is a look, or Standard (WIP) with one of its token sets ('wip:<set>'): the set is written, then the look.
-  assert.match(src, /const \[look, set\] = String\(e\.target\.value \|\| 'standard'\)\.split\(':'\);\s*if \(look === 'wip'\) window\.Skin\?\.setTokens\?\.\(set \|\| 'current'\);\s*window\.Skin\?\.set\?\.\(look\);/, 'the change is the save');
+  // An entry is a look: the menu's value is the head's own id for it.
+  assert.match(src, /window\.Skin\?\.set\?\.\(String\(e\.target\.value \|\| 'standard'\)\);/, 'the change is the save');
+  assert.doesNotMatch(src, /setTokens|getTokens/, 'no token set is chosen: the head draws the look with its one');
   assert.match(src, /window\.Skin\?\.onChange\?\.\(/, 'a change in another tab re-paints the menu');
 });
 
@@ -588,9 +589,9 @@ test('Geist Mono and Young Serif load from our own origin, with their licences b
     const licence = path.join(ROOT, 'public', path.dirname(file), 'LICENSE.txt');
     assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
   }
-  // Standard (WIP)'s second brand token config names it too, for its section titles (the kit's serif role).
+  // Standard (WIP)'s second brand token set named it too, until it was removed on 20 Nov 2026.
   const outsideSerif = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
-  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look, Standard (WIP)\'s brand2 config and the signed-out pages\' names Young Serif');
+  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look and the signed-out pages\' names Young Serif');
 });
 
 test('the empty-state figures are committed beside their provenance, and drawn only by this look', () => {

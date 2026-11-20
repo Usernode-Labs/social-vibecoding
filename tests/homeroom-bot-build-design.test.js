@@ -501,12 +501,12 @@ test('the copies\' limits name each thing the shots cannot reach, and the two wa
     /there is no native phone app, so anything only its bridge shows cannot be shown/,
     /two requests cannot be made to race/,
     // 18 Nov 2026 (PR 6812): a look is reached by its address, never by the admins' menu.
-    /Settings › Experimental › Look is shown to admins only, so a change made for a particular look is declared with that look's \?skin=<look> in its start path \(such as \?skin=brand or \?skin=paper\), never through that menu/,
+    /Settings › Experimental › Look is shown to admins only, so a change made for a particular look is declared with that look's \?skin=<look> in its start path \(such as \?skin=brand or \?skin=wip\), never through that menu/,
   ]) assert.match(text, limit);
   // The looks named are exactly the ones the Look menu and the head's pin take.
   const skinTs = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/lib/skin.ts'), 'utf8');
-  const frame = JSON.parse(/export const FRAME_SKINS = (\[[^\]]*\])/.exec(skinTs)[1].replace(/'/g, '"'));
-  assert.deepEqual([...copyLimits.LOOK_SKINS], ['wip', 'brand', ...frame]);
+  const menu = JSON.parse(/export const MENU_SKINS = (\[[^\]]*\])/.exec(skinTs)[1].replace(/'/g, '"'));
+  assert.deepEqual([...copyLimits.LOOK_SKINS], menu);
   const head = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/head.html'), 'utf8');
   assert.ok(head.includes(`const SKINS = [${copyLimits.LOOK_SKINS.map((s) => `'${s}'`).join(', ')}];`), 'the head pins the same looks by ?skin=');
   assert.match(text, /Before you declare a change, check that the copies can reach its state\./);
