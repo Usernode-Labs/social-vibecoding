@@ -8689,7 +8689,6 @@ html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-
   font-size: var(--wip-btn-size);
   font-weight: var(--wip-btn-weight);
   letter-spacing: var(--wip-btn-track);
-  transition: background-color 120ms ease, transform 80ms ease, box-shadow 80ms ease;
 }
 html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):is(.text-xs, .py-1, .py-0\.5, .py-1\.5) {
   box-shadow: var(--wip-btn-edge-small);
@@ -8737,11 +8736,6 @@ html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .hom
   text-underline-offset: 3px;
 }
 html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; }
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) { transition: none; }
-}
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) { transition: none; }
 /* YES AND NO ON A VOTE: Homeroom's own pair, equal weight on purpose (neither answer is the main action). */
 html:not([data-skin]) {
   --wip-btn-yes-bg: #a9cf97;
