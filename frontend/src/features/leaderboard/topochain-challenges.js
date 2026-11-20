@@ -742,6 +742,62 @@ const TopochainChallenges = {
       : PlatformI18n.t('leaderboard:challenges.countNote.other', figures);
   },
 
+  // #6895: some challenges are counted on a schedule, so after finishing
+  // something the rail can sit still until the scorer's next run, with
+  // nothing saying why. One short line under the rail says how often it
+  // counts, when it last did and when the next count is due — or that it is
+  // due now. The schedule is the CHALLENGE's, so the line is the same for
+  // everybody, and the server sends it as `scoring:
+  // { interval_minutes, last_scored_at }` (#3185). It is absent for a
+  // challenge counted on the spot, one whose rule has never run, and one
+  // whose schedule is off, so those pages stay exactly as they were.
+  //
+  // A length of time the sentences above insert: minutes under an hour,
+  // whole hours under a day, then whole days.
+  _scoringDuration(minutes) {
+    const m = Number(minutes);
+    if (m < 60) return PlatformI18n.t('leaderboard:challenges.scoring.duration.minutes', { count: m });
+    if (m < 1440) {
+      return PlatformI18n.t('leaderboard:challenges.scoring.duration.hours', { count: Math.round(m / 60) });
+    }
+    return PlatformI18n.t('leaderboard:challenges.scoring.duration.days', { count: Math.round(m / 1440) });
+  },
+
+  // The scheduled-count line for a challenge, else null. `now` is a
+  // parameter so a test can pin the clock; the page has no timer, so the
+  // times are worked out when it is drawn or redrawn and then stand.
+  _scoringNoteOf(c, now = Date.now()) {
+    const s = c && c.scoring;
+    if (!s || typeof s !== 'object') return null;
+    const every = Number(s.interval_minutes);
+    const last = Date.parse(s.last_scored_at);
+    if (!Number.isFinite(every) || every <= 0) return null;
+    if (!Number.isFinite(last)) return null;
+    // Closed or over: it will not be counted again, so a schedule is news
+    // nobody can act on.
+    if (!TopochainChallenges._isOpen(c)) return null;
+    const due = last + every * 60000;
+    // A `last_scored_at` ahead of this device's clock (skew) reads as just now.
+    const agoMin = Math.max(0, Math.floor((now - last) / 60000));
+    const intervalText = TopochainChallenges._scoringDuration(every);
+    if (now >= due) {
+      return PlatformI18n.t('leaderboard:challenges.scoring.pending', {
+        every: intervalText,
+        last: TopochainChallenges._scoringDuration(Math.max(1, agoMin)),
+      });
+    }
+    // Never "in about 0 minutes": a count less than a minute off reads as 1.
+    const nextText = TopochainChallenges._scoringDuration(Math.max(1, Math.ceil((due - now) / 60000)));
+    if (agoMin < 1) {
+      return PlatformI18n.t('leaderboard:challenges.scoring.noteJustNow', { every: intervalText, next: nextText });
+    }
+    return PlatformI18n.t('leaderboard:challenges.scoring.note', {
+      every: intervalText,
+      last: TopochainChallenges._scoringDuration(agoMin),
+      next: nextText,
+    });
+  },
+
   // Open right now, by the rule Home's server applies (OPEN_ONLY_WHERE in
   // src/routes/home-panels.js): not marked over by the organiser, and inside
   // its effective schedule window. The public list carries every enabled
@@ -1588,6 +1644,10 @@ const TopochainChallenges = {
       // say it (a proposal counts once it is put to the vote; nothing past a
       // counted measure's cap, a weekly one's this week).
       countNote: TopochainChallenges._countNoteOf(challenge),
+      // #6895: under the rail, when a scheduled count last ran, how often it
+      // runs and when the next one is due — or that it is due now, so recent
+      // progress may not show yet. Null on a challenge counted on the spot.
+      scoringNote: TopochainChallenges._scoringNoteOf(challenge),
       // The same artwork as the card's tile, for the page's well.
       illustration: TopochainChallenges._illustrationOf(cp),
       illustrationTone: TopochainChallenges._illustrationToneOf(cp),

@@ -6,13 +6,16 @@
 // (2026-10-16) it holds, in this order: the title, its points, the artwork,
 // the rail, the organiser's task line, the action and "What counts" — no
 // category eyebrow, deadline, description, Scoring or participants. The task
-// line came back (#6592): it says what to do to start and finish. The render
-// half asserts that order and the parts it is made of; the source half asserts
-// what makes it a level rather than an overlay — in flow, the grid and the
-// screen's own tabs and event bar stepping aside, and no back control of its
-// own — because none of that shows in static markup. The artwork well is drawn
-// only for an illustration the registry resolves: a built-in, or an upload on
-// its payload tone.
+// line came back (#6592): it says what to do to start and finish. So did the
+// time of the next count, in plain words under the rail (#6895): a challenge
+// counted on a schedule says when progress was last counted and when the next
+// count is due, or that it is due now. The render half asserts that order and
+// the parts it is made of; the source half asserts what makes it a level
+// rather than an overlay — in flow, the grid and the screen's own tabs and
+// event bar stepping aside, and no back control of its own — because none of
+// that shows in static markup. The artwork well is drawn only for an
+// illustration the registry resolves: a built-in, or an upload on its payload
+// tone.
 //
 // Run with: node --test tests/challenge-detail-page.test.js
 
@@ -185,6 +188,27 @@ test('a level of the screen, not an overlay: in flow, the rest of the screen ste
   assert.equal((src.match(/href=\{/g) || []).length, 1, 'still exactly one href, the guarded action');
 });
 
+// #6895: the scheduled-count line, right under the rail, in the same small
+// grey note the points line uses.
+test('the scheduled-count line sits under the rail, before the task and the action (#6895)', () => {
+  const note = message('leaderboard:challenges.scoring.note',
+    { every: '10 minutes', last: '4 minutes', next: '6 minutes' });
+  const task = 'Open any app somebody else made and use it for 10 minutes in total.';
+  const html = render({ ...VIEW, scoringNote: note, task });
+  const at = html.indexOf('data-challenge-scoring');
+  assert.ok(at !== -1, 'the line is drawn');
+  assert.ok(html.includes('<p class="text-[0.8125rem] text-zinc-500 dark:text-zinc-400" data-challenge-scoring="true">'),
+    'the same grey note the points line uses');
+  assert.ok(html.includes(`>${note}<`), 'the sentence reads in full');
+  const rail = html.indexOf('role="progressbar"');
+  const taskAt = html.indexOf('data-challenge-task');
+  const cta = html.indexOf('href="https://example.com/node"');
+  assert.ok(at > rail, 'after the progress rail');
+  assert.ok(at < taskAt, 'before the organiser’s task line');
+  assert.ok(at < cta, 'before the action');
+  assert.doesNotMatch(render(VIEW), /data-challenge-scoring/,
+    'a challenge counted on the spot draws no line');
+});
 // #3253, #3248: the note on what the rule counts sits under the points, muted.
 test('the count note reads under the points, and is absent without one', () => {
   const note = message('leaderboard:challenges.countNote.onPropose');

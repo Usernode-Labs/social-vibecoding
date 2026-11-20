@@ -3631,6 +3631,12 @@
       "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel:has([role=progressbar][aria-valuetext]):has([data-challenge-task])"
     },
     {
+      "name": "A challenge counted on a schedule says when progress was last counted and when the next count is due (#6895)",
+      "path": "/#leaderboard/challenges/900501/900730",
+      "expectText": "Progress is counted every",
+      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel [role=progressbar][aria-valuetext] ~ p[data-challenge-scoring]:has(+ [data-challenge-task])"
+    },
+    {
       "name": "Imported proposal mid-build shows the Preview building pill (#866, #2585)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000042",
       "expectSelector": "button.gc-vote-btn.gc-vote-btn-building[disabled]",

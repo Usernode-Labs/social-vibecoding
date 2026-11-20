@@ -15920,18 +15920,27 @@ async function seedStagingInviteChallengeStatuses(pool) {
     );
     // The rule it is scored by: three joined people, 250 points each, on the
     // event's running window (no schedule of its own). The invite status
-    // reader resolves the same rule row.
+    // reader resolves the same rule row. It also carries the scheduled
+    // count's times (#6895), which is what a challenge's page reads to say
+    // when progress was last counted and when the next count is due: an
+    // interval of ten minutes and a count four minutes ago, so a fresh
+    // preview shows the line without waiting for the scorer's first beat.
+    // The timestamps are filled only when absent, so a reboot (or a real
+    // pass) never rewinds them.
     await pool.query(
       `INSERT INTO challenge_scoring_rules
          (id, name, measure, challenge_template_id, challenge_id, target,
-          points, enabled, notes, created_at, updated_at)
+          points, interval_minutes, last_scored_at, enabled, notes, created_at, updated_at)
        VALUES (900900, 'Staging demo: invite three participants',
-               'INVITES_JOINED', NULL, 900730, 3, 250, TRUE,
+               'INVITES_JOINED', NULL, 900730, 3, 250, 10,
+               NOW() - INTERVAL '4 minutes', TRUE,
                'Staging demo: backs the invite challenge''s per-person list.',
                NOW(), NOW())
        ON CONFLICT (id) DO UPDATE SET
          challenge_id = EXCLUDED.challenge_id, measure = EXCLUDED.measure,
-         target = EXCLUDED.target, points = EXCLUDED.points, enabled = TRUE`
+         target = EXCLUDED.target, points = EXCLUDED.points, enabled = TRUE,
+         interval_minutes = COALESCE(challenge_scoring_rules.interval_minutes, EXCLUDED.interval_minutes),
+         last_scored_at = COALESCE(challenge_scoring_rules.last_scored_at, EXCLUDED.last_scored_at)`
     );
     const { rows: viewerRows } = await pool.query(
       "SELECT id FROM users WHERE username = 'usernode-capture'");
