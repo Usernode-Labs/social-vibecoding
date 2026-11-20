@@ -86,6 +86,7 @@ import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type Invi
 import { hubShot, hubShotPayload } from './hub-shot';
 import { useHubDismissed } from './hub-dismissed';
 import { changeHref } from '../../../lib/change-href';
+import { communityScene } from '../../home/pinned-communities';
 import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import type { ApprovalPayload } from '../../who-decides/model';
 import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, type ProjectCover } from '../../guest/project-card';
@@ -1335,7 +1336,8 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           when it has one, and its icon again, large, in front of it. */}
       {wipLook ? (
         <>
-          <span className="wip-hero-wash" aria-hidden="true" />
+          {/* The brand kit's background this community wears on its pinned card (asked 20 Nov 2026), fading into the card toward the words. */}
+          <span className="wip-hero-wash" data-scene={String(communityScene(slug))} aria-hidden="true" />
           <span className="wip-hero-art" aria-hidden="true">
             <span className="wip-hero-rings" />
             <span className="wip-hero-stage">

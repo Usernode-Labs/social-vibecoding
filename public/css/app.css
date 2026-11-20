@@ -7383,6 +7383,28 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is
 html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
 html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
 html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+/* THE HERO WEARS A BRAND BACKGROUND (asked 20 Nov 2026): one of the kit's six pictures, the one the community's pinned
+   card opens on, fills the hero's far side and fades into the card toward the words, so they stay on the card's own
+   colour. It stands in place of the drifting washes, the dots and the rings. */
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene] {
+  background-image: var(--wip-hero-scene, var(--wip-scene-1));
+  background-size: cover;
+  background-position: center;
+  -webkit-mask-image: linear-gradient(to right, transparent 30%, #000 78%);
+  mask-image: linear-gradient(to right, transparent 30%, #000 78%);
+}
+html:not([data-skin])[dir="rtl"] #dev-workshop .wip-hero-wash[data-scene] {
+  -webkit-mask-image: linear-gradient(to left, transparent 30%, #000 78%);
+  mask-image: linear-gradient(to left, transparent 30%, #000 78%);
+}
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="2"] { --wip-hero-scene: var(--wip-scene-2); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="3"] { --wip-hero-scene: var(--wip-scene-3); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="4"] { --wip-hero-scene: var(--wip-scene-4); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="5"] { --wip-hero-scene: var(--wip-scene-5); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="6"] { --wip-hero-scene: var(--wip-scene-6); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene]::before { content: none; }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene] + .wip-hero-art { background-image: none; }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene] + .wip-hero-art > .wip-hero-rings { display: none; }
 /* THE VOTE COUNT on the Needs you door is the look's filled action in small: black on a light page, yellow on a dark
    one. It was the accent with white words, and under this look the accent on a dark page is cream (20 Nov 2026). */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill:not([data-ws-channel-unread]):not(.dev-ws-foryou-pill-light) { background: var(--wip-cta-from); color: var(--wip-cta-ink); }
