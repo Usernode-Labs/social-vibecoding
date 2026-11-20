@@ -261,7 +261,7 @@ test('B6: the words of a plan, two questions and the setup message', () => {
   // 1 Nov 2026: made from a design, its screens are drawn already.
   const designed = dm.firstVersionStartedText({ name: 'Plant Pal', earlyPlan: true, fromDesign: true });
   assert.equal(designed, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
-    + 'Your design is its plan: I\'ll build the first version from it and tell you here when it\'s live.');
+    + 'Your artifact is its plan: I\'ll build the first version from it and tell you here when it\'s live.');
   assert.match(read('src/routes/apps.js'), /fromDesign: !!fromDesign,/);
   for (const said of [early, elsewhere, designed]) assert.doesNotMatch(said, /for you to try/, 'nothing waits on a vote');
   assert.doesNotMatch(early, /plan/, 'the plan is asked about on the made screen, not here');

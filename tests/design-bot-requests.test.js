@@ -2,13 +2,13 @@
 
 // #6260: in a design thread, Homeroom bot reads a project's open requests
 // (list_requests, get_request), the same board Main Chat's turn reads. The
-// project is this design's unless they name another, and only one the person
+// project is this artifact's unless they name another, and only one the person
 // can see is read. Reading is all it does: nothing is filed or posted, and
 // the turn's platform grant is closed when it ends.
 //
 // Pinned here, without a database:
 //   1. Both tools are offered, and are readers (gone once reading is over).
-//   2. This design's project is the default.
+//   2. This artifact's project is the default.
 //   3. A design with no project reads one they name.
 //   4. A project they cannot see answers the same as one that does not
 //      exist, and nothing is read.
@@ -69,9 +69,9 @@ test('the design bot is offered both board readers, and they count as reading', 
 
 const { designChatTurn, call } = require('./lib/design-chat-turn');
 
-// `threadApp`: the project the design's thread belongs to (surface 'new': null).
+// `threadApp`: the project the artifact's thread belongs to (surface 'new': null).
 // `apps`: what findApp resolves, by the name the model passed.
-// `design`/`current`: the thread's design and the version shown (read_plan).
+// `design`/`current`: the thread's artifact and the version shown (read_plan).
 // `planTarget`: the request planTargetOf gives; `requestSpecs` what it posts.
 function boardTurn(steps, {
   surface = 'app', threadApp = HOMEROOM, canView = true, apps = { homeroom: HOMEROOM, ear: EAR, locked: LOCKED }, openMcp,
@@ -82,7 +82,7 @@ function boardTurn(steps, {
   const calls = [];
   // Step 6: the chat's own turn opens one read grant for the turn, and the
   // design reads the board through it (design-bot.js openSession `grant`).
-  // This one serves no tools of its own, so the design's readers are used.
+  // This one serves no tools of its own, so the artifact's readers are used.
   const platform = openMcp === undefined ? {
     async call(name, args) { calls.push({ name, args }); return { text: `answer from ${name}` }; },
     async close() { closes.push(true); },
@@ -133,7 +133,7 @@ function boardTurn(steps, {
     },
   });
   // A request draft goes out through the chat's own offer, as a card under
-  // the reply (bot_cards: `card.kind` file_request); the design's plan card is
+  // the reply (bot_cards: `card.kind` file_request); the artifact's plan card is
   // post_design.
   const offers = () => turn.sent.filter((m) => m.card?.kind === 'file_request');
   const plans = () => turn.sent.filter((m) => m.card?.kind === 'post_design');
@@ -409,18 +409,18 @@ const REQUEST_ARGS = {
   doneWhen: ['The drawing uses the project\'s own classes.'],
 };
 
-test('offer_request in a design thread is the chat\'s own, beside the design\'s offers', () => {
+test('offer_request in a design thread is the chat\'s own, beside the artifact\'s offers', () => {
   // Step 6 (#6864): the design adds no offer_request of its own; the chat's
-  // serves it, with notTheDesign for a request on the design's own project.
+  // serves it, with notTheDesign for a request on the artifact's own project.
   const names = designBot.TOOLS.map((t) => t.function.name);
   assert.ok(!names.includes('offer_request'), 'not a second copy');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
   assert.equal(tool.parameters.additionalProperties, false);
   assert.doesNotMatch(tool.description, /—/);
   assert.match(designBot.TOOLS.find((t) => t.function.name === 'offer_plan').function.description,
-    /Only this design: never for another request/);
+    /Only this artifact: never for another request/);
   assert.match(designBot.TOOLS.find((t) => t.function.name === 'offer_plan').function.description,
-    /They approve the design \(lgtm, looks good, that's it\) or ask you to build, implement, file or post it/);
+    /They approve the artifact \(lgtm, looks good, that's it\) or ask you to build, implement, file or post it/);
 });
 
 test('in a design thread for project A, the bot offers a request on project B, not the plan card', async () => {
@@ -452,15 +452,15 @@ test('from a design thread about another project, the request can be filed on Ho
   assert.deepEqual(turn.plans(), []);
 });
 
-test('step 6: a request on the design\'s own project goes back to offer_plan, unless it is something else', async () => {
+test('step 6: a request on the artifact\'s own project goes back to offer_plan, unless it is something else', async () => {
   const turn = boardTurn([
     { calls: [call('offer_request', { ...REQUEST_ARGS, project: 'Homeroom' }, 'o1')] },
     { calls: [call('offer_request', { ...REQUEST_ARGS, project: 'Homeroom', notTheDesign: true }, 'o2')] },
     { calls: [call('reply', { text: 'Here is the request I\'d file on Homeroom.' }, 'r1')] },
   ], { design: DESIGN, current: { version: 4, html: '<main><p>Now</p></main>' } });
   await turn.run;
-  assert.match(toolResult(turn.seen, 'o1').error, /To file this design, offer it with offer_plan/);
-  assert.equal(toolResult(turn.seen, 'o2').ok, true, 'something that is not this design is offered as a request');
+  assert.match(toolResult(turn.seen, 'o1').error, /To file this artifact, offer it with offer_plan/);
+  assert.equal(toolResult(turn.seen, 'o2').ok, true, 'something that is not this artifact is offered as a request');
   assert.equal(turn.offers().length, 1);
   assert.ok(turn.offered[0].includes('offer_request'));
 });
@@ -499,17 +499,17 @@ test('one reply holds one kind of card: a request and the design are never offer
   assert.equal(toolResult(designFirst.seen, 'p1').ok, true);
   assert.match(toolResult(designFirst.seen, 'o1').error, /one kind of card/);
   assert.deepEqual(designFirst.offers(), [], 'no request draft');
-  assert.equal(designFirst.sent.length, 1, 'the design\'s own card goes out');
+  assert.equal(designFirst.sent.length, 1, 'the artifact\'s own card goes out');
   assert.equal(designFirst.sent[0].card.kind, 'post_design');
 });
 
 test('the prompt lets the bot offer an ordinary request, and never tells the person to file it', () => {
   const prompt = designBot.designPrompt({ username: 'evan', design: DESIGN, version: 4, html: '<p>x</p>' });
   assert.match(prompt, /offered with\n {2}offer_request, on the project they name, Homeroom included/);
-  assert.match(prompt, /offer_plan is only for this design, never for another request/);
-  assert.match(prompt, /offer_request never for this design: its card cannot carry the design/);
+  assert.match(prompt, /offer_plan is only for this artifact, never for another request/);
+  assert.match(prompt, /offer_request never for this artifact: its card cannot carry the artifact/);
   assert.match(prompt, /Never tell them to file it themselves/);
   // The line above it still says the bot itself posts and files nothing,
   // and that approving the design files it with offer_plan (#6864).
-  assert.match(prompt, /- You never post, file or make anything yourself\. When they approve the design \(lgtm, looks good, that's it,\n {2}ship it\) or ask you to build, implement, file or post it, offer it with offer_plan/);
+  assert.match(prompt, /- You never post, file or make anything yourself\. When they approve the artifact \(lgtm, looks good, that's it,\n {2}ship it\) or ask you to build, implement, file or post it, offer it with offer_plan/);
 });

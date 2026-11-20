@@ -24,7 +24,7 @@ import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { threadsAllowed } from './bot-shared';
 import { BotHeadWords, botHead, draftPreviewOf, isHeadCard } from './bot-head-card';
-import { DesignVersionCard, designVersionOf } from './design-card';
+import { DesignVersionCard, designArtifactOf, designVersionOf } from './design-card';
 import { BotRichCard, botCardOf } from './bot-cards';
 import { BotLookedLine } from './bot-looked';
 import { BotHtmlReply, botReplyHtml } from './bot-html';
@@ -511,7 +511,7 @@ export const MessageRow = memo(function MessageRow({
   const extras = (
     <>
       {designVersion && message.threadRootId ? (
-        <DesignVersionCard conversationId={conversationId} rootId={message.threadRootId} version={designVersion} title={message.metadata?.homeroomBot?.designTitle || null} />
+        <DesignVersionCard conversationId={conversationId} rootId={message.threadRootId} version={designVersion} title={message.metadata?.homeroomBot?.designTitle || null} artifactId={designArtifactOf(message)} />
       ) : null}
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)

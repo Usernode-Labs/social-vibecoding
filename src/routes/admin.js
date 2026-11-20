@@ -1460,6 +1460,32 @@ function adminRoutes(config) {
     }
   });
 
+  // 20 Nov 2026 (live-draft review, E): Homeroom bot's web search in its
+  // chat (services/bot-web-search.js), on unless a full admin switches it
+  // off for everyone, with no deploy. Read open to view-only admins.
+  router.get('/api/admin/bot-web-search', async (_req, res) => {
+    try {
+      res.json(await require('../services/bot-web-search').adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read web search switch failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/bot-web-search', requireAdminWrite, async (req, res) => {
+    const on = req.body ? req.body.enabled : undefined;
+    if (typeof on !== 'boolean') return res.status(400).json({ error: 'Provide enabled: true or false.' });
+    try {
+      const search = require('../services/bot-web-search');
+      await search.setEnabled(pool, { on, actorId: req.user.id });
+      log.info('admin', 'Bot web search switched', { by: req.user.username, enabled: on });
+      res.json(await search.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Switch web search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.put('/api/admin/app-limit', requireAdminWrite, async (req, res) => {
     const body = req.body || {};
     if (!Object.prototype.hasOwnProperty.call(body, 'limit')) {

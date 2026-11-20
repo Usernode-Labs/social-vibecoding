@@ -416,7 +416,7 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.ok(other.id, 'a second project to name');
     const wrong = await mayor.checkPlanOffer(pool, { user: ada, design: words, args: { project: 'Fern friend' } });
     assert.equal(wrong.ok, false);
-    assert.match(wrong.error, /This design is a screen of Plant pal, so it posts there\. Offer it without project\./);
+    assert.match(wrong.error, /This artifact is a screen of Plant pal, so it posts there\. Offer it without project\./);
     const same = await mayor.checkPlanOffer(pool, { user: ada, design: words, args: { project: 'Plant pal' } });
     assert.equal(same.ok, true, 'naming its own project falls through');
     assert.equal(Number(same.offer.app.id), Number(app.id));

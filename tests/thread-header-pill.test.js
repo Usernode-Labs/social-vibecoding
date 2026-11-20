@@ -402,7 +402,9 @@ test('a private thread with the bot is drawn on the public thread\'s page, from 
   assert.match(messages, /<ThreadPage\s+kind="private"/);
   assert.match(messages, /<ThreadHeadCard\s+attrs=\{\{ 'data-reply-head': 'alone' \}\}\s+tile=\{<span className="dev-thread-bar-tile dev-thread-bar-face" data-reply-avatar="">/);
   assert.match(messages, /<div className="messages-thread-sub" data-private-thread-sub="">/, 'the lock line is the small line\'s part that gives way first');
-  assert.match(messages, /className="messages-thread-action messages-thread-preview dev-thread-head-text" data-reply-preview=""/);
+  // 20 Nov 2026 (live-draft review, I): the head's Artifacts button, a pill sized to its word.
+  assert.match(messages, /<ArtifactsButton [^>]*\n\s*hasArtifact=\{isDesignThread\(root, replies\)\} liveDraft=\{liveDraft\}\n\s*className="messages-thread-action messages-thread-preview dev-thread-head-text" \/>/);
+  assert.match(read('frontend/src/features/messages/artifacts-button.tsx'), /<button type="button" className=\{className\} data-reply-preview="" data-reply-artifacts=""/);
   // The opening message is the first card, its foot where the thread went; the replies the second.
   assert.match(messages, /<div className="dev-thread-page-post" data-thread-page-post="">\s*<div className="dev-request-root dev-thread-card" data-thread-card="">/);
   assert.match(messages, /<PrivateThreadFoot where=\{privateWhere\}/);

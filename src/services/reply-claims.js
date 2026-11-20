@@ -232,6 +232,24 @@ const DRAFT_DONE = new RegExp([
   String.raw`\bthe preview (?:now )?(?:shows|has) (?:it|the change|your change)\b`,
 ].join('|'), 'i');
 
+// 20 Nov 2026 (live-draft review, A): ten replies in thread 58972 said one
+// delete button was fixed, and the person answered "nope" with a screenshot
+// each time. In a draft turn, "it's fixed", "Fixed:", "the button now sits
+// on the right", "it looks right now" say how the preview looks; only a look
+// at it after the turn's last save (live-draft-bot.js look_at_preview, the
+// session's draftLooked) backs them. "It should now sit on the right" and "I
+// expect it to" say what is expected, which a reply with no look says, and
+// "the preview now shows the change" is what a save says (draft_done).
+const DRAFT_LOOKS = new RegExp([
+  String.raw`\b(?:it|that|this|everything|the\s+[^.!?\n]{1,40}?)(?:'s|’s|\s+is|\s+are|\s+has been|\s+have been|\s+was|\s+were)\s+(?:now\s+)?(?:all\s+)?(?:fixed|sorted(?:\s+out)?|resolved)\b`,
+  String.raw`(?:^|[.!?\n]\s*)[*_]*(?:all\s+)?fixed\b`,
+  String.raw`(?<!\b(?:should|will|would|could|might|may|must|to)\s+)(?<!['’]ll\s+)\bnow\s+(?:looks?|shows?|sits?|appears?|lines?\s+up|fits?|displays?|matches|reads?|stays?)\b(?!\s+(?:it|them|the (?:change|changes|edit)|your (?:change|changes|edit))\b)`,
+  String.raw`\b(?:looks?|appears?)\s+(?:right|correct|good|fine|better|great|as (?:you|they) (?:asked|wanted))\s+now\b`,
+].join('|'), 'i');
+// Not a claim about the preview now: the app running again (what the last
+// apply itself said), or an earlier change told of.
+const DRAFT_NOT_LOOKS = /\b(?:runs?|running|starts?|started|restart(?:s|ed)?|boots?|back up|up again|earlier|previous(?:ly)?|last time)\b/i;
+
 // #6151: a filed design (design-bot.js) said not to be built, or to need
 // somebody else to start it: "I can't build it myself", "someone on the
 // project has to start it", "building starts on the project's side".
@@ -250,6 +268,143 @@ const UNREAD_DESCRIPTION_RE = new RegExp(
   + String.raw`|\bearlier\s+(?:wording|version|text)\b`,
   'i',
 );
+
+// 20 Nov 2026 (live-draft review, E): a reply that says it looked something
+// up on the web. Asked to "research how ios apps usually lay out this", the
+// bot said "Looking into it:" and answered from what it knew, with no way to
+// look. Only a web_search that ran this turn backs it (bot-web-search.js):
+// "I researched", "I looked it up", "I searched online", "from my
+// research", "I'll research it" (with nothing searched). Not "I searched
+// the open requests", which list_requests does.
+const SEARCHED_WEB = new RegExp([
+  String.raw`\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+|quickly\s+)?(?:researched|googled)\b`,
+  String.raw`\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+|quickly\s+)?(?:did|done)\s+(?:some\s+|a bit of\s+|a little\s+|a quick\s+|quick\s+)?(?:research|digging online|searching)\b`,
+  String.raw`\bI(?:'m| am)\s+(?:now\s+|just\s+)?(?:researching|googling)\b`,
+  String.raw`\b(?:I(?:'ll| will)|let me)\s+(?:now\s+|just\s+|quickly\s+|go\s+)?(?:research|google)\b`,
+  String.raw`\b(?:I(?:'ve| have)?|I(?:'m| am)|I(?:'ll| will)|let me)\s+(?:just\s+|now\s+|already\s+|quickly\s+)?(?:searched|searching|search|looked|looking|look|checked|checking|check|read|found)\b[^.!?\n]{0,40}?\b(?:online|on the web|the web|on the internet|the internet|on Google)\b`,
+  String.raw`\b(?:my|the|a quick|some|this)\s+(?:research|web search(?:es)?|online search(?:es)?|search results?)\s+(?:shows?|showed|found|finds|turned up|says?|said|suggests?|suggested|points?)\b`,
+  String.raw`\b(?:from|after|based on|according to)\s+(?:my|some|a quick|the)\s+(?:research|web search|online search|searching)\b`,
+].join('|'), 'i');
+// "I looked it up", unless the sentence says it was one of Homeroom's own
+// records ("I looked it up in your requests", "looked up request #12").
+const LOOKED_UP = /\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+|quickly\s+)?looked\s+(?:it|this|that|them|those|these)\s+up\b|\b(?:I(?:'ll| will)|let me)\s+(?:just\s+|quickly\s+|go\s+)?look\s+(?:it|this|that)\s+up\b/i;
+const HOMEROOM_RECORDS = /\b(?:requests?|records?|code|workshop|my_work|progress|discussion|proposals?|changes?|threads?)\b|#\d/i;
+const SEARCHED_CLAIM = new RegExp(`${SEARCHED_WEB.source}|${LOOKED_UP.source}`, 'i');
+
+/** Pure: a sentence that says it looked something up on the web (SEARCHED_WEB, LOOKED_UP). */
+function claimsSearch(sentence) {
+  const text = String(sentence || '');
+  return SEARCHED_WEB.test(text) || (LOOKED_UP.test(text) && !HOMEROOM_RECORDS.test(text));
+}
+
+// 20 Nov 2026 (live-draft review, C): an offer or a promise to change a
+// proposal: "Want me to update PR #142?", "I'll apply this look to the
+// proposal", "Shall I push it into PR #142". At 16:05 in thread 58972 the bot
+// offered a button "Apply this page's look onto PR #142 now", after saying a
+// draft could not be seeded from PR 142, and no tool could do it. Said in a
+// reply's words, only an offer or a promise counts: "Update the proposal from
+// the preview's header" tells THEM what to tap. A button is a thing they tap
+// to say, so there an order counts too ("Apply ... onto PR #142").
+const PROPOSAL_TARGET = String.raw`(?:\b(?:PR|pull request|proposal)\s*#?\s*\d{1,7}\b|\b(?:the|your|its|this|that|my|their)\s+(?:(?:open|current|existing|same|old)\s+)?(?:proposal|PR|pull request)\b)`;
+const PROPOSAL_VERB = String.raw`(?:update|apply|revise|change|edit|modify|push|add|bring|port|carry|copy|put|move|merge|fold|rework|amend|patch|sync|fix)`;
+// The verb, then the proposal at once, or a few words and where they go.
+const PROPOSAL_REACH = String.raw`${PROPOSAL_VERB}\b(?:\s+[\w'’-]+){0,6}?\s+(?:(?:onto|into|to|in|on|over to|across to)\s+)?${PROPOSAL_TARGET}`;
+const PROPOSAL_OFFER = new RegExp([
+  String.raw`\b(?:I(?:['’]ll| will| can| could| would|['’]d| shall| am going to|['’]m going to)|(?:shall|should|can|could|may) I|(?:want|like) me to|let me|let['’]s)\s+(?:(?:also|now|then|just|quickly|first|still|go ahead and|try to)\s+)*${PROPOSAL_REACH}`,
+  String.raw`\bI(?:['’]m| am)\s+(?:now\s+)?(?:updating|applying|revising|changing|editing|pushing|adding|bringing|porting|copying|putting|moving|merging|reworking|amending|patching|syncing|fixing)\b(?:\s+[\w'’-]+){0,6}?\s+(?:(?:onto|into|to|in|on)\s+)?${PROPOSAL_TARGET}`,
+].join('|'), 'i');
+const PROPOSAL_BUTTON = new RegExp([
+  PROPOSAL_OFFER.source,
+  String.raw`^[\W_]*(?:(?:yes|ok|okay|sure|please|go ahead and|now)[,!.]?\s+)*${PROPOSAL_REACH}`,
+].join('|'), 'i');
+
+/** Pure: the proposals a sentence names by number ("PR #142", "proposal #6011"). */
+function proposalNumbers(sentence) {
+  const out = new Set();
+  for (const m of String(sentence || '').matchAll(/\b(?:PR|pull request|proposal)\s*#?\s*(\d{1,7})\b/gi)) out.add(Number(m[1]));
+  return [...out];
+}
+
+/**
+ * Pure (C): whether an offer to change a proposal stands on nothing this turn
+ * can do. It stands on (a) this thread's live draft's own proposal while
+ * Update proposal is a real tap (`proposalTaps`: the card this turn put under
+ * the reply, or the preview header's while the draft has changes the
+ * proposal lacks), or (b) a proposal the bot built, which revise_proposal can
+ * change (`revisableProposals`, read once by checkReply; unread or a failed
+ * read cannot tell, and stands). "The proposal" with no number is the
+ * draft's in a thread whose draft has one, else one the bot built for them.
+ */
+function proposalOfferUnbacked(sentence, t = {}) {
+  const taps = t.proposalTaps || {};
+  const draftPr = Number(taps.pr) > 0 ? Number(taps.pr) : null;
+  const own = t.revisableProposals || null;
+  if (own?.unsure) return false;
+  const numbers = proposalNumbers(sentence);
+  if (!numbers.length) {
+    if (draftPr || taps.update) return !taps.update;
+    return !(t.revised || own?.theirs);
+  }
+  return !numbers.every((n) => (taps.update && n === draftPr) || !!own?.prs?.has(n) || !!own?.ids?.has(n));
+}
+
+/** The bot's own proposals up for a vote that a sentence names, or that answer requests they asked for. */
+const REVISABLE_SQL = `
+  SELECT cs.id, cs.pr_number,
+         EXISTS (SELECT 1 FROM homeroom_bot_runs r
+                   JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+                  WHERE r.proposal_session_id = cs.id AND q.user_id = $3) AS theirs
+    FROM chat_sessions cs
+   WHERE cs.user_id = $1 AND cs.status = 'promoted' AND cs.is_headless = FALSE
+     AND (cs.pr_number = ANY($2::int[]) OR cs.id = ANY($2::int[])
+          OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
+                       JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+                      WHERE r.proposal_session_id = cs.id AND q.user_id = $3))
+   LIMIT 50`;
+
+/**
+ * C: what revise_proposal could change for the proposals `pieces` (sentences
+ * or buttons) name, read once a turn (again only for a number not read yet)
+ * onto `turn.revisableProposals`: { prs, ids, theirs, asked }, or
+ * { unsure: true } when the read failed. Nothing to read where the turn has
+ * no revise_proposal. Never throws.
+ */
+async function noteRevisable(pool, turn, pieces) {
+  const numbers = [...new Set(pieces.flatMap(proposalNumbers))];
+  const had = turn.revisableProposals;
+  if (had && !had.unsure && numbers.every((n) => had.asked.has(n))) return;
+  const none = { prs: new Set(), ids: new Set(), theirs: false, asked: new Set(numbers) };
+  const tools = turn.toolNames;
+  const botId = Number(turn.bot?.id);
+  if ((tools instanceof Set && !tools.has('revise_proposal')) || !(botId > 0)) {
+    turn.revisableProposals = none;
+    return;
+  }
+  try {
+    const { rows } = await pool.query(REVISABLE_SQL, [botId, numbers, Number(turn.user?.id) || null]);
+    turn.revisableProposals = {
+      prs: new Set((rows || []).map((r) => Number(r.pr_number)).filter((n) => n > 0)),
+      ids: new Set((rows || []).map((r) => Number(r.id)).filter((n) => n > 0)),
+      theirs: (rows || []).some((r) => r.theirs === true),
+      asked: new Set(numbers),
+    };
+  } catch (err) {
+    log.warn('reply-claims', 'Could not read the proposals a reply offers to change', { err: err?.message || String(err) });
+    turn.revisableProposals = { unsure: true };
+  }
+}
+
+/**
+ * Pure (C): a reply's buttons (the reply tool's suggestions, each sent as
+ * their words when tapped) less those that offer to change a proposal no
+ * tool of this turn can change. Only where the turn carries its proposal
+ * facts (the chat, homeroom-bot-mayor.js proposalTapsOf).
+ */
+function keptButtons(labels, ctx = null) {
+  const list = Array.isArray(labels) ? labels : [];
+  if (!ctx || !ctx.proposalTaps) return list;
+  return list.filter((label) => !(PROPOSAL_BUTTON.test(String(label || '')) && proposalOfferUnbacked(String(label || ''), ctx)));
+}
 
 /** The bot's own work on a request, by its stored stage, never started or since stopped. */
 const NOT_STARTED_STAGES = new Set(['waiting_for_you', 'stopped', 'closed']);
@@ -359,7 +514,7 @@ const CLAIMS = Object.freeze([
     proof: 'turn',
     re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
     turn: (t) => !!(t.attached?.length || (!t.place && t.pictures?.made) || t.drew),
-    said: 'says pictures or a design were posted',
+    said: 'says pictures or an artifact were posted',
   },
   {
     kind: 'started',
@@ -509,7 +664,7 @@ const CLAIMS = Object.freeze([
     re: DESIGN_DONE,
     applies: (t) => !!t.design,
     turn: (t) => !!t.drew,
-    said: 'says you changed or drew the design',
+    said: 'says you changed or drew the artifact',
   },
   {
     // Artifacts, stage 2: a thread's plain page (artifact-session.js), said
@@ -531,6 +686,31 @@ const CLAIMS = Object.freeze([
     said: 'says you changed or saved the draft',
   },
   {
+    // A (live-draft review): how the preview looks now, or that it is
+    // fixed, said with no look at it since the turn's last save. The app
+    // running again is what the apply itself said, and is no such claim.
+    kind: 'draft_looks',
+    proof: 'turn',
+    re: DRAFT_LOOKS,
+    applies: (t) => !!t.liveDraft,
+    when: (sentence) => !DRAFT_NOT_LOOKS.test(sentence),
+    turn: (t) => !!t.draftLooked,
+    said: 'says it is fixed or how the preview looks now, without looking at it since your last save',
+  },
+  {
+    // 20 Nov 2026 (live-draft review, C): an offer or a promise to change a
+    // proposal that nothing in this turn can change (proposalOfferUnbacked).
+    // Only the chat carries the facts (proposalTaps); its buttons are checked
+    // by the same rule (checkReply `buttons`, keptButtons).
+    kind: 'proposal_action',
+    proof: 'turn',
+    re: PROPOSAL_OFFER,
+    applies: (t) => !!t.proposalTaps,
+    when: (sentence, t) => proposalOfferUnbacked(sentence, t),
+    turn: () => false,
+    said: 'offers or promises to change a proposal that nothing you can do here changes',
+  },
+  {
     kind: 'not_built',
     proof: 'turn',
     re: NOT_BUILT,
@@ -538,7 +718,7 @@ const CLAIMS = Object.freeze([
     // filedBuilds). Where a person must decide, saying so is the truth.
     applies: (t) => !!t.design && !!t.filedDesign,
     turn: (t) => !t.designBuilds,
-    said: 'says this filed design will not be built, or that someone else has to start it',
+    said: 'says this filed artifact will not be built, or that someone else has to start it',
   },
   {
     kind: 'unread_description',
@@ -548,6 +728,18 @@ const CLAIMS = Object.freeze([
     applies: (t) => t.readChanges instanceof Set || Array.isArray(t.readChanges),
     turn: (t) => (t.readChanges instanceof Set ? t.readChanges.size : t.readChanges.length) > 0,
     said: 'describes what a change\'s description says without reading it in this turn',
+  },
+  {
+    // 20 Nov 2026 (live-draft review, E): "I looked it up", "I researched",
+    // with no web search run this turn. Only on the chat, which counts its
+    // searches (homeroom-bot-mayor.js `webSearched`), switched on or off.
+    kind: 'searched',
+    proof: 'turn',
+    re: SEARCHED_CLAIM,
+    applies: (t) => Number.isInteger(t.webSearched),
+    when: (sentence) => claimsSearch(sentence),
+    turn: (t) => t.webSearched > 0,
+    said: 'says you looked it up, searched the web or researched it',
   },
 ]);
 
@@ -639,8 +831,8 @@ function mentions(text, { receipt = null } = {}) {
 // followedUp, steered, pictures, attached, closedThread; and, on
 // a design thread, design, drew, filedDesign, designBuilds; in a plain
 // page's thread (artifacts), page, drew; with a live draft
-// open (step 6), liveDraft, draftSaved; on the voice,
-// readChanges.
+// open (step 6), liveDraft, draftSaved, draftLooked; on the voice,
+// readChanges; on the chat (E, 20 Nov 2026), webSearched.
 
 // ── What a turn's tools returned ──────────────────────────────────────────
 
@@ -1339,11 +1531,25 @@ async function unknownProjects(pool, ctx, text) {
  * of theirs. `ctx` is the turn's context: its flags (named above), its
  * place, and what its tools returned (noteTool). Empty when it all stands.
  */
-async function checkReply(pool, ctx, text) {
+async function checkReply(pool, ctx, text, { buttons = null } = {}) {
   const turn = ctx || {};
   const receipt = receiptPhrases(turn);
   const found = mentions(text, { receipt });
-  if (!found.body) return [];
+  // 20 Nov 2026 (live-draft review, C): the reply tool's buttons that offer
+  // to change a proposal, and what revise_proposal could change, read first.
+  const pressed = turn.proposalTaps && Array.isArray(buttons)
+    ? buttons.map((b) => String(b || '')).filter((b) => PROPOSAL_BUTTON.test(b)) : [];
+  const offers = found.claims.filter((m) => m.kind === 'proposal_action').map((m) => m.sentence);
+  if (turn.proposalTaps && (offers.length || pressed.length)) await noteRevisable(pool, turn, [...offers, ...pressed]);
+  const withButtons = (problems) => {
+    const cutButtons = pressed.filter((b) => proposalOfferUnbacked(b, turn));
+    if (!cutButtons.length) return problems;
+    const at = problems.find((p) => p.kind === 'proposal_action');
+    if (at) return problems.map((p) => (p === at ? { ...p, all: true, buttons: cutButtons } : p));
+    const claim = BY_KIND.get('proposal_action');
+    return [...problems, { kind: claim.kind, said: claim.said, proof: claim.proof, numbers: [], all: true, buttons: cutButtons }];
+  };
+  if (!found.body) return withButtons([]);
   // A claim the turn backs needs no read; one that is not asks the records.
   const pending = found.claims.filter((m) => {
     const claim = BY_KIND.get(m.kind);
@@ -1384,7 +1590,7 @@ async function checkReply(pool, ctx, text) {
   if (briefShortOfPlan(turn.newProjectBrief?.idea, text)) {
     out.push({ kind: 'short_brief', said: 'offers New project with a one-line idea while its reply sets out a longer plan' });
   }
-  return out;
+  return withButtons(out);
 }
 
 // ── The repair note ───────────────────────────────────────────────────────
@@ -1475,17 +1681,37 @@ function repairNote(problems, { tools = null } = {}) {
       ? ' Nothing was saved to the draft this turn. Make the change with edit_file and save it with apply_changes, then reply; or say plainly that nothing changed.'
       : ' Nothing was saved to the draft, so do not say it was.')
     : '';
+  // A (live-draft review): how the preview looks, said with no look since the last save.
+  const draftLooks = kinds.has('draft_looks')
+    ? (offered('look_at_preview')
+      ? ' You have not looked at the preview since your last save this turn, so you cannot say it is fixed or how it looks now. Look with look_at_preview, then say what it shows; if you cannot look, say the change is applied and what you expect it to show, in those words.'
+      : ' Nothing looked at the preview since the last save: say the change is applied and what you expect it to show, never that it is fixed or how it looks now.')
+    : '';
   // #6159: there is no control on their side; close_thread finishes a private thread.
   const noControl = kinds.has('no_control')
     ? ` There is no such control on their side${offered('close_thread') ? ': to finish this private thread, call close_thread.' : '.'}`
     : '';
   // #6151: a filed design Homeroom bot builds.
   const notBuilt = kinds.has('not_built')
-    ? ' This design is filed, and Homeroom bot builds it from its plan. Say so, and where it stands from the FILED line. Never say it cannot be built or that someone else has to start it.'
+    ? ' This artifact is filed, and Homeroom bot builds it from its plan. Say so, and where it stands from the FILED line. Never say it cannot be built or that someone else has to start it.'
     : '';
   // #6263: a description described without reading it.
   const unread = kinds.has('unread_description')
     ? ` You described a change's description without reading it in this reply.${offered('get_change') ? ' Read it with get_change, or say you cannot see it.' : ' Leave out what it says, or say you cannot see it.'}`
+    : '';
+  // 20 Nov 2026 (live-draft review, E): a look at the web said with none run.
+  const searched = kinds.has('searched')
+    ? (offered('web_search')
+      ? ' You did not search the web in this turn. If they asked you to look something up, call web_search now and name the pages you used as links; otherwise say plainly that you are answering from what you know.'
+      : ' You cannot search the web here: say plainly that you are answering from what you know, never that you looked it up, searched or researched it.')
+    : '';
+  // 20 Nov 2026 (live-draft review, C): a proposal offered to be changed, in
+  // words or as a button, that nothing here changes.
+  const buttons = problems.flatMap((p) => (Array.isArray(p.buttons) ? p.buttons : []));
+  const proposalAction = kinds.has('proposal_action')
+    ? ` Nothing you can do here changes that proposal, so never offer or promise it, in words or as a button${buttons.length ? ` (leave out ${buttons.map((b) => `"${b}"`).join(' and ')})` : ''}.`
+      + (offered('offer_propose_draft') ? ' This thread\'s live draft reaches its own proposal only by their tap: offer_propose_draft puts Propose, or Update proposal, under your reply.' : '')
+      + (offered('revise_proposal') ? ' revise_proposal changes only a proposal you built.' : '')
     : '';
   const canDoLine = canDo.length ? `If they want it done now, call the tool that does it: ${canDo.join(', ')}.` : '';
   return [
@@ -1493,7 +1719,7 @@ function repairNote(problems, { tools = null } = {}) {
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${draftLooks}${proposalAction}${noControl}${notBuilt}${unread}${searched}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1589,9 +1815,14 @@ module.exports = {
   briefShortOfPlan,
   NO_CONTROL_CLAIM,
   DESIGN_DONE,
+  DRAFT_LOOKS,
   NOT_BUILT,
   UNREAD_DESCRIPTION_RE,
+  SEARCHED_CLAIM,
+  claimsSearch,
   squashWords,
+  sentences,
+  sentencesOf,
   cleanReply,
   requestNumbers,
   usedAsRequest,
@@ -1612,4 +1843,10 @@ module.exports = {
   projectMentions,
   unknownProjects,
   planCardOther,
+  // 20 Nov 2026 (live-draft review, C).
+  PROPOSAL_OFFER,
+  PROPOSAL_BUTTON,
+  proposalNumbers,
+  proposalOfferUnbacked,
+  keptButtons,
 };

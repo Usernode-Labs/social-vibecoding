@@ -46,7 +46,7 @@ test('the design draws, reads the project\'s code and edits, in its twelve round
   assert.deepEqual(write.required, ['title', 'size', 'html'], 'no note: the reply\'s summary is the version\'s one line');
   assert.deepEqual(write.properties.size.enum, ['phone', 'desktop']);
   assert.equal(designBot.TOOLS.find((t) => t.function.name === 'read_source').function.parameters.required.join(), 'path',
-    'the design\'s own project unless it names another');
+    'the artifact\'s own project unless it names another');
   assert.deepEqual(designBot.screenArgs({ title: '  Settings ', size: 'desktop', html: '<p>x</p>', note: '' }),
     { title: 'Settings', size: 'desktop', html: '<p>x</p>', note: 'Settings' });
   assert.equal(designBot.screenArgs({ title: 'X', size: 'tablet', html: '<p>x</p>' }).size, 'phone');
@@ -219,7 +219,7 @@ test('the prompt: a thread with no screen yet is drawn; one with a version is ed
   assert.doesNotMatch(none, /—/);
   const design = { surface: 'app', app: { slug: 'garden', name: 'Garden club' }, title: 'Plots', width: 390, height: 844 };
   const some = designBot.designPrompt({ username: 'ada', design, version: 3, html: '<p>x</p>' });
-  assert.match(some, /The design is a screen of the app Garden club, "Plots", drawn at 390 by 844 pixels\./);
+  assert.match(some, /The artifact is a screen of the app Garden club, "Plots", drawn at 390 by 844 pixels\./);
   assert.match(some, /THE CURRENT VERSION \(version 3\), its whole HTML:\n<p>x<\/p>$/);
 });
 
@@ -287,7 +287,7 @@ test('the chat draws a screen in place of the screen picker: start_design, in th
   assert.equal(mayor.PICK_SCREEN, undefined);
   const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'design', appSlug: null } } });
   assert.match(prompt, /When they want to see how a\n  screen could look, call start_design: you draw it here, in this thread/);
-  assert.match(prompt, /\(start_design\): it gives you the design tools for the rest of this turn, and you draw it yourself from/);
+  assert.match(prompt, /\(start_design\): it gives you the artifact tools for the rest of this turn, and you draw it yourself from/);
   assert.doesNotMatch(prompt, /offer_design|Pick the screen|designer/);
   const src = read('src/services/homeroom-bot-mayor.js');
   // Step 6 (#6864): the chat's rounds end with its own reply; nothing is
@@ -378,13 +378,15 @@ test('a version said in a thread is drawn small, with Open preview; nothing is r
   assert.match(src, /<ArtifactFrame\s+mode="run"\s+viewer="author"/, 'the one frame, running for its author, as the pane\'s is');
   assert.doesNotMatch(src, /<iframe|sandbox=/, 'no frame of its own');
   assert.match(src, /<ArtifactFrame[\s\S]{0,200}?\n\s+inert\n/, 'a picture, not something to use: out of the tab order, hidden from readers, no pointer');
-  assert.match(src, /const open = \(\) => openPreview\(\{ conversationId, rootId, version \}\);/);
+  // 20 Nov 2026 (live-draft review, I and K): on its own artifact.
+  assert.match(src, /const open = \(\) => openPreview\(\{ conversationId, rootId, version, artifactId \}\);/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /const designVersion = inThread && message\.threadRootId && !message\.deleted \? designVersionOf\(message\) : null;/);
   assert.match(row, /<DesignVersionCard conversationId=\{conversationId\} rootId=\{message\.threadRootId\} version=\{designVersion\}/);
-  // And the thread's head opens it at the newest, while it is not open.
+  // And the thread's head opens the column (20 Nov 2026, I: its Artifacts
+  // button, which also closes it: tests/live-draft-screens.test.js).
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /\{alone && preview\?\.rootId !== rootId && isDesignThread\(root, replies\) \? \(/);
+  assert.match(index, /<ArtifactsButton conversationId=\{conversationId\} rootId=\{rootId\}\s+hasArtifact=\{isDesignThread\(root, replies\)\}/);
 });
 
 test('a thread about a request is named by it, in its head and in the list', () => {
@@ -409,7 +411,7 @@ test('a thread about a request is named by it, in its head and in the list', () 
   assert.deepEqual([row({ about_kind: 'request', about_number: 18, about_title: 'Dark mode' }).title, row({ about_kind: 'request', about_number: 18, about_title: 'Dark mode' }).about],
     ['Dark mode', { kind: 'request', number: 18 }]);
   assert.equal(row({ first_own: 'a seed calendar' }).title, 'a seed calendar');
-  assert.equal(row({ kind: 'design', content: 'I opened a design thread for Plots…', design_title: 'Plots' }).title, 'Plots', 'a design by its screen');
+  assert.equal(row({ kind: 'design', content: 'I opened a thread for Plots…', design_title: 'Plots' }).title, 'Plots', 'a design by its screen');
 });
 
 // #6681: RecipeBot's drawing came out unstyled, then asked "missing styling

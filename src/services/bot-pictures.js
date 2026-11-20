@@ -789,34 +789,29 @@ async function pictureToScreenshot(pool, config, { user, image, deps = {} }) {
 /**
  * "Add to the design": the picture goes on the design thread's list the
  * designer is told about for its next version (design-bot.js designPrompt).
- * Resolves { ok, pictures } or { ok: false, status, error }.
+ * Resolves { ok, pictures } or { ok: false, status, error }. 20 Nov 2026
+ * (live-draft review, K): on the artifact `artifactId` of the thread (the
+ * gallery card's designArtifactId; none is its first), kept by the store.
  */
-async function addToDesign(pool, { user, rootId, image, deps = {} }) {
+async function addToDesign(pool, { user, rootId, artifactId = null, image, deps = {} }) {
   const threads = deps.designThreads || require('./design-threads');
-  const design = await threads.designFor(pool, { userId: user.id, rootId });
+  const design = await threads.designFor(pool, { userId: user.id, rootId, artifactId });
   if (!design) return { ok: false, status: 404, error: 'No such design' };
   const row = await imageForMember(pool, { userId: user.id, id: image.id });
   if (!row || Number(row.conversation_id) !== design.conversationId) return { ok: false, status: 404, error: 'No such picture' };
   const entry = {
     id: image.id, label: clip(image.label || row.letter, 20), width: Number(row.width) || null, height: Number(row.height) || null,
   };
-  const { rows: [kept] } = await pool.query(
-    `UPDATE design_threads
-        SET pictures = CASE WHEN pictures @> jsonb_build_array(jsonb_build_object('id', $2::text)) THEN pictures
-                            ELSE (CASE WHEN jsonb_array_length(pictures) >= $4 THEN pictures - 0 ELSE pictures END) || jsonb_build_array($3::jsonb)
-                       END
-      WHERE private_thread_id = $1
-      RETURNING pictures`,
-    [design.threadId, image.id, JSON.stringify(entry), MAX_DESIGN_PICTURES],
-  );
-  return kept ? { ok: true, pictures: kept.pictures } : { ok: false, status: 404, error: 'No such design' };
+  const kept = await (deps.artifacts || require('./artifacts')).addPicture(pool, {
+    threadId: design.threadId, artifactId: design.artifactId, entry, max: MAX_DESIGN_PICTURES,
+  });
+  return kept ? { ok: true, pictures: kept } : { ok: false, status: 404, error: 'No such design' };
 }
 
-/** The pictures a design was given (Add to the design), oldest first. */
-async function designPictures(pool, threadId) {
+/** The pictures a design was given (Add to the design), oldest first: the thread's first artifact unless `artifactId` says. */
+async function designPictures(pool, threadId, artifactId = null) {
   if (!threadId) return [];
-  const { rows: [row] } = await pool.query('SELECT pictures FROM design_threads WHERE private_thread_id = $1', [Number(threadId)]);
-  return Array.isArray(row?.pictures) ? row.pictures.filter((p) => p && ID_RE.test(String(p.id || ''))) : [];
+  return require('./artifacts').picturesOf(pool, { threadId, artifactId });
 }
 
 // ── A build's picture (usernode-image) ───────────────────────────────────

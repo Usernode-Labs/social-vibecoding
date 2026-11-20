@@ -12970,6 +12970,121 @@ html.un-kb .un-modal {
   #staging-overlay[data-placement="full"] .staging-vote { margin-top: 0; }
 }
 
+/* 20 Nov 2026 (live-draft review, G): a live draft's own controls, in its
+   preview's header now that the thread has no bar. They take the header's
+   second row, where a change's Vote and switch would be (a draft has
+   neither): where the draft stands on the left, its one action and Close
+   draft on the right. */
+.staging-draft {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 10px;
+}
+.staging-draft-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.staging-draft-line[data-bad] { color: var(--state-blocked); }
+.staging-draft-act,
+.staging-draft-quiet {
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+.staging-draft-act { border: 1px solid transparent; background: var(--accent); color: #fff; }
+.staging-draft-quiet { border: 1px solid var(--app-sheet-line); background: transparent; color: var(--text-primary); }
+.staging-draft-act:disabled,
+.staging-draft-quiet:disabled { opacity: 0.5; }
+#staging-comment-btn[data-on] { background: var(--accent); border-color: transparent; color: #fff; }
+
+/* 20 Nov 2026 (live-draft review, J): a comment pinned on a live draft's
+   running app. The layer covers the app's frame only, so the rest of the
+   screen stays as it is; the pin and its box are drawn inside it. */
+.staging-pin-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: crosshair;
+  background: rgba(17, 24, 39, 0.04);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.staging-pin-hint {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 20px);
+  padding: 6px 12px;
+  border-radius: 9999px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 6px 18px -10px rgba(17, 24, 39, 0.35);
+  font-size: 13px;
+  color: var(--text-primary);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.staging-pin {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  margin: -26px 0 0 -13px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 4px 10px -4px rgba(17, 24, 39, 0.5);
+  pointer-events: none;
+}
+.staging-pin-box {
+  position: absolute;
+  width: 280px;
+  max-width: calc(100% - 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 20px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 12px 30px -14px rgba(17, 24, 39, 0.45);
+  cursor: auto;
+  transform: translateY(calc(-100% - 34px));
+}
+.staging-pin-box[data-below] { transform: translateY(12px); }
+.staging-pin-box textarea {
+  min-height: 64px;
+  width: 100%;
+  resize: vertical;
+  border-radius: 12px;
+  padding: 8px;
+  font-size: 15px;
+  color: var(--text-primary);
+  background: var(--messages-surface-2, var(--state-neutral-bg));
+  border: 0;
+}
+.staging-pin-on { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.staging-pin-error { font-size: 13px; color: var(--state-blocked); }
+.staging-pin-acts { display: flex; justify-content: flex-end; gap: 8px; }
+
 /* One way out: Back at the start in the whole window, × at the end docked. */
 #staging-overlay[data-placement="full"] .staging-exit-close,
 #staging-overlay:not([data-placement="full"]) .staging-exit-back { display: none; }
@@ -31124,6 +31239,32 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
   white-space: nowrap;
 }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > [data-private-thread-menu] { flex: none; }
+/* 20 Nov 2026 (live-draft review, H): a private thread's head, narrow (the
+   Artifacts column open beside it), squeezed its title to a few letters
+   between Preview, ⋯ and ×. Its title now keeps room to read at least its
+   first word, and the buttons give way first: Artifacts is its glyph alone
+   in a head under 460px, and a disc then. The head is measured as a
+   container for it. */
+.messages-thread-header[data-reply-head] { container: bot-thread-head / inline-size; }
+.messages-thread-header[data-reply-head] .dev-thread-bar-text { min-width: min(7.5rem, 40%); }
+.messages-thread-artifacts-glyph { display: none; width: 18px; height: 18px; flex: none; }
+.messages-thread-action.messages-thread-preview { gap: 6px; }
+.messages-thread-action.messages-thread-preview[aria-pressed="true"] { background: var(--messages-surface-2, var(--state-neutral-bg)); }
+/* The card head's pill rule (above) is an id's weight: the narrow rule
+   matches it, and comes after it. */
+@container bot-thread-head (max-width: 460px) {
+  .messages-thread-action.messages-thread-preview,
+  html :is(#dev-topic-thread, #ai-screen) .dev-request .dev-request-bar .messages-thread-header[data-reply-head] .messages-thread-action.messages-thread-preview {
+    width: 36px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+  .messages-thread-action.messages-thread-preview .messages-thread-artifacts-glyph { display: block; }
+  .messages-thread-action.messages-thread-preview .messages-thread-artifacts-word {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+}
+
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 6px; }
 .dev-thread-exits { display: none; align-items: center; gap: 2px; flex: none; }

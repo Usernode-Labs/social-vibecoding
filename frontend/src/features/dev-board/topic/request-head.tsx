@@ -983,7 +983,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
                   <span aria-hidden="true"> · </span>
                   <a
                     className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
-                    href={`#homeroom-bot/thread/${r.fromThread.rootId}/design/${r.fromThread.designVersion}`}
+                    href={`#homeroom-bot/thread/${r.fromThread.rootId}/design/${r.fromThread.designVersion}${r.fromThread.artifactId && r.fromThread.artifactId > 1 ? `?artifact=${r.fromThread.artifactId}` : ''}`}
                     data-request-design-door={r.fromThread.designVersion}
                   >
                     {t('project:topic.request.openDesign', { version: r.fromThread.designVersion })}

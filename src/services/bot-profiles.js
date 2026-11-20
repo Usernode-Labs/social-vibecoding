@@ -46,6 +46,9 @@ const CHAT_LIMITS = Object.freeze({
   offers: 3,
   // Cards a reply names (requests, changes, projects).
   cards: 3,
+  // 20 Nov 2026 (live-draft review, E): web searches one turn may run
+  // (bot-web-search.js), each a few tenths of a cent on the bot's key.
+  searchesPerTurn: 3,
 });
 
 // A project's thread: one reply, short and quick, by the place's rules.
@@ -105,10 +108,13 @@ const ARTIFACT_LIMITS = Object.freeze({
 // with an open live draft (services/live-drafts.js), whose code the turn
 // changes while its preview runs beside the chat. It reads some code,
 // edits, saves (the preview restarts) and replies; a save that stops the
-// app is fixed in the same turn, so it may save a few times.
+// app is fixed in the same turn, so it may save a few times. 20 Nov 2026
+// (live-draft review, A): it may look at its preview twice a turn
+// (look_at_preview, a capture job each), after a save and after its fix.
 const DRAFT_LIMITS = Object.freeze({
   rounds: 18,
   appliesPerTurn: 3,
+  looksPerTurn: 2,
   editsPerCall: 16,
   outputTokens: 16000,
   retryOutputTokens: 32000,
@@ -121,7 +127,10 @@ const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
   'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'write_artifact', 'open_app_preview', 'close_thread',
-  'report_problem', 'offer_new_project', 'change_plan', 'reply',
+  'report_problem', 'offer_new_project', 'change_plan', 'web_search', 'reply',
+  // 20 Nov 2026 (live-draft review, C): offered only while the turn has the
+  // thread's live draft loaded (homeroom-bot-mayor.js toolsFor).
+  'offer_propose_draft',
 ]);
 // What each capability adds to the private profile's tools (step 6). The
 // design's reads of its project's code and board are its own: they read the
@@ -132,7 +141,7 @@ const DESIGN_TOOLS = Object.freeze([
   'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page',
 ]);
 const DRAFT_TOOLS = Object.freeze([
-  'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes',
+  'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes', 'look_at_preview',
 ]);
 // Artifacts, stage 2: what every kind of artifact is written and changed
 // with (src/services/bot-tools/artifact.js). The chat's own reply and
@@ -253,6 +262,10 @@ function capabilityOf(name) {
  * `threadDesign` (the artifact it holds: a design, or a plain page, by its
  * `artifactKind`) and `threadLiveDraft` (a live draft open in it). A turn
  * may load one as it runs (start_design, write_artifact, open_app_preview).
+ * 20 Nov 2026 (live-draft review, K): a thread holds several artifacts, of
+ * either kind; `threadDesign` is the one the message is about
+ * (design-threads.js threadOf), so the turn starts with that one's
+ * capability and limits, and moves to another's when it opens it.
  */
 function capabilitiesInChat({ threadDesign = null, threadLiveDraft = null } = {}) {
   const held = threadDesign ? [threadDesign.artifactKind === 'page' ? 'artifact' : 'design'] : [];

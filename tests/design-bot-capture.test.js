@@ -98,7 +98,7 @@ test('a capture then an edit saves version 1 as the copy and version 2 as the ch
 test('a thread that already has a version is not captured again', async () => {
   const turn = captureTurn([
     { calls: [call('capture_page', { page: 'Homeroom bot page' })] },
-    { calls: [call('reply', { text: 'This design already has a version.' })] },
+    { calls: [call('reply', { text: 'This artifact already has a version.' })] },
   ], {
     design: { latest: 1, state: 'open', threadId: 7, rootId: 500, surface: 'platform', title: 'Homeroom bot page', app: HOMEROOM, versions: [] },
     current: { version: 1, html: '<html><body>old</body></html>' },

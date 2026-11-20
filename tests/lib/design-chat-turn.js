@@ -130,9 +130,9 @@ function designChatTurn(steps, {
   return { run, sent, doings, seen, choices, offered, recorded, versions, versionArgs, reads, sql };
 }
 
-/** The design section of a round's messages (THIS THREAD'S DESIGN), or ''. */
+/** The design section of a round's messages (THIS THREAD'S ARTIFACT), or ''. */
 function designSection(messages) {
-  return (messages || []).filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S DESIGN'))
+  return (messages || []).filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S ARTIFACT'))
     .map((m) => m.content).join('\n');
 }
 

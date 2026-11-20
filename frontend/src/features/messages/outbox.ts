@@ -26,7 +26,7 @@
  * memory as they always did.
  */
 
-import type { ConversationMessage, SharedObjectReference } from './types';
+import type { ConversationMessage, SharedObjectReference, ShowingRef } from './types';
 
 /** What a send POSTs, again under the same key on Retry or once the connection is back. */
 export interface PendingSend {
@@ -37,6 +37,8 @@ export interface PendingSend {
   attachmentIds?: string[];
   object?: SharedObjectReference;
   idempotencyKey: string;
+  /** 20 Nov 2026 (C, I): what the column beside a bot thread showed when it was sent (./showing.ts). */
+  showing?: ShowingRef | null;
 }
 
 /**

@@ -437,7 +437,12 @@ async function createRef({ row, sessionId, branchName, owner, repo, userId, from
   if (!out.ok) throw Object.assign(new Error(out.error || 'The branch was not created'), { status: out.status, error: out.error || null });
 }
 
-async function ensureSessionBranch({ pool, sessionId, username = null, label = null, userId = null }) {
+// `fromSessionId` (20 Nov 2026, live-draft review C): the change whose
+// branch this one starts from, named by the caller instead of read from the
+// row: a live draft's proposal starts at the draft's head
+// (live-drafts.js propose), and is neither the draft's "own version" nor
+// stacked on it, so neither column below is written for it.
+async function ensureSessionBranch({ pool, sessionId, username = null, label = null, userId = null, fromSessionId: named = null }) {
   // One first use at a time per session, on any process: a session lock on
   // the process's lock connection (src/db/session-locks.js), not a row lock
   // in a transaction held on a pooled connection across GitHub's call (the
@@ -471,9 +476,9 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
     // #6423: a build stacked on a change touching the same files starts from
     // that change's branch the same way (its waits_for_session_id), with no
     // "own version" meaning (that is rebuilt_from_session_id's alone).
-    let fromSessionId = row.rebuilt_from_session_id
+    let fromSessionId = Number(named) > 0 ? Number(named) : (row.rebuilt_from_session_id
       ? Number(row.rebuilt_from_session_id)
-      : (row.waits_for_session_id ? Number(row.waits_for_session_id) : null);
+      : (row.waits_for_session_id ? Number(row.waits_for_session_id) : null));
     let fromBranch = null;
     if (fromSessionId) {
       const { rows: [src] } = await pool.query(

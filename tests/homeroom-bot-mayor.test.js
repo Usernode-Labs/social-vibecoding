@@ -119,7 +119,8 @@ test('the tools: sixteen lookups and actions and a reply, every one closed to ex
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
-      'start_design', 'write_artifact', 'open_app_preview', 'change_plan', 'close_thread', 'report_problem', 'offer_new_project', 'reply']);
+      'start_design', 'write_artifact', 'open_app_preview', 'offer_propose_draft', 'change_plan', 'close_thread', 'report_problem',
+      'offer_new_project', 'reply']);
   // 14 Nov 2026: Main Chat is gone, and with it the one tool that existed
   // only to open a thread from Main (start_project_thread). A new project
   // starts in the thread the person is in: offer_new_project and, step 6
@@ -663,6 +664,9 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
     post_reply: ['Post it', 'Keep it private'],
     // 1 Nov 2026 (C2.2): a design as a plan; its card names the request (designPlanAnswers).
     post_design: ['Post it as a plan', 'Not yet'],
+    // 20 Nov 2026 (live-draft review, C): this thread's live draft, at a tap.
+    propose_draft: ['Propose', 'Not yet'],
+    update_draft_proposal: ['Update proposal', 'Not yet'],
   });
   assert.deepEqual(mayor.designPlanAnswers(18), ['Post as a plan on #18', 'Not yet']);
   assert.deepEqual(mayor.designPlanAnswers(null), ['New request', 'Add to an existing request…']);

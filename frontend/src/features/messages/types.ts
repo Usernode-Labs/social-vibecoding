@@ -34,8 +34,27 @@ export interface DesignPin {
   version: number;
   x: number;
   y: number;
+  /** 20 Nov 2026 (live-draft review, K): the artifact it is pinned on; none means the thread's first. */
+  artifactId?: number;
   element?: { tag: string; id: string; text: string };
 }
+
+/**
+ * 20 Nov 2026 (live-draft review, J): a comment pinned on a live draft's
+ * preview: the point as fractions of the frame, the route the app was on,
+ * the frame's size, and what the app's bridge said is under it.
+ */
+export interface PreviewPin {
+  draftId: number;
+  x: number;
+  y: number;
+  route?: string;
+  viewport?: { width: number; height: number };
+  element?: { tag: string; id: string; text: string };
+}
+
+/** 20 Nov 2026 (C, I): what the column beside a bot thread shows when a message is sent. */
+export type ShowingRef = { artifactId: number } | { liveDraftId: number };
 
 /**
  * Homeroom bot parity (P1-P9): a card the bot put under a reply beyond its
@@ -70,6 +89,8 @@ export interface HomeroomBotMeta {
   html?: string;
   /** #6071: a design thread's version this message says (kind 'design_version'). */
   designVersion?: number;
+  /** 20 Nov 2026 (live-draft review, K): which artifact of the thread that version is of; none means its first. */
+  artifactId?: number;
   /** #6071: the screen a design thread is of (kind 'opened_design', and 1 Nov 2026 a version's and a drawn thread's line). */
   designTitle?: string;
   /** #6071 follow-up: what a thread from the bot's "+" is for (kind 'opened_thread'); none is any kind of change. 1 Nov 2026: 'project', a new project's thread. */
@@ -191,7 +212,7 @@ export interface HomeroomBotMeta {
    * project card carries its `brief` instead of a design, and may have no
    * name yet.
    */
-  makeProject?: { name: string; rootId: number; version: number | null; brief?: string };
+  makeProject?: { name: string; rootId: number; version: number | null; brief?: string; artifactId?: number };
   madeSlug?: string;
   madeName?: string;
   /**
@@ -795,7 +816,7 @@ export interface ConversationMessage {
   attachments: MessageAttachment[];
   objects: SharedObjectCard[];
   /** Set by the platform only, on the Homeroom bot's messages (#3624); a person's carries a design pin at most (#6071). */
-  metadata?: { homeroomBot?: HomeroomBotMeta; designPin?: DesignPin } | null;
+  metadata?: { homeroomBot?: HomeroomBotMeta; designPin?: DesignPin; previewPin?: PreviewPin } | null;
   /**
    * Whether the VIEWER has saved this message — their own private bookmark,
    * never an aggregate. Hydrated with the page (services/conversations.js), so

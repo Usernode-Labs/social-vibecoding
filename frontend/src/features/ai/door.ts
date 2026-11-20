@@ -176,7 +176,7 @@ export function botItemAt(hash: string | null | undefined): BotItem | null {
 /** What is open beside the thread, as the address names it. */
 export type BotDetail =
   | { kind: 'plan'; sessionId: number; version: number | null }
-  | { kind: 'design'; version: number | null }
+  | { kind: 'design'; version: number | null; artifactId?: number }
   | { kind: 'shots'; changeId: number };
 
 const num = (s: string | undefined): number | null => (/^\d{1,10}$/.test(s || '') ? Number(s) : null);
@@ -190,7 +190,12 @@ export function botDetailAt(hash: string | null | undefined): BotDetail | null {
   const path = String(hash || '').replace(/^#/, '').split('?')[0].replace(/\/+$/, '');
   if (!/^(?:homeroom-bot|ai)\//.test(path)) return null;
   const design = /\/design(?:\/(\d{1,10}))?$/.exec(path);
-  if (design) return { kind: 'design', version: num(design[1]) };
+  if (design) {
+    // 20 Nov 2026 (live-draft review, K): `?artifact=N` names one of the
+    // thread's artifacts after its first; none is the first.
+    const artifact = num(/[?&]artifact=(\d{1,10})(?:&|$)/.exec(String(hash || '').split('?').slice(1).join('?').replace(/^/, '?'))?.[1]);
+    return { kind: 'design', version: num(design[1]), ...(artifact && artifact > 1 ? { artifactId: artifact } : {}) };
+  }
   const shots = /\/shots\/(\d{1,10})$/.exec(path);
   if (shots) return { kind: 'shots', changeId: Number(shots[1]) };
   const plan = /\/plan\/(\d{1,10})(?:\/(\d{1,10}))?$/.exec(path);
