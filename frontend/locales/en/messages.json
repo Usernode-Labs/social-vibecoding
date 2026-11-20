@@ -4799,6 +4799,46 @@
     "text": "Made into {{project}}.",
     "description": "Line at the top of a private thread with Homeroom bot once a project was made from its plan. {{project}} is the new project's name; an Open link follows it."
   },
+  "privateThread.filedNoProject": {
+    "text": "Filed as request #{{number}}.",
+    "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was filed, when the project it was filed on is not known. {{number}} is the new request's number."
+  },
+  "privateThread.postedNoProject": {
+    "text": "Posted on #{{number}}.",
+    "description": "Line at the top of a thread in the person's private chat with Homeroom bot once its words were posted on a request, when the request's project is not known. {{number}} is the request's number."
+  },
+  "privateThread.foot.filed": {
+    "text": "Filed",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot (the AI tab), once the thread was filed as a request. A past participle."
+  },
+  "privateThread.foot.filedOn": {
+    "text": "As request #{{number}} on {{project}}",
+    "description": "Under \"Filed\" at the foot of the first card of a private thread with Homeroom bot: the request it became. {{number}} is the request's number, {{project}} the project's name."
+  },
+  "privateThread.foot.filedAs": {
+    "text": "As request #{{number}}",
+    "description": "Under \"Filed\" at the foot of the first card of a private thread with Homeroom bot, when the project is not known. {{number}} is the request's number."
+  },
+  "privateThread.foot.posted": {
+    "text": "Posted",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot, once its words were posted on a request. A past participle."
+  },
+  "privateThread.foot.postedOn": {
+    "text": "On request #{{number}} on {{project}}",
+    "description": "Under \"Posted\" at the foot of the first card of a private thread with Homeroom bot: the request its words were posted on. {{number}} is the request's number, {{project}} the project's name."
+  },
+  "privateThread.foot.postedAs": {
+    "text": "On request #{{number}}",
+    "description": "Under \"Posted\" at the foot of the first card of a private thread with Homeroom bot, when the project is not known. {{number}} is the request's number."
+  },
+  "privateThread.foot.made": {
+    "text": "Made into a project",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot, once a project was made from its plan. The project's name follows under it."
+  },
+  "privateThread.foot.done": {
+    "text": "Done",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot once the person marked it done. Reopen sits beside it."
+  },
   "privateThread.posted": {
     "text": "Posted on #{{number}} on {{project}}.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was posted in an existing thread. {{number}} is the request's or change's number, {{project}} the project's name."
