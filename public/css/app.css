@@ -8772,16 +8772,14 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
 }
-/* THE PAGE IS A SHEET TUCKED INTO THE MENU, UNDER A BAR WITH A FOOT (asked
-   20 Nov 2026, from the "only the sidebar is blue, header on the page"
-   design). Where the page meets the panel, its top and bottom corners are
-   rounded, with the menu open or folded to its strip: the panel's own blue
-   is drawn round two quarter circles just past its edge, by a fixed layer
-   on <body> that takes no pointer and sits in the panel's own layer, under
-   the top bar. A peeking menu floats over the page, and a running app fills
-   the window beside its menu, so neither gets the corners.
-   The top bar ends in a hairline, from the panel's edge to the window's,
-   so the bar reads as part of the frame rather than part of the page. */
+/* THE PAGE IS A SHEET TUCKED INTO THE MENU (asked 20 Nov 2026, from the
+   "only the sidebar is blue, header on the page" design). Where the page
+   meets the panel, its top and bottom corners are rounded, with the menu
+   open or folded to its strip: the panel's own blue is drawn round two
+   quarter circles just past its edge, by a fixed layer on <body> that takes
+   no pointer and sits in the panel's own layer, under the top bar. A
+   peeking menu floats over the page, and a running app fills the window
+   beside its menu, so neither gets the corners. */
 @media (min-width: 768px) {
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after {
     content: "";
@@ -8800,16 +8798,6 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     background-image:
       radial-gradient(circle at 0 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
       radial-gradient(circle at 0 0, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius));
-  }
-  html:not([data-skin]) body #platform-header#platform-header::after {
-    content: "";
-    position: absolute;
-    inset-block-end: 0;
-    inset-inline-start: var(--platform-rail-w, 0px);
-    inset-inline-end: 0;
-    height: 1px;
-    background: var(--wip-nav-bar-line);
-    pointer-events: none;
   }
 }
 /* The place you are on carries a thin bar of the set's accent at its start. */

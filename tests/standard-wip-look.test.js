@@ -272,7 +272,7 @@ test('the fold button leads the logo\'s line, on the same spot open and folded, 
   assert.deepEqual(toggle.match(/<[A-Za-z]*(Icon|svg)\b[^>]*>/g), ['<SidebarIcon className="w-5 h-5" />']);
 });
 
-test('the page is a sheet tucked into the menu: rounded where it meets it, under a top bar that ends in a line (20 Nov 2026)', () => {
+test('the page is a sheet tucked into the menu: its corners are rounded where it meets it (20 Nov 2026)', () => {
   const all = rules(menuBlock());
   const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-page-radius:/.test(r.body));
   assert.ok(tokens, 'the corners\' radius is a token of the block');
@@ -291,15 +291,6 @@ test('the page is a sheet tucked into the menu: rounded where it meets it, under
   const rtl = all.find((r) => r.selector === `${MENU_SCOPE}[dir="rtl"] ${docked}`);
   assert.ok(rtl, 'right to left the menu is on the right');
   assert.match(rtl.body, /circle at 0 100%[\s\S]*circle at 0 0/, 'so the quarter circles open the other way');
-  // The top bar's foot: a hairline from the menu's edge to the window's, in the bar's own line.
-  const line = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header::after`);
-  assert.ok(line, 'the top bar ends in a line');
-  assert.match(line.body, /position: absolute;/);
-  assert.match(line.body, /inset-block-end: 0;/);
-  assert.match(line.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'from the menu\'s edge');
-  assert.match(line.body, /inset-inline-end: 0;/, 'to the window\'s');
-  assert.match(line.body, /height: 1px;/);
-  assert.match(line.body, /background: var\(--wip-nav-bar-line\);/);
   // From 768px only, where the menu is a sidebar: a phone's is the bar at the screen's foot.
   const css = read('public', 'css', 'app.css');
   const at = css.indexOf('THE PAGE IS A SHEET TUCKED INTO THE MENU');
