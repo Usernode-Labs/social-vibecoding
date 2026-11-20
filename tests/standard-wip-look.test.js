@@ -28,9 +28,9 @@ const WIP_HIDES = [
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html:not([data-skin]) #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
-  'html[data-skin-wip][data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
+  'html:not([data-skin])[data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
   // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.
-  'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
+  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // From 1280px a project's Needs you shows what a change does beside it: no arrow to open it, no dimming behind it (20 Nov 2026).
