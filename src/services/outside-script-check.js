@@ -52,7 +52,8 @@ const OUTSIDE_SCRIPT_CHECK_NAME = 'No script from another site';
 const OUTSIDE_SCRIPT_CHECK_PATH = 'added lines';
 // Synthetic-row index namespace: -1 the missing-advisory rollup, -2 the
 // over-ceiling guard (visuals.js), -3 the unit suite, -4 the asset route,
-// -5 the Content rules review, -6 render health, -7 the sign-in token order.
+// -5 the Content rules review, -6 render health, -7 the sign-in token order,
+// -9 the build-output check.
 const OUTSIDE_SCRIPT_CHECK_INDEX = -8;
 // The same budget release-holds.js reads a change with.
 const DIFF_CHAR_BUDGET = 120000;
