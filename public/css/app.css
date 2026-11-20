@@ -8624,6 +8624,25 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     padding-inline-end: 0;
   }
 }
+/* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT COMMUNITIES, here too: the
+   same give-way rule the sidebar has always had (beside the Communities
+   tab's own comment, further down app.css), scoped to this block so it
+   out-ranks the lit-row rules above instead of losing to them. The tab
+   keeps `aria-current`; only its fill, ink and count step back. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] {
+    background: transparent;
+    color: var(--wip-nav-ink);
+    font-weight: 600;
+  }
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
+    color: inherit;
+  }
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] .platform-tab-votes {
+    background: var(--wip-nav-count-bg);
+    color: var(--wip-nav-count-ink);
+  }
+}
 /* END OF THE LEFT MENU AND THE TOP BAR. */
 /* ── BUTTONS (20 Nov 2026): the "Sticker" drawing of the element levels
    sheet, option A, for the standard look and the brand kit's drawing of it
