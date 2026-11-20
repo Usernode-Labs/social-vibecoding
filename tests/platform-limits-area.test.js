@@ -170,3 +170,40 @@ test('both islands render nothing until their figures arrive', () => {
   assert.match(SOURCE, /useSyncExternalStore\(subscribe, \(\) => snapshot, \(\) => null\)/,
     'the server snapshot is empty, so the prerendered shell is unchanged');
 });
+
+// ─── The cluster's own (services/platform-capacity.js) ──────────────────
+
+test('the cluster rows: the disk in GiB, a quota by its tightest resource, a node by name, and See the cluster', () => {
+  const html = card([
+    { key: 'db_disk', state: 'at', used: 51200, cap: 51200, left: 0, percent: 100, detail: { volume: 'social-postgres-1' } },
+    { key: 'quota_workers', state: 'near', used: 917, cap: 1000, left: 83, percent: 92,
+      detail: { namespace: 'social-workers', resource: 'cpu', used: '44500m', hard: '48' } },
+    { key: 'quota_apps', state: 'near', used: 820, cap: 1000, left: 180, percent: 82,
+      detail: { namespace: 'social-apps', resource: 'memory', used: '150Gi', hard: '192Gi' } },
+    { key: 'node_pool', state: 'near', used: 9000, cap: 10000, left: 1000, percent: 90, detail: { node: 'fsn1-worker-3' } },
+  ]);
+  const disk = rowOf(html, 'db_disk');
+  assert.match(disk, /data-limit-tone="broken"/, 'red: Postgres is refusing writes now');
+  assert.match(disk, /Database disk: 50 of 50 GiB/);
+  assert.match(disk, /Postgres has no room to write, so saves are failing\./);
+  assert.match(disk, /data-limit-action="status"/);
+  assert.match(disk, /See the cluster/);
+  assert.match(disk, /href="#admin\/status"/);
+  const workers = rowOf(html, 'quota_workers');
+  assert.match(workers, /data-limit-tone="near"/);
+  assert.match(workers, /Workers quota: 92% used/);
+  assert.match(workers, /CPU requested: 44\.5 of 48\. When it fills, new coding sessions and checks wait\./);
+  assert.match(rowOf(html, 'quota_apps'), /Memory requested: 150 GiB of 192 GiB\./);
+  const node = rowOf(html, 'node_pool');
+  assert.match(node, /Node volume pool: 8\.8 of 9\.8 GiB/);
+  assert.match(node, /On fsn1-worker-3\. When it fills, new worker and preview volumes fail to mount\./);
+});
+
+test("a cluster figure gone stale says when it was last read, and offers Check again", () => {
+  const html = card([{ key: 'quota_builds', state: 'unknown', reason: 'stale', measuredAt: '2026-11-20T11:30:00Z' }]);
+  const row = rowOf(html, 'quota_builds');
+  assert.match(row, /data-limit-tone="unknown"/);
+  assert.match(row, /Builds quota/);
+  assert.match(row, /Not read since /);
+  assert.match(row, /data-limit-action="check"/);
+});

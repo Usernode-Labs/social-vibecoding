@@ -58,7 +58,11 @@ const RESEND_AFTER_MS = 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
 const MAX_PHONES = 10;
 const MAX_LABEL = 60;
-const KEYS = Object.freeze(['apps', 'openrouter_credit', 'sessions', 'db_connections']);
+const KEYS = Object.freeze([
+  'apps', 'openrouter_credit', 'sessions', 'db_connections',
+  // The cluster's own (services/platform-capacity.js).
+  'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool',
+]);
 const RANK = Object.freeze({ ok: 0, near: 1, broken: 2 });
 const BROKEN_STATES = Object.freeze(new Set(['over', 'at', 'out']));
 const CREDITS_URL = 'https://openrouter.ai/settings/credits';
@@ -67,7 +71,24 @@ const NAMES = Object.freeze({
   sessions: 'the session count',
   openrouter_credit: 'the OpenRouter credit',
   db_connections: 'the database connections',
+  db_disk: 'the database disk',
+  quota_apps: 'the apps quota',
+  quota_workers: 'the workers quota',
+  quota_builds: 'the builds quota',
+  node_pool: 'the node volume pools',
 });
+// A namespace quota's name in a text, and what stops when it fills.
+const QUOTA_TEXT = Object.freeze({
+  quota_apps: { name: 'apps', near: 'apps and previews stop starting', at: "Apps and previews can't start" },
+  quota_workers: { name: 'workers', near: 'new sessions and checks wait', at: 'New sessions and checks are waiting' },
+  quota_builds: { name: 'builds', near: 'new image builds fail', at: 'New image builds are failing' },
+});
+
+// Whole MiB (the capacity limits' volume figures) as GiB.
+function gib(mib) {
+  const n = Number(mib) / 1024;
+  return n < 10 ? String(Math.round(n * 10) / 10) : String(Math.round(n));
+}
 
 /** A refusal the card shows as it is: `code` for the client, `status` for HTTP. */
 class LimitTextError extends Error {
@@ -201,6 +222,21 @@ function textFor(row, step, { site = origin() } = {}) {
   if (row.key === 'sessions') {
     if (near) return `${lead}sessions at ${figures}, near the limit. Raise it: ${limits}`;
     return `${lead}sessions at ${figures}. New sessions are pausing idle ones or being refused. Raise the limit: ${limits}`;
+  }
+  if (row.key === 'db_disk') {
+    const size = `${gib(row.used)} of ${gib(row.cap)} GiB`;
+    if (near) return `${lead}database disk at ${size}. When it fills, Postgres stops writing. See: ${status}`;
+    return `${lead}database disk full, ${size}. Saves are failing until the volume grows. See: ${status}`;
+  }
+  if (row.key === 'node_pool') {
+    const size = `${gib(row.used)} of ${gib(row.cap)} GiB`;
+    if (near) return `${lead}a node's volume pool is at ${size}. When it fills, new volumes fail to mount. See: ${status}`;
+    return `${lead}a node's volume pool is full, ${size}. New worker and preview volumes are failing. See: ${status}`;
+  }
+  if (QUOTA_TEXT[row.key]) {
+    const q = QUOTA_TEXT[row.key];
+    if (near) return `${lead}${q.name} quota ${row.percent}% used. When it fills, ${q.near}. See: ${status}`;
+    return `${lead}${q.name} quota used up. ${q.at}. See: ${status}`;
   }
   if (row.key === 'db_connections') {
     if (near) return `${lead}database connections at ${figures}, near the limit. Apps fail at ${row.cap}. See: ${status}`;

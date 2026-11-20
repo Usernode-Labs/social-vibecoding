@@ -172,6 +172,28 @@ test('the words are short, carry the figures and the fix, and nothing personal',
   }
 });
 
+test('the cluster\'s own limits are texted in the same words: the figure, what stops, and where to look', () => {
+  const site = 'https://app.onhomeroom.com';
+  const say = (row) => texts.textFor(row, { action: 'crossing' }, { site });
+  assert.equal(say({ key: 'db_disk', state: 'near', used: 41000, cap: 51200 }),
+    'Homeroom: database disk at 40 of 50 GiB. When it fills, Postgres stops writing. See: https://app.onhomeroom.com/#admin/status');
+  assert.match(say({ key: 'db_disk', state: 'at', used: 51200, cap: 51200 }), /^Homeroom: database disk full, 50 of 50 GiB\. Saves are failing/);
+  assert.equal(say({ key: 'quota_workers', state: 'near', used: 917, cap: 1000, percent: 92 }),
+    'Homeroom: workers quota 92% used. When it fills, new sessions and checks wait. See: https://app.onhomeroom.com/#admin/status');
+  assert.match(say({ key: 'quota_apps', state: 'at', used: 1000, cap: 1000, percent: 100 }), /^Homeroom: apps quota used up\. Apps and previews can't start\./);
+  assert.match(say({ key: 'quota_builds', state: 'over', used: 1100, cap: 1000, percent: 100 }), /builds quota used up\. New image builds are failing\./);
+  assert.match(say({ key: 'node_pool', state: 'near', used: 9000, cap: 10000 }), /a node's volume pool is at 8\.8 of 9\.8 GiB\./);
+  assert.match(texts.textFor({ key: 'node_pool', state: 'unknown' }, { action: 'unknown' }, { site }),
+    /couldn't read the node volume pools for an hour/);
+  for (const key of ['db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool']) {
+    assert.ok(texts.KEYS.includes(key), `${key} is texted`);
+    for (const state of ['near', 'at']) {
+      const words = say({ key, state, used: 999999, cap: 999999, percent: 100 });
+      assert.ok(words.length <= 160, `${key} ${state}: one SMS (${words.length})`);
+    }
+  }
+});
+
 // ─── 3 and 4: the flow, against the real SMS layer ─────────────────────
 
 const GB = '+447700900123';

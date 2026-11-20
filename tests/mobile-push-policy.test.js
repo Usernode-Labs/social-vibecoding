@@ -473,6 +473,20 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
     body: "80 of 97 database connections are open. At 97, apps can't open new ones",
   });
   assert.equal(copy('connections_full:97:97').title, 'Database connections used up');
+  // The cluster's own (services/platform-capacity.js).
+  assert.deepEqual(copy('db_disk_warn:41000:51200'), {
+    title: 'Database disk filling up',
+    body: "40 of 50 GiB of the database's disk is used. When it fills, Postgres stops writing",
+  });
+  assert.equal(copy('db_disk_full:51200:51200').title, 'Database disk full');
+  assert.deepEqual(copy('quota_workers_warn:917:1000'), {
+    title: 'Cluster quota running low (workers)',
+    body: "91% of the workers namespace's quota is used. When it fills, new coding sessions and checks wait",
+  });
+  assert.equal(copy('quota_apps_full:1000:1000').title, 'Cluster quota used up (apps)');
+  assert.match(copy('quota_builds_full:1000:1000').body, /new image builds fail/);
+  assert.equal(copy('node_pool_full:10000:10000').title, 'Node volume pool full');
+  assert.match(copy('node_pool_warn:9000:10000').body, /^8\.8 of 9\.8 GiB of a node's volume pool is used/);
   // GitHub's hourly budget (services/github-budget.js).
   assert.deepEqual(copy('github_warn:4000:5000'), {
     title: 'GitHub requests running low',

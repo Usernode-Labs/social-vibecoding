@@ -125,7 +125,9 @@ function fakePool({
       const sql = collapse(rawSql);
       queries.push(sql);
       if (/FROM platform_limit_alerts WHERE limit_key = ANY/.test(sql)) {
-        return { rows: Object.entries(levels).map(([limit_key, level]) => ({ limit_key, level })) };
+        // A level alone, or (the cluster's limits) the whole stored row.
+        return { rows: Object.entries(levels).map(([limit_key, v]) => (typeof v === 'string'
+          ? { limit_key, level: v } : { limit_key, ...v })) };
       }
       if (/FROM apps WHERE status <> 'error'/.test(sql)) {
         if (failApps) throw new Error('connection terminated');
@@ -307,4 +309,62 @@ test('the route, the socket frame and both islands are wired', () => {
   assert.match(read('public/js/app.js'), /case 'platform_limits_changed':\s*\/\/[\s\S]*?window\.UsernodeReact\?\.platformLimits\?\.refresh\?\.\(\);/);
   assert.match(read('frontend/src/features/notifications/notifications-sheet.tsx'), /<PlatformLimitsArea open=\{!!open\} \/>/);
   assert.match(read('frontend/src/features/header/platform-header.tsx'), /<PlatformLimitsDot \/>\s*<\/a>/);
+});
+
+// ─── 3. The cluster's own limits (services/platform-capacity.js) ─────────
+
+const CLUSTER = {
+  ...CONFIG,
+  appRuntime: 'kubernetes',
+  databaseUrl: 'postgres://u:p@social-postgres-rw.social-data.svc.cluster.local:5432/social',
+  kubernetes: {
+    appNamespace: 'social-apps', workerNamespace: 'social-workers', buildNamespace: 'social-builds',
+    checkPoolMetricsUrl: 'http://prometheus.monitoring.svc:9090',
+  },
+};
+
+test('a cluster row comes from what the sweep stored: its level, its figure, and what it was about', () => {
+  const now = Date.parse('2026-11-20T12:00:00Z');
+  const fresh = new Date(now - 4 * 60 * 1000).toISOString();
+  assert.equal(view.capacityRow('node_pool', null, { percent: 80, now }), null, 'never measured here: no row');
+  assert.equal(view.capacityRow('node_pool', { level: 'ok', used: 10, cap: 100, measured_at: fresh }, { percent: 80, now }), null);
+  const near = view.capacityRow('quota_workers', {
+    level: 'warn', used: 917, cap: 1000, measured_at: fresh,
+    detail: { namespace: 'social-workers', resource: 'cpu', used: '44', hard: '48' },
+  }, { percent: 80, now });
+  assert.deepEqual([near.key, near.state, near.percent], ['quota_workers', 'near', 92]);
+  assert.deepEqual(near.detail, { namespace: 'social-workers', resource: 'cpu', used: '44', hard: '48' });
+  assert.equal(near.measuredAt, fresh);
+  const full = view.capacityRow('db_disk', { level: 'full', used: 51200, cap: 51200, measured_at: fresh }, { percent: 80, now });
+  assert.equal(full.state, 'at');
+  // Held by the margin, as the counted rows are: 75% after a crossing at 80%.
+  assert.equal(view.capacityRow('db_disk', { level: 'warn', used: 750, cap: 1000, measured_at: fresh }, { percent: 80, now }).state, 'near');
+  const old = new Date(now - view.CAPACITY_STALE_MS - 1000).toISOString();
+  assert.deepEqual(view.capacityRow('db_disk', { level: 'warn', used: 900, cap: 1000, measured_at: old }, { percent: 80, now }),
+    { key: 'db_disk', state: 'unknown', reason: 'stale', measuredAt: old }, 'four missed sweeps: could not check');
+});
+
+test('compute shows the cluster rows it has figures for, and never reads the cluster itself', async () => {
+  view.resetForTests();
+  const capacity = require('../src/services/platform-capacity');
+  const measure = capacity.measure;
+  capacity.measure = () => { throw new Error('the area must not measure'); };
+  try {
+    const at = new Date().toISOString();
+    const pool = fakePool({ levels: {
+      quota_workers: { level: 'warn', used: 917, cap: 1000, measured_at: at,
+        detail: { namespace: 'social-workers', resource: 'cpu', used: '44', hard: '48' } },
+      db_disk: { level: 'full', used: 51200, cap: 51200, measured_at: at, detail: { volume: 'social-postgres-1' } },
+      quota_apps: { level: 'ok', used: 300, cap: 1000, measured_at: at },
+    } });
+    const out = await view.compute(pool, CLUSTER);
+    assert.deepEqual(out.rows.map((r) => `${r.key}:${r.state}`), ['db_disk:at', 'quota_workers:near']);
+    assert.equal(out.broken, true, 'a full disk shows the dot');
+    // Off Kubernetes, the same stored rows say nothing.
+    view.resetForTests();
+    const off = await view.compute(pool, CONFIG);
+    assert.deepEqual(off.rows, []);
+  } finally {
+    capacity.measure = measure;
+  }
 });

@@ -7,8 +7,10 @@
  *
  * WHAT IT SHOWS. One row per limit that is past its line
  * (services/platform-limits-view.js decides which, and in what order: worst
- * first). The app limit, the session limit, the bot's OpenRouter credit and
- * the shared database's connections. Each row is the figure in words, what
+ * first). The app limit, the session limit, the bot's OpenRouter credit,
+ * the shared database's connections, and the cluster's own: the database's
+ * disk, each runtime namespace's quota and the nodes' volume pools
+ * (services/platform-capacity.js). Each row is the figure in words, what
  * breaks, and ONE action to where it is fixed: Raise the limit (Admin ›
  * Limits), Add credit (OpenRouter's own page, a fixed address), Check again
  * (re-reads a figure that could not be read).
@@ -43,13 +45,16 @@ import { buttonVariants } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
-  AppWindowIcon, ArrowPathIcon, ArrowTopRightOnSquareIcon, ArrowsRightLeftIcon, TerminalIcon, WalletIcon,
+  AppWindowIcon, ArchiveBoxIcon, ArrowPathIcon, ArrowTopRightOnSquareIcon, ArrowsRightLeftIcon, ChartBarIcon,
+  TerminalIcon, WalletIcon,
 } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
 
-export type LimitKey = 'apps' | 'sessions' | 'openrouter_credit' | 'db_connections';
+export type QuotaKey = 'quota_apps' | 'quota_workers' | 'quota_builds';
+export type LimitKey = 'apps' | 'sessions' | 'openrouter_credit' | 'db_connections'
+  | 'db_disk' | 'node_pool' | QuotaKey;
 export type LimitState = 'over' | 'at' | 'out' | 'near' | 'unknown';
 
 export interface LimitRow {
@@ -69,6 +74,9 @@ export interface LimitRow {
   reason?: string;
   /** #6901: people turned away at this limit, once that is counted. */
   turnedAway?: number | null;
+  /** The cluster's limits: what the figure is about (the fullest volume or
+   * node, or a quota's tightest resource and its own used and hard values). */
+  detail?: { volume?: string; node?: string; namespace?: string; resource?: string; used?: string; hard?: string } | null;
 }
 
 export interface LimitsPayload {
@@ -88,7 +96,10 @@ const READ_PATH = '/api/admin/platform-limits';
 const CHECK_PATH = '/api/admin/platform-limits/check';
 const POLL_MS = 5 * 60 * 1000;
 const FRESH_MS = 30 * 1000;
-const KEYS: ReadonlySet<string> = new Set(['apps', 'sessions', 'openrouter_credit', 'db_connections']);
+const KEYS: ReadonlySet<string> = new Set([
+  'apps', 'sessions', 'openrouter_credit', 'db_connections',
+  'db_disk', 'node_pool', 'quota_apps', 'quota_workers', 'quota_builds',
+]);
 const STATES: ReadonlySet<string> = new Set(['over', 'at', 'out', 'near', 'unknown']);
 const BROKEN: ReadonlySet<string> = new Set(['over', 'at', 'out']);
 
@@ -210,6 +221,78 @@ function dollars(cents: number | null | undefined): string {
   }).format(n);
 }
 
+/** Whole MiB (the volume figures) as GiB: one decimal under ten. */
+function gib(mib: number | null | undefined): string {
+  const n = Number.isFinite(mib as number) ? Math.max(0, Number(mib)) / 1024 : 0;
+  return String(n < 10 ? Math.round(n * 10) / 10 : Math.round(n));
+}
+
+// A Kubernetes quantity ("42500m", "96Gi", "340") as a number of its base unit.
+const QUANTITY: Record<string, number> = {
+  m: 1e-3, '': 1, k: 1e3, M: 1e6, G: 1e9, T: 1e12, Ki: 2 ** 10, Mi: 2 ** 20, Gi: 2 ** 30, Ti: 2 ** 40,
+};
+function quantity(raw: string | undefined): number | null {
+  const m = /^(\d+(?:\.\d+)?)([a-zA-Z]*)$/.exec(String(raw ?? '').trim());
+  if (!m || !Object.prototype.hasOwnProperty.call(QUANTITY, m[2])) return null;
+  return Number(m[1]) * QUANTITY[m[2]];
+}
+const BYTE_RESOURCES: ReadonlySet<string> = new Set(['memory', 'memory_limits', 'scratch', 'scratch_limits', 'storage']);
+const CPU_RESOURCES: ReadonlySet<string> = new Set(['cpu', 'cpu_limits']);
+const RESOURCE_WORDS: Record<string, string> = {
+  pods: 'notifications:limits.quota.resource.pods',
+  cpu: 'notifications:limits.quota.resource.cpu',
+  cpu_limits: 'notifications:limits.quota.resource.cpu_limits',
+  memory: 'notifications:limits.quota.resource.memory',
+  memory_limits: 'notifications:limits.quota.resource.memory_limits',
+  scratch: 'notifications:limits.quota.resource.scratch',
+  scratch_limits: 'notifications:limits.quota.resource.scratch_limits',
+  storage: 'notifications:limits.quota.resource.storage',
+  volumes: 'notifications:limits.quota.resource.volumes',
+  services: 'notifications:limits.quota.resource.services',
+  secrets: 'notifications:limits.quota.resource.secrets',
+  config_maps: 'notifications:limits.quota.resource.config_maps',
+  jobs: 'notifications:limits.quota.resource.jobs',
+  builds: 'notifications:limits.quota.resource.builds',
+};
+
+/** A quota's tightest resource in words: "CPU requested: 42.5 of 48". */
+function quotaFigure(detail: LimitRow['detail'], t: Translate): string | null {
+  if (!detail || !detail.resource || !RESOURCE_WORDS[detail.resource]) return null;
+  const used = quantity(detail.used);
+  const hard = quantity(detail.hard);
+  if (used == null || hard == null) return null;
+  const say = (n: number) => {
+    if (BYTE_RESOURCES.has(String(detail.resource))) return `${gib(n / 2 ** 20)} GiB`;
+    if (CPU_RESOURCES.has(String(detail.resource))) return String(Math.round(n * 10) / 10);
+    return String(Math.round(n));
+  };
+  return t('notifications:limits.quota.figure', {
+    resource: t(RESOURCE_WORDS[detail.resource]), used: say(used), hard: say(hard),
+  });
+}
+
+// Each namespace quota's own words: its title, and what stops when it fills.
+const QUOTA_WORDS: Record<QuotaKey, { title: string; titleUnknown: string; near: string; at: string }> = {
+  quota_apps: {
+    title: 'notifications:limits.quota.apps.title',
+    titleUnknown: 'notifications:limits.quota.apps.titleUnknown',
+    near: 'notifications:limits.quota.apps.near',
+    at: 'notifications:limits.quota.apps.at',
+  },
+  quota_workers: {
+    title: 'notifications:limits.quota.workers.title',
+    titleUnknown: 'notifications:limits.quota.workers.titleUnknown',
+    near: 'notifications:limits.quota.workers.near',
+    at: 'notifications:limits.quota.workers.at',
+  },
+  quota_builds: {
+    title: 'notifications:limits.quota.builds.title',
+    titleUnknown: 'notifications:limits.quota.builds.titleUnknown',
+    near: 'notifications:limits.quota.builds.near',
+    at: 'notifications:limits.quota.builds.at',
+  },
+};
+
 function clock(iso: string | null | undefined): string | null {
   const at = Date.parse(String(iso || ''));
   if (!Number.isFinite(at)) return null;
@@ -260,6 +343,31 @@ export function rowView(row: LimitRow, t: Translate): RowView {
     sub = row.state === 'unknown' ? t('notifications:limits.unknown.read')
       : row.state === 'near' ? t('notifications:limits.sessions.near', { cap: figures.cap }) : t('notifications:limits.sessions.at');
     if (row.state === 'unknown') action = check;
+  } else if (row.key === 'db_disk' || row.key === 'node_pool' || row.key in QUOTA_WORDS) {
+    // The cluster's own (services/platform-capacity.js): what fixes them is
+    // in the infrastructure, so the action is where the cluster is shown.
+    const unknown = row.state === 'unknown';
+    const when = clock(row.measuredAt);
+    const stale = when ? t('notifications:limits.unknown.stale', { time: when }) : t('notifications:limits.unknown.read');
+    const cluster: RowAction = { kind: 'status', label: t('notifications:limits.action.cluster'), href: STATUS_HREF, external: false };
+    action = unknown ? check : cluster;
+    if (row.key === 'db_disk') {
+      title = unknown ? t('notifications:limits.dbDisk.titleUnknown')
+        : t('notifications:limits.dbDisk.title', { used: gib(row.used), cap: gib(row.cap) });
+      sub = unknown ? stale : row.state === 'near' ? t('notifications:limits.dbDisk.near') : t('notifications:limits.dbDisk.at');
+    } else if (row.key === 'node_pool') {
+      const node = row.detail?.node || '';
+      title = unknown ? t('notifications:limits.nodePool.titleUnknown')
+        : t('notifications:limits.nodePool.title', { used: gib(row.used), cap: gib(row.cap) });
+      const what = row.state === 'near' ? t('notifications:limits.nodePool.near') : t('notifications:limits.nodePool.at');
+      sub = unknown ? stale : (node ? `${t('notifications:limits.nodePool.node', { node })} ${what}` : what);
+    } else {
+      const words = QUOTA_WORDS[row.key as QuotaKey];
+      title = unknown ? t(words.titleUnknown) : t(words.title, { percent: Math.max(0, Math.round(Number(row.percent) || 0)) });
+      const figure = quotaFigure(row.detail, t);
+      const what = row.state === 'near' ? t(words.near) : t(words.at);
+      sub = unknown ? stale : (figure ? `${figure} ${what}` : what);
+    }
   } else if (row.key === 'db_connections') {
     title = row.state === 'unknown' ? t('notifications:limits.connections.titleUnknown') : t('notifications:limits.connections.title', figures);
     sub = row.state === 'unknown' ? t('notifications:limits.unknown.read')
@@ -327,6 +435,8 @@ function RowIcon({ name }: { name: LimitKey }) {
   if (name === 'apps') return <AppWindowIcon aria-hidden="true" />;
   if (name === 'sessions') return <TerminalIcon aria-hidden="true" />;
   if (name === 'db_connections') return <ArrowsRightLeftIcon aria-hidden="true" />;
+  if (name === 'db_disk' || name === 'node_pool') return <ArchiveBoxIcon aria-hidden="true" />;
+  if (name === 'quota_apps' || name === 'quota_workers' || name === 'quota_builds') return <ChartBarIcon aria-hidden="true" />;
   return <WalletIcon aria-hidden="true" />;
 }
 

@@ -19,6 +19,19 @@
 //                   the line where ordinary logins (every app's) are refused:
 //                   platform-limit-alerts.js's `connections` limit, so it
 //                   has a stored level and bell notices like the others.
+//   db_disk         the shared Postgres server's volume, MiB used of its size.
+//   quota_apps, quota_workers, quota_builds
+//                   each runtime namespace's ResourceQuota, its tightest
+//                   resource (`detail` names it and its own figures).
+//   node_pool       the fullest node's local volume pool.
+//
+// Those last five are the cluster's own (services/platform-capacity.js), read
+// from Prometheus and the Kubernetes API by the platform-limits sweep every
+// five minutes. Their rows come from what that sweep stored (figure, level,
+// when, and `detail`), never from a read made when the area opens. A figure
+// older than CAPACITY_STALE_MS says it could not be checked; one never
+// measured here (off Kubernetes, in a preview, or before the node pools' read
+// grant, Usernode-Labs/infra#103, exists) has no row at all.
 //
 // Nothing here makes a new outside call when the area is opened. The counted
 // limits are read through platform-limit-alerts.js's own LIMITS (the count and
@@ -45,11 +58,18 @@ const CACHE_MS = 30 * 1000;
 // missed reads make the last figure too old to stand on.
 const CREDIT_STALE_MS = 45 * 60 * 1000;
 const COUNTED = Object.freeze(['apps', 'sessions', 'connections']);
+// The cluster's own limits; their alerts' keys are their rows' keys.
+const CAPACITY = Object.freeze(['db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool']);
+// Four missed sweeps (every five minutes) make a stored figure too old.
+const CAPACITY_STALE_MS = 20 * 60 * 1000;
 // The alerts' key for a limit, and the row's (the client's) key for it.
 const ROW_KEY = Object.freeze({ apps: 'apps', sessions: 'sessions', connections: 'db_connections' });
 // Worst first; then the order the mockup lists them in.
 const STATE_RANK = Object.freeze({ over: 0, at: 1, out: 1, near: 2, unknown: 3 });
-const KEY_RANK = Object.freeze({ apps: 0, openrouter_credit: 1, sessions: 2, db_connections: 3 });
+const KEY_RANK = Object.freeze({
+  apps: 0, openrouter_credit: 1, sessions: 2, db_connections: 3,
+  db_disk: 4, node_pool: 5, quota_apps: 6, quota_workers: 7, quota_builds: 8,
+});
 // The states the bell's red dot is for: Homeroom is refusing something now.
 const BROKEN = Object.freeze(new Set(['over', 'at', 'out']));
 
@@ -133,6 +153,23 @@ function unknownRow(key, reason) {
   return { key, state: 'unknown', reason };
 }
 
+/**
+ * One of the cluster's limits as a row, from what the sweep stored, or null:
+ * never measured here, or under its line. Pure. `stored` is its
+ * platform_limit_alerts row ({ level, used, cap, measured_at, detail }).
+ */
+function capacityRow(key, stored, { percent, now = Date.now() } = {}) {
+  if (!stored || !stored.measured_at) return null;
+  const at = new Date(stored.measured_at).getTime();
+  if (!Number.isFinite(at)) return null;
+  const measuredAt = new Date(at).toISOString();
+  if (now - at > CAPACITY_STALE_MS) return { ...unknownRow(key, 'stale'), measuredAt };
+  const row = countedRow(key, { used: stored.used, cap: stored.cap, percent, level: stored.level });
+  if (!row) return null;
+  const detail = stored.detail && typeof stored.detail === 'object' ? stored.detail : null;
+  return { ...row, measuredAt, ...(detail ? { detail } : {}) };
+}
+
 /** Worst first, then a fixed order. Pure. */
 function sortRows(rows) {
   return rows.slice().sort((a, b) => {
@@ -145,10 +182,11 @@ async function storedLevels(pool) {
   const out = new Map();
   try {
     const { rows } = await pool.query(
-      'SELECT limit_key, level FROM platform_limit_alerts WHERE limit_key = ANY($1::text[])',
-      [COUNTED],
+      `SELECT limit_key, level, used, cap, measured_at, detail
+         FROM platform_limit_alerts WHERE limit_key = ANY($1::text[])`,
+      [[...COUNTED, ...CAPACITY]],
     );
-    for (const row of rows) out.set(row.limit_key, row.level);
+    for (const row of rows) out.set(row.limit_key, row);
   } catch (err) {
     // Never recorded yet, or unreadable: the live figures still decide.
     log.warn('platform-limits', 'Could not read the stored limit levels', { err: err.message });
@@ -172,12 +210,18 @@ async function compute(pool, config) {
     try {
       const cap = await limit.cap(config, pool);
       const used = await limit.count(pool);
-      const row = countedRow(ROW_KEY[key], { used, cap, percent, level: levels.get(key) });
+      const row = countedRow(ROW_KEY[key], { used, cap, percent, level: levels.get(key)?.level });
       if (row) rows.push(row);
     } catch (err) {
       log.warn('platform-limits', 'Could not read a limit', { limit: key, err: err.message });
       rows.push(unknownRow(ROW_KEY[key], 'no_answer'));
     }
+  }
+  for (const key of CAPACITY) {
+    const limit = limits.CAPACITY_LIMITS.find((l) => l.key === key);
+    if (!limit || !limit.enabled(config)) continue;
+    const row = capacityRow(key, levels.get(key), { percent });
+    if (row) rows.push(row);
   }
   // #6901 counts the people turned away at the app limit while it is full;
   // the row says that count, from that one source.
@@ -221,7 +265,7 @@ async function read(pool, config, { fresh = false } = {}) {
  */
 async function refresh(pool, config) {
   const limits = alerts();
-  for (const key of COUNTED) {
+  for (const key of [...COUNTED, ...CAPACITY]) {
     await limits.evaluate(pool, config, key).catch((err) =>
       log.warn('platform-limits', 'A limit check failed', { limit: key, err: err.message }));
   }
@@ -265,9 +309,11 @@ function resetForTests() {
 module.exports = {
   CACHE_MS,
   CREDIT_STALE_MS,
+  CAPACITY_STALE_MS,
   BROKEN,
   countedRow,
   creditRow,
+  capacityRow,
   sortRows,
   compute,
   read,
