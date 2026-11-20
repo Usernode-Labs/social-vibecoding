@@ -1414,6 +1414,14 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       const limits = require('./limits');
       limits.invalidate();
     } catch {}
+    // That backstop is what OpenRouter refuses on, and the sync that moves
+    // it runs when a coding turn starts. While the bot is paused because its
+    // budget is used up at OpenRouter no turn starts, so a raised budget
+    // would not reach the key until the week turned. A saved budget is taken
+    // to the key now, and the figures read back: the pause lifts on that
+    // read, and the limits area's row follows.
+    await syncBudget(pool, config).catch((err) =>
+      log.warn('homeroom-bot', 'Could not take the saved weekly budget to the bot\'s key', { err: err.message }));
   }
   // More room for live work is used now, and a bot switched on rebuilds
   // its whole queue now (the lane: its grants and its refresh, soon). A
@@ -1431,6 +1439,30 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       log.warn('homeroom-bot', 'Could not release requests held for a week that got room', { err: err.message }));
   }
   return { ok: true };
+}
+
+/**
+ * A saved weekly budget, taken where OpenRouter enforces it: the bot key's
+ * own limit is brought in line (openrouter-managed-keys.js syncAllowance),
+ * the credit sweep reads the key back (lifting a pause whose cause was the
+ * budget, once the key can spend again), and the budget's limit is evaluated
+ * so its row and notice follow. Best-effort: the caller's save has already
+ * succeeded, and each step also happens later by itself.
+ */
+async function syncBudget(pool, config, deps = {}) {
+  const { rows: [botRow] = [] } = await pool.query(
+    'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME],
+  );
+  if (!botRow) return;
+  const managedOpenRouter = deps.managedOpenRouter || require('./openrouter-managed-keys');
+  if (managedOpenRouter.managedKeysEnabled(config)) {
+    await managedOpenRouter.syncAllowance({
+      pool, userId: botRow.id, config,
+      state: await managedOpenRouter.stateForUser(pool, botRow.id),
+    });
+  }
+  await (deps.credit || require('./openrouter-credit')).sweep(pool, config);
+  await (deps.limitAlerts || require('./platform-limit-alerts')).evaluate(pool, config, 'bot_budget');
 }
 
 // ── Identity ─────────────────────────────────────────────────────────────
@@ -11657,6 +11689,9 @@ async function adminPayload(pool, config, {
       username: botRow.username,
       weeklyLimitCents: botRow.weekly_limit_cents ?? DEFAULT_WEEKLY_LIMIT_CENTS,
       weeklySpentCents,
+      // When that week turns: Monday 00:00 UTC, which is also the weekly
+      // reset of the bot's key at OpenRouter. The console names the day.
+      weeklyResetsAt: limits.weeklyResetAt(),
       hasIncludedKey,
       model: platformDefaultModel(settings, config),
       // #3654: each stage's setting, the default filled in. A build's plan
@@ -12860,6 +12895,7 @@ module.exports = {
   handOffConflict,
   tellDeployFailed,
   creditOutOf,
+  syncBudget,
   emptyReplyIsInfra,
   retryCardFor,
   liveBuildInput,

@@ -412,7 +412,9 @@ test('A1, end to end: OpenRouter\'s real 402 through the real client is an outag
   const stored = JSON.parse(settings.get(credit.KEY_STATE));
   assert.ok(stored.outage?.since, 'the outage is in the one stored state');
   assert.deepEqual(writes.filter((w) => w === 'incident').length, 1, 'one incident for the outage');
-  assert.deepEqual(await credit.creditState(pool), { out: true, since: stored.outage.since, words: stored.outage.words });
+  // The cause is credit: nothing here says the bot's weekly budget ran out
+  // (no "Key limit exceeded", and no key figures to judge from).
+  assert.deepEqual(await credit.creditState(pool), { out: true, since: stored.outage.since, words: stored.outage.words, cause: 'credit' });
   // 3. While that outage stands, the next message asks the stored state
   //    first and sends no request at all (review B1).
   requests.length = 0;
