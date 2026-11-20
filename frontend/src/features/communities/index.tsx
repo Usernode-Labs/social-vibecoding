@@ -56,7 +56,7 @@ import { Button } from '@/components/ui/button';
 import { PlusIcon, SearchIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { useSkin } from '../../lib/skin';
+import { useSkin, isKitHome } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
@@ -113,7 +113,9 @@ export function CommunitiesScreen() {
   const needs = Math.max(0, Number(badgeNeeds) || 0);
   // The look, read after mount only (useSkin): the prerender knows none.
   const skin = useSkin();
-  const wip = skin === 'wip';
+  // The standard look's page too since 20 Nov 2026 (lib/skin.ts isKitHome): the
+  // first render's 'standard' is one of the two, so the prerender agrees.
+  const wip = isKitHome(skin);
   const brand = skin === 'brand';
   // Standard (WIP) and the brand look draw Home with the kit (../home/wip-kit):
   // their Home has the Needs you card and New project as a filled button, so
