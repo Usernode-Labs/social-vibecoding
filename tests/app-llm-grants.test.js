@@ -24,7 +24,7 @@ const state = {
   weeklyOverride: null,
   hasIdentity: false,
   identityLookupError: false,
-  apiKeyEnc: null,
+  ownKey: false,
   grants: new Map(), // `${appId}:${userId}` -> row
   // #2510: the routes resolve an app through appAccess.getAppForUser now, and
   // checkAppAccess THROWS on a row missing `view_visibility` rather than
@@ -68,8 +68,11 @@ function mockQuery(sql, params) {
   // appAccess.isCollaborator — the fixture app is public, so this is only
   // reached for a private one and answers "no".
   if (/app_collaborators/.test(sql)) return { rows: [] };
-  if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
-    return { rows: state.apiKeyEnc ? [{ anthropic_key_enc: state.apiKeyEnc }] : [] };
+  // The person's own OpenRouter key on file (openrouter-managed-keys.js
+  // ownKeyOnFile, task 2275): a valid row whose source is not the included
+  // key's. It was their own Anthropic key, read from users, before.
+  if (/FROM credentials\.user_ai_credentials/.test(sql) && /metadata->>'source' AS source/.test(sql)) {
+    return { rows: state.ownKey ? [{ source: 'personal' }] : [] };
   }
   if (/SELECT allow_byok FROM app_llm_grants/.test(sql)) {
     const row = state.grants.get(`${params[0]}:${params[1]}`);
@@ -169,7 +172,7 @@ beforeEach(() => {
   state.weeklyOverride = null;
   state.hasIdentity = false;
   state.identityLookupError = false;
-  state.apiKeyEnc = null;
+  state.ownKey = false;
   state.usage = { spent: null, byok: null };
   delete process.env.USERNODE_ENV;
   delete process.env.IDENTITY_CREDIT_POLICY;
@@ -381,7 +384,7 @@ test('bootstrap endpoint sanitizes the manifest llm block and clamps the suggest
     assert.equal(body.defaultCapCents, 100);
     assert.equal(body.maxCapCents, 2500);
     assert.equal(body.grant, null);
-    assert.equal(body.hasApiKey, false);
+    assert.equal(body.hasOwnKey, false);
   });
   state.apps.set('demo-app', {
     id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null,
@@ -416,7 +419,7 @@ test('tiered policy refuses an unverified app grant when no payer exists', async
 test('tiered unverified users can grant BYOK explicitly, but it is never enabled implicitly', async () => {
   process.env.IDENTITY_CREDIT_POLICY = 'tiered';
   state.userLimit = null;
-  state.apiKeyEnc = 'present';
+  state.ownKey = true;
   await withServer(async (base) => {
     let res = await fetch(`${base}/api/me/llm-grants`, {
       method: 'POST',
@@ -459,7 +462,7 @@ test('tiered unverified users can grant BYOK explicitly, but it is never enabled
 test('an entitlement lookup outage still permits an explicitly consented BYOK grant', async () => {
   process.env.IDENTITY_CREDIT_POLICY = 'tiered';
   state.identityLookupError = true;
-  state.apiKeyEnc = 'present';
+  state.ownKey = true;
   await withServer(async (base) => {
     const bootstrap = await fetch(`${base}/api/apps/demo-app/llm-grant`, { headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
     assert.equal(bootstrap.status, 200);

@@ -11,108 +11,58 @@ const { hasDocumentBlocks, withoutDocuments } = require('./attachments');
 // DEFAULT_MODEL (the user-facing allowlist default).
 const DEFAULT_MODEL = 'claude-opus-5-5';
 
-// ── Fable classifier fallback ───────────────────────────────────────
-// claude-fable-5-1 requests run through Anthropic's safety classifiers,
-// which can decline a request (HTTP 200 + stop_reason 'refusal' +
-// stop_details.category). Recovery is opt-in and PER REQUEST: the
-// server-side fallback beta re-serves a declined request on the fallback
-// model inside the same call, with cache-read repricing applied
-// automatically. streamChat below is the single funnel for every
-// platform-authored Messages call that can run a user-selected model, so
-// opting in here covers every retry/regeneration/continuation path.
-// NOTE: any future direct SDK use outside this module bypasses the
-// fallback config, the detection, and the billing attribution — route
-// new Messages calls through streamChat.
-//
-// The fallback is Anthropic's `"default"`: the API picks the recommended
-// model for each refusal's category (cyber declines go to Opus 4.8, for
-// example), so there is no model list here to keep valid. A pinned array
-// entry has to be in the requested model's `allowed_fallback_models`, and
-// when #2818 moved the pin from Opus 5 to Opus 5.5 — which Fable 5.1 does
-// not allow — every Fable request came back 400 "'claude-opus-5-5' is not a
-// valid fallback target for 'claude-fable-5-1'", shown as "The last turn
-// did not finish." The `"default"` form takes its own beta header; pairing
-// either header with the other form is a 400 too.
-const FABLE_MODEL = 'claude-fable-5-1';
-const FALLBACK_MODE = 'default';
-const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
-
 // The per-change metadata call (title, description, plain-English summary)
 // and the hub's since-your-last-visit summary both run on this model.
 const PR_METADATA_MODEL = 'claude-sonnet-5-5';
 
-// A fallback-served response is detected reliably ONLY via
-// usage.iterations carrying a 'fallback_message' entry. A sticky-served
-// turn (conversation already pinned to the fallback model) carries NO
-// {type:'fallback'} content block, so the block alone under-detects.
-function detectFallback(finalMessage) {
-  const iterations = finalMessage && finalMessage.usage && finalMessage.usage.iterations;
-  if (!Array.isArray(iterations)) return false;
-  return iterations.some((entry) => entry && entry.type === 'fallback_message');
-}
+// Every Messages call here goes to OpenRouter's Anthropic-compatible
+// endpoint on the platform's OpenRouter key (services/openrouter-messages.js,
+// task 2275). A Claude id as written here ('claude-sonnet-5-5') is mapped to
+// OpenRouter's spelling, with a dot for the minor version and an
+// 'anthropic/' prefix, on the way out. Anthropic's
+// server-side refusal fallback was a beta of Anthropic's own API and does
+// not exist there, so a refusal is simply a refusal.
+const openrouterMessages = require('./openrouter-messages');
 
-// The {from, to} of the LAST fallback content block, when present —
-// attribution only (absent on sticky-served turns; see detectFallback).
-function fallbackBoundary(content) {
-  if (!Array.isArray(content)) return null;
-  for (let i = content.length - 1; i >= 0; i--) {
-    const block = content[i];
-    if (block && block.type === 'fallback') {
-      return {
-        from: (block.from && block.from.model) || null,
-        to: (block.to && block.to.model) || null,
-      };
-    }
-  }
-  return null;
-}
-
-// Streaming echo rule for a mid-output fallback: the declined model's
-// truncated tool_use / thinking blocks BEFORE the switch boundary are
-// invalid in subsequent calls and must be omitted; text blocks and
-// everything after the boundary echo normally. The fallback block itself
-// is an ignorable audit marker (kept). Content with no fallback block
-// passes through untouched.
-function sanitizeFallbackContent(content) {
-  if (!Array.isArray(content)) return content || [];
-  let boundaryIdx = -1;
-  for (let i = content.length - 1; i >= 0; i--) {
-    if (content[i] && content[i].type === 'fallback') { boundaryIdx = i; break; }
-  }
-  if (boundaryIdx === -1) return content;
-  return content.filter((block, i) => {
-    if (i >= boundaryIdx) return true;
-    const type = block && block.type;
-    return type !== 'tool_use' && type !== 'thinking' && type !== 'redacted_thinking';
-  });
-}
-
-let Anthropic;
 let client;
 let helperConfig = null;
 
 async function init(config) {
   llmTelemetry.init(config);
-  // The helper calls' GLM route reads the bot's OpenRouter key and base URL
-  // from here (helperMessage below); without it they all stay on Haiku.
+  // Both routes a helper call takes, GLM first and its second try on Claude,
+  // read the platform's OpenRouter key and base URL from here.
   helperConfig = config || null;
-  // Always import the SDK so BYOK users can still work even when the
-  // admin key is absent — we just don't spin up a shared `client` in
-  // that case. Before this change a BYOK-only deployment would throw
-  // `Anthropic is not defined` in streamChat.
-  const mod = await import('@anthropic-ai/sdk');
-  Anthropic = mod.default;
-
-  if (!config.anthropicApiKey) {
-    log.warn('llm', 'ANTHROPIC_API_KEY not set — shared admin calls disabled (BYOK still works)');
+  // scripts/language-sync.js, on a person's own machine: their key, given.
+  if (config && config.openrouterKeyForScripts) {
+    client = openrouterMessages.keyClient({
+      apiKey: config.openrouterKeyForScripts,
+      openrouterApiBase: config.openrouterApiBase,
+      openrouterOrigin: config.openrouterOrigin,
+    });
     return;
   }
-  client = new Anthropic({ apiKey: config.anthropicApiKey });
-  log.info('llm', 'Anthropic client initialized');
+  if (!config || !config.dataEncryptionKey) {
+    log.warn('llm', 'No data encryption key: the platform OpenRouter key cannot be read, model helpers are off');
+    client = null;
+    return;
+  }
+  client = openrouterMessages.platformClient(config);
+  // Read once now, so isEnabled() is true from the first request where
+  // the key is there, and false where it is not (a staging preview).
+  await openrouterMessages.warmPlatformKey(config);
+  log.info('llm', 'Model helpers use the platform OpenRouter key', { keyFound: !openrouterMessages.platformKeyMissing() });
 }
 
+// Whether the platform can make its own model calls: a client exists and a
+// read found the platform key (init reads it; a minute-old answer stands
+// while it is read again). False before any read finds it, so a staging
+// preview, which has no key, keeps every model feature off. This is
+// what gates the GLM-first features too (feedback titles, checks in plain
+// words, the content review, a first version's plan...), so it must not
+// depend on anything but the platform's OpenRouter key.
 function isEnabled() {
-  return !!client;
+  if (!client) return false;
+  return !(typeof client.keyMissing === 'function' && client.keyMissing());
 }
 
 function getSystemPrompt(appName, repoFiles) {
@@ -388,7 +338,7 @@ function anthropicOutcome(stopReason) {
   return stopReason === 'refusal' ? 'refusal' : 'success';
 }
 
-function telemetryBase(context, defaults, apiKey) {
+function telemetryBase(context, defaults) {
   const ctx = context || {};
   return {
     pool: ctx.pool || null,
@@ -396,7 +346,7 @@ function telemetryBase(context, defaults, apiKey) {
     sessionId: ctx.sessionId,
     backend: ctx.backend || defaults.backend,
     component: ctx.component || defaults.component,
-    billingPath: ctx.billingPath || (apiKey ? 'anthropic_byok' : 'platform'),
+    billingPath: ctx.billingPath || 'platform',
     correlationId: ctx.correlationId || crypto.randomUUID(),
     attemptNumber: Number.isInteger(ctx.attemptNumber) && ctx.attemptNumber > 0
       ? ctx.attemptNumber
@@ -410,73 +360,49 @@ function recordAnthropicResponse({
 }) {
   if (!llmTelemetry.isCollectionEnabled()) return 1;
   try {
-    const outerUsage = response && response.usage;
-    const iterations = Array.isArray(outerUsage && outerUsage.iterations)
-      && outerUsage.iterations.length
-      ? outerUsage.iterations
-      : null;
-    const usageRows = iterations || [outerUsage || null];
-    const boundary = fallbackBoundary(response && response.content);
+    // One provider request, one event: OpenRouter serves no server-side
+    // fallback iterations (that was an Anthropic beta, task 2275).
+    const effectiveUsage = (response && response.usage) || null;
     const responseMetrics = anthropicResponseMetrics(response);
-
-    usageRows.forEach((entry, index) => {
-      const usage = entry && entry.usage ? entry.usage : entry;
-      const isLast = index === usageRows.length - 1;
-      const isFallback = entry && entry.type === 'fallback_message';
-      const iterationModel = safeTelemetryModel(entry && entry.model)
-        || (isFallback ? safeTelemetryModel(boundary && boundary.to) : null)
-        || (!isLast ? safeTelemetryModel(boundary && boundary.from) : null)
-        || safeTelemetryModel(response && response.model)
-        || requestedModel;
-      const stopReason = !isLast && iterations && detectFallback(response)
-        ? 'refusal'
-        : (response && response.stop_reason) || null;
-      // The outer usage object is the only source on older response shapes.
-      // It is safe to use for a single iteration, but never duplicate an
-      // aggregate total across multiple physical model invocations.
-      const effectiveUsage = usageRows.length === 1 && !hasUsageMetrics(usage)
-        ? outerUsage
-        : usage;
-      const eventAttempt = attemptNumber + index;
-      const costUsd = telemetryCostUsd(effectiveUsage, iterationModel);
-      void llmTelemetry.record(context.pool, {
-        invocationKey: `${context.correlationId}:${eventAttempt}`,
-        timestamp: startedAt,
-        appId: context.appId,
-        sessionId: context.sessionId,
-        provider: 'anthropic',
-        backend: context.backend,
-        component: context.component,
-        // The provider request's model remains the requested model for every
-        // server-side fallback hop; the iteration model is what was served.
-        requestedModel,
-        servedModel: iterationModel,
-        billingPath: context.billingPath,
-        inputTokens: usageMetric(effectiveUsage, 'input_tokens'),
-        cacheReadInputTokens: usageMetric(effectiveUsage, 'cache_read_input_tokens'),
-        cacheWriteInputTokens: usageMetric(effectiveUsage, 'cache_creation_input_tokens'),
-        outputTokens: usageMetric(effectiveUsage, 'output_tokens'),
-        reasoningOutputTokens: null,
-        ...anthropicUsageDetails(effectiveUsage),
-        providerTurnCount: 1,
-        providerModelCount: 1,
-        costUsd,
-        costSource: costUsd == null ? 'unavailable' : 'platform_estimate',
-        // A server-side fallback exposes one duration for the enclosing API
-        // request, not per model iteration. Attribute it once to the final
-        // iteration instead of duplicating it across attempts.
-        durationMs: isLast ? durationMs : null,
-        providerDurationMs: isLast ? durationMs : null,
-        timeToFirstOutputMs: isLast ? timeToFirstOutputMs : null,
-        ...requestMetrics,
-        ...(isLast ? responseMetrics : {}),
-        outcome: anthropicOutcome(stopReason),
-        stopReason,
-        attemptNumber: eventAttempt,
-        correlationId: context.correlationId,
-      });
+    const iterationModel = safeTelemetryModel(response && response.model) || requestedModel;
+    const stopReason = (response && response.stop_reason) || null;
+    const eventAttempt = attemptNumber;
+    const reportedUsd = Number(effectiveUsage && effectiveUsage.cost);
+    const providerReported = !!effectiveUsage && typeof effectiveUsage.cost === 'number'
+      && Number.isFinite(reportedUsd) && reportedUsd >= 0;
+    const costUsd = providerReported ? reportedUsd : telemetryCostUsd(effectiveUsage, iterationModel);
+    void llmTelemetry.record(context.pool, {
+      invocationKey: `${context.correlationId}:${eventAttempt}`,
+      timestamp: startedAt,
+      appId: context.appId,
+      sessionId: context.sessionId,
+      provider: 'openrouter',
+      backend: context.backend,
+      component: context.component,
+      requestedModel,
+      servedModel: iterationModel,
+      billingPath: context.billingPath,
+      inputTokens: usageMetric(effectiveUsage, 'input_tokens'),
+      cacheReadInputTokens: usageMetric(effectiveUsage, 'cache_read_input_tokens'),
+      cacheWriteInputTokens: usageMetric(effectiveUsage, 'cache_creation_input_tokens'),
+      outputTokens: usageMetric(effectiveUsage, 'output_tokens'),
+      reasoningOutputTokens: null,
+      ...anthropicUsageDetails(effectiveUsage),
+      providerTurnCount: 1,
+      providerModelCount: 1,
+      costUsd,
+      costSource: costUsd == null ? 'unavailable' : (providerReported ? 'provider_reported' : 'platform_estimate'),
+      durationMs: durationMs,
+      providerDurationMs: durationMs,
+      timeToFirstOutputMs: timeToFirstOutputMs,
+      ...requestMetrics,
+      ...responseMetrics,
+      outcome: anthropicOutcome(stopReason),
+      stopReason,
+      attemptNumber: eventAttempt,
+      correlationId: context.correlationId,
     });
-    return usageRows.length;
+    return 1;
   } catch {
     // Observation must never turn a successful provider response into a
     // failed user turn, even if a future SDK ships an unexpected usage shape.
@@ -486,13 +412,6 @@ function recordAnthropicResponse({
 
 function safeTelemetryModel(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function hasUsageMetrics(usage) {
-  return usageMetric(usage, 'input_tokens') != null
-    || usageMetric(usage, 'output_tokens') != null
-    || usageMetric(usage, 'cache_read_input_tokens') != null
-    || usageMetric(usage, 'cache_creation_input_tokens') != null;
 }
 
 function isAnthropicCancellation(error) {
@@ -533,7 +452,7 @@ function recordAnthropicError({
       timestamp: startedAt,
       appId: context.appId,
       sessionId: context.sessionId,
-      provider: 'anthropic',
+      provider: 'openrouter',
       backend: context.backend,
       component: context.component,
       requestedModel,
@@ -555,25 +474,19 @@ function recordAnthropicError({
   }
 }
 
-// `fallbacks: true` sends the request through the beta endpoint with the
-// server-side refusal fallback ("default" mode, FALLBACK_BETA above), so a
-// safety classifier declining the request re-runs it on a fallback model
-// inside the same call instead of coming back empty. A client without the
-// beta namespace (the test stubs) takes the plain path unchanged.
 async function createMessageWithTelemetry({
   activeClient, params, requestOptions, passRequestOptions = false,
-  telemetryContext, defaults, apiKey, fallbacks = false,
+  telemetryContext, defaults,
 }) {
-  const context = telemetryBase(telemetryContext, defaults, apiKey);
+  if (!activeClient) throw new Error('LLM not initialized');
+  const context = telemetryBase(telemetryContext, defaults);
   const startedAt = new Date();
   const startedMs = Date.now();
   const requestMetrics = llmTelemetry.isCollectionEnabled()
     ? anthropicRequestMetrics(params, { requestMode: 'single' })
     : {};
-  const beta = fallbacks && activeClient.beta && activeClient.beta.messages
-    && typeof activeClient.beta.messages.create === 'function';
-  const target = beta ? activeClient.beta.messages : activeClient.messages;
-  const sent = beta ? { ...params, betas: [FALLBACK_BETA], fallbacks: FALLBACK_MODE } : params;
+  const target = activeClient.messages;
+  const sent = params;
   try {
     // Preserve the provider call's arity as well as its params object. Some
     // SDK stubs distinguish create(params) from create(params, undefined).
@@ -621,10 +534,11 @@ async function createMessageWithTelemetry({
 // ~1s median). A GLM answer that is late, fails or cannot be read is asked of
 // Haiku 5.5 instead (Haiku 4.5 before #4189), so the worst case is the limit
 // plus what Haiku takes. The limits are tight where somebody
-// waits on the answer and loose where nobody does.
+// waits on the answer and loose where nobody does. Haiku is the second try
+// over OpenRouter too, on the same platform key (task 2275): there is no
+// separate Anthropic key any more.
 //
-// Unchanged: a call made on somebody's own Anthropic key (BYOK) goes to Haiku
-// on that key, as before, and a caller that names a Claude model gets it.
+// A caller that names a Claude model gets it, over OpenRouter.
 // HELPER_MODEL=haiku in the root dapp.json's platform_env sends every helper
 // back to Haiku without a deploy of code.
 //
@@ -644,7 +558,6 @@ const HELPER_FALLBACK_MODEL = 'claude-haiku-5-5';
 // thought unless asked, so turning it off keeps each helper as it was.
 // Accepted at effort low, medium and high; none of these calls sets effort.
 const HELPER_FALLBACK_THINKING = Object.freeze({ type: 'disabled' });
-const HELPER_BOT_USERNAME = 'homeroom_bot';
 const HELPER_TOOL = 'answer';
 // GLM's reasoning counts against the output ceiling, so each helper's Haiku
 // ceiling gets this much room on top of it.
@@ -659,10 +572,6 @@ const HELPER_OUTPUT_LIMIT = Object.freeze({
   // for a plan written in a language that takes more tokens.
   first_version_plan: 1200,
 });
-// How long the bot's key is reused before it is read again (one query and a
-// decrypt per minute rather than per call; the title preview fires as people
-// type).
-const HELPER_KEY_TTL_MS = 60 * 1000;
 const HELPER_TIME_LIMIT_MS = Object.freeze({
   // Somebody is waiting: the feedback title preview as they type, the
   // create dialog's description, a reply to "@Homeroom bot", the ask box.
@@ -692,7 +601,6 @@ const HELPER_TIME_LIMIT_MS = Object.freeze({
   content_review: 30000,
 });
 
-let helperKeyCache = null;
 let helperTestDeps = null;
 
 /** 'glm' when helpers try GLM first, 'haiku' when HELPER_MODEL says so. */
@@ -707,29 +615,12 @@ async function helperModelNow() {
   return require('./helper-model').current(helperConfig);
 }
 
-// The Homeroom bot's included OpenRouter key, or null (no bot yet, no key,
-// no config, a read that failed). Never throws.
+// The platform's OpenRouter key (the Homeroom bot's included key), or null
+// (no bot yet, no key, no config, a read that failed). Never throws. Both a
+// helper's GLM call and its second try on Claude are paid with it.
 async function helperKey() {
   if (helperTestDeps && 'key' in helperTestDeps) return helperTestDeps.key;
-  if (!helperConfig || !helperConfig.dataEncryptionKey) return null;
-  if (helperKeyCache && Date.now() - helperKeyCache.at < HELPER_KEY_TTL_MS) return helperKeyCache.key;
-  let key = null;
-  try {
-    const pool = require('../db/pool').getPool(helperConfig);
-    const { rows } = await pool.query(
-      'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [HELPER_BOT_USERNAME],
-    );
-    if (rows[0]) {
-      key = await require('./credential-store').readSecret({
-        pool, userId: rows[0].id, provider: 'openrouter', purpose: 'coding_agent',
-        dataKey: helperConfig.dataEncryptionKey,
-      });
-    }
-  } catch (err) {
-    log.warn('llm', 'Helper model key unreadable; helpers use Haiku', { err: err.message });
-  }
-  helperKeyCache = { key: key || null, at: Date.now() };
-  return helperKeyCache.key;
+  return openrouterMessages.platformKey(helperConfig);
 }
 
 /** Pure: `params` with thinking off when it is a Haiku helper call that does not set it. */
@@ -1004,12 +895,12 @@ async function askHelperModel({
  * refuse is not an answer, and Haiku is asked (run five's plan at Make it).
  */
 async function helperMessage({
-  helper, activeClient, params, schema, apiKey, signal, requestOptions,
+  helper, activeClient, params, schema, signal, requestOptions,
   telemetryContext, defaults, model = HELPER_MODEL, validate,
 }) {
   const correlationId = (telemetryContext && telemetryContext.correlationId) || crypto.randomUUID();
   let tried = false;
-  if (model === HELPER_MODEL && !apiKey && schema && helperRoute() === 'glm') {
+  if (model === HELPER_MODEL && schema && helperRoute() === 'glm') {
     const glm = await askHelperModel({
       helper,
       component: (telemetryContext && telemetryContext.component) || defaults.component,
@@ -1053,7 +944,6 @@ async function helperMessage({
     passRequestOptions: !!requestOptions,
     telemetryContext: { ...(telemetryContext || {}), correlationId, attemptNumber: tried ? 2 : 1 },
     defaults,
-    apiKey,
   });
   const blocks = Array.isArray(response && response.content) ? response.content : [];
   return {
@@ -1075,7 +965,6 @@ async function helperMessage({
 function _setHelperDepsForTests(deps) {
   const prev = helperTestDeps;
   helperTestDeps = deps || null;
-  helperKeyCache = null;
   return prev;
 }
 
@@ -1085,35 +974,30 @@ function _setHelperDepsForTests(deps) {
 // unbounded one is a runaway nobody sees until the bill.
 const STREAM_MAX_TOKENS_DEFAULT = 8192;
 
-async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onThinking, onDone, onError, signal, apiKey, telemetryContext, maxTokens }) {
-  // BYOK (#30): when the caller passes a user-provided key, we spin up
-  // a transient client for this request instead of reusing the shared
-  // one. Otherwise fall back to the admin key. Creating a client per
-  // request is fine — Anthropic's SDK is lightweight and the HTTP
-  // layer under the hood keeps its own keepalive pool.
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+// One Messages call with the platform's tool-loop surface: the Workshop
+// ask box's second try and a fleet campaign's tool loop. It is one
+// non-streaming request on OpenRouter (the relay's streaming is for Claude
+// Code, which reads the stream itself); `onToken` gets the whole text once
+// it is in, so a caller that forwards tokens still forwards all of them.
+async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onDone, onError, signal, telemetryContext, maxTokens }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
 
   const requestedModel = model || DEFAULT_MODEL;
+  // No default component: a caller names its own (fleet_maintenance,
+  // workshop_ask), and one that forgets is recorded flagged
+  // (llm-telemetry.js component_unknown), never quietly as other_helper.
   const context = telemetryBase(telemetryContext, {
-    backend: 'mayor', component: 'other_helper',
-  }, apiKey);
+    backend: 'mayor', component: null,
+  });
   let nextAttemptNumber = context.attemptNumber;
 
-  // Pass the abort signal via request options so /api/sessions/:id/stop
-  // can cancel an in-flight Mayor call cleanly (instead of us just
-  // swallowing tokens locally while the API keeps billing).
+  // Pass the abort signal via request options so a stop can cancel an
+  // in-flight call cleanly instead of letting the provider keep billing.
   const requestOptions = signal ? { signal } : undefined;
 
   try {
-    let fullText = '';
-
-    // One attempt against `runModel`. Fable 5 requests go through the
-    // beta surface with the server-side fallback opt-in (see the module
-    // header) so a classifier decline is re-served, inside the same call,
-    // by the model Anthropic recommends for its category; every other model
-    // keeps the plain path byte-for-byte.
-    const runStream = async (runModel, { withFallbacks }) => {
+    const runOnce = async (runModel) => {
       const params = withHelperThinking({
         model: runModel,
         max_tokens: Number.isInteger(maxTokens) && maxTokens > 0
@@ -1121,7 +1005,6 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
           : STREAM_MAX_TOKENS_DEFAULT,
         system: systemPrompt,
         messages,
-        stream: true,
       });
       if (Array.isArray(tools) && tools.length) params.tools = tools;
       // toolChoice lets callers force 'none' on wrap-up turns to prevent
@@ -1130,48 +1013,15 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
       const observeTelemetry = llmTelemetry.isCollectionEnabled();
       const requestMetrics = observeTelemetry
-        ? anthropicRequestMetrics(params, {
-          requestMode: 'stream',
-          fallbackModelCount: withFallbacks ? 1 : 0,
-        })
+        ? anthropicRequestMetrics(params, { requestMode: 'single' })
         : {};
-
       const startedAt = new Date();
       const startedMs = Date.now();
       const attemptNumber = nextAttemptNumber;
-      let timeToFirstOutputMs = null;
-      const markFirstOutput = () => {
-        if (observeTelemetry && timeToFirstOutputMs == null) {
-          timeToFirstOutputMs = Date.now() - startedMs;
-        }
-      };
       try {
-        const stream = withFallbacks
-          ? activeClient.beta.messages.stream({
-            ...params,
-            betas: [FALLBACK_BETA],
-            fallbacks: FALLBACK_MODE,
-          }, requestOptions)
-          : activeClient.messages.stream(params, requestOptions);
-
-        // `streamEvent` sees thinking/tool blocks as well as text, whereas the
-        // existing `text` callback alone would overstate first-output latency
-        // for thinking-heavy or tool-only turns. Older SDK/test streams simply
-        // ignore the event name.
-        if (observeTelemetry) {
-          stream.on('streamEvent', (event) => {
-            if (event && (event.type === 'content_block_start'
-                || event.type === 'content_block_delta')) markFirstOutput();
-          });
-        }
-
-        stream.on('text', (text) => {
-          markFirstOutput();
-          fullText += text;
-          if (onToken) onToken(text);
-        });
-
-        const finalMessage = await stream.finalMessage();
+        const finalMessage = requestOptions
+          ? await activeClient.messages.create(params, requestOptions)
+          : await activeClient.messages.create(params);
         nextAttemptNumber += recordAnthropicResponse({
           context,
           requestedModel: runModel,
@@ -1180,7 +1030,6 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
           durationMs: Date.now() - startedMs,
           attemptNumber,
           requestMetrics,
-          timeToFirstOutputMs,
         });
         return finalMessage;
       } catch (error) {
@@ -1192,7 +1041,6 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
           attemptNumber,
           error,
           requestMetrics,
-          timeToFirstOutputMs,
         });
         nextAttemptNumber += 1;
         throw error;
@@ -1201,56 +1049,29 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     let finalMessage;
     try {
-      finalMessage = await runStream(requestedModel, {
-        withFallbacks: requestedModel === FABLE_MODEL,
-      });
+      finalMessage = await runOnce(requestedModel);
     } catch (err) {
       // #3557: a PDF the provider cannot take (malformed, encrypted, too
       // many pages) fails the whole request, and the Mayor replays it on
       // later turns. A request that carried one and was refused as invalid
-      // before anything streamed is retried ONCE with each PDF replaced by
-      // a line naming it.
-      if (err?.status !== 400 || fullText || !hasDocumentBlocks(messages)) throw err;
-      log.warn('llm', 'Request with a PDF refused as invalid — retrying once without documents', {
+      // is retried ONCE with each PDF replaced by a line naming it.
+      if (err?.status !== 400 || !hasDocumentBlocks(messages)) throw err;
+      log.warn('llm', 'Request with a PDF refused as invalid; retrying once without documents', {
         model: requestedModel,
       });
       messages = withoutDocuments(messages);
-      finalMessage = await runStream(requestedModel, {
-        withFallbacks: requestedModel === FABLE_MODEL,
-      });
-    }
-
-    // Fallback couldn't run (e.g. Opus rate-limited at that instant):
-    // the refusal names a model to retry directly. ONE retry, plain
-    // path (no fallbacks param needed); a second refusal is final.
-    // Fable's thinking blocks in the replayed history are dropped
-    // server-side (unbilled) by the other model — no stripping needed.
-    let retriedOnRecommended = false;
-    const recommendedModel = finalMessage.stop_reason === 'refusal'
-      && finalMessage.stop_details
-      && typeof finalMessage.stop_details.recommended_model === 'string'
-      && finalMessage.stop_details.recommended_model.trim();
-    if (recommendedModel) {
-      log.warn('llm', 'Refusal with recommended_model — retrying once directly', {
-        requested: requestedModel, retryModel: recommendedModel,
-      });
-      finalMessage = await runStream(recommendedModel, { withFallbacks: false });
-      retriedOnRecommended = true;
+      finalMessage = await runOnce(requestedModel);
     }
 
     const inputTokens = finalMessage.usage?.input_tokens || 0;
     const outputTokens = finalMessage.usage?.output_tokens || 0;
 
-    // Walk the assembled content blocks so callers can orchestrate a
-    // tool-use loop without having to re-derive text vs. tool_use from
-    // the raw SDK event shapes. `rawContent` is returned so the caller
-    // can echo it back into the next turn's assistant message —
-    // Anthropic requires the exact block sequence to round-trip a
-    // tool_use → tool_result handoff. It is sanitized per the fallback
-    // echo rule first (a no-op when no fallback block is present), and
-    // `toolUses` derives from the SANITIZED content so a truncated
-    // pre-boundary tool_use can never be dispatched or answered.
-    const rawContent = sanitizeFallbackContent(finalMessage.content || []);
+    // Walk the content blocks so callers can orchestrate a tool-use loop
+    // without re-deriving text vs. tool_use. `rawContent` is returned so the
+    // caller can echo it back into the next turn's assistant message: the
+    // Messages API wants the exact block sequence to round-trip a
+    // tool_use -> tool_result handoff.
+    const rawContent = Array.isArray(finalMessage.content) ? finalMessage.content : [];
     const toolUses = [];
     let assembledText = '';
     for (const block of rawContent) {
@@ -1259,25 +1080,18 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
         toolUses.push({ id: block.id, name: block.name, input: block.input });
       }
     }
-
+    if (assembledText && onToken) onToken(assembledText);
     if (onDone) onDone();
 
     const stopReason = finalMessage.stop_reason;
     return {
-      text: assembledText || fullText,
+      text: assembledText,
       toolUses,
       stopReason,
       rawContent,
       usage: { input_tokens: inputTokens, output_tokens: outputTokens },
-      // Fable 5 fallback surface (see module header). servedModel names
-      // the model that actually produced the message; fallbackServed is
-      // the usage.iterations detection (plus the recommended_model retry
-      // path, where the serving model is by definition not the requested
-      // one); stopDetails is populated only on refusals.
       requestedModel,
       servedModel: finalMessage.model || requestedModel,
-      fallbackServed: retriedOnRecommended || detectFallback(finalMessage),
-      fallbackBoundary: fallbackBoundary(finalMessage.content || []),
       stopDetails: stopReason === 'refusal' ? (finalMessage.stop_details || null) : null,
     };
   } catch (err) {
@@ -1302,6 +1116,17 @@ function estimateCostCents(usage, model) {
   // model-costs.js publishes for it, never at the unknown-model rate below.
   const reported = Number(usage && usage.cost_usd);
   if (usage && usage.cost_usd != null && Number.isFinite(reported) && reported >= 0) return reported * 100;
+  // OpenRouter's Messages endpoint reports what a call cost as usage.cost
+  // (dollars), when it does.
+  const openrouterCost = Number(usage && usage.cost);
+  if (usage && typeof usage.cost === 'number' && Number.isFinite(openrouterCost) && openrouterCost >= 0) {
+    return openrouterCost * 100;
+  }
+  // A Claude model under its OpenRouter id ('anthropic/' and a dotted minor)
+  // is priced from the Claude rate cards below, as it is under its own.
+  if (typeof model === 'string' && /^anthropic\/claude-/i.test(model)) {
+    model = openrouterMessages.fromOpenRouterModel(model);
+  }
   const published = typeof model === 'string' && model.includes('/')
     ? require('./model-costs').publishedPricing(model) : null;
   if (published) {
@@ -1406,8 +1231,8 @@ function stripLoneSurrogates(s) {
   return out;
 }
 
-async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
 
   // Normalize to chronological lists, falling back to the legacy
@@ -1481,19 +1306,15 @@ Author: ${stripLoneSurrogates(username) || 'unknown'}`;
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'pr_metadata' },
-    apiKey,
-    fallbacks: true,
   });
   if (resp.stop_reason === 'refusal') throw new Error('PR metadata request was refused');
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
   const { title, body, summary } = parsePrMetadataText(text);
-  // Surface usage so callers (pr-metadata.js) can debit the user
-  // who triggered the PR. May be undefined if the SDK strips it on
-  // some response shapes; callers must tolerate that. A fallback-served
-  // response bills at the model that actually answered.
-  const served = detectFallback(resp) && typeof resp.model === 'string' ? resp.model : model;
-  return { title, body, summary, usage: resp.usage, model: served };
+  // Surface usage so callers (pr-metadata.js) can debit the user who
+  // triggered the PR. May be undefined on some response shapes; callers
+  // must tolerate that.
+  return { title, body, summary, usage: resp.usage, model };
 }
 
 // ── The hub's since-your-last-visit line ─────────────────────────────
@@ -1554,7 +1375,6 @@ Respond with JSON: {"summary": "..."}.`;
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'since_summary' },
-    fallbacks: true,
   });
   if (resp.stop_reason === 'refusal') throw new Error('Since summary request was refused');
   if (resp.stop_reason === 'max_tokens') throw new Error('Since summary ran out of tokens');
@@ -1565,17 +1385,15 @@ Respond with JSON: {"summary": "..."}.`;
   let summary = typeof parsed.summary === 'string' ? parsed.summary.replace(/\s+/g, ' ').trim() : '';
   if (!summary) throw new Error('Empty since summary');
   if (summary.length > SINCE_SUMMARY_MAX) summary = summary.slice(0, SINCE_SUMMARY_MAX).trimEnd();
-  const served = detectFallback(resp) && typeof resp.model === 'string' ? resp.model : model;
-  return { summary, usage: resp.usage, model: served };
+  return { summary, usage: resp.usage, model };
 }
 
 // ── The translation step's transport ──────────────────────────────────
 // services/language-sync.js builds every request's params (its model, its
 // schema, its cached system prompt); this sends them on the platform's key
-// and hands back each answer's text by request id. A proposal's few new
-// messages go one by one; a whole language goes as one Message Batch, which
-// costs half as much and may take minutes to hours. Usage is recorded like
-// any platform call (a batch's at the list price, so it reads high).
+// and hands back each answer's text by request id, a few at a time.
+// OpenRouter has no Message Batches, so a whole language goes the same way
+// as a proposal's few new messages, at the ordinary price (task 2275).
 
 function catalogAnswer(message) {
   const text = (message?.content || []).filter((block) => block.type === 'text').map((block) => block.text).join('');
@@ -1606,44 +1424,6 @@ async function translateCatalogDirect(requests, { concurrency = 4, telemetryCont
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, requests.length) }, lane));
-  return answers;
-}
-
-async function submitCatalogBatch(requests) {
-  if (!client) throw new Error('LLM not initialized');
-  const batch = await client.messages.batches.create({
-    requests: requests.map((request) => ({ custom_id: request.customId, params: request.params })),
-  });
-  return { id: batch.id, status: batch.processing_status };
-}
-
-async function catalogBatchStatus(id) {
-  if (!client) throw new Error('LLM not initialized');
-  const batch = await client.messages.batches.retrieve(id);
-  return { id: batch.id, status: batch.processing_status, counts: batch.request_counts || null };
-}
-
-async function catalogBatchAnswers(id, { telemetryContext } = {}) {
-  if (!client) throw new Error('LLM not initialized');
-  const context = telemetryBase(telemetryContext, { backend: 'helper', component: 'language_sync' });
-  const answers = new Map();
-  for await (const entry of await client.messages.batches.results(id)) {
-    if (entry?.result?.type === 'succeeded') {
-      const message = entry.result.message;
-      recordAnthropicResponse({
-        context, requestedModel: message?.model, response: message,
-        startedAt: new Date(), durationMs: 0, attemptNumber: 1,
-      });
-      answers.set(entry.custom_id, catalogAnswer(message));
-    } else {
-      // An errored request carries the API's own reason (a refused
-      // parameter, an overload); keep it, so a pass that wrote nothing
-      // says why instead of a bare "errored".
-      const result = entry?.result || {};
-      const detail = result.error?.error?.message || result.error?.message || '';
-      answers.set(entry?.custom_id, { error: detail ? `${result.type || 'failed'}: ${detail}` : (result.type || 'failed') });
-    }
-  }
   return answers;
 }
 
@@ -1744,8 +1524,8 @@ const SHORT_DESCRIPTION_SCHEMA = {
 // longer description its creator gave the Homeroom bot to build from. The
 // same helper model and defensive parse as a session title; the caller
 // falls back to the description's first sentence when this throws.
-async function generateShortDescription({ name, brief, max = 90, apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function generateShortDescription({ name, brief, max = 90, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   const text = String(brief || '').trim();
   if (!text) throw new Error('Nothing to describe');
@@ -1763,7 +1543,6 @@ Respond with ONLY a JSON object: {"description": "..."}. No prose before or afte
     schema: SHORT_DESCRIPTION_SCHEMA,
     telemetryContext,
     defaults: { backend: 'helper', component: 'short_description' },
-    apiKey,
   });
   const out = (resp.content || []).find((b) => b.type === 'text')?.text || '';
   let description = '';
@@ -2030,8 +1809,8 @@ Respond with ONLY a JSON object: {"explanation": "..."}. No prose before or afte
 // is the card's JSON whichever model answered (GLM through `schema`, Haiku
 // as its prompt asks). THROWS with no key or on a provider error; the caller
 // makes the card from the description instead.
-async function generateAppSketch({ system, user, schema, model = HELPER_MODEL, maxTokens = 4000, apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function generateAppSketch({ system, user, schema, model = HELPER_MODEL, maxTokens = 4000, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   const { response: resp, model: served } = await helperMessage({
     helper: 'app_sketch',
@@ -2045,7 +1824,6 @@ async function generateAppSketch({ system, user, schema, model = HELPER_MODEL, m
     schema,
     telemetryContext,
     defaults: { backend: 'helper', component: 'app_sketch' },
-    apiKey,
   });
   const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
   return { text, usage: resp.usage, model: served };
@@ -2087,9 +1865,9 @@ async function inferAppCategory({ system, user, schema, maxTokens = 60, telemetr
 // structured output (structuredOutputSchema). THROWS with no key or on a
 // provider error; the caller then leaves the plan to the triage, as before.
 async function generateFirstVersionPlan({
-  system, user, schema, model = HELPER_MODEL, maxTokens = 2000, apiKey, telemetryContext, validate,
+  system, user, schema, model = HELPER_MODEL, maxTokens = 2000, telemetryContext, validate,
 }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   const { response: resp, model: served, reply } = await helperMessage({
     helper: 'first_version_plan',
@@ -2105,7 +1883,6 @@ async function generateFirstVersionPlan({
     validate,
     telemetryContext,
     defaults: { backend: 'helper', component: 'first_version_plan' },
-    apiKey,
   });
   const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
   // And how the reply came back (helperMessage `reply`): its finish reason,
@@ -2124,9 +1901,9 @@ async function generateFirstVersionPlan({
 // THROWS with no client or on a provider error; the caller then leaves the
 // first look to the spec, as before.
 async function generateFirstLook({
-  system, user, model, effort = null, maxTokens = 16000, timeoutMs = null, apiKey, telemetryContext,
+  system, user, model, effort = null, maxTokens = 16000, timeoutMs = null, telemetryContext,
 }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   if (!model) throw new Error('generateFirstLook: no model');
   const { response: resp, model: served } = await helperMessage({
@@ -2142,7 +1919,6 @@ async function generateFirstLook({
     ...(timeoutMs ? { requestOptions: { timeout: timeoutMs, maxRetries: 1 } } : {}),
     telemetryContext,
     defaults: { backend: 'helper', component: 'first_version_look' },
-    apiKey,
   });
   const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
   return { text, usage: resp.usage, model: served, stopReason: resp.stop_reason || null };
@@ -2165,8 +1941,8 @@ async function generateFirstLook({
 // unparseable text). The scorer treats a throw as "leave it for the next
 // tick" and never as a zero, so an outage costs a delay, never someone's
 // points.
-async function gradeChallengeUnit({ system, user, schema, apiKey, telemetryContext, model = HELPER_MODEL }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function gradeChallengeUnit({ system, user, schema, telemetryContext, model = HELPER_MODEL }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   if (!system || !user) throw new Error('gradeChallengeUnit needs a rubric and an input');
   const { response: resp, model: served } = await helperMessage({
@@ -2182,7 +1958,6 @@ async function gradeChallengeUnit({ system, user, schema, apiKey, telemetryConte
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'challenge_grade' },
-    apiKey,
   });
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
   // A fence/smart-quote fallback: structured outputs normally return clean
@@ -2291,8 +2066,8 @@ function parseIssueTitleReply(raw) {
 // reporter's own words (feedbackTitleFromDescription) and
 // `actionable: false`, so no caller ever publishes a refusal and none
 // queues a retry for it.
-async function generateIssueTitle({ description, apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function generateIssueTitle({ description, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   const { response: resp, model } = await helperMessage({
     helper: 'issue_title',
@@ -2321,7 +2096,6 @@ ${stripLoneSurrogates(description).trim()}`,
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'issue_title' },
-    apiKey,
   });
   const raw = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
   // A declined or cut-off answer is never a title, whatever text it holds.
@@ -2381,8 +2155,8 @@ function chatAskChangeLines(changes) {
 // or anything else people say in a group chat. `changes` ({ id, title,
 // firstVersion }) are the bot's own changes waiting for approval, which a
 // message to it may ask to fix instead of asking for something new.
-async function readChatAsk({ text, appName = null, toBot = true, changes = [], apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function readChatAsk({ text, appName = null, toBot = true, changes = [], telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   const offered = toBot && Array.isArray(changes) ? changes.filter((c) => c && typeof c.id === 'string').slice(0, 5) : [];
   const schema = offered.length ? CHAT_ASK_REVISE_SCHEMA : CHAT_ASK_SCHEMA;
@@ -2423,7 +2197,6 @@ ${stripLoneSurrogates(String(text || '')).trim().slice(0, 4000)}`,
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'chat_ask' },
-    apiKey,
   });
   const raw = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
   let parsed = null;
@@ -2519,8 +2292,8 @@ function sanitizeReportSummary(parsed, knownUsernames) {
   return { narrative, highlights, risks, owners };
 }
 
-async function generateReportSummary({ inputJson, appName, knownUsernames, apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function generateReportSummary({ inputJson, appName, knownUsernames, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
 
   const system = `You write progress reports for a collaborative app-building platform. You are given a JSON snapshot of one app's development state: open issues (the backlog), proposals awaiting review votes, governance proposals, work sessions in progress, and recently completed changes.
@@ -2554,7 +2327,6 @@ ${inputJson}`;
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'report_summary' },
-    apiKey,
   });
 
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
@@ -2794,8 +2566,8 @@ function parseWorkshopJson(resp, what) {
 // services/workshop-themes.js `fixTopics` enforces it whatever this answers.
 const WORKSHOP_DISCOVERY_VERSION = 5;
 
-async function generateWorkshopThemeDefinitions({ inputJson, appName, itemKeys, apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function generateWorkshopThemeDefinitions({ inputJson, appName, itemKeys, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
 
   const system = `You organise the work on a collaborative app-building platform. You are given a JSON snapshot of one app's board: every open issue, every proposal awaiting a vote, every shared work session and every change that landed recently, each with a "key". Draft the CATEGORIES the work falls into — what the work is ABOUT, not what stage it is at.
@@ -2860,7 +2632,6 @@ ${inputJson}`;
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'workshop_themes' },
-    apiKey,
   });
 
   const parsed = parseWorkshopJson(resp, 'discovery');
@@ -2882,8 +2653,8 @@ ${inputJson}`;
 // card will be talked about.
 const WORKSHOP_PLACEMENT_VERSION = 3;
 
-async function placeWorkshopItems({ themesJson, itemsJson, appName, itemKeys, themeIds, apiKey, telemetryContext }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function placeWorkshopItems({ themesJson, itemsJson, appName, itemKeys, themeIds, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
 
   const instructions = `You place cards from a collaborative app-building platform's board into the board's categories. The categories are given below as JSON — each with an "id", a "name", a "description" of what falls under it, and "anchors": the keys of cards already known to belong to it.
@@ -2917,8 +2688,7 @@ ${itemsJson}`;
       output_config: { effort: 'low', format: { type: 'json_schema', schema: WORKSHOP_PLACEMENT_SCHEMA } },
     },
     telemetryContext,
-    defaults: { backend: 'helper', component: 'workshop_themes' },
-    apiKey,
+    defaults: { backend: 'helper', component: 'workshop_placement' },
   });
 
   const parsed = parseWorkshopJson(resp, 'placement');
@@ -3049,9 +2819,9 @@ function sanitizeWorkshopDigest(parsed) {
 const WORKSHOP_DIGEST_VERSION = 7;
 
 async function generateWorkshopDigest({
-  inputJson, lastWeekJson, thisWeekJson, themesJson, appName, windows, apiKey, telemetryContext,
+  inputJson, lastWeekJson, thisWeekJson, themesJson, appName, windows, telemetryContext,
 }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
 
   const w = windows || {};
@@ -3133,8 +2903,7 @@ ${inputJson}`;
       output_config: { effort: 'low', format: { type: 'json_schema', schema: WORKSHOP_DIGEST_SCHEMA } },
     },
     telemetryContext,
-    defaults: { backend: 'helper', component: 'workshop_themes' },
-    apiKey,
+    defaults: { backend: 'helper', component: 'workshop_digest' },
   });
 
   const raw = parseWorkshopJson(resp, 'digest');
@@ -3255,17 +3024,16 @@ ${stripLoneSurrogates(String(question || '')).slice(0, 1000)}`;
  * worth being able to read on its own.
  */
 async function answerWorkshopQuestion({
-  contextJson, question, history, model, apiKey, telemetryContext, onToken, signal,
+  contextJson, question, history, model, telemetryContext, onToken, signal,
 }) {
   const req = buildWorkshopAskRequest({ contextJson, question, history, model });
   const context = { ...(telemetryContext || {}), backend: 'helper', component: 'workshop_ask' };
-  // No picker choice: GLM first (not on a BYOK key, and only where the
-  // Anthropic fallback exists), Haiku behind it. A picked model is asked as
-  // it always was.
+  // No picker choice: GLM first, Haiku behind it, both on the platform's
+  // OpenRouter key. A picked model is asked as it always was.
   let runModel = req.model;
   if (req.model === HELPER_MODEL) {
     runModel = HELPER_FALLBACK_MODEL;
-    if (!apiKey && client && helperRoute() === 'glm') {
+    if (client && helperRoute() === 'glm') {
       const correlationId = context.correlationId || crypto.randomUUID();
       const glm = await askHelperModel({
         helper: 'workshop_ask',
@@ -3298,7 +3066,6 @@ async function answerWorkshopQuestion({
     maxTokens: WORKSHOP_ASK_MAX_TOKENS,
     onToken,
     signal,
-    apiKey,
     telemetryContext: context,
   });
 
@@ -3336,8 +3103,8 @@ const CONTENT_REVIEW_SCHEMA = {
   additionalProperties: false,
 };
 
-async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+async function reviewContentRules({ system, diff, telemetryContext }) {
+  const activeClient = client;
   if (!activeClient) throw new Error('LLM not initialized');
   const { response: resp, model } = await helperMessage({
     helper: 'content_review',
@@ -3351,7 +3118,6 @@ async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'content_review' },
-    apiKey,
   });
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
   const match = raw.replace(/```(?:json)?/gi, '').match(/\{[\s\S]*\}/);
@@ -3397,13 +3163,11 @@ module.exports = {
   WORKSHOP_DISCOVERY_VERSION, WORKSHOP_PLACEMENT_VERSION, WORKSHOP_DIGEST_VERSION,
   // The Needs-you deck's ask box — see services/workshop-ask.js.
   answerWorkshopQuestion, WORKSHOP_ASK_MODEL, WORKSHOP_ASK_HISTORY_MAX,
-  // Fable 5 classifier-fallback surface (+ tests)
-  detectFallback, sanitizeFallbackContent, fallbackBoundary,
-  FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA, PR_METADATA_MODEL,
+  PR_METADATA_MODEL,
   generateSinceSummary, SINCE_SUMMARY_VERSION,
   // The translation step's transport — see services/language-sync.js.
-  translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers,
-  // The helpers' model: GLM 5.3 Flash first, Haiku behind it.
+  translateCatalogDirect,
+  // The helpers' model: GLM 5.3 Flash first, Haiku behind it (both over OpenRouter).
   HELPER_MODEL, HELPER_FALLBACK_MODEL, HELPER_FALLBACK_THINKING, withHelperThinking, HELPER_TIME_LIMIT_MS, helperRoute, helperAnswer, helperMessage,
   answerShape, structuredOutputSchema, helperTextAnswer, HELPER_OUTPUT_LIMIT,
   SHORT_DESCRIPTION_SCHEMA, WORKSHOP_ASK_SCHEMA,

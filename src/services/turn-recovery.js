@@ -1599,18 +1599,10 @@ async function resumeDetachedTurnInner({
       result,
       settleClaude: async () => {
         if (!result.costUsd) return null;
-        let byok = recoveryActiveTurn.byok;
-        if (byok === undefined || byok === null) {
-          try {
-            const { rows } = await pool.query(
-              'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS byok',
-              [session.user_id]
-            );
-            byok = !!rows[0]?.byok;
-          } catch {
-            byok = false;
-          }
-        }
+        // A record from before task 2275 may say its turn ran on the
+        // owner's own Anthropic key; one that says nothing ran on the
+        // platform's, as every relayed turn does now.
+        const byok = recoveryActiveTurn.byok === true;
         const limits = require('./limits');
         return limits.settleTurnSpend(pool, session.user_id, Math.round(result.costUsd * 100), {
           turnByok: !!byok,

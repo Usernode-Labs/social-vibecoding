@@ -11682,6 +11682,15 @@ const AppView = {
       return true;
     }
     const open = AppView._findTopicItem();
+    // A proposal page whose row nothing holds yet (a late-answer correction
+    // or a live burst in the first moments of a cold open) cannot tell which
+    // endpoint owns it: guessing "not up for a vote" read a promoted one's
+    // /api/sessions/:id/details, a 404 and a console error. Its page knows
+    // its row's status, so the re-read is the page's.
+    if (!open && t.kind === 'proposal') {
+      AppView._tellChangePage(id);
+      return true;
+    }
     const review = !!open && ['promoted', 'merging', 'merged'].includes(open.status);
     const voted = !!(live.kinds && live.kinds.has('vote'));
     if (voted && review) AppView._invalidateVoteRoster(id);
@@ -32778,15 +32787,15 @@ const AppView = {
       const appName = realAppName || PlatformI18n.t('changes:dialog.llm.fallbackApp');
       const suggested = info.llm?.suggestedCapCents ?? null;
       const prefillCents = suggested ?? info.defaultCapCents ?? 100;
-      // Zero is intentional for an unverified account with no BYOK key;
-      // never coerce it to the historical $25 fallback.
+      // Zero is intentional for an unverified account with no key of its
+      // own; never coerce it to the historical $25 fallback.
       const parsedMax = Number(info.maxCapCents);
       const maxCents = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : 0;
       const noCapacity = maxCents === 0;
       const eligibilityUnavailable = info.entitlement?.entitlementAvailable === false;
       const byokOnly = !noCapacity
         && Number(info.entitlement?.limitCents) === 0
-        && !!info.hasApiKey;
+        && !!info.hasOwnKey;
 
       react.mountLlmConsentModal(root, {
         appName,
@@ -32808,7 +32817,9 @@ const AppView = {
             suggestedNote: suggested != null
               ? PlatformI18n.t('changes:dialog.llm.capSuggested')
               : PlatformI18n.t('changes:dialog.llm.capChangeLater'),
-            byok: info.hasApiKey
+            // The person's own OpenRouter key (task 2275; an Anthropic key
+            // before), never the included one.
+            byok: info.hasOwnKey
               ? {
                 checked: byokOnly,
                 label: byokOnly

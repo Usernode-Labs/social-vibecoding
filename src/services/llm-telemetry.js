@@ -76,9 +76,34 @@ const COMPONENTS = new Set([
   'workshop_ask',
   'content_review',
   // The translation step's catalog requests (services/language-sync.js), sent
-  // one by one or as a Message Batch.
+  // a few at a time.
   'language_sync',
   'dictation',
+  // Task 2275: names callers already passed that were not listed here, so
+  // their calls were all recorded as other_helper (21,010 Sonnet calls in
+  // the 30 days before, mostly the Workshop's themes and the tap-to-translate
+  // of people's own words).
+  // A private thread's title (services/private-threads.js).
+  'thread_title',
+  // A proposal's description written again after a reply (homeroom-bot.js).
+  'revised_description',
+  // The Workshop lander (services/workshop-themes.js): its themes, where
+  // each item sits among them, and the week's digest, one name each.
+  'workshop_themes',
+  'workshop_placement',
+  'workshop_digest',
+  // Translations other than the shell's catalogs: what people wrote
+  // (services/user-content-translations.js), the admin text an admin edits
+  // (services/admin-text-translations.js) and the mail templates
+  // (services/mail/template-translate.js).
+  'user_content_translation',
+  'admin_text_translation',
+  'mail_template_translation',
+  // Before & after shots' Claude Code run (services/shots-agent.js) and the
+  // Homeroom bot's follow-up turn (homeroom-bot-followup.js): coding runs
+  // that were not collected at all while their names were missing here.
+  'shots_agent',
+  'homeroom_bot_followup',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([
@@ -211,7 +236,11 @@ function normalizeEvent(event = {}) {
     timestamp: validTimestamp.toISOString(),
     provider: enumValue(event.provider, PROVIDERS, 'unknown'),
     backend: enumValue(event.backend, BACKENDS, 'helper'),
-    component: enumValue(event.component, COMPONENTS, 'other_helper'),
+    // A name not listed in COMPONENTS is recorded as itself (a short slug)
+    // and flagged (component_unknown below), never folded into
+    // other_helper: a call site that forgot to be listed still reads on its
+    // own line. Only a missing or unreadable name becomes other_helper.
+    component: recordedComponent(event.component),
     requested_model: safeModel(event.requestedModel),
     served_model: safeModel(event.servedModel),
     billing_path: enumValue(event.billingPath, BILLING_PATHS, 'unknown'),
@@ -233,8 +262,19 @@ function normalizeEvent(event = {}) {
   // route ('openrouter'), not its host. A provider's name, never content;
   // absent when unknown, so older rows and other callers are unchanged.
   addOptional(normalized, { routed_provider: safeProviderName(event.routedProvider) });
+  if (!COMPONENTS.has(event.component)) normalized.component_unknown = true;
 
   return Object.assign(normalized, normalizeDiagnostics(event));
+}
+
+// A component slug: lower case, digits and underscores, the shape every
+// listed name has. Anything else (free text, a path) is never recorded.
+const COMPONENT_SLUG = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** Pure: the component name a telemetry row records for `value`. */
+function recordedComponent(value) {
+  if (COMPONENTS.has(value)) return value;
+  return typeof value === 'string' && COMPONENT_SLUG.test(value) ? value : 'other_helper';
 }
 
 // An OpenRouter provider's name as OpenRouter gives it ("Z.AI",
@@ -1329,6 +1369,8 @@ module.exports = {
   normalizeEvent,
   normalizeDiagnostics,
   collectionComponent,
+  recordedComponent,
+  COMPONENTS,
   isCollectionEnabled,
   _setEnabledForTests,
   _setSinkForTests,

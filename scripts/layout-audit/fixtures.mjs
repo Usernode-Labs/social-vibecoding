@@ -48,7 +48,6 @@ const ME = {
   tourDone: true,
   homeWalkOwed: false,
   homeroomReached: true,
-  hasApiKey: false,
   openrouterAvailable: false,
   usernodePubkey: null,
   walletLinkEnabled: false,

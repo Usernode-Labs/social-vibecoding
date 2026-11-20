@@ -864,12 +864,11 @@ function dashboardRoutes(config) {
   // top tier split into "capped" vs "kept going on own key".
   //
   // The $20+ split answers "who hit the cap and stopped vs. who continued on
-  // their own Anthropic key". A user has a usable own key for a day when
-  // EITHER users.anthropic_key_enc IS NOT NULL (key configured — a CURRENT
-  // snapshot; there is no key-presence history table) OR that day's
-  // byok_cost_cents > 0 (own-key spend actually recorded). The two are OR'd
-  // so the snapshot captures capability and the per-day spend corrects past
-  // days for users whose key has since changed. limits.recordSpend only
+  // their own key". A user kept going on their own key that day when that
+  // day's byok_cost_cents > 0 (own-key spend actually recorded: an
+  // Anthropic key before task 2275, an app's spend on their own OpenRouter
+  // key since). The stored-key snapshot it was OR'd with went with people's
+  // own Anthropic keys. limits.recordSpend only
   // writes a row when cost > 0, so a literal "$0" row generally never exists:
   // the $0 bucket is therefore DERIVED as (users registered as of that day)
   // minus the users counted in the paid buckets — analogous to the kudos
@@ -881,8 +880,8 @@ function dashboardRoutes(config) {
   router.get('/api/admin/analytics/spend-distribution', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
     try {
-      // "Has a usable own key" predicate, reused for the $20+ split.
-      const byok = '(u.anthropic_key_enc IS NOT NULL OR lu.byok_cost_cents > 0)';
+      // "Kept going on an own key" predicate, reused for the $20+ split.
+      const byok = '(lu.byok_cost_cents > 0)';
       const { rows } = await pool.query(
         `WITH spine AS (
            SELECT generate_series(

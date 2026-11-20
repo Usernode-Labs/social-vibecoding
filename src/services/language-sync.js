@@ -338,8 +338,7 @@ function writeLanguage(root, language, accepted, english = readEnglishEntries(ro
 /**
  * What a sync would send: for every configured language (or `languages`),
  * its plan and the requests that carry it. Deterministic for a given
- * checkout, which is what lets a Message Batch be submitted on one pass and
- * its answers matched to their messages on a later one.
+ * checkout.
  */
 function prepareSync(root, { languages = null, onlyIds = null, chunkSize = CHUNK_SIZE } = {}) {
   const config = packs.readConfig(path.join(root, LOCALES));
@@ -418,7 +417,7 @@ async function syncTranslations({
         for (const { item, problem } of failed) summary.languages[request.language].failed.push({ id: item.id, problem });
       }
     }
-    // A whole round that failed (a batch that errored, a model refusing
+    // A whole round that failed (an outage, a model refusing
     // everything) is not retried message by message: that would be one
     // request per message. Those stay English, and the next pass tries again.
     if (retry.length > maxRetries) {

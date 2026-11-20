@@ -186,12 +186,13 @@ test('the anchors the chunk brief names by hand are all still rendered', () => {
   for (const [id, file] of Object.entries(NAMED)) {
     assert.ok(SRC.get(file).includes(`id="${id}"`), `${file}.js must still render #${id}`);
   }
-  // #admin-credit-balance belonged to a console-rendered section (limits)
-  // until #1120 slice 21 moved that section out of the chassis into its own
-  // module, like the nine. The id is still the anchor; only the file moved.
+  // The limits section moved out of the chassis into its own module in
+  // #1120 slice 21, like the nine. Its anchor was #admin-credit-balance
+  // until that card went with the Anthropic key (task 2275); the global
+  // daily cap field is the one a declared check selects on now.
   const limits = fs.readFileSync(path.join(ADMIN_DIR, 'admin-limits.tsx'), 'utf8');
-  assert.ok(limits.includes('id="admin-credit-balance"'),
-    'admin-limits.tsx must still render #admin-credit-balance');
+  assert.ok(limits.includes('id="admin-limit-global"'),
+    'admin-limits.tsx must still render #admin-limit-global');
 });
 
 // ── 3. Lifecycle: nothing outlives its section ──────────────────────────

@@ -3,8 +3,9 @@
 // OpenRouter credential APIs (plan.md §6): the account's OpenRouter key,
 // which voice input (routes/dictation.js) transcribes with.
 //
-// Distinct from the legacy /api/me/api-key route (which is
-// Anthropic-specific). These routes own the OpenRouter key lifecycle:
+// The legacy /api/me/api-key route (a person's own Anthropic key) went in
+// task 2275; these routes own the OpenRouter key lifecycle, the only key a
+// person adds now:
 //   GET    /api/me/credentials/openrouter   status (last4, limits)
 //   PUT    /api/me/credentials/openrouter   save/replace personal key
 //   DELETE /api/me/credentials/openrouter   revoke

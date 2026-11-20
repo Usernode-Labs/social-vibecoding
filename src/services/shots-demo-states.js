@@ -1666,7 +1666,7 @@ const STATES = [
       return {
         shows: [
           { state: `Your weekly building allowance nearly spent, ${dollars(leftCents)} of ${dollars(limitCents)} left: Settings' AI credit line says what is left this week, in red.`,
-            path: '/#settings/api-key' },
+            path: '/#settings/usage' },
         ],
       };
     },

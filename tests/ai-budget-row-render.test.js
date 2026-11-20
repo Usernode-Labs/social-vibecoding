@@ -144,11 +144,14 @@ test('exhausted with no key reads "$0 of $20 left", the $0 in red', async () => 
   assert.match(rowHtml(s), /title="You have used all \$20\.00 of today/);
 });
 
-test('exhausted WITH a key drops the remainder and says where turns bill now', async () => {
+// Task 2275: people's own Anthropic keys are gone, so no state of the row
+// says turns bill to a saved key. An old payload that still carries the
+// flag reads the same as one without it.
+test('a hasByokKey flag from an old payload changes nothing: exhausted is "$0 left"', async () => {
   const s = await publish(budget({ spentCents: 2000, remainingCents: 0, hasByokKey: true }));
-  assert.ok(!s.view.parts.some((p) => p.remaining), 'no "0 left" on a row that can keep going');
-  assert.equal(s.view.parts[0].runs[0].text, 'All $20 used today');
-  assert.match(s.view.title, /billed to the Anthropic key you saved in Settings/);
+  const left = s.view.parts.find((p) => p.remaining);
+  assert.equal(left.runs.map((r) => r.text).join(''), '$0 of $20 left today');
+  assert.doesNotMatch(s.view.title, /Anthropic/);
 });
 
 test('no allowance at all says so, instead of "$0 of $0"', async () => {
@@ -165,7 +168,7 @@ test('a BYOK figure is its own part, so the "·" wraps with it', async () => {
   assert.equal(byok.runs[1].tone, 'byok');
   const html = rowHtml(s);
   assert.match(html, /<span class="drawer-meter-part"><span class="drawer-meter-dim">· <\/span><span class="text-emerald-700 dark:text-emerald-400">your key \$4\.50<\/span><\/span>/);
-  assert.match(s.view.title, /does not count against the allowance/);
+  assert.match(s.view.title, /billed to your own OpenRouter key and does not count against the allowance/);
 });
 
 test('a locked tier offers the unlock instead of dividing by a zero cap', async () => {
@@ -181,13 +184,13 @@ test('a locked tier offers the unlock instead of dividing by a zero cap', async 
   assert.match(html, /title="Connect GitHub or X in Settings to unlock \$10\/day\./);
 });
 
-test('a locked tier with a key still says the key is available', async () => {
+test('a locked tier is locked, whatever an old payload says about a key', async () => {
   const s = await publish(budget({
     limitCents: 0, remainingCents: 0, spentCents: 0,
     verificationRequired: true, hasByokKey: true,
   }));
-  assert.match(rowHtml(s), /your key available/);
-  assert.match(s.view.title, /Your own Anthropic key remains available/);
+  assert.doesNotMatch(rowHtml(s), /your key available/);
+  assert.match(s.view.title, /^Connect GitHub or X in Settings to unlock \$10\/day\.$/);
 });
 
 test('an unverifiable eligibility says so, in one flat amber run', async () => {
@@ -255,15 +258,6 @@ test('an exhausted weekly window tells the user it was the week that ran out', a
   assert.doesNotMatch(s.view.title, /of today’s/);
 });
 
-test('a weekly window with a key on file names the weekly allowance as the one spent', async () => {
-  const s = await publish(budget({
-    limitCents: 5000, spentCents: 5000, remainingCents: 0, hasByokKey: true,
-    capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
-  }));
-  assert.match(s.view.title, /\$50\.00 weekly allowance is used up/);
-  assert.equal(s.view.parts[0].runs[0].text, 'All $50 used this week');
-  assert.match(s.view.title, /billed to the Anthropic key you saved in Settings/);
-});
 
 test('the daily row is untouched: still "daily", still local-time-aware', async () => {
   const s = await publish(budget({ spentCents: 640, remainingCents: 1360 }));
@@ -279,17 +273,13 @@ test('the window wording is derived from capWindow, never retyped per state', ()
   // the one `weeklyWindow` read.
   assert.match(CREDIT_SRC, /var weeklyWindow = \(state \? state\.capWindow : s\.capWindow\) === 'weekly';/);
   for (const [weekly, daily] of [
-    ['keyBilledWeekly', 'keyBilledDaily'], ['usedAllWeekly', 'usedAllDaily'], ['usedWeekly', 'usedDaily'],
+    ['usedAllWeekly', 'usedAllDaily'], ['usedWeekly', 'usedDaily'],
   ]) {
     assert.ok(CREDIT_SRC.includes(
       `weeklyWindow ? PlatformI18n.t('wallet:credit.tip.${weekly}', amounts)`), weekly);
     assert.ok(CREDIT_SRC.includes(`: PlatformI18n.t('wallet:credit.tip.${daily}', amounts)`), daily);
   }
   const amounts = { limit: '$20.00', spent: '$1.00', remaining: '$19.00' };
-  assert.equal(message('wallet:credit.tip.keyBilledWeekly', amounts),
-    'Your $20.00 weekly allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.');
-  assert.equal(message('wallet:credit.tip.keyBilledDaily', amounts),
-    'Your $20.00 daily allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.');
   assert.equal(message('wallet:credit.tip.usedAllWeekly', amounts), 'You have used all $20.00 of this week’s AI allowance.');
   assert.equal(message('wallet:credit.tip.usedAllDaily', amounts), 'You have used all $20.00 of today’s AI allowance.');
   assert.equal(message('wallet:credit.tip.usedWeekly', amounts), '$1.00 of your $20.00 weekly AI allowance used ($19.00 left).');

@@ -11637,16 +11637,13 @@ async function seedStagingWeeklyCaps(pool) {
 
 // Daily spend distribution fixtures (the seven-bucket stacked chart on
 // /dashboard). The chart counts users per platform-spend bucket per day,
-// with the $20+ tier split into "capped" (no usable own key) vs "kept going
-// on own key". Two staging facts force a dedicated seed:
-//   1. llm_usage is staging:private (schema-only clone → empty), so there is
-//      no per-day spend to bucket at all without seeding it here.
-//   2. users.anthropic_key_enc is a staging:private COLUMN (scrubbed to NULL
-//      on clone), so the "has own key" branch would never populate from real
-//      users — the $20+/own-key segment would always be empty.
-// We create obviously-fake users (staging-demo-spend-*) at fixed high ids,
-// give a subset a non-null anthropic_key_enc sentinel so the own-key branch
-// lights up, and write 30 days of llm_usage spanning every bucket. A couple
+// with the $20+ tier split into "capped" vs "kept going on own key" (own-key
+// spend recorded that day). llm_usage is staging:private (schema-only clone
+// → empty), so there is no per-day spend to bucket at all without seeding it
+// here. We create obviously-fake users (staging-demo-spend-*) at fixed high
+// ids, give a subset own-key spend so that branch lights up (the stored
+// Anthropic key sentinel it used went with those keys, task 2275), and write
+// 30 days of llm_usage spanning every bucket. A couple
 // are is_admin so the "Include admin users" toggle visibly changes the bars.
 // Idempotent (fixed ids + ON CONFLICT DO NOTHING); strict no-op outside
 // staging; never references real users.
@@ -11677,26 +11674,23 @@ async function seedStagingSpendDistribution(pool) {
 
     const records = fixtures.map(f => ({
       id: f.id, name: f.name, admin: f.admin,
-      key_enc: f.key ? 'v1:staging-demo-fake-key' : null,
-      key_last4: f.key ? 'demo' : null,
       base: { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier] || 0,
       tier: f.tier,
     }));
-    // Sentinel passwords/keys are non-loginable and carry no real secret.
+    // Sentinel passwords are non-loginable and carry no real secret.
     await pool.query(
-      `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
-       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin, f.key_enc, f.key_last4
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean, key_enc text, key_last4 text)
+      `INSERT INTO users (id, username, password, is_admin)
+       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean)
        ON CONFLICT (id) DO NOTHING`,
       [JSON.stringify(records)]
     );
-    // Re-pin roles/keys, and only backdate signups that are too recent.
+    // Re-pin roles, and only backdate signups that are too recent.
     await pool.query(
-      `UPDATE users u SET is_admin = f.admin, anthropic_key_enc = f.key_enc,
-              anthropic_key_last4 = f.key_last4,
+      `UPDATE users u SET is_admin = f.admin,
               created_at = CASE WHEN u.created_at > NOW() - INTERVAL '45 days'
                                 THEN NOW() - INTERVAL '45 days' ELSE u.created_at END
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean, key_enc text, key_last4 text)
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean)
         WHERE u.id = f.id`,
       [JSON.stringify(records)]
     );

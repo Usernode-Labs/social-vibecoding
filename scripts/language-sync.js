@@ -9,11 +9,12 @@
 // that has a key. Never part of a build.
 //
 //   node scripts/language-sync.js --plan                  what each language needs
-//   node scripts/language-sync.js [--languages id,es]     translate it, one request at a time
-//   node scripts/language-sync.js --batch                 the same as one Message Batch (half price, slower)
+//   node scripts/language-sync.js [--languages id,es]     translate it, a few requests at a time
 //   node scripts/language-sync.js --changed-from <ref>    only the messages whose English differs from <ref>
 //
-// Translating reads ANTHROPIC_API_KEY from the environment.
+// Translating reads OPENROUTER_API_KEY from the environment: the requests go
+// to OpenRouter's Claude Messages endpoint, as the platform's own do. There
+// is no --batch any more: OpenRouter has no Message Batches (task 2275).
 
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -37,15 +38,6 @@ function englishAt(ref) {
   return english;
 }
 
-async function waitForBatch(llm, id) {
-  for (;;) {
-    const status = await llm.catalogBatchStatus(id);
-    console.log(`[language-sync] batch ${id}: ${status.status}`, status.counts ? JSON.stringify(status.counts) : '');
-    if (status.status === 'ended') return llm.catalogBatchAnswers(id);
-    await new Promise((resolve) => setTimeout(resolve, 30000));
-  }
-}
-
 async function main() {
   const languages = option('--languages') ? option('--languages').split(',').map((tag) => tag.trim()).filter(Boolean) : null;
   const ref = option('--changed-from');
@@ -61,12 +53,13 @@ async function main() {
     return;
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not set');
+  if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not set');
   const llm = require('../src/services/llm');
-  await llm.init({ anthropicApiKey: process.env.ANTHROPIC_API_KEY });
-  const translate = process.argv.includes('--batch')
-    ? async (requests) => waitForBatch(llm, (await llm.submitCatalogBatch(requests)).id)
-    : (requests) => llm.translateCatalogDirect(requests);
+  await llm.init({
+    openrouterKeyForScripts: process.env.OPENROUTER_API_KEY,
+    openrouterApiBase: process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1',
+  });
+  const translate = (requests) => llm.translateCatalogDirect(requests);
   const summary = await sync.syncTranslations({
     root: ROOT, translate, languages, onlyIds, log: (line) => console.log(`[language-sync] ${line}`),
   });

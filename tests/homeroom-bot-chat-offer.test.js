@@ -178,7 +178,7 @@ test('WP-C: a message is counted in words', () => {
 
 test('WP-C: an unaddressed message is read as an idea, not as something said to the bot', () => {
   const llm = read('src/services/llm.js');
-  assert.match(llm, /async function readChatAsk\(\{ text, appName = null, toBot = true, changes = \[\], apiKey, telemetryContext \}\)/);
+  assert.match(llm, /async function readChatAsk\(\{ text, appName = null, toBot = true, changes = \[\], telemetryContext \}\)/);
   assert.match(llm, /'Somebody new to the group wrote this'/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'\)\)/);
