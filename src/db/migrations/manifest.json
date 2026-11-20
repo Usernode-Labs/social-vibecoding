@@ -480,6 +480,11 @@
       "id": "private-thread-make-refusal",
       "sha256": "e7efcf19f95f64919f2042ed2b2eaa8fcfba4daa0130470bc33ff21d26de0194",
       "schemaSha256": "933757d701ecab7769895883fab51f7a807e716507d20017b766bd71776e8a9a"
+    },
+    {
+      "id": "platform-limit-refusals",
+      "sha256": "40a8ab6559cc2cabfccd4d6452c704363bd5f68219ae840e9b077fdbd213ecb7",
+      "schemaSha256": "075e0e0ccb2fc560922614a69af29a6a90f8e356b53e8cf96eeba7530aad99e4"
     }
   ]
 }

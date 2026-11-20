@@ -486,6 +486,29 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   assert.equal(copy(undefined).title, 'Platform limit');
 });
 
+test('#6901: a refusal at the app limit says so, with a count for later notices', () => {
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_limit', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('apps_away:1:210:0'), {
+    title: 'Someone was turned away',
+    body: 'The server is at its app limit (210 apps). Raise it in Admin → Limits or remove an app',
+  });
+  assert.deepEqual(copy('apps_away:1:210:61'), {
+    title: 'People turned away at the app limit',
+    body: '1 person was turned away in the last 2 hours',
+  });
+  assert.deepEqual(copy('apps_away:3:210:180'), {
+    title: 'People turned away at the app limit',
+    body: '3 people were turned away in the last 3 hours',
+  });
+  // Under the hour says "in the last hour"; 60 minutes is the last hour too.
+  assert.equal(copy('apps_away:2:210:60').body, '2 people were turned away in the last hour');
+  for (const detail of ['apps_away:1:210:0', 'apps_away:3:210:180']) {
+    assert.ok(!/—/.test(JSON.stringify(copy(detail))), detail);
+  }
+});
+
 test('#2386: a friend request and its acceptance name the person and what to do', () => {
   const request = buildMessage({ ...INPUT, kind: 'friend_request', context: { sourceUsername: 'lin' } });
   assert.deepEqual(request.notification, {

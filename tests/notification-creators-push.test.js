@@ -204,8 +204,19 @@ test('platform limit alerts go to full admins, once per unread cap and level, an
     /existing\.kind = 'platform_limit' AND split_part\(existing\.detail, ':', 1\) = \$2 AND existing\.read_at IS NULL/,
     'one unread alert per admin, cap and level; a new level still gets through');
   assert.doesNotMatch(insert.sql, /app_id/, 'the cap belongs to the server, not an app');
-  assert.deepEqual(insert.params, ['apps_warn:40:50', 'apps_warn']);
+  assert.deepEqual(insert.params, ['apps_warn:40:50', 'apps_warn', false],
+    'the unread rule is on unless a refusal notice asks for a repeat (#6901)');
   assert.equal(rows.length, 1);
+});
+
+test('#6901: a refusal notice may repeat, its rate being the locked three-hour window', async () => {
+  const pool = fakePool({});
+  await notifications.createPlatformLimitNotifications(pool, {
+    detail: 'apps_away:3:210:180', repeatable: true,
+  });
+  const insert = pool.state.inserts[0];
+  assert.equal(insert.params[2], true);
+  assert.match(insert.sql, /\(\$3::boolean OR NOT EXISTS/, 'the unread de-dupe is skipped');
 });
 
 test('platform limit alerts need a well-formed token', async () => {
