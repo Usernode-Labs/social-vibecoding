@@ -22,7 +22,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadTsx } = require('./lib/render-tsx');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
 
 const CARD = 'frontend/src/features/home/needs-you-card.tsx';
@@ -178,12 +178,13 @@ test('a row is the thread\'s own page, and the card lists what is in the look\'s
   for (const [at, n] of [['640px', 2], ['1024px', 4]]) {
     assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html:not\\(\\[data-skin\\]\\) \\{ --wip-cols: ${n}; \\} \\}`));
   }
-  assert.match(css, /\.wip-poster \{\s*display: flex;\s*flex: 0 0 calc\(\(100% - \(var\(--wip-cols, 1\) - 1\) \* var\(--wip-col-gap\)\) \/ var\(--wip-cols, 1\)\);/, 'a challenge is one of the same columns');
+  // A challenge is a card of its own, one of the same columns wide and a card gap from the next.
+  assert.match(css, /\.wip-poster \{\s*display: flex;\s*flex: 0 0 calc\(\(100% - \(var\(--wip-cols, 1\) - 1\) \* var\(--wip-card-gap\)\) \/ var\(--wip-cols, 1\)\);/, 'a challenge is one of the same columns');
 });
 
 test('a challenge is its picture, then its words beside it, in a row that pages with an arrow at each end', () => {
   const src = read('frontend/src/features/home/panels/challenges.tsx');
-  assert.match(src, /className="wip-poster"[\s\S]{0,400}<WipChallengeArt[\s\S]{0,200}<span className="wip-item-text">/, 'the picture first, the words in their own column');
+  assert.match(src, /className=\{`\$\{WIP_CARD\} wip-poster`\}[\s\S]{0,400}<WipChallengeArt[\s\S]{0,200}<span className="wip-item-text">/, 'the picture first, the words in their own column');
   // An arrow is drawn only while there is more that way, and names where it goes.
   assert.match(src, /className="wip-rail-arrow wip-rail-arrow-back" aria-label=\{t\('home:challenges\.scrollBack'\)\} onClick=\{\(\) => page\(-1\)\}/);
   assert.match(src, /className="wip-rail-arrow wip-rail-arrow-on" aria-label=\{t\('home:challenges\.scrollOn'\)\} onClick=\{\(\) => page\(1\)\}/);
@@ -191,13 +192,70 @@ test('a challenge is its picture, then its words beside it, in a row that pages 
   assert.equal(message('home:challenges.scrollOn'), 'More challenges');
   const css = read('public/css/app.css');
   assert.match(css, /\.wip-poster-art \{[^}]*width: var\(--wip-poster-art\);[^}]*height: var\(--wip-poster-art\);/);
-  // A row and a poster keep a project tile's own padding, so the three lists' icons start on the same lines.
+  // A row keeps a project tile's own padding, so the two lists' icons start on the same lines.
   assert.match(css, /\.wip-row \{[^}]*padding: 0\.5rem var\(--wip-cell-pad\);/);
-  assert.match(css, /\.wip-poster \{[^}]*padding: 0\.5rem var\(--wip-cell-pad\);/);
+  // A poster is a card of its own (20 Nov 2026), so it has a card's padding,
+  // and 4px more at its end, which keeps what it is worth clear of the arrow
+  // drawn over that edge.
+  assert.match(css, /\.wip-poster \{[^}]*padding: var\(--wip-card-pad\);\s*padding-inline-end: calc\(var\(--wip-card-pad\) \+ 0\.25rem\);/);
   // 19 Nov 2026: the brand look sets no --wip-cell-pad, so that padding fell
   // away and a recent thread's lines sat on the hairlines. Its rows are
   // padded top and bottom from 768px (a phone's rows are cards of their own).
   assert.match(css, /@media \(min-width: 768px\) \{\s*html\[data-skin="brand"\][^{]*#home-needs-card \.wip-row \{\s*padding: 0\.5rem 0;\s*\}\s*\}/);
+});
+
+test('each challenge is a card of its own, and the row around them draws none', () => {
+  // 20 Nov 2026 (asked by the product owner): the posters were things in one
+  // wide card; now each is the kit's card, and the row is no card at all.
+  const row = (over) => ({
+    eventId: 3, icon: null, illustration: null, illustrationTone: null, done: false,
+    reward: '500 pts', state: 'new', stateLabel: 'Not started', fill: null, counted: false, earned: null, ...over,
+  });
+  const view = {
+    key: 'challenges', title: 'Challenges', mode: 'next', heading: 'Next challenges', seeAll: true, note: null,
+    rows: [
+      row({ id: '11', goal: 'Use apps for 10 minutes', reward: '1,000 pts', state: 'progress', stateLabel: '1/10 Minutes this week', fill: 0.1, counted: true }),
+      row({ id: '12', goal: 'Invite someone to Homeroom' }),
+    ],
+  };
+  // The prerender's look is the standard one, which draws the kit's posters.
+  const html = renderComponent('frontend/src/features/home/panels/challenges.tsx', 'ChallengesPanel', { view });
+  assert.match(html, /<article class="home-panel" data-panel="challenges"[^>]*><div class="wip-posters-box" data-wip-challenges=""><div class="wip-posters">/,
+    'the row is held by a box that is no card: no wip-card, no tone');
+  const cards = [...html.matchAll(/<button type="button" class="([^"]*)" data-tone="([^"]*)" data-challenge-id="(\d+)"/g)];
+  assert.deepEqual(cards.map((m) => [m[1], m[2], m[3]]), [['wip-card wip-poster', 'goal', '11'], ['wip-card wip-poster', 'goal', '12']],
+    'each challenge is the kit\'s card, in the goal colours');
+  assert.equal((html.match(/wip-card/g) || []).length, 2, 'the cards are the only cards');
+  // Inside a card nothing changed: the picture, the goal, where the viewer
+  // stands, what it is worth and the meter. Not an arrow of its own, nor
+  // progress in a pill (an older design had both; asked to leave them out).
+  for (const card of html.split('<button type="button" class="wip-card wip-poster"').slice(1)) {
+    const body = card.slice(0, card.indexOf('</button>'));
+    assert.match(body, /^[^>]*><span class="wip-poster-art" aria-hidden="true">[^<]*<\/span><span class="wip-item-text"><b class="wip-item-title">[^<]+<\/b><span class="wip-poster-facts"><span class="wip-item-meta">[^<]+<\/span><span class="wip-poster-worth">[^<]+<\/span><\/span><span class="wip-meter" aria-hidden="true"><span style="width:\d+%"><\/span><\/span><\/span>$/);
+    assert.doesNotMatch(body, /<svg|wip-pill|wip-rail-arrow/);
+  }
+
+  const css = read('public/css/app.css');
+  // The kit's card is the one recipe: its ground, its hairline, its corners.
+  assert.match(css, /\n\.wip-card \{\s*border-radius: var\(--wip-card-radius\);\s*background-color: var\(--wip-card-bg\);\s*box-shadow: inset 0 0 0 1px var\(--wip-card-line\), var\(--wip-card-shadow\);\s*\}/);
+  // The box paints nothing; it holds the row's margins, so an arrow's 50% is the cards' middle.
+  assert.match(css, /\n\.wip-posters-box \{ position: relative; display: flow-root; \}/);
+  assert.doesNotMatch(css, /\.wip-posters-card/, 'the old card round the row is gone');
+  // A card gap between two cards, and room inside the scroller for what a
+  // card draws outside its box (its shadow, its focus ring), given back by
+  // the margins so the cards stay on the column's lines.
+  assert.match(css, /\n\.wip-posters \{\s*display: flex;\s*gap: var\(--wip-card-gap\);\s*margin-block: -0\.25rem -1rem;\s*margin-inline: calc\(var\(--wip-card-gap\) \/ -2\);\s*padding-block: 0\.25rem 1rem;\s*padding-inline: calc\(var\(--wip-card-gap\) \/ 2\);\s*overflow-x: auto;\s*scroll-snap-type: x mandatory;\s*scroll-padding-inline: calc\(var\(--wip-card-gap\) \/ 2\);/);
+  // Under the pointer the Workshop board's card edge and shadow; the keyboard's card also wears a focus ring.
+  assert.match(css, /\n\.wip-poster:is\(:hover, :focus-visible\) \{ box-shadow: inset 0 0 0 1px var\(--wip-card-line-hover\), 0 8px 22px -14px var\(--wip-card-line-hover\); \}/);
+  assert.match(css, /#dev-kanban \.dev-ws-wrow:hover \{ box-shadow: inset 0 0 0 1px var\(--wip-card-line-hover\), 0 8px 22px -14px var\(--wip-card-line-hover\); \}/, 'the board\'s own, which the poster copies');
+  assert.match(css, /\n\.wip-poster:focus-visible \{ outline: 2px solid var\(--wip-ink-action\); outline-offset: 2px; \}/);
+  // The arrows sit centred on the edge of the card at their end; a phone's 12px gutter keeps them a little further in.
+  assert.match(css, /\n\.wip-rail-arrow-back \{ inset-inline-start: -1rem; \}\n\.wip-rail-arrow-on \{ inset-inline-end: -1rem; \}\n@media \(max-width: 639\.98px\) \{\n  \.wip-rail-arrow-back \{ inset-inline-start: -0\.625rem; \}\n  \.wip-rail-arrow-on \{ inset-inline-end: -0\.625rem; \}\n\}/);
+  // While it loads, the placeholder holds the same shape: card-shaped blocks a card gap apart, nothing round them.
+  const pending = 'html:not\\(\\[data-skin\\]\\) #home-challenges-section\\.home-section-pending > \\.home-panel-body';
+  assert.match(css, new RegExp(`${pending} \\{ padding: 0; \\}`));
+  assert.match(css, new RegExp(`${pending} > div \\{\\s*flex-direction: row;\\s*gap: var\\(--wip-card-gap\\);`));
+  assert.match(css, new RegExp(`${pending} > div > div \\{\\s*flex: 0 0 calc\\(\\(100% - \\(var\\(--wip-cols\\) - 1\\) \\* var\\(--wip-card-gap\\)\\) \\/ var\\(--wip-cols\\)\\);\\s*height: calc\\(var\\(--wip-poster-art\\) \\+ 2 \\* var\\(--wip-card-pad\\)\\);\\s*border-radius: var\\(--wip-card-radius\\);\\s*background-color: var\\(--wip-skeleton\\);\\s*\\}`));
 });
 
 test('a title\'s plain words have their own span, and a project\'s name is one size', () => {
