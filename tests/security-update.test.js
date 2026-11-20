@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { createRequire } = require('node:module');
@@ -216,19 +217,40 @@ test('independent daily audits cover every image and publish data without issue-
   assert.match(download.with.pattern, /github\.run_attempt/, 'a retry cannot consume older clean artifacts');
 });
 
-test('release requires both the images and live database checks, with the full suite on pull requests', () => {
+test('release requires built images and either an exact-tree pass or successful release database checks', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const pr = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
   const database = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/kubernetes-database-checks.yml'), 'utf8'));
   assert.deepEqual(Object.keys(workflow.on), ['push', 'workflow_dispatch']);
   assert.deepEqual(workflow.on.push.branches, ['main']);
   assert.equal(workflow.jobs.plan.if, "github.ref == 'refs/heads/main'");
-  assert.deepEqual(workflow.jobs.release.needs, ['build', 'preview-schema-compatibility']);
-  assert.equal(workflow.jobs.release.if, undefined, 'GitHub requires all dependencies to succeed');
+  assert.deepEqual(workflow.jobs.release.needs, ['plan', 'build', 'preview-schema-compatibility']);
+  const expression = workflow.jobs.release.if.trim().replace(/^\$\{\{|\}\}$/g, '');
+  const publish = (postgres, verified, { build = 'success', plan = 'success', cancelled = false } = {}) =>
+    vm.runInNewContext(expression, {
+      cancelled: () => cancelled,
+      needs: {
+        plan: { result: plan, outputs: { postgres_verified: verified } },
+        build: { result: build },
+        'preview-schema-compatibility': { result: postgres },
+      },
+    });
+  assert.equal(publish('success', 'false'), true);
+  assert.equal(publish('skipped', 'true'), true);
+  assert.equal(publish('skipped', 'false'), false);
+  assert.equal(publish('skipped', undefined), false);
+  for (const status of ['failure', 'cancelled']) assert.equal(publish(status, 'true'), false);
+  assert.equal(publish('skipped', 'true', { build: 'failure' }), false);
+  assert.equal(publish('skipped', 'true', { plan: 'failure' }), false);
+  assert.equal(publish('skipped', 'true', { cancelled: true }), false);
   assert.deepEqual(workflow.jobs.build.needs, ['plan']);
   const gate = workflow.jobs['preview-schema-compatibility'];
   assert.equal(gate.needs, 'plan');
-  assert.equal(gate.if, "needs.plan.outputs.should_release == 'true'");
+  assert.equal(gate.if, "needs.plan.outputs.should_release == 'true' && needs.plan.outputs.postgres_verified != 'true'");
+  const prior = workflow.jobs.plan.steps.find((step) => step.id === 'postgres');
+  assert.equal(prior.if, "steps.release.outputs.should_release == 'true'");
+  assert.equal(prior.run, 'node scripts/reuse-kubernetes-postgres-check.js');
+  assert.equal(workflow.jobs.plan.outputs.postgres_verified, '${{ steps.postgres.outputs.verified }}');
   assert.equal(gate.uses, './.github/workflows/kubernetes-database-checks.yml');
   assert.equal(gate.with, undefined);
   assert.equal(pr.jobs['preview-schema-compatibility'].uses, gate.uses);
@@ -239,6 +261,13 @@ test('release requires both the images and live database checks, with the full s
   assert.equal(twoServer.if, undefined);
   assert.match(twoServer.run, /tests\/database-role-split-postgres\.test\.js/);
   assert.match(twoServer.run, /tests\/platform-preview-data-policy-postgres\.test\.js/);
+  const captureTree = steps.find((step) => step.id === 'tree');
+  const receipt = steps.find((step) => step.name === 'Publish PostgreSQL check result');
+  assert.equal(steps[1], captureTree, 'record the tree immediately after checkout');
+  assert.match(captureTree.run, /git rev-parse HEAD\^\{tree\}/);
+  assert.ok(steps.indexOf(receipt) > steps.indexOf(twoServer));
+  assert.equal(receipt.if, "inputs.full_suite && github.event_name == 'pull_request'");
+  assert.equal(receipt.with.name, 'postgres-17-18-v1-pr${{ github.event.pull_request.number }}-attempt${{ github.run_attempt }}-${{ steps.tree.outputs.tree }}');
   assert.equal(steps.find((step) => step.run?.includes('tests/platform-signals-postgres.test.js')).if, 'inputs.full_suite');
   assert.equal(steps.find((step) => step.run?.includes('tests/private-streams-postgres.test.js')).if, 'inputs.full_suite');
   const rebuilds = steps.filter((step) => step.run?.includes('npm rebuild bcrypt'));

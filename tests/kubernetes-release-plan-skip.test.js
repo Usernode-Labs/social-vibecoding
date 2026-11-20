@@ -172,8 +172,7 @@ test('Select release work: a run that can release builds and publishes; one that
   const claude = workflow.jobs.plan.steps.find((step) => step.id === 'claude');
   assert.equal(claude.if, "steps.release.outputs.should_release == 'true'");
   assert.ok(workflow.jobs.plan.steps.indexOf(claude) > workflow.jobs.plan.steps.indexOf(selectStep));
-  assert.equal(workflow.jobs['preview-schema-compatibility'].if, "needs.plan.outputs.should_release == 'true'");
   assert.equal(workflow.jobs.build.if, "needs.plan.outputs.should_release == 'true'");
   assert.deepEqual([].concat(workflow.jobs.release.needs),
-    ['build', 'preview-schema-compatibility']);
+    ['plan', 'build', 'preview-schema-compatibility']);
 });

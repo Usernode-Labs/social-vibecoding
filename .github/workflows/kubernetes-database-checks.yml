@@ -33,6 +33,13 @@ jobs:
         options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v6
+      - name: Record the pull request tree before tests
+        id: tree
+        if: inputs.full_suite && github.event_name == 'pull_request'
+        run: |
+          tree="$(git rev-parse HEAD^{tree})"
+          printf 'tree=%s\n' "$tree" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$tree" > "$RUNNER_TEMP/postgres-verified-tree"
       - uses: actions/setup-node@v6
         id: node
         with:
@@ -115,3 +122,12 @@ jobs:
         run: node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports['5432'] }}/postgres
+
+      - name: Publish PostgreSQL check result
+        if: inputs.full_suite && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-17-18-v1-pr${{ github.event.pull_request.number }}-attempt${{ github.run_attempt }}-${{ steps.tree.outputs.tree }}
+          path: ${{ runner.temp }}/postgres-verified-tree
+          if-no-files-found: error
+          retention-days: 14

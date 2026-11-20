@@ -271,7 +271,7 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
   assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
   assert.match(workflow, /pull: true/);
-  assert.match(workflow, /needs: \[build, preview-schema-compatibility\]/);
+  assert.match(workflow, /needs: \[plan, build, preview-schema-compatibility\]/);
   assert.match(workflow, /npm view @anthropic-ai\/claude-code@latest version/);
   assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,
     'the dependency version is resolved once in the plan');

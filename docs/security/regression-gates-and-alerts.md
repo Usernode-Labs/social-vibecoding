@@ -22,9 +22,11 @@ records the refusal and retries after four minutes. The check names in
 `security/required-merge-checks.json` are also configured in Settings >
 Branches > main.
 
-Stable releases re-run the two-server PostgreSQL tests against the release
-revision. A new image digest gets runtime probes, inventory validation, and
-a security scan. Findings are advisory and appear in the job report.
+Stable releases reuse the Postgres pass from the merged PR when GitHub shows
+that the check ran successfully on the same tree. Releases without that
+evidence run the two-server PostgreSQL tests on the release revision. A new
+image digest gets runtime probes, inventory validation, and a security scan.
+Findings are advisory and appear in the job report.
 Execution and validation errors still fail the release. The independent
 daily audit scans digests already in the stable chart and opens native
 security requests.

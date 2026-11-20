@@ -25,9 +25,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     name: Plan image release
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       claude_code_version: ${{ steps.claude.outputs.version }}
       should_release: ${{ steps.release.outputs.should_release }}
+      postgres_verified: ${{ steps.postgres.outputs.verified }}
     steps:
       - uses: actions/checkout@v6
       - uses: azure/setup-helm@v4
@@ -108,6 +113,13 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           printf '### Kubernetes image plan\n\n- Claude Code: `%s`\n' "$version" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Find a PostgreSQL pass for the release tree
+        id: postgres
+        if: steps.release.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/reuse-kubernetes-postgres-check.js
 
   build:
     name: Resolve ${{ matrix.component }} image
@@ -279,12 +291,16 @@ jobs:
   preview-schema-compatibility:
     name: Preview schema compatibility (PostgreSQL 17/18)
     needs: plan
-    if: needs.plan.outputs.should_release == 'true'
+    if: needs.plan.outputs.should_release == 'true' && needs.plan.outputs.postgres_verified != 'true'
     uses: ./.github/workflows/kubernetes-database-checks.yml
 
   release:
     name: Publish atomic Helm release
-    needs: [build, preview-schema-compatibility]
+    needs: [plan, build, preview-schema-compatibility]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.build.result == 'success'
+          && (needs['preview-schema-compatibility'].result == 'success'
+              || (needs['preview-schema-compatibility'].result == 'skipped' && needs.plan.outputs.postgres_verified == 'true')) }}
     runs-on: ubuntu-latest
     permissions:
       # Reads this workflow's own runs: when the newest release went out, and

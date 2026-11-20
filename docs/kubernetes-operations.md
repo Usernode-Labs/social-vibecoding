@@ -28,9 +28,12 @@ Code version. A new version changes the worker's reuse key. During quiet
 periods, dispatch the workflow to pick up a release without a source push.
 
 Pull request checks run in `kubernetes-pr-checks.yml`. The required Security
-merge gate covers its security and database jobs. After merge, the release
-workflow runs the two-server role and preview-copy tests against the release
-revision. The single-server workflow and access tests run on pull requests.
+merge gate covers its security and database jobs. The release can reuse a
+passing PostgreSQL 17/18 run for the merged PR when it tested the same Git
+tree. The planner checks the result from the exact run attempt. If the tree
+differs or the result is missing, expired, or unreadable, the release runs
+the two-server role and preview-copy tests. The single-server workflow and
+access tests run on pull requests.
 
 Each stable release rolls the platform, so the workflow spaces rollouts
 during bursts of merges. It runs one push to `main` at a time, and
