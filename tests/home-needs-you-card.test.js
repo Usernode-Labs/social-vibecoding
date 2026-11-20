@@ -311,6 +311,8 @@ test('The standard look: the Workshop opens on its overview, and the board is th
     .flatMap((m) => m[1].split(/,(?![^(]*\))/).map((s) => s.trim()).filter((s) => /\.dev-ws-pagehead\b/.test(s)));
   assert.ok(hiding.includes('html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead'), 'Standard (WIP) puts it away');
   for (const one of hiding) assert.match(one, /^html\[data-skin(-wip)?\]/, `"${one}" hides the board's way back in the standard look`);
+  // "All items" is the page's one heading, so the place's name over it is the quiet one, as "Hub" is over the hub.
+  assert.ok(css.includes('html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }'));
   // The overview's declared checks run in the standard look again (#6936 had moved them to the brand look).
   const overview = JSON.parse(read('dapp.json')).tests.filter((check) => (check.expectSelector || '').includes('[data-ws-part="overview"]'));
   assert.ok(overview.length >= 3, 'the overview has declared checks');
