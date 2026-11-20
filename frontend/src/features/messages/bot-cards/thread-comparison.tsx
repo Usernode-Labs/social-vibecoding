@@ -15,7 +15,7 @@ import { ArtifactFrame } from '../../artifact/frame';
 export function ThreadComparison({ comparison }: { comparison: { title: string; html: string } }): ReactNode {
   const t = useMessages('messages');
   return (
-    <div className="mt-2 flex max-w-[560px] flex-col gap-1.5" data-bot-comparison="">
+    <div className="mt-2 flex w-full min-w-0 max-w-[560px] flex-col gap-1.5" data-bot-comparison="">
       {comparison.title ? <span className="text-[13px] font-semibold">{comparison.title}</span> : null}
       <ArtifactFrame
         mode="static"
