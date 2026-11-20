@@ -36,7 +36,7 @@ import { Chip, FadeRail } from '@/components/ui/chip';
 import { Select } from '@/components/ui/select';
 
 import { WipSkel } from './wip-kit';
-import { useLiveSkin } from '../../lib/skin';
+import { useLiveSkin, isKitHome } from '../../lib/skin';
 import { useMessages } from '../../lib/i18n/react';
 import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
 import { featuredApps, presentCategories, sortApps, type GuestApp, type GuestSort } from '../guest/guest-data';
@@ -79,7 +79,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const t = useMessages('home');
   const ta = useMessages('auth');
   // Standard (WIP), lib/skin.ts: Featured is a row of Home's own there, so its label says of what.
-  const wip = useLiveSkin() === 'wip';
+  const wip = isKitHome(useLiveSkin());
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);

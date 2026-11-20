@@ -86,7 +86,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { isFrameSkin, useSkin } from '../../lib/skin';
+import { isFrameSkin, useSkin, isKitHome } from '../../lib/skin';
 import { HomeFrame } from './frame/home-frame';
 
 import { SearchIcon } from '@/components/ui/icons';
@@ -153,12 +153,11 @@ export function HomeScreen() {
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
   const frame = isFrameSkin(skin) && viewer;
   // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
-  const wip = skin === 'wip';
-  // The standard look takes Standard (WIP)'s Home a piece at a time (20 Nov
-  // 2026). First its top row: the short search field, and New project as the
-  // page's top action. `useSkin()` answers 'standard' on the first render, so
-  // this is also what the prerendered document draws.
-  const topRow = wip || skin === 'standard';
+  // The standard look's Home too since 20 Nov 2026 (lib/skin.ts isKitHome).
+  // `useSkin()` answers 'standard' on the first render, so this is also what
+  // the prerendered document draws.
+  const wip = isKitHome(skin);
+  const topRow = wip;
   // "Paper, simplified, with brand styling" (Drea's review of #6699) takes
   // two of Standard (WIP)'s pieces in its own colours (app.css, the brand
   // look's HOME): New project as a button on the search row, and the Recent
