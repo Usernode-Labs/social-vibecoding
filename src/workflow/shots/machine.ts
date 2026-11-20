@@ -1140,14 +1140,14 @@ const WRITES = {
                                    part, scale, focus_rect, public_safe, object_key, dense_object_key,
                                    thumb_object_key, thumb_width, thumb_height, thumb_bytes, thumb_sha256,
                                    screen_object_key, screen_width, screen_height, screen_bytes, screen_sha256,
-                                   placeholder)
+                                   placeholder, thumb_content_type, screen_content_type)
        SELECT md5(f.run_id || ':' || f.slot), f.run_id, f.story_id, f.viewport, f.side, f.variant, f.media, f.theme,
               f.content_type, f.width, f.height, f.bytes, f.sha256,
               f.density, f.dense_width, f.dense_height, f.dense_bytes, f.dense_sha256,
               f.part, f.scale, f.focus_rect, f.public_safe, f.object_key, f.dense_object_key,
               f.thumb_object_key, f.thumb_width, f.thumb_height, f.thumb_bytes, f.thumb_sha256,
               f.screen_object_key, f.screen_width, f.screen_height, f.screen_bytes, f.screen_sha256,
-              f.placeholder
+              f.placeholder, f.thumb_content_type, f.screen_content_type
          FROM shot_run_files f WHERE f.run_id = $1 AND f.slot = ANY($2::text[])
        ON CONFLICT DO NOTHING`, [w.runId, w.slots]);
     await moveRun(tx, w.runId, 'verified', { hardVerdict: w.verdict, planHash: w.planHash });

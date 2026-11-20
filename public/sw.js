@@ -1584,14 +1584,33 @@ if (typeof module !== 'undefined' && module.exports) {
     return entry.pending.then((res) => res.clone());
   }
 
+  // A before/after shot's own address (routes/shots.js), with or without its
+  // copy's query. Its file never changes at an address, so the browser's
+  // own HTTP cache may keep it: see networkFirstApi.
+  const SHOT_PICTURE_PATH = /^\/api\/apps\/[^/]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/;
+  function isShotPicture(request) {
+    try { return SHOT_PICTURE_PATH.test(new URL(request.url).pathname); } catch { return false; }
+  }
+
   async function networkFirstApi(event) {
     const context = apiContext(event.request);
-    // No scope, no cache. An <img> can send no header, so every picture comes
-    // this way, a change's shots too: their bytes arriving count as the
-    // network answering (reportArriving; the 19 Nov retest of #6876 went
-    // "Connecting…" while shots drained because this path was not wrapped).
+    // No scope, no worker cache. An <img> can send no header, so every
+    // picture comes this way, a change's shots too: their bytes arriving
+    // count as the network answering (reportArriving; the 19 Nov retest of
+    // #6876 went "Connecting…" while shots drained because this path was not
+    // wrapped).
+    //
+    // Everything else here bypasses the browser's HTTP cache too (no-store).
+    // A shot does not (20 Nov): it is served `private, max-age=31536000,
+    // immutable` with `Vary: Cookie, Authorization` after its access check,
+    // so a second look at the same picture is not another download. The
+    // Vary is what keeps it to its own session: Chrome and WebKit both skip
+    // a stored copy whose request cookies differ, so after a sign-out, or a
+    // different account signing in on the same device, the picture is asked
+    // for again and checked again (tests/pwa-offline-cache.test.js).
     if (!context) {
-      return fetch(new Request(event.request, { cache: 'no-store' })).then((res) => reportArriving(event, res));
+      const sent = isShotPicture(event.request) ? event.request : new Request(event.request, { cache: 'no-store' });
+      return fetch(sent).then((res) => reportArriving(event, res));
     }
     await apiCacheWork;
     if (!currentApiContext(context)) return staleApiResponse();

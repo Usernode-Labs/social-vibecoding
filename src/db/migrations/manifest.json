@@ -505,6 +505,11 @@
       "id": "homeroom-bot-run-stop-cause",
       "sha256": "1d0288278492a7df3df5ecb040643d9912ff77639a535cf354a9159b4882ee0d",
       "schemaSha256": "d9bd3e082e9a0aaa67beea11645c25588e6e3e9ea3062a77a65a2f62d793a679"
+    },
+    {
+      "id": "shots-copy-content-types",
+      "sha256": "db77afe6c58fcc0ba0da17decf55361c43c7865f88f108424fa35dd4d766deea",
+      "schemaSha256": "fa13135f40668c253a33f9d48be8209d0e2e90a3ca05b664432cceafc5baaefe"
     }
   ]
 }
