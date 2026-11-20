@@ -533,9 +533,10 @@ function designThreadLines(design, { refused = null } = {}) {
     '  be offered on any project they can see: this thread is not limited to the design\'s project. Never say',
     '  something cannot be done in this thread, and never tell them to do it themselves somewhere else.',
   );
-  // 20 Nov 2026 (live-draft review, K): the thread's other artifacts
-  // (artifact-session.js).
-  lines.push(...require('./artifact-session').artifactListLines(design));
+  // 20 Nov 2026 (live-draft review, K, F): the thread's other artifacts, and
+  // when a new subject is a new artifact (artifact-session.js).
+  const session = require('./artifact-session');
+  lines.push(...session.artifactListLines(design), ...session.NEW_SUBJECT_LINES);
   return lines;
 }
 

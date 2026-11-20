@@ -60,6 +60,18 @@ const FULL_THREAD_TEXT = `This thread holds ${MAX_ARTIFACTS_PER_THREAD} artifact
 const ONE_A_TURN_TEXT = 'You changed an artifact this turn already, and one turn saves one. Reply now, and say you will '
   + 'change the other one when they ask again.';
 
+// 20 Nov 2026 (live-draft review, F): what is a new version and what is a
+// new artifact, said in every artifact's section and in the thread's own
+// lines. The bot once wrote a new subject (iOS list layouts) as version 2 of
+// the old one ("style directions"), and the old one was gone from view.
+const NEW_SUBJECT_LINES = Object.freeze([
+  '- A change to what an artifact already shows is a new version of it: edit_artifact, or write_artifact with its',
+  '  number (artifact) to write it again whole. A different subject, or their asking for "a new one", is a new',
+  '  artifact: write_artifact with no number (start_design for a screen in a project\'s look). Never write one',
+  '  subject over another. When you are not sure it is the same subject, make a new artifact.',
+  '- When this thread holds more than one artifact, your reply names the one you wrote to, by its title.',
+]);
+
 /** Pure: an artifact's kind in the words the turn is told. */
 function kindWords(kind) {
   return kind === 'page' ? 'a page' : 'a screen in a project\'s look';
@@ -197,6 +209,8 @@ function pagePrompt({ username, artifact = null, version = 0, html = '', next = 
     artifact
       ? `  with this page's number (artifact ${Number(artifact.artifactId) || 1}) to write it again whole, with no number for a new artifact.`
       : '  this new one, with no number.',
+    // F (20 Nov 2026): a new subject is a new artifact, never an overwrite.
+    ...NEW_SUBJECT_LINES,
     `- One version a turn: what you write and change in this turn is saved as version ${Number(next) || 1} when you reply.`,
     '- Real words and real numbers from what they said, never placeholder text. What they told you stays in the page.',
     '- A script in the page runs only for them, in a box that reaches nothing. Never ask for a password or anything',
@@ -241,8 +255,8 @@ function threadLines(artifact, { refused = null } = {}) {
     lines.push('- You change it yourself, here, with the page tools (THIS THREAD\'S PAGE below says how), and your one reply',
       '  says the version you saved.');
   }
-  // K (20 Nov 2026): the thread's other artifacts.
-  lines.push(...artifactListLines(artifact));
+  // K, F (20 Nov 2026): the thread's other artifacts, and what is new.
+  lines.push(...artifactListLines(artifact), ...NEW_SUBJECT_LINES);
   return lines;
 }
 
@@ -464,6 +478,7 @@ module.exports = {
   NO_PROJECT_TEXT,
   FULL_THREAD_TEXT,
   ONE_A_TURN_TEXT,
+  NEW_SUBJECT_LINES,
   holdsPage,
   applyEdits,
   pageArgs,

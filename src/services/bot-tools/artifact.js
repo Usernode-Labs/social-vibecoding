@@ -60,13 +60,14 @@ const DESCRIPTIONS = Object.freeze({
       + 'how one could look: that is start_design. Nothing in the page may load from the network (no external src, '
       + 'href, @import, fetch or font): it is blocked. It is saved as version 1 when you reply, and you change it '
       + 'afterwards with exact edits, so write it once, whole.',
-    // 20 Nov 2026 (live-draft review, K): with no `artifact` number it
+    // 20 Nov 2026 (live-draft review, K, F): with no `artifact` number it
     // writes a NEW artifact, the thread's next; with one, a whole new
-    // version of that one.
+    // version of that one. A different subject is never written over another.
     artifact: 'Write a whole page: one self-contained HTML page, with its own <style> and inline <script>. With no artifact '
       + 'number it is a NEW artifact in this thread: for a different subject, or when they ask for a new one, or when '
       + 'there is none yet. With an artifact\'s number it writes that one again whole, as its next version. To change '
-      + 'what a page shows, use edit_artifact instead. One write_artifact a turn. It is saved when you reply.',
+      + 'what a page shows, use edit_artifact instead. Never write one subject over another; when unsure, make a new '
+      + 'one. One write_artifact a turn. It is saved when you reply.',
     design: 'Draw a whole screen: self-contained HTML for one screen (its markup, and a <style> block of its own for '
       + 'anything the project\'s stylesheets do not cover), at the size it is for. Homeroom puts the project\'s own '
       + 'stylesheets in, so use their classes and never copy CSS from them. A plan shows the screen without its '

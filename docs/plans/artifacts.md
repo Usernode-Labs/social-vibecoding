@@ -1,6 +1,6 @@
 # Artifacts
 
-Status: stages 0 to 3 built, stage 4 light; several artifacts in a thread (K) built (November 2026).
+Status: stages 0 to 3 built, stage 4 light; several artifacts in a thread (K, F) built (November 2026).
 This replaces "design mode" as a separate thing: a design is one kind of
 artifact.
 
@@ -66,7 +66,7 @@ only, and never failing a boot. Plans reached only through
 plan's record with `created_from_issue_number` set to its request and
 `linked_issues` holding that one number, and nothing else writes one.
 
-## Several artifacts in a thread (K, 20 Nov 2026)
+## Several artifacts in a thread (K, F, 20 Nov 2026)
 
 Asked for something new, the bot once saved iOS list layouts as version 2 of
 "Gym Tracker style directions": the store held one artifact per thread
@@ -137,6 +137,14 @@ switchArtifact`); `write_artifact` with no number while one is open writes a
 new artifact of the open kind, and `start_design` a new screen. One artifact
 changes per turn. The version line names the artifact once the thread holds
 more than one: "Layouts, version 2: ...".
+
+**F: a new subject is a new artifact.** The skill says it
+(`src/prompts/artifact-design.md`, the page kind's section in
+`artifact-session.js`, the thread's own lines and the tool descriptions): a
+change to what an artifact shows is a new version of it; a different
+subject, or "a new one", is a new artifact; never one subject over another;
+when unsure, a new one; the reply names the artifact it wrote to when the
+thread holds more than one.
 
 **Shots.** `db/migrate.js seedStagingArtifactsThread` gives the shots member
 (`usernode-capture`) one thread holding two pages: "Staging demo: style
@@ -328,7 +336,7 @@ path serves an artifact to anyone but its author.
 | 2 | The artifact capability and its tools, private threads only | built |
 | 3 | Design as a kind with a skill | built, with what is kept above |
 | 4 | Plans drawn by the same frame; the author's door to the design | light: built |
-| K | Several artifacts in a thread | built |
+| K, F | Several artifacts in a thread; a new subject is a new artifact | built |
 
 ## What is left
 

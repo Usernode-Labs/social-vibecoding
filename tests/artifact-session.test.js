@@ -336,7 +336,7 @@ function numberedStore({ byNumber, html }) {
   return { store, threads, made, saved };
 }
 
-test('K: in a thread that holds "Style directions", write_artifact with no number makes a second artifact and leaves the first at its version', async () => {
+test('F: a thread that holds "Style directions", asked for iOS list layouts, makes a second artifact and leaves the first at its version', async () => {
   const styles = { ...twoArtifacts().styles, artifacts: [twoArtifacts().styles.artifacts[0]] };
   const made = [];
   const saved = [];
@@ -358,6 +358,9 @@ test('K: in a thread that holds "Style directions", write_artifact with no numbe
   ], { design: styles, ask: 'can you research how ios apps usually lay out lists like this', deps: { artifacts: store } });
   await turn.run;
 
+  // The rule is said where the turn reads it: the thread's lines and the page's own section.
+  assert.match(turn.seen[0][0].content, /A different subject, or their asking for "a new one", is a new/);
+  assert.match(pageSection(turn.seen[0]), /Never write one\s+subject over another\. When you are not sure it is the same subject, make a new artifact\./);
   assert.match(pageSection(turn.seen[0]), /with this page's number \(artifact 1\) to write it again whole, with no number for a new artifact/);
   // write_artifact with no number, while "Style directions" was open, opened a new one.
   assert.equal(resultOf(turn.seen[1], 'cwrite_artifact').ok, true);
@@ -373,7 +376,7 @@ test('K: in a thread that holds "Style directions", write_artifact with no numbe
   assert.equal(turn.sent[0].metadata.artifactId, 2);
 });
 
-test('K: with the layouts open, an edit that names artifact 1 makes version 2 of the first', async () => {
+test('F: with the layouts open, "make the second direction darker" makes version 2 of the first', async () => {
   const { styles, layouts } = twoArtifacts();
   const { store, threads, made, saved } = numberedStore({ byNumber: { 1: styles, 2: layouts }, html: { 1: STYLES_HTML, 2: LAYOUTS_HTML } });
   const turn = designChatTurn([
@@ -444,4 +447,9 @@ test('K: the tools take an artifact number; with none, write_artifact is a new a
   assert.equal(session.artifactNumber(2), 2);
   assert.equal(session.artifactNumber('3'), 3);
   for (const none of [undefined, null, '', 0, -1, 'new', 1.5]) assert.equal(session.artifactNumber(none), null, String(none));
+  // F's rule, in the design kind's skill too.
+  const skill = require('../src/services/design-bot').designSkill().rules;
+  assert.match(skill, /A different screen or subject, or their asking for "a new one", is a new\s+artifact/);
+  assert.match(skill, /When you are not sure it is the\s+same subject, make a new artifact\./);
+  for (const line of session.NEW_SUBJECT_LINES) assert.doesNotMatch(line, /—/, 'no em dashes');
 });
