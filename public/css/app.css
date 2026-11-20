@@ -9033,6 +9033,27 @@ html:not([data-skin]) .rf-switch.rf-switch-pressed[data-view="before"] .rf-knob 
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request,
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) { max-width: none; margin-inline: 0; padding-inline: var(--wip-gutter); }
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(#gc-thread-head:empty) .dev-request-sheet { background: none; border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* THE PAGE'S TITLE (asked 20 Nov 2026): the other places open under their name ("Hub", "Needs you", "Workshop"), and
+   this page opened under nothing. It says the place it is under, in the band and at the size the others have theirs.
+   The standard look alone, from 768px, on the page: a phone's header says it, and a side panel has its own head. */
+.dev-thread-place-title { display: none; }
+@media (min-width: 768px) {
+  html:not([data-skin]):not(.in-side-panel) body #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    height: 52px;
+    /* The band the others have: inset 4px, a hairline under it, 4px before the page. */
+    margin: 10px 4px 4px;
+    padding-inline: 10px;
+    box-shadow: inset 0 -1px 0 var(--app-sheet-line);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 22px;
+    color: var(--text-primary);
+  }
+}
 /* And the sheet the project's page stands every place on (a tinted, edged panel behind everything) is cleared behind
    this page, as it is behind the hub (asked 20 Nov 2026): the page's cards are the only cards, on the wallpaper. */
 html:not([data-skin]):not(.in-side-panel) body #app-view > #app-content > .dc-lift-strip:has(> .gc-tab-body > #dev-topic-thread:not(.dev-ws-side-page)):not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) {

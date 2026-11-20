@@ -84,6 +84,12 @@ export function DevTopicSubView() {
   const t = useMessages('project');
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
+      {/*
+          The page's title, as the hub, Needs you and the board have one (20 Nov
+          2026): the place this page is under. app.css shows it in the standard
+          look from 768px, on the page alone; a phone's header already says it.
+      */}
+      <h2 className="dev-thread-place-title">{t('project:page.title.workshop')}</h2>
       <div className="gc-tab-body flex-1 flex min-h-0">
         {/*
             The topic page's host. The dev-board or group-chat bridge mounts
