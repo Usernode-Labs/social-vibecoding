@@ -3548,6 +3548,13 @@ const App = {
           case 'app_allowance_changed':
             window.UsernodeReact?.appAllowance?.invalidate?.();
             break;
+          case 'platform_limits_changed':
+            // A platform-wide limit moved (services/platform-limits-view.js,
+            // an admin-only broadcast with no figures in it). The full
+            // admins' limits area and the bell's dot read it again; anyone
+            // else's page does nothing (features/notifications/platform-limits.tsx).
+            window.UsernodeReact?.platformLimits?.refresh?.();
+            break;
           case 'budget_updated':
             // #2598: a model call's cost just landed against this user's
             // weekly pool (services/budget-live.js). The meters repaint from

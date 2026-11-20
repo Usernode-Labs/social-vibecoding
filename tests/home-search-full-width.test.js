@@ -16,9 +16,10 @@ const HOME = read('frontend/src/features/home/index.tsx');
 const CSS = read('public/css/app.css');
 
 function wrapperClasses() {
-  const m = HOME.match(/<div className=\{wip \? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'\}>\s*<div className=\{wip \? 'relative wip-search' : '([^']*)'\}>\s*<SearchIcon/);
-  // Standard (WIP) draws a short field beside New project (tests/standard-wip-look.test.js);
-  // every other look's wrapper is the second literal.
+  const m = HOME.match(/<div className=\{topRow \? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'\}>\s*<div className=\{topRow \? 'relative wip-search' : '([^']*)'\}>\s*<SearchIcon/);
+  // The kit's Home (Standard (WIP), and the standard look since 20 Nov 2026) draws a short
+  // field beside New project (tests/standard-wip-look.test.js); every other look's wrapper
+  // is the second literal.
   assert.ok(m, 'the search field sits in a wrapper inside the bar\'s .home-column');
   return m[1].split(/\s+/);
 }

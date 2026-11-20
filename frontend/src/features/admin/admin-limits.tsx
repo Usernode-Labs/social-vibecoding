@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { LimitTextsCard } from './admin-limit-texts';
 
 // Limits (#admin/limits): the server's app limit and session limit, whether
 // previews may have projects made in them, GitHub's hourly request budget
@@ -1028,6 +1029,8 @@ function LimitsSection() {
       <VersionsCard canWrite={canWrite} />
 
       <LiveDraftsCard canWrite={canWrite} />
+
+      <LimitTextsCard canWrite={canWrite} />
 
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">

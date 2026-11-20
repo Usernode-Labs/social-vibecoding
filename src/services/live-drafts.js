@@ -41,6 +41,7 @@ const fs = require('fs');
 const path = require('path');
 
 const log = require('./logger');
+const botFailure = require('./bot-turn-failure');
 
 const SETTING_KEY = 'live_drafts_enabled';
 const CACHE_TTL_MS = 10 * 1000;
@@ -313,6 +314,7 @@ async function open(pool, config, { user, rootId, deps = {} }) {
   }
 
   let head = null;
+  let asked = null;
   try {
     const lifecycle = deps.sessionLifecycle || require('./session-lifecycle');
     const { branchName } = await lifecycle.ensureSessionBranch({
@@ -325,7 +327,7 @@ async function open(pool, config, { user, rootId, deps = {} }) {
       'UPDATE live_drafts SET base_sha = $2, head_sha = $2, updated_at = NOW() WHERE id = $1', [draft.id, head],
     );
     const previews = deps.previewWorkflow || require('./preview-workflow');
-    const asked = await previews.request({
+    asked = await previews.request({
       pool, session: { ...session, branch_name: branchName }, head, reason: 'preview', actor: `user:${user.id}`,
     });
     if (asked?.status === 'rejected' && asked.reason !== 'already_serving') {
@@ -333,6 +335,9 @@ async function open(pool, config, { user, rootId, deps = {} }) {
     }
   } catch (err) {
     log.warn('live-drafts', 'A draft could not start', { draftId: draft.id, err: err.message });
+    await botFailure.recordPlatformIncident(pool, {
+      where: 'live draft open', cause: asked?.reason || 'start',
+    }, deps);
     await pool.query(
       `UPDATE live_drafts SET live_state = 'failed', last_error = $2, updated_at = NOW() WHERE id = $1`,
       [draft.id, String(err.userMessage || err.message).slice(0, 500)],
@@ -489,6 +494,23 @@ async function rebuild(pool, config, draft, why, deps = {}) {
     log.info('live-drafts', 'Draft edit waits for its preview', { draftId: draft.id, why });
     return { ok: true, rebuilding: true, why: 'starting' };
   }
+  // A refusal that is not the preview already being there is Homeroom's
+  // failure, not the change's: the draft keeps its head and says so.
+  if (asked?.status === 'rejected' && !['already_serving', 'same_head'].includes(asked.reason)) {
+    const reason = String(asked.reason || 'refused').slice(0, 120);
+    await pool.query(
+      `UPDATE live_drafts SET last_error = $2, updated_at = NOW() WHERE id = $1`,
+      [draft.id, `The preview could not be started (${reason})`.slice(0, 500)],
+    );
+    await botFailure.recordPlatformIncident(pool, {
+      where: 'live draft preview', cause: `preview_refused_${reason}`,
+    }, deps);
+    log.warn('live-drafts', 'A draft preview was refused', { draftId: draft.id, why, reason });
+    return {
+      ok: false, platform: true, why: 'preview_refused', reason,
+      error: `The preview could not be started (${reason})`.slice(0, 300),
+    };
+  }
   await pool.query(
     `UPDATE live_drafts SET live_state = 'rebuilding', last_error = NULL, updated_at = NOW() WHERE id = $1`, [draft.id],
   );
@@ -529,10 +551,19 @@ async function sendToPreview(pool, config, { draft, files, since, head, deps = {
     return rebuild(pool, config, { ...draft, head_sha: head }, 'unreachable', deps);
   }
   if (applied.status === 409 && applied.body?.needsRebuild) {
+    // The app's own build step failed after the edit: that is the app's
+    // failure, and the supervisor already put its files back.
+    if (applied.body.why === 'build') {
+      return { ok: false, crashed: true, why: 'build', log: String(applied.body.log || '').slice(-4000) };
+    }
     return rebuild(pool, config, { ...draft, head_sha: head }, applied.body.why || 'install', deps);
   }
   if (applied.status !== 200) {
-    return { ok: false, crashed: false, error: applied.body?.error || `The preview answered ${applied.status}` };
+    const error = applied.body?.error || `The preview answered ${applied.status}`;
+    await botFailure.recordPlatformIncident(pool, {
+      where: 'live draft preview', cause: `supervisor_${applied.status}`,
+    }, deps);
+    return { ok: false, platform: true, why: 'supervisor', error };
   }
   if (applied.body?.ok) return { ok: true, bootMs: applied.body.bootMs ?? null };
   return { ok: false, crashed: true, why: applied.body?.why || 'exited', log: String(applied.body?.log || '').slice(-4000) };
@@ -592,7 +623,7 @@ async function applyEdit(pool, config, { draftId, userId, files, summary, deps =
     commit = await github.pushFiles(repo.owner, repo.repo, list, { branch: draft.branch_name, message });
   } catch (err) {
     log.warn('live-drafts', 'A draft edit could not be saved', { draftId: draft.id, err: err.message });
-    return { ok: false, error: 'The edit could not be saved to the draft. Try again in a moment.' };
+    return { ok: false, platform: true, error: 'The edit could not be saved to the draft. Try again in a moment.' };
   }
   const head = exact(commit?.sha);
   if (!head) return { ok: false, error: 'The edit could not be saved to the draft.' };

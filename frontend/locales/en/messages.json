@@ -4371,6 +4371,14 @@
     "text": "{{label}}, small",
     "description": "Title of the small preview of one version on the card that compares versions of a design. {{label}} is the version's name."
   },
+  "botCards.comparison.frameTitle": {
+    "text": "Comparison: {{title}}",
+    "description": "What screen readers call the frame that draws a comparison Homeroom bot laid out under its reply in a project thread. {{title}} is the comparison's own name, such as Before and after."
+  },
+  "botCards.comparison.note": {
+    "text": "Laid out by Homeroom bot. Nothing in it runs.",
+    "description": "Small grey line under a comparison Homeroom bot laid out under its reply in a project thread: the bot made the picture, and nothing in it can run."
+  },
   "botCards.compare.open": {
     "text": "Open {{label}} beside the chat",
     "description": "Accessible name of a small preview on the card that compares versions of a design: opens that version in the design preview."
@@ -4798,6 +4806,46 @@
   "privateThread.made": {
     "text": "Made into {{project}}.",
     "description": "Line at the top of a private thread with Homeroom bot once a project was made from its plan. {{project}} is the new project's name; an Open link follows it."
+  },
+  "privateThread.filedNoProject": {
+    "text": "Filed as request #{{number}}.",
+    "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was filed, when the project it was filed on is not known. {{number}} is the new request's number."
+  },
+  "privateThread.postedNoProject": {
+    "text": "Posted on #{{number}}.",
+    "description": "Line at the top of a thread in the person's private chat with Homeroom bot once its words were posted on a request, when the request's project is not known. {{number}} is the request's number."
+  },
+  "privateThread.foot.filed": {
+    "text": "Filed",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot (the AI tab), once the thread was filed as a request. A past participle."
+  },
+  "privateThread.foot.filedOn": {
+    "text": "As request #{{number}} on {{project}}",
+    "description": "Under \"Filed\" at the foot of the first card of a private thread with Homeroom bot: the request it became. {{number}} is the request's number, {{project}} the project's name."
+  },
+  "privateThread.foot.filedAs": {
+    "text": "As request #{{number}}",
+    "description": "Under \"Filed\" at the foot of the first card of a private thread with Homeroom bot, when the project is not known. {{number}} is the request's number."
+  },
+  "privateThread.foot.posted": {
+    "text": "Posted",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot, once its words were posted on a request. A past participle."
+  },
+  "privateThread.foot.postedOn": {
+    "text": "On request #{{number}} on {{project}}",
+    "description": "Under \"Posted\" at the foot of the first card of a private thread with Homeroom bot: the request its words were posted on. {{number}} is the request's number, {{project}} the project's name."
+  },
+  "privateThread.foot.postedAs": {
+    "text": "On request #{{number}}",
+    "description": "Under \"Posted\" at the foot of the first card of a private thread with Homeroom bot, when the project is not known. {{number}} is the request's number."
+  },
+  "privateThread.foot.made": {
+    "text": "Made into a project",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot, once a project was made from its plan. The project's name follows under it."
+  },
+  "privateThread.foot.done": {
+    "text": "Done",
+    "description": "Bold status at the foot of the first card of a private thread with Homeroom bot once the person marked it done. Reopen sits beside it."
   },
   "privateThread.posted": {
     "text": "Posted on #{{number}} on {{project}}.",
@@ -6040,8 +6088,8 @@
     "description": "Status line on a thread's live draft bar when a change needs the preview built again (for example, it added a package)."
   },
   "liveDraft.failed": {
-    "text": "The preview didn't start.",
-    "description": "Status line on a thread's live draft bar when its preview could not be started."
+    "text": "The preview couldn't start because of a problem on Homeroom's side, not your app. Close the draft and ask Homeroom bot to open it again in a few minutes.",
+    "description": "Status line on a thread's live draft bar when its preview never started, which is always a problem on Homeroom's side. It says how to try again: a draft that failed at opening has no changes to lose, so closing it is safe."
   },
   "liveDraft.show": {
     "text": "Show preview",

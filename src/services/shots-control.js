@@ -484,9 +484,11 @@ function fileEntry(row) {
     sized: row.thumb_sha256 || row.screen_sha256 || row.placeholder ? {
       thumb: row.thumb_sha256 ? {
         width: row.thumb_width, height: row.thumb_height, bytes: row.thumb_bytes, sha256: row.thumb_sha256,
+        contentType: row.thumb_content_type || WEBP,
       } : null,
       screen: row.screen_sha256 ? {
         width: row.screen_width, height: row.screen_height, bytes: row.screen_bytes, sha256: row.screen_sha256,
+        contentType: row.screen_content_type || WEBP,
       } : null,
       placeholder: row.placeholder || null,
     } : null,
@@ -546,8 +548,8 @@ async function load(db, runId, { lock = false } = {}) {
   const { rows: files } = await db.query(
     `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256,
             density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe,
-            thumb_width, thumb_height, thumb_bytes, thumb_sha256,
-            screen_width, screen_height, screen_bytes, screen_sha256, placeholder
+            thumb_width, thumb_height, thumb_bytes, thumb_sha256, thumb_content_type,
+            screen_width, screen_height, screen_bytes, screen_sha256, screen_content_type, placeholder
        FROM shot_run_files WHERE run_id = $1`, [runId]);
   return { row, control: fromRow(row, files) };
 }
@@ -575,8 +577,8 @@ async function persist(db, control, store) {
     'SELECT slot FROM shot_run_files WHERE run_id = $1 AND slot = ANY($2::text[]) ORDER BY slot FOR UPDATE',
     [control.runId, dirty.map(dbSlot)]);
   const copies = (file) => [
-    ...(file.sized?.thumb?.data ? [{ data: file.sized.thumb.data, contentType: WEBP }] : []),
-    ...(file.sized?.screen?.data ? [{ data: file.sized.screen.data, contentType: WEBP }] : []),
+    ...(file.sized?.thumb?.data ? [{ data: file.sized.thumb.data, contentType: file.sized.thumb.contentType || WEBP }] : []),
+    ...(file.sized?.screen?.data ? [{ data: file.sized.screen.data, contentType: file.sized.screen.contentType || WEBP }] : []),
   ];
   const uploads = dirty.flatMap((file) => [{ data: file.data, contentType: file.contentType },
     ...(file.dense?.data ? [{ data: file.dense.data, contentType: file.contentType }] : []), ...copies(file)]);
@@ -604,9 +606,10 @@ async function persist(db, control, store) {
           density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe,
           object_key, dense_object_key,
           thumb_object_key, thumb_width, thumb_height, thumb_bytes, thumb_sha256,
-          screen_object_key, screen_width, screen_height, screen_bytes, screen_sha256, placeholder)
+          screen_object_key, screen_width, screen_height, screen_bytes, screen_sha256, placeholder,
+          thumb_content_type, screen_content_type)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22, $23, $24,
-               $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+               $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
        ON CONFLICT (run_id, slot) DO UPDATE
          SET object_key = EXCLUDED.object_key, dense_object_key = EXCLUDED.dense_object_key,
              content_type = EXCLUDED.content_type, media = EXCLUDED.media,
@@ -621,6 +624,7 @@ async function persist(db, control, store) {
              screen_object_key = EXCLUDED.screen_object_key, screen_width = EXCLUDED.screen_width,
              screen_height = EXCLUDED.screen_height, screen_bytes = EXCLUDED.screen_bytes,
              screen_sha256 = EXCLUDED.screen_sha256, placeholder = EXCLUDED.placeholder,
+             thumb_content_type = EXCLUDED.thumb_content_type, screen_content_type = EXCLUDED.screen_content_type,
              public_safe = EXCLUDED.public_safe, saved_at = NOW()`,
       [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType,
         f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1,
@@ -632,7 +636,9 @@ async function persist(db, control, store) {
         f.sized?.thumb?.bytes ?? null, f.sized?.thumb?.sha256 || null,
         screenObjectKey, f.sized?.screen?.width || null, f.sized?.screen?.height || null,
         f.sized?.screen?.bytes ?? null, f.sized?.screen?.sha256 || null,
-        f.sized?.placeholder || null]);
+        f.sized?.placeholder || null,
+        thumbObjectKey ? f.sized.thumb.contentType || WEBP : null,
+        screenObjectKey ? f.sized.screen.contentType || WEBP : null]);
   }
   control.dirty.clear();
 }

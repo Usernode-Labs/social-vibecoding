@@ -6,17 +6,17 @@
 // with the other member's round picture, the thread's name and the lock
 // badge; the replies in a discussion card, every one the flat named row a
 // channel draws; and the reply box, as the public thread's reply card, at
-// the foot. The cards are at most 446px wide and centred in the column, so
-// the sheet is one screenful with the reply box visible.
+// the foot. (Until 20 Nov 2026 the cards were at most 446px wide and the
+// replies scrolled inside the middle one; now the page is a public thread's.)
 //
 // What this pins:
 //   1. Only the bot tab's alone pane is marked (`alone && botChat`); no
 //      other thread pane gets `data-bot-sheet`.
 //   2. The alone head opens on the bot's face, round, before the title.
 //   3. A flat row is the named row, never a bubble on a side.
-//   4. The CSS block is scoped to the standard and brand looks, at most
-//      446px, three cards of `--thread-card` at a 20px radius, with the
-//      scroller taking the room between them.
+//   4. 20 Nov 2026: the sheet is a public thread's page (group-chat/
+//      thread-page.tsx), drawn by the public thread's rules; what app.css
+//      keeps for it alone is the pane's ground and the rows of its cards.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -57,22 +57,18 @@ test('a flat row is the named row, never a bubble', () => {
     'the root message and every reply in the thread are flat');
 });
 
-test('the sheet\'s CSS draws three 446px cards in the standard and brand looks', () => {
-  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet]';
-  const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  assert.match(css, new RegExp(escaped(scope)),
-    'a frame look keeps its own thread: nothing here applies under one');
-  assert.match(css, new RegExp(`${escaped(scope)} > :is\\(\\.messages-thread-header, \\.messages-thread-scroll, \\.chat-status, \\.messages-composer, \\[data-private-thread\\], \\[data-live-draft\\]\\) \\{\\s+width: 100%;\\s+max-width: 446px;\\s+margin-inline: auto;`),
-    'the three cards are one compact width, centred in the column');
-  assert.match(css, new RegExp(`${escaped(scope)} \\{\\s+--thread-card: var\\(--thread-card-look, var\\(--dc-sheet-fill\\)\\);`));
-  assert.match(css, new RegExp(`${escaped(scope)} \\{\\s+--thread-card: [^}]*--thread-card-r: 20px;`),
-    'the public thread\'s card variables, at its 20px radius');
-  assert.match(css, new RegExp(`${escaped(scope)} > \\.messages-thread-header \\{\\s+flex: 0 0 auto;[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`),
-    'the head card');
-  assert.match(css, new RegExp(`${escaped(scope)} > \\.messages-thread-scroll \\{\\s+flex: 1 1 auto;\\s+min-height: 0;\\s+overflow-y: auto;\\s+padding-inline: 0;[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card\\);\\s+box-shadow: var\\(--thread-card-edge\\);`),
-    'the discussion card scrolls between the other two');
-  assert.match(css, new RegExp(`${escaped(scope)} > \\.messages-composer \\{\\s+flex: 0 0 auto;\\s+padding-inline: 0;`),
-    'the reply card stays at the foot and stylable');
-  assert.match(css, new RegExp(`${escaped(scope)} > \\.messages-composer > \\.messages-composer-card:focus-within \\{\\s+box-shadow: var\\(--thread-card-edge\\), 0 0 0 2px var\\(--accent\\);`),
-    'the box keeps its focus ring on the card');
+test('20 Nov 2026: the sheet is a public thread\'s page, drawn by the public thread\'s rules', () => {
+  // #6863's own copy (three 446px cards, the replies scrolling inside the
+  // middle one, its own head rules) is gone: a thread alone in the bot tab's
+  // column is drawn on ../group-chat/thread-page.tsx under the standard and
+  // brand looks, and app.css draws it from the public thread's rules.
+  assert.doesNotMatch(css, /\.messages-reply-pane\[data-bot-sheet\]/, 'no rules of the sheet\'s own');
+  assert.match(messages, /const page = sheet && !frameLook;/, 'a frame look keeps its own thread');
+  assert.match(messages, /data-thread-page-host=\{page \? '' : undefined\}/);
+  assert.match(css, /#ai-screen \.messages-layout\[data-bot-threads\] > \.messages-reply-pane\[data-thread-page-host\] \{\s+background: transparent;/,
+    'the pane draws no sheet: the page lies on the column\'s ground, as a request\'s does');
+  assert.match(css, /#ai-screen \.dev-private-thread \[data-thread-page-replies\] \.messages-message \{ padding: 8px 16px; gap: 12px; \}/,
+    'the replies card\'s rows are the flat named rows');
+  assert.match(css, /#ai-screen \.dev-private-thread \[data-thread-page-post\] \.messages-message > :first-child:not\(\.min-w-0\) \{ display: none; \}/,
+    'the opening card holds the words, as a request\'s card does, with no face');
 });

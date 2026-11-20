@@ -34,7 +34,7 @@ import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from
 import { botRequestNames, botThreadTitle, dotText, threadsAllowed } from './bot-shared';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
-  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName, privateThreadTitle, privateThreadWords, serverThreadName,
+  PrivateThreadDoors, PrivateThreadFoot, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName, privateThreadTitle, privateThreadWords, serverThreadName,
   usePrivateThread,
 } from './private-thread-bar';
 import { LiveDraftBar } from './live-draft-bar';
@@ -59,6 +59,8 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
+import { ThreadPage } from '../group-chat/thread-page';
+import { ThreadHeadCard } from '../dev-board/topic/thread-head';
 import { centreInScroller, isNearBottom, isNearStart, isNearTop, LOAD_NEWER_SLACK_PX, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
@@ -1964,6 +1966,9 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     appSlug: trackMeta.appSlug, appName: trackMeta.appName, issueNumber: trackMeta.issueNumber, firstVersion: trackMeta.firstVersion === true,
   } : null);
   const scroller = useRef<HTMLDivElement>(null);
+  // 20 Nov 2026: under a frame look the pane keeps its own thread; under the
+  // standard and brand looks a private thread is a public thread's page.
+  const frameLook = isFrameSkin(useLiveSkin());
   // #3571: the same keyboard avoidance as the conversation beside it. On a
   // phone this pane covers the conversation, so its composer is the one the
   // keyboard comes up under when a thread is replied to.
@@ -2262,14 +2267,101 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
       </div>
     );
   };
+  // 20 Nov 2026: the thread's two parts, drawn either way below: its
+  // opening message, and the replies under it.
+  // The root's Reply quotes it into THIS thread's composer (#2387): its
+  // own threadRootId is null, being the main stream's message.
+  // #6668: a thread opened from the bot's "+" opens on what the person
+  // wrote, not on the bot's "New thread." line (Main Chat left that
+  // line out too, #6250). The root still names the thread; it is only
+  // not drawn.
+  const rootRow = root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} /> : null;
+  const repliesPart = (
+    <>
+          {/* An error stands in place of the thread (#5219 review): with one,
+              the count line would say "No replies yet", which is a different
+              answer to the same question, so it waits. */}
+          {thread?.error ? null : (
+            <div className="messages-reply-count" aria-hidden={!merged.length}>
+              <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
+            </div>
+          )}
+          {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}
+          {/* #6148: the row holds its height and, while an earlier page
+              loads, the "Loading…" line; the button returns only to retry a
+              failed load. Scrolling up to here does the rest. */}
+          {(thread?.nextBefore || discussion?.more) ? (
+            <div ref={earlierRow} className="flex min-h-12 flex-wrap items-center justify-center gap-x-3 gap-y-1 py-2" data-load-earlier-replies="">
+              {thread?.nextBefore
+                ? thread.loading
+                  ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:replies.loadingEarlier')}</span>
+                  : earlierFailed
+                    ? <button type="button" onClick={() => { setEarlierFailed(false); void earlierReplies().then((ok) => { if (!ok) setEarlierFailed(true); }); }} className="messages-load-older">{t('messages:replies.loadEarlier')}</button>
+                    : null
+                : null}
+              {discussion?.more ? <a className="messages-load-older" href={issueRefHref(discussion.appSlug, String(discussion.issueNumber))}>{t('messages:replies.discussion.more')}</a> : null}
+            </div>
+          ) : null}
+          {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>{t('core:common.tryAgain')}</button></div> : null}
+          {merged.map((entry) => {
+            const divider = tryDivider(entry.message.createdAt);
+            if (entry.kind === 'discussion') {
+              const row = <DiscussionRow key={`discussion-${entry.message.id}`} message={entry.message} appSlug={discussion.appSlug} issueNumber={discussion.issueNumber} />;
+              return divider ? <Fragment key={`discussion-${entry.message.id}`}>{divider}{row}</Fragment> : row;
+            }
+            const { message } = entry;
+            const grouped = !!previous && previous.kind === 'reply' && !previous.message.failed && !message.failed
+              && groupsWithPrevious(
+                { author: previous.message.sender.id, at: previous.message.createdAt },
+                { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
+              );
+            previous = entry;
+            // B19 follow-up: the "New" line above the first reply not read when it opened.
+            // (Above the first reply drawn from there on: the one it names may be
+            // a card its plan carries, which is not drawn.)
+            const line = firstUnread && !newLineDrawn && message.id >= firstUnread
+              ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
+            if (line) newLineDrawn = true;
+            const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} focused={flashId === message.id} planCardId={isPlanMessage(message) ? cardId || flatPlans.cardOf.get(message.id) || null : null} />;
+            return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
+          })}
+          {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
+          {privateRoot && privateMine && root ? (
+            <PrivateThreadDoors
+              rootId={privateRoot}
+              text={privateThreadWords(root, replies, meId)}
+              name={privateThreadName(root, replies)}
+              where={privateWhere}
+              botReplied={replies.some((message) => message.sender.bot)}
+              invited={newProjectInvited(root, replies)}
+              working={!!threadWorking}
+            />
+          ) : null}
+    </>
+  );
+  // A PRIVATE THREAD IS DRAWN ON A PUBLIC THREAD'S PAGE (20 Nov 2026). Alone
+  // in the bot tab's column, under the standard and brand looks, the thread
+  // is the page a request's thread is drawn on (../group-chat/thread-page.tsx),
+  // as a request's page is drawn in the same column: the head card every
+  // thread leads with (../dev-board/topic/thread-head.tsx), floating over the
+  // page and tightening as it scrolls; the opening message as the first card,
+  // whose foot says where the thread went (./private-thread-bar.tsx
+  // PrivateThreadFoot); the replies as the second; and the reply box at the
+  // foot, as wide as the cards. #6863 drew it as a sheet of its own, a 446px
+  // strip whose replies scrolled inside the middle card, and its copy of the
+  // public head drifted within a day (Preview forced into the round button).
+  // A frame look, and every other thread, keeps the pane below.
+  const page = sheet && !frameLook;
+  const footShown = privateMine && !!privateWhere && (privateWhere.state !== 'open' || !!privateWhere.made);
   return (
     <aside
       ref={paneRef}
       {...drop.handlers}
-      className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"
+      className={`messages-reply-pane platform-kb-column${page ? '' : ' dc-lift dc-lift-session'}`}
       style={replyWidth != null ? { '--messages-reply-width': `${replyWidth}px` } as CSSProperties : undefined}
       aria-label={t('messages:replies.paneName')}
       data-bot-sheet={sheet ? '' : undefined}
+      data-thread-page-host={page ? '' : undefined}
       data-reply-thread={rootId}
     >
       {/* #5691: the divider between the chat and this thread, dragged to
@@ -2287,153 +2379,167 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
         onPointerDown={onReplyResizeStart}
         onKeyDown={onReplyResizeKey}
       />
-      <header className="messages-thread-header" data-reply-head={alone ? 'alone' : undefined}>
-        {alone && onBack ? (
-          <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
-            aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
-            <ChevronLeftIcon aria-hidden="true" />
-          </button>
-        ) : null}
-        {/* #6863: the sheet's head card opens on the other member's round
-            picture, the way a public thread's head opens on its face. */}
-        {sheet ? <span data-reply-avatar=""><UserAvatar user={face} title={aloneTitle || undefined} size="lg" shape="circle" /></span> : null}
-        {alone ? (
-          // 1 Nov 2026: the thread alone in the column, under its own name
-          // and the line that says it is theirs alone.
-          <div className="min-w-0 flex-1" title={aloneTitle || undefined}>
-            <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{aloneTitle}</div>
-            <div className="messages-thread-sub flex min-w-0 items-center gap-1" data-private-thread-sub="">
-              <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="truncate">{t('messages:ai.thread.sub')}</span>
+      {page ? (
+        <ThreadPage
+          kind="private"
+          label={aloneTitle || t('messages:replies.paneName')}
+          scroller={scroller}
+          scrollClassName="messages-reply-scroll platform-safe-scroll"
+          scrollProps={{ 'aria-live': 'polite' }}
+          back={onBack ? (
+            <button type="button" className="dev-topic-back un-touch-target" data-reply-back="" onClick={onBack} title={t('messages:ai.drawer.back')}>
+              <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
+              <span>{t('messages:ai.drawer.back')}</span>
+            </button>
+          ) : null}
+          bar={(
+            <ThreadHeadCard
+              attrs={{ 'data-reply-head': 'alone' }}
+              tile={<span className="dev-thread-bar-tile dev-thread-bar-face" data-reply-avatar=""><UserAvatar user={face} title={aloneTitle || undefined} size="lg" shape="circle" /></span>}
+              // The lock line is the small line's own part that gives way
+              // first in a narrow head, as a request's project does: it is
+              // the head's `.messages-thread-sub`, as it was in the pane's.
+              line={null}
+              title={<div className="messages-thread-name line-clamp-2 dev-request-bar-title" data-reply-title="" title={aloneTitle || undefined}>{aloneTitle}</div>}
+              sub={(
+                <div className="messages-thread-sub" data-private-thread-sub="">
+                  <LockIcon className="dev-thread-bar-lock" aria-hidden="true" />{t('messages:ai.thread.sub')}
+                </div>
+              )}
+              menu={(
+                <>
+                  {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
+                  {preview?.rootId !== rootId && isDesignThread(root, replies) ? (
+                    <button type="button" className="messages-thread-action messages-thread-preview dev-thread-head-text" data-reply-preview=""
+                      onClick={() => openPreview({ conversationId, rootId, version: null })}>
+                      {t('messages:design.pane.showPreview')}
+                    </button>
+                  ) : null}
+                  {privateMine && privateRoot && privateWhere ? (
+                    <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'} name={aloneTitle}
+                      onChanged={(state) => setPrivateWhere({ ...privateWhere, state })}
+                      onRenamed={(title) => setPrivateWhere({ ...privateWhere, title, titled: 'person' })} />
+                  ) : null}
+                </>
+              )}
+              exits={onBack ? null : (
+                <span className="dev-thread-exits" data-thread-exits="">
+                  <button type="button" className="messages-thread-action dev-thread-exit" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
+                    <XIcon aria-hidden="true" />
+                  </button>
+                </span>
+              )}
+            />
+          )}
+          foot={(
+            <>
+              <JumpToLatest scroller={scroller} />
+              <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
+              <MessageComposer threadRootId={rootId} scroller={scroller} />
+            </>
+          )}
+        >
+          {rootRow || footShown ? (
+            <div className="dev-thread-page-post" data-thread-page-post="">
+              <div className="dev-request-root dev-thread-card" data-thread-card="">
+                {rootRow ? <div className="min-w-0">{rootRow}</div> : null}
+                {footShown ? (
+                  <PrivateThreadFoot where={privateWhere} rootId={privateRoot}
+                    onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
+                ) : null}
+              </div>
             </div>
+          ) : null}
+          {privateMine && privateRoot && privateWhere?.state === 'open' ? <LiveDraftBar rootId={privateRoot} /> : null}
+          <div className="dev-thread-page-replies" data-thread-page-replies="">{repliesPart}</div>
+        </ThreadPage>
+      ) : (
+        <>
+          <header className="messages-thread-header" data-reply-head={alone ? 'alone' : undefined}>
+            {alone && onBack ? (
+              <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
+                aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
+                <ChevronLeftIcon aria-hidden="true" />
+              </button>
+            ) : null}
+            {/* #6863: the sheet's head card opens on the other member's round
+                picture, the way a public thread's head opens on its face. */}
+            {sheet ? <span data-reply-avatar=""><UserAvatar user={face} title={aloneTitle || undefined} size="lg" shape="circle" /></span> : null}
+            {alone ? (
+              // 1 Nov 2026: the thread alone in the column, under its own name
+              // and the line that says it is theirs alone.
+              <div className="min-w-0 flex-1" title={aloneTitle || undefined}>
+                <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{aloneTitle}</div>
+                <div className="messages-thread-sub flex min-w-0 items-center gap-1" data-private-thread-sub="">
+                  <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{t('messages:ai.thread.sub')}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="min-w-0 flex-1">
+                <div className="messages-thread-name flex min-w-0 items-center gap-2">
+                  {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
+                  <span className="min-w-0 truncate" title={replyTitle}>{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
+                </div>
+                {where ? <div className="messages-thread-sub">{where}</div> : null}
+              </div>
+            )}
+            {/* #6071: in a design thread, the way to its preview: on a phone the
+                switch back to it. 1 Nov 2026 (C1): in the bot tab's column, any
+                thread holding a design (a version said anywhere in it) has
+                Preview, which opens the design as the tab's own column
+                (../ai/preview.ts), while it is not open already. */}
+            {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
+            {alone && preview?.rootId !== rootId && isDesignThread(root, replies) ? (
+              <button type="button" className="messages-thread-action messages-thread-preview" data-reply-preview=""
+                onClick={() => openPreview({ conversationId, rootId, version: null })}>
+                <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
+              </button>
+            ) : null}
+            {/* #6159: Mark done, or Reopen, in the thread's own ⋯. */}
+            {privateMine && privateRoot && privateWhere ? (
+              <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'} name={aloneTitle}
+                onChanged={(state) => setPrivateWhere({ ...privateWhere, state })}
+                onRenamed={(title) => setPrivateWhere({ ...privateWhere, title, titled: 'person' })} />
+            ) : null}
+            {/* On a phone the Messages screen's header bar has the way back
+                (app.css hides this one there, polish N16), and in the bot tab's
+                drawer its own back arrow leads the head instead, so no ✕ is
+                drawn. 6 Nov 2026 (#6425): on a desktop the ✕ closes the thread,
+                leaving the lists alone. */}
+            {alone && onBack ? null : (
+              <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
+                <XIcon aria-hidden="true" />
+              </button>
+            )}
+          </header>
+          {/* Its head says it is theirs alone in the bot tab's column; under
+              it, where it went once it was filed or posted. */}
+          {privateMine && !(alone && privateWhere?.state === 'open') ? (
+            <PrivateThreadNote where={privateWhere} rootId={privateRoot}
+              onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
+          ) : null}
+          {/* A live draft of the thread's project, while one is open: a
+              preview beside the chat that Homeroom bot changes as they talk
+              (./live-draft-bar.tsx, services/live-drafts.js). Nothing until
+              they ask the bot for one. */}
+          {privateMine && privateRoot && privateWhere?.state === 'open' ? (
+            <LiveDraftBar rootId={privateRoot} />
+          ) : null}
+          <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
+            {rootRow}
+            {repliesPart}
           </div>
-        ) : (
-          <div className="min-w-0 flex-1">
-            <div className="messages-thread-name flex min-w-0 items-center gap-2">
-              {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
-              <span className="min-w-0 truncate" title={replyTitle}>{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
-            </div>
-            {where ? <div className="messages-thread-sub">{where}</div> : null}
-          </div>
-        )}
-        {/* #6071: in a design thread, the way to its preview: on a phone the
-            switch back to it. 1 Nov 2026 (C1): in the bot tab's column, any
-            thread holding a design (a version said anywhere in it) has
-            Preview, which opens the design as the tab's own column
-            (../ai/preview.ts), while it is not open already. */}
-        {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
-        {alone && preview?.rootId !== rootId && isDesignThread(root, replies) ? (
-          <button type="button" className="messages-thread-action messages-thread-preview" data-reply-preview=""
-            onClick={() => openPreview({ conversationId, rootId, version: null })}>
-            <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
-          </button>
-        ) : null}
-        {/* #6159: Mark done, or Reopen, in the thread's own ⋯. */}
-        {privateMine && privateRoot && privateWhere ? (
-          <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'} name={aloneTitle}
-            onChanged={(state) => setPrivateWhere({ ...privateWhere, state })}
-            onRenamed={(title) => setPrivateWhere({ ...privateWhere, title, titled: 'person' })} />
-        ) : null}
-        {/* On a phone the Messages screen's header bar has the way back
-            (app.css hides this one there, polish N16), and in the bot tab's
-            drawer its own back arrow leads the head instead, so no ✕ is
-            drawn. 6 Nov 2026 (#6425): on a desktop the ✕ closes the thread,
-            leaving the lists alone. */}
-        {alone && onBack ? null : (
-          <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
-            <XIcon aria-hidden="true" />
-          </button>
-        )}
-      </header>
-      {/* Its head says it is theirs alone in the bot tab's column; under
-          it, where it went once it was filed or posted. */}
-      {privateMine && !(alone && privateWhere?.state === 'open') ? (
-        <PrivateThreadNote where={privateWhere} rootId={privateRoot}
-          onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
-      ) : null}
-      {/* A live draft of the thread's project, while one is open: a
-          preview beside the chat that Homeroom bot changes as they talk
-          (./live-draft-bar.tsx, services/live-drafts.js). Nothing until
-          they ask the bot for one. */}
-      {privateMine && privateRoot && privateWhere?.state === 'open' ? (
-        <LiveDraftBar rootId={privateRoot} />
-      ) : null}
-      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
-        {/* The root's Reply quotes it into THIS thread's composer (#2387): its
-            own threadRootId is null, being the main stream's message.
-            #6668: a thread opened from the bot's "+" opens on what the person
-            wrote, not on the bot's "New thread." line (Main Chat left that
-            line out too, #6250). The root still names the thread; it is only
-            not drawn. */}
-        {root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} /> : null}
-        {/* An error stands in place of the thread (#5219 review): with one,
-            the count line would say "No replies yet", which is a different
-            answer to the same question, so it waits. */}
-        {thread?.error ? null : (
-          <div className="messages-reply-count" aria-hidden={!merged.length}>
-            <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
-          </div>
-        )}
-        {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}
-        {/* #6148: the row holds its height and, while an earlier page
-            loads, the "Loading…" line; the button returns only to retry a
-            failed load. Scrolling up to here does the rest. */}
-        {(thread?.nextBefore || discussion?.more) ? (
-          <div ref={earlierRow} className="flex min-h-12 flex-wrap items-center justify-center gap-x-3 gap-y-1 py-2" data-load-earlier-replies="">
-            {thread?.nextBefore
-              ? thread.loading
-                ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:replies.loadingEarlier')}</span>
-                : earlierFailed
-                  ? <button type="button" onClick={() => { setEarlierFailed(false); void earlierReplies().then((ok) => { if (!ok) setEarlierFailed(true); }); }} className="messages-load-older">{t('messages:replies.loadEarlier')}</button>
-                  : null
-              : null}
-            {discussion?.more ? <a className="messages-load-older" href={issueRefHref(discussion.appSlug, String(discussion.issueNumber))}>{t('messages:replies.discussion.more')}</a> : null}
-          </div>
-        ) : null}
-        {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>{t('core:common.tryAgain')}</button></div> : null}
-        {merged.map((entry) => {
-          const divider = tryDivider(entry.message.createdAt);
-          if (entry.kind === 'discussion') {
-            const row = <DiscussionRow key={`discussion-${entry.message.id}`} message={entry.message} appSlug={discussion.appSlug} issueNumber={discussion.issueNumber} />;
-            return divider ? <Fragment key={`discussion-${entry.message.id}`}>{divider}{row}</Fragment> : row;
-          }
-          const { message } = entry;
-          const grouped = !!previous && previous.kind === 'reply' && !previous.message.failed && !message.failed
-            && groupsWithPrevious(
-              { author: previous.message.sender.id, at: previous.message.createdAt },
-              { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
-            );
-          previous = entry;
-          // B19 follow-up: the "New" line above the first reply not read when it opened.
-          // (Above the first reply drawn from there on: the one it names may be
-          // a card its plan carries, which is not drawn.)
-          const line = firstUnread && !newLineDrawn && message.id >= firstUnread
-            ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
-          if (line) newLineDrawn = true;
-          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} focused={flashId === message.id} planCardId={isPlanMessage(message) ? cardId || flatPlans.cardOf.get(message.id) || null : null} />;
-          return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
-        })}
-        {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
-        {privateRoot && privateMine && root ? (
-          <PrivateThreadDoors
-            rootId={privateRoot}
-            text={privateThreadWords(root, replies, meId)}
-            name={privateThreadName(root, replies)}
-            where={privateWhere}
-            botReplied={replies.some((message) => message.sender.bot)}
-            invited={newProjectInvited(root, replies)}
-            working={!!threadWorking}
-          />
-        ) : null}
-      </div>
-      <JumpToLatest scroller={scroller} />
-      {/* 31 Oct 2026: who is typing in this thread (the bot answering a
-          message written here among them), as the conversation's own line
-          says it. It was drawn beside the conversation alone, which a phone
-          hides while a thread is open. Under Jump to latest, as in every
-          chat (1 Nov 2026). */}
-      <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
-      <MessageComposer threadRootId={rootId} scroller={scroller} />
+          <JumpToLatest scroller={scroller} />
+          {/* 31 Oct 2026: who is typing in this thread (the bot answering a
+              message written here among them), as the conversation's own line
+              says it. It was drawn beside the conversation alone, which a phone
+              hides while a thread is open. Under Jump to latest, as in every
+              chat (1 Nov 2026). */}
+          <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
+          <MessageComposer threadRootId={rootId} scroller={scroller} />
+        </>
+      )}
       {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </aside>
   );

@@ -467,6 +467,8 @@ function communityInviteRoutes(config) {
       }
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
+      // An invite link is not a page a search engine should list.
+      res.setHeader('X-Robots-Tag', require('../services/search-robots').NOINDEX);
       applyShellDocumentHeaders(res, INDEX_PATH);
       // A dead preview takes no token either: its tags carry no image.
       res.type('html').send(withPreviewTags(html, previewTags(preview, requestOrigin(req), demo ? null : token)));
@@ -474,6 +476,7 @@ function communityInviteRoutes(config) {
       log.error('invites', 'Serving an invite page failed', { err: err.message });
       if (!res.headersSent) {
         res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
+        res.setHeader('X-Robots-Tag', require('../services/search-robots').NOINDEX);
         return res.sendFile(INDEX_PATH);
       }
     }

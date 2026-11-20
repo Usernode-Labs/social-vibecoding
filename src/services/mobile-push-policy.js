@@ -155,7 +155,18 @@ function minutesSince(value, now) {
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+// Whole MiB as GiB, one decimal under ten (the capacity limits' figures).
+function gib(mib) {
+  const n = Number(mib) / 1024;
+  return n < 10 ? String(Math.round(n * 10) / 10) : String(Math.round(n));
+}
+// A namespace quota's name and what stops when it is used up.
+const QUOTA_ROLES = Object.freeze({
+  quota_apps: { name: 'apps', full: 'apps and previews cannot start until some stop or the quota is raised', warn: 'apps and previews cannot start' },
+  quota_workers: { name: 'workers', full: 'new coding sessions and checks wait until some finish or the quota is raised', warn: 'new coding sessions and checks wait' },
+  quota_builds: { name: 'builds', full: 'new image builds fail until old ones are cleared or the quota is raised', warn: 'new image builds fail' },
+});
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 // #6901: "apps_away:<people>:<cap>:<ago>", platform-limit-alerts.js
 // refusalToken. ago is the minutes from the run's start to the notice; 0 is
 // "someone was just turned away".
@@ -279,6 +290,39 @@ function platformLimitCopy(detail) {
       : { title: 'GitHub App requests running low',
         body: `${used} of ${cap} GitHub App requests used this hour` };
   }
+  // The cluster's own ceilings (services/platform-capacity.js): volumes in
+  // MiB, a quota's tightest resource in thousandths of its hard value.
+  if (limit === 'db_disk') {
+    const figures = `${gib(used)} of ${gib(cap)} GiB`;
+    return level === 'full'
+      ? { title: 'Database disk full',
+        body: `${figures} of the database's disk is used. Postgres stops writing, so saves fail until the volume is grown` }
+      : { title: 'Database disk filling up',
+        body: `${figures} of the database's disk is used. When it fills, Postgres stops writing` };
+  }
+  if (limit === 'node_pool') {
+    const figures = `${gib(used)} of ${gib(cap)} GiB`;
+    return level === 'full'
+      ? { title: 'Node volume pool full',
+        body: `A node's volume pool is full (${figures}). New worker and preview volumes fail to mount` }
+      : { title: 'Node volume pool filling up',
+        body: `${figures} of a node's volume pool is used. When it fills, new volumes fail to mount` };
+  }
+  if (QUOTA_ROLES[limit]) {
+    const role = QUOTA_ROLES[limit];
+    return level === 'full'
+      ? { title: `Cluster quota used up (${role.name})`,
+        body: `The ${role.name} namespace's quota is used up: ${role.full}` }
+      : { title: `Cluster quota running low (${role.name})`,
+        body: `${Math.floor(Number(used) / 10)}% of the ${role.name} namespace's quota is used. When it fills, ${role.warn}` };
+  }
+  if (limit === 'connections') {
+    return level === 'full'
+      ? { title: 'Database connections used up',
+        body: `${used} of ${cap} database connections are open. Apps can't open new ones, so their pages fail until some close or the limit is raised` }
+      : { title: 'Database connections running low',
+        body: `${used} of ${cap} database connections are open. At ${cap}, apps can't open new ones` };
+  }
   if (limit === 'apps') {
     return level === 'full'
       ? { title: 'App limit reached',
@@ -331,6 +375,39 @@ function releaseHoldAsksCopy(detail, label, withApp, t) {
     title: withApp(what ? t('push:releaseHold.capability.title', { what }) : t('push:releaseHold.capability.titleAny')),
     body: label ? t('push:releaseHold.capability.body.named', { title: label }) : t('push:releaseHold.capability.body.plain'),
   };
+}
+
+// The kinds of personal detail a change keeps, by their id, in the order a
+// sentence lists them (an id is one plain literal:
+// tests/mobile-push-language.test.js).
+const RELEASE_HOLD_PEOPLE_WHAT = Object.freeze({
+  email: 'push:releaseHold.people.what.email',
+  phone: 'push:releaseHold.people.what.phone',
+  birth: 'push:releaseHold.people.what.birth',
+  address: 'push:releaseHold.people.what.address',
+  name: 'push:releaseHold.people.what.name',
+});
+
+// The push for a notice that keeps data about people or adds a private key
+// ("Stylist: Now keeps people's email addresses"), or null for any other
+// notice. The first of RULES' order names it, as on the bell.
+function releaseHoldToldCopy(detail, label, withApp, t) {
+  const [rulesPart, tagsPart] = String(detail || '').replace(/^notice:/, '').split('|');
+  const rules = String(rulesPart || '').split(',');
+  const body = label ? t('push:releaseHold.notice.body.named', { title: label }) : t('push:releaseHold.notice.body.plain');
+  if (rules.includes('people')) {
+    const kinds = new Set(String(tagsPart || '').split(',').filter((tag) => tag.startsWith('people:'))
+      .map((tag) => tag.slice('people:'.length)));
+    const what = Object.keys(RELEASE_HOLD_PEOPLE_WHAT).filter((k) => kinds.has(k))
+      .map((k) => t(RELEASE_HOLD_PEOPLE_WHAT[k])).filter(Boolean)
+      .reduce((first, second) => (first ? t('push:releaseHold.people.pair', { first, second }) : second), '');
+    return {
+      title: withApp(what ? t('push:releaseHold.people.title', { what }) : t('push:releaseHold.people.titleAny')),
+      body,
+    };
+  }
+  if (rules.includes('secret')) return { title: withApp(t('push:releaseHold.secret.title')), body };
+  return null;
 }
 
 function buildCopy(kind, context, now, t) {
@@ -855,10 +932,11 @@ function buildCopy(kind, context, now, t) {
     case 'release_hold':
       // A detail that starts "notice:" is a change the rules could not read
       // in full, or (20 Nov 2026) one that asks for a device capability, which
-      // each person grants for themselves ("notice:capability|capability:camera"): it is
-      // not held, and the push says so.
+      // each person grants for themselves ("notice:capability|capability:camera"),
+      // keeps data about people or adds a private key
+      // ("notice:people|people:email"): it is not held, and the push says so.
       if (/^notice:/.test(String(detail || ''))) {
-        return releaseHoldAsksCopy(detail, label, withApp, t) || {
+        return releaseHoldAsksCopy(detail, label, withApp, t) || releaseHoldToldCopy(detail, label, withApp, t) || {
           title: withApp(t('push:releaseHold.notice.title')),
           body: label ? t('push:releaseHold.notice.body.named', { title: label }) : t('push:releaseHold.notice.body.plain'),
         };

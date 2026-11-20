@@ -37,7 +37,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { CheckIcon, PlusIcon, SpeechCheckIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CheckIcon, COMMUNITY_EMBLEMS, CommunityEmblem, PlusIcon, SpeechCheckIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
@@ -131,18 +131,39 @@ const LOGO_ORBS = 4;
  * a community has no logo of its own yet, and its app's icon is the app's
  * (`CommunityApps` draws that one, small).
  */
+/** The kit's four emblem colours (app.css `--wip-emblem-1` to `-4`: sun, sky, leaf, salmon). */
+const INK = (n: number) => `var(--wip-emblem-${(n % 4) + 1})`;
+
+/**
+ * A COMMUNITY'S OWN LOGO (20 Nov 2026, fourth drawing): one of the emblems
+ * (`CommunityEmblem`, in the glyph module) on a quiet ground, where a look tells a community from the apps it
+ * holds. Which emblem and which turn of the colours come from the community's
+ * slug, so a community always has the same one. It is a drawing, not a stored
+ * picture: a community has no logo of its own yet, and its app's icon is the
+ * app's (`CommunityApps` draws that one, small). `data-orb` and the two
+ * `--logo-*` values are the third drawing's (a soft glow), still what a look
+ * without the emblems paints.
+ */
 export function CommunityLogo({ slug }: { slug: string; name?: string }) {
   const next = logoRandom(slug);
   const orb = Math.floor(next() * LOGO_ORBS) + 1;
   const at = (n: number) => `${30 + Math.floor(n * 3) * 20}%`;
+  const x = at(next());
+  const y = at(next());
+  const emblem = Math.floor(next() * COMMUNITY_EMBLEMS);
+  const turn = Math.floor(next() * 4);
+  const colours = [0, 1, 2, 3].map((n) => INK(n + turn));
   return (
     <span
       className={`${FACE} home-community-logo`}
       data-scene={String(communityScene(slug))}
       data-orb={String(orb)}
-      style={{ ['--logo-x' as string]: at(next()), ['--logo-y' as string]: at(next()) }}
+      data-emblem={String(emblem + 1)}
+      style={{ ['--logo-x' as string]: x, ['--logo-y' as string]: y }}
       aria-hidden="true"
-    />
+    >
+      <CommunityEmblem className="home-community-emblem" emblem={emblem} colours={colours} />
+    </span>
   );
 }
 

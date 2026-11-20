@@ -5323,19 +5323,25 @@ async function openDraftThread(pool, { bot, user, conversationId, message, kind,
 }
 
 // Where a draft's private thread went, once it is decided: filed or posted
-// (`ref` the request's number), or put away. Nothing for a draft said in
-// Main. Never throws.
-async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) {
+// (`ref` the request's number, on `appId`'s project), or put away. Nothing
+// for a draft said in Main. Never throws.
+//
+// 20 Nov 2026: the project goes with the number. A thread started on no
+// project ("Any project") has no app of its own, and a draft the bot said in
+// it was filed on one: the thread kept the number and lost the project, so
+// its head read "Filed as request #6861 on ." with no way to the request.
+async function notePrivateDraft(pool, { userId, messageId, state, ref = null, appId = null }) {
   if (!messageId) return;
   await pool.query(
-    `UPDATE private_threads p SET state = $3, result_ref = COALESCE($4, p.result_ref), updated_at = NOW()
+    `UPDATE private_threads p SET state = $3, result_ref = COALESCE($4, p.result_ref),
+            app_id = COALESCE(p.app_id, $5), updated_at = NOW()
        FROM conversation_messages m
       WHERE m.id = $1 AND p.root_message_id = m.thread_root_id AND p.user_id = $2 AND p.state = 'open'
         -- 14 Nov 2026: a draft said in a thread that is not its own (the
         -- bot's hello, a first version, Earlier chat, a note) leaves that
         -- thread as it is: only the draft's card says where it went.
         AND p.kind NOT IN ('hello', 'first_version', 'earlier', 'note')`,
-    [Number(messageId), Number(userId), state, ref == null ? null : Number(ref)],
+    [Number(messageId), Number(userId), state, ref == null ? null : Number(ref), appId == null ? null : Number(appId)],
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
@@ -6243,7 +6249,7 @@ async function settleOffer(pool, config, {
       extras, conversationId: action.conversation_id,
     });
     await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
-    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber });
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber, appId: app.id });
     // 31 Oct 2026: the draft's card says what it became. It kept saying "not
     // filed yet" after File it filed it as #6071: the number went to the
     // offer's row and the thread's, never to the message the card is drawn
@@ -7679,7 +7685,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
       return failed(err.message, later);
     }
     if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
-    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n });
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n, appId: app.id });
     require('./bot-work-changed').noteWorkChanged(user.id, deps);
     return ack(revisingLine({ title: session.title, projectName: name, queued: posted.queued ?? null }), {
       objects: [{ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) }],
@@ -7708,7 +7714,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
     return failed(err.message, later);
   }
   if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
-  await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n });
+  await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n, appId: app.id });
   // A change to a complicated change's plan (#4488): the plan stops waiting
   // and is planned again with it (homeroom-bot-dm.js changeOnRequest).
   if (action.title === 'plan_change') {

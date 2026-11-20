@@ -66,6 +66,7 @@ import { Button } from '@/components/ui/button';
 import { MakeSheet } from './bot-make';
 import { reopenThread } from './private-thread-done';
 import { TrackBar, trackShort, trackStateWord, useTrackOf } from './bot-track';
+import { ThreadFoot } from '../dev-board/topic/thread-card';
 import type { BotTrack } from './types';
 
 export interface PrivateThreadState {
@@ -432,15 +433,97 @@ export function PrivateThreadNote({ where, rootId = null, onChanged }: {
     );
   }
   if (where.state === 'filed' || where.state === 'posted') {
-    const id = where.state === 'filed' ? 'messages:privateThread.filed' : 'messages:privateThread.posted';
+    // 20 Nov 2026: a thread whose project is not known says the number
+    // alone; it read "Filed as request #6861 on ." (notePrivateDraft kept no
+    // project for a thread started on none, and now does).
+    const project = where.app?.name || where.app?.slug || '';
+    const id = where.state === 'filed'
+      ? (project ? 'messages:privateThread.filed' : 'messages:privateThread.filedNoProject')
+      : (project ? 'messages:privateThread.posted' : 'messages:privateThread.postedNoProject');
     return (
       <div className="messages-bot-note px-4 py-2" data-private-thread={where.state}>
-        {t(id, { number: where.number ?? '', project: where.app?.name || '' })}
+        {t(id, { number: where.number ?? '', project })}
         {where.href ? <>{' · '}<a href={where.href}>{t('messages:privateThread.open')}</a></> : null}
       </div>
     );
   }
   return <div className="messages-bot-note px-4 py-2" data-private-thread="open">{t('messages:privateThread.label')}</div>;
+}
+
+/**
+ * WHERE THE THREAD WENT, AS ITS OPENING CARD'S FOOT (20 Nov 2026). A private
+ * thread is drawn on a public thread's page (../group-chat/thread-page.tsx),
+ * and a request's card says where it stands in its foot, so the opening card
+ * of a private thread says where the thread went in the same foot
+ * (dev-board/topic/thread-card.tsx ThreadFoot): filed, posted, made into a
+ * project or done, with the way there, or Reopen. A filed thread whose
+ * request can be followed says where the request stands now, in the track's
+ * own words with its steps, as the strip over the thread did
+ * (RequestTrackStrip). Nothing while it is open: the head already says that
+ * only they can see it. It replaces PrivateThreadNote on that page, which
+ * stands loose between the head and the thread elsewhere.
+ */
+export function PrivateThreadFoot({ where, rootId = null, onChanged }: {
+  where: PrivateThreadState | null;
+  rootId?: number | null;
+  onChanged?: (state: PrivateThreadState['state']) => void;
+}): ReactNode {
+  const t = useMessages('messages');
+  const filed = filedRequestOf(where);
+  const track = useTrackOf(filed ? { appSlug: filed.slug, appName: filed.name, issueNumber: filed.number } : null);
+  if (!where) return null;
+  if (where.state === 'done') {
+    return (
+      <ThreadFoot what="private-done" headline={t('messages:privateThread.foot.done')} sub={t('messages:privateThread.done')}>
+        {rootId ? (
+          <button type="button" className="gc-vote-btn" data-private-thread-reopen=""
+            onClick={() => { void reopenThread(rootId).then((next) => { if (next) onChanged?.(next); }); }}>
+            {t('messages:privateThread.reopen')}
+          </button>
+        ) : null}
+      </ThreadFoot>
+    );
+  }
+  if (filed && track) {
+    const word = trackStateWord(track);
+    const short = trackShort(track);
+    return (
+      <ThreadFoot what="private-track" headline={word} sub={short === word ? null : short}>
+        <TrackBar track={track} className="w-16 shrink-0" />
+        <a className="gc-vote-btn inline-flex items-center" href={filed.href} data-private-track-open="">
+          {t('messages:privateThread.openRequest', { number: filed.number })}
+        </a>
+      </ThreadFoot>
+    );
+  }
+  const project = where.app?.name || where.app?.slug || '';
+  if (where.made && where.app?.slug) {
+    return (
+      <ThreadFoot what="private-made" headline={t('messages:privateThread.foot.made')} sub={project}>
+        <a className="gc-vote-btn inline-flex items-center" href={`#app/${encodeURIComponent(where.app.slug)}`}>{t('messages:privateThread.open')}</a>
+      </ThreadFoot>
+    );
+  }
+  if (where.state === 'filed' || where.state === 'posted') {
+    const number = where.number ?? '';
+    const sub = where.state === 'filed'
+      ? (project ? t('messages:privateThread.foot.filedOn', { number, project }) : t('messages:privateThread.foot.filedAs', { number }))
+      : (project ? t('messages:privateThread.foot.postedOn', { number, project }) : t('messages:privateThread.foot.postedAs', { number }));
+    return (
+      <ThreadFoot
+        what={`private-${where.state}`}
+        headline={where.state === 'filed' ? t('messages:privateThread.foot.filed') : t('messages:privateThread.foot.posted')}
+        sub={sub}
+      >
+        {where.href ? (
+          <a className="gc-vote-btn inline-flex items-center" href={where.href} data-private-thread-open="">
+            {where.number ? t('messages:privateThread.openRequest', { number: where.number }) : t('messages:privateThread.open')}
+          </a>
+        ) : null}
+      </ThreadFoot>
+    );
+  }
+  return null;
 }
 
 /** The thread's foot: New project, when Homeroom bot offers one, and who it is for. */

@@ -43,8 +43,10 @@ export type ReviewScreen = {
   density?: number;
   /** Denser stills of parts of the after side, `rect` in CSS px of this screen. */
   closeups?: Closeup[];
-  before: { url: string; height: number; srcSet?: string; placeholder?: string | null };
-  after: { url: string; height: number; srcSet?: string; placeholder?: string | null };
+  // `thumb` is the thumbnail copy's address (lib/shot-img.ts): the middle
+  // layer a slot draws before the sharp picture, and what a tile loads.
+  before: { url: string; height: number; srcSet?: string; placeholder?: string | null; thumb?: string | null };
+  after: { url: string; height: number; srcSet?: string; placeholder?: string | null; thumb?: string | null };
   regions: Region[];
   /** The declared changes this screen shows, by number (1 is the first claim). */
   changes?: number[];
@@ -636,7 +638,7 @@ export type Closeup = { url: string; rect: Box; density: number };
 export type TitlePlate = {
   x: number; y: number; w: number; h: number; r: number;
   /** The still, placed so the piece shows inside the plate; null for a deck's back plate. */
-  img: { url: string; left: number; top: number; width: number; height: number } | null;
+  img: { url: string; srcSet?: string; sizes?: string; left: number; top: number; width: number; height: number } | null;
   /** A deck's back plate: one plain tone. */
   fill?: string;
   z: number;
@@ -733,7 +735,14 @@ function plateFor(p: TitlePiece, b: Box, s: number, cx: number, cy: number, z: n
     x, y, w, h, r: Math.min(COVER.radius, h / 2), z,
     img: c
       ? { url: c.url, left: (c.rect.x - b.x) * s, top: (c.rect.y - b.y) * s, width: c.rect.w * s, height: c.rect.h * s }
-      : { url: p.screen.after.url, left: -b.x * s, top: -b.y * s, width: p.screen.width * s, height: p.screen.after.height * s },
+      // The whole screen at its drawn width: the browser takes the smallest
+      // copy sharp for it (the thumbnail at a sheet's usual sizes), not the
+      // full PNG it used to load for every plate.
+      : {
+        url: p.screen.after.url,
+        ...(p.screen.after.srcSet ? { srcSet: p.screen.after.srcSet, sizes: `${Math.max(1, Math.round(p.screen.width * s))}px` } : {}),
+        left: -b.x * s, top: -b.y * s, width: p.screen.width * s, height: p.screen.after.height * s,
+      },
   };
 }
 

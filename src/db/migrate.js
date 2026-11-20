@@ -250,6 +250,9 @@ async function migrate(config) {
   // while its own required checks finish, so the change page has the Merging
   // card to show. A fresh copy never meets it: GitHub has to refuse a merge.
   await seedStagingGithubChecksHold(pool);
+  // The admin limits area's shots: the bot's credit under its warning line,
+  // so a full admin's Notifications sheet has a row to show.
+  await seedStagingPlatformLimit(pool);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
   await seedStagingGroupedFollowOns(pool, config);
@@ -2293,6 +2296,45 @@ async function seedStagingBotWaitingRows(pool) {
           ],
         );
       }
+      // 20 Nov 2026 (#6914): a request's page whose Homeroom bot reply carries
+      // a comparison, so the shots can show it drawn under the reply with
+      // nothing running. Obviously fake and inert (no script, no address);
+      // idempotent by its stagingDemo mark; a no-op outside staging.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '10 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'thread-comparison')`,
+        [
+          appId, botRow.rows[0].id,
+          'Staging demo: here they are side by side. Today\'s filter row on the left, the request\'s on the right.',
+          JSON.stringify({
+            stagingDemo: 'thread-comparison',
+            homeroomBot: {
+              kind: 'voice',
+              comparison: {
+                title: 'Before and after',
+                html: '<!doctype html><html><head><style>'
+                  + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+                  + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+                  + 'h3{margin:0 0 8px;font-size:14px}'
+                  + '.chips{display:flex;gap:6px;flex-wrap:wrap}'
+                  + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+                  + '.chip.new{background:#dbe8ff}'
+                  + 'p{margin:8px 0 0;color:#71717a;font-size:12px}'
+                  + '</style></head><body><div class="cols">'
+                  + '<div><h3>Today</h3><div class="chips"><span class="chip">Open</span><span class="chip">Mine</span>'
+                  + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+                  + '<div><h3>With this change</h3><div class="chips"><span class="chip new">Open</span>'
+                  + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+                  + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+                  + '</div></body></html>',
+              },
+            },
+          }),
+        ],
+      );
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
@@ -2512,6 +2554,28 @@ async function seedStagingChangePictures(pool) {
         caption: `${picture.subject} · ${picture.sha.slice(0, 7)}`,
       })),
     };
+    // 20 Nov 2026: the comparison a thread reply carries is drawn under it,
+    // static, with nothing running (homeroom-bot-voice.js say). A fresh
+    // staging copy has no model to lay one out, so this obviously fake one is
+    // stored with the reply. It is inert markup: no script, no address.
+    const comparison = {
+      title: 'Staging demo: the filter row, today and with this change',
+      html: '<!doctype html><html><head><style>'
+        + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+        + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+        + 'h3{margin:0 0 8px;font-size:14px}'
+        + '.row{display:flex;gap:6px;margin:0 0 8px;flex-wrap:wrap}'
+        + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+        + '.chip.new{background:#dbe8ff}'
+        + 'p{margin:0;color:#71717a;font-size:12px}'
+        + '</style></head><body><div class="cols">'
+        + '<div><h3>Today</h3><div class="row"><span class="chip">Open</span><span class="chip">Mine</span>'
+        + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+        + '<div><h3>With this change</h3><div class="row"><span class="chip new">Open</span>'
+        + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+        + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+        + '</div></body></html>',
+    };
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
        SELECT $1, $2, 'Here is what this change looks like, drawn from bbbbbbb, its newest version: the admit email as it is today and with this change.',
@@ -2520,7 +2584,7 @@ async function seedStagingChangePictures(pool) {
                            WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $3
                              AND metadata->>'stagingDemo' = 'change-pictures')`,
       [app.id, bot.id, Number(change.id), JSON.stringify({
-        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery },
+        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery, comparison },
       })],
     );
   } catch (err) {
@@ -10852,7 +10916,7 @@ async function seedSizedCopies(pool, file) {
   for (const name of ['thumb', 'screen']) {
     const copy = copies[name];
     if (!copy) continue;
-    await withStagingMedia(pool, copy.data, 'image/webp', (tx, m) => Promise.resolve(m));
+    await withStagingMedia(pool, copy.data, copy.contentType || 'image/webp', (tx, m) => Promise.resolve(m));
     keys[name] = copy;
   }
   if (!keys.thumb && !keys.screen && !copies.placeholder) return;
@@ -10860,14 +10924,14 @@ async function seedSizedCopies(pool, file) {
     `UPDATE shot_artifacts
         SET thumb_object_key = $2, thumb_width = $3, thumb_height = $4, thumb_bytes = $5, thumb_sha256 = $6,
             screen_object_key = $7, screen_width = $8, screen_height = $9, screen_bytes = $10, screen_sha256 = $11,
-            placeholder = $12
+            placeholder = $12, thumb_content_type = $13, screen_content_type = $14
       WHERE id = $1`,
     [file.id,
       keys.thumb ? media.objectKey(keys.thumb.data) : null, keys.thumb?.width ?? null, keys.thumb?.height ?? null,
       keys.thumb?.bytes ?? null, keys.thumb?.sha256 ?? null,
       keys.screen ? media.objectKey(keys.screen.data) : null, keys.screen?.width ?? null, keys.screen?.height ?? null,
       keys.screen?.bytes ?? null, keys.screen?.sha256 ?? null,
-      copies.placeholder]
+      copies.placeholder, keys.thumb?.contentType ?? null, keys.screen?.contentType ?? null]
   );
 }
 
@@ -13884,6 +13948,40 @@ async function seedStagingRestartEligibleMerge(pool, config) {
 // request), idempotent, and strictly a no-op outside staging. Its session id
 // is apart from every other fixture's and in a range no real session can
 // reach.
+// The admin limits area's shots (services/platform-limits-view.js,
+// frontend/src/features/notifications/platform-limits.tsx): a fresh staging
+// copy carries production's credit state, which is usually well above the
+// warning line, so the area would have nothing to show. This writes a sample
+// state under it: $184 left, about two days at the week's spend, read just
+// now. Staging only; the preview's own credit sweep replaces it on its next
+// read (and with no OpenRouter key in the preview, keeps the figure and says
+// it could not check, which the area also shows). Warnings are never sent
+// from staging (openrouter-credit.js isStaging), so no admin is told.
+async function seedStagingPlatformLimit(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const state = {
+    balanceCents: 18400,
+    accountCents: 18400,
+    keyCents: null,
+    dailyCents: 9200,
+    at: new Date().toISOString(),
+    armed: { low: false, urgent: false },
+    outage: null,
+    stagingFixture: 'platform limits area',
+  };
+  try {
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ('homeroom_bot_credit_state', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(state)],
+    );
+    log.info('db', 'Staging platform-limit fixture seeded', { balanceCents: state.balanceCents });
+  } catch (err) {
+    log.warn('db', 'Staging platform-limit fixture failed', { err: err.message });
+  }
+}
+
 async function seedStagingGithubChecksHold(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   const SESSION_ID = 999_999_991;
@@ -17014,6 +17112,7 @@ module.exports = {
   seedStagingBotFixesPlatform,
   // #6563: the approved change GitHub is holding, the Merging card's shot.
   seedStagingGithubChecksHold,
+  seedStagingPlatformLimit,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.

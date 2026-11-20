@@ -1494,6 +1494,9 @@ const GroupChat = {
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
       // #6533: what a change looks like, under Homeroom bot's reply in its thread.
       botGallery: GroupChat._botGalleryView(kind === 'message' && !deleted ? meta : null),
+      // 20 Nov 2026: the comparison the bot laid out, drawn under its reply
+      // in a project thread (homeroom-bot-voice.js say), or null.
+      botComparison: GroupChat._botComparisonView(kind === 'message' && !deleted ? meta : null),
       // #6684: a note sent into a build from this request, under the reply
       // that says so (homeroom-bot-voice.js say).
       botBuildNote: GroupChat._botBuildNoteView(kind === 'message' && !deleted ? meta : null),
@@ -1516,6 +1519,22 @@ const GroupChat = {
     const gallery = bot && bot.gallery;
     return gallery && gallery.purpose === 'change' && Array.isArray(gallery.images) && gallery.images.length
       ? gallery : null;
+  },
+
+  /**
+   * 20 Nov 2026: the HTML comparison a reply carries (homeroom-bot-voice.js
+   * say, metadata.homeroomBot.comparison): drawn under the reply in the one
+   * static frame, with nothing in it running. Only the bot's own voice
+   * message can carry one, and only as long as a laid-out reply.
+   */
+  _botComparisonView(meta) {
+    const bot = meta && meta.homeroomBot;
+    if (!bot || bot.kind !== 'voice' || bot.offer) return null;
+    const comparison = bot.comparison;
+    if (!comparison || typeof comparison !== 'object' || Array.isArray(comparison)) return null;
+    if (typeof comparison.title !== 'string') return null;
+    const html = typeof comparison.html === 'string' ? comparison.html : '';
+    return html.trim() && html.length <= 60000 ? { title: comparison.title, html } : null;
   },
 
   // Task 2020 follow-up: the laid-out copy of a reply of Homeroom bot's in a

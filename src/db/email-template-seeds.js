@@ -307,12 +307,13 @@ const SEEDS = {
     release_hold: {
       name: ACTIONS.release_hold.label,
       layout: STANDARD_LAYOUT,
-      subject: `{{#if held}}⚠️ Approval needed: {{title}}{{else}}{{#if asks}}{{#if hasApp}}{{app}} now asks for a device capability: {{title}}{{else}}A change asks for a device capability: {{title}}{{/if}}{{else}}Not read in full: {{title}}{{/if}}{{/if}}`,
+      subject: `{{#if held}}⚠️ Approval needed: {{title}}{{else}}{{#if asks}}{{#if hasApp}}{{app}} now asks for a device capability: {{title}}{{else}}A change asks for a device capability: {{title}}{{/if}}{{else}}{{#if unread}}Not read in full: {{title}}{{else}}For your information: {{title}}{{/if}}{{/if}}{{/if}}`,
       preheader: `{{#if held}}{{#if hasApp}}A change in {{app}} is held until an admin votes yes.{{else}}A change is held until an admin votes yes.{{/if}}`
         + `{{else}}{{#if asks}}{{#if hasApp}}A change in {{app}} asks for a device capability. It is not held.{{else}}A change asks for a device capability. It is not held.{{/if}}`
-        + `{{else}}{{#if hasApp}}A change in {{app}} was too large to read in full. It is not held.{{else}}A change was too large to read in full. It is not held.{{/if}}{{/if}}{{/if}}`,
+        + `{{else}}{{#if unread}}{{#if hasApp}}A change in {{app}} was too large to read in full. It is not held.{{else}}A change was too large to read in full. It is not held.{{/if}}`
+        + `{{else}}{{#if hasApp}}A change in {{app}} is not held. Here is what it does.{{else}}A change is not held. Here is what it does.{{/if}}{{/if}}{{/if}}{{/if}}`,
       why: `You are receiving this because you are an administrator of Homeroom, and `
-        + `{{#if held}}a change is waiting for an administrator's approval.{{else}}{{#if asks}}a change asks for a device capability.{{else}}Homeroom could not read a change in full.{{/if}}{{/if}}`,
+        + `{{#if held}}a change is waiting for an administrator's approval.{{else}}{{#if asks}}a change asks for a device capability.{{else}}{{#if unread}}Homeroom could not read a change in full.{{else}}a change does something administrators are told about.{{/if}}{{/if}}{{/if}}`,
       html: `{{#if held}}`
         + `<p style="margin:0 0 12px;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#a85f00">⚠️ Held for an admin</p>`
         + `<p><strong>{{title}}</strong>{{#if hasApp}} in {{app}}{{/if}}{{#if hasAuthor}}, by {{author}},{{/if}} cannot go live until an administrator approves it.</p>`
@@ -325,6 +326,7 @@ const SEEDS = {
         + `<p>Why you are told: {{reasons}}</p>`
         + `{{#if asks}}<p>Nobody's camera, microphone or location is reached by this alone: each person is asked before the app can use it, and chooses Allow this time, Always allow or Not now. You do not need to do anything.</p>{{/if}}`
         + `{{#if unread}}<p>Homeroom's risk rules read only the first part of it, most often because it includes a large built file. You do not need to do anything. Open the change if you want to look at the rest.</p>{{/if}}`
+        + `{{#if asks}}{{else}}{{#if unread}}{{else}}<p>You do not need to do anything. Open the change if you want to look at it.</p>{{/if}}{{/if}}`
         + `<p><a href="{{url}}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#0a6ee0;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Open the change</a></p>`
         + `{{/if}}`,
       text: `{{#if held}}`
@@ -339,6 +341,7 @@ const SEEDS = {
         + `Why you are told: {{reasons}}\n\n`
         + `{{#if asks}}Nobody's camera, microphone or location is reached by this alone: each person is asked before the app can use it, and chooses Allow this time, Always allow or Not now. You do not need to do anything.\n\n{{/if}}`
         + `{{#if unread}}Homeroom's risk rules read only the first part of it, most often because it includes a large built file. You do not need to do anything. Open the change if you want to look at the rest.\n\n{{/if}}`
+        + `{{#if asks}}{{else}}{{#if unread}}{{else}}You do not need to do anything. Open the change if you want to look at it.\n\n{{/if}}{{/if}}`
         + `Open the change: {{url}}`
         + `{{/if}}`,
     },

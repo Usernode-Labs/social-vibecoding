@@ -150,6 +150,10 @@ const APP_SLEEP_LOCK = 991027;
 // CLASSIFIER half of a transaction lock on the person, as VOTE_DIGEST_LOCK,
 // so two projects' claims for one person cannot both pass the one-a-week cap.
 const INVITE_NUDGE_LOCK = 991031;
+// The text alerts sweep (services/limit-texts.js): session-scoped and held
+// for one pass, so two processes' clocks cannot both text the same crossing
+// before either has written its mark. A pass that cannot take it skips.
+const LIMIT_TEXTS_LOCK = 991032;
 // Review B3 (19 Nov 2026): one writer at a time of one stored work state
 // (services/work-state.js refresh): the CLASSIFIER half of
 // `pg_try_advisory_xact_lock(classifier, hashtext(item))`, transaction-
@@ -165,4 +169,4 @@ module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDA
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
   CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK,
-  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK, INVITE_NUDGE_LOCK, WORK_STATE_ITEM_LOCK };
+  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK, INVITE_NUDGE_LOCK, LIMIT_TEXTS_LOCK, WORK_STATE_ITEM_LOCK };

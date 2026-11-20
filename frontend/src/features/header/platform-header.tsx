@@ -81,6 +81,7 @@ import '../improve/improve-status.js';
 // publishes the controller; this pulls both in.
 import '../notifications/mount';
 import { LookPicker } from '../frame/look-picker';
+import { PlatformLimitsDot } from '../notifications/platform-limits';
 
 // LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
 // the ramp, and `zinc-100` there is #eaeaea — byte-identical to the light page
@@ -739,6 +740,10 @@ export function PlatformHeader() {
               aria-label={t('core:header.unreadNotifications')}
             >
             </span>
+            {/* Full admins only: a red dot while a platform limit is
+                refusing people now (../notifications/platform-limits.tsx).
+                Renders nothing until its figures arrive. */}
+            <PlatformLimitsDot />
           </a>
           {/*
               THE MARK, LAST, and the corner is the whole argument for the

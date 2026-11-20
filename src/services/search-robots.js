@@ -73,6 +73,19 @@ function withRobots(existing, rule) {
 }
 
 /**
+ * The X-Robots-Tag a shell answer of the platform itself carries: none for
+ * the front page, which is the page a search engine should find, and
+ * noindex for every other address (`/app/<slug>` of a private or unknown
+ * project, `/app/<slug>/workshop`, `/thread/…`, `/invite/…`). A crawler
+ * carries no session, so anything a signed-in person sees is a state it must
+ * not list. Public project pages are answered by services/project-preview.js
+ * before this and stay indexable.
+ */
+function shellRobots({ path } = {}) {
+  return path === '/' ? null : NOINDEX;
+}
+
+/**
  * The `Link` header that names the shell front page's one address, or null.
  * Only for `/` on production: a query string (`?report=app`, `?demo=1`) is
  * the same page. Every other shell address is left alone; a public
@@ -92,5 +105,6 @@ module.exports = {
   isPreviewHost,
   appHostRobots,
   withRobots,
+  shellRobots,
   shellCanonicalLink,
 };

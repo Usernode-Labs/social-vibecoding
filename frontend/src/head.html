@@ -62,6 +62,11 @@
        this title REQUIRES a SW_VERSION bump in public/sw.js, or existing
        installs keep serving the precached document with the old name. -->
   <title>Homeroom</title>
+  <!-- What a search engine shows under the title. The shell document is
+       served for every path, so this line is the home page's description
+       only: a public project's page has it removed and its own inserted
+       (src/services/project-preview.js). -->
+  <meta name="description" content="Homeroom is where people make apps together: suggest a change, vote on it, and see it go live.">
   <!-- The browser-chrome colour, and the ground the shell paints on before
        any stylesheet has loaded. Both live UP HERE, ahead of the theme
        module, because that module rewrites the metas from the resolved theme

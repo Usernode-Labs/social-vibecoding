@@ -101,8 +101,10 @@ test('in a side panel the thread is the same three cards, and the picture is one
   const css = read('public/css/app.css');
   const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
-  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
+  // 20 Nov 2026: a private thread in the bot tab's column is the same page, and its two cards the same cards.
+  const priv = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread';
+  assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\),\\n${esc(priv)} :is\\(\\[data-thread-page-post\\], \\[data-thread-page-replies\\]\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
+  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet,\\n${esc(priv)} > \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-thread-kicker \{ display: none; \}/, 'the panel\'s head already names the project and the number');
   const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
   assert.match(brand, /\.dev-request \{ --thread-ground-look: var\(--bl-page\); \}/);
@@ -626,7 +628,8 @@ test('a foot with a vote to cast folds into the header once it has gone up behin
   assert.match(change, /const floating = float && footVote \? \{\s*sub: dotLine\(facts\.map\(\(f\) => f\.replace\(\/\[\.\\s\]\+\$\/, ''\)\)\) \|\| null,\s*actions: <>\{failed \? null : testAction\}\{footVote\}<\/>,/);
   // One card: the header's lower corners go square and its drop shadow
   // gives way while the row is there; the row ends the card. On a wide page
-  // the timeline beside the card steps down for it.
+  // the head ends where the card does (20 Nov 2026), so the timeline beside
+  // it no longer steps down for the row.
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf('THE VOTE FOLDS INTO THE HEADER'), css.indexOf("/* THE PAGE'S WAY BACK, AT THE PILL'S START."));
   assert.ok(block.length > 0, 'the fold sits in the header pill\'s own block');
@@ -634,8 +637,8 @@ test('a foot with a vote to cast folds into the header once it has gone up behin
   // 19 Nov 2026: at the head card's 20px corners, no longer the capsule's ends.
   assert.match(block, /\.dev-thread-float \{[^}]*border-radius: 0 0 20px 20px;/);
   assert.match(block, /\.dev-request-bar \.messages-thread-header \{\s*position: relative;\s*z-index: 1;\s*\/\* The head's corners, as a length they can ease from\. \*\/\s*border-radius: 20px;/);
-  assert.match(block, /\.dev-request-bar > \.messages-thread-header \{ transition: border-radius 180ms ease; \}/);
-  assert.match(block, /:has\(\.dev-thread-float\) \.dev-request-rail \{\s*top: 64px;/);
+  assert.match(block, /\.dev-request-bar > \.messages-thread-header \{ transition: border-radius 180ms ease, padding 180ms ease, box-shadow 180ms ease; \}/);
+  assert.doesNotMatch(css, /:has\(\.dev-thread-float\) \.dev-request-rail \{/, 'the row is in the card\'s column, beside the timeline');
 });
 
 test('the picture\'s chip says what the side is for this change', () => {

@@ -138,7 +138,7 @@ test('the detail token round-trips and fits the 32-character column', () => {
 
 // ─── 2. evaluate() against a recording pool ─────────────────────────────
 
-function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, setting = null, windowMs = null, refusalsSince = null } = {}) {
+function fakePool({ apps = 0, sessions = 0, connections = 10, level = 'ok', countError = null, setting = null, windowMs = null, refusalsSince = null } = {}) {
   const state = { level, windowMs, refusalsSince, queries: [], updates: [] };
   return {
     state,
@@ -151,6 +151,11 @@ function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, set
         return { rows: [{ n: apps }] };
       }
       if (/FROM chat_sessions/.test(sql)) return { rows: [{ cnt: sessions }] };
+      // The connections limit: its line, and the census's count.
+      if (/superuser_reserved_connections/.test(sql)) return { rows: [{ cap: 97 }] };
+      if (/FROM pg_stat_activity|homeroom_connection_counts/.test(sql)) {
+        return { rows: /GROUP BY datname|WHERE datname/.test(sql) ? [] : [{ max: 100, used: connections, idle: 0 }] };
+      }
       // services/app-limit.js: the admin's app limit, when one is stored.
       if (/FROM platform_settings s/.test(sql)) {
         return { rows: setting == null ? [] : [{ value: String(setting), updated_at: null, updated_by: 'ada' }] };
@@ -219,7 +224,7 @@ test('a crossing is recorded and announced in one transaction, then published', 
   const commit = sqls.indexOf('COMMIT');
   assert.ok(begin >= 0 && begin < lock && lock < update && update < commit,
     'the level is read under a row lock and written before the commit');
-  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 40, 50, true, null]);
+  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 40, 50, true, null, null]);
 });
 
 test('the same crossing evaluated again is silent', async () => {
@@ -229,7 +234,7 @@ test('the same crossing evaluated again is silent', async () => {
   assert.equal(out.notified, null);
   assert.deepEqual(calls.create, []);
   assert.deepEqual(calls.publish, []);
-  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 41, 50, false, null],
+  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 41, 50, false, null, null],
     'the figures are still refreshed');
 });
 
@@ -291,7 +296,7 @@ test('a cap that is off records ok and pages nobody', async () => {
   const out = await limits.evaluate(pool, { maxApps: 0 }, 'apps', deps);
   assert.equal(out.level, 'ok');
   assert.deepEqual(calls.create, []);
-  assert.deepEqual(pool.state.updates[0], ['apps', 'ok', 900, null, false, null]);
+  assert.deepEqual(pool.state.updates[0], ['apps', 'ok', 900, null, false, null, null]);
   assert.equal(out.cap, 0);
 });
 
@@ -301,11 +306,14 @@ test('the sweep checks every cap and one failure does not stop the others', asyn
   const { calls, deps } = recorder();
   const out = await limits.sweep(pool, CONFIG, deps);
   assert.deepEqual(out.errors, ['apps: db down']);
-  assert.deepEqual(out.results.map((r) => r.key), ['sessions', 'github_app']);
+  assert.deepEqual(out.results.map((r) => r.key),
+    ['sessions', 'connections', 'github_app', 'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool']);
   // A process that has not heard from GitHub yet records nothing: "ok"
   // would re-arm a crossing already told (each new leader used to).
-  assert.deepEqual(out.results.slice(1).map((r) => [r.level, r.unknown]), [[null, true]],
+  assert.deepEqual(out.results.slice(2, 3).map((r) => [r.level, r.unknown]), [[null, true]],
     'nothing known about GitHub records nothing');
+  // Off Kubernetes, the cluster's own limits measure nothing and record nothing.
+  assert.ok(out.results.slice(3).every((r) => r.unknown && r.level === null), 'no cluster limit applies here');
   assert.ok(!pool.state.queries.some((q) => /platform_limit_alerts/.test(q.sql) && /github/.test(JSON.stringify(q.params))),
     'no GitHub level is written');
   assert.deepEqual(calls.create, [{ detail: 'sessions_warn:60:75' }]);
@@ -753,7 +761,7 @@ test('refusals are recorded once a day and reported, against a real database', {
 });
 
 test('the detail format is spelled identically wherever it is parsed', () => {
-  const literal = String.raw`/^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
+  const literal = String.raw`/^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
   for (const rel of [
     'src/services/platform-limit-alerts.js',
     'src/services/mobile-push-policy.js',
@@ -761,8 +769,17 @@ test('the detail format is spelled identically wherever it is parsed', () => {
   ]) {
     assert.ok(read(rel).includes(literal), `${rel} parses the same token`);
   }
-  assert.deepEqual(limits.LIMITS.map((l) => l.key), ['apps', 'sessions', 'github_app'],
+  assert.deepEqual(limits.ALL_LIMITS.map((l) => l.key),
+    ['apps', 'sessions', 'connections', 'github_app', 'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool'],
     'a new cap must be added to the token pattern in all three places');
+  for (const limit of limits.ALL_LIMITS) {
+    // A quota's figure is thousandths of its hard value, clamped to 9999.
+    const widest = limit.key.startsWith('quota_')
+      ? limits.detailToken(limit.key, 'full', 9999, 1000)
+      : limits.detailToken(limit.key, 'full', 9999999, 9999999);
+    assert.ok(widest.length <= 32, `${widest} fits the 32 characters every creator keeps to`);
+    assert.ok(limits.parseDetail(widest), `${limit.key}'s token parses back`);
+  }
 });
 
 test('both tunables are declared so the Platform variables panel lists them', () => {
@@ -771,4 +788,71 @@ test('both tunables are declared so the Platform variables panel lists them', ()
   assert.equal(keys.get('MAX_APPS')?.default, '50', 'matches src/config.js');
   assert.equal(keys.get('PLATFORM_LIMIT_WARN_PERCENT')?.default, String(limits.DEFAULT_WARN_PERCENT));
   assert.match(read('src/config.js'), /maxApps: parseInt\(process\.env\.MAX_APPS \|\| '50', 10\)/);
+});
+
+test('database connections cross like the other limits: one notice per crossing, with the margin', async () => {
+  const pool = fakePool({ connections: 80 });
+  const { calls, deps } = recorder();
+  const warn = await limits.evaluate(pool, CONFIG, 'connections', deps);
+  assert.deepEqual([warn.level, warn.used, warn.cap], ['warn', 80, 97], 'the line is max_connections less the reserved blocks');
+  assert.deepEqual(calls.create, [{ detail: 'connections_warn:80:97' }]);
+  await limits.evaluate(pool, CONFIG, 'connections', deps);
+  assert.equal(calls.create.length, 1, 'still near: no second notice');
+  const full = await limits.evaluate(fakePool({ connections: 97, level: pool.state.level }), CONFIG, 'connections', deps);
+  assert.equal(full.level, 'full');
+  assert.deepEqual(calls.create[1], { detail: 'connections_full:97:97' });
+  assert.ok('connections_full:9999999:9999999'.length <= 32, 'the widest token fits every creator');
+  assert.deepEqual(limits.parseDetail('connections_warn:80:97'), { limit: 'connections', level: 'warn', used: 80, cap: 97 });
+});
+
+// ─── The cluster's own (services/platform-capacity.js) ──────────────────
+
+const CLUSTER = {
+  ...CONFIG,
+  appRuntime: 'kubernetes',
+  kubernetes: { appNamespace: 'social-apps', workerNamespace: 'social-workers', buildNamespace: 'social-builds' },
+};
+
+function workersQuota(cpuPercent, cpuUsed) {
+  return {
+    listNamespaceCapacity: async () => [
+      { namespace: 'social-apps', resources: { pods: { used: '100', hard: '360', percent: 27.8 } } },
+      { namespace: 'social-workers', resources: {
+        pods: { used: '30', hard: '120', percent: 25 },
+        requestsCpu: { used: cpuUsed, hard: '48', percent: cpuPercent },
+      } },
+    ],
+  };
+}
+
+test('a namespace quota is measured once, stored with its tightest resource, and crosses like the others', async () => {
+  require('../src/services/platform-capacity').resetForTests();
+  const pool = fakePool();
+  const { calls, deps } = recorder();
+  const warn = await limits.evaluate(pool, CLUSTER, 'quota_workers', { ...deps, capacity: { kubernetes: workersQuota(91.7, '44') } });
+  assert.deepEqual([warn.level, warn.used, warn.cap], ['warn', 917, 1000], 'thousandths of the tightest resource');
+  assert.deepEqual(calls.create, [{ detail: 'quota_workers_warn:917:1000' }]);
+  assert.deepEqual(JSON.parse(pool.state.updates[0][6]),
+    { namespace: 'social-workers', resource: 'cpu', used: '44', hard: '48' }, 'what the figure is about is kept beside it');
+  await limits.evaluate(pool, CLUSTER, 'quota_workers', { ...deps, capacity: { kubernetes: workersQuota(93.8, '45') } });
+  assert.equal(calls.create.length, 1, 'still near: no second notice');
+  const full = await limits.evaluate(pool, CLUSTER, 'quota_workers', { ...deps, capacity: { kubernetes: workersQuota(100, '48') } });
+  assert.equal(full.level, 'full');
+  assert.deepEqual(calls.create.map((c) => c.detail), ['quota_workers_warn:917:1000', 'quota_workers_full:1000:1000']);
+});
+
+test('a cluster limit that does not apply here records nothing', async () => {
+  const pool = fakePool();
+  const { calls, deps } = recorder();
+  // Off Kubernetes.
+  const off = await limits.evaluate(pool, CONFIG, 'db_disk', deps);
+  assert.equal(off.unknown, true);
+  // The node pools before their read grant: the API's 403 is "not here yet".
+  const forbidden = Object.assign(new Error('forbidden'), { code: 403 });
+  const before = await limits.evaluate(pool, CLUSTER, 'node_pool', {
+    ...deps, capacity: { kubernetes: { listVolumePools: async () => { throw forbidden; } } },
+  });
+  assert.equal(before.unknown, true);
+  assert.equal(pool.state.queries.length, 0, 'no level row is touched');
+  assert.equal(calls.create.length, 0);
 });

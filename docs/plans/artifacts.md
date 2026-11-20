@@ -70,8 +70,8 @@ sandbox and policy, whole, and holds the two modules to the same text.
 | Mode | Sandbox | Scripts | Used by |
 |---|---|---|---|
 | `run` | `allow-scripts` | the page's own inline scripts | a design or a page, for its author: the pane, the version card, the comparison |
-| `static` | `""` | none | a plan's screens (all three places), a first look's drawn screen (served by its route with the same policy as a header), anyone but the author until they choose |
-| `helper` | `allow-scripts` | Homeroom's helper only, by a nonce made new for each frame (`script-src 'nonce-...'`) | the bot's laid-out answers, which must tell the chat their height and where their links are |
+| `static` | `""` | none | a plan's screens (all three places), a first look's drawn screen (served by its route with the same policy as a header), a change's email pictures (the thumbnail), a comparison the bot lays out in a thread, anyone but the author until they choose |
+| `helper` | `allow-scripts` | Homeroom's helper only, by a nonce made new for each frame (`script-src 'nonce-...'`) | the bot's laid-out answers, which must tell the chat their height and where their links are; an opened email, which must tell the viewer its height |
 
 Every mode: `default-src 'none'`, `connect-src 'none'` (no fetch, socket or
 beacon), `form-action 'none'`, `frame-src 'none'`, `base-uri 'none'`. A design
@@ -108,6 +108,14 @@ The viewer rule lives in the frame, with a test (`frameModeFor`):
 - A caller cannot hand a prebuilt or served document to a running frame.
 
 Today every running page is read from its author's own private thread.
+
+The last two surfaces are on it too (20 Nov 2026): a change's email pictures,
+the thumbnail static and the opened email in the helper mode (the per-frame
+nonce helper reports its height by message, so no frame is same-origin), and a
+comparison the thread voice lays out, drawn in the project thread in static
+mode instead of posted as an HTML file. The admin's email template editor is
+the one frame kept: it edits a template in place, shows no HTML the bot wrote,
+and needs to read its own document.
 
 ## The capability
 
@@ -181,6 +189,27 @@ drops its scripts.
   (`DESIGN_REPLY_TOOL`) serves both kinds. The `offer_request` variant that
   refuses the design's own project stays the design kind's.
 
+### Drafts get the same treatment (#6915)
+
+- **The skill.** A live draft's instructions are its own skill,
+  `src/prompts/artifact-draft.md`, read once and loaded only while a draft is
+  open (`live-draft-bot.js draftSkill`). It is written against the chat's own
+  rules: a question says first what makes it necessary and what its answer
+  changes (the prompt used to say "ask back when what they want is unclear"),
+  and nothing promises anything later. It says what the preview really runs
+  on, its own copy of the app's data. What is the draft's own (its files,
+  what has been saved, the app's notes, the opening note) is still added by
+  code.
+- **One edit function.** A draft's file edit runs `artifact-session.js
+  applyEdits`, as a design and a page do, at the draft's own
+  `DRAFT_LIMITS.editsPerCall` and with its own error sentences.
+- **Honest failures.** A failure on Homeroom's side (the preview, its
+  supervisor, or the platform under it) is said as Homeroom's, spends none of
+  the turn's applies and asks for no code change. An app that stopped after
+  an edit is the app's own failure, fixed or put back in the same turn. A
+  change that needs a full rebuild says so and how long it takes, and a
+  preview that never started leaves the draft's bar saying how to retry.
+
 ## The plan stays a document
 
 **Decided against: a plan as a free page with scripts.** Ten readers take
@@ -227,5 +256,4 @@ path serves an artifact to anyone but its author.
   is ever wanted, it needs a route with a header policy on the separate site
   `browser-site-isolation.md` describes (built, switched off), and the viewer
   rule above.
-- The thread voice's HTML comparison attachment and the gallery card's
-  `EmailFrame` keep their own frames for now.
+

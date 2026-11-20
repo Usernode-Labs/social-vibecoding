@@ -13776,17 +13776,30 @@ const AppView = {
 
   // #6825: a still's smaller copies (services/shots-view.js `sizes`) as one
   // srcset, smallest first, so a slot takes the smallest copy sharp for it
-  // and its screen. Empty for a still saved before the copies existed, which
-  // then loads its one url as it always did.
+  // and its screen. The original is listed only when no copy is as wide as
+  // it: a screen copy as wide as the PNG is the same picture in a fraction
+  // of the bytes, so the PNG stays `src` (the fallback) and is never picked.
+  // Empty for a still saved before the copies existed, which then loads its
+  // one url as it always did. frontend/src/lib/shot-img.ts shotSrcSet is the
+  // same rule.
   _shotSrcSet(artifact) {
     const copyOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}\?size=(?:thumb|screen)$/.test(String(url || ''));
-    const parts = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
-      .filter((copy) => copy && copyOk(copy.url) && Number(copy.width) > 0)
-      .map((copy) => `${copy.url} ${Math.round(Number(copy.width))}w`);
+    const copies = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
+      .filter((copy) => copy && copyOk(copy.url) && Number(copy.width) > 0);
+    const parts = copies.map((copy) => `${copy.url} ${Math.round(Number(copy.width))}w`);
     if (!parts.length) return '';
     const own = Number(artifact && artifact.width) > 0 ? Number(artifact.width) : 0;
-    if (own && artifact.url) parts.push(`${artifact.url} ${own}w`);
+    if (own && artifact.url && !copies.some((copy) => Number(copy.width) >= own)) parts.push(`${artifact.url} ${own}w`);
     return parts.join(', ');
+  },
+
+  // The thumbnail copy's own address, or '': the middle layer a slot draws
+  // between the blurred preview and the sharp picture.
+  _shotThumb(artifact) {
+    const copy = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
+      .find((one) => one && one.size === 'thumb'
+        && /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}\?size=thumb$/.test(String(one.url || '')));
+    return copy ? copy.url : '';
   },
 
   // The blurred preview a slot draws until its still decodes: the 20 px WebP
@@ -13889,14 +13902,18 @@ const AppView = {
         // #6825: a still with smaller copies carries their `srcSet` and the
         // `placeholder` it draws until one arrives; one saved before them
         // carries neither, exactly as it always did.
+        // The thumbnail's address rides along too, as the layer between the
+        // preview and the sharp picture, and what a tile loads.
         const side = (artifact, height) => {
           const srcSet = AppView._shotSrcSet(artifact);
           const placeholder = AppView._shotPlaceholder(artifact);
+          const thumb = AppView._shotThumb(artifact);
           return {
             url: artifact.url,
             height,
             ...(srcSet ? { srcSet } : {}),
             ...(placeholder ? { placeholder } : {}),
+            ...(thumb ? { thumb } : {}),
           };
         };
         return {
@@ -27585,10 +27602,13 @@ const AppView = {
         // #6825: the still takes the smallest copy sharp for this slot (its
         // stage is at most about 640 px wide), over its blurred preview, so
         // the picture arrives sooner and nothing moves when it lands.
+        // Behind it, the thumbnail over the blurred preview, so the slot goes
+        // blur, then soft, then sharp.
         const still = (artifact, cls) => {
           const set = AppView._shotSrcSet(artifact);
-          const preview = AppView._shotPlaceholder(artifact);
-          const style = preview ? ` style="${attr(`background-image:url("${preview}");background-size:cover;background-position:center`)}"` : '';
+          const layers = [AppView._shotThumb(artifact), AppView._shotPlaceholder(artifact)].filter(Boolean);
+          const each = (value) => layers.map(() => value).join(',');
+          const style = layers.length ? ` style="${attr(`background-image:${layers.map((one) => `url("${one}")`).join(',')};background-size:${each('cover')};background-position:${each('center')}`)}"` : '';
           // The slot's width, from the usable box (#THE USABLE BOX): the page
           // less its own margins, up to the stage's 640 px.
           const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) calc(var(--platform-usable-w) - 32px), 640px"` : '';

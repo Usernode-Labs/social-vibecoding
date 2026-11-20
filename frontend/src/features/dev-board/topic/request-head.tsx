@@ -51,7 +51,7 @@ import { TrackCard, trackClock, trackEyebrow, trackLinks } from '../../messages/
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
 import { TranslateNote, useTranslate } from '../../messages/translate';
-import { useThreadHeadFit } from './thread-head-fit';
+import { ThreadHeadCard } from './thread-head';
 import {
   STAGES,
   newestSpecVersion,
@@ -171,32 +171,28 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
   // standard bar's title. The bar above it carries the trail and the way
   // back (RequestHead below).
   const frame = isFrameSkin(useLiveSkin());
-  // 19 Nov 2026: the head card is measured and tightens as the thread
-  // scrolls (./thread-head-fit.ts).
-  const head = useRef<HTMLElement>(null);
-  useThreadHeadFit(head, !frame);
   if (frame) return <TopicFrameHead title={r.title} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
   // 18 Nov 2026: the bar is the thread's head (app.css), as a change's is
   // (./change-head.tsx ChangeBar). 19 Nov 2026: a card that leads with the
   // request's title; the project, the topic, the number and the status are
   // the small line over it, which app.css lays out from these same nodes.
+  // 20 Nov 2026: the card every thread page leads with (./thread-head.tsx),
+  // measured and tightened as the thread scrolls.
   const where = dotLine([threadProjectName(), r.category]);
   return (
-    <header ref={head} className="messages-thread-header">
-      <ThreadBarTile />
-      <div className="min-w-0 flex-1 dev-thread-bar-text">
-        {pill ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="messages-thread-kicker min-w-0" data-request-kicker="">{kicker}</div>
-            <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
-          </div>
-        ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
-        <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{title || r.title}</div>
-        {r.category
-          ? <div className="messages-thread-sub" data-request-category="">{where}</div>
-          : where ? <div className="messages-thread-sub">{where}</div> : null}
-      </div>
-      {menuKey ? (
+    <ThreadHeadCard
+      tile={<ThreadBarTile />}
+      line={pill ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="messages-thread-kicker min-w-0" data-request-kicker="">{kicker}</div>
+          <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
+        </div>
+      ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
+      title={<div className="messages-thread-name line-clamp-2 dev-request-bar-title">{title || r.title}</div>}
+      sub={r.category
+        ? <div className="messages-thread-sub" data-request-category="">{where}</div>
+        : where ? <div className="messages-thread-sub">{where}</div> : null}
+      menu={menuKey ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
@@ -208,8 +204,8 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
           <EllipsisHorizontalIcon aria-hidden="true" />
         </button>
       ) : null}
-      <ThreadExits />
-    </header>
+      exits={<ThreadExits />}
+    />
   );
 }
 

@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const liveDrafts = require('../src/services/live-drafts');
+const draftBot = require('../src/services/live-draft-bot');
 const supervisor = require('../src/services/live-draft-supervisor');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -367,5 +368,101 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     const closed = await liveDrafts.close(pool, { user: person, draftId: draft.id, deps });
     assert.equal(closed.body.draft.state, 'closed');
     assert.equal((await liveDrafts.close(pool, { user: person, draftId: draft.id, deps })).status, 404);
+  });
+
+  await t.test('a draft says Homeroom\'s failures as Homeroom\'s, and an app that stopped as the app\'s', async () => {
+    const root = await thread(person, project);
+    const opened = await liveDrafts.open(pool, CONFIG, { user: person, rootId: root, deps });
+    assert.equal(opened.status, 200, JSON.stringify(opened.body));
+    const draft = opened.body.draft;
+    await publish(draft);
+    let session = await draftBot.openSession(pool, CONFIG, { user: person, draft: await liveDrafts.byId(pool, draft.id), deps });
+    assert.ok(!session.refused, session.refused);
+    const applyChange = async (name) => {
+      const wrote = await session.run('write_file', { path: `draft-${name}.js`, content: `// ${name}\n` });
+      assert.equal(wrote.ok, true, JSON.stringify(wrote));
+      return session.run('apply_changes', { summary: name });
+    };
+    // The supervisor answers as this draft's head, then `applyAnswer`.
+    const serve = async (applyAnswer) => {
+      const before = await liveDrafts.byId(pool, draft.id);
+      preview = { status: { head: before.head_sha }, apply: () => applyAnswer };
+    };
+
+    // (a) The supervisor cannot be reached and the preview machine refuses
+    // to build again. Both are Homeroom's, so four applies all run: none of
+    // them spends a try.
+    preview = null;
+    const realRequest = previewWorkflow.request;
+    previewWorkflow.request = async () => ({ status: 'rejected', reason: 'quota_exceeded' });
+    try {
+      for (let i = 0; i < 4; i += 1) {
+        const out = await applyChange(`unreachable-${i}`);
+        assert.equal(out.preview, 'platform', JSON.stringify(out));
+        assert.match(out.note, /Homeroom had a problem on its side/);
+        assert.match(out.note, /asking again in a few minutes/i);
+      }
+    } finally {
+      previewWorkflow.request = realRequest;
+    }
+
+    // (b) The supervisor answers 500: platform words, and no try is spent.
+    for (let i = 0; i < 4; i += 1) {
+      await serve([500, { error: 'supervisor exploded' }]);
+      const out = await applyChange(`supervisor-${i}`);
+      assert.equal(out.preview, 'platform', JSON.stringify(out));
+      assert.match(out.note, /Homeroom had a problem on its side/);
+      assert.match(out.note, /Saved in the draft/);
+    }
+
+    // (c) The preview is refused when a draft opens: it never started, and
+    // the incident is recorded for the team.
+    const seen = [];
+    const incidents = {
+      KINDS: require('../src/services/platform-incidents').KINDS,
+      async record(_p, args) { seen.push(args); return 1; },
+    };
+    previewWorkflow.request = async () => ({ status: 'rejected', reason: 'quota_exceeded' });
+    try {
+      const another = await user();
+      const anotherProject = await app();
+      const refused = await liveDrafts.open(pool, CONFIG, {
+        user: another, rootId: await thread(another, anotherProject), deps: { ...deps, incidents },
+      });
+      assert.equal(refused.status, 200, JSON.stringify(refused.body));
+      assert.equal(refused.body.draft.live, 'failed');
+      assert.ok(seen.some((i) => i.detail.cause === 'quota_exceeded'), JSON.stringify(seen));
+    } finally {
+      previewWorkflow.request = realRequest;
+    }
+
+    // (d) The app stopped after an edit: its log comes back, and the try counts.
+    for (let i = 0; i < 3; i += 1) {
+      await serve([200, { ok: false, why: 'exited', log: 'ReferenceError: boom' }]);
+      const out = await applyChange(`stopped-${i}`);
+      assert.equal(out.preview, 'crashed', JSON.stringify(out));
+      assert.match(out.log, /ReferenceError: boom/);
+      assert.match(out.note, /did not start/);
+    }
+    const over = await applyChange('over');
+    assert.equal(over.ok, false);
+    assert.match(over.error, /That is 3 applies this turn/);
+
+    // A new turn (its applies counted from none) for what the preview itself says.
+    session = await draftBot.openSession(pool, CONFIG, { user: person, draft: await liveDrafts.byId(pool, draft.id), deps });
+    assert.ok(!session.refused, session.refused);
+
+    // (e) A new install: the preview is built again, about a minute or two.
+    await serve([409, { ok: false, needsRebuild: true, why: 'install' }]);
+    const install = await applyChange('install');
+    assert.equal(install.preview, 'rebuilding', JSON.stringify(install));
+    assert.match(install.note, /minute or two/);
+
+    // (f) The app's own build step failed: that is the app's own failure.
+    await serve([409, { ok: false, needsRebuild: true, why: 'build', log: 'npm ERR! build failed' }]);
+    const build = await applyChange('build');
+    assert.equal(build.preview, 'crashed', JSON.stringify(build));
+    assert.match(build.log, /npm ERR! build failed/);
+    assert.match(build.note, /its build/);
   });
 });

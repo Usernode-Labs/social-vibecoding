@@ -128,6 +128,7 @@ import { NOTIFICATION_KIND_FILTER_KEYS, matchesKindFilter } from './notification
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
+import { PlatformLimitsArea } from './platform-limits';
 import type { NotificationRowView } from './notifications-list';
 import { CardHistory, ProjectStack, foldLive, foldStories, type CardPlace, type LiveItem } from './notification-stacks';
 import { dayNumber } from '../../lib/time-zone';
@@ -2146,6 +2147,14 @@ export function NotificationsSheetView() {
           <XIcon className="w-5 h-5" />
         </button>
       </div>
+      {/*
+          The platform limits area (./platform-limits.tsx): full admins only,
+          under the title and above the search and the tabs, so it shows on
+          every tab and while searching. It has no close: a row leaves once
+          its limit is back under its line. Nothing renders until its figures
+          arrive, so the prerendered sheet is unchanged.
+      */}
+      <PlatformLimitsArea open={!!open} />
       {/*
           #5405: the search field, between the title and the tab strip — the
           Discover field's shape (Discover's search, retired with One Home,
