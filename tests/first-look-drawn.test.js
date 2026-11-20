@@ -173,11 +173,20 @@ test('inertMarkup takes out what the frame\'s CSP would refuse, and keeps the sc
 });
 
 test('the CSP: sandboxed, nothing loads but inline styles and data', () => {
-  assert.equal(fvs.DRAWN_CSP, "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:");
+  // Artifacts, stage 1: the one policy every page the bot writes is drawn
+  // under (src/services/artifact-policy.js), static, as a header, naming no
+  // origin. What it lets load is what it always was; what it now also says
+  // outright (no script, fetch, frame or form) default-src already refused.
+  assert.equal(fvs.DRAWN_CSP, require('../src/services/artifact-policy').cspFor('static', { header: true }));
+  assert.equal(fvs.DRAWN_CSP, "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'none'; "
+    + "connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'");
   const policy = new Map(fvs.DRAWN_CSP.split(';').map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k, v.join(' ')]));
   assert.equal(policy.get('sandbox'), '', 'no allow-scripts, no allow-same-origin, nothing allowed');
   assert.equal(policy.get('default-src'), "'none'");
-  assert.equal([...policy.keys()].some((k) => /script|connect|frame|child|worker|form-action/.test(k)), false);
+  for (const [name, value] of policy) {
+    if (/script|connect|frame|child|worker|form-action|base-uri/.test(name)) assert.equal(value, "'none'", name);
+  }
+  assert.doesNotMatch(fvs.DRAWN_CSP, /https?:|\*/, 'no address it may load from');
 });
 
 // ── The route ────────────────────────────────────────────────────────────
@@ -317,17 +326,19 @@ test('the frame: sandbox="", lazy, named, out of the tab order, takes no pointer
   assert.deepEqual([DRAWN_LOOK_WIDTH, DRAWN_LOOK_HEIGHT], [390, 844]);
   const html = renderToHtml(createElement(DrawnLook, { src: DRAWN_URL, label: 'The first look at Club Votes', width: 50 }));
   assert.equal(html, '<div role="img" aria-label="The first look at Club Votes" data-first-look-drawn="" class="pointer-events-none absolute inset-0 overflow-hidden ">'
-    + `<iframe src="${DRAWN_URL}" title="The first look at Club Votes" sandbox="" loading="lazy" referrerPolicy="no-referrer" scrolling="no" tabindex="-1" aria-hidden="true"`
-    + ' class="absolute start-0 top-0 h-[844px] w-[390px] origin-top-left border-0 [color-scheme:light] " style="transform:scale(0.1282051282051282)"></iframe></div>');
+    // The one frame (frontend/src/features/artifact/frame.tsx), static.
+    + `<iframe src="${DRAWN_URL}" title="The first look at Club Votes" sandbox="" referrerPolicy="no-referrer" loading="lazy" scrolling="no" data-artifact-frame="static" tabindex="-1" aria-hidden="true"`
+    + ' class="absolute start-0 top-0 h-[844px] w-[390px] origin-top-left border-0 [color-scheme:light] " style="transform:scale(0.1282051282051282);pointer-events:none"></iframe></div>');
   // Named by the box it is in.
   const hidden = renderToHtml(createElement(DrawnLook, { src: DRAWN_URL, label: 'x', width: 125, hidden: true }));
   assert.match(hidden, /^<div aria-hidden="true" data-first-look-drawn=""/);
   assert.match(hidden, /scale\(0\.32051282051282054\)/);
   // A box of no fixed width is measured before it is shown.
-  assert.match(renderToHtml(createElement(DrawnLook, { src: DRAWN_URL, label: 'x' })), /class="[^"]*\[color-scheme:light\] opacity-0"><\/iframe>/);
+  assert.match(renderToHtml(createElement(DrawnLook, { src: DRAWN_URL, label: 'x' })), /class="[^"]*\[color-scheme:light\] opacity-0" style="pointer-events:none"><\/iframe>/);
   // Never anything that would let it run or reach out.
   const src = read(`${DIR}/drawn-look.tsx`);
-  assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ''), /allow-scripts|allow-same-origin|allow-forms|allow-popups|srcDoc|dangerouslySetInnerHTML/);
+  assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ''), /allow-scripts|allow-same-origin|allow-forms|allow-popups|srcDoc|dangerouslySetInnerHTML|<iframe/);
+  assert.match(src, /<ArtifactFrame\s+mode="static"\s+src=\{src\}/, 'the shared frame, static, with the served document');
 });
 
 test('a picture after a drawn screen waits until it is in; anything else is drawn as it comes', () => {
@@ -349,7 +360,7 @@ test('the made screen\'s first look card: the drawn screen faded in over the out
   assert.match(html, /data-made-first-look-phone="drawing"/, 'the outline until the frame has loaded');
   assert.match(html, /motion-safe:animate-card-sweep/);
   assert.match(html, /<div role="img" aria-label="The first look at Club Votes&#x27;s main screen" data-first-look-drawn="" class="pointer-events-none absolute inset-0 overflow-hidden transition-opacity duration-300 ease-out motion-reduce:transition-none opacity-0">/);
-  assert.match(html, new RegExp(`<iframe src="${DRAWN_URL.replace(/[?.]/g, '\\$&')}"[^>]* sandbox=""[^>]*style="transform:scale\\(0\\.1282051282051282\\)"`), '50px wide, as the phone is');
+  assert.match(html, new RegExp(`<iframe src="${DRAWN_URL.replace(/[?.]/g, '\\$&')}"[^>]* sandbox=""[^>]*style="transform:scale\\(0\\.1282051282051282\\)`), '50px wide, as the phone is');
   assert.doesNotMatch(html, /<img/);
   // The phone is the same box whatever it holds.
   for (const src of [null, DRAWN_URL, '/api/apps/club-votes/first-version/screens/first_look/0?v=17']) {
@@ -365,7 +376,7 @@ test('the hub\'s first look card: the drawn screen in the picture\'s box', () =>
   const hub = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: DRAWN_URL }));
   assert.match(html, /^<section class="dev-ws-strip dev-ws-hub-first dev-ws-first-look" data-ws-first-look=""><div class="dev-ws-first-look-shot relative overflow-hidden"><div role="img" aria-label="The first look at Club Votes&#x27;s main screen" data-first-look-drawn=""/);
-  assert.match(html, /sandbox=""[^>]*style="transform:scale\(0\.1641025641025641\)"/, '64px wide');
+  assert.match(html, /sandbox=""[^>]*style="transform:scale\(0\.1641025641025641\)/, '64px wide');
   assert.doesNotMatch(html, /<img/);
   const src = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   assert.match(src, /if \(!wanted \|\| !slug \|\| \(src && src !== broken && !isDrawnLook\(src\)\)\) return undefined;/);
@@ -380,7 +391,7 @@ test('the App tab: the drawn screen in the band\'s phone, and under Live while i
   assert.match(html, /data-first-version-screens="first_look"/);
   assert.match(html, /First look · drawn from the plan/);
   assert.match(html, /<div role="img" aria-label="A first look at Plant Pal, drawn from the plan" data-first-look-drawn=""/);
-  assert.match(html, /sandbox=""[^>]*style="transform:scale\(0\.32051282051282054\)"/, '125px wide');
+  assert.match(html, /sandbox=""[^>]*style="transform:scale\(0\.32051282051282054\)/, '125px wide');
   assert.doesNotMatch(html, /<img/);
   const status = read('frontend/src/features/app-frame/app-status.tsx');
   assert.match(status, /const steady = useLookSwap\(screens \?\? null, firstImage\);/);

@@ -61,7 +61,8 @@ import type { ActionSpec, DevCardModel, StatusPillState, TitleSpec } from '../ca
 import { useThreadHeadFit } from './thread-head-fit';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { shortDate } from '../../../lib/timestamp';
-import { changeRail, type RailOpen } from './rail-model';
+import { changeRail, leadRow, type RailOpen } from './rail-model';
+import type { Standing } from '../../../lib/work-state';
 import { changeFoot, changePhase, fixStanding, type ChangePhase } from './card-model';
 import { closeStep, isGates, openStep, useOpenStep } from './step-store';
 import { NoPicture, PlanWords, StepLayer, ThreadBarTile, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy, threadProjectName } from './thread-card';
@@ -982,8 +983,14 @@ export function phaseOf(v: ChangeThreadView): ChangePhase {
   return changePhase({ status: v.status ? { key: v.status.key, label: v.status.label } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
 }
 
-export function ChangeFoot({ id, card, v, page, ballot = false, tail = null, float = false }: {
+export function ChangeFoot({ id, card, v, page, ballot = false, tail = null, float = false, row = null }: {
   id: number | null; card: DevCardModel; v: ChangeThreadView; page: string; ballot?: boolean;
+  /**
+   * On a request's page with one change: the REQUEST's stored row, which
+   * words the foot's headline and line in place of the change's own row
+   * (./card-model.ts ChangeFootInput.work). The buttons stay the change's.
+   */
+  row?: Standing | null;
   /** A quiet row at the foot's end, inside its band (the private suggestion). */
   tail?: ReactNode;
   /**
@@ -994,7 +1001,15 @@ export function ChangeFoot({ id, card, v, page, ballot = false, tail = null, flo
   float?: boolean;
 }): ReactNode {
   const t = useMessages('project');
-  const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null, votes: v.votes, testing: v.testing, merge: v.merge || null, work: v.work || null });
+  // The request's row words it on a request's page, as it words the
+  // timeline's last step (./rail-model.ts leadRow).
+  const lead = leadRow<Standing>(row, v.work || null, id);
+  const foot = changeFoot({
+    status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null,
+    votes: v.votes, testing: v.testing, merge: v.merge || null,
+    work: lead,
+    yours: lead === row && row ? row.mine !== false : true,
+  });
   const { voteAction, testAction, testingActions } = gateActions(card, v);
   const now = useReleaseNow(v.votes.release);
   const release = v.votes.release ? releaseSentence(v.votes.release, now) : null;

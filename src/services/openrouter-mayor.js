@@ -17,6 +17,7 @@
 const { platformHeaders } = require('./openrouter-client');
 const llmTelemetry = require('./llm-telemetry');
 const { withoutDocuments } = require('./attachments');
+const { MAX_REFUSAL_CHARS, refusalCode } = require('./provider-error');
 // The coding turns' host routing (PROVIDER_ROUTING_BY_MODEL and its fallback),
 // read from the Claude Code listener itself so the chat and both listeners
 // route a model alike.
@@ -88,16 +89,10 @@ class OpenRouterMayorError extends Error {
 }
 
 // The most of a refusal's body read, to tell OpenRouter's two 402s apart.
-const MAX_ERROR_BODY_CHARS = 2000;
-
 // T1.3: a 402 is out of credit (`credit_out`), unless its body asks only
-// for a shorter reply ("requires more credits, or fewer max_tokens"), which
-// stays the key's billing refusal it was. openrouter-credit.js creditOut is
-// the one classifier.
-function refusalCode(status, body = '') {
-  if (status === 402 && require('./openrouter-credit').creditOut({ status, body: String(body || '') })) return 'credit_out';
-  return providerErrorCode(status);
-}
+// for a shorter reply; provider-error.js refusalCode says which, for this
+// client and openrouter.js alike.
+const MAX_ERROR_BODY_CHARS = MAX_REFUSAL_CHARS;
 
 async function refusalBody(response) {
   try {
@@ -455,15 +450,6 @@ function recordTelemetry({ context, billingPath, requestedModel, result, error, 
     attemptNumber: 1,
     requestMode: 'single',
   });
-}
-
-function providerErrorCode(status) {
-  if (status === 401 || status === 403) return 'authentication';
-  if (status === 402) return 'billing';
-  if (status === 408 || status === 504) return 'timeout';
-  if (status === 429) return 'rate_limited';
-  if (status >= 500) return 'provider_unavailable';
-  return 'invalid_request';
 }
 
 async function readBoundedJson(response) {

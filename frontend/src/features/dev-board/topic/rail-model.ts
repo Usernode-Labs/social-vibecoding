@@ -12,8 +12,9 @@
  */
 
 import { lineWords, stageWords, type Phrase, type Stage, type Standing, type WorkState } from '../../../lib/work-state';
+import { lookOf, stagePhrase } from '../../../lib/work-stages';
 import type { RequestSpecCard } from './request-model';
-import { changePhase, fixStanding, stageNote, type ChangePhase, type GateLike } from './card-model';
+import { changePhase, fixStanding, stageNote, SETTLED_PHASES, type ChangePhase, type GateLike } from './card-model';
 import type { ThreadItem } from './thread-model';
 
 /** Which glyph a step's marker wears. */
@@ -76,9 +77,13 @@ export function newestPlan(specs: RequestSpecCard[]): RequestSpecCard | null {
   return pool.reduce((best, s) => ((s.version ?? 0) >= (best.version ?? 0) ? s : best), pool[0]);
 }
 
-const BUSY: ReadonlySet<Stage> = new Set<Stage>(['reading', 'planning', 'building', 'checking', 'going_live']);
-
-const STAGE_ICON: Record<Stage, RailIcon> = {
+/**
+ * The icon of the timeline's last step, by its stage: one for every stage of
+ * the table (lib/work-stages.ts), so a new stage is drawn on purpose. Whether
+ * the step spins, how it is tinted and whether its note asks somebody are
+ * the stage's look (STAGE_LOOK), which the foot (./card-model.ts) reads too.
+ */
+export const STAGE_ICON: Readonly<Record<Stage, RailIcon>> = {
   reading: 'working',
   planning: 'plan',
   waiting_for_you: 'waiting',
@@ -90,9 +95,6 @@ const STAGE_ICON: Record<Stage, RailIcon> = {
   stopped: 'stopped',
   closed: 'closed',
 };
-
-/** The stages a change's tests have been passed by, so "Tested" is an event behind it. */
-const PAST_TESTS: ReadonlySet<Stage> = new Set<Stage>(['up_for_vote', 'going_live', 'live']);
 
 function planStep(plan: RequestSpecCard): RailStep {
   return step({
@@ -107,9 +109,6 @@ function planStep(plan: RequestSpecCard): RailStep {
   });
 }
 
-/** The stages that wait on a person: their note is the one that asks. */
-const ASKS: ReadonlySet<Stage> = new Set<Stage>(['waiting_for_you', 'up_for_vote']);
-
 /**
  * Where the thread stands, as its last step. Its title is short (the foot
  * carries the server's whole headline; a stop's reason is the note), and a
@@ -120,20 +119,21 @@ function nowStep(standing: WorkState, yours: boolean, track = false, ballot: Req
   const lead = standing.change || null;
   const shots = stage === 'checking' && standing.line?.code === 'shots';
   const choosing = !!ballot && stage === 'up_for_vote';
+  const look = lookOf(stage);
   return step({
     key: `now:${stage}`,
     icon: shots ? 'shots' : STAGE_ICON[stage] || 'working',
     title: choosing ? { id: 'project:topic.card.ballot.choosing', values: { count: ballot!.count } }
-      : stage === 'stopped' ? { id: 'core:work.stage.stopped' } : stageWords(standing, { yours }),
+      : stage === 'stopped' ? { id: stagePhrase('stopped') } : stageWords(standing, { yours }),
     at: standing.since || null,
     since: stage !== 'live' && stage !== 'closed',
     now: true,
-    tone: stage === 'stopped' ? 'bad' : stage === 'live' ? 'ok' : stage === 'closed' ? 'muted' : null,
-    busy: BUSY.has(stage),
+    tone: look.tone,
+    busy: look.busy,
     // The rule of a ballot; else the server's own second line, else the
     // plain sentence for the stage.
     note: choosing ? ballot!.about : lineWords(standing) || stageNote(standing),
-    noteTone: stage === 'stopped' ? 'bad' : ASKS.has(stage) ? 'act' : 'plain',
+    noteTone: stage === 'stopped' ? 'bad' : look.asks ? 'act' : 'plain',
     open: lead && (stage === 'up_for_vote' || stage === 'going_live' || stage === 'live')
       ? { kind: 'votes', changeId: lead.id }
       : lead && stage === 'checking'
@@ -161,9 +161,13 @@ export interface RequestRailInput {
   /** An open ballot between competing changes: how many, and its rule in a sentence (the last step's title and note). */
   ballot?: { count: number; about: Phrase | string } | null;
   /**
-   * The request's one change, when the card's foot is that change's: its
-   * steps (built, its tests, where it stands) come from `changeRail`, so the
-   * timeline ends on the phase the foot shows.
+   * The request's one change, when the card's foot is drawn in that change's
+   * section: its events (built, its tests, its votes) and what a press opens
+   * come from `changeRail`. The last step is still the REQUEST's: worded
+   * from `standing`, the request's own stored row, as the foot is
+   * (./thread-changes.tsx hands the same row to the change's foot). The
+   * change's row (`lead.work`) words it only when the request's row is not
+   * about this change, or there is none (`leadRow`).
    */
   lead?: ChangeRailInput | null;
 }
@@ -183,7 +187,14 @@ export function requestRail(input: RequestRailInput): RailStep[] {
   if (plan) steps.push(planStep(plan));
   const many = changes.length > 1;
   if (input.lead) {
-    steps.push(...changeRail({ ...input.lead, plan: null }));
+    // The page is the request's, so where it stands is the request's row.
+    // It used to be the change's: a request whose row said "Stopped: its
+    // tests still fail" (the bot gave up fixing them) ended its own page on
+    // a busy "Checking", the change's row, while the Homeroom bot tab and
+    // the bell said Stopped. The two rows differ on purpose: the request's
+    // says what is being done about it, the change's where the change is.
+    const row = leadRow(standing, input.lead.work || null, input.lead.id);
+    steps.push(...changeRail({ ...input.lead, plan: null, work: row, yours: row === standing ? input.yours !== false : true }));
     return steps;
   }
   const lead = standing?.change || null;
@@ -214,7 +225,7 @@ export function requestRail(input: RequestRailInput): RailStep[] {
         title: failing ? { id: 'project:topic.rail.testsFailed', values: { count: failing } } : { id: 'project:topic.rail.testsFailedPlain' },
         link: { label: { id: 'project:topic.rail.seeFailed' }, open: { kind: 'checks', changeId: item.id } },
       }));
-    } else if (lead.checks.state === 'passing' && stage && (PAST_TESTS.has(stage) || (stage === 'checking' && standing?.line?.code === 'shots'))) {
+    } else if (lead.checks.state === 'passing' && stage && (lookOf(stage).pastTests || (stage === 'checking' && standing?.line?.code === 'shots'))) {
       steps.push(step({
         key: `tested:${item.id}`,
         icon: 'tested',
@@ -238,6 +249,28 @@ export function requestRail(input: RequestRailInput): RailStep[] {
   return steps;
 }
 
+/**
+ * Pure: the row that words a request's page with one change (`id`): the
+ * request's own stored row while it is about that change (its `change`),
+ * else the change's own. A request's row that names another change (one the
+ * page no longer draws), or none at all (an older server, a row stored
+ * before the change was), says nothing about this one: wording this
+ * change's foot from it would put "Not started yet" over a change up for a
+ * vote.
+ *
+ * One case reads the change's row past the request's: the request says only
+ * that its change is up for a vote. Whether that vote is open yet is the
+ * change's row's to say (its screenshots, a sync with main, an update on its
+ * way), and the two rows reach the page by different reads, so for a moment
+ * the request's can still say "Up for a vote" after the change's has moved
+ * on.
+ */
+export function leadRow<T extends WorkState>(request: T | null, change: T | null, id: number | null = null): T | null {
+  const about = !!request && !!request.change && (id == null || Number(request.change.id) === Number(id));
+  if (!request || !about) return change;
+  return request.stage === 'up_for_vote' && change ? change : request;
+}
+
 export interface ChangeRailInput {
   id: number | null;
   author: string | null;
@@ -258,9 +291,12 @@ export interface ChangeRailInput {
    * read's `work`), the one every list and the card's foot read
    * (./card-model.ts storedFoot). While it is not up for a vote, its words
    * title the last step, so the timeline never says "Up for a vote" while
-   * the foot says "Taking screenshots".
+   * the foot says "Taking screenshots". On a request's page with one change
+   * `requestRail` passes the request's row here instead.
    */
   work?: Standing | null;
+  /** The viewer is the row's requester: its words are theirs (a request's row only; a change's row reads the same to everyone). */
+  yours?: boolean;
 }
 
 /** The pills that only count votes: the step says "Up for a vote", and the foot has the count. */
@@ -395,24 +431,28 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
       });
     }
   }
-  return withStoredNow(steps, input.work || null, phase, input.merge || null);
+  return withStoredNow(steps, input.work || null, phase, input.merge || null, input.yours !== false);
 }
 
-/** The phases a change's own status settles: merged, merging, a stalled release, closed. */
-const SETTLED_PHASES: ReadonlySet<ChangePhase> = new Set<ChangePhase>(['live', 'closed', 'going', 'stuck']);
-
 /**
- * T2.3 (19 Nov 2026): the last step worded from the change's stored work
- * state, as its foot is (./card-model.ts storedFoot), whenever that row is
- * not up for a vote. The live gates still decide which events stand behind
- * it (Tested, Tests failed, Voted) and what a press opens; the row decides
- * what it is waiting on now. Its checks passed and only the screenshots are
- * left reads "Taking screenshots"; a sync with main, an update on its way,
- * GitHub's hold or a check being fixed say so too, never "Up for a vote".
- * Only while the change is open: once it is live, closed or merging, the
- * phase's own step stands (its date, its pill).
+ * T2.3 (19 Nov 2026): the last step worded from the stored work state, as
+ * the foot is (./card-model.ts storedFoot), whenever that row is not up for
+ * a vote. The live gates still decide which events stand behind it (Tested,
+ * Tests failed, Voted) and what a press opens; the row decides what it is
+ * waiting on now. Its checks passed and only the screenshots are left reads
+ * "Taking screenshots"; a sync with main, an update on its way, GitHub's
+ * hold or a check being fixed say so too, never "Up for a vote". Only while
+ * the change is open: once it is live, closed or merging, the phase's own
+ * step stands (its date, its pill; SETTLED_PHASES, which the foot shares).
+ *
+ * The row is the change's own on a change's page, and the request's on a
+ * request's page with one change (`requestRail`). A change's own row is
+ * never Stopped (services/work-state.js deriveChange has no such state), so
+ * the stopped wording below is the request's: the bot stopped fixing its
+ * change's tests, and the step keeps the card's own words for who fixes them
+ * now.
  */
-function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePhase, merge: GateLike | null = null): RailStep[] {
+function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePhase, merge: GateLike | null = null, yours = true): RailStep[] {
   if (!work || !work.stage || work.stage === 'up_for_vote') return steps;
   // Merged, merging, a stalled release or closed: the change's own status
   // is newer than any row, and its step already says so.
@@ -427,17 +467,18 @@ function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePh
   // minutes"), which says more than the row's line and is the only place
   // the card look shows it while the step layer is shut.
   const held = stage === 'going_live' && phase === 'approved' && !!merge && merge.note.length > 0 && !!steps[at].note;
+  const look = lookOf(stage);
   steps[at] = {
     ...steps[at],
     icon: shots ? 'shots' : STAGE_ICON[stage] || 'working',
-    title: stage === 'stopped' ? { id: 'core:work.stage.stopped' } : stageWords(work, { yours: true }),
-    tone: stage === 'stopped' ? 'bad' : stage === 'live' ? 'ok' : stage === 'closed' ? 'muted' : null,
-    busy: BUSY.has(stage),
+    title: stage === 'stopped' ? { id: stagePhrase('stopped') } : stageWords(work, { yours }),
+    tone: look.tone,
+    busy: look.busy,
     // The row's second line; a stop of the bot's fixes keeps the card's own
     // words for who fixes it now, which the row has no line for.
     note: held ? steps[at].note
       : lineWords(work) || (stage === 'stopped' && phase === 'failed' ? steps[at].note : null) || stageNote(work),
-    noteTone: stage === 'stopped' ? 'bad' : ASKS.has(stage) ? 'act' : 'plain',
+    noteTone: stage === 'stopped' ? 'bad' : look.asks ? 'act' : 'plain',
   };
   return steps;
 }

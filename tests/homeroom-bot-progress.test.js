@@ -14,7 +14,14 @@ const progress = require('../src/services/homeroom-bot-progress');
 
 const NOW = new Date('2026-10-02T16:04:00Z');
 const ago = (minutes) => new Date(NOW.getTime() - minutes * 60 * 1000).toISOString();
-const stage = (row) => progress.stageOf(row, { now: NOW });
+const ws = require('../src/services/work-state');
+// Where a request's facts row puts it (services/work-state.js derive, the one
+// decider): its stage, then its why, its reason or its line's code.
+const at = (row) => {
+  const s = ws.derive(row, { now: NOW });
+  return [s.stage, s.why || s.reason || (s.line && s.line.code)].filter(Boolean).join(' ');
+};
+const sinceOf = (row) => ws.derive(row, { now: NOW }).since;
 
 test('the steps a request and a first version go through, and which step each stage is', () => {
   // #4053: a first version's steps say what is happening, never what to do
@@ -70,75 +77,63 @@ test('#4053: the build line a first version\'s thumbnail shows, for its creator 
 });
 
 test('a request being read, asked about, or waiting in the queue', () => {
-  assert.deepEqual(stage({ started_at: ago(3) }), {
-    stage: 'reading', since: ago(3), doing: 'reading the request to decide whether to ask a question or build it', limit: 'reading',
-  });
-  assert.match(stage({ started_at: ago(3), first_version: true }).doing, /^reading the description/);
-  assert.deepEqual(stage({ question_at: ago(9) }), {
-    stage: 'question', since: ago(9), doing: 'waiting for an answer to the question asked', waitingOn: 'them',
-  });
+  assert.equal(at({ started_at: ago(3) }), 'reading');
+  assert.equal(sinceOf({ started_at: ago(3) }), ago(3));
+  assert.equal(at({ started_at: ago(3), first_version: true }), 'reading');
+  assert.equal(at({ question_at: ago(9) }), 'waiting_for_you question');
+  assert.equal(sinceOf({ question_at: ago(9) }), ago(9));
   // 13 Nov 2026: whose line it is, and that it starts by itself ("waiting
   // for a free builder" read as a wait for another person).
-  assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).doing, progress.QUEUE_WAIT);
-  assert.equal(progress.QUEUE_WAIT, 'waiting its turn in my own line; I\'ll start on it by myself when I have a free slot');
-  assert.equal(stage({ verdict: 'person', mode: 'live' }), null, 'nothing in progress');
+  assert.equal(at({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }), 'reading queued');
+  assert.equal(at({ verdict: 'person', mode: 'live' }), 'waiting_for_you decide', 'nothing in progress: handed back');
 });
 
 test('a build in progress is read from its run and its session, never the queue', () => {
   const ready = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(5) };
-  assert.equal(stage({ ...ready }).stage, 'starting', 'a ready verdict with no session yet');
-  assert.equal(stage({ ...ready, run_at: ago(40) }).stage, 'stalled', 'and past the grace, it says nothing is recorded');
-  assert.match(stage({ ...ready, run_at: ago(40) }).doing, /nothing about the build has been recorded since/);
-  const planning = stage({ ...ready, build_session_id: 7, build_status: 'active', build_started_at: ago(4) });
-  assert.deepEqual(planning, { stage: 'planning', since: ago(4), doing: 'writing the plan for the build', limit: 'plan' });
-  const building = stage({ ...ready, build_session_id: 7, build_status: 'active', build_started_at: ago(12), spec_at: ago(6) });
-  assert.deepEqual(building, { stage: 'building', since: ago(6), doing: 'building it', limit: 'build' });
-  assert.equal(stage({ ...ready, build_session_id: 7, build_status: 'active', build_turn_mode: 'build', build_turn_at: ago(2) }).stage,
+  assert.equal(at({ ...ready }), 'building starting', 'a ready verdict with no session yet');
+  assert.equal(at({ ...ready, run_at: ago(40) }), 'stopped stalled', 'and past the grace, nothing is recorded');
+  const planning = { ...ready, build_session_id: 7, build_status: 'active', build_started_at: ago(4) };
+  assert.deepEqual([at(planning), sinceOf(planning)], ['planning', ago(4)]);
+  const building = { ...ready, build_session_id: 7, build_status: 'active', build_started_at: ago(12), spec_at: ago(6) };
+  assert.deepEqual([at(building), sinceOf(building)], ['building', ago(6)]);
+  assert.equal(at({ ...ready, build_session_id: 7, build_status: 'active', build_turn_mode: 'build', build_turn_at: ago(2) }),
     'building', 'a build whose plan failed is still a build');
-  assert.equal(stage({ ...ready, build_session_id: 7, build_status: 'paused', spec_at: ago(30) }).stage, 'proposing');
-  assert.equal(stage({ ...ready, build_session_id: 7, build_status: 'archived' }), null, 'a failed attempt is not in progress');
-  assert.equal(stage({ ...ready, cap_suppressed: 'proposals_per_app' }).stage, 'held');
-  assert.equal(stage({ ...ready, mode: 'shadow', build_session_id: 7, build_status: 'active' }), null,
+  assert.equal(at({ ...ready, build_session_id: 7, build_status: 'paused', spec_at: ago(30) }), 'building proposing');
+  assert.equal(at({ ...ready, build_session_id: 7, build_status: 'archived' }), 'reading waiting', 'a failed attempt is not in progress');
+  assert.equal(at({ ...ready, cap_suppressed: 'proposals_per_app' }), 'building held_waiting');
+  assert.equal(at({ ...ready, mode: 'shadow', build_session_id: 7, build_status: 'active' }), 'reading waiting',
     'a shadow build is never their work');
-  assert.equal(stage({ ...ready, build_ok: false }), null);
-  assert.equal(stage({ ...ready, started_at: ago(1) }).stage, 'reading', 'a new look comes first');
+  assert.equal(at({ ...ready, build_ok: false }), 'stopped build_failed');
+  assert.equal(at({ ...ready, started_at: ago(1) }), 'reading', 'a new look comes first');
 });
 
 test('a proposal: its checks, then the group\'s vote', () => {
   const open = { proposal_status: 'promoted', proposal_at: ago(20) };
-  const running = stage({ ...open, check_state: 'pending', check_phase: 'testing', checks_at: ago(8),
-    checks_progress: { ran: 120, expected: 338, failed: 0 } });
-  assert.equal(running.stage, 'checks');
-  assert.equal(running.doing, 'it\'s waiting for approval, and its tests are running: 120 of 338 done, 0 failed so far');
-  assert.equal(running.since, ago(8));
-  assert.equal(stage({ ...open, check_state: 'pending', check_phase: 'building' }).doing,
-    'it\'s waiting for approval, and its tests are running: building the preview first');
-  const failing = stage({ ...open, check_state: 'failing', test_results: [{ status: 'pass' }, { status: 'fail' }, { status: 'fail' }] });
-  assert.equal(failing.stage, 'checks_failed');
-  assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (2 tests did not pass)');
-  assert.deepEqual(stage({ ...open, check_state: 'passing' }), {
-    stage: 'vote', since: ago(20), doing: 'it\'s waiting for approval', waitingOn: 'the group',
-  });
-  assert.equal(stage({ ...open, check_state: 'skipped' }).stage, 'vote');
-  assert.equal(stage({ ...open, check_state: 'failing', started_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fixing');
-  assert.equal(stage({ ...open, started_at: ago(1), queue_reason: 'changed' }).stage, 'revising');
+  const running = { ...open, check_state: 'pending', check_phase: 'testing', checks_at: ago(8),
+    checks_progress: { ran: 120, expected: 338, failed: 0 } };
+  assert.deepEqual([at(running), sinceOf(running)], ['checking', ago(8)]);
+  assert.equal(at({ ...open, check_state: 'pending', check_phase: 'building' }), 'checking');
+  const failing = ws.derive({ ...open, check_state: 'failing', test_results: [{ status: 'pass' }, { status: 'fail' }, { status: 'fail' }] }, { now: NOW });
+  assert.deepEqual([failing.stage, failing.line], ['checking', { code: 'checks_failing', failing: 2 }]);
+  assert.deepEqual([at({ ...open, check_state: 'passing' }), sinceOf({ ...open, check_state: 'passing' })], ['up_for_vote', ago(20)]);
+  assert.equal(at({ ...open, check_state: 'skipped' }), 'up_for_vote');
+  assert.equal(at({ ...open, check_state: 'failing', started_at: ago(1), queue_reason: 'checks_failing' }), 'building fixing');
+  assert.equal(at({ ...open, started_at: ago(1), queue_reason: 'changed' }), 'building revising');
   // #3734: a follow-up waiting its turn is the bot's next step, not the vote:
-  // a change asked for in the DM (#3740), a reply, or its own red checks.
-  assert.deepEqual(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'dm_revise', queue_position: 1 }), {
-    stage: 'followup_queued', since: ago(1), doing: 'waiting for a free slot of mine to follow up on the newest replies on the change',
-  });
-  assert.equal(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), question_at: ago(5) }).stage, 'followup_queued',
+  // a change asked for in the DM (#3740) or a reply. Its own red checks
+  // waiting for a fix are its checks failing, as the change's row says them.
+  const followUp = { ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'dm_revise', queue_position: 1 };
+  assert.deepEqual([at(followUp), sinceOf(followUp)], ['building update_queued', ago(1)]);
+  assert.equal(at({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), question_at: ago(5) }), 'building update_queued',
     'a reply since the question is read next');
-  assert.deepEqual(stage({ ...open, check_state: 'failing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }), {
-    stage: 'fix_queued', since: ago(1), doing: 'waiting for a free slot of mine to fix what its tests found',
-  });
-  assert.equal(stage({ proposal_status: 'merging', queue_id: 8, enqueued_at: ago(1) }).stage, 'merging',
+  assert.equal(at({ ...open, check_state: 'failing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }), 'checking checks_failing');
+  assert.equal(at({ proposal_status: 'merging', queue_id: 8, enqueued_at: ago(1) }), 'going_live',
     'a proposal being merged is not followed up on');
   assert.equal(progress.stepNumber('followup_queued', false), 5);
   assert.equal(progress.stepNumber('fix_queued', false), 4);
-  assert.equal(stage({ ...open, check_state: 'passing', question_at: ago(2) }).stage, 'question');
-  assert.equal(stage({ proposal_status: 'merging', proposal_at: ago(2) }).stage, 'merging');
-  assert.equal(stage({ proposal_status: 'merged' }), null, 'live is finished, not in progress');
+  assert.equal(at({ ...open, check_state: 'passing', question_at: ago(2) }), 'waiting_for_you question');
+  assert.equal(at({ proposal_status: 'merging', proposal_at: ago(2) }), 'going_live');
+  assert.equal(at({ proposal_status: 'merged' }), 'live', 'live is finished, not in progress');
 });
 
 // #6528: a passing change is still Checking while its before & after shots
@@ -153,21 +148,17 @@ test('#6528: a passing change holds at checking until its shots settle', () => {
     shots_state: 'exploring', shots_run_id: 'r'.repeat(32),
     shots_detail: { headSha: head, required: true }, shots_updated_at: ago(5), checks_at: ago(5),
   };
-  assert.deepEqual(stage({ ...open, ...shooting }), {
-    stage: 'checks', since: ago(5),
-    doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
-  });
-  assert.equal(stage({ ...open, ...shooting, shots_state: 'verified' }).stage, 'vote');
-  assert.equal(stage({ ...open, ...shooting, shots_detail: { headSha: head, required: false } }).stage, 'vote',
+  assert.deepEqual([at({ ...open, ...shooting }), sinceOf({ ...open, ...shooting })], ['checking shots', ago(5)]);
+  assert.equal(at({ ...open, ...shooting, shots_state: 'verified' }), 'up_for_vote');
+  assert.equal(at({ ...open, ...shooting, shots_detail: { headSha: head, required: false } }), 'up_for_vote',
     'nothing visible to shoot is not held');
-  assert.equal(stage({ ...open, ...shooting, checks_at: ago(50), shots_updated_at: ago(50) }).stage, 'vote',
+  assert.equal(at({ ...open, ...shooting, checks_at: ago(50), shots_updated_at: ago(50) }), 'up_for_vote',
     'the hold lapses after 45 minutes');
   // T2.12 (19 Nov 2026): a first version's shots hold it too, as its App
-  // tab's readiness does (homeroom-bot-dm.js changeReadiness); once they
-  // settle it goes live without a vote.
-  assert.equal(stage({ ...open, ...shooting, first_version: true }).stage, 'checks',
+  // tab does; once they settle it goes live without a vote.
+  assert.equal(at({ ...open, ...shooting, first_version: true }), 'checking shots',
     'a first version is held while its shots are taken, as its App tab is');
-  assert.equal(stage({ ...open, ...shooting, first_version: true, shots_state: 'verified' }).stage, 'vote');
+  assert.equal(at({ ...open, ...shooting, first_version: true, shots_state: 'verified' }), 'going_live first_version');
 });
 
 // 13 Oct 2026 (D1): a project's first version goes live without a vote, so
@@ -175,27 +166,10 @@ test('#6528: a passing change holds at checking until its shots settle', () => {
 // not say it is waiting for approval.
 test('D1: a first version up for testing waits on nobody\'s approval', () => {
   const open = { proposal_status: 'promoted', proposal_at: ago(20), first_version: true };
-  assert.deepEqual(stage({ ...open, check_state: 'passing' }), {
-    stage: 'vote', since: ago(20), doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two',
-  });
-  assert.equal(stage({ ...open, check_state: 'pending', check_phase: 'building' }).doing,
-    'it goes live without a vote once its tests pass, and its tests are running: building the preview first');
-  const failing = stage({ ...open, check_state: 'failing', test_results: [{ status: 'fail' }] });
-  assert.equal(failing.doing, 'it goes live without a vote once its tests pass, and its tests failed (1 test did not pass)');
-  assert.equal(progress.inFlight({ stage: 'vote' }), false, 'nor is it the bot\'s work in flight');
-});
-
-test('#3734: in flight is what the bot is doing now or has in its queue, never what waits on others', () => {
-  for (const name of ['setting_up', 'queued', 'reading', 'starting', 'planning', 'building', 'proposing',
-    'followup_queued', 'revising', 'fix_queued', 'fixing', 'merging']) {
-    assert.equal(progress.inFlight({ stage: name }), true, name);
-  }
-  for (const name of ['question', 'vote', 'checks', 'checks_failed', 'held', 'stalled']) {
-    assert.equal(progress.inFlight({ stage: name }), false, name);
-  }
-  assert.equal(progress.inFlight({ stage: 'setting_up', waitingOn: 'them' }), false, 'a project waiting for its secrets waits on them');
-  assert.equal(progress.inFlight(null), false);
-  for (const busy of progress.BUSY_STAGES) assert.ok(progress.IN_FLIGHT_STAGES.has(busy), `${busy}: busy is in flight`);
+  const passing = ws.derive({ ...open, check_state: 'passing' }, { now: NOW });
+  assert.deepEqual([passing.stage, passing.line, passing.whoseMove, passing.since], ['going_live', { code: 'first_version' }, null, ago(20)]);
+  assert.equal(at({ ...open, check_state: 'pending', check_phase: 'building' }), 'checking');
+  assert.equal(at({ ...open, check_state: 'failing', test_results: [{ status: 'fail' }] }), 'checking checks_failing');
 });
 
 test('a first version\'s setup: which part runs, when this process knows', () => {
@@ -256,17 +230,13 @@ test('a ready request waiting for its build slot says so, and what it waits for'
     build_ok: null, run_proposal: null, build_session_id: null, run_at: '2026-10-03T12:30:00Z',
     build_waiting_at: '2026-10-03T12:31:00Z',
   };
-  const state = progress.stageOf(row, { now });
-  assert.deepEqual(state, { stage: 'build_queued', since: '2026-10-03T12:31:00Z', doing: 'ready to build; waiting its turn to be built' });
+  const state = ws.derive(row, { now });
+  assert.deepEqual([state.stage, state.line, state.since], ['building', { code: 'queued' }, '2026-10-03T12:31:00.000Z']);
   assert.equal(progress.stepNumber('build_queued', false), 2, 'the plan is the next step');
-  assert.ok(progress.IN_FLIGHT_STAGES.has('build_queued') && !progress.BUSY_STAGES.has('build_queued'),
-    'in the bot\'s hands, not this minute');
   // Its session exists: it is under way, not waiting.
-  assert.notEqual(progress.stageOf({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).stage, 'build_queued');
+  assert.equal(ws.derive({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).line, null);
   // Every screen draws it as ready to build, waiting its turn (services/work-state.js).
-  const ws = require('../src/services/work-state');
-  assert.deepEqual(ws.fromStage({ stage: 'build_queued' }, {}).line, { code: 'queued' });
-  assert.equal(ws.stageSays(ws.fromStage({ stage: 'build_queued' }, {})), 'Ready to build');
+  assert.equal(ws.stageSays(state), 'Ready to build');
 });
 
 // #4539: a request closed while its plan waited for Build it, or while the
@@ -276,19 +246,17 @@ test('a ready request waiting for its build slot says so, and what it waits for'
 test('#4539: on a closed request the plan and the question stop waiting, and the outcome names the closure', () => {
   // The plan is ready and waits for Build it.
   const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(49) };
-  assert.deepEqual(stage({ ...waiting }), {
-    stage: 'plan', since: ago(49), waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
-  });
-  assert.equal(stage({ ...waiting, request_closed: true }), null, 'closed: the plan is not in progress any more');
+  assert.deepEqual([at({ ...waiting }), sinceOf({ ...waiting })], ['waiting_for_you plan', ago(49)]);
+  assert.equal(at({ ...waiting, request_closed: true }), 'closed', 'closed: the plan is not in progress any more');
   // The question the bot asked about it stops waiting too.
-  assert.equal(stage({ question_at: ago(9), request_closed: true }), null);
+  assert.equal(at({ question_at: ago(9), request_closed: true }), 'closed');
   // With a proposal still open, only the question yields: the proposal's
   // own state is what shows.
-  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9) }).stage, 'question');
-  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9), request_closed: true }).stage,
-    'vote', 'the closed request\'s open proposal still shows its state');
+  assert.equal(at({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9) }), 'waiting_for_you question');
+  assert.equal(at({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9), request_closed: true }),
+    'up_for_vote', 'the closed request\'s open proposal still shows its state');
   // A build already begun is unchanged.
-  assert.equal(stage({ ...waiting, request_closed: true, build_session_id: 7, build_status: 'active', build_started_at: ago(40) }).stage,
+  assert.equal(at({ ...waiting, request_closed: true, build_session_id: 7, build_status: 'active', build_started_at: ago(40) }),
     'planning', 'a build under way builds on');
   // Where it stands: closed, on every surface (services/work-state.js).
   assert.equal(require('../src/services/work-state').derive({ ...waiting, request_closed: true }).stage, 'closed');
@@ -309,13 +277,12 @@ test('#4539: on a closed request no build still to start reads as in progress', 
     stalled: {},
   };
   for (const [name, extra] of Object.entries(toStart)) {
-    assert.notEqual(stage({ ...ready, ...extra }), null, `${name}: in progress while the request is open`);
-    assert.equal(stage({ ...ready, ...extra, request_closed: true }), null, `${name}: not in progress once it is closed`);
+    assert.notEqual(at({ ...ready, ...extra }), 'reading waiting', `${name}: in progress while the request is open`);
     assert.equal(require('../src/services/work-state').derive({ ...ready, ...extra, request_closed: true }).stage, 'closed', name);
   }
   // A change already up for a vote still shows its own state.
-  assert.equal(stage({ ...ready, cap_suppressed: 'proposals_per_app', request_closed: true,
-    proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20) }).stage, 'vote');
+  assert.equal(at({ ...ready, cap_suppressed: 'proposals_per_app', request_closed: true,
+    proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20) }), 'up_for_vote');
 });
 
 // #6219 (3 Nov 2026): #6210's plan waited for Build it, but a question left
@@ -326,14 +293,12 @@ test('#4539: on a closed request no build still to start reads as in progress', 
 // it. A question the plan's own look asked still wins.
 test('#6219: a plan waiting for Build it wins over a question left open from before its look', () => {
   const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(40) };
-  assert.equal(stage({ ...waiting, question_at: ago(90) }).stage, 'plan', 'a question older than the run');
-  assert.equal(stage({ ...waiting, question_at: ago(45) }).stage, 'question', 'the plan\'s own look asked it');
-  assert.equal(stage({ ...waiting }).stage, 'plan');
+  assert.equal(at({ ...waiting, question_at: ago(90) }), 'waiting_for_you plan', 'a question older than the run');
+  assert.equal(at({ ...waiting, question_at: ago(45) }), 'waiting_for_you question', 'the plan\'s own look asked it');
+  assert.equal(at({ ...waiting }), 'waiting_for_you plan');
   // Every page lists a plan as waiting for you (services/work-state.js),
   // which the bot page puts under Needs you; a question it leaves to the feed.
-  const ws = require('../src/services/work-state');
-  const plan = ws.fromStage({ stage: 'plan' }, {});
-  assert.deepEqual([plan.stage, plan.why], ['waiting_for_you', 'plan']);
+  const plan = ws.derive({ ...waiting }, { now: NOW });
   assert.equal(ws.placeFor(plan, { requester: true }), 'needs');
 });
 
@@ -344,22 +309,21 @@ test('#6219: a plan waiting for Build it wins over a question left open from bef
 // reply, a message from the bot, a queue row on hold, or a read under way.
 test('#6246: a plan waiting for Build it stays the plan beside a reply or a queue row', () => {
   const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(40) };
-  const plan = {
-    stage: 'plan', since: ago(40), waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
-  };
+  const plan = ['waiting_for_you plan', ago(40)];
+  const read = (row) => [at(row), sinceOf(row)];
   // (a) A question left open from before the plan's look does not hide it.
-  assert.deepEqual(stage({ ...waiting, question_at: ago(90) }), plan);
+  assert.deepEqual(read({ ...waiting, question_at: ago(90) }), plan);
   // (b) A person's newer reply, with no queue row yet.
-  assert.deepEqual(stage({ ...waiting, reply_at: ago(5), reply_user_id: 7 }), plan);
+  assert.deepEqual(read({ ...waiting, reply_at: ago(5), reply_user_id: 7 }), plan);
   // (c) A newer reply whose read has started (a claimed queue row).
-  assert.deepEqual(stage({ ...waiting, reply_at: ago(5), started_at: ago(4) }), plan);
+  assert.deepEqual(read({ ...waiting, reply_at: ago(5), started_at: ago(4) }), plan);
   // (d) A queue row waiting its turn, not yet started and not held.
-  assert.deepEqual(stage({ ...waiting, queue_id: 8, enqueued_at: ago(3), reply_at: ago(5) }), plan);
+  assert.deepEqual(read({ ...waiting, queue_id: 8, enqueued_at: ago(3), reply_at: ago(5) }), plan);
   // (e) A queue row on hold until Monday.
   const heldUntil = new Date(NOW.getTime() + 60 * 60 * 1000).toISOString();
-  assert.deepEqual(stage({ ...waiting, queue_id: 8, enqueued_at: ago(600), held_until: heldUntil, reply_at: ago(5) }), plan);
+  assert.deepEqual(read({ ...waiting, queue_id: 8, enqueued_at: ago(600), held_until: heldUntil, reply_at: ago(5) }), plan);
   // The plan's own look asked the question: that still wins.
-  assert.equal(stage({ ...waiting, question_at: ago(45) }).stage, 'question');
+  assert.equal(at({ ...waiting, question_at: ago(45) }), 'waiting_for_you question');
   // planWaits says the same on each of the rows above.
   for (const row of [
     { ...waiting, question_at: ago(90) },
@@ -369,7 +333,7 @@ test('#6246: a plan waiting for Build it stays the plan beside a reply or a queu
     { ...waiting, queue_id: 8, enqueued_at: ago(600), held_until: heldUntil, reply_at: ago(5) },
   ]) {
     assert.equal(progress.planWaits(row), true);
-    assert.equal(stage(row).stage, 'plan');
+    assert.equal(at(row), 'waiting_for_you plan');
   }
 });
 
@@ -388,25 +352,8 @@ test('#6246: built, held, replaced or closed, a plan is no longer waiting', () =
   };
   for (const [name, extra] of Object.entries(notWaiting)) {
     assert.equal(progress.planWaits({ ...waiting, ...extra }), false, name);
-    assert.notEqual(stage({ ...waiting, ...extra })?.stage, 'plan', name);
+    assert.notEqual(at({ ...waiting, ...extra }), 'waiting_for_you plan', name);
   }
-});
-
-test('#6246: one SQL definition of a waiting plan, shared by the page and the Workshop', () => {
-  const sql = progress.planWaitingSql();
-  assert.match(sql, /run\.mode = 'live' AND run\.verdict = 'ready'/);
-  assert.match(sql, /run\.awaiting_go_at IS NOT NULL/);
-  assert.match(sql, /run\.live_build_waiting_at IS NULL/);
-  assert.match(sql, /run\.build_ok IS NULL/);
-  assert.match(sql, /run\.build_session_id IS NULL/);
-  assert.match(sql, /run\.proposal_session_id IS NULL/);
-  assert.match(sql, /run\.cap_suppressed IS NULL/);
-  assert.match(sql, /ORDER BY run\.id DESC LIMIT 1/, 'the newest run, any mode, decides');
-  assert.match(sql, /github_issue_number = m\.issue_number/);
-  assert.match(sql, /homeroom_bot_closed_requests/);
-  assert.doesNotMatch(sql, /\$\d/, 'no parameters of its own');
-  assert.match(progress.planWaitingSql({ appId: 'q.app_id', issueNumber: 'q.issue_number' }),
-    /run\.app_id = q\.app_id AND run\.issue_number = q\.issue_number/);
 });
 
 // #6228 (3 Nov 2026): a person's reply on a request the bot handed back is
@@ -416,41 +363,27 @@ test('#6246: one SQL definition of a waiting plan, shared by the page and the Wo
 test('#6228: a fresh reply on a handed-back request reads as waiting to be read', () => {
   const handed = { mode: 'live', verdict: 'person', run_at: ago(10) };
   // Not queued yet: the refresh's window.
-  assert.deepEqual(stage({ ...handed, reply_at: ago(1), reply_user_id: 7 }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
-  });
-  // handedBack still says Decide on its own; stageOf answers first.
+  const soon = (row) => { const st = ws.derive(row, { now: NOW }); return [st.stage, st.line, st.since]; };
+  assert.deepEqual(soon({ ...handed, reply_at: ago(1), reply_user_id: 7 }), ['reading', { code: 'reply', soon: true }, ago(1)]);
+  // handedBack still says Decide on its own; the reply answers first.
   assert.equal(progress.handedBack({ ...handed, reply_at: ago(1) }), 'decide');
   // Past the window with no queue row: back to how it was.
-  assert.equal(stage({ ...handed, reply_at: ago(3) }), null);
+  assert.equal(at({ ...handed, reply_at: ago(3) }), 'waiting_for_you decide');
   assert.equal(progress.REPLY_WAIT_MS, 2 * 60 * 1000);
   // Queued, on hold: it waits for the week, not a read.
-  assert.equal(stage({ ...handed, queue_id: 4, enqueued_at: ago(45), held_until: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(), reply_at: ago(30) }).stage, 'on_hold');
-  assert.deepEqual(stage({ ...handed, queue_id: 4, enqueued_at: ago(2), reply_at: ago(1) }), {
-    stage: 'reading', reply: true, waiting: true, since: ago(1), doing: 'reading the new reply in a moment',
-  });
-  // The read started: reading the reply, with the reading clock.
-  assert.deepEqual(stage({ ...handed, started_at: ago(1), reply_at: ago(2) }), {
-    stage: 'reading', reply: true, since: ago(1), doing: 'reading the new reply', limit: 'reading',
-  });
+  assert.equal(at({ ...handed, queue_id: 4, enqueued_at: ago(45), held_until: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(), reply_at: ago(30) }), 'reading cooldown');
+  assert.deepEqual(soon({ ...handed, queue_id: 4, enqueued_at: ago(2), reply_at: ago(1) }), ['reading', { code: 'reply', soon: true }, ago(1)]);
+  // The read started: reading the reply.
+  assert.deepEqual(soon({ ...handed, started_at: ago(1), reply_at: ago(2) }), ['reading', { code: 'reply' }, ago(1)]);
   // A reply older than the look was already read.
-  assert.equal(stage({ ...handed, reply_at: ago(20), run_at: ago(10) }), null);
+  assert.equal(at({ ...handed, reply_at: ago(20), run_at: ago(10) }), 'waiting_for_you decide');
   // The request closed, or its change is up: unchanged.
-  assert.equal(stage({ ...handed, request_closed: true, reply_at: ago(1) }), null);
-  assert.equal(stage({ ...handed, proposal_status: 'promoted', proposal_at: ago(20), check_state: 'passing', reply_at: ago(1) }).stage, 'vote');
-});
-
-test('#6228: the reply read is one SQL definition, shared with the track', () => {
-  const sql = progress.replyLateralSql();
-  assert.match(sql, /cm\.thread_type = 'issue'/);
-  assert.match(sql, /ru\.is_synthetic IS NOT TRUE/);
-  assert.match(sql, /cm\.created_at > run\.created_at/);
-  assert.match(progress.replyLateralSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.app_id = a\.id/);
+  assert.equal(at({ ...handed, request_closed: true, reply_at: ago(1) }), 'closed');
+  assert.equal(at({ ...handed, proposal_status: 'promoted', proposal_at: ago(20), check_state: 'passing', reply_at: ago(1) }), 'up_for_vote');
   // #6280: the stored work state (which the track and the bot page read)
   // is derived from the same record fragment, and the reply lateral is in
   // it, so no two screens read a reply differently. A thread's reply line
   // reads the same lateral (homeroom-bot-reply-status.js).
-  const ws = require('../src/services/work-state');
   assert.match(ws.REQUEST_FACTS_SQL, /cm\.created_at > run\.created_at/);
   assert.match(progress.requestRecordJoinsSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.created_at > run\.created_at/);
   const replySrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-reply-status.js'), 'utf8');
@@ -564,23 +497,22 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   assert.match(read('src/routes/sessions.js'), /detail\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\s*\.changeBotFix\(pool, session\.id, \{ viewer: req\.user \}\)\.catch\(\(\) => null\);/);
   assert.match(read('src/routes/votes.js'), /proposal\.bot_fix = await require\('\.\.\/services\/homeroom-bot-progress'\)\s*\.changeBotFix\(pool, proposal\.id, \{ viewer: req\.user \}\)\.catch\(\(\) => null\);/);
   // The Homeroom bot page's own stage for it (ai-work.js BOT_STANDING), as
-  // stageOf reads a started checks_failing row.
+  // the derive reads a started checks_failing row.
   const open = { proposal_status: 'promoted', proposal_at: ago(20), check_state: 'failing', checks_sha: 'a'.repeat(40), reviewed_head_sha: 'a'.repeat(40) };
-  assert.deepEqual(stage({ ...open, started_at: ago(4), queue_reason: 'checks_failing' }),
-    { stage: 'fixing', since: ago(4), doing: 'fixing what its tests found' });
-  assert.equal(stage({ ...open, queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fix_queued');
-  const ws = require('../src/services/work-state');
-  const fixing = ws.fromStage({ stage: 'fixing' }, {});
+  const fixing = ws.derive({ ...open, started_at: ago(4), queue_reason: 'checks_failing' }, { now: NOW });
+  assert.equal(fixing.since, ago(4));
+  assert.equal(at({ ...open, queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }), 'checking checks_failing');
   assert.deepEqual([fixing.stage, fixing.line, ws.placeFor(fixing, { own: true })], ['building', { code: 'fixing' }, 'next']);
   // #6545: a fix waiting its turn is Checking with its failing tests, not a
   // change ready to vote on.
-  const queued = ws.fromStage({ stage: 'fix_queued' }, {});
+  const fixQueued = { ...open, queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' };
+  const queued = ws.derive(fixQueued, { now: NOW });
   assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['checking', { code: 'checks_failing' }, 'waiting']);
-  const counted = ws.fromStage({ stage: 'fix_queued' }, { failed_checks: 4 });
+  const counted = ws.derive({ ...fixQueued, failed_checks: 4 }, { now: NOW });
   assert.deepEqual([counted.stage, counted.line], ['checking', { code: 'checks_failing', failing: 4 }]);
   // An update queued on a passing change still holds its vote: 11 Nov 2026,
   // it is not open for votes, so it is the bot's, waiting its turn.
-  const followUp = ws.fromStage({ stage: 'followup_queued' }, {});
+  const followUp = ws.derive({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'reply' }, { now: NOW });
   assert.deepEqual([followUp.stage, followUp.line], ['building', { code: 'update_queued' }]);
   assert.equal(require('../src/services/homeroom-bot-track').STEP_OF_STAGE[fixing.stage], 'build', 'its track lights Build');
 });
@@ -604,20 +536,15 @@ test('#6357: a hold says why: the week\'s building time, or a day\'s pause after
   assert.equal(progress.holdOf({ held_until: null }, { now: NOW }), null);
   assert.equal(progress.holdOf({ held_until: ago(1), held_reason: 'cooldown' }, { now: NOW }), null);
   // The stage: on hold either way, saying which, with its own end.
-  assert.deepEqual(stage({ ...queued, held_until: inADay, held_reason: 'cooldown' }), {
-    stage: 'on_hold', hold: 'cooldown', until: inADay, since: ago(30), waitingOn: 'time',
-    doing: 'paused after repeated errors: trying again at 2026-10-03 16:04 UTC',
-  });
-  assert.deepEqual(stage({ ...queued, held_until: monday, held_reason: 'allowance' }), {
-    stage: 'on_hold', until: monday, since: ago(30), waitingOn: 'time',
-    doing: 'on hold until Monday: this week\'s building time is used up',
-  });
+  const cooled = ws.derive({ ...queued, held_until: inADay, held_reason: 'cooldown' }, { now: NOW });
+  assert.deepEqual([cooled.stage, cooled.line, cooled.since], ['reading', { code: 'cooldown', until: inADay }, ago(30)]);
+  const held = ws.derive({ ...queued, held_until: monday, held_reason: 'allowance' }, { now: NOW });
+  assert.deepEqual([held.stage, held.line, held.since], ['reading', { code: 'on_hold', until: monday }, ago(30)]);
   // Every screen's line (services/work-state.js) keeps them apart.
-  const ws = require('../src/services/work-state');
-  const cool = ws.fromStage(stage({ ...queued, held_until: inADay }), {});
+  const cool = ws.derive({ ...queued, held_until: inADay }, { now: NOW });
   assert.deepEqual(cool.line, { code: 'cooldown', until: inADay }, 'with its own end, which its track draws');
   assert.equal(ws.says(cool), 'Not started yet · Paused after repeated errors: Homeroom bot tries again later');
-  const week = ws.fromStage(stage({ ...queued, held_until: monday }), {});
+  const week = ws.derive({ ...queued, held_until: monday }, { now: NOW });
   assert.deepEqual(week.line, { code: 'on_hold', until: monday });
   assert.equal(ws.lineSays(week), 'On hold until Monday: this week\'s building time is used up');
   assert.equal(ws.placeFor(cool, { own: true }), 'waiting');
@@ -661,9 +588,8 @@ test('#6807: a change waiting on a fix for a check that is not its own reads as 
     proposal_status: 'promoted', proposal_at: ago(20), checks_at: ago(18),
     check_state: 'failing', checks_sha: 'a'.repeat(40), reviewed_head_sha: 'a'.repeat(40),
   };
-  assert.deepEqual(stage({ ...proposal, flake_fixing: true }),
-    { stage: 'flake_fixing', since: ago(18), doing: 'getting the check it fails on fixed first' });
-  assert.equal(stage({ ...proposal, flake_fixing: false }).stage, 'checks_failed', 'no wait: as today');
-  assert.equal(stage({ ...proposal, flake_fixing: true, check_state: 'passing' }).stage, 'vote',
+  assert.deepEqual([at({ ...proposal, flake_fixing: true }), sinceOf({ ...proposal, flake_fixing: true })], ['checking fixing_check', ago(18)]);
+  assert.equal(at({ ...proposal, flake_fixing: false }), 'checking checks_failing', 'no wait: as today');
+  assert.equal(at({ ...proposal, flake_fixing: true, check_state: 'passing' }), 'up_for_vote',
     'a passing verdict is its vote as usual');
 });

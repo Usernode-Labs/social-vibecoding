@@ -83,6 +83,24 @@ const DESIGN_LIMITS = Object.freeze({
   editsPerCall: 16,
 });
 
+// Artifacts, stage 2 (docs/plans/artifacts.md): the artifact capability
+// (artifact-session.js), for a thread that holds a plain page, or a turn
+// that starts one. Cheap on purpose: it reads no project code and looks at
+// no render, so it needs fewer rounds than a design. A step may still write
+// a whole page (16,000 output tokens, twice that when cut off), which is why
+// a page is written once and then changed with exact edits; and the model is
+// shown, and may edit, a version of at most `versionChars`.
+const ARTIFACT_LIMITS = Object.freeze({
+  rounds: 8,
+  outputTokens: 16000,
+  retryOutputTokens: 32000,
+  requestTimeoutMs: 180_000,
+  history: 16,
+  replyChars: 1500,
+  editsPerCall: 16,
+  versionChars: 120_000,
+});
+
 // The draft capability (live-draft-bot.js openSession): a private thread
 // with an open live draft (services/live-drafts.js), whose code the turn
 // changes while its preview runs beside the chat. It reads some code,
@@ -102,7 +120,7 @@ const DRAFT_LIMITS = Object.freeze({
 const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
-  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'open_app_preview', 'close_thread',
+  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'write_artifact', 'open_app_preview', 'close_thread',
   'report_problem', 'offer_new_project', 'change_plan', 'reply',
 ]);
 // What each capability adds to the private profile's tools (step 6). The
@@ -110,12 +128,16 @@ const CHAT_TOOLS = Object.freeze([
 // design's project unless another is named, and stop once its reading is
 // over. The chat's own reply, close_thread and offer_request serve it.
 const DESIGN_TOOLS = Object.freeze([
-  'write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan', 'compare_versions',
+  'write_artifact', 'edit_artifact', 'list_source', 'read_source', 'read_plan', 'compare_versions',
   'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page',
 ]);
 const DRAFT_TOOLS = Object.freeze([
   'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes',
 ]);
+// Artifacts, stage 2: what every kind of artifact is written and changed
+// with (src/services/bot-tools/artifact.js). The chat's own reply and
+// close_thread serve it.
+const ARTIFACT_TOOLS = Object.freeze(['write_artifact', 'edit_artifact', 'show_artifact', 'compare_artifacts']);
 // Every project thread offers these; each kind adds its own.
 const THREAD_TOOLS = Object.freeze([
   'reply', 'stay_quiet', 'request_detail', 'read_message', 'list_source', 'read_source', 'update_change',
@@ -140,7 +162,7 @@ const PROFILES = Object.freeze({
   // the capabilities the thread's state gives it (CAPABILITIES).
   private: profile('private', {
     surface: 'chat', scope: 'main', prompt: 'private', limits: CHAT_LIMITS, tools: CHAT_TOOLS, threadTools: true, platformReads: true,
-    capabilities: Object.freeze(['design', 'draft']),
+    capabilities: Object.freeze(['design', 'draft', 'artifact']),
   }),
   request: profile('request', {
     surface: 'thread', scope: 'thread', prompt: 'request', places: ['issue'], limits: THREAD_LIMITS,
@@ -183,6 +205,10 @@ const PROFILES = Object.freeze({
 const CAPABILITIES = Object.freeze({
   design: Object.freeze({ capability: 'design', scope: 'design', prompt: 'design', limits: DESIGN_LIMITS, tools: DESIGN_TOOLS }),
   draft: Object.freeze({ capability: 'draft', scope: 'draft', prompt: 'draft', limits: DRAFT_LIMITS, tools: DRAFT_TOOLS }),
+  // Artifacts, stage 2: a thread that holds a plain page, or a turn that
+  // writes one (write_artifact). A design is an artifact too, of the design
+  // kind, and keeps its own capability and tools above.
+  artifact: Object.freeze({ capability: 'artifact', scope: 'artifact', prompt: 'artifact', limits: ARTIFACT_LIMITS, tools: ARTIFACT_TOOLS }),
 });
 
 /** A thread kind's profile; throws for a kind there is none of. */
@@ -224,12 +250,13 @@ function capabilityOf(name) {
 /**
  * Step 6: the capabilities a private thread's turn starts with, by what the
  * chat found in the thread (homeroom-bot-dm.js answerUserMessage):
- * `threadDesign` (a design it holds) and `threadLiveDraft` (a live draft
- * open in it). A turn may load one as it runs (start_design,
- * open_app_preview).
+ * `threadDesign` (the artifact it holds: a design, or a plain page, by its
+ * `artifactKind`) and `threadLiveDraft` (a live draft open in it). A turn
+ * may load one as it runs (start_design, write_artifact, open_app_preview).
  */
 function capabilitiesInChat({ threadDesign = null, threadLiveDraft = null } = {}) {
-  return [...(threadDesign ? ['design'] : []), ...(threadLiveDraft ? ['draft'] : [])];
+  const held = threadDesign ? [threadDesign.artifactKind === 'page' ? 'artifact' : 'design'] : [];
+  return [...held, ...(threadLiveDraft ? ['draft'] : [])];
 }
 
 /**
@@ -249,7 +276,7 @@ function turnLimits(loaded = []) {
 }
 
 module.exports = {
-  KINDS, PLACE_KIND, CHAT_LIMITS, THREAD_LIMITS, DESIGN_LIMITS, DRAFT_LIMITS, THREAD_CHECKS, PROFILES, CAPABILITIES,
-  CHAT_TOOLS, DESIGN_TOOLS, DRAFT_TOOLS,
+  KINDS, PLACE_KIND, CHAT_LIMITS, THREAD_LIMITS, DESIGN_LIMITS, DRAFT_LIMITS, ARTIFACT_LIMITS, THREAD_CHECKS, PROFILES, CAPABILITIES,
+  CHAT_TOOLS, DESIGN_TOOLS, DRAFT_TOOLS, ARTIFACT_TOOLS,
   profileOf, kindOfPlace, profileOfPlace, kindInChat, capabilityOf, capabilitiesInChat, turnLimits,
 };

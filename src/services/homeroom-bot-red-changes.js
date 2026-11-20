@@ -115,5 +115,6 @@ module.exports = {
   STALE_DAYS,
   STALE_RED_SQL,
   redNote,
+  numbersOf,
   sweepStaleRedChanges,
 };

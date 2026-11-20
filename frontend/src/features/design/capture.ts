@@ -16,7 +16,7 @@
  * clone, never the live tree, which React and the legacy modules own), with
  * what the person typed into its fields written in, scripts, frames and
  * hidden subtrees left out, and its stylesheets named by their full address
- * (the design's frame draws them from this site, ../design/frame.ts).
+ * (the design's frame draws them from this site, ../artifact/frame-doc.ts).
  *
  * AN APP on its App tab is another origin, so the shell cannot read it: it
  * asks the app's bridge (/usernode-bridge/v1/bridge.js, the

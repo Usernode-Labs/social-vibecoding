@@ -355,8 +355,11 @@ async function stateRows(pool, rows, { botId = null, deps = {} } = {}) {
   return new Map(found.map((row) => [Number(row.chat_message_id), row]));
 }
 
-// The card's sentence for each stage of a request's work state.
-const READY_LINES = new Set(['queued', 'held_builds', 'held_waiting']);
+// The card's sentence for each stage of a request's work state. A build
+// found ready that waits (its turn, a limit, building credit) is the one
+// table's (work-stages.json `ready`): the card kept a list of its own, which
+// missed `credit_wait` and said "Building it now" through a credit wait.
+const { READY: READY_LINES } = require('./work-stages');
 
 /**
  * Pure: a request's work state as the card's stage (CARD_STAGES), whose
