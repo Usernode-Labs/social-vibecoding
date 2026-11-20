@@ -28,6 +28,10 @@ const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+// The hub as every look but the kit's draws it (the cards these tests hold): since 20 Nov 2026 the standard look's hub
+// is the kit's (lib/skin.ts isKitHome), held by tests/home-needs-you-card.test.js and tests/standard-wip-look.test.js.
+const LEGACY_SKIN = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
+const LEGACY_HUB = { stubs: LEGACY_SKIN };
 const HUB = 'frontend/src/features/dev-board/workshop/hub-cards.tsx';
 const LANDER = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 const TABS = read('frontend/src/features/nav/tab-bar.tsx');
@@ -141,7 +145,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // Each row is a door to its place.
   assert.match(hub, /onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}/);
   assert.match(hub, /<RecentlyLive slug=\{slug\} rows=\{v\.recentLive\} onAll=\{\(\) => openTab\('workshop'\)\} own=\{ownLive\} ident=\{recentIdent\} month=\{community\?\.activity\?\.shipped_month\} \/>/, 'All in Workshop is the Workshop place, and so is "N more live this month"');
-  const { ForYouCard } = loadTsx(HUB);
+  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
   const quiet = renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine: null, alone: true,
     onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, canPost: true,
@@ -201,7 +205,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
 });
 
 test('For you\'s Discussion row: the channel\'s name, its last line, what is new, and the way in', () => {
-  const { ForYouCard } = loadTsx(HUB);
+  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
   const card = (data, over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine: null, alone: false, canPost: true,
     onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, data, ...over,
@@ -239,7 +243,7 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
 });
 
 test('For you\'s Needs you opens the queue and counts the votes owed', () => {
-  const { ForYouCard } = loadTsx(HUB);
+  const { ForYouCard } = loadTsx(HUB, LEGACY_HUB);
   const row = (key, title, who) => ({ t: 'card', key, card: { title: { text: title } }, who, kind: 'vote' });
   const card = (queue, canPost = true) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', name: 'Garden', queue, mine: null, workEmpty: null, alone: false, canPost,
@@ -257,7 +261,7 @@ test('For you\'s Needs you opens the queue and counts the votes owed', () => {
   assert.match(outsider, /<p class="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these\.<\/p>/);
   assert.doesNotMatch(needs, /data-ws-hub-needs-none/, 'the door says nothing about an empty queue: it is not drawn then');
   // #3408: no vote owed, no door. One quiet line says so.
-  const { NothingToVote, owesVote } = loadTsx(HUB);
+  const { NothingToVote, owesVote } = loadTsx(HUB, LEGACY_HUB);
   assert.equal(owesVote([]), false);
   const none = renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} }));
   assert.equal(none, '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
@@ -265,12 +269,12 @@ test('For you\'s Needs you opens the queue and counts the votes owed', () => {
 
   // Members & activity is the hero's since #3268, and the fortnight How
   // it's going's: pinned in tests/community-hub-details.test.js.
-  assert.equal(loadTsx(HUB).MembersCard, undefined, 'no separate Members & activity card');
-  assert.equal(loadTsx(HUB).NeedsCard, undefined, 'and no Needs you card beside the For you row');
+  assert.equal(loadTsx(HUB, LEGACY_HUB).MembersCard, undefined, 'no separate Members & activity card');
+  assert.equal(loadTsx(HUB, LEGACY_HUB).NeedsCard, undefined, 'and no Needs you card beside the For you row');
 });
 
 test('Recently live: the last three changes that went live, as pictures that open their pages', () => {
-  const { RecentlyLive, RECENT_LIVE_SHOWN } = loadTsx(HUB);
+  const { RecentlyLive, RECENT_LIVE_SHOWN } = loadTsx(HUB, LEGACY_HUB);
   assert.equal(RECENT_LIVE_SHOWN, 3);
   const r = (id, over = {}) => ({
     key: `live:${id}`, sessionId: id, prNumber: 900 + id, title: `Change ${id}`, who: 'Homeroom bot',
@@ -301,7 +305,7 @@ test('Recently live: the last three changes that went live, as pictures that ope
   // NEVER EMPTY (15 Oct 2026): before any change has gone live, one card
   // for the app itself, its tile and name and since when it has been live,
   // opening the app. Its label has no door: nothing has landed to list.
-  const { liveSinceLine } = loadTsx(HUB);
+  const { liveSinceLine } = loadTsx(HUB, LEGACY_HUB);
   const own = (since, rows = []) => renderToHtml(createElement(RecentlyLive, {
     slug: 'garden', rows, onAll: () => {}, own: { name: 'Garden', iconUrl: null, iconEmoji: '🌱', since },
   }));

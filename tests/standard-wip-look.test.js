@@ -26,13 +26,17 @@ const WIP_HIDES = [
   // Under 1024px a project's tile is its icon and name alone.
   'html:not([data-skin]) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
-  'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
+  'html:not([data-skin]) #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
   'html[data-skin-wip][data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
   // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.
   'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
-  'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  'html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  // The project's preview is a card beside the hero from 1024px; narrower, the hero keeps the picture at its side (20 Nov 2026).
+  'html:not([data-skin]) #dev-workshop .wip-hero-preview',
+  // And where the card is there, the hero's own tilted copy of the picture is not.
+  'html:not([data-skin]) #dev-workshop .dev-ws-hero-summary[data-has-preview] .wip-hero-art-pic',
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
   'html:not([data-skin]) #app-list .app-card-opened',
 ];

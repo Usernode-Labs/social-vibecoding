@@ -35,11 +35,15 @@ const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+// The hub as every look but the kit's draws it (the cards these tests hold): since 20 Nov 2026 the standard look's hub
+// is the kit's (lib/skin.ts isKitHome), held by tests/home-needs-you-card.test.js and tests/standard-wip-look.test.js.
+const LEGACY_SKIN = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
+const LEGACY_HUB = { stubs: LEGACY_SKIN };
 const HUB = 'frontend/src/features/dev-board/workshop/hub-cards.tsx';
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 const LANDER = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 
-const hub = loadTsx(HUB);
+const hub = loadTsx(HUB, LEGACY_HUB);
 
 const community = (over = {}) => ({
   slug: 'geneva-hikes',
@@ -255,7 +259,7 @@ test('For you on a project nobody else is in: the Workshop and the Discussion fr
 });
 
 test('the Share it card says what an invite is for while it is being built', () => {
-  const { shareItLine } = loadTsx(CARD);
+  const { shareItLine } = loadTsx(CARD, LEGACY_HUB);
   assert.equal(shareItLine(true), 'Invite people to follow along while it’s being built, or make it public so anyone can join.');
   assert.equal(shareItLine(false), 'Invite people to make it a private community, or make it public so anyone can join.');
   assert.match(read(CARD), /<p className="dev-ws-strip-text">\{shareItLine\(!!data\.first_version && !data\.first_version\.ready\)\}<\/p>/);
@@ -390,7 +394,7 @@ test('#4045: `?shot=hub-first-week` draws a made-up first week for the before/af
   assert.deepEqual([link.audience, link.member_count, link.members.length, link.invite_link, link.is_creator], ['solo', 1, 1, true, true]);
   assert.deepEqual([link.invite_summary.links, link.invite_summary.joined, link.invite_summary.expires_at],
     [1, 0, new Date(7 * 24 * 60 * 60000 - 60000).toISOString()]);
-  assert.equal(loadTsx(CARD).inviteSentLine(link.invite_summary, 0), 'Invite link sent · nobody has joined yet · 7 days left');
+  assert.equal(loadTsx(CARD, LEGACY_HUB).inviteSentLine(link.invite_summary, 0), 'Invite link sent · nobody has joined yet · 7 days left');
   assert.equal(creator.invite_link, false);
   assert.equal(creator.invite_summary, null);
   assert.equal(creator.channel.post_url, null, 'nothing behind it to post to');
