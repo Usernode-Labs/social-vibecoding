@@ -4569,35 +4569,28 @@ html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-h
   color: var(--site-label);
   font-weight: 500;
 }
-#auth-landing-screen [data-guest-discover] :is([data-guest-card], [data-guest-featured]) {
+/* A community's card is the community card (A COMMUNITY'S CARD, approved
+   20 Nov 2026) in the site's own colours: its white panel on an ink outline
+   with a hard edge under it, 14px corners, its ink and muted words, and its
+   name in the serif at the card's own size. The larger first row of
+   Featured is the card's own larger size. */
+#auth-landing-screen [data-guest-discover] {
+  --cm-bg: var(--site-panel);
+  --cm-radius: 14px;
+  --cm-edge: 0 2px 0 var(--site-line);
+  --cm-edge-on: 0 2px 0 var(--site-line);
+  --cm-edge-lift: 0 2px 0 var(--site-line), 0 22px 36px -14px rgb(0 0 0 / 0.34);
+  --cm-ink: var(--site-ink);
+  --cm-muted: var(--site-muted);
+  --cm-body: var(--site-muted);
+}
+#auth-landing-screen [data-guest-discover] .cm-card {
   border: 1px solid var(--site-line);
-  border-radius: 14px;
-  background-color: var(--site-panel);
-  box-shadow: 0 2px 0 var(--site-line);
 }
-#auth-landing-screen [data-guest-discover] :is([data-guest-card], [data-guest-featured]) > span:last-child {
-  border-top: 1px solid var(--site-line);
-}
-/* The first featured communities, large: a taller picture, the name a size
-   up, two lines of what it is, and how many members and changes. */
-#auth-landing-screen [data-guest-discover] [data-guest-lead] > span:first-child { aspect-ratio: 16 / 9; }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] > span:last-child { padding: 14px 16px 16px; min-height: 132px; }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-link] { font-size: 24px; line-height: 29px; }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-about] { margin-top: 4px; font-size: 15px; line-height: 21px; color: var(--site-muted); }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-stats] { color: var(--site-label); }
 #auth-landing-screen [data-guest-discover] [data-guest-card-link] {
   font-family: var(--site-serif);
-  font-size: 19px;
-  line-height: 23px;
   font-weight: 400;
   letter-spacing: -0.005em;
-  color: var(--site-ink);
-}
-#auth-landing-screen [data-guest-discover] [data-guest-card-link]::after {
-  border-radius: 14px;
-}
-#auth-landing-screen [data-guest-discover] [data-guest-card-about] {
-  color: var(--site-muted);
 }
 /* the website's look on the signed-out pages: end */
 
@@ -5944,8 +5937,6 @@ html:not([data-skin]) {
   --wip-pill-ink: var(--wip-cta-ink);
   --wip-count-bg: var(--accent-tint);
   --wip-count-ink: var(--accent-tint-ink);
-  /* A community card's own colour, lifted: lighter and fuller, so a row of them is not a row of dark blocks */
-  --wip-cover-lift: brightness(1.5) saturate(1.35);
   /* A challenge picture's band: how much of its pale tone it wears and, under
      that, how much of the tone's deeper line colour over the card. The light
      is all pale tone; the dark is none of it and a third of the deep one,
@@ -6082,10 +6073,9 @@ html:not([data-skin]) { --wip-cols: 1; }
 @media (min-width: 640px) { html:not([data-skin]) { --wip-cols: 2; } }
 @media (min-width: 1024px) { html:not([data-skin]) { --wip-cols: 4; } }
 /* In the dark (either config): an icon's tile is a step lighter than the
-   card and edged, so a dark picture stays a shape; a community's colour is
-   lifted less; a challenge's band wears a third of its tone's deep colour. */
+   card and edged, so a dark picture stays a shape; a challenge's band wears
+   a third of its tone's deep colour. */
 html:not([data-skin]).dark {
-  --wip-cover-lift: brightness(1.2) saturate(1.25);
   --wip-poster-tone: 0%;
   --wip-poster-deep: 34%;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 14px -4px rgb(0 0 0 / 0.55);
@@ -6671,21 +6661,6 @@ html:not([data-skin]) .home-row > #home-challenges-section { margin-top: calc(va
 html:not([data-skin]) #app-list > .app-card,
 html:not([data-skin]) .wip-search > input,
 html:not([data-skin]) #home-join-section select { border-radius: var(--wip-radius-inner); }
-/* A community's card, and the placeholders that stand for one while it
-   loads, are cards on the page. */
-html:not([data-skin]) #home-join-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
-/* A community's card with no picture of its own wears its colour, which is
-   picked to carry white text elsewhere and is dark for a field this size.
-   Here a copy of that colour lies on it, lifted (lighter and fuller, not
-   washed toward grey), under the glow and the icon, which keep their own
-   strength. (A card with a picture has no colour laid on it, and no lift.) */
-html:not([data-skin]) #home-join-section [data-guest-card-cover][style]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: inherit;
-  filter: var(--wip-cover-lift);
-}
 /* Under a token config, Home's section labels are drawn from the config's
    label tokens (the shell's own label's values unless the config names
    others): the three label lines and Featured's. */
@@ -8086,6 +8061,7 @@ html:not([data-skin]) {
   --cm-radius: var(--wip-card-radius);
   --cm-edge: inset 0 0 0 1px var(--wip-soft-line);
   --cm-edge-on: inset 0 0 0 1px var(--wip-card-line);
+  --cm-edge-lift: inset 0 0 0 1px var(--wip-card-line), 0 2px 4px rgb(0 0 0 / 0.05), 0 22px 36px -14px rgb(0 0 0 / 0.34);
   --cm-ink: var(--wip-ink);
   --cm-muted: var(--wip-ink-muted);
   --cm-body: var(--wip-ink-soft);
@@ -8232,14 +8208,6 @@ html:not([data-skin]) #communities-all-section > [data-home-join-featured] {
 }
 html:not([data-skin]) #communities-screen #communities-all-section > .home-area-label { padding-top: var(--wip-row-gap); }
 html:not([data-skin]) #communities-all-section select { border-radius: var(--wip-radius-inner); }
-html:not([data-skin]) #communities-all-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
-html:not([data-skin]) #communities-all-section [data-guest-card-cover][style]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: inherit;
-  filter: var(--wip-cover-lift);
-}
 html:not([data-skin]) #communities-all-section [data-home-join-featured] > h3 {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
@@ -9274,6 +9242,73 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
 }
 @media (min-width: 640px) {
   .cm-week-sr { display: none; }
+}
+/* FEATURED'S FIRST ROW, LARGER (asked 20 Nov 2026), signed in or out:
+   features/communities/card.tsx `useLeadCount` decides how many (one fewer
+   than a row of the rest, three at most; the whole width on a phone) and
+   sets --cm-lead-cols; the rest of Featured is the grid under it. */
+.cm-grid[data-cm-grid="lead"] { grid-template-columns: repeat(var(--cm-lead-cols, 3), minmax(0, 1fr)); }
+.cm-grid[data-cm-grid="lead"] + .cm-grid { margin-top: var(--cm-gap); }
+.cm-card[data-cm-size="lead"] .cm-card-body { padding: 0 16px 18px; }
+.cm-card[data-cm-size="lead"] .cm-card-head { gap: 14px; }
+.cm-card[data-cm-size="lead"] .cm-card-face { margin-top: -18px; }
+.cm-card[data-cm-size="lead"] .cm-card-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 17px;
+  font-size: 36px;
+}
+.cm-card[data-cm-size="lead"] .cm-card-id { padding-top: 8px; }
+.cm-card[data-cm-size="lead"] .cm-card-name { font-size: 18px; line-height: 22px; }
+.cm-card[data-cm-size="lead"] :is(.cm-card-members, .cm-card-desc, .cm-card-week) { font-size: 14px; line-height: 20px; }
+.cm-card[data-cm-size="lead"] .cm-card-desc { margin-top: 10px; }
+/* A PHONE (under 640px): two cards to a row, 12px apart, each a size down
+   (the icon 44px, 11px over the picture's edge, the name 14px); Featured's
+   first card the whole width, its icon 60px. */
+@media (max-width: 639.98px) {
+  .cm-grid:is([data-cm-grid="join"], [data-cm-grid="lead"]) { gap: 12px; }
+  .cm-grid[data-cm-grid="lead"] + .cm-grid { margin-top: 12px; }
+  .cm-grid[data-cm-grid="join"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cm-grid[data-cm-grid="join"] .cm-card-body { padding: 0 10px 12px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-head { gap: 9px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-face { margin-top: -11px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 11px;
+    font-size: 24px;
+  }
+  .cm-grid[data-cm-grid="join"] .cm-card-id { gap: 1px; padding-top: 5px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-name { font-size: 14px; line-height: 17px; }
+  .cm-card[data-cm-size="lead"] .cm-card-face { margin-top: -15px; }
+  .cm-card[data-cm-size="lead"] .cm-card-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 15px;
+  }
+  .cm-card[data-cm-size="lead"] .cm-card-name { font-size: 17px; line-height: 21px; }
+}
+/* A card that lifts off the page under the pointer (Discover's: the card
+   rises by its own classes, ../guest/guest-discover.tsx), onto a shadow,
+   its picture growing a little; still for anyone who asks for less motion. */
+@media (hover: hover) {
+  .cm-card[data-cm-lift]:hover { box-shadow: var(--cm-edge-lift); }
+  .cm-card[data-cm-lift] .cm-card-img { transition: transform 300ms ease-out; }
+  .cm-card[data-cm-lift]:hover .cm-card-img { transform: scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-card[data-cm-lift] .cm-card-img { transition: none; }
+  .cm-card[data-cm-lift]:hover .cm-card-img { transform: none; }
+}
+:where(html[data-motion="reduce"]) .cm-card[data-cm-lift] .cm-card-img { transition: none; }
+:where(html[data-motion="reduce"]) .cm-card[data-cm-lift]:hover .cm-card-img { transform: none; }
+/* A card held in place while the list is read: the card's ground, its
+   picture's shape, and about as tall as a card's words. */
+.cm-card-skel .cm-card-pic { background-color: var(--cm-pic-ground); }
+.cm-card-skel-body { display: block; height: 130px; }
+.cm-card-skel[data-cm-size="lead"] .cm-card-skel-body { height: 150px; }
+@media (max-width: 639.98px) {
+  .cm-grid[data-cm-grid="join"] .cm-card-skel-body { height: 110px; }
 }
 /* The compact card: the icon smaller, on a dark hairline (it sits on the
    card's own white), beside the name and the members, centred. */

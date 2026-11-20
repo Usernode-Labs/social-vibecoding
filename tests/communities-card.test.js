@@ -144,3 +144,23 @@ test('the card\'s measures: a 16:9 picture, a 56px icon 14px over its edge, 15px
   // No blur anywhere on it, and no stock palette.
   assert.doesNotMatch(block, /blur\(|backdrop-filter|gray-|indigo-/);
 });
+
+test('every place draws the same card from its own tokens: the standard look, the brand look and the visitor page', () => {
+  const tokenRule = (selector) => {
+    const at = css.indexOf(`${selector} {\n  --cm-bg:`);
+    assert.ok(at >= 0, `${selector} sets the card's tokens`);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  assert.match(tokenRule('html:not([data-skin])'), /--cm-bg: var\(--wip-card-bg\);[\s\S]*--cm-edge-lift: inset 0 0 0 1px var\(--wip-card-line\), /);
+  const brand = tokenRule('html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))');
+  assert.match(brand, /--cm-radius: 18px;[\s\S]*--cm-small: 13px;\s*--cm-small-line: 18px;/);
+  assert.match(tokenRule('#auth-landing-screen [data-guest-discover]'), /--cm-bg: var\(--site-panel\);\s*--cm-radius: 14px;/);
+  // No look restyles the card's parts by hand: only tokens, and the edge, the
+  // votes and the visitor page's outline and serif name.
+  for (const part of ['.cm-card-pic', '.cm-card-icon', '.cm-card-week', '.cm-card-desc']) {
+    const outside = css.replace(block, '').split(part).length - 1;
+    assert.equal(outside, 0, `${part} is drawn only by the card's own block`);
+  }
+  // Under 640px every big card says this week with its two glyphs, wherever it is.
+  assert.match(block, /\.cm-card \.cm-week-glyphs \{ display: flex; \}/);
+});

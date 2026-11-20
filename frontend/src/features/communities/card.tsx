@@ -35,6 +35,8 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { CheckIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useMinWidth } from '../../lib/use-min-width';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
   CORNER, CORNER_PIN, CORNER_UNPIN, MinusGlyph, VOTES, WIGGLE, communityScene, openHub,
@@ -72,6 +74,9 @@ export function cardScene(slug: string): number {
 
 const count = (n: number | null | undefined) => Math.max(0, Math.floor(Number(n) || 0));
 
+/** What goes over a picture: drawn as it is, or asked whether the picture itself is shown (a preview loop plays only over one). */
+export type PictureOverlay = ReactNode | ((picture: boolean) => ReactNode);
+
 /**
  * The card's picture, or its background. `attrs` and `children` are the
  * caller's: the hooks a card-to-page morph finds, a "New" pill, a preview
@@ -81,7 +86,7 @@ export function CommunityPicture({ community, eager = false, attrs, children }: 
   community: CardCommunity;
   eager?: boolean;
   attrs?: Record<string, string | undefined>;
-  children?: ReactNode;
+  children?: PictureOverlay;
 }) {
   const { pictureUrl: url, pictureDarkUrl: dark } = community;
   const [failed, setFailed] = useState(false);
@@ -104,7 +109,7 @@ export function CommunityPicture({ community, eager = false, attrs, children }: 
           ) : null}
         </>
       ) : null}
-      {children}
+      {typeof children === 'function' ? children(picture) : children}
     </span>
   );
 }
@@ -177,14 +182,16 @@ function CardId({ community, name }: { community: CardCommunity; name?: ReactNod
  * drawn on the icon (a count, the edit discs) and `faceClass` moves it (the
  * edit wiggle); `picture` goes over the picture.
  */
-export function CommunityCardContent({ community, eager = false, name, face, faceClass, picture, pictureAttrs }: {
+export function CommunityCardContent({ community, eager = false, name, face, faceClass, picture, pictureAttrs, aboutAttrs }: {
   community: CardCommunity;
   eager?: boolean;
   name?: ReactNode;
   face?: ReactNode;
   faceClass?: string;
-  picture?: ReactNode;
+  picture?: PictureOverlay;
   pictureAttrs?: Record<string, string | undefined>;
+  /** Hooks on the sentence (a card on Discover keeps its `data-guest-card-about`). */
+  aboutAttrs?: Record<string, string | undefined>;
 }) {
   const about = (community.description || '').trim();
   return (
@@ -198,7 +205,7 @@ export function CommunityCardContent({ community, eager = false, name, face, fac
           </span>
           <CardId community={community} name={name} />
         </span>
-        {about ? <span className="cm-card-desc" data-cm-desc="">{about}</span> : null}
+        {about ? <span className="cm-card-desc" data-cm-desc="" {...aboutAttrs}>{about}</span> : null}
         <CommunityWeek active={community.activeWeek} live={community.liveWeek} />
       </span>
     </>
@@ -283,4 +290,71 @@ export function CommunityPageCard({ community, votes, editing, compact = false, 
       {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
   );
+}
+
+/**
+ * A card held in place while what it shows is read: the card's own ground,
+ * its picture's shape and about as tall as its words, so the page does not
+ * move when the cards land. `lead` holds the larger card's place.
+ */
+export function CommunityCardSkeleton({ lead = false }: { lead?: boolean }) {
+  return (
+    <span className="cm-card cm-card-skel" data-cm-size={lead ? 'lead' : undefined} aria-hidden="true">
+      <span className="cm-card-pic" />
+      <span className="cm-card-skel-body" />
+    </span>
+  );
+}
+
+/** The most featured communities the larger first row holds. */
+export const LEAD_MAX = 3;
+
+/**
+ * HOW MANY FEATURED COMMUNITIES ARE DRAWN LARGER, in a first row of their
+ * own (asked 20 Nov 2026: "first row of featured larger everywhere"): one
+ * fewer than a row of the cards under it holds, so each is wider than they
+ * are, three at most and two at least; on a phone (under 640px), one, the
+ * whole width. How many a row holds is read off the grid itself: `probe` is
+ * an empty grid of the same kind (`data-cm-grid="join"`), whose columns the
+ * CSS decides (the caller hands it over from a ref callback, so a probe
+ * drawn anew is measured anew), read again whenever its width changes.
+ * Before it is measured (and in a prerender) the answer is the most.
+ */
+export function useLeadCount(probe: HTMLElement | null): number {
+  const wide = useMinWidth(640);
+  const [cols, setCols] = useState(LEAD_MAX + 1);
+  useIsomorphicLayoutEffect(() => {
+    const el = probe;
+    if (!el || typeof window === 'undefined') return undefined;
+    const measure = () => {
+      const tracks = getComputedStyle(el).gridTemplateColumns.split(' ').filter((track) => /^[\d.]+px$/.test(track)).length;
+      if (tracks) setCols(tracks);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [probe]);
+  return wide ? Math.max(2, Math.min(LEAD_MAX, cols - 1)) : 1;
+}
+
+/** A row of the public directory (GET /api/public/apps) as the card draws it. */
+export function communityFromDirectory(app: {
+  slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null;
+  illustration_url?: string | null; illustration_dark_url?: string | null; member_count?: number;
+  description?: string | null; active_users?: number; merged_week?: number;
+}): CardCommunity {
+  return {
+    slug: app.slug,
+    name: app.name,
+    iconUrl: app.icon_url,
+    iconEmoji: app.icon_emoji,
+    pictureUrl: app.illustration_url,
+    pictureDarkUrl: app.illustration_dark_url,
+    members: app.member_count,
+    description: app.description,
+    activeWeek: app.active_users,
+    liveWeek: app.merged_week,
+  };
 }
