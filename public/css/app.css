@@ -8943,8 +8943,15 @@ html:not([data-skin]) .rf-pair[data-rf-voted="yes"] .rf-pair-thumb { background:
 html:not([data-skin]) .rf-pair[data-rf-voted="no"] .rf-pair-thumb { background: var(--wip-btn-no-bg); }
 html:not([data-skin]) .rf-pair-div { background: var(--wip-btn-2-ink); }
 html:not([data-skin]) .rf-pair-btn:focus-visible,
-html:not([data-skin]) .rf-morph:focus-visible { outline-color: var(--wip-btn-focus); }
+html:not([data-skin]) .rf-morph:focus-visible,
+html:not([data-skin]) .rf-prev:focus-visible { outline-color: var(--wip-btn-focus); }
 html:not([data-skin]) .rf-morph {
+  border: 1px solid var(--wip-btn-2-line);
+  background: var(--wip-btn-2-bg);
+  box-shadow: var(--wip-btn-edge);
+  color: var(--wip-btn-2-ink);
+}
+html:not([data-skin]) .rf-prev {
   border: 1px solid var(--wip-btn-2-line);
   background: var(--wip-btn-2-bg);
   box-shadow: var(--wip-btn-edge);
@@ -8961,6 +8968,7 @@ html:not([data-skin]) .rf-morph[data-rf-morph="next"] {
   color: var(--wip-btn-1-ink);
 }
 html:not([data-skin]) .rf-morph:active { box-shadow: none; scale: 1; transform: var(--wip-btn-press); }
+html:not([data-skin]) .rf-prev:active { box-shadow: none; scale: 1; transform: var(--wip-btn-press); }
 /* RESUME, in the strip that offers to go back into an app: the strip's one action, a small level 1 pill. */
 html:not([data-skin]) .platform-parked-pill {
   border: 1px solid var(--wip-btn-1-line);
@@ -27898,6 +27906,13 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-count { font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .rf-morph:active { scale: .97; }
 .rf-morph:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* #6919: back to the change shown before this one: a round arrow the size of
+   Skip, in the row's quiet fill, left of Yes | No. With nothing behind it,
+   the platform's disabled look: the same button, faded and not pressable. */
+.rf-prev { flex: none; display: grid; place-items: center; width: 52px; height: 52px; padding: 0; border: 0; border-radius: 26px; background: var(--rf-fill); color: var(--rf-ink); cursor: pointer; }
+.rf-prev:active { scale: .97; }
+.rf-prev:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rf-prev:disabled { opacity: .4; cursor: default; scale: 1; }
 .rf-morph-in { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; font-size: 17px; font-weight: 600; transition: opacity .2s, transform .3s cubic-bezier(0.22,1,0.36,1); }
 .rf-morph-next { opacity: 0; transform: translateX(calc(10px * var(--rtl-sign))); }
 .rf-morph[data-rf-morph="next"] .rf-morph-skip { opacity: 0; transform: scale(.5); }
@@ -27933,7 +27948,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-prev, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
   .rf-lens { animation: none; }
   .rf-claim { animation: none; }
 }
@@ -27948,6 +27963,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 :where(html[data-motion="reduce"]) .rf-pair-thumb,
 :where(html[data-motion="reduce"]) .rf-pair-mark,
 :where(html[data-motion="reduce"]) .rf-morph,
+:where(html[data-motion="reduce"]) .rf-prev,
 :where(html[data-motion="reduce"]) .rf-morph-in,
 :where(html[data-motion="reduce"]) .rf-why,
 :where(html[data-motion="reduce"]) .rf-tile,
@@ -28820,7 +28836,7 @@ html[data-skin]:not([data-skin="brand"]) .rf-pair-btn[aria-checked="true"] { col
 html[data-skin]:not([data-skin="brand"]) .rf-vrow .rf-morph { height: 52px; padding: 0; cursor: pointer; }
 /* A quiet button on this card is the tone the card's own controls have (a
    look's quiet button is drawn for the page's ground, and the card is solid). */
-html[data-skin]:not([data-skin="brand"]) .rf-page-wrap :is(.rf-desc-go, .rf-morph:not([data-rf-morph="next"]), .rf-chip:not([aria-checked="true"]), [data-needs-vote-chip]:not([aria-pressed="true"])) { background: var(--rf-fill); }
+html[data-skin]:not([data-skin="brand"]) .rf-page-wrap :is(.rf-desc-go, .rf-prev, .rf-morph:not([data-rf-morph="next"]), .rf-chip:not([aria-checked="true"]), [data-needs-vote-chip]:not([aria-pressed="true"])) { background: var(--rf-fill); }
 /* A worn button is laid out as a button; these keep what the product says about each. */
 html[data-skin]:not([data-skin="brand"]) :is(.rf-go, .rf-chip, .rf-end-btn, .rf-end-back, [data-needs-vote-chip]) { cursor: pointer; }
 html[data-skin]:not([data-skin="brand"]) .rf-go:disabled { cursor: default; }

@@ -609,6 +609,24 @@ export function nextIndex(items: ReviewItem[], index: number, votes: Record<stri
   return -1;
 }
 
+/**
+ * The change a trail of keys leads back to: `keys` is the run's changes in
+ * the order they were shown, and the last of them that is still in `run`
+ * (and is not a group decision) is the one. Returns its index in `run`, and
+ * the keys that were not used, so going on again passes over what it
+ * skipped. Nothing left gives -1.
+ */
+export function trailIndex(run: ReviewItem[], keys: string[]): { index: number; rest: string[] } {
+  let rest = keys.slice();
+  while (rest.length) {
+    const key = rest[rest.length - 1];
+    rest = rest.slice(0, -1);
+    const i = run.findIndex((it) => it.key === key);
+    if (i >= 0 && run[i].kind !== 'governance') return { index: i, rest };
+  }
+  return { index: -1, rest: [] };
+}
+
 /* ── The title shot's composition (the factory prototype's rules) ─────────
  *
  * Ported from the title-shots factory (research 2026-10-15/16), on what

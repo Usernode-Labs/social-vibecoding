@@ -519,6 +519,61 @@ test('at rest the vote is part of the page: Yes | No and Skip, no sheet', () => 
   assert.match(html, /class="rf-why rf-why-off"/, 'the room for a reason is kept, empty');
 });
 
+// #6919: a round back arrow at the start of the vote row, left of Yes | No,
+// which returns to the change shown just before this one. With nothing
+// behind it, it is greyed out and cannot be pressed.
+test('#6919: the back arrow sits left of Yes and No, and is grey with nothing behind', () => {
+  const off = sheetHtml({});
+  assert.ok(off.indexOf('data-rf-prev=""') > 0, 'the arrow is drawn on the change page');
+  assert.ok(off.indexOf('data-rf-prev=""') < off.indexOf('data-rf-vote="yes"'), 'left of the pair');
+  assert.match(off, /data-rf-prev="" disabled=""/, 'the first change has nothing to go back to');
+  assert.ok(off.includes(`aria-label="${message('communities:review.vote.prevLabel')}"`), 'named for a screen reader');
+  const on = sheetHtml({ hasPrev: true });
+  assert.doesNotMatch(on, /data-rf-prev="" disabled=""/, 'enabled once there is a change behind');
+  assert.equal(message('communities:review.vote.prevLabel'), 'Go back to the previous change');
+  // Only the resting row carries it: a help sheet's pair is not the change page.
+  assert.doesNotMatch(sheetHtml({ state: 'talk' }), /data-rf-prev/);
+  // The arrow's own tap goes back; the native disabled attribute keeps it out
+  // of the keyboard's order and the platform's disabled look fades it.
+  const vs = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.match(vs, /disabled=\{!hasPrev\}/);
+  assert.match(vs, /onClick=\{onPrev\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-prev \{ flex: none; display: grid; place-items: center; width: 52px; height: 52px;/, 'the size and fill of Skip');
+  assert.match(css, /\.rf-prev:disabled \{ opacity: \.4; cursor: default; scale: 1; \}/, 'greyed out, the platform\'s disabled look');
+});
+
+test('#6919: back then forward returns to the same change', () => {
+  const a = { key: 'a', kind: 'proposal' };
+  const g = { key: 'g', kind: 'governance' };
+  const b = { key: 'b', kind: 'proposal' };
+  const c = { key: 'c', kind: 'proposal' };
+  const run = [a, g, b, c];
+  assert.deepEqual(model.trailIndex(run, ['a', 'b']), { index: 2, rest: ['a'] }, 'the last change still in the run');
+  assert.deepEqual(model.trailIndex(run, ['a', 'gone']), { index: 0, rest: [] }, 'a change that left the run is passed over');
+  assert.deepEqual(model.trailIndex(run, ['g']), { index: -1, rest: [] }, 'a group decision is never shown in the run');
+  assert.deepEqual(model.trailIndex(run, []), { index: -1, rest: [] }, 'nothing behind: nothing to go back to');
+
+  const flow = read('frontend/src/features/review-flow/review-flow.tsx');
+  // Back puts the change on show onto the forward trail and goes to the one behind.
+  assert.match(flow, /const goBack = \(\) => \{[\s\S]*?setAhead\(\(cur\) => \[\.\.\.cur, item\.key\]\);\s*setBehind\(prev\.rest\);\s*slide\.current = -1;\s*goTo\(prev\.index\);/);
+  // Forward reads the trail it came back along before nextIndex, so the same
+  // change comes back; the one left behind joins the trail back.
+  assert.match(flow, /if \(dir === 1 && forward\.index >= 0\) n = forward\.index;/, 'forward reads the trail back first');
+  assert.match(flow, /if \(forward\.index >= 0\) setAhead\(forward\.rest\);/, 'the one left behind joins the trail back');
+  // The button is Done only when neither the trail ahead nor nextIndex has one.
+  assert.match(flow, /const onward = forward\.index >= 0 \? forward\.index : next;/);
+  assert.match(flow, /hasNext=\{onward >= 0\}/);
+  assert.match(flow, /const prev = trailIndex\(run, behind\);/);
+  assert.match(flow, /const hasPrev = prev\.index >= 0;/);
+  // The push multiplies both sides by which way the page goes.
+  assert.match(flow, /const sign = dirSign\(\) \* from\.dir;/);
+  assert.match(flow, /setFrom\(\{ index, view: views\.current\[item\.key\] \|\| SHEET_VIEW, dir \}\);/);
+  // Picking another kind of vote, or looking again, starts a fresh run.
+  assert.match(flow, /setDone\(false\);\s*setBehind\(\[\]\);\s*setAhead\(\[\]\);\s*\};/, 'Look again clears the trail');
+  assert.match(flow, /setIndex\(first >= 0 \? first : Math\.max\(0, nextRun\.findIndex[\s\S]*?setBehind\(\[\]\);\s*setAhead\(\[\]\);/, 'a vote kind starts a fresh run');
+});
+
 test('help is in the bar\'s card: Ask privately, Discussion and Try it, each opened over the page', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   for (const to of ['askq', 'talk', 'try']) assert.match(src, new RegExp(`data-rf-help="${to}" onClick=\\{\\(\\) => help\\('${to}'\\)\\}`));
