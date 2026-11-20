@@ -36,6 +36,8 @@ const WIP_HIDES = [
   // From 1280px a project's Needs you shows what a change does beside it: no arrow to open it, no dimming behind it (20 Nov 2026).
   'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim',
   'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle',
+  // And the short claim over the picture: the full text is beside it, so it is said once.
+  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row',
   // The project's preview is a card beside the hero from 1024px; narrower, the hero keeps the picture at its side (20 Nov 2026).
   'html:not([data-skin]) #dev-workshop .wip-hero-preview',
   // And where the card is there, the hero's own tilted copy of the picture is not.
@@ -242,7 +244,7 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
       assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|^html:not\(\[data-skin\]\)(\.dark)? \.(rf-pair|rf-morph|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
+      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|^html:not\(\[data-skin\]\)(\.dark)? \.(rf-pair|rf-morph|rf-switch|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
     }
   }
   // Colours are written in the token rules alone, and every token a rule reads is declared there.
