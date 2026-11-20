@@ -47,6 +47,7 @@ async function audit(pool, { shouldStop = () => false } = {}) {
     while (queue.length && !shouldStop()) {
       if (!githubBudget.budgetAllows('background')) { held = true; return; }
       const row = queue.shift();
+      if (require('./project-source').managedRepo(row.repo_url)) continue;
       const parsed = repoRef.ownerRepo(row.repo_url);
       if (!parsed) continue;
       const { owner, repo } = parsed;

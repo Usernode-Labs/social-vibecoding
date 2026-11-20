@@ -44,6 +44,7 @@ const jwt = require('jsonwebtoken');
 const ISSUER = 'usernode';
 
 const AUD_WORKER = 'usernode:worker';
+const AUD_PROJECT_SOURCE = 'usernode:project-source';
 const AUD_EDGE = 'usernode:edge';
 
 const PUR_IFRAME = 'iframe';
@@ -54,6 +55,7 @@ const PUR_IFRAME = 'iframe';
 // welcomes guests verifies this audience on purpose.
 const PUR_GUEST = 'guest';
 const PUR_WORKER = 'worker:session';
+const PUR_PROJECT_SOURCE = 'project:source-read';
 // Declares before/after-shot intent only; it cannot publish Git or create PRs.
 const PUR_VISIBLE_CHANGES = 'worker:visible-changes';
 // The platform asking an app, server to server, to erase or export one
@@ -505,6 +507,18 @@ function verifyProdDebugToken(token) {
   return verifyWorkerPurpose(token, PUR_PROD_DEBUG);
 }
 
+function signProjectSourceToken(claims, expiresIn) {
+  return jwt.sign({ ...claims, pur: PUR_PROJECT_SOURCE }, workerSecret(), {
+    algorithm: 'HS256', issuer: ISSUER, audience: AUD_PROJECT_SOURCE, expiresIn,
+  });
+}
+
+function verifyProjectSourceToken(token) {
+  return verifyWith(token, workerSecret(), {
+    algorithm: 'HS256', audience: AUD_PROJECT_SOURCE, purpose: PUR_PROJECT_SOURCE,
+  });
+}
+
 // ── Private-app edge gate ─────────────────────────────────────────────
 //
 // The edge purposes share EDGE_JWT_SECRET; the `pur` check is what keeps a
@@ -754,6 +768,8 @@ module.exports = {
   signingPublicKeyPem,
   signWorkerToken,
   verifyWorkerToken,
+  signProjectSourceToken,
+  verifyProjectSourceToken,
   signVisibleChangesToken,
   verifyVisibleChangesToken,
   signWorkerPurpose,

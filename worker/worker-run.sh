@@ -241,7 +241,7 @@ if [ ! -d /home/node/workspace/.git ]; then
     fi
     echo "__USERNODE_PHASE__ checkout (sealed at the pinned base)"
   else
-    if ! CLONE_OUT="$(git clone --single-branch --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1)"; then
+    if ! CLONE_OUT="$(usernode_source_git clone --single-branch --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1)"; then
       die "clone failed: $(clip "$CLONE_OUT")"
     fi
     if ! FETCH_OUT="$(usernode_fetch_session_refs)"; then

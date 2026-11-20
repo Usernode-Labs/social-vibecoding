@@ -155,6 +155,28 @@ test('a git-host app: prepare, patch, native proposal, update, moved head', { ti
   assert.ok(prepared.workOrder.includes(`git format-patch ${main0}..HEAD --stdout`));
   assert.doesNotMatch(prepared.workOrder, /git push|gh repo fork/);
 
+  const savedCohort = process.env.GIT_HOST_PRIVATE_PROJECTS;
+  const savedSigningKey = process.env.WORKER_JWT_SECRET;
+  try {
+    process.env.GIT_HOST_PRIVATE_PROJECTS = 'tide-log';
+    process.env.WORKER_JWT_SECRET = 'test-project-source-key';
+    const privateOrder = await svc.prepareWork(deps, {
+      user, app: { ...app, view_visibility: 'private' }, brief: 'Show the high tide in bold',
+      clientName: 'Claude', origin: ORIGIN,
+    });
+    assert.equal(privateOrder.taskId, prepared.taskId);
+    assert.equal(privateOrder.baseSha, main0);
+    assert.equal(privateOrder.cloneUrl, null);
+    assert.match(privateOrder.workOrder, /Authorization: Bearer svgs_/);
+    assert.match(privateOrder.workOrder, /git clone --branch source/);
+    assert.doesNotMatch(privateOrder.workOrder, /repository is public|git fetch origin/);
+  } finally {
+    if (savedCohort === undefined) delete process.env.GIT_HOST_PRIVATE_PROJECTS;
+    else process.env.GIT_HOST_PRIVATE_PROJECTS = savedCohort;
+    if (savedSigningKey === undefined) delete process.env.WORKER_JWT_SECRET;
+    else process.env.WORKER_JWT_SECRET = savedSigningKey;
+  }
+
   // ── submit_work with the patch: a native proposal ──────────────────
   const first = agentPatch(path.join(root, 'agent'), main0, (dir) => {
     fs.writeFileSync(path.join(dir, 'index.html'), '<p><b>High tide</b></p>\n');

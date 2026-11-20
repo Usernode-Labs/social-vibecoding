@@ -213,7 +213,7 @@ test('the limit is chosen when the worker is made, for both runtimes, and can be
   const src = read('src/services/worker.js');
   const boot = src.slice(src.indexOf('async function _bootstrapWarmContainer('), src.indexOf('// Public API: ensureWorker, execInWorker, evictWorker'));
   assert.match(boot, /const memory = workerMemoryFor\(repoOwner, repoName\);/);
-  assert.match(boot, /kubernetes\.ensureWorker\(kubernetesWorkerConfig\(\), \{\n\s+sessionId, env: safeEnv, onProgress, temporary, memory,/);
+  assert.match(boot, /kubernetes\.ensureWorker\(kubernetesWorkerConfig\(\), \{\n\s+sessionId, env: \{ \.\.\.safeEnv, \.\.\.sourceEnv \}, onProgress, temporary, memory,/);
   assert.match(boot, /'--memory', memory,/);
   assert.match(read('deploy/helm/social-vibecoding-platform/templates/platform.yaml'),
     /- \{name: WORKER_MEMORY_PLATFORM_REPO, value: \{\{ \.Values\.config\.workerMemoryPlatformRepo \| quote \}\}\}/);

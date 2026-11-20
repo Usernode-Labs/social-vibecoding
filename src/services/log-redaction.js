@@ -27,6 +27,7 @@ const SENSITIVE_PATTERNS = [
   [/sk-or-v1-[A-Za-z0-9_-]+/g],           // OpenRouter API keys
   [/sk-ant-[A-Za-z0-9_-]+/g],             // Anthropic API keys (user + admin)
   [/svmc[pd]_[A-Za-z0-9_-]{43}/g],         // Homeroom MCP bearers (connector + delegated, #2779)
+  [/svgs_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g], // Homeroom private source grants
   [/svpu_[A-Za-z0-9_-]{43}/g],             // Homeroom work-order patch upload tokens (#4264)
   [/svcu_[A-Za-z0-9_-]{43}/g],             // Homeroom connector upload tokens (connector-uploads.js)
   [/svpp_[A-Za-z0-9_-]{43}/g],             // Homeroom platform-preview project credentials

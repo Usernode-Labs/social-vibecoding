@@ -525,9 +525,9 @@ function isRepoNameExistsError(err) {
   return /name already exists on this account/i.test(err.message || '');
 }
 
-async function createRepo(owner, name, { description = '', adoptExisting = false } = {}) {
+async function createRepo(owner, name, { description = '', adoptExisting = false, private: isPrivate = false } = {}) {
   require('./code-host-write').requireCodeHostWrite('github.createRepo');
-  if (onGitHost(owner)) return hostedGit().createRepo(owner, name, { description, adoptExisting });
+  if (onGitHost(owner)) return hostedGit().createRepo(owner, name, { description, adoptExisting, private: isPrivate });
   // New repositories are made on Homeroom's git host. On GitHub they were
   // made on the bot's account with its token, which is never sent again
   // ("Who Homeroom is on GitHub" above), and the App cannot make one on an
