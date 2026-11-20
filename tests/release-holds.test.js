@@ -392,10 +392,14 @@ test('the bell row is an admin\'s only, settles with the change, and wears the w
   assert.equal(message('notifications:row.releaseHold.label'), 'Needs your approval');
   assert.equal(message('push:releaseHold.title'), 'A change needs your approval');
   // A change that is only told about: no warning sign, and no ask.
-  const notice = /if \(\/\^notice:\/\.test\(String\(n\.detail \|\| ''\)\)\) \{\s+return \{([\s\S]*?)\};/.exec(client);
-  assert.ok(notice, 'the row reads the detail the server wrote');
-  assert.doesNotMatch(notice[1], /needsYou|26A0/);
-  assert.match(notice[1], /notifications:row\.releaseHold\.noticeLabel/);
+  // (20 Nov 2026: the notice row has its own function, which also names a
+  // device capability; tests/device-permissions-ask.test.js renders it.)
+  assert.match(client, /if \(\/\^notice:\/\.test\(String\(n\.detail \|\| ''\)\)\) return releaseHoldNoticeRow\(n, base, prLabel\);/,
+    'the row reads the detail the server wrote');
+  const notice = client.slice(client.indexOf('function releaseHoldNoticeRow('), client.indexOf('function rowView('));
+  assert.ok(notice.length > 0);
+  assert.doesNotMatch(notice, /needsYou|26A0/);
+  assert.match(notice, /notifications:row\.releaseHold\.noticeLabel/);
   assert.equal(message('notifications:row.releaseHold.noticeLabel'), 'Not read in full');
   assert.match(read('src', 'services', 'mobile-push-policy.js'), /\/\^notice:\/\.test\(String\(detail \|\| ''\)\)[\s\S]{0,200}push:releaseHold\.notice\.title/);
   assert.equal(message('push:releaseHold.notice.title'), 'A change was not read in full');

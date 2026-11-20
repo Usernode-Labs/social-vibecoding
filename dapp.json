@@ -4501,10 +4501,10 @@
       "expectText": "record audio from your microphone"
     },
     {
-      "name": "#2219: the first grant says the app will reopen, because the policy only applies on navigation",
+      "name": "#2219: the first grant says the app will reopen, because the policy only applies on navigation, and offers Allow this time beside Always allow",
       "path": "/?shot=app-permission",
-      "expectSelector": "#permission-consent-modal:not(.hidden) #permission-consent-allow",
-      "expectText": "Allow and reopen"
+      "expectSelector": "#permission-consent-modal:not(.hidden) #permission-consent-allow-once + #permission-consent-allow",
+      "expectText": "will reopen"
     },
     {
       "name": "#2219: granted device permissions are listed per app in Settings, with a way back, beside AI spending and blocked apps",

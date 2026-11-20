@@ -7939,6 +7939,30 @@
     "text": "Allow and reopen",
     "description": "Confirm button of the permission dialog when the app must be loaded again for the permission to work: gives the permission and reloads the app."
   },
+  "dialog.permission.allowOnce": {
+    "text": "Allow this time",
+    "description": "Button of the permission dialog an app opens when it asks for a device capability, such as the camera: gives the permission only while the app stays open. It is not saved, and is not listed in Settings. Shown beside \"Always allow\"."
+  },
+  "dialog.permission.allowAlways": {
+    "text": "Always allow",
+    "description": "Confirm button of the permission dialog, beside \"Allow this time\": gives the permission to this app until the person takes it back in Settings."
+  },
+  "dialog.permission.noteChoices": {
+    "text": "Only {{app}} gets this. Allow this time lasts until you close {{app}}. Always allow lasts until you take it back in Settings.",
+    "description": "Note in the permission dialog when both \"Allow this time\" and \"Always allow\" are offered: what each lasts. {{app}} is the app's name; \"this\" is the permission being asked for."
+  },
+  "dialog.permission.noteChoicesUnnamed": {
+    "text": "Only This app gets this. Allow this time lasts until you close it. Always allow lasts until you take it back in Settings.",
+    "description": "The same note when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+  },
+  "dialog.permission.noteChoicesReopen": {
+    "text": "Only {{app}} gets this. Allow this time lasts until you close {{app}}. Always allow lasts until you take it back in Settings. The app will reopen so the change takes effect.",
+    "description": "The same note when the app has to be loaded again for the permission to work. {{app}} is the app's name."
+  },
+  "dialog.permission.noteChoicesReopenUnnamed": {
+    "text": "Only This app gets this. Allow this time lasts until you close it. Always allow lasts until you take it back in Settings. The app will reopen so the change takes effect.",
+    "description": "The same note when the app has to be loaded again and its name is not known; \"This app\" is written as the dialog has always shown it."
+  },
   "dialog.llm.fallbackApp": {
     "text": "This app",
     "description": "Stands where the app's name is shown on its own in the dialog that asks whether an app may use AI on the person's account, when the name is not known. Shown alone, as a label; the dialog's sentences have unnamed wordings of their own."

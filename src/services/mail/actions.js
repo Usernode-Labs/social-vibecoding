@@ -414,6 +414,8 @@ const ACTIONS = {
       hasAuthor: flag('True when the author is known'),
       reasons: text('Why it is held, or why the admins are told: one sentence per reason, joined by spaces', { fromCode: true }),
       held: flag('True when the change waits for an admin\'s yes; false when the admins are only told about it'),
+      asks: flag('True when the change asks for a device capability, such as the camera, and the admins are only told'),
+      unread: flag('True when the change was too large for the risk rules to read in full'),
       url: link('Opens the change, where an admin votes'),
     },
     required: BOTH('url'),
@@ -435,6 +437,11 @@ const ACTIONS = {
         // Held unless the sender says otherwise (services/release-holds.js
         // sends false for a change the admins are only told about).
         held: payload.held !== false,
+        // Why a change that is not held is told about: it asks for a device
+        // capability, or it could not be read in full, or both. A sender
+        // that names neither (one from before `asks`) meant the second.
+        asks: payload.asks === true,
+        unread: payload.unread === true || (payload.held === false && payload.asks !== true && payload.unread !== false),
         url: url(payload.url) || PRODUCTION_ORIGIN,
       };
     },

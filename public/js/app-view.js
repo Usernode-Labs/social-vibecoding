@@ -2425,7 +2425,66 @@ const AppView = {
   // stale grant set must never ride another app's navigation.
   grantedForSlug(slug) {
     if (!slug || AppView.iframePermissionsSlug !== slug) return [];
-    return (AppView.iframePermissions && AppView.iframePermissions.effective) || [];
+    const saved = (AppView.iframePermissions && AppView.iframePermissions.effective) || [];
+    const once = AppView._onceGrantsFor(slug);
+    return once.length ? saved.concat(once.filter((c) => !saved.includes(c))) : saved;
+  },
+
+  // ── "Allow this time" (20 Nov 2026) ───────────────────────────────────
+  //
+  // A one-time grant is never sent to the server and never listed in
+  // Settings. It lives here, keyed by the app and tied to the very frame
+  // ELEMENT it was given on: the re-navigation that puts it into force keeps
+  // that element (so it survives the reload it needs, and any reload while
+  // the app stays open), and closing the app, or leaving it for another,
+  // ends it, because the next launch is a different element or a different
+  // app. grantedForSlug folds it into the `allow` every navigation writes.
+  _onceGrants: new Map(),
+  _onceGrantsFor(slug) {
+    const entry = slug ? AppView._onceGrants.get(slug) : null;
+    if (!entry) return [];
+    const frame = typeof AppView._appFrame === 'function' ? AppView._appFrame() : null;
+    const el = frame && typeof frame.frame === 'function' ? frame.frame() : null;
+    if (!el || el !== entry.el || el.isConnected === false) {
+      AppView._onceGrants.delete(slug);
+      return [];
+    }
+    return [...entry.caps];
+  },
+  _grantOnce(slug, capability) {
+    const frame = typeof AppView._appFrame === 'function' ? AppView._appFrame() : null;
+    const el = frame && typeof frame.frame === 'function' ? frame.frame() : null;
+    if (!slug || !el || !AppView._appIframeGated.includes(capability)) return false;
+    const entry = AppView._onceGrants.get(slug);
+    if (entry && entry.el === el) entry.caps.add(capability);
+    else AppView._onceGrants.set(slug, { el, caps: new Set([capability]) });
+    return true;
+  },
+
+  // ── The app's place across a permission reload ────────────────────────
+  //
+  // A grant reloads the app's frame, which loses whatever screen the app was
+  // on. An app hands its place to requestPermission({ place }) and reads it
+  // back with usernode.takeSavedPlace() once it has reloaded. The shell holds
+  // it, not the app's own storage, so it works however the frame is
+  // sandboxed. One place per app, read once, and only for a few minutes.
+  PERMISSION_PLACE_MAX_CHARS: 16000,
+  PERMISSION_PLACE_TTL_MS: 5 * 60 * 1000,
+  _permissionPlaces: new Map(),
+  _savePermissionPlace(slug, place) {
+    if (!slug || place === undefined || place === null) return false;
+    let json;
+    try { json = JSON.stringify(place); } catch { return false; }
+    if (typeof json !== 'string' || json.length > AppView.PERMISSION_PLACE_MAX_CHARS) return false;
+    AppView._permissionPlaces.set(slug, { json, at: Date.now() });
+    return true;
+  },
+  _takePermissionPlace(slug) {
+    const entry = slug ? AppView._permissionPlaces.get(slug) : null;
+    if (!entry) return null;
+    AppView._permissionPlaces.delete(slug);
+    if (Date.now() - entry.at > AppView.PERMISSION_PLACE_TTL_MS) return null;
+    try { return JSON.parse(entry.json); } catch { return null; }
   },
   _grantedNow() {
     return AppView.grantedForSlug((AppView.appData && AppView.appData.slug) || null);
@@ -32325,7 +32384,7 @@ const AppView = {
     const data = e.data;
     if (!data || !data.id) return;
     const type = data.__usernode_permission;
-    if (type !== 'request' && type !== 'get' && type !== 'get-all') return;
+    if (type !== 'request' && type !== 'get' && type !== 'get-all' && type !== 'take-place') return;
 
     // Only the app frames this shell owns may ask — all three, same gate as
     // the LLM family. The landing viewer and the staging preview delegate
@@ -32354,6 +32413,13 @@ const AppView = {
     const slug = bridge.slug;
     if (!slug) {
       reply(null, PlatformI18n.t('changes:bridge.appNotIdentified'));
+      return;
+    }
+
+    // usernode.takeSavedPlace(): the place this app handed requestPermission
+    // before a grant reloaded it, once, or null. Only the App tab reloads.
+    if (type === 'take-place') {
+      reply({ place: frameId === 'app-iframe' ? AppView._takePermissionPlace(slug) : null });
       return;
     }
 
@@ -32392,12 +32458,19 @@ const AppView = {
 
     if (!bridge.current()) return;
     const declared = (info.declared || []).map((d) => d.capability);
-    const effective = info.effective || [];
+    const saved = info.effective || [];
+    // This open app's one-time grants count as granted too, while they last
+    // (see _onceGrantsFor), and say so in `scope`.
+    const once = frameId === 'app-iframe'
+      ? AppView._onceGrantsFor(slug).filter((c) => declared.includes(c) && !saved.includes(c))
+      : [];
+    const effective = saved.concat(once);
 
     if (type === 'get-all') {
       reply({
         declared: info.declared || [],
         granted: effective,
+        grantedOnce: once,
         active: AppView._appIframeGated.filter(
           (c) => AppView._frameAllowsCapability(frameId, c)
         ),
@@ -32410,7 +32483,10 @@ const AppView = {
       // Already granted. `active` false is the rare case of a grant made in
       // another tab since this document loaded, and it means the same thing
       // as a fresh grant: this document cannot use it until it reloads.
-      reply({ capability, state: 'granted', active: isActive, reloadRequired: !isActive });
+      reply({
+        capability, state: 'granted', active: isActive, reloadRequired: !isActive,
+        scope: once.includes(capability) ? 'once' : 'always',
+      });
       return;
     }
     if (!declared.includes(capability)) {
@@ -32442,10 +32518,27 @@ const AppView = {
       // still worth storing, it just does not light up here.
       needsReload: frameId === 'app-iframe' && !isActive,
       surfaced: frameId !== 'app-iframe',
+      // "Allow this time" only where it can come true: the App tab, whose
+      // reload puts it in force. A preview or the landing viewer delegates
+      // nothing, so a grant there is only worth saving.
+      allowOnce: frameId === 'app-iframe',
     });
     if (!bridge.current()) return;
-    if (!decision) {
+    if (decision !== 'always' && decision !== 'once') {
       reply({ capability, state: 'denied', active: false, reason: 'declined' });
+      return;
+    }
+
+    if (decision === 'once') {
+      // Nothing is stored: the grant is this open frame's alone, and the
+      // reload below is what puts it in force (see _onceGrantsFor).
+      if (frameId !== 'app-iframe' || !AppView._grantOnce(slug, capability)) {
+        reply({ capability, state: 'denied', active: false, reason: 'declined' });
+        return;
+      }
+      if (data.place !== undefined) AppView._savePermissionPlace(slug, data.place);
+      reply({ capability, state: 'granted', active: false, reloadRequired: true, scope: 'once' });
+      try { await AppView._renavigateForPermissions(slug); } catch {}
       return;
     }
 
@@ -32468,8 +32561,10 @@ const AppView = {
 
     // Answer BEFORE re-navigating. The reload below destroys the document
     // that asked, so a reply sent after it would land nowhere; sent first,
-    // an app that checks `active` gets its chance to stop cleanly.
-    reply({ capability, state: 'granted', active: false, reloadRequired: true });
+    // an app that checks `active` gets its chance to stop cleanly. Its
+    // place, when it gave one, is kept for usernode.takeSavedPlace().
+    if (frameId === 'app-iframe' && data.place !== undefined) AppView._savePermissionPlace(slug, data.place);
+    reply({ capability, state: 'granted', active: false, reloadRequired: true, scope: 'always' });
     if (frameId === 'app-iframe') {
       try { await AppView._renavigateForPermissions(slug); } catch {}
     }
@@ -32861,8 +32956,9 @@ const AppView = {
     if (AppView._llmConsentSettle) AppView._llmConsentSettle(true);
   },
   // Singleton permission prompt, same scrim/card pattern as the LLM consent
-  // dialog above. Resolves true on Allow, null on "Not now" / backdrop /
-  // Esc. There is no validation branch here: the decision IS the answer, so
+  // dialog above. Resolves 'always' on Always allow, 'once' on Allow this
+  // time, null on "Not now" / backdrop / Esc. There is no validation branch
+  // here: the decision IS the answer, so
   // unlike `_llmConsentSettle` there is nothing for the controller to check.
   _permissionModalEl: null,
   /** The open dialog's resolver, so its card's buttons can dispatch by name. */
@@ -32894,16 +32990,30 @@ const AppView = {
             ? PlatformI18n.t('changes:dialog.permission.titleCapability', { app: view.appName, capability: view.capability })
             : PlatformI18n.t('changes:dialog.permission.titleCapabilityUnnamed', { capability: view.capability })),
         reason: view.reason,
+        // With "Allow this time" on offer (the App tab), the note says what
+        // each of the two choices lasts, and the confirm button is the
+        // lasting one, "Always allow". Elsewhere it reads as it always has.
         note: view.surfaced
           ? PlatformI18n.t('changes:dialog.permission.notePreview')
-          : (view.needsReload
-            ? (view.appName
-              ? PlatformI18n.t('changes:dialog.permission.noteReopen', { app: view.appName })
-              : PlatformI18n.t('changes:dialog.permission.noteReopenUnnamed'))
-            : (view.appName
-              ? PlatformI18n.t('changes:dialog.permission.note', { app: view.appName })
-              : PlatformI18n.t('changes:dialog.permission.noteUnnamed'))),
-        confirmLabel: view.needsReload ? PlatformI18n.t('changes:dialog.permission.allowReopen') : PlatformI18n.t('changes:dialog.permission.allow'),
+          : (view.allowOnce
+            ? (view.needsReload
+              ? (view.appName
+                ? PlatformI18n.t('changes:dialog.permission.noteChoicesReopen', { app: view.appName })
+                : PlatformI18n.t('changes:dialog.permission.noteChoicesReopenUnnamed'))
+              : (view.appName
+                ? PlatformI18n.t('changes:dialog.permission.noteChoices', { app: view.appName })
+                : PlatformI18n.t('changes:dialog.permission.noteChoicesUnnamed')))
+            : (view.needsReload
+              ? (view.appName
+                ? PlatformI18n.t('changes:dialog.permission.noteReopen', { app: view.appName })
+                : PlatformI18n.t('changes:dialog.permission.noteReopenUnnamed'))
+              : (view.appName
+                ? PlatformI18n.t('changes:dialog.permission.note', { app: view.appName })
+                : PlatformI18n.t('changes:dialog.permission.noteUnnamed')))),
+        confirmLabel: view.allowOnce
+          ? PlatformI18n.t('changes:dialog.permission.allowAlways')
+          : (view.needsReload ? PlatformI18n.t('changes:dialog.permission.allowReopen') : PlatformI18n.t('changes:dialog.permission.allow')),
+        onceLabel: view.allowOnce ? PlatformI18n.t('changes:dialog.permission.allowOnce') : null,
       });
 
       const done = (result) => {
@@ -32926,18 +33036,21 @@ const AppView = {
 
       // Backdrop, Esc and "Not now" are all the SAME answer, and it is the
       // deny answer. A permission dialog must never read a dismissal as
-      // consent.
-      AppView._permissionConsentSettle = (allow) => done(allow ? true : null);
+      // consent. The two yeses are named: 'always' is stored, 'once' is not.
+      AppView._permissionConsentSettle = (choice) => done(choice === 'always' || choice === 'once' ? choice : null);
 
       root.classList.remove('hidden');
     });
   },
 
   _permissionConsentDecline() {
-    if (AppView._permissionConsentSettle) AppView._permissionConsentSettle(false);
+    if (AppView._permissionConsentSettle) AppView._permissionConsentSettle(null);
   },
   _permissionConsentAllow() {
-    if (AppView._permissionConsentSettle) AppView._permissionConsentSettle(true);
+    if (AppView._permissionConsentSettle) AppView._permissionConsentSettle('always');
+  },
+  _permissionConsentAllowOnce() {
+    if (AppView._permissionConsentSettle) AppView._permissionConsentSettle('once');
   },
 };
 

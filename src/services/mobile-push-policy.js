@@ -295,6 +295,44 @@ function platformLimitCopy(detail) {
 
 // Kind-specific {title, body}, or null when the kind's essential context is
 // missing (e.g. a mention without a sender) — null means the generic copy.
+// A release_hold notice's capabilities ("notice:capability|capability:camera",
+// services/release-holds.js notifyIfDue), in the catalogue's order: an array
+// (empty when the row names none) when the notice is about a capability,
+// else null.
+// Each capability's words, by its id, in the catalogue's order (an id is one
+// plain literal: tests/mobile-push-language.test.js).
+const RELEASE_HOLD_CAPABILITY_WHAT = Object.freeze({
+  geolocation: 'push:releaseHold.capability.what.geolocation',
+  microphone: 'push:releaseHold.capability.what.microphone',
+  camera: 'push:releaseHold.capability.what.camera',
+  'display-capture': 'push:releaseHold.capability.what.display-capture',
+  usb: 'push:releaseHold.capability.what.usb',
+  serial: 'push:releaseHold.capability.what.serial',
+  hid: 'push:releaseHold.capability.what.hid',
+  bluetooth: 'push:releaseHold.capability.what.bluetooth',
+  midi: 'push:releaseHold.capability.what.midi',
+});
+function releaseHoldAsks(detail) {
+  const [rules, caps] = String(detail || '').replace(/^notice:/, '').split('|');
+  if (!String(rules || '').split(',').includes('capability')) return null;
+  const named = new Set(String(caps || '').split(',').filter((tag) => tag.startsWith('capability:'))
+    .map((tag) => tag.slice('capability:'.length)));
+  return Object.keys(RELEASE_HOLD_CAPABILITY_WHAT).filter((name) => named.has(name));
+}
+
+// The push for a notice about a device capability, or null for any other
+// notice: "Stylist: Now asks for the camera".
+function releaseHoldAsksCopy(detail, label, withApp, t) {
+  const asks = releaseHoldAsks(detail);
+  if (!asks) return null;
+  const what = asks.map((name) => t(RELEASE_HOLD_CAPABILITY_WHAT[name])).filter(Boolean)
+    .reduce((first, second) => (first ? t('push:releaseHold.capability.pair', { first, second }) : second), '');
+  return {
+    title: withApp(what ? t('push:releaseHold.capability.title', { what }) : t('push:releaseHold.capability.titleAny')),
+    body: label ? t('push:releaseHold.capability.body.named', { title: label }) : t('push:releaseHold.capability.body.plain'),
+  };
+}
+
 function buildCopy(kind, context, now, t) {
   const app = cleanText(context.appName);
   const conversation = cleanText(context.conversationTitle);
@@ -816,9 +854,11 @@ function buildCopy(kind, context, now, t) {
     // (services/release-holds.js). The change's own name says which.
     case 'release_hold':
       // A detail that starts "notice:" is a change the rules could not read
-      // in full: it is not held, and the push says so.
+      // in full, or (20 Nov 2026) one that asks for a device capability, which
+      // each person grants for themselves ("notice:capability|capability:camera"): it is
+      // not held, and the push says so.
       if (/^notice:/.test(String(detail || ''))) {
-        return {
+        return releaseHoldAsksCopy(detail, label, withApp, t) || {
           title: withApp(t('push:releaseHold.notice.title')),
           body: label ? t('push:releaseHold.notice.body.named', { title: label }) : t('push:releaseHold.notice.body.plain'),
         };

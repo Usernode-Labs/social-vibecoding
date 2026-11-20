@@ -3151,15 +3151,27 @@ recordBtn.onclick = async () => {
 };
 ```
 
-The answer is `{ capability, state, active, reason }`. `state` is
+The answer is `{ capability, state, active, reason, scope }`. `state` is
 `"granted"` or `"denied"`; on a denial `reason` is `"declined"` (the person
 said no), `"not_declared"` (missing from your `dapp.json`) or
 `"unknown_capability"`.
 
+**Once or always.** The dialog offers **Allow this time** beside **Always
+allow**. On a grant, `scope` says which: `"always"` is saved and listed in
+the person's Settings, and `"once"` lasts only while your app stays open,
+so the next time they open it, asking again shows the dialog again. Write
+your app so either works: ask on the tap that needs it every time, and let
+the platform answer at once when the grant still stands.
+
+Declaring a capability holds no change for an admin. Each person decides
+for themselves, so the platform only tells its admins that your project
+now asks for it.
+
 `usernode.getPermission(name)` reads the same answer without ever
 prompting, so you can render an "enable" button from it.
 `usernode.getPermissions()` returns the whole picture for your app:
-`{ declared, granted, active }`.
+`{ declared, granted, grantedOnce, active }`, where `grantedOnce` lists the
+grants that last only while the app is open.
 
 ### `active` is the field to read twice
 
@@ -3168,10 +3180,35 @@ capability granted just now cannot apply to the document that asked for it.
 On that first grant the platform tells the person the app will reopen, and
 reloads the frame. `active: false` therefore means "granted, and you are
 about to be reloaded": stop, do not call the web API, and let the reload
-land. Save anything you need to keep first.
+land.
+
+**Keep your place across that reload.** Pass where the person is as
+`place` (anything JSON, up to 16 KB). The platform keeps it for a few
+minutes, and `usernode.takeSavedPlace()` hands it back once after the app
+reloads (a second call answers `null`). Read it when your app starts, and
+open the screen it names:
+
+```js
+photoBtn.onclick = async () => {
+  const r = await usernode.requestPermission('camera', { place: { screen: 'photo', draftId } });
+  if (r.state !== 'granted') return showWhyWeNeedIt(r.reason);
+  if (!r.active) return;  // the app reopens, then the code below brings it back here
+  openCamera();
+};
+
+// At startup:
+usernode.takeSavedPlace().then((place) => {
+  if (place && place.screen === 'photo') showPhotoScreen(place.draftId);
+}).catch(() => {});  // standalone, with no platform: nothing was saved
+```
+
+Keep the place small: the screen and the ids that rebuild it, never the
+person's data. Anything typed but not yet saved should be saved the way
+your app already saves it.
 
 Every later launch delegates it up front and `requestPermission()` resolves
-`active: true` with no dialog and no reload at all.
+`active: true` with no dialog and no reload at all, for a grant that was
+**Always allow**, or for **Allow this time** while the app stays open.
 
 For the same reason, a revoke in Settings takes effect the next time the
 app opens rather than instantly. A running document's policy cannot be

@@ -3005,6 +3005,72 @@ function rowTone(n, view) {
   return bot && bot.moment === 'on_hold' && bot.said !== 'low' ? 'hold' : null;
 }
 
+// A release_hold notice's detail ("notice:<rules>|<rule>:<value>,…",
+// src/services/release-holds.js notifyIfDue) as { rules, capabilities }.
+// Each capability's words, by its id, in the catalogue's order.
+const RELEASE_HOLD_CAPABILITY_WHAT = Object.freeze({
+  geolocation: 'notifications:row.releaseHold.capability.geolocation',
+  microphone: 'notifications:row.releaseHold.capability.microphone',
+  camera: 'notifications:row.releaseHold.capability.camera',
+  'display-capture': 'notifications:row.releaseHold.capability.display-capture',
+  usb: 'notifications:row.releaseHold.capability.usb',
+  serial: 'notifications:row.releaseHold.capability.serial',
+  hid: 'notifications:row.releaseHold.capability.hid',
+  bluetooth: 'notifications:row.releaseHold.capability.bluetooth',
+  midi: 'notifications:row.releaseHold.capability.midi',
+});
+const RELEASE_HOLD_CAPABILITIES = Object.keys(RELEASE_HOLD_CAPABILITY_WHAT);
+function releaseHoldNotice(detail) {
+  const body = String(detail || '').replace(/^notice:/, '');
+  const [rulesPart, capsPart] = body.split('|');
+  const rules = String(rulesPart || '').split(',').map((r) => r.trim()).filter(Boolean);
+  const tags = String(capsPart || '').split(',').map((c) => c.trim()).filter(Boolean);
+  const named = new Set(tags.filter((tag) => tag.startsWith('capability:')).map((tag) => tag.slice('capability:'.length)));
+  return { rules, tags, capabilities: RELEASE_HOLD_CAPABILITIES.filter((c) => named.has(c)) };
+}
+
+// "the camera", "the microphone and the camera": each capability in the
+// catalogue's words, joined the way the reader's language joins a list.
+function capabilityPhrase(capabilities) {
+  const words = (capabilities || []).map((c) => t(RELEASE_HOLD_CAPABILITY_WHAT[c])).filter(Boolean);
+  if (!words.length) return '';
+  try {
+    const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
+    return new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(words);
+  } catch {
+    return words.join(', ');
+  }
+}
+
+// A release_hold row that only tells (detail "notice:…"). 20 Nov 2026: a
+// change that asks for a device capability is told about, not held, and
+// names the project and what it now asks for ("Stylist now asks for the
+// camera"), from the names the detail carries after a `|`. A row from before
+// the names says it in general words. Otherwise it is a change the rules
+// could not read in full. Neither asks anything of the reader, so neither
+// wears the warning sign.
+function releaseHoldNoticeRow(n, base, prLabel) {
+  const notice = releaseHoldNotice(n.detail);
+  if (notice.rules.includes('capability')) {
+    const what = capabilityPhrase(notice.capabilities);
+    const id = what
+      ? (n.appName ? 'notifications:row.releaseHold.capabilityLabel' : 'notifications:row.releaseHold.capabilityLabelUnnamed')
+      : (n.appName ? 'notifications:row.releaseHold.capabilityLabelAny' : 'notifications:row.releaseHold.capabilityLabelAnyUnnamed');
+    return {
+      ...base,
+      icon: '\u2139\uFE0F',
+      by: n.sourceUsername || null,
+      ...headline(t(id, { app: n.appName || '', what }), prLabel || n.sessionTitle || t('notifications:row.releaseHold.capabilityBody')),
+    };
+  }
+  return {
+    ...base,
+    icon: '\u2139\uFE0F',
+    by: n.sourceUsername || null,
+    ...headline(t('notifications:row.releaseHold.noticeLabel'), prLabel || n.sessionTitle || t('notifications:row.releaseHold.noticeBody')),
+  };
+}
+
 function rowView(n) {
   const view = rowWords(n);
   const tone = rowTone(n, view);
@@ -3538,17 +3604,10 @@ function rowWords(n) {
   // holds.js), for full admins. The warning sign is the point of the row: it
   // is the one ask in the bell that something risky waits on this reader.
   if (n.kind === 'release_hold') {
-    // A detail that starts "notice:" is a change the rules could not read
-    // in full: the admins are told, and it is not held, so the row asks for
-    // nothing and carries no warning sign.
-    if (/^notice:/.test(String(n.detail || ''))) {
-      return {
-        ...base,
-        icon: '\u2139\uFE0F',
-        by: n.sourceUsername || null,
-        ...headline(t('notifications:row.releaseHold.noticeLabel'), prLabel || n.sessionTitle || t('notifications:row.releaseHold.noticeBody')),
-      };
-    }
+    // A detail that starts "notice:" is a change the admins are only told
+    // about (it asks for a device capability, or could not be read in full):
+    // it is not held, so the row asks for nothing and carries no warning sign.
+    if (/^notice:/.test(String(n.detail || ''))) return releaseHoldNoticeRow(n, base, prLabel);
     return {
       ...base,
       needsYou: true,
@@ -4188,6 +4247,8 @@ function stampFields(ts) {
 // is what keeps ./notifications-list.tsx presentational, and it is what let the
 // list be lifted wholesale into the hamburger without this module noticing.
 Notifications._rowView = rowView;
+Notifications._releaseHoldNotice = releaseHoldNotice;
+Notifications._capabilityPhrase = capabilityPhrase;
 // B4: the sheet's rows, folded, for tests (a bot moment never folds).
 Notifications._screenViews = screenViews;
 // "One story": where a conversation row (and its push) opens, for tests.
