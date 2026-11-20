@@ -204,7 +204,7 @@ const VALUES = [
   '',
 ].join('\n');
 
-test('what is live comes off the newest stable chart, and an unreadable chart is no baseline', () => {
+test('the release baseline follows the promoted chart digest and is unavailable when the tag cannot be read', async () => {
   const live = {
     revision: 'a5f91bc5ff8ebc2c255754663d48e62b699bcbea',
     platform: `sha256:${'f'.repeat(64)}`, worker: `sha256:${'7'.repeat(64)}`, capture: `sha256:${'4'.repeat(64)}`,
@@ -214,6 +214,15 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
   assert.equal(parseReleaseValues(VALUES.replace(/sourceRevision: .*/, 'sourceRevision: "main"')), null);
 
   const calls = [];
+  const digest = `sha256:${'d'.repeat(64)}`;
+  const repository = 'usernode-labs/charts/social-vibecoding-platform';
+  const connect = async (...args) => {
+    assert.deepEqual(args, [repository], 'the public release lookup requests read access');
+    return { manifest: async ref => {
+      assert.equal(ref, 'release');
+      return { digest };
+    } };
+  };
   const helm = (file, args) => {
     calls.push([file, ...args]);
     const dir = args[args.indexOf('--untardir') + 1];
@@ -221,10 +230,17 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
     fs.writeFileSync(path.join(dir, 'social-vibecoding-platform', 'values.release.yaml'), VALUES);
     return { status: 0 };
   };
-  assert.deepEqual(liveRelease('usernode-labs', { run: helm }), live);
-  assert.deepEqual(calls[0].slice(0, 5), ['helm', 'pull', 'oci://ghcr.io/usernode-labs/charts/social-vibecoding-platform', '--version', '0.1.*'],
-    'the newest stable chart: the one the plan job reads as published');
-  assert.equal(liveRelease('usernode-labs', { run: () => ({ status: 1 }) }), null);
+  assert.deepEqual(await liveRelease('usernode-labs', { connect, run: helm }), live);
+  assert.deepEqual(calls[0].slice(0, 4), ['helm', 'pull', `oci://ghcr.io/${repository}@${digest}`, '--untar']);
+  assert.equal(await liveRelease('usernode-labs', { connect, run: () => ({ status: 1 }) }), null);
+
+  const missing = async () => ({ manifest: async () => null });
+  const unreadable = async () => ({ manifest: async () => { throw new Error('registry unavailable'); } });
+  const invalid = async () => ({ manifest: async () => ({ digest: 'not-a-digest' }) });
+  for (const resolve of [missing, unreadable, invalid]) {
+    assert.equal(await liveRelease('usernode-labs', { connect: resolve, run: helm }), null);
+  }
+  assert.equal(calls.length, 1, 'a failed lookup must never try a numeric tag or version range');
 });
 
 test('PR findings block against the exact base; post-merge findings are advisory', () => {
