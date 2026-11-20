@@ -2402,10 +2402,11 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   // 18 Nov 2026: a long reply with no copy that still says its words is laid
   // out from them, as the chat's answer is (homeroom-bot-mayor.js answerHtml).
   // Never under an offer, whose words are one line over its buttons, or for
-  // the fallback line.
+  // the fallback line. #6920: the held line is one short line too, below
+  // answerHtml's threshold, so it stays words with no copy of its own.
   const spent = { ...t.usage };
   const laid = await require('./homeroom-bot-mayor').answerHtml(t, { reply: finalReply }, {
-    text, html: ownHtml, laysOut: record.outcome !== 'fallback' && record.outcome !== 'held' && !ctx.offer, deps,
+    text, html: ownHtml, laysOut: record.outcome !== 'fallback' && !ctx.offer, deps,
     check: async (made) => !(await claims.checkReply(pool, ctx, replyHtml.htmlWords(made))).length,
   });
   const html = laid.html;
@@ -2417,7 +2418,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     record.costUsd = t.usage.costUsd;
     if (layoutCost > 0) await chargeTurn(pool, bot, layoutCost);
   }
-  record.htmlStatus = (record.outcome === 'fallback' || record.outcome === 'held') ? null : laid.status;
+  record.htmlStatus = record.outcome === 'fallback' ? null : laid.status;
   record.htmlModel = laid.model;
   // #6600: a takeover the bot queued in this turn can already have failed
   // before the reply is posted (a worker that could not start, say). The
