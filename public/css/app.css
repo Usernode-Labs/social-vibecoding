@@ -7805,10 +7805,14 @@ html[data-skin-wip] #app-list .app-card-opened { display: none; }
    2026: their rules and tokens, the menu's colours among them, are the
    block after this one ("THE LEFT MENU AND THE TOP BAR"). What is left here
    is where the brand kit points a token at a value of its own: its typeface,
-   its corners, and its ink for the top bar. */
+   its corners, and its card and ink for the fold arrow and the top bar. */
 html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-nav-font: var(--wip-font);
   --wip-nav-tile-radius: var(--wip-radius-small);
+  --wip-nav-fold-radius: var(--wip-radius-pill);
+  --wip-nav-fold-bg: var(--wip-card-bg);
+  --wip-nav-fold-line: var(--wip-card-line);
+  --wip-nav-fold-ink: var(--wip-ink);
   --wip-nav-bar-ink: var(--wip-ink);
   --wip-nav-bar-tint: var(--wip-ghost);
   --wip-nav-bar-line: var(--wip-card-line);
@@ -8335,11 +8339,12 @@ html[data-skin-wip] #communities-screen .communities-discover-text > b {
    are on is a filled row; a row under the pointer wears a soft ground; a
    count is a disc. The top bar has no fill of its own: its words and
    buttons are the page's ink, on every page (a project's page too, which
-   painted it in the community's colour). The logo is the fold button.
+   painted it in the community's colour). The fold button is a round arrow
+   on the panel's edge.
    EVERY VALUE IS A TOKEN, --wip-nav-*, declared once here in light and in
    dark. The menu's colours are the brand kit's in both looks; what the
-   top bar wears is the page's own, so the standard look reads the shell's
-   values there and the brand kit names its own. */
+   fold arrow and the top bar wear is the page's own, so the standard look
+   reads the shell's values there and the brand kit names its own. */
 html:not([data-skin]) {
   /* The colours are Homeroom's brand kit's (asked 20 Nov 2026): its deep sky for the panel, white words, and the place you are on in the sun. */
   --wip-nav-bg: #3c7bd8;                 /* the panel */
@@ -8368,9 +8373,9 @@ html:not([data-skin]) {
   --wip-nav-ic-sliders: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0'/%3E%3Ccircle cx='15' cy='6' r='2.2'/%3E%3Ccircle cx='9' cy='12' r='2.2'/%3E%3Ccircle cx='17' cy='18' r='2.2'/%3E%3C/svg%3E");
   --wip-nav-ic-fold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 6-6 6 6 6'/%3E%3C/svg%3E");
   --wip-nav-ic-unfold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 6 6 6-6 6'/%3E%3C/svg%3E");
-  --wip-nav-fold-ic: 14px;               /* the chevron beside the logo, which is the fold button */
-  --wip-nav-fold-gap: 0px;                /* the logotype is narrower than its box, which is the gap already */
-  --wip-nav-brand-hover: 0.82;           /* the logo under the pointer */
+  --wip-nav-fold: 24px;                  /* the fold arrow pinned to the panel's edge */
+  --wip-nav-fold-top: 14px;
+  --wip-nav-fold-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
   --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
   --wip-nav-ic-size: 20px;
   --wip-nav-ic-size-small: 18px;
@@ -8397,8 +8402,11 @@ html:not([data-skin]) {
   --wip-nav-size: 15px;
   --wip-nav-head-size: 12.5px;
   --wip-nav-font: inherit;
-  --wip-nav-fold-radius: 8px;            /* the fold button's focus ring follows the logo */
-  /* The top bar's ink: the shell's own values here; the brand kit names its own in its block. */
+  /* The fold arrow's disc, and the top bar's ink: the shell's own values here; the brand kit names its own below. */
+  --wip-nav-fold-radius: 9999px;
+  --wip-nav-fold-bg: var(--dc-sheet-solid);
+  --wip-nav-fold-line: var(--app-sheet-line);
+  --wip-nav-fold-ink: var(--text-primary);
   --wip-nav-bar-ink: var(--text-primary);
   --wip-nav-bar-tint: color-mix(in srgb, var(--text-primary) 8%, transparent);
   --wip-nav-bar-line: var(--app-sheet-line);
@@ -8506,37 +8514,34 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header { padding-inline-start: calc(var(--wip-nav-w) + 1rem); }
   /* Homeroom's own mark and logotype are the panel's brand already: the top bar does not say them again. */
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
-  /* THE LOGO IS THE FOLD BUTTON (asked 20 Nov 2026; it was a round arrow on
-     the panel's edge). The top bar's own toggle is laid over the panel's
-     logotype, clear, so a press on the logo folds the menu and a press on
-     the mark opens it. A chevron beside the logo says which way, under the
-     pointer or the keyboard's focus. */
-  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
-    position: absolute;
-    inset-block-start: var(--wip-nav-brand-top);
-    inset-inline-start: calc(var(--wip-nav-pad) + 8px);
-    width: calc(var(--wip-nav-brand-w) + var(--wip-nav-fold-gap) + var(--wip-nav-fold-ic));
-    height: var(--wip-nav-brand-tile);
-    justify-content: flex-end;
+  /* THE FOLD BUTTON IS AN ARROW: pinned on the panel's edge while it is open, and at the
+     top bar's start, pointing the other way, once it is folded. */
+  html:not([data-skin]) #platform-header #sidebar-toggle {
+    width: var(--wip-nav-fold);
+    height: var(--wip-nav-fold);
     border: 0;
     border-radius: var(--wip-nav-fold-radius);
-    background: transparent;
-    box-shadow: none;
-    color: var(--wip-nav-ink-strong);
-    cursor: pointer;
+    background: var(--wip-nav-fold-bg);
+    box-shadow: inset 0 0 0 1px var(--wip-nav-fold-line), var(--wip-nav-fold-shadow);
+    color: var(--wip-nav-fold-ink);
   }
-  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle > svg {
-    width: var(--wip-nav-fold-ic);
-    height: var(--wip-nav-fold-ic);
+  html:not([data-skin]) #platform-header #sidebar-toggle > svg {
+    width: 14px;
+    height: 14px;
     background-color: currentColor;
-    -webkit-mask: var(--wip-nav-ic-fold) center / contain no-repeat;
-    mask: var(--wip-nav-ic-fold) center / contain no-repeat;
-    opacity: 0;
-    transition: opacity 120ms ease;
+    -webkit-mask: var(--wip-nav-ic-unfold) center / contain no-repeat;
+    mask: var(--wip-nav-ic-unfold) center / contain no-repeat;
   }
-  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle:is(:hover, :focus-visible) > svg { opacity: 1; }
-  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle > svg > * { opacity: 0; }
-  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)):has(#sidebar-toggle:hover) #platform-tabs::before { opacity: var(--wip-nav-brand-hover); }
+  html:not([data-skin]) #platform-header #sidebar-toggle > svg > * { opacity: 0; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #sidebar-toggle {
+    position: absolute;
+    inset-block-start: var(--wip-nav-fold-top);
+    inset-inline-start: calc(var(--wip-nav-w) - var(--wip-nav-fold) / 2);
+  }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #sidebar-toggle > svg {
+    -webkit-mask-image: var(--wip-nav-ic-fold);
+    mask-image: var(--wip-nav-ic-fold);
+  }
   html:not([data-skin]) #platform-header,
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     --fake-glass-tint: transparent;
@@ -8557,7 +8562,8 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
 /* FOLDED, THE MENU IS A STRIP OF ICONS AND LOGOS (asked 20 Nov 2026), not
    gone: the five places' glyphs, each community's logo, You and Settings,
    under Homeroom's mark. Words, counts, headings and a community's nested
-   places are the open menu's. A press on the mark opens it; the page keeps the strip's width clear, as it does the menu's.
+   places are the open menu's. The fold arrow rides the strip's edge and
+   opens it; the page keeps the strip's width clear, as it does the menu's.
    (frontend/src/features/nav/rail-slide.ts slides nothing away here.) */
 @media (min-width: 768px) {
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) {
@@ -8585,13 +8591,9 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + 1rem); }
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
-    inset-inline-start: calc((var(--wip-nav-mini-w) - var(--wip-nav-mini-mark)) / 2);
-    width: calc(var(--wip-nav-mini-mark) + var(--wip-nav-fold-ic));
-    height: var(--wip-nav-mini-mark);
-  }
-  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle > svg {
-    -webkit-mask-image: var(--wip-nav-ic-unfold);
-    mask-image: var(--wip-nav-ic-unfold);
+    position: absolute;
+    inset-block-start: var(--wip-nav-fold-top);
+    inset-inline-start: calc(var(--wip-nav-mini-w) - var(--wip-nav-fold) / 2);
   }
   /* The page stands clear of the strip, as it does of the open menu (the shell's own rules stand aside for a folded rail, which was gone). */
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #app-view {
