@@ -8528,7 +8528,7 @@ html:not([data-skin]) #communities-screen .communities-discover-text > b {
    count is a disc. The top bar has no fill of its own: its words and
    buttons are the page's ink, on every page (a project's page too, which
    painted it in the community's colour). The fold button is inside the
-   panel, at the end of the logo's line.
+   panel, first on the logo's line, and stays on that spot folded.
    EVERY VALUE IS A TOKEN, --wip-nav-*, declared once here in light and in
    dark. The menu's colours are the brand kit's in both looks; what the
    top bar wears is the page's own, so the standard look reads the shell's
@@ -8560,13 +8560,9 @@ html:not([data-skin]) {
   --wip-nav-ic-users: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='8' r='3.5'/%3E%3Cpath d='M2.5 20a6.5 6.5 0 0 1 13 0M16 4.600a3.5 3.5 0 0 1 0 6.800M18 14.500a6.5 6.5 0 0 1 3.5 5.5'/%3E%3C/svg%3E");
   --wip-nav-ic-user: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4 21a8 8 0 0 1 16 0'/%3E%3C/svg%3E");
   --wip-nav-ic-sliders: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0'/%3E%3Ccircle cx='15' cy='6' r='2.2'/%3E%3Ccircle cx='9' cy='12' r='2.2'/%3E%3Ccircle cx='17' cy='18' r='2.2'/%3E%3C/svg%3E");
-  /* The fold button's glyph is the menu itself: a window with its side panel, and a chevron for which way it goes. */
-  --wip-nav-ic-fold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='15' rx='4.5'/%3E%3Cpath d='M9 4.500v15'/%3E%3Cpath d='m16 9.500-2.500 2.500 2.500 2.500'/%3E%3C/svg%3E");
-  --wip-nav-ic-unfold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='15' rx='4.5'/%3E%3Cpath d='M9 4.500v15'/%3E%3Cpath d='m14 9.500 2.500 2.500-2.500 2.500'/%3E%3C/svg%3E");
-  --wip-nav-fold: 32px;                  /* the fold button: a quiet rounded square inside the panel, at its end */
-  --wip-nav-fold-ic: 20px;
-  --wip-nav-fold-rest: 0.78;             /* the glyph at rest; whole under the pointer or the keyboard's focus */
-  --wip-nav-fold-inset: -4px;            /* the fold button's own air laps the panel's edge, so its glyph sits 2px from it on either side */
+  --wip-nav-fold: 32px;                  /* the fold button: a quiet rounded square, first on the logo's line, its glyph in the rows' icon column */
+  --wip-nav-fold-stroke: 1.8;            /* its glyph is the shell's own SidebarIcon, at the weight the rows' glyphs above are drawn */
+  --wip-nav-fold-rest: 0.88;             /* the glyph at rest; whole under the pointer or the keyboard's focus */
   --wip-nav-settings: 32px;              /* the Settings button at the end of You's row: a square inside the row's height */
   --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
   --wip-nav-ic-size: 20px;
@@ -8579,15 +8575,15 @@ html:not([data-skin]) {
   --wip-nav-brand-tile: 28px;
   --wip-nav-brand-h: 60px;               /* the brand's band at the panel's top */
   --wip-nav-brand-logo: url('/brand/homeroom-logotype-black.png'); /* the logotype, as a mask the panel's ink fills */
-  --wip-nav-brand-w: 124px;
+  --wip-nav-brand-w: 108px;              /* the logotype's own width at --wip-nav-brand-tile (its file is 280 x 73), so it starts at its box's start in either reading direction */
   --wip-nav-w: 244px;                    /* Sunrise's own measures and face */
-  /* Folded, the menu is a strip of icons and logos (asked 20 Nov 2026). */
+  /* Folded, the menu is a strip of icons and logos (asked 20 Nov 2026). It
+     centres its glyphs, which puts them where the open rows start theirs:
+     (64px - 20px) / 2 = 10px + 12px. That sum is what keeps the fold button
+     on the same spot open and folded. */
   --wip-nav-mini-w: 64px;
   --wip-nav-mini-pad: 10px;
-  --wip-nav-mini-mark: 32px;             /* Homeroom's mark at the strip's top */
-  --wip-nav-mini-mark-radius: 8px;
   --wip-nav-mini-rule-gap: 8px;          /* above and under the strip's hairline */
-  --wip-nav-brand-mark: url('/brand/homeroom-mark.png');
   --wip-nav-pad: 10px;
   --wip-nav-row-pad: 12px;
   --wip-nav-row-gap: 12px;
@@ -8707,12 +8703,14 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs :is(.platform-tab-label, .platform-rail-community-name) { font-size: var(--wip-nav-size); }
   html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { text-transform: none; letter-spacing: 0; font-size: var(--wip-nav-head-size); font-weight: 600; }
   /* THE BRAND: Homeroom's logotype at the panel's top, the same on
-     every page. The top bar (fold button, then the page's own title) starts beside the panel. */
+     every page. It starts where the rows' words start: the fold button is
+     before it, in the rows' icon column. The top bar (the page's own title)
+     starts beside the panel. */
   html:not([data-skin]) #platform-tabs::before {
     content: "";
     position: absolute;
     inset-block-start: var(--wip-nav-brand-top);
-    inset-inline-start: calc(var(--wip-nav-pad) + 8px);
+    inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) + var(--wip-nav-ic-size) + var(--wip-nav-row-gap));
     width: var(--wip-nav-brand-w);
     height: var(--wip-nav-brand-tile);
     background: var(--wip-nav-ink-strong); /* the whole shorthand: the bar's own glass gradient would lie over the ink */
@@ -8727,14 +8725,20 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
   /* THE FOLD BUTTON IS PART OF THE PANEL (20 Nov 2026; it was a white disc
      astride the panel's edge): a quiet rounded square in the menu's own ink,
-     at the end of the logo's line, with a row's soft ground under the
-     pointer. Its glyph is the menu itself, a window with its side panel.
-     Folded, it is beside the strip, at the top bar's start, in the bar's
-     ink, and points the other way. */
+     with a row's soft ground under the pointer. It comes first on the
+     logo's line, its glyph in the column the rows' glyphs stand in, and
+     it is on THE SAME SPOT open and folded (asked 20 Nov 2026), so a
+     second press needs no pointer move: the strip centres its glyphs on
+     that column too (the --wip-nav-mini-* note). It was at the end of the
+     logo's line, and folded it jumped 240px to the top bar's start.
+     This one rule places it in both states; the folded block below has no
+     rule for it. Its glyph is the shell's own SidebarIcon, a panel with
+     its side column, the same in both states (the icon's note in
+     @/components/ui/icons.tsx says why), drawn at the rows' weight. */
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
     position: absolute;
     inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);
-    inset-inline-start: calc(var(--wip-nav-w) - var(--wip-nav-fold-inset) - var(--wip-nav-fold));
+    inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) - (var(--wip-nav-fold) - var(--wip-nav-ic-size)) / 2);
     width: var(--wip-nav-fold);
     height: var(--wip-nav-fold);
     border: 0;
@@ -8748,16 +8752,13 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     color: var(--wip-nav-ink-strong);
   }
   html:not([data-skin]) #platform-header #sidebar-toggle > svg {
-    width: var(--wip-nav-fold-ic);
-    height: var(--wip-nav-fold-ic);
-    background-color: currentColor;
-    -webkit-mask: var(--wip-nav-ic-fold) center / contain no-repeat;
-    mask: var(--wip-nav-ic-fold) center / contain no-repeat;
+    width: var(--wip-nav-ic-size);
+    height: var(--wip-nav-ic-size);
+    stroke-width: var(--wip-nav-fold-stroke); /* over the icon's own 2, a presentation attribute any rule out-ranks */
     opacity: var(--wip-nav-fold-rest);
     transition: opacity 120ms ease;
   }
   html:not([data-skin]) #platform-header #sidebar-toggle:is(:hover, :focus-visible) > svg { opacity: 1; }
-  html:not([data-skin]) #platform-header #sidebar-toggle > svg > * { opacity: 0; }
   html:not([data-skin]) #platform-header,
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     --fake-glass-tint: transparent;
@@ -8817,9 +8818,11 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
 }
 /* FOLDED, THE MENU IS A STRIP OF ICONS AND LOGOS (asked 20 Nov 2026), not
    gone: the five places' glyphs, each community's logo, You and Settings,
-   under Homeroom's mark. Words, counts, headings and a community's nested
-   places are the open menu's. The fold button, beside the strip, opens it;
-   the page keeps the strip's width clear, as it does the menu's.
+   under the fold button, which opens it from the spot it folded it from.
+   Words, counts, headings and a community's nested places are the open
+   menu's; so is the brand, which has no room beside the button: the top
+   bar shows Homeroom's own title instead, just past the strip. The page
+   keeps the strip's width clear, as it does the menu's.
    (frontend/src/features/nav/rail-slide.ts slides nothing away here.) */
 @media (min-width: 768px) {
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) {
@@ -8843,30 +8846,12 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   /* Settings has a line of its own above You (open, it rides the end of You's row). */
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-rail-settings { align-self: center; margin: 0 0 2px; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) #platform-tab-me { padding-inline-end: 0; }
-  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before {
-    inset-inline-start: calc((var(--wip-nav-mini-w) - var(--wip-nav-mini-mark)) / 2);
-    width: var(--wip-nav-mini-mark);
-    height: var(--wip-nav-mini-mark);
-    border-radius: var(--wip-nav-mini-mark-radius);
-    background: var(--wip-nav-brand-mark) center / contain no-repeat;
-    -webkit-mask: none;
-    mask: none;
-  }
-  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + var(--wip-nav-fold-inset)); }
-  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
-  /* Folded, the button is on the page's side of the strip: the first thing in the top bar, in the bar's own ink. */
-  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
-    position: static;
-    color: var(--wip-nav-bar-ink);
-  }
-  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle:hover {
-    background: var(--wip-nav-bar-tint);
-    color: var(--wip-nav-bar-ink);
-  }
-  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle > svg {
-    -webkit-mask-image: var(--wip-nav-ic-unfold);
-    mask-image: var(--wip-nav-ic-unfold);
-  }
+  /* The fold button has the logo's line to itself (it was Homeroom's mark, 20 Nov 2026). */
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before { content: none; }
+  /* The top bar starts beside the strip as it does beside the open menu, and
+     says Homeroom there: the open menu's rule that hides the bar's own
+     brand is the open menu's alone. A project's page names the project. */
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + 1rem); }
   /* The page stands clear of the strip, as it does of the open menu (the shell's own rules stand aside for a folded rail, which was gone). */
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #app-view {
     padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
