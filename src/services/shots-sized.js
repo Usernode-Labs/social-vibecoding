@@ -10,9 +10,15 @@
 // through srcset (frontend/src/lib/shot-img.ts, public/js/app-view.js), and
 // draws the preview at once while the file arrives.
 //
-// The originals are PNG; the copies are WebP, many times smaller at the same
-// size. `sharp` ships prebuilt linuxmusl binaries for the node:22-alpine
-// images, so the image build needs no extra tools.
+// The originals are PNG. The thumbnail is WebP, many times smaller at the
+// same size. The screen copy is a progressive JPEG (20 Nov): it draws the
+// whole picture coarse after about a tenth of its bytes and sharpens as the
+// rest arrives, where a WebP or a PNG appears all at once. A still with
+// transparent pixels keeps a WebP screen copy, since a JPEG has no alpha.
+// Each copy says its own type (`contentType`), which is stored beside it and
+// served with it (routes/shots.js). `sharp` ships prebuilt linuxmusl
+// binaries for the node:22-alpine images, so the image build needs no extra
+// tools.
 
 const crypto = require('node:crypto');
 const log = require('./logger');
@@ -21,9 +27,22 @@ const log = require('./logger');
 // long side covers them at 3x.
 const THUMB_EDGE = 600;
 // The largest slot is about 400 CSS px wide (the side panel, a change's main
-// picture), so 1200 px covers it at 3x.
+// picture), so 1200 px WIDE covers it at 3x. It was once applied to the long
+// side, which made a phone screen's copy 554 px wide: too narrow for a 390
+// CSS px slot at 2x or 3x, so phones and Retina screens fell through to the
+// whole PNG.
 const SCREEN_EDGE = 1200;
 const COPY_QUALITY = 75;
+// The screen copy's JPEG quality, chosen on real phone screens, light and
+// dark, under the change page's 2.5x magnifier: at 80 the edges of grey text
+// on a dark ground ring; from 85 up it looks like the PNG, and 88 keeps a
+// margin for small text; 90 costs about 11% more for no visible gain. 4:4:4 keeps coloured text and thin lines sharp (no chroma
+// halving). mozjpeg's own scan order puts half the file in its second scan;
+// libjpeg's standard order (optimiseScans off) refines the picture about
+// every tenth of the file instead, for 4% more bytes.
+const SCREEN_QUALITY = 88;
+const JPEG = 'image/jpeg';
+const WEBP = 'image/webp';
 // The preview: about 20 px wide, at most 1 KB, sent inside the shots view.
 const PLACEHOLDER_WIDTH = 20;
 const PLACEHOLDER_QUALITY = 30;
@@ -44,7 +63,28 @@ async function webpAt(sharp, buffer, edge) {
     .resize({ width: edge, height: edge, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: COPY_QUALITY })
     .toBuffer({ resolveWithObject: true });
-  return { data, width: info.width, height: info.height, bytes: data.length, sha256: sha256(data) };
+  return { data, width: info.width, height: info.height, bytes: data.length, sha256: sha256(data), contentType: WEBP };
+}
+
+// The screen copy: at most `edge` px WIDE, never enlarged, as a progressive
+// JPEG. Made even when the still is already that narrow, since the JPEG is
+// a fraction of the PNG's bytes at the same size; `sizedCopies` drops it if
+// it is not smaller. A still with any transparent pixel gets a WebP instead.
+async function screenAt(sharp, buffer, edge) {
+  const meta = await sharp(buffer).metadata();
+  const width = Number(meta.width) || 0;
+  const height = Number(meta.height) || 0;
+  if (!width || !height) return null;
+  const opaque = !meta.hasAlpha || (await sharp(buffer).stats()).isOpaque;
+  const sized = sharp(buffer).resize({ width: Math.min(edge, width), withoutEnlargement: true });
+  const { data, info } = await (opaque
+    ? sized.removeAlpha().jpeg({
+      quality: SCREEN_QUALITY, progressive: true, mozjpeg: true, optimiseScans: false, chromaSubsampling: '4:4:4',
+    })
+    : sized.webp({ quality: COPY_QUALITY })).toBuffer({ resolveWithObject: true });
+  return {
+    data, width: info.width, height: info.height, bytes: data.length, sha256: sha256(data), contentType: opaque ? JPEG : WEBP,
+  };
 }
 
 // The preview a slot draws before its picture decodes: a 20 px wide WebP, as
@@ -59,7 +99,7 @@ async function placeholderFor(sharp, buffer) {
 }
 
 // `{ thumb, screen, placeholder }` for one still's PNG. Each copy is
-// `{ data, width, height, bytes, sha256 }` or null. A copy no smaller than
+// `{ data, width, height, bytes, sha256, contentType }` or null. A copy no smaller than
 // its source is left out, and a library failure returns all nulls: the still
 // is saved and loads as it always did.
 async function sizedCopies(buffer) {
@@ -74,7 +114,7 @@ async function sizedCopies(buffer) {
   }
   try {
     const thumb = await webpAt(sharp, buffer, THUMB_EDGE);
-    const screen = await webpAt(sharp, buffer, SCREEN_EDGE);
+    const screen = await screenAt(sharp, buffer, SCREEN_EDGE);
     const placeholder = await placeholderFor(sharp, buffer);
     const smaller = (copy, source) => (copy && copy.bytes < source.length ? copy : null);
     return {
@@ -89,5 +129,5 @@ async function sizedCopies(buffer) {
 }
 
 module.exports = {
-  THUMB_EDGE, SCREEN_EDGE, MAX_PLACEHOLDER, sizedCopies,
+  THUMB_EDGE, SCREEN_EDGE, SCREEN_QUALITY, MAX_PLACEHOLDER, COPY_TYPES: [WEBP, JPEG], sizedCopies,
 };
