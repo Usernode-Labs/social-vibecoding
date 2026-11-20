@@ -59,7 +59,13 @@ const MAX_FILES_KEPT = 40;
 const LOOK_HELD = 'OpenRouter\'s credit ran out';
 const LOOK_HELD_TEXT = (project) => `OpenRouter's credit ran out, so I couldn't look into it in ${project} yet. `
   + 'I\'ll run the look and post what I find here as soon as it\'s back.';
-const isHeldLook = (row) => row?.state === 'failed' && String(row.error || '').startsWith(LOOK_HELD);
+// The same when it was the bot's weekly budget that ran out (the outage's
+// cause, bot-pause-words.js): another opening, and a held look all the same.
+const pauseWords = require('../bot-pause-words');
+const isHeldLook = (row) => row?.state === 'failed'
+  && [LOOK_HELD, pauseWords.LOOK_HELD].some((opening) => String(row.error || '').startsWith(opening));
+// Whether a held look's stored words are the budget's.
+const heldForBudget = (row) => String(row?.error || '').startsWith(pauseWords.LOOK_HELD);
 // Review A2: what a look says when Homeroom or its provider failed under it:
 // whose failure it was, and nothing about their question.
 const PLATFORM_ERROR = 'The look did not finish because Homeroom had a problem on its side. Ask me again in a few minutes.';
@@ -289,8 +295,13 @@ async function gate(pool, { user, app, settings, bot = null, deps = {}, doing = 
   // Review B1: asked before the model is. While the one stored outage stands
   // (openrouter-credit.js creditState) no turn is started to meet the 402.
   const credit = deps.credit?.creditState ? deps.credit : require('../openrouter-credit');
-  if ((await credit.creditState(pool)).out) {
-    return { code: 'credit', error: `Homeroom bot is out of building credit just now, so it cannot ${what}. Ask again once credit is back.` };
+  const outage = await credit.creditState(pool);
+  if (outage.out) {
+    // `budget`: it was the bot's weekly budget (the outage's cause), which
+    // starts again on a day the refusal can name.
+    return pauseWords.isBudget(outage)
+      ? { code: 'credit', budget: true, error: pauseWords.lookRefused(what, pauseWords.resetDay()) }
+      : { code: 'credit', error: `Homeroom bot is out of building credit just now, so it cannot ${what}. Ask again once credit is back.` };
   }
   return null;
 }
@@ -500,10 +511,12 @@ async function lookInto(pool, config, { user, app, question, notes = null, since
   const credit = deps.credit?.noteOutage ? deps.credit : require('../openrouter-credit');
   const sorted = routed ? turnFailure.sort({ code: routed.error || null, turn: result }) : { class: 'platform', cause: 'no_result' };
   if (sorted.class === 'credit') {
-    await credit.noteOutage(pool, { words: 'a look met OpenRouter\'s 402 for credit' }).catch(() => null);
+    const noted = await credit.noteOutage(pool, { words: 'a look met OpenRouter\'s 402 for credit' }).catch(() => null);
+    const project = app.name || app.slug || 'the project';
     return {
       ok: false, code: 'credit', failure: 'credit',
-      error: LOOK_HELD_TEXT(app.name || app.slug || 'the project'), costUsd, ms, model,
+      error: pauseWords.isBudget(noted) ? pauseWords.lookHeldText(project, pauseWords.resetDay()) : LOOK_HELD_TEXT(project),
+      costUsd, ms, model,
     };
   }
   if (!routed || routed.error) {
@@ -736,7 +749,9 @@ async function requestLook(pool, { id, appId, userId }) {
 
 // #6920: a look held for credit, as the chat model reads it: no result, and
 // the one promise it may make (the claims check allows it: ctx.lookRunning).
-const heldNote = (project) => ({
+const heldNote = (project, { budget = false } = {}) => (budget ? {
+  ok: false, held: true, error: pauseWords.lookHeldText(project, pauseWords.resetDay()), note: pauseWords.LOOK_NOTE,
+} : {
   ok: false, held: true, error: LOOK_HELD_TEXT(project),
   note: 'say in one short line that the look runs once credit is back and is posted here',
 });
@@ -772,7 +787,7 @@ async function runTool(pool, ctx, args) {
   if (before && before.deliver === 'post') {
     if (isHeldLook(before)) {
       ctx.lookRunning = true;
-      return heldNote(name);
+      return heldNote(name, { budget: heldForBudget(before) });
     }
     if (before.state === 'running') {
       ctx.lookRunning = true;
@@ -817,7 +832,7 @@ async function runTool(pool, ctx, args) {
   if (!row) return { ok: false, error: 'The look did not start just now.' };
   if (isHeldLook(row)) {
     ctx.lookRunning = true;
-    return heldNote(name);
+    return heldNote(name, { budget: heldForBudget(row) });
   }
   const out = compactResult(row, name);
   if (row.state === 'done') {
@@ -856,6 +871,7 @@ module.exports = {
   postHeldLine,
   LOOK_HELD_TEXT,
   isHeldLook,
+  heldNote,
   // Pure, for tests.
   lookArgs,
   lookPrompt,

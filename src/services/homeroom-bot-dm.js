@@ -884,6 +884,9 @@ function saidOf(kind, info = {}) {
     case 'build_failed':
       // T2.9: "I'm trying again" only when a retry is owed (#6859).
       if (info.cause === 'plan') return info.retrying === true ? 'build_no_plan' : 'build_no_plan_stopped';
+      // A wait for the bot's weekly budget, not for credit (`budget`: the
+      // outage's cause when the build stopped) has its own words.
+      if (info.cause === 'credit' && info.budget === true) return 'build_budget';
       return BUILD_SAID[info.cause] || 'build_other';
     case 'first_version_failed': return 'first_failed';
     case 'preview_failed': case 'needs_look': return 'needs_look';
@@ -1975,11 +1978,17 @@ const FIRST_UNPROPOSED_SAID = Object.freeze({
  * had built, which has nothing left to put up for approval). `first`: a
  * project's first version, which goes live without approval.
  */
-function failedWords(reason, { it = 'this', voice = 'me', doing = 'build', first = false } = {}) {
+function failedWords(reason, { it = 'this', voice = 'me', doing = 'build', first = false, budget = false, now = new Date() } = {}) {
   const read = buildFailedCause(reason);
   const d = FAILED_DOING[doing] || FAILED_DOING.build;
   const cause = d === FAILED_DOING.update && read.cause === 'unproposed' ? 'other' : read.cause;
   if (first && cause === 'unproposed') return (FIRST_UNPROPOSED_SAID[voice] || FIRST_UNPROPOSED_SAID.me)(it);
+  // It stopped for the bot's weekly budget, not for credit (`budget`: the
+  // outage's cause when it stopped): the day the week turns is the answer.
+  if (cause === 'credit' && budget) {
+    const pause = require('./bot-pause-words');
+    return (pause.stopped[voice] || pause.stopped.me)(d, it, pause.resetDay(now));
+  }
   const said = (FAILED_SAID[voice] || FAILED_SAID.me);
   return (said[cause] || said.other)(d, it, read.times, read.by);
 }
@@ -1988,8 +1997,8 @@ function failedWords(reason, { it = 'this', voice = 'me', doing = 'build', first
  * Pure: why a build of `it` did not finish (failedWords), in the DM's voice
  * or ('bot') on the request; `first` for a project's first version.
  */
-function buildFailedWords(reason, it = 'this', voice = 'me', { first = false } = {}) {
-  return failedWords(reason, { it, voice, doing: 'build', first });
+function buildFailedWords(reason, it = 'this', voice = 'me', { first = false, budget = false, now = new Date() } = {}) {
+  return failedWords(reason, { it, voice, doing: 'build', first, budget, now });
 }
 
 /**
@@ -2131,7 +2140,7 @@ function requestNews(kind, dm, context) {
       if (context.firstVersion) {
         const cause = buildFailedCause(dm.reason).cause;
         const finishes = cause === 'unproposed';
-        const why = `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true })}`;
+        const why = `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true, budget: dm.budget === true })}`;
         // #6267: the platform retries a temporary refusal itself, so the
         // maker is not asked to do anything; the others say how a tap helps.
         // T2.9: nor is a build waiting for building credit, which starts
@@ -2148,7 +2157,7 @@ function requestNews(kind, dm, context) {
         // #6267: a temporary refusal is being retried, so no "Reply here"
         // line; a permanent one or one given up on says a reply helps.
         const cause = buildFailedCause(dm.reason).cause;
-        const words = `${line}\n\n${buildFailedWords(dm.reason, it)}`;
+        const words = `${line}\n\n${buildFailedWords(dm.reason, it, 'me', { budget: dm.budget === true })}`;
         if (cause === 'push' || cause === 'credit' || cause === 'stopped') return words;
         // #6313: only ask for a reply when a reply is what restarts it. A
         // failure the bot is already trying again by itself says so instead

@@ -237,10 +237,19 @@ function textFor(row, step, { site = origin() } = {}) {
     const used = dollars(row.detail?.usedCents ?? row.used);
     const cap = dollars(row.detail?.capCents ?? row.cap);
     const day = resetDay(row.detail?.resetsAt);
+    // What stops is more than the bot: its key also pays for before and
+    // after shots, Sync with main and apps' AI features. One SMS is 160
+    // characters, and the link has to arrive whole, so a budget with enough
+    // digits to push the list past that says only that building stops.
     const until = day ? ` until ${day}` : '';
-    if (near) return `${lead}bot's weekly budget at ${used} of ${cap}. It stops building at ${cap}${until}. Raise it: ${settings}`;
-    if (step.action === 'reminder') return `${lead}bot's weekly budget is still used up. Building stopped${until}. Raise it: ${settings}`;
-    return `${lead}bot's weekly budget is used up, ${used} of ${cap}. Building stopped${until}. Raise it: ${settings}`;
+    const oneSms = (full, brief) => (full.length <= 160 ? full : brief);
+    if (near) {
+      return oneSms(`${lead}bot budget ${used} of ${cap}, then builds, shots, sync and apps' AI stop${until}. Raise it: ${settings}`,
+        `${lead}bot budget ${used} of ${cap}. Building stops at ${cap}${until}. Raise it: ${settings}`);
+    }
+    if (step.action === 'reminder') return `${lead}bot budget used up. Builds, shots, sync and apps' AI stopped${until}. Raise it: ${settings}`;
+    return oneSms(`${lead}bot budget used up (${cap}). Builds, shots, sync and apps' AI stopped${until}. Raise it: ${settings}`,
+      `${lead}bot budget used up (${cap}). Building stopped${until}. Raise it: ${settings}`);
   }
   if (row.key === 'sessions') {
     if (near) return `${lead}sessions at ${figures}, near the limit. Raise it: ${limits}`;

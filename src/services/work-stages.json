@@ -102,6 +102,7 @@
     "credit_wait": {
       "stages": ["building"],
       "phrase": "core:work.line.creditWait",
+      "valued": { "phrase": "core:work.line.budgetWait", "need": "budget", "values": {} },
       "ready": true, "waits": true, "listed": "waiting",
       "bot": { "building": { "what": "queued" } },
       "firstVersion": "build_queued"

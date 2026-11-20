@@ -4070,9 +4070,14 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   // once), one honest line, and the turn asked again on its own. No plain
   // answer is tried: it would meet the same 402.
   if (error === 'credit_out') {
-    await (t.ctx?.deps?.credit || require('./openrouter-credit')).noteOutage(pool, { words: 'a chat answer met OpenRouter\'s 402 for credit' })
+    const noted = await (t.ctx?.deps?.credit || require('./openrouter-credit')).noteOutage(pool, { words: 'a chat answer met OpenRouter\'s 402 for credit' })
       .catch(() => null);
-    return { fallback: 'credit', text: CREDIT_TEXT, cards: [], defer: true };
+    // Which figure ran out (the outage's cause): the bot's weekly budget
+    // comes back by itself on a day it can name, and no admin has to be told.
+    const pause = require('./bot-pause-words');
+    return {
+      fallback: 'credit', text: pause.isBudget(noted) ? pause.chat.now(pause.resetDay()) : CREDIT_TEXT, cards: [], defer: true,
+    };
   }
   if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [], defer: false };
   const plain = await plainAnswer(t, history, { later: deferrable });
@@ -4917,6 +4922,14 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // on the clock; the next return of credit answers it.
     if (creditOut && deps.resume) return null;
     if (next > DEFER_DELAYS_MS.length) {
+      if (creditOut) {
+        // The same two lines for a weekly budget that is used up, with the
+        // day it starts again (the stored outage's cause).
+        const pause = require('./bot-pause-words');
+        if (await pause.budgetNow(pool, deps.credit || null)) {
+          return say(ctx.owed ? pause.chat.gaveUpOwed(pause.resetDay()) : pause.chat.gaveUp(pause.resetDay()));
+        }
+      }
       return say(creditOut ? (ctx.owed ? CREDIT_GAVE_UP_OWED_TEXT : CREDIT_GAVE_UP_TEXT)
         : ctx.owed ? DEFERRED_GAVE_UP_OWED_TEXT : DEFERRED_GAVE_UP_TEXT);
     }

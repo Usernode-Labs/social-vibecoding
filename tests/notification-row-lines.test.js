@@ -384,11 +384,13 @@ test('platform limit rows say which cap, how full, and what happens next', async
   const budget = await lines({ kind: 'platform_limit', detail: 'bot_budget_warn:64800:80000',
     appName: null, sourceUsername: null, createdAt: '2026-11-20T12:00:00Z' });
   assert.equal(budget.label, "Homeroom bot's weekly budget is 81% used");
-  assert.match(budget.subject, /^\$648 of \$800 used\. +At \$800 the bot stops building until Monday\./);
+  assert.match(budget.subject,
+    /^\$648 of \$800 used\. +At \$800 the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until Monday\./);
   const budgetFull = await lines({ kind: 'platform_limit', detail: 'bot_budget_full:80000:80000',
     appName: null, sourceUsername: null, createdAt: '2026-11-22T23:30:00Z' });
   assert.equal(budgetFull.label, "Homeroom bot's weekly budget is used up");
-  assert.equal(budgetFull.subject, 'The bot stopped building. It starts again on Monday, or once the budget is raised.');
+  assert.equal(budgetFull.subject,
+    "The bot stopped building, and screenshots, sync with main and apps' AI features stopped with it. They start again on Monday, or once the budget is raised.");
 
   // The account's credit (services/openrouter-credit.js detailToken), with
   // the days it lasts only when a rate was known.

@@ -7920,7 +7920,9 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
       [runId],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record that a build waited for credit', { runId, err: err.message }));
     const credit = require('./openrouter-credit');
-    await credit.noteOutage(pool, { words: built.error || null });
+    // Which figure ran out (the outage's cause): the weekly budget's note
+    // says the day it starts again, here, in the chat and on the push.
+    const budget = require('./bot-pause-words').isBudget(await credit.noteOutage(pool, { words: built.error || null }));
     // Review B6: the write that brings the request back once credit is. It
     // was tried once, and its failure only logged, while the next line told
     // the person the bot "will pick this up again by itself". It is keyed by
@@ -7946,10 +7948,10 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
         where: 'queueing a build that waits for credit', cause: 'queue_write_failed',
         detail: { appId: app.id, issueNumber, runId },
       });
-      await say('build_failed', live.buildCreditText({ queued: false }), { dm: { reason: built.error || 'credit' } });
+      await say('build_failed', live.buildCreditText({ queued: false, budget }), { dm: { reason: built.error || 'credit', ...(budget ? { budget: true } : {}) } });
       return 'credit_wait';
     }
-    await say('build_failed', live.buildCreditText(), { dm: { reason: CREDIT_WAIT_REASON } });
+    await say('build_failed', live.buildCreditText({ budget }), { dm: { reason: CREDIT_WAIT_REASON, ...(budget ? { budget: true } : {}) } });
     return 'credit_wait';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
@@ -12273,7 +12275,7 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
     if (Number(item.priority) === 0) {
       await L.once('credit_note', () => postThreadNote({
         pool, ws: liveDeps(deps).ws, app, issueNumber: Number(item.issue_number), kind: 'credit_wait', bot,
-        text: live.buildCreditText(), version: `credit-${outageKey(outage)}`,
+        text: live.buildCreditText({ budget: require('./bot-pause-words').isBudget(outage) }), version: `credit-${outageKey(outage)}`,
       }).then(() => true).catch(() => false));
     }
     return { outcome: 'credit', words: String(creditWords).slice(0, 300), ...extra };

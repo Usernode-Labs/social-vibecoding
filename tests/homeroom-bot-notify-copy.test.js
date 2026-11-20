@@ -57,6 +57,9 @@ const BODIES = [
   // T2.9: a credit wait asks for nothing; a stop by a person names them; a
   // failed read and a closed change say what they are.
   ['stopped', 'build_credit', {}, 'Paused: I\'m out of building credit for now. I\'ll pick it up again by myself.'],
+  // The same wait when it is the bot's weekly budget that ran out (the
+  // outage's cause): the day its week turns, which is always a Monday.
+  ['stopped', 'build_budget', {}, 'Paused: I\'ve used up this week\'s building budget. I\'ll pick it up again on Monday.'],
   ['stopped', 'stopped_by', { stoppedBy: 'ada', said: 'stopped_by' }, 'Stopped by @ada.'],
   ['stopped', 'look_failed', {}, 'Stopped: I couldn\'t read it. Ask me to build it on its page.'],
   ['stopped', 'change_closed', {}, 'Stopped: its change was closed. Ask me to build it again on its page.'],
