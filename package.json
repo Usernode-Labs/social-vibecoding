@@ -43,7 +43,6 @@
     "typescript": "6.0.3"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.89.0",
     "@kubernetes/client-node": "1.4.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@octokit/app": "^15.1.2",

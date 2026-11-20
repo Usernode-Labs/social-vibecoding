@@ -10,12 +10,14 @@ import { BuildingTime } from '../building-time';
  *
  * Both lived in the Anthropic API key part until the settings restructure,
  * where the figure most builders open Settings to find sat under the name of
- * a key most of them never add. The ids are unchanged (#drawer-row-ai-budget
+ * a key most of them never add (that part is gone since task 2275). The ids are unchanged (#drawer-row-ai-budget
  * inside AiBudgetRow, #settings-spend and its rows), and so is everything
  * that fills them: features/header/ai-credit.js owns the one shared
  * allowance and both figures read it (#6493) — the row through its view
  * model, the spend card's platform line through `AiCredit.Budget.current()`
- * — so the two cannot disagree. The card stays hidden unless a key is saved.
+ * — so the two cannot disagree. The card stays hidden unless something was
+ * paid on the viewer's own key this week (an app's spend on their own
+ * OpenRouter key, under a grant that allows it).
  */
 export function UsageSection() {
   // Subscribed: settings.js fills the two figures and rewrites
@@ -34,7 +36,7 @@ export function UsageSection() {
           status row nobody acts on from a menu, and put it in the Anthropic
           API key pane, the page about "what happens when your allowance runs
           out". The settings restructure gave it a part of its own at the head
-          of that same page, where the key now follows it.
+          of that same page; the Anthropic key part itself went in task 2275.
 
           The row is `features/header/ai-budget.tsx` now: it renders from a
           store `features/header/ai-credit.js` publishes into, instead of
@@ -56,9 +58,10 @@ export function UsageSection() {
       */}
       <BuildingTime />
       {/*
-          #119 — spend breakdown for BYOK users. Filled by
-          Settings._refreshSpend() on modal open; hidden while loading,
-          on fetch failure, or when no key is saved. Rows are ordered
+          #119 — spend breakdown, platform allowance beside the viewer's
+          own key. Filled by Settings._refreshSpend() on open; hidden while
+          loading, on fetch failure, or when nothing was paid on the
+          viewer's own key this week. Rows are ordered
           limit-first to match the billing order (#212). #2571 moved both
           figures to the allowance's own window: one card cannot state a
           week's platform spend beside a day's own-key spend.

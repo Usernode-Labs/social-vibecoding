@@ -45,7 +45,7 @@ const STAGES = {
     // as given and drafts the rest of its categories around.
     pinned: {
       1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e', 3: '5539cd0961999c6a', 4: 'd6ca79b69d490122',
-      5: '76a69f845f7976a4',
+      5: 'a12ef863002637a0',
     },
   },
   placement: {
@@ -55,7 +55,7 @@ const STAGES = {
     // longer fed to it — that is the thing being decided, so offering it back
     // would anchor the answer to the value already there.
     // 3: the project's topics lead the list, marked, and win a tie (#4417).
-    pinned: { 1: 'd82abd8a00088937', 2: 'fdff738ca4ac4873', 3: '8ca2521f788c61ab' },
+    pinned: { 1: 'd82abd8a00088937', 2: 'fdff738ca4ac4873', 3: '708d797d20ce81f3' },
   },
   digest: {
     constant: 'WORKSHOP_DIGEST_VERSION',
@@ -90,7 +90,7 @@ const STAGES = {
       4: '5ae848d3fe65b9d1',
       5: 'fa7bbe7465b5aea4',
       6: '84cedc3ec42f85d4',
-      7: '95951e15d7808fa2',
+      7: '5a6c5fe485f1a6b5',
     },
   },
 };

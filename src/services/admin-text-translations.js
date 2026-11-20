@@ -440,7 +440,9 @@ async function runOnce({ pool, deps = {} }) {
   for (const [language, items] of plan) {
     requests.push(...sync.buildRequests(language, names[language], items, glossary));
   }
-  const answers = await model.translateCatalogDirect(requests);
+  const answers = await model.translateCatalogDirect(requests, {
+    telemetryContext: { component: 'admin_text_translation' },
+  });
 
   let saved = 0;
   let refused = 0;

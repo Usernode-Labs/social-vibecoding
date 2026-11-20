@@ -7,6 +7,7 @@ const limits = require('../services/limits');
 const { invalidateGrant } = require('../middleware/app-llm-auth');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Grant management for app LLM access (issue #34). Mounted AFTER
@@ -20,11 +21,9 @@ const DEFAULT_CAP_CENTS = 100;
 
 async function grantCapacity(pool, userId) {
   const entitlement = await limits.getUserCreditEntitlement(pool, userId);
-  const { rows } = await pool.query(
-    'SELECT anthropic_key_enc FROM users WHERE id = $1',
-    [userId]
-  );
-  const hasApiKey = !!rows[0]?.anthropic_key_enc;
+  // An OpenRouter key of the person's own (never the included one): what a
+  // grant's allow_byok spends since task 2275.
+  const hasOwnKey = await managedOpenRouter.ownKeyOnFile(pool, userId);
   // #1788 made the allowance two caps; #2571 leaves one, the weekly one,
   // so that is the ceiling a per-app cap is carved out of. An account
   // identity verification has granted nothing still gets nothing here —
@@ -43,8 +42,8 @@ async function grantCapacity(pool, userId) {
   // and never exposes the key to the app.
   const maxCapCents = allowanceCents > 0
     ? allowanceCents
-    : (hasApiKey ? limits.TIER_ONE_LIMIT_CENTS : 0);
-  return { entitlement, hasApiKey, maxCapCents, allowanceCents };
+    : (hasOwnKey ? limits.TIER_ONE_LIMIT_CENTS : 0);
+  return { entitlement, hasOwnKey, maxCapCents, allowanceCents };
 }
 
 // Cap validation shared by create + update: a positive integer no
@@ -112,7 +111,7 @@ function llmGrantsRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
     if (req.query.demo === '1' && process.env.USERNODE_ENV === 'staging') {
-      return res.json({ grants: demoGrants(), demo: true });
+      return res.json({ grants: demoGrants(), demo: true, hasOwnKey: true });
     }
 
     try {
@@ -130,7 +129,10 @@ function llmGrantsRoutes(config) {
           ORDER BY g.status = 'active' DESC, a.name ASC`,
         [req.user.id]
       );
-      res.json({ grants: rows.map(grantJson) });
+      // hasOwnKey: whether a row may offer "use my own key" (allow_byok),
+      // which spends the person's own OpenRouter key.
+      const hasOwnKey = await managedOpenRouter.ownKeyOnFile(pool, req.user.id);
+      res.json({ grants: rows.map(grantJson), hasOwnKey });
     } catch (err) {
       log.error('llm-grants', 'List failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Failed to load AI permissions' });
@@ -159,21 +161,21 @@ function llmGrantsRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const capacity = await grantCapacity(pool, req.user.id);
-      if (!capacity.entitlement.entitlementAvailable && !capacity.hasApiKey) {
+      if (!capacity.entitlement.entitlementAvailable && !capacity.hasOwnKey) {
         return res.status(503).json({ error: 'Credit eligibility could not be verified. Try again shortly.' });
       }
       // #1788: "no platform credit" means neither cap applies, not just
       // the daily one (see grantCapacity).
       if (capacity.allowanceCents === 0) {
-        if (!capacity.hasApiKey) {
+        if (!capacity.hasOwnKey) {
           const error = capacity.entitlement.verificationRequired
-            ? 'Connect GitHub or X to use platform-funded AI, or add your own Anthropic API key.'
-            : 'No AI credit is available. Add your own Anthropic API key to continue.';
+            ? 'Connect GitHub or X to use platform-funded AI, or add your own OpenRouter key.'
+            : 'No AI credit is available. Add your own OpenRouter key to continue.';
           return res.status(400).json({ error, code: 'credit_required' });
         }
         if (allowByok !== true) {
           return res.status(400).json({
-            error: 'Enable access to your own Anthropic API key for this app.',
+            error: 'Enable access to your own OpenRouter key for this app.',
             code: 'byok_required',
           });
         }
@@ -214,7 +216,7 @@ function llmGrantsRoutes(config) {
 
     try {
       const capacity = await grantCapacity(pool, req.user.id);
-      if (!capacity.entitlement.entitlementAvailable && !capacity.hasApiKey) {
+      if (!capacity.entitlement.entitlementAvailable && !capacity.hasOwnKey) {
         return res.status(503).json({ error: 'Credit eligibility could not be verified. Try again shortly.' });
       }
       if (capacity.maxCapCents === 0) {
@@ -244,7 +246,7 @@ function llmGrantsRoutes(config) {
         }
         if (!effectiveAllowByok) {
           return res.status(400).json({
-            error: 'Your own Anthropic API key is the only available payer for this app. Enable it before changing this permission.',
+            error: 'Your own OpenRouter key is the only available payer for this app. Enable it before changing this permission.',
             code: 'byok_required',
           });
         }
@@ -356,7 +358,7 @@ function llmGrantsRoutes(config) {
         llm: { purpose, suggestedCapCents },
         defaultCapCents: Math.min(DEFAULT_CAP_CENTS, capacity.maxCapCents),
         maxCapCents: capacity.maxCapCents,
-        hasApiKey: capacity.hasApiKey,
+        hasOwnKey: capacity.hasOwnKey,
         entitlement: capacity.entitlement,
       });
     } catch (err) {

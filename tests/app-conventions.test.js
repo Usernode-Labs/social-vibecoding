@@ -272,9 +272,13 @@ test('the excerpt and the full Tailwind section agree about the CDN (#1215)', ()
   assert.match(excerpt, TARGET);
   assert.match(tailwind, TARGET);
 
-  // And neither claims a check rejects the CDN, because none does.
+  // And neither claims a check rejects the CDN tag already in an app,
+  // because none does. Since 20 Nov 2026 one rejects a NEWLY ADDED tag ("No
+  // script from another site", src/services/outside-script-check.js), and the
+  // section says which is which.
   assert.doesNotMatch(excerpt, /rejected by/i);
-  assert.match(tailwind, /No proposal check rejects a `cdn\.tailwindcss\.com` tag/);
+  assert.match(tailwind, /No proposal check rejects a `cdn\.tailwindcss\.com` tag already in an\s+app\./);
+  assert.match(tailwind, /A change that adds a new one fails that check\./);
 });
 
 test('a first version\'s populated demo: the viewer\'s own data, a screen and a half, labelled once, every control; nothing else changes (7 Oct 2026)', () => {

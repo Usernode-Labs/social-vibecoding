@@ -115,7 +115,7 @@ test('returns the platform default cap with nothing spent', async () => {
   assert.equal(r.limitCents, 5000, 'the $50 weekly default');
   assert.equal(r.spentCents, 0);
   assert.equal(r.remainingCents, 5000);
-  assert.equal(r.hasByokKey, false);
+  assert.equal('hasByokKey' in r, false, 'no own-key flag any more (task 2275)');
   assert.match(r.resetsAt, /T00:00:00\.000Z$/, 'resets at a UTC midnight, not local');
   assert.equal(new Date(r.resetsAt).getUTCDay(), 1, 'and it is a Monday');
 });
@@ -139,13 +139,11 @@ test('an exhausted cap still returns full figures, not an error', async () => {
   assert.equal(r.remainingCents, 0, 'clamped, never negative');
 });
 
-test('BYOK spend is reported but never subtracted from the allowance', async () => {
+test('own-key spend is reported but never subtracted from the allowance', async () => {
   row.weekly_spent_cents = 500;
   row.weekly_byok_cents = 9999;
-  row.has_byok_key = true;
   const r = await fetch(`${base}/api/me/ai-budget`).then((x) => x.json());
   assert.equal(r.byokCents, 9999, 'and over the same week the allowance covers');
-  assert.equal(r.hasByokKey, true);
   assert.equal(r.remainingCents, 4500, 'only platform-billed spend counts against the cap');
 });
 
@@ -170,7 +168,7 @@ test('the payload carries no global spend or global cap', async () => {
   assert.deepEqual(Object.keys(r).sort(), [
     'byokCents', 'capWindow', 'creditPolicy', 'dailyApplies',
     'dailyLimitCents', 'dailySpentCents', 'entitlementAvailable',
-    'hasByokKey', 'identityTier', 'limitCents', 'limitSource', 'lowBalancePct',
+    'identityTier', 'limitCents', 'limitSource', 'lowBalancePct',
     'remainingCents', 'resetLabel', 'resetsAt', 'spentCents', 'tier',
     'tierLimitCents', 'verificationRequired', 'weeklyApplies',
     'weeklyLimitCents', 'weeklySource', 'weeklySpentCents', 'windowLabel',

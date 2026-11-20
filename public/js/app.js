@@ -1885,6 +1885,8 @@ const App = {
         reason: 'Records your voice notes',
         needsReload: true,
         surfaced: false,
+        // As the App tab asks it: "Allow this time" beside "Always allow".
+        allowOnce: true,
       });
     };
     setTimeout(attempt, 50);

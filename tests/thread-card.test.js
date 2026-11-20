@@ -101,8 +101,10 @@ test('in a side panel the thread is the same three cards, and the picture is one
   const css = read('public/css/app.css');
   const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
-  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
+  // 20 Nov 2026: a private thread in the bot tab's column is the same page, and its two cards the same cards.
+  const priv = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread';
+  assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\),\\n${esc(priv)} :is\\(\\[data-thread-page-post\\], \\[data-thread-page-replies\\]\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
+  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet,\\n${esc(priv)} > \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-thread-kicker \{ display: none; \}/, 'the panel\'s head already names the project and the number');
   const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
   assert.match(brand, /\.dev-request \{ --thread-ground-look: var\(--bl-page\); \}/);

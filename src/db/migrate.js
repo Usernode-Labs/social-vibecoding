@@ -2328,6 +2328,45 @@ async function seedStagingBotWaitingRows(pool) {
           ],
         );
       }
+      // 20 Nov 2026 (#6914): a request's page whose Homeroom bot reply carries
+      // a comparison, so the shots can show it drawn under the reply with
+      // nothing running. Obviously fake and inert (no script, no address);
+      // idempotent by its stagingDemo mark; a no-op outside staging.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '10 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'thread-comparison')`,
+        [
+          appId, botRow.rows[0].id,
+          'Staging demo: here they are side by side. Today\'s filter row on the left, the request\'s on the right.',
+          JSON.stringify({
+            stagingDemo: 'thread-comparison',
+            homeroomBot: {
+              kind: 'voice',
+              comparison: {
+                title: 'Before and after',
+                html: '<!doctype html><html><head><style>'
+                  + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+                  + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+                  + 'h3{margin:0 0 8px;font-size:14px}'
+                  + '.chips{display:flex;gap:6px;flex-wrap:wrap}'
+                  + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+                  + '.chip.new{background:#dbe8ff}'
+                  + 'p{margin:8px 0 0;color:#71717a;font-size:12px}'
+                  + '</style></head><body><div class="cols">'
+                  + '<div><h3>Today</h3><div class="chips"><span class="chip">Open</span><span class="chip">Mine</span>'
+                  + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+                  + '<div><h3>With this change</h3><div class="chips"><span class="chip new">Open</span>'
+                  + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+                  + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+                  + '</div></body></html>',
+              },
+            },
+          }),
+        ],
+      );
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
@@ -2547,6 +2586,28 @@ async function seedStagingChangePictures(pool) {
         caption: `${picture.subject} · ${picture.sha.slice(0, 7)}`,
       })),
     };
+    // 20 Nov 2026: the comparison a thread reply carries is drawn under it,
+    // static, with nothing running (homeroom-bot-voice.js say). A fresh
+    // staging copy has no model to lay one out, so this obviously fake one is
+    // stored with the reply. It is inert markup: no script, no address.
+    const comparison = {
+      title: 'Staging demo: the filter row, today and with this change',
+      html: '<!doctype html><html><head><style>'
+        + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+        + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+        + 'h3{margin:0 0 8px;font-size:14px}'
+        + '.row{display:flex;gap:6px;margin:0 0 8px;flex-wrap:wrap}'
+        + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+        + '.chip.new{background:#dbe8ff}'
+        + 'p{margin:0;color:#71717a;font-size:12px}'
+        + '</style></head><body><div class="cols">'
+        + '<div><h3>Today</h3><div class="row"><span class="chip">Open</span><span class="chip">Mine</span>'
+        + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+        + '<div><h3>With this change</h3><div class="row"><span class="chip new">Open</span>'
+        + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+        + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+        + '</div></body></html>',
+    };
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
        SELECT $1, $2, 'Here is what this change looks like, drawn from bbbbbbb, its newest version: the admit email as it is today and with this change.',
@@ -2555,7 +2616,7 @@ async function seedStagingChangePictures(pool) {
                            WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $3
                              AND metadata->>'stagingDemo' = 'change-pictures')`,
       [app.id, bot.id, Number(change.id), JSON.stringify({
-        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery },
+        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery, comparison },
       })],
     );
   } catch (err) {
@@ -11608,16 +11669,13 @@ async function seedStagingWeeklyCaps(pool) {
 
 // Daily spend distribution fixtures (the seven-bucket stacked chart on
 // /dashboard). The chart counts users per platform-spend bucket per day,
-// with the $20+ tier split into "capped" (no usable own key) vs "kept going
-// on own key". Two staging facts force a dedicated seed:
-//   1. llm_usage is staging:private (schema-only clone → empty), so there is
-//      no per-day spend to bucket at all without seeding it here.
-//   2. users.anthropic_key_enc is a staging:private COLUMN (scrubbed to NULL
-//      on clone), so the "has own key" branch would never populate from real
-//      users — the $20+/own-key segment would always be empty.
-// We create obviously-fake users (staging-demo-spend-*) at fixed high ids,
-// give a subset a non-null anthropic_key_enc sentinel so the own-key branch
-// lights up, and write 30 days of llm_usage spanning every bucket. A couple
+// with the $20+ tier split into "capped" vs "kept going on own key" (own-key
+// spend recorded that day). llm_usage is staging:private (schema-only clone
+// → empty), so there is no per-day spend to bucket at all without seeding it
+// here. We create obviously-fake users (staging-demo-spend-*) at fixed high
+// ids, give a subset own-key spend so that branch lights up (the stored
+// Anthropic key sentinel it used went with those keys, task 2275), and write
+// 30 days of llm_usage spanning every bucket. A couple
 // are is_admin so the "Include admin users" toggle visibly changes the bars.
 // Idempotent (fixed ids + ON CONFLICT DO NOTHING); strict no-op outside
 // staging; never references real users.
@@ -11648,26 +11706,23 @@ async function seedStagingSpendDistribution(pool) {
 
     const records = fixtures.map(f => ({
       id: f.id, name: f.name, admin: f.admin,
-      key_enc: f.key ? 'v1:staging-demo-fake-key' : null,
-      key_last4: f.key ? 'demo' : null,
       base: { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier] || 0,
       tier: f.tier,
     }));
-    // Sentinel passwords/keys are non-loginable and carry no real secret.
+    // Sentinel passwords are non-loginable and carry no real secret.
     await pool.query(
-      `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
-       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin, f.key_enc, f.key_last4
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean, key_enc text, key_last4 text)
+      `INSERT INTO users (id, username, password, is_admin)
+       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean)
        ON CONFLICT (id) DO NOTHING`,
       [JSON.stringify(records)]
     );
-    // Re-pin roles/keys, and only backdate signups that are too recent.
+    // Re-pin roles, and only backdate signups that are too recent.
     await pool.query(
-      `UPDATE users u SET is_admin = f.admin, anthropic_key_enc = f.key_enc,
-              anthropic_key_last4 = f.key_last4,
+      `UPDATE users u SET is_admin = f.admin,
               created_at = CASE WHEN u.created_at > NOW() - INTERVAL '45 days'
                                 THEN NOW() - INTERVAL '45 days' ELSE u.created_at END
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean, key_enc text, key_last4 text)
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean)
         WHERE u.id = f.id`,
       [JSON.stringify(records)]
     );

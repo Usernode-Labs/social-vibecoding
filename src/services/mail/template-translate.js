@@ -442,7 +442,9 @@ async function runLanguages(pool, kind, id, runId, english, todo, { overwrite, d
     const requests = chunk.map((language) => requestFor(kind, id, language, languages[language] || language, parts, words));
     let answers;
     try {
-      answers = await model.translateCatalogDirect(requests);
+      answers = await model.translateCatalogDirect(requests, {
+        telemetryContext: { component: 'mail_template_translation' },
+      });
     } catch (err) {
       for (const language of chunk) await record(language, `failed: the model did not answer (${(err && err.message) || 'request failed'})`);
       continue;

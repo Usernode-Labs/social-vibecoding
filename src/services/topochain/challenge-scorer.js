@@ -809,7 +809,6 @@ async function scoreChallenge(pool, row, rule, run) {
     // rest is waiting on the model, and retrying it every beat instead of
     // every interval would turn one outage into sixty failed calls an hour.
     const gradedCredits = await grader.gradeAll(toGrade, {
-      apiKey: run.apiKey,
       llm: run.llm,
       onError: (err) => { run.summary.grading = err.message; },
     });
@@ -855,12 +854,12 @@ const STAMP_CUT_SHORT_SQL = `
 `;
 
 async function score(pool, {
-  dryRun = false, now = Date.now(), apiKey = null, llm = null, only = null,
+  dryRun = false, now = Date.now(), llm = null, only = null,
 } = {}) {
   const summary = { challenges: [], credits: 0, graded: 0, skipped: 0, grading: null };
   const { rows } = await pool.query(RULE_CHALLENGES_SQL, [ONBOARDING_LIMIT]);
   const run = {
-    summary, dryRun, now, apiKey, llm,
+    summary, dryRun, now, llm,
     budget: MAX_CREDITS_PER_RUN,
     grades: MAX_GRADES_PER_RUN,
   };
@@ -1086,9 +1085,11 @@ async function runOnce(pool, {
 } = {}) {
   const { rows } = await pool.query(RUN_START_SQL, [trigger, dryRun]);
   const runId = rows[0] && rows[0].id;
-  const apiKey = (config && config.anthropicApiKey) || null;
   try {
-    const summary = await score(pool, { dryRun, now, apiKey, only });
+    // Grades go GLM first, Claude Haiku behind it, both on the platform's
+    // OpenRouter key (llm.js helperMessage). They ran on a separate
+    // Anthropic key until task 2275.
+    const summary = await score(pool, { dryRun, now, only });
     // A pass that wrote credits checks the standings even when the scheduled
     // check is not due, so a place moves in the pass that counted the points.
     // A dry run never aggregates, and a pass with no credits leaves the

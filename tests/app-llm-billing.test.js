@@ -19,10 +19,11 @@ const {
 } = require('../src/routes/app-llm-proxy');
 
 // At-rest encryption key (services/secrets.js KDF input) — not a
-// signing key. Same value the old shared JWT_SECRET held; the split was
-// a rename, so existing ciphertext keeps decrypting.
-const DATA_KEY = 'test-jwt-secret';
-const USER_KEY = 'sk-ant-test-123';
+// signing key.
+const DATA_KEY = 'test-data-key';
+// The person's own OpenRouter key: what allow_byok spends since task 2275
+// (it was their own Anthropic key before).
+const USER_KEY = 'sk-or-user-test-123';
 const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
 
 // Same mock-pool shape as limits-resolve-billing-path.test.js, plus
@@ -40,6 +41,9 @@ function makePool({
   globalLimit = 20000,
   globalSpent = 0,
   keyEnc = null,
+  // Whose key it is: 'personal' (one they added) or the included key's
+  // source, which never counts as their own.
+  keySource = 'personal',
 } = {}) {
   const calls = [];
   return {
@@ -65,8 +69,13 @@ function makePool({
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
         return { rows: [{ total: globalSpent }] };
       }
-      if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
-        return { rows: keyEnc ? [{ anthropic_key_enc: keyEnc }] : [] };
+      // credential-store.js readMetadata, then readSecret, on the person's
+      // OpenRouter credential.
+      if (/SELECT id, provider, purpose, secret_last4, status, revision/.test(sql)) {
+        return { rows: keyEnc ? [{ id: 3, status: 'valid', revision: 2, metadata: { source: keySource } }] : [] };
+      }
+      if (/SELECT status, secret_last4, secret_enc, revision/.test(sql)) {
+        return { rows: keyEnc ? [{ status: 'valid', secret_last4: '-123', secret_enc: keyEnc, revision: 2 }] : [] };
       }
       return { rows: [] };
     },
@@ -84,7 +93,7 @@ test('budget headroom → platform path, key never looked up', async () => {
   const pool = makePool({ weeklySpent: 100, keyEnc: GOOD_KEY_ENC });
   const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.deepEqual(r, { byok: false });
-  assert.equal(pool.issued(/anthropic_key_enc/), false);
+  assert.equal(pool.issued(/user_ai_credentials/), false);
 });
 
 test('budget exhausted + allow_byok + key → BYOK path with the decrypted key', async () => {
@@ -97,7 +106,7 @@ test('budget exhausted + allow_byok=false → 429-shaped error, key never looked
   const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
   const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
   assert.match(r.error, /Weekly limit reached/);
-  assert.equal(pool.issued(/anthropic_key_enc/), false,
+  assert.equal(pool.issued(/user_ai_credentials/), false,
     'an app the user did not opt into BYOK must never trigger a key lookup');
 });
 
@@ -105,6 +114,13 @@ test('budget exhausted + allow_byok but no key on file → error', async () => {
   const pool = makePool({ weeklySpent: 2500 });
   const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.match(r.error, /Weekly limit reached/);
+});
+
+test('the included OpenRouter key is never the person\'s own: exhausted is refused', async () => {
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC, keySource: 'usernode_managed' });
+  const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
+  assert.match(r.error, /Weekly limit reached/);
+  assert.equal(r.apiKey, undefined);
 });
 
 test('global cap hit + allow_byok + key → BYOK path', async () => {

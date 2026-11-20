@@ -2,18 +2,17 @@
 
 // Generic user AI credential store (plan.md PR2).
 //
-// Generalizes users.anthropic_key_enc/_last4 so a second provider
-// (openrouter) can be stored without stacking another pair of columns.
+// Generalized users.anthropic_key_enc/_last4 so a second provider
+// (openrouter) could be stored without stacking another pair of columns.
 // One row per (user_id, provider, purpose):
 //
-//   provider = 'anthropic' | 'openrouter'
+//   provider = 'openrouter'   ('anthropic' rows are history: people's own
+//                              Anthropic keys were removed in task 2275,
+//                              and every such row is a revoked tombstone)
 //   purpose  = 'coding_agent' | 'app_llm'
 //
-// For this feature the new credential is provider='openrouter',
-// purpose='coding_agent'. The encryption envelope is unchanged
-// (src/services/secrets.js AES-256-GCM keyed by config.dataEncryptionKey),
-// so Anthropic ciphertext was copied into the generic table without
-// decrypt/re-encrypt (see schema backfill).
+// The encryption envelope is src/services/secrets.js AES-256-GCM keyed by
+// config.dataEncryptionKey.
 //
 // Security contract (applies to every consumer):
 //   - Only rows with status === 'valid' are usable; unverified / invalid
@@ -30,19 +29,15 @@ const crypto = require('crypto');
 const log = require('./logger');
 const secrets = require('./secrets');
 
-const PROVIDERS = ['anthropic', 'openrouter'];
+// The table's CHECK still allows 'anthropic' for the tombstones; nothing
+// here reads or writes one any more.
+const PROVIDERS = ['openrouter'];
 const PURPOSES = ['coding_agent', 'app_llm'];
 // Supported status values. Only 'valid' is usable; the rest are explicitly
 // non-usable states we constrain at the store boundary.
 const VALID_STATUS = 'valid';
 const REVOKED_STATUS = 'revoked';
 const SUPPORTED_STATUSES = [VALID_STATUS, REVOKED_STATUS, 'unverified', 'invalid', 'expired', 'disabled'];
-
-// Legacy column pair that the Anthropic coding-agent credential predates.
-const LEGACY_ANTHROPIC_COLUMNS = {
-  secretEnc: 'anthropic_key_enc',
-  secretLast4: 'anthropic_key_last4',
-};
 
 function assertProviderPurpose(provider, purpose) {
   if (!PROVIDERS.includes(provider)) throw new Error(`credential-store: unknown provider ${provider}`);
@@ -142,18 +137,9 @@ async function upsertOnClient({ client, userId, provider, purpose, secretEnc, se
   return rows[0] || null;
 }
 
-// Public upsert for providers that have no dual-write legacy path (e.g.
-// openrouter). Anthropic coding-agent credentials MUST go through
-// writeAnthropicCodingAgent so the legacy users.anthropic_key_* columns
-// stay in lockstep — a bare upsert would leave two different active
-// secrets (review P2 dual-write bypass).
+// Public upsert.
 async function upsert(opts) {
-  const { provider, purpose } = opts;
-  if (provider === 'anthropic' && purpose === 'coding_agent') {
-    throw new Error(
-      'credential-store: anthropic/coding_agent must use writeAnthropicCodingAgent()'
-    );
-  }
+  assertProviderPurpose(opts.provider, opts.purpose);
   const { pool } = opts;
   return withTransaction(pool, (client) => upsertOnClient({ client, ...opts }));
 }
@@ -247,11 +233,8 @@ async function revokeOnClient({ client, userId, provider, purpose }) {
   return rows[0] || null;
 }
 
-// Revoke (tombstone) a credential row. Authoritative: clears the generic
-// secret AND, for the Anthropic coding-agent credential, the legacy
-// users.anthropic_key_* columns in the same transaction, so a tombstoned
-// row can never be resurrected from stale legacy ciphertext. Never
-// physically deletes.
+// Revoke (tombstone) a credential row. Authoritative: clears the secret.
+// Never physically deletes.
 async function revoke({ pool, userId, provider, purpose }) {
   assertProviderPurpose(provider, purpose);
   if (!userId) return null;
@@ -263,18 +246,7 @@ async function revoke({ pool, userId, provider, purpose }) {
     // yet, we INSERT (and thereby lock) the tombstone row — a plain UPDATE
     // would affect zero rows and acquire no lock, letting a delete commit
     // after a save while the generic key stays valid (review F1).
-    const revoked = await revokeOnClient({ client, userId, provider, purpose });
-    // Authoritative revocation must also clear any stale legacy ciphertext
-    // so a later legacy-first fallback can't re-expose the deleted key.
-    if (provider === 'anthropic' && purpose === 'coding_agent') {
-      await client.query(
-        `UPDATE users SET ${LEGACY_ANTHROPIC_COLUMNS.secretEnc} = NULL,
-                          ${LEGACY_ANTHROPIC_COLUMNS.secretLast4} = NULL
-         WHERE id = $1`,
-        [userId]
-      );
-    }
-    return revoked;
+    return revokeOnClient({ client, userId, provider, purpose });
   });
 }
 
@@ -335,86 +307,9 @@ async function readSecret({ pool, userId, provider, purpose, dataKey, expectedRe
     return null;
   }
 
-  // Generic row exists but is not usable (unverified/invalid/revoked):
-  // state is authoritative — do NOT fall back to legacy.
-  if (row) return null;
-
-  // No generic row: compatible legacy fallback for Anthropic coding-agent
-  // only, during the migration window (backfill not yet present).
-  if (provider === 'anthropic' && purpose === 'coding_agent') {
-    return readLegacyAnthropic({ pool, userId, dataKey });
-  }
+  // Generic row exists but is not usable (unverified/invalid/revoked), or
+  // there is no row at all.
   return null;
-}
-
-// ── Legacy Anthropic compatibility (dual-read/dual-write) ─────────────
-
-async function readLegacyAnthropic({ pool, userId, dataKey }) {
-  try {
-    const { rows } = await pool.query(
-      `SELECT ${LEGACY_ANTHROPIC_COLUMNS.secretEnc} AS enc
-       FROM users WHERE id = $1`,
-      [userId]
-    );
-    const enc = rows[0]?.enc;
-    if (enc) {
-      const dec = secrets.decrypt(enc, dataKey);
-      if (dec) return dec;
-      log.warn('credential-store', 'legacy anthropic decrypt failed; treating as none', { userId });
-    }
-  } catch (err) {
-    log.warn('credential-store', 'legacy anthropic read failed', { userId, err: err.message });
-  }
-  return null;
-}
-
-// Dual-write a new Anthropic coding-agent key to BOTH the generic row
-// and the legacy users columns ATOMICALLY in one transaction. Any failure
-// rolls back both and propagates to the caller — a replace/delete can
-// never return success while the other store is left stale.
-async function writeAnthropicCodingAgent({ pool, userId, apiKey, dataKey, status = VALID_STATUS, verified = true }) {
-  const encrypted = secrets.encrypt(apiKey, dataKey);
-  const last4 = apiKey.slice(-4);
-  const fp = fingerprint(apiKey, dataKey);
-  return withTransaction(pool, async (client) => {
-    const generic = await upsertOnClient({
-      client, userId, provider: 'anthropic', purpose: 'coding_agent',
-      secretEnc: encrypted, secretLast4: last4, secretFingerprint: fp,
-      status, verified,
-    });
-    // Mirror the credential into the legacy users.anthropic_key_* columns
-    // ONLY when VALID. Legacy consumers (e.g. src/services/limits.js
-    // loadUserApiKey) read those columns unconditionally and ignore status,
-    // so a non-valid (unverified/invalid) key must never appear there as a
-    // live key. Critically, a non-valid REPLACEMENT must atomically CLEAR
-    // the legacy columns in the same transaction — otherwise a status-blind
-    // consumer keeps using the previously-valid key A after the user
-    // submitted an unverified/invalid replacement B (review F3). Non-valid
-    // keys live only in the generic store; legacy is cleared, not skipped.
-    if (status === VALID_STATUS) {
-      await client.query(
-        `UPDATE users SET ${LEGACY_ANTHROPIC_COLUMNS.secretEnc} = $1,
-                          ${LEGACY_ANTHROPIC_COLUMNS.secretLast4} = $2
-         WHERE id = $3`,
-        [encrypted, last4, userId]
-      );
-    } else {
-      await client.query(
-        `UPDATE users SET ${LEGACY_ANTHROPIC_COLUMNS.secretEnc} = NULL,
-                          ${LEGACY_ANTHROPIC_COLUMNS.secretLast4} = NULL
-         WHERE id = $1`,
-        [userId]
-      );
-    }
-    return generic;
-  });
-}
-
-// Dual-write a delete/revoke of the Anthropic coding-agent key. The
-// generic tombstone + legacy clear happen atomically (see revoke above).
-async function deleteAnthropicCodingAgent({ pool, userId }) {
-  await revoke({ pool, userId, provider: 'anthropic', purpose: 'coding_agent' });
-  return true;
 }
 
 module.exports = {
@@ -433,8 +328,4 @@ module.exports = {
   revoke,
   readMetadata,
   readSecret,
-  readLegacyAnthropic,
-  writeAnthropicCodingAgent,
-  deleteAnthropicCodingAgent,
-  LEGACY_ANTHROPIC_COLUMNS,
 };

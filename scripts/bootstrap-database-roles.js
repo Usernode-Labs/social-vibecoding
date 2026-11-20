@@ -6,7 +6,7 @@ const { Client } = require('pg');
 const access = require('../src/services/database-role-access');
 const { PLATFORM_SCHEMAS, ensureRuntimeGrants } = require('../src/services/database-role-grants');
 
-let stage = 'configuration';
+const EXTENSION_SCAN_CONCURRENCY = 4;
 const ident = value => `"${String(value).replace(/"/g, '""')}"`;
 const lit = access.literal;
 
@@ -179,14 +179,21 @@ async function extensionPlans(url, platformDb) {
   const plans = new Map();
   const add = names => { const sorted = [...new Set(names)].sort(); plans.set(JSON.stringify(sorted), sorted); };
   add(['pg_stat_statements']);
-  for (const { datname } of databases) {
-    const extensions = await connected(url, async client => (await client.query(
-      "SELECT extname FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql' ORDER BY extname")).rows, datname);
-    const names = extensions.map(row => row.extname);
-    add(names);
-    // The operator may add its managed statistics extension after a newly
-    // created source was inspected. Prepare that exact combination as well.
-    add([...names, 'pg_stat_statements']);
+  for (let offset = 0; offset < databases.length; offset += EXTENSION_SCAN_CONCURRENCY) {
+    const batch = databases.slice(offset, offset + EXTENSION_SCAN_CONCURRENCY);
+    // Wait for all connections in the batch to close even if one query fails.
+    const results = await Promise.allSettled(batch.map(({ datname }) => connected(url, async client => {
+      const { rows } = await client.query(
+        "SELECT extname FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql' ORDER BY extname");
+      return rows.map(row => row.extname);
+    }, datname)));
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+      add(result.value);
+      // The operator may add its managed statistics extension after a newly
+      // created source was inspected. Prepare that exact combination as well.
+      add([...result.value, 'pg_stat_statements']);
+    }
   }
   return [...plans.values()];
 }
@@ -245,7 +252,7 @@ async function prepareTemplates(url, roles, plans) {
   });
 }
 
-async function bootstrap(env = process.env) {
+async function bootstrap(env = process.env, onStage = () => {}) {
   if (!access.enabled(env)) throw new Error('Database role bootstrap is not enabled');
   const roles = access.names(env);
   const primary = env.DATABASE_BOOTSTRAP_URL;
@@ -257,10 +264,10 @@ async function bootstrap(env = process.env) {
   // Refuse an unresolved legacy/restore owner before changing any login or
   // schema. Ordinary migration must never silently leave such apps behind.
   for (const [side, url] of [['primary', primary], ...(preview ? [['preview', preview]] : [])]) {
-    stage = `${side} tenant ownership preflight`;
+    onStage(`${side} tenant ownership preflight`);
     await connected(url, client => assertTenantOwners(client, roles, database));
   }
-  stage = 'primary roles';
+  onStage('primary roles');
   await connected(primary, async client => {
     for (const [kind, name] of Object.entries(roles)) await ensureRole(client, name,
       env[`DATABASE_${kind.toUpperCase()}_PASSWORD`], kind === 'provisioner');
@@ -268,18 +275,18 @@ async function bootstrap(env = process.env) {
     const { rows } = await client.query('SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1', [database]);
     if (!rows.length) await client.query(`CREATE DATABASE ${ident(database)} OWNER ${ident(roles.migrator)}`);
   });
-  stage = 'platform object ownership and grants';
+  onStage('platform object ownership and grants');
   await connected(primary, async client => {
     await ownPlatformSchema(client, roles, database, env);
     await installConnectionCounts(client, [roles.web, roles.conductor, roles.migrator]);
   }, database);
-  stage = 'extension inventory';
+  onStage('extension inventory');
   const plans = await extensionPlans(primary, database);
-  stage = 'primary extension templates';
+  onStage('primary extension templates');
   const primaryTemplates = await prepareTemplates(primary, roles, plans);
   let previewTemplates = 0;
   if (preview) {
-    stage = 'preview roles';
+    onStage('preview roles');
     await connected(preview, async client => {
       await ensureRole(client, roles.web, env.STAGING_DATABASE_READ_PASSWORD, false, true);
       await ensureRole(client, roles.provisioner, env.STAGING_DATABASE_PROVISIONER_PASSWORD, true);
@@ -288,18 +295,30 @@ async function bootstrap(env = process.env) {
       const maintenance = decodeURIComponent(access.parseUrl(preview, 'STAGING_DATABASE_BOOTSTRAP_URL').pathname.slice(1));
       await client.query(`GRANT CONNECT ON DATABASE ${ident(maintenance)} TO ${ident(roles.web)}, ${ident(roles.provisioner)}`);
     });
-    stage = 'preview extension templates';
+    onStage('preview extension templates');
     previewTemplates = await prepareTemplates(preview, roles, plans);
   }
-  stage = 'complete';
   return { roles: 4, primaryTemplates, previewTemplates };
 }
 
-if (require.main === module) bootstrap().then(result => {
-  console.log('[database-bootstrap] complete', JSON.stringify(result));
-}).catch(error => {
-  console.error('[database-bootstrap] failed', JSON.stringify({ stage, code: error.code || 'bootstrap_failed' }));
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  let stage = 'configuration';
+  let started = performance.now();
+  function onStage(nextStage) {
+    const now = performance.now();
+    console.log('[database-bootstrap] timing', JSON.stringify({ stage, elapsedMs: Math.round(now - started) }));
+    stage = nextStage;
+    started = now;
+  }
+
+  bootstrap(process.env, onStage).then(result => {
+    onStage('complete');
+    console.log('[database-bootstrap] complete', JSON.stringify(result));
+  }).catch(error => {
+    const elapsedMs = Math.round(performance.now() - started);
+    console.error('[database-bootstrap] failed', JSON.stringify({ stage, elapsedMs, code: error.code || 'bootstrap_failed' }));
+    process.exitCode = 1;
+  });
+}
 
 module.exports = { bootstrap, verifier, adoptionFunctionSql, installAdoption, ownPlatformSchema, extensionPlans, prepareTemplates };

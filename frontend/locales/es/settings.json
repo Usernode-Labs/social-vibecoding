@@ -735,30 +735,6 @@
     "text": "Se reinicia el lunes a las 00:00 UTC.",
     "source": "8260c59430618de198b46e83610e7a2945840b03ccd8174e1d52020606f50498"
   },
-  "apiKey.title": {
-    "text": "Clave de API de Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.intro": {
-    "text": "Usa tu propia clave de API de Anthropic para seguir trabajando después del límite semanal. Primero se usa tu asignación semanal de la plataforma; cuando se agota, tu clave toma el relevo automáticamente, incluso en mitad de un turno en curso, y el uso se factura directamente a tu cuenta de Anthropic.",
-    "source": "5b0792bc208a2c15d311cd18b29c5aabb8d6bb4c085f13c01991ffe2eaad28ba"
-  },
-  "apiKey.savedKeyLabel": {
-    "text": "Clave",
-    "source": "99a52df3ff3d499488e2fa28150c4106a2cb5e928891a830a9aa3922b2d32160"
-  },
-  "apiKey.fieldLabel": {
-    "text": "Clave de API de Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.remove": {
-    "text": "Quitar",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.safety": {
-    "text": "Se cifra en reposo, se verifica con Anthropic antes de guardarla y nunca se muestra completa después. El servidor la descifra en memoria para llamar a Anthropic en tu nombre, así que no pegues claves en servicios en los que no confíes con ese nivel de acceso. <0>Define límites de gasto estrictos</0> en la propia clave como defensa adicional.",
-    "source": "964372764cebc98f971f0a8a93b91718b37a66b5e4dc6fe31778a665234ac478"
-  },
   "openrouter.intro": {
     "text": "Usa cualquier modelo compatible para todo el chat y la programación en una sesión de OpenRouter. Estas sesiones no usan tu asignación de Claude de la plataforma. Tu cuenta incluye una clave de OpenRouter, así que OpenRouter es la opción predeterminada y GLM 5.3 Flash se selecciona cuando está disponible, mientras que la lista completa de modelos visibles para la clave sigue disponible. Los modelos marcados como Claude Code en la lista se ejecutan en Claude Code. Las claves se cifran en reposo y solo se inyectan en cada turno.",
     "source": "227eef10170b9b0dc7009a9f48d95a0859acd84a1c5e2755f9c5415cf73d6c01"
@@ -1803,10 +1779,6 @@
     "text": "OpenRouter",
     "source": "eb70c3bc14fa7ae14285b750955958e63b64b8f19546c30fc2223ad9057a959c"
   },
-  "nav.part.apiKey": {
-    "text": "Clave de API de Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
   "nav.part.connectors": {
     "text": "Conectores",
     "source": "c3d2e79ebdd046c6b7363de7b69dc9fb5b38235f0d328fdff0b2f9ccf2854b07"
@@ -1938,10 +1910,6 @@
   "nav.keywords.usage": {
     "text": "asignación límite créditos presupuesto gasto restante semanal",
     "source": "0adb04f257b23954eed88565204036d296f01d22c8f8910de60d1ec37715c568"
-  },
-  "nav.keywords.apiKey": {
-    "text": "claude byok clave sk-ant facturación",
-    "source": "c996fca19838c733331595e2a1ae5519bade7c758661edf20d108351488a7ef7"
   },
   "nav.keywords.openrouter": {
     "text": "modelo glm deepseek razonamiento predeterminado agente de programación clave",
@@ -2443,34 +2411,6 @@
     "text": "No se pudieron guardar las preferencias de notificaciones push móviles",
     "source": "7c9cc454c737e22211eec5f1755a2a9f649e051365bf74886355d84ea0e96ff7"
   },
-  "apiKey.field.replacePlaceholder": {
-    "text": "Pega una clave nueva para reemplazarla",
-    "source": "8a347fdf5687f98be7defa6bc00ee1346e79f50c7ecaa801b91a57f74907d1ca"
-  },
-  "apiKey.button.replace": {
-    "text": "Reemplazar",
-    "source": "95e154398a4bc0091aa4d6b607472ac5a89e41fbc84a3a49f823314d6de9eebc"
-  },
-  "apiKey.status.pasteFirst": {
-    "text": "Primero pega una clave de API.",
-    "source": "448710dc61de72d49cedf6c73808a66355e18e7fe52e4eb20f52886ec200bcf8"
-  },
-  "apiKey.status.verifying": {
-    "text": "Verificando con Anthropic…",
-    "source": "cabd4656e84b52428a35326940ab951d522f9ada12f2b0c94a1ffea7c24d6c31"
-  },
-  "apiKey.status.saveFailed": {
-    "text": "No se pudo guardar la clave.",
-    "source": "2ca6410dbed10cffc6c57ada961d1493471bb3565ec122ef9f331d08a1eac4ca"
-  },
-  "apiKey.status.saved": {
-    "text": "Guardada. Tus chats ahora se facturan a tu cuenta de Anthropic.",
-    "source": "94373a53a9d8cd2639fa1a6a89cd48aa9d9759d80621802dc1949f64570f0cac"
-  },
-  "apiKey.status.networkError": {
-    "text": "Error de red: {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
-  },
   "openrouter.cost.free": {
     "text": "Gratis",
     "source": "f411a1fb62758b4c54690d0a702b4955b54dd22115416fa7b1ce51b4a084818d"
@@ -2898,30 +2838,6 @@
   "signOut.failed": {
     "text": "No se pudo cerrar sesión. Revisa tu conexión e inténtalo de nuevo.",
     "source": "0632a4853c68c1e1f46564d9df9aaabb335f62459c2b38543b87107e9fd0a158"
-  },
-  "apiKey.remove.confirmTitle": {
-    "text": "¿Eliminar tu clave de API?",
-    "source": "1ee469e473451824b7c32a8088b0d3f61de81c496df0a7d9b557b8a0ec15c301"
-  },
-  "apiKey.remove.confirmMessage": {
-    "text": "Los próximos chats usarán de nuevo el presupuesto diario compartido.",
-    "source": "cafee8d0d055378667b569721fd4f68f2a918d395544fe9006708cfab489b51e"
-  },
-  "apiKey.remove.confirmButton": {
-    "text": "Eliminar",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.remove.failed": {
-    "text": "No se pudo eliminar la clave.",
-    "source": "4b33ea92e4c7da9f490f106fded6a4b5033ce752e74e3eb11c5e89b3eb6c87e7"
-  },
-  "apiKey.remove.done": {
-    "text": "Eliminada.",
-    "source": "b4df0c43b59cfbb146d94d5610850a72afbd6844486643b3e025e7eee9891af2"
-  },
-  "apiKey.remove.networkError": {
-    "text": "Error de red: {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
   },
   "grants.status.demoData": {
     "text": "Datos de demostración: los cambios no se guardan.",

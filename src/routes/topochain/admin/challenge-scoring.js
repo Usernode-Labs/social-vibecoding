@@ -28,6 +28,7 @@
 const { Router } = require('express');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
+const llm = require('../../../services/llm');
 const { adminWriteGate } = require('./auth');
 const { toIntId, toBool, toNumber } = require('./util');
 const { ok, fail, iso, num } = require('../helpers');
@@ -279,7 +280,7 @@ function challengeScoringAdminRoutes(config) {
             interval_minutes: scorer.intervalMinutes(config),
             interval_choices: rules.INTERVAL_CHOICES,
             aggregate_hours: scorer.aggregateHours(config),
-            grading_configured: !!(config && config.anthropicApiKey),
+            grading_configured: llm.isEnabled(),
           },
         },
       });

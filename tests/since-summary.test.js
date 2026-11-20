@@ -13,7 +13,8 @@
 //     concurrent first askers share one call; a failure falls back to the
 //     titles and is retried after an hour, not on every view;
 //   - the model call runs on Sonnet 5.5 at low effort with a JSON schema
-//     and the refusal fallback, and a refusal throws.
+//     on the plain call (OpenRouter has no refusal fallback), and a refusal
+//     throws.
 //
 // The SQL itself is exercised against a real schema in
 // tests/since-summary-postgres.test.js.
@@ -242,16 +243,18 @@ const ok = (text) => ({
   usage: { input_tokens: 2000, output_tokens: 60 },
 });
 
-test('the line is written by Sonnet 5.5 at low effort, to a schema, with the refusal fallback', async () => {
+test('the line is written by Sonnet 5.5 at low effort, to a schema, on the plain call', async () => {
   const c = stubClient(ok('{"summary":"  Mostly polish on\\nMessages.  "}'));
   const out = await withClient(c, () => llm.generateSinceSummary({
     changes: [{ pr: 1, title: 'A', summary: 'B' }], total: 40, truncated: false, fromDate: '2026-09-28',
   }));
   assert.equal(out.summary, 'Mostly polish on Messages.');
   const { kind, params } = c.calls[0];
-  assert.equal(kind, 'beta');
+  // OpenRouter has no server-side refusal fallback (task 2275): the plain
+  // call, whatever the client offers.
+  assert.equal(kind, 'plain');
   assert.equal(params.model, 'claude-sonnet-5-5');
-  assert.equal(params.fallbacks, 'default');
+  assert.equal(params.fallbacks, undefined);
   assert.equal(params.output_config.effort, 'low');
   assert.equal(params.output_config.format.type, 'json_schema');
   assert.ok(params.max_tokens >= 1000);

@@ -108,8 +108,8 @@ export function SettingsScreen() {
   const { Sections, failed } = useStoreState(settingsChunkStore) as SettingsChunkState;
 
   // refresh() reads /api/auth/me (joining the boot read) into Settings.state,
-  // which app-view consults for `hasApiKey` before this screen is
-  // ever opened — so it runs at hydration, on every route, as before. At boot
+  // which the shell consults before this screen is ever opened, so it runs
+  // at hydration, on every route, as before. At boot
   // window.Settings is the façade, whose refresh() is exactly that read and
   // nothing else; and this is also where the idle prefetch is armed.
   useIsomorphicLayoutEffect(() => {

@@ -118,21 +118,21 @@ what passes in the cache. No proposal is opened and nothing is committed.
   edge, the same line breaks, no em dash or markup the English lacks, names
   written as they are. A failed answer is asked again once, alone; a message
   that fails twice stays English until the English changes again.
-- **How much at once.** A few hundred messages, the usual merge's worth, go one
-  request at a time, the same pass. More, a whole new language, go as one
-  Message Batch at half the price, kept once it has ended; its answers are
-  matched by message and used only for English it was asked about.
+- **How much at once.** Every message goes as a direct request, a few at a
+  time, in the pass that finds it, on the platform's OpenRouter key. A whole
+  new language is just a longer pass: OpenRouter has no Message Batches, so
+  the half-price batch the step used before (on a separate Anthropic key) is
+  gone.
 - **Correcting one.** Commit the corrected entry with `"locked": true`: a
   committed entry wins over the cache.
 - `LANGUAGE_SYNC_ENABLED=false` turns it off. Its spend counts against the
   platform's daily system budget. A full admin's connector reads where it
-  stands with `get_browser_languages`: a batch in flight, what the last pass
-  could use, and each language's coverage.
+  stands with `get_browser_languages`: what the last pass could use, and each
+  language's coverage.
 
 `node scripts/language-sync.js --plan` shows what each language needs on a
-checkout, and the same script translates by hand with an `ANTHROPIC_API_KEY`
-(`--batch` for a Message Batch, `--changed-from <ref>` for one change's
-messages).
+checkout, and the same script translates by hand with an `OPENROUTER_API_KEY`
+(`--changed-from <ref>` for one change's messages).
 
 ## Using a message
 

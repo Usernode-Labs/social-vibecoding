@@ -55,7 +55,7 @@ export function OpenRouterSection() {
         </Label>
         <div className="ui-card ui-keyrow rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
-            {/* Same shape as #settings-api-key above — see the note there. */}
+            {/* A field in a flex row beside its button: the width is on the wrapper. */}
             <PasswordInput id="settings-openrouter-key" placeholder="sk-or-..." autoComplete="off" spellCheck={false} enterKeyHint="done" wrapperClassName="flex-1 min-w-0" className="font-mono" box="card" ring="bare" hint="dim" />
           </div>
           <div className="flex gap-2 px-4 py-3">

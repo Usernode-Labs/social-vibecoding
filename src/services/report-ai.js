@@ -339,7 +339,6 @@ async function generateForApp({ pool, config, app, userId, since }) {
         inputJson: JSON.stringify(input),
         appName: app.name || app.slug,
         knownUsernames,
-        apiKey: billing.apiKey,
         telemetryContext: { pool, appId: app.id },
       });
     } catch (err) {
@@ -366,12 +365,11 @@ async function generateForApp({ pool, config, app, userId, since }) {
         since || null]
     );
 
-    // Debit the Haiku call to the clicking user — into the BYOK bucket
-    // when their own key paid for it, mirroring pr-metadata.js.
+    // Debit the model call to the clicking user, mirroring pr-metadata.js.
     if (result.usage) {
       await limits.recordSpend(
         pool, userId, llm.estimateCostCents(result.usage, result.model),
-        { byok: !!billing.apiKey }
+        { byok: false }
       );
     }
     return { summary: shapeRow(rows[0]), cached: false };

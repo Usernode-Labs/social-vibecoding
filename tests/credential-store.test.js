@@ -50,7 +50,7 @@ function makeDb(handlers) {
 test('assertProviderPurpose rejects unknown provider/purpose', async () => {
   const pool = makeDb(() => ({ rows: [] }));
   await assert.rejects(() => store.upsert({ pool, provider: 'nope', userId: 1 }));
-  await assert.rejects(() => store.upsert({ pool, provider: 'anthropic', purpose: 'nope', userId: 1 }));
+  await assert.rejects(() => store.upsert({ pool, provider: 'openrouter', purpose: 'nope', userId: 1 }));
 });
 
 test('assertStatus rejects unsupported status values', async () => {
@@ -85,15 +85,23 @@ test('status=valid requires verified=true (and verified=true requires status=val
   );
 });
 
-test('anthropic/coding_agent upsert is rejected (must dual-write via writeAnthropicCodingAgent)', async () => {
+// Task 2275: people's own Anthropic keys are gone. The table keeps its
+// tombstones ('anthropic' stays in its CHECK), but nothing here may write,
+// read or revoke one, and the legacy users.anthropic_key_* mirror is gone.
+test('anthropic is no longer a provider the store reads or writes', async () => {
+  assert.deepEqual(store.PROVIDERS, ['openrouter']);
   const pool = makeDb(() => ({ rows: [] }));
-  await assert.rejects(
-    () => store.upsert({
-      pool, userId: 1, provider: 'anthropic', purpose: 'coding_agent',
-      secretEnc: sk('k'), secretLast4: 'xxxx',
-    }),
-    /must use writeAnthropicCodingAgent/,
-  );
+  await assert.rejects(() => store.upsert({
+    pool, userId: 1, provider: 'anthropic', purpose: 'coding_agent', secretEnc: sk('k'), secretLast4: 'xxxx',
+  }), /unknown provider anthropic/);
+  await assert.rejects(() => store.readSecret({ pool, userId: 1, provider: 'anthropic', purpose: 'coding_agent', dataKey: DATA_KEY }),
+    /unknown provider anthropic/);
+  await assert.rejects(() => store.revoke({ pool, userId: 1, provider: 'anthropic', purpose: 'coding_agent' }),
+    /unknown provider anthropic/);
+  for (const gone of ['writeAnthropicCodingAgent', 'deleteAnthropicCodingAgent', 'readLegacyAnthropic', 'LEGACY_ANTHROPIC_COLUMNS']) {
+    assert.equal(gone in store, false, `${gone} is gone`);
+  }
+  assert.equal(pool.ops().length, 0, 'not one query was sent');
 });
 
 test('fingerprint is deterministic, 64-hex, distinct from plaintext', () => {
@@ -104,87 +112,40 @@ test('fingerprint is deterministic, 64-hex, distinct from plaintext', () => {
   assert.match(a, /^[0-9a-f]{64}$/);
 });
 
-// ── Atomic dual-write + status gating (F1, F3) ─────────────────────────
-test('F1/F3: valid save dual-writes generic + legacy atomically', async () => {
-  const pool = makeDb((sql) => {
-    if (/INSERT INTO credentials.user_ai_credentials/.test(sql)) return { rows: [{ id: 1, revision: 1, status: 'valid', secret_last4: 'abcd' }] };
-    if (/UPDATE users SET/.test(sql)) return { rows: [] };
-    return { rows: [] };
-  });
-  await store.writeAnthropicCodingAgent({ pool, userId: 5, apiKey: 'sk-ant-api03-abcdef', dataKey: DATA_KEY });
-  const sqls = pool.ops().map((o) => o.sql);
-  assert.ok(sqls.some((s) => /INSERT INTO credentials.user_ai_credentials/.test(s)), 'generic insert');
-  assert.ok(sqls.some((s) => /UPDATE users SET anthropic_key_enc/.test(s)), 'legacy update for valid');
-  assert.ok(pool.beginIdx() >= 0 && pool.commitIdx() > pool.beginIdx(), 'atomic txn');
-});
-
-test('F1: a legacy dual-write failure rolls back AND propagates', async () => {
-  const pool = makeDb((sql) => {
-    if (/INSERT INTO credentials.user_ai_credentials/.test(sql)) return { rows: [{ id: 1, revision: 1 }] };
-    if (/UPDATE users SET/.test(sql)) return { error: new Error('legacy write boom') };
-    return { rows: [] };
-  });
-  await assert.rejects(
-    () => store.writeAnthropicCodingAgent({ pool, userId: 5, apiKey: 'sk-ant-api03-abcdef', dataKey: DATA_KEY }),
-    /legacy write boom/
-  );
-  assert.equal(pool.rollbackCount(), 1, 'rolled back on failure');
-  assert.equal(pool.commitIdx(), -1, 'no COMMIT after rollback');
-});
-
-test('F3: a NON-valid Anthropic save CLEARS legacy columns (old key not left active)', async () => {
-  const pool = makeDb((sql) => {
-    if (/INSERT INTO credentials.user_ai_credentials/.test(sql)) return { rows: [{ id: 1, revision: 1, status: 'unverified' }] };
-    if (/UPDATE users SET/.test(sql)) return { rows: [] };
-    return { rows: [] };
-  });
-  await store.writeAnthropicCodingAgent({ pool, userId: 5, apiKey: 'sk-ant-abcdef', dataKey: DATA_KEY, status: 'unverified', verified: false });
-  const sqls = pool.ops().map((o) => o.sql);
-  assert.ok(sqls.some((s) => /INSERT INTO credentials.user_ai_credentials/.test(s)), 'generic insert');
-  // A non-valid replacement must atomically CLEAR the legacy columns so
-  // status-blind legacy consumers stop using the previously-valid key
-  // (review F3). It must clear (set NULL), not mirror the non-valid key.
-  const legacyUpdate = sqls.find((s) => /UPDATE users SET/.test(s));
-  assert.ok(legacyUpdate, 'legacy columns are updated on a non-valid replacement');
-  assert.match(legacyUpdate, /anthropic_key_enc = NULL/, 'non-valid key is NOT written to legacy; it is cleared');
-});
-
 // ── Revocation (F1 delete-save race, F2 authoritative) ─────────────────
 test('F1: revoke issues an UPSERT tombstone (locks row even when absent)', async () => {
   const pool = makeDb((sql) => {
     if (/INSERT INTO credentials.user_ai_credentials/.test(sql)) return { rows: [{ status: 'revoked', revision: 1 }] };
-    if (/UPDATE users SET anthropic_key_enc = NULL/.test(sql)) return { rows: [] };
     return { rows: [] };
   });
-  await store.revoke({ pool, userId: 9, provider: 'anthropic', purpose: 'coding_agent' });
+  await store.revoke({ pool, userId: 9, provider: 'openrouter', purpose: 'coding_agent' });
   const sqls = pool.ops().map((o) => o.sql);
   const insert = sqls.find((s) => /INSERT INTO credentials.user_ai_credentials/.test(s));
   assert.ok(insert, 'revoke uses INSERT ... ON CONFLICT');
   assert.match(insert, /ON CONFLICT/, 'revoke upserts (not a zero-row UPDATE)');
   assert.match(insert, /status = 'revoked'/, 'tombstone status set');
   assert.match(insert, /verified_at = NULL/, 'tombstone clears verified_at (satisfies valid_verified)');
-  assert.ok(sqls.some((s) => /UPDATE users SET anthropic_key_enc = NULL/.test(s)), 'legacy cleared in same txn');
+  assert.equal(sqls.some((s) => /anthropic_key_enc/.test(s)), false, 'no legacy mirror to clear any more');
   assert.ok(pool.beginIdx() >= 0 && pool.commitIdx() > pool.beginIdx(), 'atomic revocation txn');
 });
 
-test('F2: a tombstoned row NEVER falls back to legacy ciphertext', async () => {
+test('F2: a tombstoned row yields nothing', async () => {
   const pool = makeDb((sql) => {
     if (/SELECT status, secret_last4, secret_enc/.test(sql)) return { rows: [{ status: 'revoked', secret_last4: null, secret_enc: null }] };
-    if (/SELECT anthropic_key_enc AS enc\s+FROM users/i.test(sql)) return { rows: [{ enc: sk('sk-ant-api03-OLD-DELETED') }] };
     return { rows: [] };
   });
-  const got = await store.readSecret({ pool, userId: 3, provider: 'anthropic', purpose: 'coding_agent', dataKey: DATA_KEY });
-  assert.equal(got, null, 'revoked credential must not resurrect deleted key');
+  const got = await store.readSecret({ pool, userId: 3, provider: 'openrouter', purpose: 'coding_agent', dataKey: DATA_KEY });
+  assert.equal(got, null, 'a revoked credential must not resurrect a deleted key');
 });
 
 // ── Atomic read + status gating (F4) ───────────────────────────────────
 test('F4: readSecret fetches status + secret in one statement (same snapshot)', async () => {
   const pool = makeDb((sql) => {
-    if (/SELECT status, secret_last4, secret_enc/.test(sql)) return { rows: [{ status: 'valid', secret_last4: 'abcd', secret_enc: sk('sk-ant-ok') }] };
+    if (/SELECT status, secret_last4, secret_enc/.test(sql)) return { rows: [{ status: 'valid', secret_last4: 'abcd', secret_enc: sk('sk-or-ok') }] };
     return { rows: [] };
   });
-  const got = await store.readSecret({ pool, userId: 1, provider: 'anthropic', purpose: 'coding_agent', dataKey: DATA_KEY });
-  assert.equal(got, 'sk-ant-ok');
+  const got = await store.readSecret({ pool, userId: 1, provider: 'openrouter', purpose: 'coding_agent', dataKey: DATA_KEY });
+  assert.equal(got, 'sk-or-ok');
   // Exactly one SELECT to the credentials table (no separate metadata +
   // ciphertext queries).
   const selects = pool.ops().filter((o) => /SELECT status, secret_last4, secret_enc/.test(o.sql)).length;
@@ -197,32 +158,21 @@ test('F4: only status=valid rows yield a secret', async () => {
       if (/SELECT status, secret_last4, secret_enc/.test(sql)) return { rows: [{ status, secret_last4: 'abcd', secret_enc: sk('x') }] };
       return { rows: [] };
     });
-    const got = await store.readSecret({ pool, userId: 1, provider: 'anthropic', purpose: 'coding_agent', dataKey: DATA_KEY });
+    const got = await store.readSecret({ pool, userId: 1, provider: 'openrouter', purpose: 'coding_agent', dataKey: DATA_KEY });
     assert.equal(got, null, `status=${status} must not be usable`);
   }
 });
 
-test('F5: a valid generic row that fails decryption is NOT replaced by legacy', async () => {
+test('F5: a valid row that fails decryption yields nothing', async () => {
   const pool = makeDb((sql) => {
     if (/SELECT status, secret_last4, secret_enc/.test(sql)) return { rows: [{ status: 'valid', secret_last4: 'abcd', secret_enc: 'v1:broken:broken:broken' }] };
-    if (/SELECT anthropic_key_enc AS enc\s+FROM users/i.test(sql)) return { rows: [{ enc: sk('sk-ant-api03-OLD') }] };
     return { rows: [] };
   });
-  const got = await store.readSecret({ pool, userId: 1, provider: 'anthropic', purpose: 'coding_agent', dataKey: DATA_KEY });
-  assert.equal(got, null, 'valid-but-corrupt generic row must not silently fall back to stale legacy');
+  const got = await store.readSecret({ pool, userId: 1, provider: 'openrouter', purpose: 'coding_agent', dataKey: DATA_KEY });
+  assert.equal(got, null, 'a valid-but-corrupt row must not be substituted by anything');
 });
 
-test('F5: no generic row -> legacy fallback (anthropic migration window)', async () => {
-  const pool = makeDb((sql) => {
-    if (/SELECT status, secret_last4, secret_enc/.test(sql)) return { rows: [] };
-    if (/SELECT anthropic_key_enc AS enc\s+FROM users/i.test(sql)) return { rows: [{ enc: sk('sk-ant-api03-legacy') }] };
-    return { rows: [] };
-  });
-  const got = await store.readSecret({ pool, userId: 3, provider: 'anthropic', purpose: 'coding_agent', dataKey: DATA_KEY });
-  assert.equal(got, 'sk-ant-api03-legacy');
-});
-
-test('F5: no generic row -> no secret for non-anthropic', async () => {
+test('F5: no row -> no secret', async () => {
   const pool = makeDb((sql) => {
     if (/SELECT status, secret_last4, secret_enc/.test(sql)) return { rows: [] };
     return { rows: [] };
