@@ -2628,6 +2628,38 @@ test('App permissions opens with how many apps hold something, and zero says not
     'the line sits at the top of the page, above the first list, whose host keeps its id and classes');
 });
 
+test('An app\'s row draws how much of today\'s cap it has used, and says so near and at the cap (#6512)', () => {
+  const row = (over) => grantRows({ phase: 'ready', grants: [grantView(over)] });
+  const bar = (html) => html.match(/<div data-role="spend-bar"[^>]*>/)?.[0];
+  const fill = (html) => (html.match(/<div data-role="spend-bar"[^>]*><div class="([^"]*)" style="width:(\d+)%"/) || []).slice(1);
+  const note = (html) => (html.match(/<p data-role="cap-note"[^>]*>([^<]*)<\/p>/) || [])[1]?.replace(/&#x27;/g, "'");
+  // Under the cap: the bar in the "you are here" ink, a meter with the words a screen reader hears, and no line.
+  const some = row({ spentCents: 37 });
+  assert.match(bar(some), /role="meter"/);
+  assert.match(bar(some), /aria-valuemin="0" aria-valuemax="100" aria-valuenow="37"/);
+  assert.match(bar(some), /aria-label="Demo App has used 37% of today(?:'|&#x27;)s cap"/);
+  assert.deepEqual(fill(some), ['h-full rounded-full bg-[color:var(--lit-ink)]', '37']);
+  assert.equal(note(some), undefined);
+  // Nothing spent: an empty track, still drawn so the rows line up.
+  assert.deepEqual(fill(row({ spentCents: 0, spent: '0.00' })), ['h-full rounded-full bg-[color:var(--lit-ink)]', '0']);
+  // From 80% the row says it is close, in words; the bar turns to the attention ink.
+  assert.equal(note(row({ spentCents: 79 })), undefined);
+  const near = row({ spentCents: 80, spent: '0.80' });
+  assert.equal(note(near), message('settings:grants.nearCap'));
+  assert.deepEqual(fill(near), ['h-full rounded-full bg-[color:var(--state-attention)]', '80']);
+  // At the cap, and past it (a call that was running when it was reached): full, never wider.
+  const at = row({ spentCents: 100, spent: '1.00' });
+  assert.equal(note(at), message('settings:grants.atCap'));
+  assert.deepEqual(fill(at), ['h-full rounded-full bg-[color:var(--state-attention)]', '100']);
+  assert.deepEqual(fill(row({ spentCents: 131, spent: '1.31' }))[1], '100');
+  assert.match(bar(row({ spentCents: 131, spent: '1.31' })), /aria-valuenow="100"/);
+  // A row with no cap figure, or a revoked one, draws no bar: there is nothing to be a share of.
+  assert.equal(bar(row({ spentCents: 10, capCents: 0 })), undefined);
+  assert.equal(bar(row({ spentCents: 10, revoked: true })), undefined);
+  assert.equal(message('settings:grants.nearCap'), 'Close to today\'s cap.');
+  assert.match(message('settings:grants.atCap'), /^Reached today's cap\./);
+});
+
 test('App AI permissions totals what the apps spent today (#6512)', () => {
   const total = (html) => (html.match(/<p data-role="spend-total"[^>]*>([^<]*)<\/p>/) || [])[1];
   // No app at all: the empty line stands and no total is drawn.
