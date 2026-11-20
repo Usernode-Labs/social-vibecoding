@@ -477,6 +477,46 @@ test('words beside a call are kept as the start of the answer, each said once', 
   assert.equal(mayor.answerText([walk], 'Here is how the main screen works.'), walk, 'a reply already inside them adds nothing');
 });
 
+// 20 Nov 2026 (live-draft review, D): thread 58972 at 15:41 and 16:05. The
+// model wrote two paragraphs beside its calls, then ended with the reply
+// tool, which said them again in other words. The opening test let the
+// reworded copy through, and both were sent.
+test('a reply that says the words beside its calls again in other words is sent once', () => {
+  const said1541 = 'The grey strip is gone: the list is a single white rounded card again, so rows end at the chevron with no '
+    + 'reserved space beside them, and the ✕ now fades in on top of the chevron when you hover a row. On a phone, where '
+    + 'there is no hover, the ✕ stays hidden and swipe-to-delete does it.\n\nIf you would rather the ✕ never appear over '
+    + 'the chevron at all, the other option is to drop it entirely and keep swipe plus the delete button inside the workout screen.';
+  const reply1541 = 'The grey strip is gone: the list is a single white rounded card again, so rows end at the chevron with no '
+    + 'empty space beside them, and the ✕ now fades in on top of the chevron when you hover a row. On a phone the ✕ stays '
+    + 'hidden and swipe-to-delete does it.\n\nIf you would rather the ✕ never sit over the chevron, the other option is to '
+    + 'drop it and keep swipe plus the delete button inside the workout screen.';
+  const said1605 = 'I can\'t seed the draft from PR #142: a draft is always built from the app on main, and #142 isn\'t there yet '
+    + '(it\'s up for a vote with no votes cast so far, its checks passing). So the draft beside us shows the old home screen, '
+    + 'and anything we change in it becomes a change of its own rather than a revision of #142.\n\nWhat does work is the path '
+    + 'I described: keep iterating on the page in this thread, and when the look is right I update #142 with it (its votes '
+    + 'clear and it rebuilds). If you tell me the next tweak, I\'ll put it in the page, and I can also apply this page\'s look '
+    + 'straight onto #142 now if you would rather iterate there.';
+  const reply1605 = 'I can\'t seed the draft from PR #142: a draft always builds from the app on main, and #142 isn\'t there yet '
+    + '(it\'s up for a vote, no votes cast so far, its checks passing). So the draft beside us shows the old home screen, and '
+    + 'anything changed in it becomes a change of its own, not a revision of #142.\n\nWhat does work is what I said before: '
+    + 'keep iterating on the page in this thread, and when the look is right I update #142 with it, its votes clearing and it '
+    + 'rebuilding. Tell me the next tweak and I\'ll put it in the page, or say the word and I\'ll apply this page\'s look onto '
+    + '#142 now so you can iterate there.';
+  for (const [beside, reply] of [[said1541, reply1541], [said1605, reply1605]]) {
+    assert.equal(mayor.answerText([beside], reply, { replyTool: true }), reply, 'the reply tool\'s text is the answer, once');
+    assert.equal(mayor.answerText([beside], reply), reply, 'reworded, it is still the same answer');
+  }
+  // A passage with a fact the reply lacks is still sent.
+  const facts = 'The draft is on its third save and the preview restarted at 4:12. Progress, Export and Import are now one '
+    + 'grouped list with chevrons.';
+  const short = 'The grouped list is in, with chevrons beside each row. Say if you want the workout list to match.';
+  assert.equal(mayor.answerText([facts], short, { replyTool: true }), `${facts}\n\n${short}`);
+  // Different words entirely: both, in order.
+  const other = 'I read the home screen and the list styles. The kit draws every row as its own rounded card, which is '
+    + 'why the corners double up where two rows meet.';
+  assert.equal(mayor.answerText([other], reply1541, { replyTool: true }), `${other}\n\n${reply1541}`);
+});
+
 test('a reply after a walkthrough written beside a call sends the walkthrough, and an offer keeps its "Looked at" line', async () => {
   const walk = 'The main screen has three parts. The header names the rota. The day strip lets you pick your days and Save '
     + 'changes keeps them. The week list says who waters each day. What I would improve: mark today, say who is next, '

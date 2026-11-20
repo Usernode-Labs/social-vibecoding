@@ -2357,26 +2357,102 @@ function besideWords(content) {
 const BESIDE_NOTE = '[Homeroom check, not from them: the words you wrote beside those calls are shown to them as the start '
   + 'of your answer. Your reply\'s text follows them: do not write them again, add only what is new.]';
 
-// How much of a kept passage's opening, found in the reply, means the reply wrote it again.
+// How much of a kept passage's opening, found in the reply, means the reply
+// wrote it again: the test a passage too short to compare by its sentences
+// still takes.
 const BESIDE_MATCH_CHARS = 160;
+
+// 20 Nov 2026 (live-draft review, D): a reply that said the kept words again
+// in other words passed the opening test above, and both copies were sent
+// (thread 58972, 15:41 and 16:05). A passage is now compared with the reply
+// by what its sentences say: a sentence of it has a close match when a
+// sentence of the reply shares most of its content words and every number
+// and name it carries.
+//   BESIDE_SENTENCE_OVERLAP  the share of the shorter sentence's content words both hold
+//   BESIDE_MIN_WORDS         fewer content words than this is too short to judge either way
+//   BESIDE_MOST              the share of a passage's judged sentences that must match
+//                            for it to be dropped; a turn that ended with the reply tool
+//                            drops it at half (the reply is the answer there)
+const BESIDE_SENTENCE_OVERLAP = 0.6;
+const BESIDE_MIN_WORDS = 4;
+const BESIDE_MOST = Object.freeze({ reply: 0.5, words: 0.67 });
+// Words that carry nothing a repeat could differ by.
+const BESIDE_STOP = new Set(('a an and are as at be but by can do does for from has have i if in into is it its '
+  + 'just me my no not now of on or so than that the their them then there these they this to too up was we what '
+  + 'when where which while who will with you your yours still also only').split(' '));
+
+/** Pure: a word as compared: lower case, a plural's or tense's ending taken off. */
+function besideStem(word) {
+  return word.length > 4 ? word.replace(/(?:ing|ed|es|s)$/, '') : word;
+}
+
+/** Pure: what a sentence says, to compare: { words, facts } (numbers and capitalised names). */
+function besideSense(sentence) {
+  const text = String(sentence || '');
+  const words = new Set(squashWords(text).split(' ').filter((w) => w && !BESIDE_STOP.has(w)).map(besideStem));
+  const facts = new Set([
+    ...(text.match(/#?\d[\d,.:]*/g) || []).map((n) => n.replace(/[,.:]+$/, '')),
+    // A capitalised word that does not open its sentence: a name.
+    ...(text.match(/(?<=[\p{L}\p{N},;] )\p{Lu}[\p{L}\p{N}]+/gu) || []).map((n) => n.toLowerCase()),
+  ]);
+  return { words, facts };
+}
+
+/** Pure: does sentence sense `a` have a close match in `pool` (senses)? */
+function besideMatched(a, pool) {
+  return pool.some((b) => {
+    if (b.words.size < 2) return false;
+    let shared = 0;
+    for (const w of a.words) if (b.words.has(w)) shared += 1;
+    if (shared / Math.min(a.words.size, b.words.size) < BESIDE_SENTENCE_OVERLAP) return false;
+    for (const fact of a.facts) if (!b.facts.has(fact) && !b.words.has(fact)) return false;
+    return true;
+  });
+}
+
+/**
+ * Pure: does `passage` say again what `others` (texts) already say? Judged by
+ * its sentences when it has enough to judge (most of them closely matched,
+ * and none of the rest carrying a number or a name the others lack), else by
+ * its opening, as before.
+ */
+function besideRepeats(passage, others, { most }) {
+  const pool = others.flatMap((t) => claims.sentences(t)).map(besideSense);
+  const all = squashWords(others.join(' '));
+  const judged = claims.sentences(passage).map(besideSense).filter((s) => s.words.size >= BESIDE_MIN_WORDS);
+  if (!judged.length) {
+    const opening = squashWords(passage).slice(0, BESIDE_MATCH_CHARS);
+    return !opening || all.includes(opening);
+  }
+  const unmatched = judged.filter((s) => !besideMatched(s, pool));
+  if ((judged.length - unmatched.length) / judged.length < most) return false;
+  // What is left must add nothing a person would miss: no number or name the others never say.
+  return unmatched.every((s) => [...s.facts].every((fact) => all.includes(squashWords(fact))));
+}
 
 /**
  * Pure: the answer as it is sent: the words kept beside calls, in order,
- * then the reply's text, each said once. Kept words whose opening the reply
- * (or an earlier passage) writes again are left out, and a reply already
- * inside the kept words adds nothing.
+ * then the reply's text, each said once. A kept passage that the reply (or
+ * an earlier passage) says again, in its words or in others, is left out; one
+ * that says something they do not is kept. `replyTool`: the turn ended with
+ * the reply tool, so its text is the answer, and kept words stay only when
+ * they add to it. A reply already inside the kept words adds nothing.
  */
-function answerText(besides = [], text = '') {
+function answerText(besides = [], text = '', { replyTool = false } = {}) {
   const reply = String(text || '').trim();
   const said = squashWords(reply);
+  const most = replyTool ? BESIDE_MOST.reply : BESIDE_MOST.words;
   const kept = [];
   for (const words of Array.isArray(besides) ? besides : []) {
     const passage = String(words || '').trim();
-    const opening = squashWords(passage).slice(0, BESIDE_MATCH_CHARS);
-    if (!opening || said.includes(opening) || kept.some((k) => squashWords(k).includes(opening))) continue;
+    if (!squashWords(passage)) continue;
+    // A passage the reply's whole text is inside of says everything the reply does: it stays, and the reply goes.
+    if (said && squashWords(passage).includes(said)) { kept.push(passage); continue; }
+    if (besideRepeats(passage, [reply, ...kept].filter(Boolean), { most })) continue;
     kept.push(passage);
   }
-  const inside = said && squashWords(kept.join(' ')).includes(said);
+  const inside = said && (squashWords(kept.join(' ')).includes(said)
+    || (kept.length && besideRepeats(reply, kept, { most: 1 })));
   return [...kept, ...(reply && !inside ? [reply] : [])].join('\n\n');
 }
 
@@ -2386,7 +2462,7 @@ function answerText(besides = [], text = '') {
  * draws in the text's place.
  */
 function checkedWords(ctx, finalText = '') {
-  return replyHtml.withHtmlWords(answerText(ctx?.besides, ctx?.reply?.text ?? finalText), ctx?.reply?.html);
+  return replyHtml.withHtmlWords(answerText(ctx?.besides, ctx?.reply?.text ?? finalText, { replyTool: !!ctx?.reply }), ctx?.reply?.html);
 }
 
 /**
@@ -4841,7 +4917,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const designShown = !!caps.design?.shown();
   // #6307: a paragraph said once, and the draft's own words left to the card
   // under the reply, before what it still claims is cut.
-  let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText))), ctx.offer);
+  let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText, { replyTool: !!ctx.reply }))), ctx.offer);
   text = clip(text, MAX_REPLY_CHARS);
   // P1: nothing more is shown as it is written; the message takes the card's place.
   draft?.close({ clear: !text });

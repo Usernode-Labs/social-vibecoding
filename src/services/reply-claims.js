@@ -1592,6 +1592,8 @@ module.exports = {
   NOT_BUILT,
   UNREAD_DESCRIPTION_RE,
   squashWords,
+  sentences,
+  sentencesOf,
   cleanReply,
   requestNumbers,
   usedAsRequest,
