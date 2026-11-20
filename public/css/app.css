@@ -7778,6 +7778,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-
   transition: box-shadow 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 /* The pointer on a card: nothing moves. Its edge deepens half a shade and a faint, wide shadow comes up under it, slowly, and goes as slowly. */
+/* Nor does it grow (20 Nov 2026): the list's own rows widen by 8px a side under the pointer or while open, and a card here kept that. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow:is(:hover, [data-on]) { margin: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow:hover { box-shadow: inset 0 0 0 1px var(--wip-card-line-hover), 0 8px 22px -14px var(--wip-card-line-hover); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow-link { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); line-height: 1.3; color: var(--wip-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-wrow-sub { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
