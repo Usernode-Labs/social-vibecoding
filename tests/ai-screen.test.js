@@ -2058,7 +2058,8 @@ test('the column is held inside the window, and the panel takes its place at its
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
   assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+\/>/);
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
+    'and the edge is the way the list hides and comes back (#6963)');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
 });
 
@@ -2821,4 +2822,90 @@ test('T2.10: a person verdict\'s pill says who or what it waits on', () => {
   ]);
   const { normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
   assert.equal(normalizeWorkState({ stage: 'waiting_for_you', why: 'decide', cause: 'others' }).cause, 'others', 'the client keeps the cause');
+});
+
+// ── The thread list hidden (#6963) ──────────────────────────────────────
+//
+// Dragging the divider past the list's floor on a wide screen puts the page
+// in one pane: the list is hidden, the thread takes the room, and a button
+// first in the thread's head — or the edge itself — brings it back. The
+// choice is this device's and holds across threads and reloads.
+
+test('the list hidden: one store, this device\'s, and only the bot page\'s column offers the way back', () => {
+  const mem = new Map();
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+      setItem: (k, v) => mem.set(k, String(v)),
+      removeItem: (k) => mem.delete(k),
+    },
+  };
+  const { setListClosed, setDocked, isListClosed, showsListButton } = loadTsx('frontend/src/features/ai/list-closed.ts');
+  const read2 = (get) => get();
+  assert.equal(typeof loadTsx('frontend/src/features/ai/list-closed.ts').useShowListButton, 'function',
+    'the page draws it through a hook, whose server snapshot is the split (the prerender)');
+  // The split is what a first visit gets, before and after mount.
+  assert.equal(read2(isListClosed), false);
+  assert.equal(read2(showsListButton), false);
+  // Hidden, but with no page docked: no button anywhere.
+  setListClosed(true);
+  assert.equal(mem.get('usernode_ai_list_closed_v1'), '1', 'remembered on this device');
+  assert.equal(read2(showsListButton), false);
+  setDocked(true);
+  assert.equal(read2(showsListButton), true, 'the bot page\'s column offers it');
+  // A phone, or a preview beside the thread, publishes itself as not docked.
+  setDocked(false);
+  assert.equal(read2(showsListButton), false);
+  assert.equal(read2(isListClosed), true, 'the choice is kept for when it is docked again');
+  setDocked(true);
+  setListClosed(false);
+  assert.equal(mem.has('usernode_ai_list_closed_v1'), false, 'a split writes nothing');
+  assert.equal(read2(showsListButton), false);
+  delete globalThis.window;
+});
+
+test('the page is one pane only while it is docked, open, and with no preview beside the thread', () => {
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /import \{ setDocked, setListClosed, useListClosed \} from '\.\/list-closed';/);
+  assert.match(index, /const listClosed = useListClosed\(\);\s+const oneUp = listClosed && columnOpen && !detailHere && !phone;/,
+    'a phone, a closed column or a preview keeps today\'s layout');
+  assert.match(index, /const snaps = !threeUp && !detailHere;/);
+  assert.match(index, /setDocked\(docked && !detailHere && !phone\)/, 'the button is offered only where the split is');
+  assert.match(index, /data-ai-list-closed=\{oneUp \? '' : undefined\}/);
+  assert.match(index, /onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}/);
+  assert.match(index, /onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}/);
+  assert.match(index, /collapsed=\{oneUp\}/, 'the edge knows the list is hidden');
+  // Opening another thread touches neither: nothing clears the choice.
+  assert.doesNotMatch(index, /setListClosed\(false\)[\s\S]{0,80}(openRoot|at\?\.threadRootId|columnKey)/,
+    'switching threads leaves the one-pane choice alone');
+});
+
+test('the way back to the list: a round head button first in a thread\'s head and a new chat\'s', () => {
+  const messages = read('frontend/src/features/messages/index.tsx');
+  const header = messages.slice(messages.indexOf('<header className="messages-thread-header" data-reply-head={alone ? \'alone\' : undefined}>'));
+  assert.match(header.slice(0, 900),
+    /\{alone && !onBack && showList \? \(\s+<button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""\s+aria-label=\{t\('messages:ai\.list\.show'\)\} title=\{t\('messages:ai\.list\.show'\)\}\s+onClick=\{\(\) => setListClosed\(false\)\}>\s+<SidebarIcon aria-hidden="true" \/>/,
+    'the same small round head button as the thread\'s ✕, named by its tooltip');
+  assert.match(messages, /const showList = useShowListButton\(\);/);
+  const fresh = read('frontend/src/features/messages/new-thread.tsx');
+  const freshHead = fresh.slice(fresh.indexOf('<header className="messages-thread-header">'));
+  assert.match(freshHead.slice(0, 600),
+    /\{showList \? \(\s+<button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""[^]*?onClick=\{\(\) => setListClosed\(false\)\}/,
+    'a new chat, under its own head, has it too');
+  assert.ok(freshHead.indexOf('data-reply-show-list') < freshHead.indexOf('messages-thread-name'),
+    'first in the head');
+  assert.equal(message('messages:ai.list.show'), 'Show thread list');
+  assert.equal(message('agent:sidePanel.listHidden'), 'Thread list hidden');
+});
+
+test('the one-pane rule: the list is not drawn and the pane takes the whole room', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\)\);\n\}/,
+    'the pane and its edge reach the rail, as `--ai-main-w` is what both read');
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \.ai-screen-body \{ display: none; \}/,
+    'and the list is out of the page');
+  assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\]\[data-ai-list-closed\] \{ --ai-main-w: calc\(var\(--platform-usable-w\) - var\(--ai-edge, 0px\)\); \}/,
+    'the frame looks honour it too');
+  assert.match(css, /body:has\(#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\)\);\n\}/,
+    'a page in Main\'s place, which reads the width from body, takes the room too');
 });

@@ -10,8 +10,9 @@ import {
 } from '@/components/ui/chat';
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon,
-  PlusIcon, SearchIcon, UserGroupIcon, XIcon,
+  PlusIcon, SearchIcon, SidebarIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
+import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
@@ -1949,6 +1950,10 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
+  // #6963: the bot tab's list is hidden behind this thread, and this is the
+  // way back to it (../ai/list-closed). Drawn only in the bot tab's own
+  // column, never in a phone's drawer or another surface's thread.
+  const showList = useShowListButton();
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
   // #6254: this thread is its own drop area — a file dropped on the reply box
@@ -2462,6 +2467,15 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
       ) : (
         <>
           <header className="messages-thread-header" data-reply-head={alone ? 'alone' : undefined}>
+            {/* #6963: the list is hidden, and this is the way back to it —
+                first in the head, where a phone draws its back arrow. */}
+            {alone && !onBack && showList ? (
+              <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
+                aria-label={t('messages:ai.list.show')} title={t('messages:ai.list.show')}
+                onClick={() => setListClosed(false)}>
+                <SidebarIcon aria-hidden="true" />
+              </button>
+            ) : null}
             {alone && onBack ? (
               <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
                 aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>

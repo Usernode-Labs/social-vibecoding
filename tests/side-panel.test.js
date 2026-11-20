@@ -1444,8 +1444,11 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
   const divider = SRC.slice(SRC.indexOf('function SidePanelDivider('));
   assert.match(divider, /setPointerCapture\(e\.pointerId\)/);
-  assert.match(divider, /d\.width = set\(d\.startW \+ \(d\.startX - e\.clientX\) \* dirSign\(\), false\);/,
+  // #6963: the raw width is read first, so a drag can go past the floor and
+  // become the list's being hidden; what is applied is still clamped.
+  assert.match(divider, /const raw = d\.startW \+ \(d\.startX - e\.clientX\) \* dirSign\(\);/,
     'pinned to the right edge: moving left widens the panel, and nothing is stored mid-drag');
+  assert.match(divider, /d\.width = set\(raw, false\);/, 'the drag itself is still clamped');
   // 3 Nov 2026: this edge sets its own column's width — Main Chat's while the
   // bot page is up, the side panel's everywhere else — resolved at each use.
   assert.match(divider, /const resolveKey = useCallback\(\s*\(\) => widthKey \?\? \(aiPageUp\(\) \? AI_MAIN_WIDTH_KEY : WIDTH_KEY\),/,
@@ -1454,9 +1457,9 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   assert.match(divider, /applyWidth\(stored == null \? null : clampWidth\(stored, b\), undefined, key\);/);
   assert.match(divider, /applyWidth\(next, undefined, key\);/);
   assert.match(divider, /if \(persist\) writeStoredWidth\(next, undefined, key\);/);
-  assert.match(divider, /if \(d\.width != null\) writeStoredWidth\(d\.width, undefined, resolveKey\(\)\);/,
-    'a press that never moved is half of a double-click, not a choice');
-  assert.match(divider, /const onDoubleClick = \(\) => \{\s*clearStoredWidth\(undefined, resolveKey\(\)\);\s*settle\(\);/);
+  assert.match(divider, /if \(d\.width != null && !d\.collapsed\) writeStoredWidth\(d\.width, undefined, resolveKey\(\)\);/,
+    'a press that never moved is half of a double-click, not a choice, and a hidden list chose no width');
+  assert.match(divider, /const onDoubleClick = \(\) => \{[^}]*clearStoredWidth\(undefined, resolveKey\(\)\);\s*settle\(\);/);
   for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) assert.ok(divider.includes(`'${key}'`), key);
   assert.match(divider, /window\.addEventListener\('resize', settle\)/, 'a window that narrows gives the width back');
   const block = CSS.slice(CSS.indexOf('.side-panel-divider {'), CSS.indexOf('.side-panel-head {'));
@@ -1901,4 +1904,164 @@ test('Open in workshop leaves the item for the Workshop and opens it, and on a n
   assert.deepEqual(thread.pushed, []);
   assert.equal(api.sidePanelStore.get().route, 'messages/4242', 'the column stays where it was');
   cleanup();
+});
+
+// ── 9. Dragging the edge to the edge (#6963) ─────────────────────────────
+//
+// On the bot page the divider's neighbour is the thread list. Dragged past the
+// list's floor it stops being a width and becomes a choice: the list hides,
+// the thread takes the room, and the same edge (or the head's button, in
+// features/ai/list-closed) brings it back. The choice is this device's,
+// beside the width.
+
+test('the list hidden is this device\'s choice, stored beside the width', () => {
+  const { readListClosed, writeListClosed, AI_LIST_CLOSED_KEY, SNAP_PX } = api.resize;
+  const mem = new Map();
+  const store = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => { mem.set(k, String(v)); },
+    removeItem: (k) => { mem.delete(k); },
+  };
+  assert.equal(AI_LIST_CLOSED_KEY, 'usernode_ai_list_closed_v1');
+  assert.equal(SNAP_PX, 48, 'the distance past the floor that hides the list');
+  assert.equal(readListClosed(store), false, 'nothing chosen: the split, as today');
+  writeListClosed(true, store);
+  assert.equal(mem.get(AI_LIST_CLOSED_KEY), '1');
+  assert.equal(readListClosed(store), true);
+  writeListClosed(false, store);
+  assert.equal(mem.has(AI_LIST_CLOSED_KEY), false, 'a split is the default, so nothing is kept');
+  assert.equal(readListClosed(store), false);
+  const throwing = {
+    getItem() { throw new Error('SecurityError'); },
+    setItem() { throw new Error('QuotaExceededError'); },
+    removeItem() { throw new Error('SecurityError'); },
+  };
+  assert.equal(readListClosed(throwing), false);
+  assert.doesNotThrow(() => writeListClosed(true, throwing));
+  assert.doesNotThrow(() => writeListClosed(false, throwing));
+  assert.equal(readListClosed(null), false, 'no storage at all');
+});
+
+test('pulling the list back opens it at the width last chosen, never a sliver', () => {
+  const { reopenWidth, bounds } = api.resize;
+  const b = bounds({ innerWidth: 1440, appLeft: 0 });
+  assert.equal(reopenWidth(null, b), null, 'nothing chosen: the stylesheet\'s own split');
+  assert.equal(reopenWidth(120, b), 320, 'narrower than the pane may be: its floor');
+  assert.equal(reopenWidth(612, b), 612, 'the width that was left');
+  assert.equal(reopenWidth(5000, b), 960, 'and never wider than this window allows');
+});
+
+test('the chart: a drag past the list\'s floor hides it, and back out brings it back', () => {
+  const { SidePanelDivider } = loadTsx('frontend/src/features/side-panel/side-panel.tsx');
+  const inRender = (fn) => { let out; const Probe = () => { out = fn(); return null; }; require('./lib/render-tsx').renderToHtml(require('./lib/render-tsx').createElement(Probe)); return out; };
+
+  const width = 1280;
+  let paneLeft = 480;            // the pane is 800 wide here; 1000 at its floor
+  const neighbourMin = 280;      // the list's floor (--ai-list-min below 1024px)
+  const props = new Map();
+  const mem = new Map();
+  const classes = new Set();
+  const doc = {
+    documentElement: {
+      dir: 'ltr',
+      classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) },
+      style: { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) },
+    },
+    body: null,
+    getElementById: () => null,
+  };
+  globalThis.window = {
+    innerWidth: width,
+    localStorage: {
+      getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+      setItem: (k, v) => mem.set(k, String(v)),
+      removeItem: (k) => mem.delete(k),
+    },
+    document: doc,
+  };
+  globalThis.document = doc;
+  const panel = { getBoundingClientRect: () => ({ left: paneLeft, right: width, width: width - paneLeft }) };
+  const panelRef = { current: panel };
+  const measure = () => ({ innerWidth: width, appLeft: 0, neighbourMin });
+  // The floor here: a 1280px room less the list's 280px, so 1000 is as wide as
+  // the pane goes before the list's floor is passed.
+  const maxW = 1000;
+
+  const calls = [];
+  const draw = (collapsed) => inRender(() => SidePanelDivider({
+    panelRef, shown: true, id: 'ai-main-divider', controls: 'ai-main-pane',
+    widthKey: api.resize.AI_MAIN_WIDTH_KEY, probe: measure,
+    collapsed, onCollapse: () => calls.push('collapse'), onRestore: () => calls.push('restore'),
+  }));
+
+  const target = { setPointerCapture() {}, releasePointerCapture() {} };
+  const down = (x) => ({ button: 0, pointerId: 1, clientX: x, preventDefault() {}, currentTarget: target });
+  const move = (x) => ({ pointerId: 1, clientX: x, currentTarget: target });
+  const up = (x) => ({ pointerId: 1, clientX: x, currentTarget: target });
+  const key = (k) => ({ key: k, shiftKey: false, preventDefault() {} });
+
+  // A little past the floor is still the floor: the drag clamps, as it did.
+  let el = draw(false);
+  el.props.onPointerDown(down(500));
+  el.props.onPointerMove(move(300));           // raw 1000 + 0: at the floor
+  props.delete('--ai-main-chosen-w');
+  el.props.onPointerMove(move(260));           // raw 1040: 40 past, not 48
+  assert.deepEqual(calls, [], 'inside the snap distance the list stays, and the drag stops at its floor');
+  assert.equal(props.get('--ai-main-chosen-w'), '1000px');
+  el.props.onPointerUp(up(260));
+
+  // Past it by SNAP_PX, the list hides.
+  el.props.onPointerDown(down(500));
+  el.props.onPointerMove(move(200));           // raw 1100, 100 past
+  assert.deepEqual(calls, ['collapse'], 'the list snaps away past its floor');
+  assert.equal(props.get('--ai-main-chosen-w'), '1000px', 'a hidden list chose no width');
+  const chosenBefore = mem.get(api.resize.AI_MAIN_WIDTH_KEY);
+  el.props.onPointerUp(up(200));
+  assert.equal(mem.get(api.resize.AI_MAIN_WIDTH_KEY), chosenBefore, 'and none is written');
+
+  // The same drag back out brings it back at the width last chosen.
+  mem.set(api.resize.AI_MAIN_WIDTH_KEY, '620');
+  props.delete('--ai-main-chosen-w');
+  const draw2 = calls.length;
+  el = draw(true);
+  el.props.onPointerDown(down(200));
+  el.props.onPointerMove(move(230));           // 30 back out: not yet
+  assert.equal(calls.length, draw2, 'backing out starts at SNAP_PX');
+  el.props.onPointerMove(move(260));           // 60 back out
+  assert.deepEqual(calls.slice(draw2), ['restore'], 'and brings the list back');
+  assert.equal(props.get('--ai-main-chosen-w'), '620px', 'at the width last chosen, not a sliver');
+
+  // The keyboard: one widening press at the floor hides it, and the opposite
+  // arrow brings it back.
+  // At its floor: the pane is as wide as it goes before the list's is passed.
+  paneLeft = 280;
+  calls.length = 0;
+  el = draw(false);
+  el.props.onKeyDown(key('ArrowLeft'));
+  assert.deepEqual(calls, ['collapse'], 'Left at the list\'s floor hides it');
+  el = draw(true);
+  el.props.onKeyDown(key('ArrowLeft'));
+  assert.deepEqual(calls, ['collapse'], 'the widening arrow does nothing while hidden');
+  el.props.onKeyDown(key('ArrowRight'));
+  assert.deepEqual(calls, ['collapse', 'restore'], 'Right brings it back');
+  assert.equal(el.props['aria-valuetext'], 'Thread list hidden', 'a screen reader hears the list is hidden');
+  assert.equal(draw(false).props['aria-valuetext'], undefined, 'and nothing while it is shown');
+
+  // A double-click resets the split and brings the list back too.
+  calls.length = 0;
+  draw(true).props.onDoubleClick();
+  assert.deepEqual(calls, ['restore']);
+
+  // With no callbacks the edge is the panel's own width, clamped exactly as
+  // before this existed (the side panel beside a running app).
+  calls.length = 0;
+  el = inRender(() => SidePanelDivider({ panelRef, shown: true, id: 'side-panel-divider', controls: 'platform-side-panel', widthKey: api.resize.WIDTH_KEY, probe: measure }));
+  assert.equal(el.props.onCollapse, undefined);
+  el.props.onPointerDown(down(500));
+  el.props.onPointerMove(move(100));
+  assert.equal(props.get('--side-panel-w'), '1000px', 'still clamped at the list\'s floor');
+  assert.equal(calls.length, 0);
+
+  delete globalThis.window;
+  delete globalThis.document;
 });

@@ -55,7 +55,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
-import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SidebarIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -218,6 +219,9 @@ function key(): string {
 /** The new chat itself, in a thread pane's place. */
 export function NewThreadPanel({ conversationId }: { conversationId: number }): ReactNode {
   const t = useMessages('messages');
+  // #6963: the bot tab's list is hidden, and a new chat under its own head
+  // offers the same way back to it.
+  const showList = useShowListButton();
   const [project, setProject] = useState(() => preset?.project || '');
   const [picking, setPicking] = useState(false);
   const [words, setWords] = useState('');
@@ -475,6 +479,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
       <header className="messages-thread-header">
+        {showList ? (
+          <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
+            aria-label={t('messages:ai.list.show')} title={t('messages:ai.list.show')}
+            onClick={() => setListClosed(false)}>
+            <SidebarIcon aria-hidden="true" />
+          </button>
+        ) : null}
         <div className="min-w-0 flex-1">
           <div className="messages-thread-name">{setup ? t('messages:newThread.builder.setup.title', { builder: ownName }) : t('messages:newThread.title')}</div>
           <div className="messages-thread-sub">
