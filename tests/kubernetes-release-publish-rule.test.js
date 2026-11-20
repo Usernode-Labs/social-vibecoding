@@ -153,7 +153,7 @@ function replay(options = {}) {
         };
       },
       peers: async () => options.peers ? options.peers(clock()) : [latestRun],
-      jobs: async run => options.jobs ? options.jobs(clock(), run) : [...checkedJobs, waitingPublisher],
+      jobs: async run => options.jobs ? options.jobs(clock(), run) : checkedJobs,
       healthy: async digest => argoHasRolledOut(options.argo ? options.argo(clock()) : argoStatus(), REPO, digest),
       now: () => now,
       wait: async milliseconds => { now += milliseconds; },
@@ -211,6 +211,13 @@ test('an unfinished newer build gets a bounded chance and can still win', async 
   const unknown = replay({ peers: () => undefined });
   assert.equal((await unknown.decide(earlier)).publish, true);
   assert.equal(unknown.clock(), BATCH_WAIT_MS, 'a newer push without a visible run can still register');
+});
+
+test('the newer run can reuse exact-tree PostgreSQL evidence before its publisher is created', async () => {
+  const fixture = replay({ jobs: () => checkedJobs.map(job => job.name.startsWith('Preview schema compatibility')
+    ? { ...job, conclusion: 'skipped' } : job) });
+  assert.equal((await fixture.decide(earlier)).publish, false);
+  assert.equal(fixture.clock(), 0);
 });
 
 test('the oldest unpublished merge starts the anti-starvation clock', async () => {

@@ -12,7 +12,6 @@ const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const VERSION = /^0\.1\.(0|[1-9][0-9]*)$/;
 const PUBLISH_JOB = 'Publish atomic Helm release';
 const REQUIRED_JOBS = ['Plan image release', 'Resolve platform image', 'Resolve worker image', 'Resolve capture image'];
-const QUEUED = new Set(['queued', 'pending', 'waiting', 'in_progress']);
 const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'startup_failure', 'action_required']);
 const BATCH_WAIT_MS = 90_000;
 const MAX_UNRELEASED_MS = 15 * 60_000;
@@ -81,11 +80,12 @@ async function chooseRelease(candidate, { previous, tip, compare, peers, jobs, h
       const publisher = steps?.find(job => job.name === PUBLISH_JOB);
       if (steps?.some(job => FAILED.has(job.conclusion)) || publisher?.status === 'completed') continue;
       const postgres = steps?.find(job => job.name.startsWith('Preview schema compatibility (PostgreSQL 17/18)'));
-      // The publication job's needs enforce exact-tree evidence if
-      // the standalone PostgreSQL job was skipped.
-      if (QUEUED.has(publisher?.status) && ['success', 'skipped'].includes(postgres?.conclusion)
+      // All three successful image jobs mean the plan selected release work.
+      // With that plan, PostgreSQL skips only for exact-tree reuse. The
+      // newer publisher can still be waiting for Actions to create its job.
+      if (['success', 'skipped'].includes(postgres?.conclusion)
           && REQUIRED_JOBS.every(name => steps.some(job => job.name === name && job.conclusion === 'success'))) {
-        return { publish: false, reason: `Verified run ${run.run_number} (${revision}) can publish from the release queue.` };
+        return { publish: false, reason: `Verified run ${run.run_number} (${revision}) can take the release slot.` };
       }
       if (revision !== sha) pending = true;
     }
