@@ -25,6 +25,7 @@ import { SparklesIcon, XIcon } from '@/components/ui/icons';
 
 import { useInnerHtml } from '../../../lib/html';
 import { useMessages } from '../../../lib/i18n/react';
+import type { Standing } from '../../../lib/work-state';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import type { FootTone } from './card-model';
 import { dotLine } from './frame/topic-page';
@@ -41,6 +42,12 @@ export const ThreadCardContext = createContext<{
   page: string;
   /** The card's own summary was written from the request and its change, so the change's is not said twice. */
   covers?: boolean;
+  /**
+   * A request's page: the request's own stored row (with the viewer's
+   * `mine`), which words the foot of its one change. Absent on a change's
+   * own page, which reads the change's row.
+   */
+  row?: Standing | null;
 }>({ card: false, page: '' });
 
 function appData(): { slug: string; name: string; icon_emoji: string | null; icon_url: string | null } | null {

@@ -4013,7 +4013,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, expect
     // stop handle: the machine's instance is where it lands, the turn
     // being spun up included.
     const platform = require('../workflow/platform.ts');
-    const owned = await platform.stopWorkflowTurn({ sessionId: Number(sessionId), by: user.username, expectedTurnId });
+    const owned = await platform.stopWorkflowTurn({ sessionId: Number(sessionId), by: user.username, byId: Number(user.id) || null, expectedTurnId });
     if (owned) return owned;
 
     // #937: `{ force: true }` is offered after a normal stop has visibly

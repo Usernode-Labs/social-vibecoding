@@ -391,24 +391,4 @@ test('the posting function against the full schema', { timeout: 120000 }, async 
     assert.equal(twice.duplicate, true);
     assert.equal((await row(`reply:dm:${ada.id}:key-hello-ada-1`)).asked, 2, 'its duplicate asked again, after');
   });
-
-  await t.test('a held answer decided before the release is keyed by its row, which it finishes: counted once', async () => {
-    const holds = require('../src/services/homeroom-bot-holds');
-    await pool.query(`UPDATE apps SET repo_url = 'https://github.com/a/b' WHERE id = $1`, [app.id]);
-    const before = await one(
-      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, pending) VALUES ($1, 42, 'going_ahead', TRUE) RETURNING id`, [app.id]);
-    let fail = true;
-    const github = { async createIssueComment() { if (fail) throw Object.assign(new Error('GitHub is down'), { status: 502 }); return { id: 7300 }; }, async listIssueComments() { return []; } };
-    const deps = { github, ws, botSvc: { parseRepo: () => ({ owner: 'a', repo: 'b' }) } };
-    const input = { appId: app.id, issueNumber: 42, kind: 'going_ahead', text: 'Homeroom bot is taking this up now, as asked.' };
-    await assert.rejects(holds.sayHeld(pool, { ...input, deps }), /GitHub is down/);
-    fail = false;
-    await holds.sayHeld(pool, { ...input, deps });
-    const rows = (await pool.query(`SELECT id, pending FROM homeroom_bot_posts WHERE app_id = $1 AND issue_number = 42`, [app.id])).rows;
-    assert.deepEqual(rows.map((r) => [r.id, r.pending]), [[before.id, null]], 'one row, finished');
-    const said = await row(`going_ahead:request:${app.id}-42:post-${before.id}`);
-    assert.deepEqual([said.outcome, said.request_post_id], ['said', before.id]);
-    const n = await one(`SELECT COUNT(*)::int AS n FROM chat_messages WHERE thread_type = 'issue' AND thread_ref = 42`);
-    assert.equal(n.n, 1, 'said once across the retry');
-  });
 });

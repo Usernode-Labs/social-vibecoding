@@ -71,7 +71,7 @@ test('the designer has compare_versions and make_pictures between its own tools 
   const names = designBot.TOOLS.map((t) => t.function.name);
   // #6354: capture_page comes after the board readers. Step 6 (#6864): the
   // chat's own reply, close_thread and offer_request serve a design thread.
-  assert.deepEqual(names, ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan', 'compare_versions', 'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page']);
+  assert.deepEqual(names, ['write_artifact', 'edit_artifact', 'list_source', 'read_source', 'read_plan', 'compare_versions', 'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page']);
   const prompt = designBot.designPrompt({
     username: 'ada', design: { surface: 'app', app: { name: 'Garden club' }, title: 'Plots', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
     pictures: [{ id: 'a'.repeat(32), label: 'A · light', width: 1024, height: 1024 }, { id: 'nope', label: 'B' }],
@@ -136,7 +136,8 @@ test('the compare card: its items read defensively, small previews side by side,
   assert.doesNotMatch(html, /data-bot-compare-propose/, 'Propose waits for the design to be read');
   assert.equal(renderToHtml(createElement(mod.CompareCard, { message: { id: 1 }, conversationId: 4, card: { type: 'compare', rootId: 9, items: [{ version: 2 }] } })), '');
   const src = read('frontend/src/features/messages/bot-cards/compare.tsx');
-  assert.match(src, /sandbox=\{DESIGN_SANDBOX\}/, 'the design card\'s own frame');
+  assert.match(src, /<ArtifactFrame\s+key=\{shown\}\s+mode="run"\s+viewer="author"/, 'the one frame, running for its author, as the design card\'s is');
+  assert.doesNotMatch(src, /<iframe|sandbox=/, 'no frame of its own');
   assert.match(src, /await decideCard\(message, 'pick', item\.key\);/);
   assert.match(src, /t\('messages:botCards\.compare\.pickWords', \{ version: item\.version \}\)/);
   assert.match(src, /<ProposeCard design=\{design\} version=\{pickedVersion\}/, 'the design pane\'s own Propose it');

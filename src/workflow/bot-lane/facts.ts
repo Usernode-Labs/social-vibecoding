@@ -41,6 +41,26 @@ export const CREDIT_OWED_DMS_SQL = `
 
 export interface CreditDm { key: string; userId: number }
 
+// The one stored credit outage (services/openrouter-credit.js KEY_STATE, a
+// platform setting whose `outage` is set while OpenRouter's credit is out).
+// The lane reads it on every pass: its pause is this level, never a flag of
+// its own that only an event could clear (review A5, 19 Nov 2026).
+export const CREDIT_STATE_KEY = 'homeroom_bot_credit_state';
+
+export interface CreditOutage { since: string; words: string | null }
+
+/** Pure: the outage in the stored credit state's value, or null. */
+export function creditOutageOf(value: unknown): CreditOutage | null {
+  try {
+    const state = JSON.parse(typeof value === 'string' && value ? value : 'null');
+    const o = state && typeof state === 'object' ? state.outage : null;
+    if (o && typeof o === 'object' && typeof o.since === 'string' && o.since) {
+      return { since: o.since, words: typeof o.words === 'string' ? o.words.slice(0, 300) : null };
+    }
+  } catch { /* an unreadable state is no outage */ }
+  return null;
+}
+
 export interface Facts {
   settings: LaneSettings;
   acting: boolean;
@@ -51,7 +71,11 @@ export interface Facts {
   // Homeroom bot parity (P4): a running batch's raised per-person number,
   // for each request its Build started (BATCH_RAISES_SQL above).
   raised?: Raised;
-  // CreditBack only: the DMs owed an answer once credit is back.
+  // The stored credit outage, or null with none. Absent only where nothing
+  // was read (NO_FACTS: a test, or a machine driven without a database).
+  credit?: CreditOutage | null;
+  // Read when the pause lifts (CreditBack, or the stored outage gone while
+  // the lane still held it): the DMs owed an answer once credit is back.
   creditDms?: CreditDm[];
 }
 
@@ -67,14 +91,18 @@ export async function readCreditDms(tx: Tx): Promise<CreditDm[]> {
 }
 
 export async function readFacts(tx: Tx, deps: { staging: boolean }): Promise<Facts> {
-  const { rows: settingRows } = await tx.query('SELECT key, value FROM platform_settings WHERE key = ANY($1::text[])', [LANE_SETTING_KEYS]);
+  const { rows: settingRows } = await tx.query('SELECT key, value FROM platform_settings WHERE key = ANY($1::text[])',
+    [[...LANE_SETTING_KEYS, CREDIT_STATE_KEY]]);
   const settings = laneSettings(settingRows);
+  // Read whether the bot is on or not: a pause that lifts while it is off
+  // still tells the DMs that kept a message for it.
+  const credit = creditOutageOf((settingRows as { key: string; value: string | null }[]).find((r) => r.key === CREDIT_STATE_KEY)?.value);
   const acting = botOn(settings, deps.staging);
-  if (!acting) return { ...NO_FACTS, settings };
+  if (!acting) return { ...NO_FACTS, settings, credit };
   const { rows: [bot] } = await tx.query('SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME]);
   // No bot account yet: nothing to grant, but the refresh runs (it makes the
   // account, homeroom-bot.js ensureBotUser), or the bot would never start.
-  if (!bot) return { ...NO_FACTS, settings, acting };
+  if (!bot) return { ...NO_FACTS, settings, acting, credit };
   const { rows: slotRows } = await tx.query(SLOTS_IN_USE_SQL);
   // Each with its read slot, and whether an older release may be running it.
   const inUse: Slot[] = slotRows.map((r: any) => slotOfRow(r)).filter((sl: Slot) => sl.kind);
@@ -83,7 +111,7 @@ export async function readFacts(tx: Tx, deps: { staging: boolean }): Promise<Fac
   const { rows: [next] } = await tx.query(NEXT_ELIGIBLE_SQL);
   const { rows: raisedRows } = await tx.query(BATCH_RAISES_SQL);
   return {
-    settings, acting, inUse, reads: reads as ReadCandidate[], builds: builds as BuildCandidate[],
+    settings, acting, credit, inUse, reads: reads as ReadCandidate[], builds: builds as BuildCandidate[],
     nextEligible: next?.at ? new Date(next.at).toISOString() : null,
     raised: raisedOf(raisedRows),
   };

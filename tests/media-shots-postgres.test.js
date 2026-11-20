@@ -180,7 +180,14 @@ test('shots object storage, publication, and retakes without byte columns agains
     assert.match(published.placeholder, /^data:image\/webp;base64,/);
     assert.ok(published.thumb_bytes < original.length);
     assert.ok(Math.max(published.thumb_width, published.thumb_height) <= 600);
-    assert.ok(Math.max(published.screen_width, published.screen_height) <= 1200);
+    // The screen copy is at most 1200 px WIDE (20 Nov): this 2560 x 1600
+    // still's is 1200 x 750. An opaque still's is a progressive JPEG, and
+    // each copy's type is stored with it (a still with transparent pixels
+    // keeps a WebP screen copy: tests/shot-loading.test.js).
+    assert.equal(published.screen_width, 1200);
+    assert.equal(published.screen_height, 750);
+    assert.equal(published.thumb_content_type, 'image/webp');
+    assert.equal(published.screen_content_type, 'image/jpeg');
     // Cleanup keeps objects only the copies refer to: they survive a sweep.
     await media.sweep(pool, store);
     for (const key of ['thumb_object_key', 'screen_object_key']) {
@@ -196,16 +203,17 @@ test('shots object storage, publication, and retakes without byte columns agains
     await new Promise((r) => server.once('listening', r));
     t.after(() => new Promise((r) => { server.closeAllConnections(); server.close(r); }));
     const url = `http://127.0.0.1:${server.address().port}/api/apps/media/proposals/${session.id}/shots/${published.id}`;
-    for (const [size, sha256, bytes] of [['thumb', published.thumb_sha256, published.thumb_bytes],
-      ['screen', published.screen_sha256, published.screen_bytes]]) {
+    for (const [size, sha256, bytes, type] of [['thumb', published.thumb_sha256, published.thumb_bytes, 'image/webp'],
+      ['screen', published.screen_sha256, published.screen_bytes, 'image/jpeg']]) {
       const response = await fetch(`${url}?size=${size}`);
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get('content-type'), 'image/webp');
+      assert.equal(response.headers.get('content-type'), type, `${size} is served as the type it was saved as`);
       assert.equal(response.headers.get('etag'), `"${sha256}"`);
       const body = Buffer.from(await response.arrayBuffer());
       assert.equal(body.length, bytes);
       assert.equal(sha(body), sha256);
-      assert.equal(body.subarray(8, 12).toString('latin1'), 'WEBP');
+      if (type === 'image/webp') assert.equal(body.subarray(8, 12).toString('latin1'), 'WEBP');
+      else assert.deepEqual([...body.subarray(0, 3)], [0xFF, 0xD8, 0xFF], 'a JPEG');
     }
     // A repeat is a 304, and the original is still served whole.
     assert.equal((await fetch(`${url}?size=thumb`, { headers: { 'if-none-match': `"${published.thumb_sha256}"` } })).status, 304);

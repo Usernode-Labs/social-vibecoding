@@ -119,27 +119,72 @@ test('the standing\'s words are drawn as the server sent them, and kept through 
   }
 });
 
+// A why or a reason this build has no name for (a newer server) used to be
+// dropped on the way in, so the row reached a screen as a stop with no
+// reason, or a wait with no why. It is kept as it came, and the screen draws
+// the words the server sent with it.
+test('a why or a reason this build does not know is kept, and its words are drawn', () => {
+  const { normalizeWorkState } = loadTsx(LIB);
+  const { requestFoot } = loadTsx('frontend/src/features/dev-board/topic/card-model.ts');
+  const { requestRail } = loadTsx('frontend/src/features/dev-board/topic/rail-model.ts');
+  const { storedRow } = require('./lib/stored-row');
+  const say = (p) => message(p.id, p.values);
+  // A stored row as the server sends it, then given a reason of a later
+  // release: its words are the server's (here, ones this catalog has).
+  const sent = {
+    ...storedRow({ stage: 'stopped', reason: 'build_failed', whoseMove: 'requester' }),
+    reason: 'out_of_credit',
+    words: { stage: { id: 'core:work.reason.planFailed' }, stageOthers: { id: 'core:work.reason.planFailed' }, line: null },
+  };
+  const work = normalizeWorkState(sent);
+  assert.equal(work.reason, 'out_of_credit', 'kept, not nulled');
+  const foot = requestFoot(work, true);
+  assert.equal(say(foot.headline), message('core:work.reason.planFailed'), 'the foot says the server\'s words for it');
+  assert.equal(foot.tone, 'bad');
+  const steps = requestRail({ asker: 'maya', askedAt: '2026-11-07T09:12:00Z', specs: [], changes: [], standing: work });
+  assert.equal(say(steps[steps.length - 1].title), 'Stopped');
+  assert.equal(steps[steps.length - 1].tone, 'bad');
+
+  const waiting = normalizeWorkState({
+    ...storedRow({ stage: 'waiting_for_you', why: 'decide', whoseMove: 'requester' }),
+    why: 'pick_a_plan',
+    words: { stage: { id: 'core:work.why.decide' }, stageOthers: { id: 'core:work.whyOthers.decide' }, line: null },
+  });
+  assert.equal(waiting.why, 'pick_a_plan');
+  assert.equal(say(requestFoot(waiting, true).headline), message('core:work.why.decide'));
+  assert.equal(say(requestFoot(waiting, false).headline), message('core:work.whyOthers.decide'));
+  // The ones it knows come through as they were.
+  assert.equal(normalizeWorkState(storedRow({ stage: 'stopped', reason: 'fix_stopped' })).reason, 'fix_stopped');
+  assert.equal(normalizeWorkState(storedRow({ stage: 'waiting_for_you', why: 'plan' })).why, 'plan');
+  // Only a code is kept: anything else is no reason at all.
+  for (const junk of ['Has Spaces', '<b>x</b>', 7, { code: 'x' }, '', 'x'.repeat(41)]) {
+    assert.equal(normalizeWorkState({ stage: 'stopped', reason: junk }).reason, null, String(junk));
+    assert.equal(normalizeWorkState({ stage: 'waiting_for_you', why: junk }).why, null, String(junk));
+  }
+});
+
 // The words a fixture is given (tests/lib/work-words.js) are the server's
-// own, once the server words its standings (services/work-state.js phrasesOf).
-test('the fixtures\' words are the server\'s phrasesOf', (t) => {
+// own (services/work-state.js phrasesOf), for every line of the one table:
+// the hand-kept copy they used to come from had no words for the four line
+// codes added after it (review B5).
+test('the fixtures\' words are the server\'s phrasesOf, for every line of the table', () => {
   const ws = require('../src/services/work-state');
-  if (typeof ws.phrasesOf !== 'function') {
-    t.skip('this server does not word its standings yet');
-    return;
+  const stages = require('../src/services/work-stages');
+  const stored = { place: 2, round: 1, of: 2, failing: 3, minutes: 4, count: 2, by: 'ada', text: 'Why.' };
+  let lines = 0;
+  for (const code of stages.LINE_CODES) {
+    for (const stage of stages.LINE[code].stages) {
+      const full = { stage, why: null, reason: null, line: { code, ...stored } };
+      const words = wordsOf(full);
+      assert.deepEqual(plain(words), plain(ws.phrasesOf(full)), `${code} on ${stage}`);
+      assert.ok(words.line || stages.LINE[code].stageWord, `${code} on ${stage}: words of its own`);
+      lines += 1;
+    }
   }
-  const states = [
-    { stage: 'reading', line: { code: 'waiting' } }, { stage: 'reading', line: { code: 'queued', place: 2 } },
-    { stage: 'building' }, { stage: 'building', line: { code: 'held_builds' } },
-    { stage: 'waiting_for_you', why: 'plan' }, { stage: 'waiting_for_you', why: 'decide', line: { code: 'reason', text: 'Why.' } },
-    { stage: 'stopped', reason: 'build_failed' }, { stage: 'checking', line: { code: 'checks_failing', failing: 2 } },
-    { stage: 'up_for_vote' }, { stage: 'going_live', line: { code: 'github_checks' } }, { stage: 'live' },
-    { stage: 'checking', line: { code: 'approved_checking' } }, { stage: 'going_live', line: { code: 'github_wait' } },
-    { stage: 'up_for_vote', line: { code: 'earlier_yes', count: 2 } },
-  ];
-  for (const state of states) {
-    const full = { why: null, reason: null, line: null, ...state };
-    assert.deepEqual(plain(ws.phrasesOf(full)), plain(wordsOf(full)), JSON.stringify(state));
-  }
+  assert.ok(lines >= stages.LINE_CODES.length);
+  // A hand-back's cause is worded as the server words it, not as a bare why.
+  const handBack = wordsOf({ stage: 'waiting_for_you', why: 'decide', cause: 'close' });
+  assert.deepEqual(plain(handBack.stage), { id: 'core:work.handBack.close' });
 });
 
 // ── Building never says Review plan ──────────────────────────────────────
@@ -188,7 +233,12 @@ test('a live or merged standing never draws Vote', () => {
   assert.equal(requestPill(layout, standing('going_live', { line: { code: 'github_checks' }, change: change({ voteOpen: false, githubHold: true }) })).key, 'approved');
   assert.equal(requestPill(layout, standing('going_live', { line: { code: 'github_wait' }, change: change({ voteOpen: false, githubHold: true }) })).key, 'going_live');
   // Its checks failing: not open for votes, so not drawn as up for one.
-  assert.equal(requestPill(layout, standing('checking', { line: { code: 'checks_failing' }, change: change({ voteOpen: false }) })), null);
+  // 19 Nov 2026, the one rule: drawn as the row says, in its blocked tone
+  // (it used to draw nothing at all).
+  const failing = requestPill(layout, standing('checking', { line: { code: 'checks_failing' }, change: change({ voteOpen: false }) }));
+  assert.equal(failing.key, 'checking');
+  assert.equal(failing.tone, 'blocked');
+  assert.equal(failing.spinner, undefined, 'nothing turns while its tests fail');
 
   // The Homeroom bot tab and the feeds: the Vote card leaves with the push.
   const { applyWorkState } = loadTsx(AI);

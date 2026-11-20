@@ -495,7 +495,7 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, 
                   }}
                   onClick={ready && view.phase === 'sheet' ? () => openShot(p.screen) : undefined}
                 >
-                  {p.img ? <img src={p.img.url} alt="" draggable={false} style={{ left: p.img.left, top: p.img.top, width: p.img.width, height: p.img.height }} /> : null}
+                  {p.img ? <img src={p.img.url} srcSet={p.img.srcSet} sizes={p.img.sizes} alt="" draggable={false} style={{ left: p.img.left, top: p.img.top, width: p.img.width, height: p.img.height }} /> : null}
                 </button>
               ))}
             </div>

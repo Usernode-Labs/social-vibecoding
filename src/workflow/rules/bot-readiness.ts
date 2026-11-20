@@ -143,7 +143,6 @@ export function holdsReady(row: Row | null | undefined, headSha: unknown, now: n
 
 // ── Checks the bot fixes ────────────────────────────────────────────────
 
-const READY_CHECKS: ReadonlySet<string> = new Set(['passing', 'skipped']);
 // The verdicts a change's failed shots are acted on beside: once the checks
 // on its head settled, so one round sees everything that failed.
 const SETTLED_CHECKS: ReadonlySet<string> = new Set(['passing', 'failing', 'skipped']);
@@ -258,34 +257,32 @@ export function checksDue(row: Row | null | undefined): Due | null {
 
 // ── Ready to try ────────────────────────────────────────────────────────
 
-export interface Readiness {
-  // Up for a vote, its checks passed or skipped on the head up for a vote.
-  checked: boolean;
-  ready: boolean;
-  epoch: number;
-  head: string | null;
-  // Until when its shots hold it (ms), when they do.
-  heldUntil: number | null;
-  broken: Claim[];
-  skipped: Claim[];
+// What "ready to try" reads of a change's stored work state
+// (services/work-state.js: work_states, or a row as its readers shape it).
+export interface StoredWork {
+  stage?: string | null;
+  line?: { code?: string | null } | null;
+  vote_open?: boolean | null;
+  voteOpen?: boolean | null;
 }
 
-// Whether the change is ready to try: up for a vote, its checks passed or
-// skipped on the head up for a vote (a verdict about another commit is not
-// its own), and its shots on that head settled (or held long enough).
-export function readiness(row: Row, now: number): Readiness {
-  const head = visualHeadForSession(row);
-  const reviewed = reviewedHeadForSession(row);
-  const onHead = !reviewed || !row.checks_commit_sha || sameSha(row.checks_commit_sha, reviewed);
-  const checked = row.status === 'promoted' && READY_CHECKS.has(row.check_state) && onHead;
-  const until = checked ? heldUntil(row, head, now) : null;
-  return {
-    checked,
-    ready: checked && until == null,
-    epoch: Number(row.approval_epoch) || 0,
-    head: head ? head.toLowerCase() : null,
-    heldUntil: until,
-    broken: checked ? brokenOnHead(row, head) : [],
-    skipped: checked ? skippedOnHead(row, head) : [],
-  };
+/**
+ * Whether a change is ready to try, read off its stored work state: it is
+ * open for votes (its row's `vote_open`: the one reading of everything that
+ * holds a vote, which is also when its voters are asked), or it is its
+ * project's first version going live without a vote, which nobody votes on
+ * but its maker is told to try.
+ *
+ * Review A3 (19 Nov 2026): this file decided it a second time (`readiness`:
+ * up for a vote, its checks passed on its head, its shots settled) and
+ * homeroom-bot-dm.js a third (`changeReadiness`), neither of which knew a
+ * conflict with main, a merge GitHub holds or an update on its way, so a
+ * change that had to sync with main first was called ready in its
+ * requester's chat while every screen said Syncing. Both are gone: the bot's
+ * change machine, its ready card and a first version's App tab read this.
+ */
+export function readyToTry(work: StoredWork | null | undefined): boolean {
+  if (!work) return false;
+  if (work.vote_open === true || work.voteOpen === true) return true;
+  return work.stage === 'going_live' && work.line?.code === 'first_version';
 }

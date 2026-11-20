@@ -143,11 +143,13 @@ test('seed: both $20+ sub-buckets are represented (own-key and no-key users)', (
   const src = read('src/db/migrate.js');
   const start = src.indexOf('async function seedStagingSpendDistribution');
   const body = src.slice(start, src.indexOf('\nasync function', start + 10));
-  // A tier-5 user (capped, no key) and a tier-6 user (own key, anthropic_key_enc set).
+  // A tier-5 user (capped) and a tier-6 user (own-key spend recorded).
   assert.match(body, /tier: 5/, 'must seed a $20+ capped user');
   assert.match(body, /tier: 6, key: true/, 'must seed a $20+ own-key user');
-  // Own-key users get a non-null sentinel key; the chart only tests IS NOT NULL.
-  assert.match(body, /anthropic_key_enc/, 'own-key users must set anthropic_key_enc');
+  // The chart reads own-key spend that day, so that is what the seed writes;
+  // no stored Anthropic key sentinel any more (task 2275).
+  assert.match(body, /CASE WHEN f\.tier = 6 THEN 800/, 'own-key users get own-key spend');
+  assert.doesNotMatch(body, /anthropic_key_enc/, 'no stored key is seeded');
   // Obviously-fake usernames, never real users.
   assert.match(body, /staging-demo-spend-/, 'fixtures must use the staging-demo-spend- prefix');
 });

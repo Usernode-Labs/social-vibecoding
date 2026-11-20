@@ -389,6 +389,14 @@ function stagingMockInProgress(viewer) {
 // filed them, so always, except on a staging copy without GitHub, which keeps
 // serving its fixtures (stagingMockIssues and friends) as before: declared
 // checks read them.
+//
+// The two reads that open ONE request (its page, GET .../github-issues/:number,
+// and its thread, readRequestComments) do not ask this: they read the stored
+// row wherever there is one, and fall back to the mock. A staging copy
+// without GitHub holds stored requests too, a production clone's real ones
+// and the fixtures its seeds write, and the before/after shots copies run
+// exactly that way. Asked, every request page on them answered 404 and
+// bounced to the hub (PR 6898's fixture 900095, PR 6531's real #6552).
 function requestsOn() {
   return !IS_STAGING || github.isEnabled();
 }
@@ -1109,7 +1117,9 @@ async function readRequestComments(pool, app, number, { demo = false, max = null
     const parsed = parseOwnerRepo(app && app.repo_url);
     const n = Number(number);
 
-    if (!requestsOn() || !parsed || !Number.isFinite(n)) {
+    // Not requestsOn(): a request's stored thread is read even on a staging
+    // copy without GitHub, where its page now opens (requestsOn says why).
+    if (!parsed || !Number.isFinite(n)) {
       if (!IS_STAGING) return { comments: [], truncated: false, note: 'unavailable' };
       const mocks = stagingMockIssueComments(n);
       const clipped = clip(mocks);
@@ -2981,7 +2991,9 @@ function issueRoutes(config) {
       let issue = null;
       if (mock && req.query.demo === '1') {
         issue = mock;
-      } else if (requestsOn() && parsed) {
+      } else if (parsed) {
+        // The stored row, even on a staging copy without GitHub (requestsOn
+        // says why): the mock is only the fallback.
         ({ issue } = await github.fetchPublicIssue(parsed.owner, parsed.repo, number));
       }
       if (!issue) issue = mock;

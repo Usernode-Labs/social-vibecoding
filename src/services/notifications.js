@@ -1243,7 +1243,11 @@ async function createManagedOpenRouterReviewNotifications(pool, {
 // De-dupe: an admin still holding an UNREAD alert for the same cap and level
 // gets no second one — the counts in the first are already stale, and a
 // pile of them says nothing the first did not.
-async function createPlatformLimitNotifications(pool, { detail }) {
+// `repeatable` (services/platform-limit-alerts.js refusal notices, #6901)
+// leaves the unread de-dupe out: the rate is the locked refusal window, not
+// one unread row, so a second notice a few hours later may sit beside the
+// first. Every existing caller passes nothing and keeps the unread rule.
+async function createPlatformLimitNotifications(pool, { detail, repeatable = false }) {
   const token = String(detail || '').slice(0, 32);
   const sep = token.indexOf(':');
   if (sep <= 0) return [];
@@ -1253,15 +1257,15 @@ async function createPlatformLimitNotifications(pool, { detail }) {
        FROM users admin
       WHERE admin.is_admin = TRUE
         AND admin.admin_readonly = FALSE
-        AND NOT EXISTS (
+        AND ($3::boolean OR NOT EXISTS (
           SELECT 1 FROM notifications existing
            WHERE existing.user_id = admin.id
              AND existing.kind = 'platform_limit'
              AND split_part(existing.detail, ':', 1) = $2
              AND existing.read_at IS NULL
-        )
+        ))
      RETURNING id, user_id, source_user_id, kind, detail, created_at`,
-    [token, token.slice(0, sep)],
+    [token, token.slice(0, sep), !!repeatable],
   );
   return rows;
 }

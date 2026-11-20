@@ -28,28 +28,23 @@
 // the bot opens a private thread for it first (openDrawThread).
 
 const log = require('./logger');
+// Artifacts, stage 1 (docs/plans/artifacts.md): a design is one KIND of
+// artifact. Its rows, its versions and its pins are the artifact store's
+// (./artifacts.js, the one module that reads and writes design_threads and
+// design_versions); this file is what is a design's alone: opening a thread
+// for a captured screen, the words a version is said with, and the hand-off
+// from a design to a plan.
+const store = require('./artifacts');
 
-// The most one version may be: the column allows 1 MB, and a version is
-// drawn whole in a frame and read whole by the model that edits it.
-const MAX_HTML_BYTES = 900 * 1024;
-const MAX_TITLE = 120;
-const MAX_NOTE = 300;
-const MAX_ROUTE = 500;
-const MAX_VERSIONS = 80;
-const SIZE = Object.freeze({ min: 200, max: 4000 });
+const { MAX_HTML_BYTES, MAX_TITLE, MAX_VERSIONS, validHtml, clipWords, versionOf, addVersion, noteVersionMessage, pinFor } = store;
+const MAX_NOTE = store.MAX_NOTE;
 const SURFACES = new Set(['platform', 'app']);
 // What a design the bot draws is of: Homeroom's own pages, a project's app,
 // or a project that does not exist yet (migration 0004).
-const DRAWN_SURFACES = new Set(['platform', 'app', 'new']);
+const DRAWN_SURFACES = store.SURFACES;
 // The two sizes a drawn screen comes in (write_screen's `size`), as a plan's
 // screens are drawn (spec-html.js).
-const SCREEN_SIZES = Object.freeze({
-  phone: Object.freeze({ width: 390, height: 844 }),
-  desktop: Object.freeze({ width: 1280, height: 800 }),
-});
-// A pinned comment's point, as fractions of the version's drawn size, and
-// the element under it in a few words (comment-pin's describeElement).
-const MAX_PIN_TEXT = 80;
+const SCREEN_SIZES = store.VIEWPORTS;
 
 function clip(value, max) {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -61,17 +56,7 @@ function id(value) {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-function size(value) {
-  const n = Math.round(Number(value));
-  return Number.isFinite(n) ? Math.min(SIZE.max, Math.max(SIZE.min, n)) : null;
-}
-
-/** Pure: the HTML a version may hold, or null when it is empty or too big. */
-function validHtml(html) {
-  const text = typeof html === 'string' ? html : '';
-  if (!text.trim()) return null;
-  return Buffer.byteLength(text, 'utf8') <= MAX_HTML_BYTES ? text : null;
-}
+const size = store.size;
 
 /** The thread a message is in, when it is one of the person's design threads: its row, or null. */
 async function threadOf(pool, { userId, conversationId, message }) {
@@ -92,52 +77,28 @@ async function threadOf(pool, { userId, conversationId, message }) {
 }
 
 /**
- * One of the person's design threads, by its first message: { threadId,
- * rootId, conversationId, state, number, kind, about, app, title, surface,
- * route, width, height, latest, versions } (versions without their HTML),
- * or null when it is not theirs or holds no design. 1 Nov 2026: any private
- * thread of theirs with a design_threads row, whatever its kind.
+ * The artifact one of the person's threads holds, by its first message
+ * (artifacts.js artifactFor), whatever its kind: { threadId, rootId,
+ * conversationId, state, number, kind, about, app, artifactKind, title,
+ * surface, route, viewport, width, height, latest, versions } (versions
+ * without their HTML), or null when it is not theirs or holds none. 1 Nov
+ * 2026: any private thread of theirs, whatever the thread's kind.
  */
-async function designFor(pool, { userId, rootId }) {
-  const root = id(rootId);
-  if (!root || !id(userId)) return null;
-  const { rows: [row] } = await pool.query(
-    `SELECT p.id, p.root_message_id, p.conversation_id, p.state, p.result_ref, p.kind,
-            p.about_kind, p.about_number,
-            a.slug, a.name, d.title, d.surface, d.route, d.width, d.height
-       FROM private_threads p
-       JOIN design_threads d ON d.private_thread_id = p.id
-       LEFT JOIN apps a ON a.id = p.app_id
-      WHERE p.root_message_id = $1 AND p.user_id = $2`,
-    [root, Number(userId)],
-  );
-  if (!row) return null;
-  const { rows: versions } = await pool.query(
-    `SELECT version, author, note, message_id, created_at FROM design_versions
-      WHERE private_thread_id = $1 ORDER BY version`,
-    [row.id],
-  );
-  return {
-    threadId: Number(row.id),
-    rootId: Number(row.root_message_id),
-    conversationId: Number(row.conversation_id),
-    state: row.state,
-    number: row.result_ref == null ? null : Number(row.result_ref),
-    kind: row.kind,
-    about: row.about_kind && row.about_number ? { kind: row.about_kind, number: Number(row.about_number) } : null,
-    app: row.slug ? { slug: row.slug, name: row.name || row.slug } : null,
-    title: row.title,
-    surface: row.surface,
-    route: row.route || null,
-    width: Number(row.width),
-    height: Number(row.height),
-    latest: versions.length ? Number(versions[versions.length - 1].version) : 0,
-    versions: versions.map((v) => ({
-      version: Number(v.version), author: v.author, note: v.note || null,
-      messageId: v.message_id == null ? null : Number(v.message_id), at: v.created_at,
-    })),
-  };
+const designFor = store.artifactFor;
+
+/**
+ * Pure (artifacts, stage 2): whether a thread's artifact is a design, the
+ * one kind that may leave its thread: as a plan (postDesignPlan), or as the
+ * first screen of a new project (homeroom-bot-dm.js designForProject, the
+ * POST /api/apps route). A plain page never does: it is its author's alone.
+ * A row from before kinds were stored is a design.
+ */
+function isDesign(artifact) {
+  return !!artifact && store.kindOf(artifact.artifactKind || 'design').kind === 'design';
 }
+
+// What a design path answers for a thread whose artifact is not a design.
+const NOT_A_DESIGN = Object.freeze({ ok: false, status: 409, error: 'not_a_design' });
 
 /**
  * #6680 (15 Nov 2026): the viewer's own private thread that filed a request,
@@ -145,6 +106,13 @@ async function designFor(pool, { userId, rootId }) {
  * the viewer alone, so nobody else's read can learn a private thread exists
  * (the request page offers the link only to its owner). The newest such
  * thread when more than one is tied to the request. Never throws.
+ *
+ * Artifacts, stage 4 (light): when the thread holds a design and the
+ * viewer's plan on the request was made from it, also the version that plan
+ * shows (`designVersion`, stored on the plan since stage 0), so the request
+ * page offers its author a door to the design itself, running, at that
+ * version. Only its author ever gets it, and the design is read only by its
+ * owner (artifacts.js): no path shows it to anyone else.
  */
 async function threadForRequest(pool, { userId, appId, number }) {
   const user = id(userId);
@@ -153,13 +121,29 @@ async function threadForRequest(pool, { userId, appId, number }) {
   if (!user || !app || !request) return null;
   try {
     const { rows: [row] } = await pool.query(
-      `SELECT root_message_id FROM private_threads
-        WHERE user_id = $1 AND app_id = $2 AND result_ref = $3 AND state IN ('filed', 'posted')
-        ORDER BY updated_at DESC
+      `SELECT p.root_message_id,
+              (SELECT s.design_version
+                 FROM chat_session_specs s
+                 JOIN chat_sessions cs ON cs.id = s.session_id
+                WHERE s.design_thread_id = p.id AND cs.user_id = p.user_id AND cs.app_id = p.app_id
+                  AND cs.source = 'request_spec' AND cs.created_from_issue_number = p.result_ref
+                  AND s.shared_to_group_at IS NOT NULL
+                ORDER BY s.shared_to_group_at DESC, s.id DESC
+                LIMIT 1) AS design_version
+         FROM private_threads p
+        WHERE p.user_id = $1 AND p.app_id = $2 AND p.result_ref = $3 AND p.state IN ('filed', 'posted')
+        ORDER BY p.updated_at DESC
         LIMIT 1`,
       [user, app, request],
     );
-    return row ? { rootId: Number(row.root_message_id) } : null;
+    if (!row) return null;
+    const found = { rootId: Number(row.root_message_id) };
+    const version = Number(row.design_version);
+    if (!(Number.isSafeInteger(version) && version > 0)) return found;
+    // A design's only: what the thread holds is the store's to say, and a
+    // plain page is never a plan's design.
+    const held = await designFor(pool, { userId: user, rootId: found.rootId });
+    return isDesign(held) ? { ...found, designVersion: version } : found;
   } catch (err) {
     log.warn('design-threads', 'Could not read the thread a request came from', { err: err.message });
     return null;
@@ -207,97 +191,22 @@ async function draftingThread(pool, { userId, botId, rootId }) {
 }
 
 /**
- * The design a thread holds, made the first time the bot draws in it: its
- * private_threads row when it has none (an idea, as a thread with no row
- * is), given `app` when it was in no project, and its design_threads row
- * (`title`, the surface its project makes it, the size drawn at). A design
- * it holds already takes the size of its newest screen. Resolves the design
- * (designFor), or null when the thread is not one the person may draw in.
+ * The design a thread holds, made the first time the bot draws in it
+ * (artifacts.js ensureArtifact, kind 'design'): its private_threads row
+ * when it has none, given `app` when it was in no project, and its artifact
+ * row (`title`, the surface its project makes it, the size drawn at). A
+ * design it holds already takes the size of its newest screen. Resolves the
+ * design (designFor), or null when the thread is not one the person may
+ * draw in.
  */
 async function ensureDesign(pool, config, { user, thread, app = null, title, size: sized = 'phone', surface: givenSurface = null, route = null }) {
   if (!user?.id || !thread?.rootId) return null;
-  const named = clip(title, MAX_TITLE) || 'Screen';
-  const { width, height } = SCREEN_SIZES[sized] || SCREEN_SIZES.phone;
   const project = thread.app || app || null;
   const surface = givenSurface || surfaceFor(config, project);
-  const { rows: [row] } = await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, $4, 'idea', 'open')
-     ON CONFLICT (root_message_id) DO UPDATE
-       SET app_id = COALESCE(private_threads.app_id, EXCLUDED.app_id), updated_at = NOW()
-     RETURNING id, user_id`,
-    [Number(user.id), Number(thread.conversationId), Number(thread.rootId), project?.id ? Number(project.id) : null],
-  );
-  if (!row || Number(row.user_id) !== Number(user.id)) return null;
-  await pool.query(
-    `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (private_thread_id) DO UPDATE
-       SET width = EXCLUDED.width, height = EXCLUDED.height,
-           surface = EXCLUDED.surface,
-           route = COALESCE(EXCLUDED.route, design_threads.route)`,
-    [row.id, named, DRAWN_SURFACES.has(surface) ? surface : 'new', route ? clip(route, MAX_ROUTE) : null, width, height],
-  );
-  return designFor(pool, { userId: user.id, rootId: thread.rootId });
-}
-
-/** One version's HTML, for the thread's owner: { version, html } or null. */
-async function versionOf(pool, { userId, rootId, version = null }) {
-  const design = await designFor(pool, { userId, rootId });
-  if (!design || !design.latest) return null;
-  const want = version == null ? design.latest : id(version);
-  if (!want) return null;
-  const { rows: [row] } = await pool.query(
-    'SELECT version, html FROM design_versions WHERE private_thread_id = $1 AND version = $2',
-    [design.threadId, want],
-  );
-  return row ? { version: Number(row.version), html: row.html, design } : null;
-}
-
-/**
- * The next version of a design thread, written once: { version } or null
- * when the HTML is not one a version may hold, or the thread has reached
- * MAX_VERSIONS. Numbered under the thread's own row lock, so two edits never
- * take one number.
- */
-async function addVersion(pool, { threadId, html, author = 'bot', note = null, messageId = null }) {
-  const body = validHtml(html);
-  if (!body || !id(threadId) || !['capture', 'bot'].includes(author)) return null;
-  const client = typeof pool.connect === 'function' ? await pool.connect() : null;
-  const db = client || pool;
-  try {
-    await db.query('BEGIN');
-    await db.query('SELECT id FROM private_threads WHERE id = $1 FOR UPDATE', [Number(threadId)]);
-    const { rows: [last] } = await db.query(
-      'SELECT COALESCE(MAX(version), 0) AS n FROM design_versions WHERE private_thread_id = $1', [Number(threadId)]);
-    const version = Number(last.n) + 1;
-    if (version > MAX_VERSIONS) {
-      await db.query('ROLLBACK');
-      return null;
-    }
-    await db.query(
-      `INSERT INTO design_versions (private_thread_id, version, html, author, note, message_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [Number(threadId), version, body, author, note ? clipWords(note, MAX_NOTE) : null, id(messageId)],
-    );
-    await db.query('UPDATE private_threads SET updated_at = NOW() WHERE id = $1', [Number(threadId)]);
-    await db.query('COMMIT');
-    return { version };
-  } catch (err) {
-    await db.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client?.release();
-  }
-}
-
-/** The message that says a version, once it is sent: its id on the version's row. */
-async function noteVersionMessage(pool, { threadId, version, messageId }) {
-  if (!id(messageId)) return;
-  await pool.query(
-    'UPDATE design_versions SET message_id = $3 WHERE private_thread_id = $1 AND version = $2 AND message_id IS NULL',
-    [Number(threadId), Number(version), Number(messageId)],
-  ).catch((err) => log.warn('design-threads', 'Could not note a version\'s message', { err: err.message }));
+  return store.ensureArtifact(pool, {
+    user, thread, app, kind: 'design', title, viewport: SCREEN_SIZES[sized] ? sized : 'phone',
+    surface: DRAWN_SURFACES.has(surface) ? surface : 'new', route,
+  });
 }
 
 /** Pure: a note without a leading "Version N:", which the thread line adds. */
@@ -308,20 +217,6 @@ function bareNote(note) {
     if (next === said) return said;
     said = next;
   }
-}
-
-/**
- * Pure (step 6, #6864): `text` cut to at most `max` characters at a word's
- * end, with "…" where it was cut: never mid-word. A first word longer than
- * that is cut at `max`, the one place a word can be.
- */
-function clipWords(text, max) {
-  const said = String(text ?? '').replace(/\s+/g, ' ').trim();
-  if (said.length <= max) return said;
-  const room = said.slice(0, max);
-  const at = room.lastIndexOf(' ');
-  const kept = (at > 0 ? room.slice(0, at) : room.slice(0, max - 1)).replace(/[\s,;:.\-–]+$/, '');
-  return `${kept}…`;
 }
 
 /**
@@ -384,11 +279,7 @@ async function startDesign(pool, config, {
      RETURNING id`,
     [user.id, opened.conversationId, opened.messageId, app.id],
   );
-  await pool.query(
-    `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height)
-     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (private_thread_id) DO NOTHING`,
-    [row.id, named, surface, route ? clip(route, MAX_ROUTE) : null, w, h],
-  );
+  await store.createFor(pool, { threadId: row.id, kind: 'design', title: named, surface, route, width: w, height: h });
   const first = await addVersion(pool, { threadId: row.id, html: body, author: 'capture', note: 'As it is now' });
   const said = await dm.sendDm(pool, {
     bot,
@@ -413,8 +304,14 @@ async function startDesign(pool, config, {
   };
 }
 
-/** Pure: the bot's line a thread it opened to draw a screen starts with. */
-function drawLine({ title = null, appName = null } = {}) {
+/**
+ * Pure: the bot's line a thread it opened to draw a screen starts with, or,
+ * for a plain page (`kind` 'page', artifact-session.js), to write one in.
+ */
+function drawLine({ title = null, appName = null, kind = 'design' } = {}) {
+  if (kind === 'page') {
+    return `I'm writing ${title ? `"${clip(title, 80)}"` : 'the page'} in a new thread. Only you can see it.`;
+  }
   const what = title ? `"${clip(title, 80)}"` : 'the screen';
   return appName
     ? `I'm drawing ${what} for ${clip(appName, 80)} in a new thread. Only you can see it.`
@@ -430,56 +327,33 @@ function drawLine({ title = null, appName = null } = {}) {
  * thread at all. Keyed by the message it answers, so a retry finds the same
  * thread. Resolves the thread (draftingThread's shape) or null.
  */
-async function openDrawThread(pool, { user, app = null, title = null, messageId = null, deps = {} }) {
+async function openDrawThread(pool, { user, app = null, title = null, messageId = null, kind = 'design', deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   if (!user?.id || user.isSynthetic) return null;
   const bot = deps.bot || await dm.botAccount(pool);
   if (!bot) return null;
   const named = clip(title, MAX_TITLE) || null;
   const appName = app ? app.name || app.slug : null;
+  // A plain page is of no project, and its thread is not a design's.
+  const page = kind === 'page';
   const said = await dm.sendDm(pool, {
     bot,
     userId: user.id,
-    content: drawLine({ title: named, appName }),
+    content: drawLine({ title: named, appName, kind }),
     // The thread's first message, its row written with it (sendDm `thread`),
     // quoting what asked for the screen.
     replyToId: id(messageId),
-    thread: { kind: 'ask', appId: app?.id ? Number(app.id) : null },
+    thread: { kind: 'ask', appId: !page && app?.id ? Number(app.id) : null },
     moment: null,
     idempotencyKey: id(messageId) ? `design-draw-${id(messageId)}` : null,
     metadata: {
-      kind: 'opened_thread', changeKind: 'design',
+      kind: 'opened_thread', changeKind: page ? 'any' : 'design',
       ...(named ? { designTitle: named } : {}),
       ...(app ? { appSlug: app.slug, appName } : {}),
     },
   });
   if (!said?.messageId) return null;
   return draftingThread(pool, { userId: user.id, botId: bot.id, rootId: said.messageId });
-}
-
-/**
- * Pure-ish: a pinned comment's point as it rides on the person's message
- * (metadata.designPin), checked against their design thread `threadRootId`:
- * { version, x, y, element? } or null when anything about it is wrong.
- */
-async function pinFor(pool, { user, conversationId, threadRootId, pin }) {
-  if (!pin || typeof pin !== 'object' || Array.isArray(pin)) return null;
-  const design = await designFor(pool, { userId: user?.id, rootId: threadRootId });
-  if (!design || design.conversationId !== Number(conversationId)) return null;
-  const version = id(pin.version);
-  const x = Number(pin.x);
-  const y = Number(pin.y);
-  if (!version || version > design.latest || !(x >= 0 && x <= 1) || !(y >= 0 && y <= 1)) return null;
-  const el = pin.element && typeof pin.element === 'object' ? pin.element : null;
-  const element = el ? {
-    tag: /^[a-z][a-z0-9-]{0,30}$/.test(String(el.tag || '')) ? String(el.tag) : '',
-    id: clip(el.id, 60),
-    text: clip(el.text, MAX_PIN_TEXT),
-  } : null;
-  return {
-    version, x: Math.round(x * 10000) / 10000, y: Math.round(y * 10000) / 10000,
-    ...(element && (element.tag || element.text) ? { element } : {}),
-  };
 }
 
 // ── Propose it ────────────────────────────────────────────────────────────
@@ -707,21 +581,6 @@ function planReadout(plan) {
   return screens;
 }
 
-// What planHtml's tech section says its after side is, in either of its two wordings.
-const PLAN_VERSION_RE = /\bafter is version (\d+)(?:, a mockup| of the design)\b/;
-
-/**
- * Pure (#6153): the design version a plan made by planHtml shows as its
- * after side, read back from its words (its HTML or the markdown made from
- * it), or null for any other plan: what Homeroom bot's line in the design
- * thread says it builds from ("building #14 from version 4").
- */
-function planDesignVersion(text) {
-  const match = PLAN_VERSION_RE.exec(String(text || ''));
-  const version = match ? Number(match[1]) : null;
-  return Number.isSafeInteger(version) && version > 0 ? version : null;
-}
-
 // What a design may post from: a thread put away posts nothing.
 const POSTABLE = new Set(['open', 'posted', 'filed']);
 
@@ -798,6 +657,8 @@ async function postDesignPlan(pool, config, {
   const specs = deps.requestSpecs || require('./request-specs');
   const design = await designFor(pool, { userId: user?.id, rootId });
   if (!design) return { ok: false, status: 404, error: 'No such design' };
+  // A plain page stays in its thread: nothing posts it, whoever asks.
+  if (!isDesign(design)) return { ...NOT_A_DESIGN };
   if (!POSTABLE.has(design.state)) {
     return { ok: false, status: 409, error: 'already_done', state: design.state, number: design.number };
   }
@@ -847,6 +708,9 @@ async function postDesignPlan(pool, config, {
   const plan = planHtml({
     design, title: named, notes: said, before: before ? before.html : null, after: after.html, version: after.version,
   });
+  // Artifacts, stage 0: the plan's version stores which design it came from
+  // (request-specs.js postRequestSpec), so nothing reads it out of its words.
+  const source = { threadId: design.threadId, version: after.version };
   // A plan the plans would refuse is said before anything is filed.
   const checked = specs.prepareSpec(plan);
   if (!checked.ok) {
@@ -865,6 +729,7 @@ async function postDesignPlan(pool, config, {
     try {
       posted = await specs.postRequestSpec(pool, {
         app, repo: open.repo, issueNumber: n, issueTitle: open.issue.title || null, user, text: plan, webPath: webPath(n),
+        design: source,
       }, deps);
     } catch (err) {
       if (err instanceof specs.SpecError) return { ok: false, status: err.status, error: err.message };
@@ -916,7 +781,7 @@ async function postDesignPlan(pool, config, {
   let planVersion = null;
   try {
     const posted = await specs.postRequestSpec(pool, {
-      app, repo, issueNumber: number, issueTitle: named, user, text: plan, webPath: webPath(number),
+      app, repo, issueNumber: number, issueTitle: named, user, text: plan, webPath: webPath(number), design: source,
     }, deps);
     planVersion = posted.version;
   } catch (err) {
@@ -960,6 +825,7 @@ async function postDesignPlan(pool, config, {
 async function proposeDesign(pool, config, { user, rootId, version = null, title = null, notes = null, deps = {} }) {
   const design = await designFor(pool, { userId: user?.id, rootId });
   if (!design) return { ok: false, status: 404, error: 'No such design' };
+  if (!isDesign(design)) return { ...NOT_A_DESIGN };
   const issueNumber = await planTargetOf(pool, design);
   return postDesignPlan(pool, config, { user, rootId, version, issueNumber, title, notes, deps });
 }
@@ -972,6 +838,7 @@ module.exports = {
   validHtml,
   threadOf,
   designFor,
+  isDesign,
   threadForRequest,
   surfaceFor,
   draftingThread,
@@ -992,7 +859,6 @@ module.exports = {
   planGap,
   planReadout,
   planHtml,
-  planDesignVersion,
   planTargetOf,
   filedNext,
   postDesignPlan,

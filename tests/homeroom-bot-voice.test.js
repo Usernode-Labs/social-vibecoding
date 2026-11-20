@@ -889,7 +889,21 @@ test('the DM, a chat\'s fix and a No vote\'s line become asks, and a merge drops
 test('#6766: it never states a platform limit the rules do not plainly forbid', () => {
   const prompt = voice.systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue', ref: 1 }, tools: [] });
   assert.match(prompt, /Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it\./);
-  assert.match(prompt, /When\n  unsure, say you will check rather than state a limit; a live app already doing it \(Homeroom Maps has a real\n  map and place search\) shows it can be built\./);
+  // Review C (19 Nov 2026): it said "say you will check", which is the
+  // promise to come back that the rule above it forbids. One rule: it
+  // checks now, in this turn, or says it does not know.
+  assert.match(prompt, /When\n  unsure, check now with a tool you have and answer from what you found, or say plainly that you do not know:\n  never state a limit you have not checked, and never say you will check later\. A live app already doing it\n  \(Homeroom Maps has a real map and place search\) shows it can be built\./);
+  assert.doesNotMatch(prompt, /say you will check rather/);
+  assert.match(prompt, /Never promise to look into something or come back to\n  it later/);
+  // The chat's prompt says the same thing.
+  const chat = require('../src/services/homeroom-bot-mayor').systemPrompt({ username: 'ada' });
+  assert.match(chat, /check now with a tool you have and answer from what you found, or say plainly that you do not know/);
+  assert.doesNotMatch(chat, /say you will check rather/);
+  assert.match(chat, /Never promise to follow up, look into, sort out, investigate or get back to them later/);
+  // And where a project's requests are listed is its Workshop, in the rule
+  // and in what a filed report says.
+  assert.match(chat, /Workshop, never a "board"/);
+  assert.doesNotMatch(chat.slice(0, chat.indexOf('PLATFORM RULES')), /requests board/);
 });
 
 // ── Step 5 (11 Nov 2026): a comment that does not change the ask ─────────

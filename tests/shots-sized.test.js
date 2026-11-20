@@ -3,7 +3,8 @@
 // services/shots-sized.js (#6825): a still's two smaller copies and its
 // blurred preview. A card's slot used to load the whole screen shot (a 1170
 // x 2532 PNG of several hundred KB); it now loads a WebP its own size, and
-// draws a 20 px preview while that arrives.
+// draws a 20 px preview while that arrives. The screen copy is a progressive
+// JPEG since 20 Nov: tests/shot-loading.test.js covers it.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,26 +32,24 @@ function screenPng(width, height) {
   return PNG.sync.write(png);
 }
 
-test('a 3x phone still gets a thumbnail, a screen copy and a preview', async () => {
+test('a 3x phone still gets a thumbnail and a preview', async () => {
   const source = screenPng(1170, 2532);
   const copies = await sized.sizedCopies(source);
   assert.ok(copies.thumb, 'a thumbnail is made');
-  assert.ok(copies.screen, 'a screen-size copy is made');
+  // This flat drawing is smaller as its PNG than as any JPEG, so it keeps no
+  // screen copy (tests/shot-loading.test.js draws one that does).
+  assert.equal(copies.screen, null);
   // WebP: RIFF....WEBP.
-  for (const copy of [copies.thumb, copies.screen]) {
+  for (const copy of [copies.thumb]) {
     assert.equal(copy.data.subarray(0, 4).toString('latin1'), 'RIFF');
     assert.equal(copy.data.subarray(8, 12).toString('latin1'), 'WEBP');
     assert.equal(copy.bytes, copy.data.length);
     assert.match(copy.sha256, /^[a-f0-9]{64}$/);
     assert.ok(copy.bytes < source.length, 'a copy is smaller than the original');
   }
-  // The thumbnail is 600 px on its long side, the screen copy 1200 px wide.
+  // The thumbnail is 600 px on its long side.
   assert.equal(Math.max(copies.thumb.width, copies.thumb.height), sized.THUMB_EDGE);
-  assert.ok(copies.screen.width <= sized.SCREEN_EDGE);
-  assert.equal(Math.max(copies.screen.width, copies.screen.height), sized.SCREEN_EDGE);
-  // A phone screen's long side is the tall one, so the screen copy is 555 wide.
-  assert.ok(copies.screen.height === sized.SCREEN_EDGE);
-  assert.ok(copies.thumb.width < copies.screen.width);
+  assert.equal(copies.thumb.contentType, 'image/webp');
   // The preview travels inside the shots view: a 20 px wide WebP, under 1.4 KB.
   assert.match(copies.placeholder, /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/);
   assert.ok(copies.placeholder.length <= sized.MAX_PLACEHOLDER);
@@ -88,7 +87,7 @@ test('the widths the view lists are the copies\' own pixels', async () => {
     media: 'png', contentType: 'image/png', width: 1170, height: 2532, density: 3,
     denseWidth: 1170, denseHeight: 2532,
     thumbWidth: copies.thumb.width, thumbHeight: copies.thumb.height,
-    screenWidth: copies.screen.width, screenHeight: copies.screen.height,
+    screenWidth: 1170, screenHeight: 2532,
     placeholder: copies.placeholder,
   };
   const [clean] = view.cleanArtifacts([artifact], { slug: 'plant-pal', sessionId: 7, verified: true, dense: true });

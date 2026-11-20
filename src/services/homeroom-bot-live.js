@@ -678,8 +678,23 @@ function retryCardFits(reason, { firstVersion = false, retrying = false } = {}) 
 // picks it up by itself once credit is added (its credit_wait read, kept by
 // the request's instance and granted once the lane's pause lifts: T1.1).
 // T1.15: GitHub's copy; Homeroom's is the bot's own words (firstPerson).
-function buildCreditText() {
-  return 'Homeroom bot is out of building credit right now. It will pick this up again by itself once credit is back.';
+// `queued: false`: the write that would bring the request back could not be
+// made (homeroom-bot.js recordLiveBuild), so nothing here promises it.
+/**
+ * Pure: whether a routed coding turn ({ error, result }) ended on
+ * OpenRouter's 402 for credit: its routed code, and what the worker read of
+ * how it ended (bot-turn-failure.js sort). Never a platform error's text.
+ */
+function turnCreditOut(routed) {
+  if (!routed || typeof routed !== 'object') return false;
+  return require('./bot-turn-failure').sort({ code: routed.error || null, turn: routed.result || null }).class === 'credit';
+}
+
+function buildCreditText({ queued = true } = {}) {
+  return queued
+    ? 'Homeroom bot is out of building credit right now. It will pick this up again by itself once credit is back.'
+    : 'Homeroom bot is out of building credit right now, and it could not keep this request\'s place in line. '
+      + 'Once credit is back, reply here and it will build this.';
 }
 
 // A first version whose build did not finish is tried once more on its own,
@@ -2387,7 +2402,7 @@ async function post({
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
   skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false, version = null,
-  card = null, requestPostId = null,
+  card = null,
 }) {
   const botPost = require('./bot-post');
   // Homeroom bot parity (P4, P5): the request moved; its batch's roll-up and
@@ -2472,8 +2487,8 @@ async function post({
     };
   }
   // The request's record from before this release, when the post is one
-  // (its row, taken up; or `requestPostId`, a held answer's pending row).
-  const priorPostId = Number(had?.request_post_id) || Number(requestPostId) || null;
+  // (its row, taken up).
+  const priorPostId = Number(had?.request_post_id) || null;
   try {
     return await sayClaimedPost({
       pool, github, ws, app, repo, issueNumber, kind, runId, text, msgType, metadata, senderId, notifications,
@@ -4341,9 +4356,7 @@ async function draftSpec({
   // T1.3: a plan turn that ended on OpenRouter's 402 for credit, read off its
   // error and what the worker read of how it ended (the Codex harness's
   // agentErrorCode, which an empty reply carries and nothing else).
-  const credit = require('./openrouter-credit');
-  const creditOut = credit.creditOut({ error: routed.error || null }) || credit.creditOut(routed.result || null)
-    ? { creditOut: true } : {};
+  const creditOut = turnCreditOut(routed) ? { creditOut: true } : {};
   if (routed.error) return { ok: false, costUsd, ...turn, error: `the spec turn failed (${routed.error})`, ...creditOut };
   // Its saved screens go where the figure holds their placeholders.
   const filled = fvScreens
@@ -4353,9 +4366,11 @@ async function draftSpec({
   if (!read.ok) {
     if (read.fragment) log.warn('homeroom-bot', 'The spec turn left only part of a spec; building from the plan', { sessionId: session.id });
     // #6867: a plan turn that ended on OpenRouter's 402 for credit is an
-    // outage, told apart from every other failed plan.
-    const out = creditOut.creditOut || credit.creditOut({ error: read.error }) ? { creditOut: true } : {};
-    return { ...read, costUsd, ...turn, ...out };
+    // outage, told apart from every other failed plan. Review B1: read off
+    // the turn (turnCreditOut), never off `read.error`, which may quote the
+    // model (`blocked: ...`): a plan that could not be built because of "the
+    // 402 page" was read as an outage.
+    return { ...read, costUsd, ...turn, ...creditOut };
   }
   if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
   let { specMd } = read;
@@ -5219,8 +5234,10 @@ async function buildAndPropose({
       ...noChangeOut(),
       // #6867: a turn that ended on OpenRouter's 402 for credit (its error,
       // or T1.3 the build turn's own result).
-      ...(require('./openrouter-credit').creditOut({ error }) || require('./openrouter-credit').creditOut(creditTurn)
-        ? { creditOut: true } : {}),
+      // Review B1: off the turn alone. `error` is the platform's own text
+      // and may quote the model or GitHub; a plan's outage is passed on by
+      // its own flag (spec.creditOut, below).
+      ...(turnCreditOut(creditTurn) ? { creditOut: true } : {}),
     };
   };
   // A skip is put away as a failed attempt is, and says why it stopped.
@@ -6241,6 +6258,7 @@ module.exports = {
   fromPlanHomeroomText,
   buildFailedText,
   buildCreditText,
+  turnCreditOut,
   deployFailedText,
   retryCardFits,
   TAP_TO_RETRY,

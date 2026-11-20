@@ -251,9 +251,10 @@ const BOT_SPEND_SQL = `
 // session: homeroom_bot_runs.build_session_id) and what came of them. One
 // that became a proposal worked; one that ended without one failed, a build
 // a restart cut short or the platform lost among them. A build stopped
-// because it was no longer needed (build_error 'skipped: ...': its request
-// was closed, read again or already had a proposal; 'superseded: ...': a
-// later verdict replaced it) is not a failure and is not counted, nor is one
+// because it was no longer needed (its stored code, build_stop, review B4:
+// 'skipped', its request was closed, read again or already had a proposal;
+// 'superseded', a later verdict replaced it) is not a failure and is not
+// counted, nor is one
 // still under way. Shadow runs are left out, and the side builds a change
 // is compared with are kept in their own table. A first version is a
 // request filed as a project's first version (homeroom_bot_requesters,
@@ -263,7 +264,7 @@ const BOT_BUILDS_SQL = `
   WITH builds AS (
     SELECT r.proposal_session_id IS NOT NULL AS proposed,
            (r.proposal_session_id IS NULL
-             AND (r.build_error LIKE 'skipped:%' OR r.build_error LIKE 'superseded:%')) AS skipped,
+             AND r.build_stop->>'cause' IN ('skipped', 'superseded')) AS skipped,
            (r.proposal_session_id IS NOT NULL OR r.build_ok IS NOT NULL) AS settled,
            (EXISTS (SELECT 1 FROM homeroom_bot_requesters q
                      WHERE q.app_id = r.app_id AND q.issue_number = r.issue_number AND q.first_version)

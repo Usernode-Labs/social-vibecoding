@@ -141,6 +141,11 @@ async function migrate(config) {
   // nearly full, each saying how much is used and what the limit is. Staging
   // runs no sweep against a growing database, so they are seeded.
   await seedStagingStorageNotices(pool);
+  // #6901's shots: while the server is full, Admin → Limits says how many
+  // people were turned away, and the bell has a refusal notice. A fresh
+  // staging copy has no run of refusals at all, and staging notifies nobody,
+  // so both are seeded with obviously fake people.
+  await seedStagingLimitRefusals(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -448,6 +453,8 @@ async function migrate(config) {
   await moveMainChatToThreads(pool);
   await moveOldChatsToThreads(pool);
   await backfillPlanRows(pool);
+  // Artifacts, stage 0: a plan an older build posted during a rollout names its design.
+  await require('../services/plan-design-source').backfill(pool);
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
@@ -2868,6 +2875,79 @@ async function seedStagingFoldedLiveNotifications(pool) {
 // for the same project, so a real bell holds one per project. The one at
 // half full has only the early notice, and the one nearly full has only the
 // warning (a sweep that jumped past both lines sends the highest alone).
+// #6901's shots: the run of refusals Admin → Limits counts, and the bell's
+// refusal notices. Obviously fake people, staging only, idempotent.
+async function seedStagingLimitRefusals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = (await pool.query(
+      `SELECT id FROM users
+        WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'staging-demo-user')
+        ORDER BY id`
+    )).rows;
+    if (!people.length) return;
+    const refusals = people.slice(0, 3);
+    await pool.query(
+      `INSERT INTO platform_limit_alerts
+         (limit_key, level, used, cap, measured_at, refusals_since, refusals_notified_at)
+       VALUES ('apps', 'full', 50, 50, NOW(), NOW() - interval '4 hours', NOW() - interval '4 hours')
+       ON CONFLICT (limit_key) DO UPDATE
+         SET refusals_since = COALESCE(platform_limit_alerts.refusals_since, NOW() - interval '4 hours'),
+             refusals_notified_at = COALESCE(platform_limit_alerts.refusals_notified_at, NOW() - interval '4 hours')`
+    );
+    for (const person of refusals) {
+      await pool.query(
+        `INSERT INTO platform_limit_refusals (limit_key, user_id, day, refused_at)
+         VALUES ('apps', $1, (NOW() AT TIME ZONE 'UTC')::date, NOW() - interval '2 hours')
+         ON CONFLICT DO NOTHING`,
+        [person.id]
+      );
+    }
+    // The bell's two notices, as the code writes them: the first refusal of
+    // the run, then a count a few hours later. The shots pair's own full admin
+    // (services/shots-fixtures.js) is inserted AFTER boot, so a seed here
+    // cannot write to it by lookup. On a shots copy only, make the row it will
+    // claim, unable to sign in and not an admin; installFullAdminFixture then
+    // promotes it in place. SHOTS_PHONE_TEST_CODE is set on the self app's
+    // pair and never on production or an ordinary staging preview, so no
+    // other copy grows this account. An ordinary staging copy still seeds the
+    // notices for the administrators it has, which is what the Admin → Limits
+    // card reads.
+    const shotsCopy = !!require('../config').shotsPhoneTestCodeFrom(process.env).code;
+    let fixtureUsername = null;
+    if (shotsCopy) {
+      const shotsFixtures = require('../services/shots-fixtures');
+      fixtureUsername = shotsFixtures.FULL_ADMIN_USERNAME;
+      await pool.query(
+        `INSERT INTO users (id, username, password, is_admin, admin_readonly,
+                            can_create_apps, has_platform_access)
+         VALUES ($1, $2, '__shots_not_a_login__', FALSE, FALSE, FALSE, FALSE)
+         ON CONFLICT DO NOTHING`,
+        [shotsFixtures.FULL_ADMIN_USER_ID, fixtureUsername]
+      );
+    }
+    const notices = [
+      { detail: 'apps_away:1:50:0', minutesAgo: 4 * 60 },
+      { detail: `apps_away:${refusals.length}:50:230`, minutesAgo: 10 },
+    ];
+    for (const notice of notices) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, source_user_id, kind, detail, created_at)
+         SELECT u.id, NULL, 'platform_limit', $1::varchar(32), NOW() - make_interval(mins => $2::int)
+           FROM users u
+          WHERE ((u.is_admin = TRUE AND u.admin_readonly = FALSE) OR u.username = $3)
+            AND NOT EXISTS (
+              SELECT 1 FROM notifications n
+               WHERE n.user_id = u.id AND n.kind = 'platform_limit' AND n.detail = $1::varchar(32)
+            )`,
+        [notice.detail, notice.minutesAgo, fixtureUsername]
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging limit refusals seed failed', { message: err.message });
+  }
+}
+
 async function seedStagingStorageNotices(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -3534,7 +3614,7 @@ async function seedStagingBotReportReply(pool) {
       rootId = root.rows[0].id;
       const filed = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Filed as #6564 on Homeroom''s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
+         VALUES ($1, $2, 'Filed as #6564 in Homeroom''s Workshop, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
@@ -3545,7 +3625,7 @@ async function seedStagingBotReportReply(pool) {
       );
       const again = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Already filed as #6564 on Homeroom''s requests board. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
+         VALUES ($1, $2, 'Already filed as #6564 in Homeroom''s Workshop. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
@@ -10772,7 +10852,7 @@ async function seedSizedCopies(pool, file) {
   for (const name of ['thumb', 'screen']) {
     const copy = copies[name];
     if (!copy) continue;
-    await withStagingMedia(pool, copy.data, 'image/webp', (tx, m) => Promise.resolve(m));
+    await withStagingMedia(pool, copy.data, copy.contentType || 'image/webp', (tx, m) => Promise.resolve(m));
     keys[name] = copy;
   }
   if (!keys.thumb && !keys.screen && !copies.placeholder) return;
@@ -10780,14 +10860,14 @@ async function seedSizedCopies(pool, file) {
     `UPDATE shot_artifacts
         SET thumb_object_key = $2, thumb_width = $3, thumb_height = $4, thumb_bytes = $5, thumb_sha256 = $6,
             screen_object_key = $7, screen_width = $8, screen_height = $9, screen_bytes = $10, screen_sha256 = $11,
-            placeholder = $12
+            placeholder = $12, thumb_content_type = $13, screen_content_type = $14
       WHERE id = $1`,
     [file.id,
       keys.thumb ? media.objectKey(keys.thumb.data) : null, keys.thumb?.width ?? null, keys.thumb?.height ?? null,
       keys.thumb?.bytes ?? null, keys.thumb?.sha256 ?? null,
       keys.screen ? media.objectKey(keys.screen.data) : null, keys.screen?.width ?? null, keys.screen?.height ?? null,
       keys.screen?.bytes ?? null, keys.screen?.sha256 ?? null,
-      copies.placeholder]
+      copies.placeholder, keys.thumb?.contentType ?? null, keys.screen?.contentType ?? null]
   );
 }
 
@@ -11493,16 +11573,13 @@ async function seedStagingWeeklyCaps(pool) {
 
 // Daily spend distribution fixtures (the seven-bucket stacked chart on
 // /dashboard). The chart counts users per platform-spend bucket per day,
-// with the $20+ tier split into "capped" (no usable own key) vs "kept going
-// on own key". Two staging facts force a dedicated seed:
-//   1. llm_usage is staging:private (schema-only clone → empty), so there is
-//      no per-day spend to bucket at all without seeding it here.
-//   2. users.anthropic_key_enc is a staging:private COLUMN (scrubbed to NULL
-//      on clone), so the "has own key" branch would never populate from real
-//      users — the $20+/own-key segment would always be empty.
-// We create obviously-fake users (staging-demo-spend-*) at fixed high ids,
-// give a subset a non-null anthropic_key_enc sentinel so the own-key branch
-// lights up, and write 30 days of llm_usage spanning every bucket. A couple
+// with the $20+ tier split into "capped" vs "kept going on own key" (own-key
+// spend recorded that day). llm_usage is staging:private (schema-only clone
+// → empty), so there is no per-day spend to bucket at all without seeding it
+// here. We create obviously-fake users (staging-demo-spend-*) at fixed high
+// ids, give a subset own-key spend so that branch lights up (the stored
+// Anthropic key sentinel it used went with those keys, task 2275), and write
+// 30 days of llm_usage spanning every bucket. A couple
 // are is_admin so the "Include admin users" toggle visibly changes the bars.
 // Idempotent (fixed ids + ON CONFLICT DO NOTHING); strict no-op outside
 // staging; never references real users.
@@ -11533,26 +11610,23 @@ async function seedStagingSpendDistribution(pool) {
 
     const records = fixtures.map(f => ({
       id: f.id, name: f.name, admin: f.admin,
-      key_enc: f.key ? 'v1:staging-demo-fake-key' : null,
-      key_last4: f.key ? 'demo' : null,
       base: { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier] || 0,
       tier: f.tier,
     }));
-    // Sentinel passwords/keys are non-loginable and carry no real secret.
+    // Sentinel passwords are non-loginable and carry no real secret.
     await pool.query(
-      `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
-       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin, f.key_enc, f.key_last4
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean, key_enc text, key_last4 text)
+      `INSERT INTO users (id, username, password, is_admin)
+       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean)
        ON CONFLICT (id) DO NOTHING`,
       [JSON.stringify(records)]
     );
-    // Re-pin roles/keys, and only backdate signups that are too recent.
+    // Re-pin roles, and only backdate signups that are too recent.
     await pool.query(
-      `UPDATE users u SET is_admin = f.admin, anthropic_key_enc = f.key_enc,
-              anthropic_key_last4 = f.key_last4,
+      `UPDATE users u SET is_admin = f.admin,
               created_at = CASE WHEN u.created_at > NOW() - INTERVAL '45 days'
                                 THEN NOW() - INTERVAL '45 days' ELSE u.created_at END
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean, key_enc text, key_last4 text)
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean)
         WHERE u.id = f.id`,
       [JSON.stringify(records)]
     );

@@ -4,7 +4,7 @@
  * thread take turns (`view`, the Preview and Chat switch).
  *
  * It draws the version shown in a sandboxed frame of the size it was
- * captured at, scaled to fit (../design/frame.ts says what the frame may
+ * captured at, scaled to fit (../artifact/frame-doc.ts says what the frame may
  * do), with a version picker; comments pinned on it; and Request it, which
  * files the design as a request with its plan once the person has read what
  * becomes public.
@@ -34,10 +34,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { ChevronLeftIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { designFrameDoc, currentSheets, DESIGN_SANDBOX, type FramePin } from '../design/frame';
+import { ArtifactFrame } from '../artifact/frame';
+import { currentSheets, type FramePin } from '../artifact/frame-doc';
 import { inlinePictures } from '../design/pictures';
 import * as api from './api';
 import type { DesignThread } from './api';
+import { paneWordIds, requestable } from './artifact-kind';
 import { loadReplyThread, useMessagesSnapshot } from './store';
 import type { DesignPin } from './types';
 
@@ -108,7 +110,7 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
   const [design, setDesign] = useState<DesignThread | null>(null);
   const [failed, setFailed] = useState(false);
   const [chosen, setChosen] = useState<number | null>(version || null);
-  const [html, setHtml] = useState<{ version: number; doc: string } | null>(null);
+  const [html, setHtml] = useState<{ version: number; html: string; sheets: string[]; site: boolean } | null>(null);
   const [commenting, setCommenting] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [note, setNote] = useState('');
@@ -153,8 +155,8 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
     // P8: the pictures it names, written in (../design/pictures.ts).
     api.getDesignVersion(rootId, shown).then(async (v) => ({ version: v.version, html: await inlinePictures(v.html) })).then((v) => {
       if (!live) return;
-      const origin = window.location.origin;
-      setHtml({ version: v.version, doc: designFrameDoc(v.html, { origin, sheets: design.surface === 'platform' ? currentSheets() : [] }) });
+      // A design draws with this site's stylesheets; a plain page names no origin and loads nothing.
+      setHtml({ version: v.version, html: v.html, sheets: design.surface === 'platform' ? currentSheets() : [], site: design.kind !== 'page' });
       loads.current = 0;
     }, () => { if (live) setFailed(true); });
     return () => { live = false; };
@@ -189,16 +191,16 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
     try { frameRef.current?.contentWindow?.postMessage(message, '*'); } catch { /* the frame is gone */ }
   }, []);
   useEffect(() => {
-    post({ __design: 'pins', pins: [...pins, ...(draft ? [{ n: pins.length + 1, x: draft.x, y: draft.y, open: true }] : [])] });
+    post({ __artifact: 'pins', pins: [...pins, ...(draft ? [{ n: pins.length + 1, x: draft.x, y: draft.y, open: true }] : [])] });
   }, [pins, draft, drawn, post]);
-  useEffect(() => { post({ __design: 'mode', on: commenting && !draft }); }, [commenting, draft, drawn, post]);
+  useEffect(() => { post({ __artifact: 'mode', on: commenting && !draft }); }, [commenting, draft, drawn, post]);
 
   // A pin the frame placed: only the frame this pane drew is believed.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
-      const data = event.data as { __design?: string; x?: number; y?: number; element?: DesignPin['element'] } | null;
-      if (!data || data.__design !== 'pin' || !commenting) return;
+      const data = event.data as { __artifact?: string; x?: number; y?: number; element?: DesignPin['element'] } | null;
+      if (!data || data.__artifact !== 'pin' || !commenting) return;
       const x = Number(data.x);
       const y = Number(data.y);
       if (!(x >= 0 && x <= 1) || !(y >= 0 && y <= 1)) return;
@@ -237,10 +239,11 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
     }
   };
 
+  const words = paneWordIds(design?.kind);
   if (failed && !design) {
     return (
-      <section className="messages-design-pane" data-design-pane={rootId} aria-label={t('messages:design.pane.label')}>
-        <p className="p-4 text-[13px] text-zinc-500">{t('messages:design.pane.failed')}</p>
+      <section className="messages-design-pane" data-design-pane={rootId} aria-label={t(words.label)}>
+        <p className="p-4 text-[13px] text-zinc-500">{t(words.failed)}</p>
         {onClose ? (
           <div className="px-4">
             <button type="button" className={QUIET} onClick={onClose} data-design-close={closeAs}>
@@ -252,14 +255,13 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
     );
   }
   const open = design?.state === 'open';
-  // 1 Nov 2026 (C2.2): a design posted as a plan may post again: the plan's next version.
-  // A design for a project not made yet has nowhere to post: the bot's
-  // Make the project card is its way out (bot-make.tsx).
-  const postable = !!design?.app && (open || design?.state === 'posted' || design?.state === 'filed');
+  // 1 Nov 2026 (C2.2): a design posted as a plan may post again: the plan's
+  // next version. Artifacts: a plain page never (requestable).
+  const postable = requestable(design);
   const latest = design?.latest || 0;
   const what = draft?.element?.text || draft?.element?.tag || '';
   return (
-    <section className="messages-design-pane" data-design-pane={rootId} data-design-view={view} aria-label={t('messages:design.pane.label')}>
+    <section className="messages-design-pane" data-design-pane={rootId} data-design-view={view} aria-label={t(words.label)}>
       <header className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
         {onClose && closeAs === 'back' ? (
           <button type="button" className={ICON} onClick={onClose} aria-label={t('messages:design.pane.back')} title={t('messages:design.pane.back')} data-design-close="back">
@@ -269,7 +271,7 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
         {/* At least 12rem wide, so on a phone the buttons wrap under it
             rather than squeezing it until the picker runs into them. */}
         <div className="min-w-[12rem] flex-1">
-          <div className="truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{design?.title || t('messages:design.pane.loading')}</div>
+          <div className="truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{design?.title || t(words.loading)}</div>
           {design ? (
             <label className="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] text-zinc-500">
               <span className="sr-only">{t('messages:design.pane.pickVersion')}</span>
@@ -333,20 +335,24 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
       <div ref={stageRef} className="messages-design-stage">
         {design && html ? (
           <div style={{ width: Math.round(design.width * scale), height: Math.round(design.height * scale) }} className="relative mx-auto overflow-hidden rounded-xl shadow-[0_0_0_1px_var(--app-sheet-line)]">
-            <iframe
-              ref={frameRef}
+            {/* The one frame (../artifact/frame.tsx), running: a design is
+                read only from its author's own private thread. */}
+            <ArtifactFrame
+              frameRef={frameRef}
               key={`${html.version}-${redraw}`}
-              title={t('messages:design.pane.frameTitle', { version: html.version })}
-              sandbox={DESIGN_SANDBOX}
-              referrerPolicy="no-referrer"
-              srcDoc={html.doc}
-              data-design-frame=""
+              mode="run"
+              viewer="author"
+              html={html.html}
+              sheets={html.sheets}
+              site={html.site}
+              pictured
+              title={t(words.frame, { version: html.version })}
               onLoad={onLoad}
               style={{ width: design.width, height: design.height, transform: `scale(${scale})`, transformOrigin: '0 0', border: 0, background: '#fff' }}
             />
           </div>
         ) : (
-          <p className="p-4 text-[13px] text-zinc-500">{failed ? t('messages:design.pane.failed') : t('messages:design.pane.loading')}</p>
+          <p className="p-4 text-[13px] text-zinc-500">{failed ? t(words.failed) : t(words.loading)}</p>
         )}
       </div>
     </section>

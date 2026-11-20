@@ -638,20 +638,6 @@ async function revisionCounts(pool, sessionId) {
   return { own: Number(rows[0]?.own || 0), asked: Number(rows[0]?.asked || 0) + handedOver, grants, openGrant };
 }
 
-/**
- * #6284: the line the change and the thread show when the bot stopped at its
- * own limit. `tries` is its own rounds plus the grants people spent.
- */
-function stoppedAtLimitText({ failingCount = 0, tries = MAX_REVISIONS, you = false } = {}) {
-  const who = you
-    ? 'You can let it try once more.'
-    : 'The person who asked for it or an admin can let it try again.';
-  const failing = failingCount > 0
-    ? `${failingCount} of this change's checks failed on its preview.`
-    : 'Its checks are failing on its preview.';
-  return `Checks failing · Homeroom bot stopped after ${tries} tries. ${who} ${failing}`;
-}
-
 /** #6284: the bot stopped at its own limit, as its own thread message. */
 function stoppedHandOffText({ failingCount = 0, tries = MAX_REVISIONS } = {}) {
   const failing = failingCount === 1
@@ -1161,12 +1147,18 @@ function checksRevisedText({ failing = [], broken = [], skipped = [] } = {}) {
 
 // #4572: a fix that ran out of time is tried once more before a person is
 // asked (homeroom-bot.js runChecksFix), and it says so.
-function checksRetryText({ broken = false, failing = true, skipped = false } = {}) {
+function checksRetryText({ broken = false, failing = true, skipped = false, platform = false } = {}) {
+  // `platform`: Homeroom or its provider failed under the fix (review A2):
+  // said as that, never as the change's or the fix's own fault.
   if (skipped && !broken && !failing) {
-    return 'Homeroom bot ran out of time adding what this change\'s before and after screens need. It is trying once more.';
+    return platform
+      ? 'Homeroom bot could not finish adding what this change\'s before and after screens need because Homeroom had a problem on its side. It is trying once more.'
+      : 'Homeroom bot ran out of time adding what this change\'s before and after screens need. It is trying once more.';
   }
   const what = broken && !failing ? 'what didn\'t work on this change' : 'the failing checks on this change';
-  return `Homeroom bot ran out of time fixing ${what}. It is trying once more.`;
+  return platform
+    ? `Homeroom bot could not finish fixing ${what} because Homeroom had a problem on its side. It is trying once more.`
+    : `Homeroom bot ran out of time fixing ${what}. It is trying once more.`;
 }
 
 /**
@@ -1568,7 +1560,6 @@ module.exports = {
   MAX_REVISIONS,
   MAX_ASKED_REVISIONS,
   revisionCounts,
-  stoppedAtLimitText,
   stoppedHandOffText,
   askedLimitText,
   MAX_SPEC_CHARS,

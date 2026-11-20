@@ -482,9 +482,39 @@
       "schemaSha256": "933757d701ecab7769895883fab51f7a807e716507d20017b766bd71776e8a9a"
     },
     {
+      "id": "platform-limit-refusals",
+      "sha256": "40a8ab6559cc2cabfccd4d6452c704363bd5f68219ae840e9b077fdbd213ecb7",
+      "schemaSha256": "075e0e0ccb2fc560922614a69af29a6a90f8e356b53e8cf96eeba7530aad99e4"
+    },
+    {
+      "id": "plan-design-source",
+      "sha256": "76f81d8dea4eb885cff349fc7d39164f342c5070cfce38c4e28bb55928f8983a",
+      "schemaSha256": "cb835f31348306fdbbce630a443beeee6bebf1cf6c76150f5bde58659df4d3f1"
+    },
+    {
+      "id": "artifact-store",
+      "sha256": "0b2b396e8efa0057a68bb5bf7ecbc24eda697b9efe8153102b10a19ad1b23fd8",
+      "schemaSha256": "c5dd3b08b4ed6ee92e22ee8fb3ed5fde6b2f7c331448f98eb4c98ab9bf392f7d"
+    },
+    {
+      "id": "work-state-one-writer",
+      "sha256": "48d01fd14d04ff8558f5ecb3cb0f2d560219fbf93c9ed82c3a20fa0532ad28a6",
+      "schemaSha256": "82150ee4b2549bbfd952093d4a820f421ba4190e22b7f2fa91cc9f7cf6aa802e"
+    },
+    {
+      "id": "homeroom-bot-run-stop-cause",
+      "sha256": "1d0288278492a7df3df5ecb040643d9912ff77639a535cf354a9159b4882ee0d",
+      "schemaSha256": "d9bd3e082e9a0aaa67beea11645c25588e6e3e9ea3062a77a65a2f62d793a679"
+    },
+    {
+      "id": "shots-copy-content-types",
+      "sha256": "db77afe6c58fcc0ba0da17decf55361c43c7865f88f108424fa35dd4d766deea",
+      "schemaSha256": "fa13135f40668c253a33f9d48be8209d0e2e90a3ca05b664432cceafc5baaefe"
+    },
+    {
       "id": "anthropic-keys-wiped",
       "sha256": "ca290627de3589255e397fef423664d812fc000cd20a452817992392ae24487b",
-      "schemaSha256": "846dc3c2b12619df467c75f6fb31b67b5b72e1c8efdc5c6f3bd2495792e25ec7"
+      "schemaSha256": "f14dc67b6026b4f8955f0cb011a625c9b5c9f36cc53ce75e33dda29d44d5bc0a"
     }
   ]
 }

@@ -592,8 +592,10 @@ function needKind(work: WorkState): string {
 }
 
 // T2.10: each hand-back that is not its requester's own decision, by the
-// pill its row wears.
-const DECIDE_KINDS: Record<string, string> = {
+// pill its row wears: every hand-back cause the one decoder stores
+// (services/bot-stop-cause.js HAND_BACKS) but `requester`, whose row is the
+// plain decide. tests/work-stages-client.test.js holds the keys to it.
+export const DECIDE_KINDS: Readonly<Record<string, string>> = {
   others: 'others_decide',
   operator_work: 'detail',
   destructive_db: 'detail',
@@ -603,7 +605,14 @@ const DECIDE_KINDS: Record<string, string> = {
   close: 'close',
 };
 
-const NEED_PILLS: Record<string, string> = {
+/**
+ * The pill of each kind of Needs you row (needKind). Every why and every
+ * reason of the one table (src/services/work-stages.json), and every
+ * hand-back cause, lands on one of these kinds, which
+ * tests/work-stages-client.test.js holds to; a row in any other stage
+ * (none is listed under Needs you) wears the plain "Take a look".
+ */
+export const NEED_PILLS: Readonly<Record<string, string>> = {
   plan: 'messages:ai.pill.buildIt',
   decide: 'messages:ai.pill.decide',
   // T2.10: who decides it, a move offered, a close vote offered.

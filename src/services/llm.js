@@ -633,6 +633,10 @@ function helperErrorClass(code) {
     case 'timeout': case 'rate_limited': case 'authentication': case 'billing':
     case 'cancelled': case 'network': case 'invalid_request':
       return code;
+    // OpenRouter's 402 for credit (provider-error.js refusalCode): the same
+    // class a 402 always had in the telemetry.
+    case 'credit_out':
+      return 'billing';
     case 'provider_unavailable': case 'provider_error': case 'output_limit':
     case 'stream_error': case 'invalid_response': case 'response_too_large':
       return 'provider';

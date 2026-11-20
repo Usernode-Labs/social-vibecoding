@@ -6792,9 +6792,25 @@ const AppView = {
     return null;
   },
 
-  // The second lines of a request nobody has started on yet (work-state.js
-  // NOT_STARTED): waiting to be read, waiting its turn, on hold.
+  // The lists below are the one table's (src/services/work-stages.json),
+  // which a classic script cannot import: each is a copy that
+  // tests/work-stages-client.test.js holds equal to the table, so a stage or
+  // a line code added there and not here fails it.
+  //
+  // The second lines of a request nobody has started on yet (the table's
+  // `notStarted`): waiting to be read, waiting its turn, on hold.
   STANDING_NOT_STARTED: new Set(['waiting', 'queued', 'on_hold', 'cooldown', 'first_version_wait']),
+
+  // The second lines that say a change's tests fail (the table's `failing`):
+  // its own checks, GitHub's, or Homeroom bot's fix of them that failed. A
+  // pill or a chip on such a row is tinted as blocked and does not spin.
+  WORK_FAILING_LINES: new Set(['checks_failing', 'github_checks_failing', 'bot_fix_failed']),
+
+  // The stages whose chip or pill spins: the build, the checks or the merge
+  // is at it this minute (the table's stages the shell draws `busy`, less
+  // reading and planning: a row in either that a chip leads with is one
+  // nobody has started on or that waits for its requester's plan).
+  WORK_BUSY_STAGES: new Set(['building', 'checking', 'going_live']),
 
   // A standing with no words (an older server) says its plain stage word.
   // Each id whole, for the language inventory; no mapping of whys or lines.
@@ -6854,6 +6870,13 @@ const AppView = {
   // under way and does not spin; a person has one a claim or their own
   // change holds; a requester's private thread holds one for their plan
   // (_planHeld).
+  //
+  // The server reads the same row for the same question (work-state.js
+  // botWorkOf, the table's `bot`: what `issue.bot` carries, and what the
+  // Ask route refuses by). tests/work-stages-client.test.js asks both about
+  // every stage, line and why of the table; where they still answer
+  // differently it is listed in BOT_ON_DIFFERS below, so a new code that
+  // reads differently fails it, and so does an entry that came to agree.
   _botOn(issue) {
     if (!issue || issue.state === 'closed') return null;
     const s = AppView._issueStanding(issue);
@@ -6876,7 +6899,10 @@ const AppView = {
         if (s.whoseMove === 'builder') return null;
         if (code === 'held_builds') return on('queued', { held: true, turn: true });
         if (code === 'held_waiting') return on('queued', { held: true });
-        if (code === 'queued') return on('queued');
+        // T2.2: waiting for building credit is in the bot's queue, to pick up
+        // again by itself, as the server reads it (work-stages.json): it read
+        // as building, under a row that says Ready to build.
+        if (code === 'queued' || code === 'credit_wait') return on('queued');
         return on('building');
       case 'waiting_for_you':
         return s.why === 'plan' ? on('queued', { plan: true }) : null;
@@ -6884,6 +6910,27 @@ const AppView = {
         return null;
     }
   },
+
+  // Where _botOn still reads a row differently from the server's botWorkOf,
+  // by `stage/line code` (19 Nov 2026, review B5). Each keeps the page's
+  // reading, which agrees with the row's own words, and is a decision for
+  // whoever next touches the table's `bot`:
+  //   reading/queued, reading/first_version_wait: nobody asked the bot for
+  //     it; the server counts it as nobody's ("Not started yet"), the page
+  //     as the bot's to build next.
+  //   reading/reply: a reply about to be read is the server's nobody's
+  //     (`soon`), the page's "reading".
+  //   planning/retry_plan: the server says building, the page queued.
+  //   planning/planning_with_you: a build waiting behind the requester's
+  //     plan (`ready`) is the server's queued, the page's nobody's.
+  //   building/queued: a build waiting its turn is the server's building;
+  //     the page says it will build it, as the row's "Ready to build" does.
+  //   building/update_queued: the server's nobody's, the page's building.
+  BOT_ON_DIFFERS: Object.freeze([
+    'reading/queued', 'reading/first_version_wait', 'reading/reply',
+    'planning/retry_plan', 'planning/planning_with_you',
+    'building/queued', 'building/update_queued',
+  ]),
 
   // The one reading of a standing for the request's status card: whether its
   // sentence is the standing's own (`says`, in its `words`), and what the
@@ -8243,9 +8290,8 @@ const AppView = {
     if (!words) return pill;
     const t = PlatformI18n.t;
     const code = work.line && work.line.code;
-    const bad = work.stage === 'stopped'
-      || code === 'checks_failing' || code === 'github_checks_failing' || code === 'bot_fix_failed';
-    const busy = !bad && (work.stage === 'building' || work.stage === 'checking' || work.stage === 'going_live');
+    const bad = work.stage === 'stopped' || AppView.WORK_FAILING_LINES.has(code);
+    const busy = !bad && AppView.WORK_BUSY_STAGES.has(work.stage);
     const title = words.line ? t(words.line.id, words.line.values || {}) : undefined;
     return {
       yes: pill.yes, no: pill.no, majority: pill.majority, advisory: 0, lock: false, reasons: [],
@@ -13347,7 +13393,9 @@ const AppView = {
         // is not up for one.
         const state = ws.rowWords ? PlatformI18n.t(ws.rowWords.stage.id, ws.rowWords.stage.values || {})
           : WORDS[ws.key] ? PlatformI18n.t(WORDS[ws.key]) : ws.label;
-        const person = ws.who && (ws.key === 'in_review' || ws.key === 'working' || ws.key === 'paused' || ws.key === 'claimed')
+        // The request's own row leading (_rowOverPerson) names nobody: its
+        // words are not about the person whose session is there.
+        const person = ws.who && !ws.rowLeads && (ws.key === 'in_review' || ws.key === 'working' || ws.key === 'paused' || ws.key === 'claimed')
           ? ws.who : null;
         const more = ws.people > 1 ? ws.people - 1 : 0;
         let label = state;
@@ -13669,17 +13717,30 @@ const AppView = {
 
   // #6825: a still's smaller copies (services/shots-view.js `sizes`) as one
   // srcset, smallest first, so a slot takes the smallest copy sharp for it
-  // and its screen. Empty for a still saved before the copies existed, which
-  // then loads its one url as it always did.
+  // and its screen. The original is listed only when no copy is as wide as
+  // it: a screen copy as wide as the PNG is the same picture in a fraction
+  // of the bytes, so the PNG stays `src` (the fallback) and is never picked.
+  // Empty for a still saved before the copies existed, which then loads its
+  // one url as it always did. frontend/src/lib/shot-img.ts shotSrcSet is the
+  // same rule.
   _shotSrcSet(artifact) {
     const copyOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}\?size=(?:thumb|screen)$/.test(String(url || ''));
-    const parts = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
-      .filter((copy) => copy && copyOk(copy.url) && Number(copy.width) > 0)
-      .map((copy) => `${copy.url} ${Math.round(Number(copy.width))}w`);
+    const copies = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
+      .filter((copy) => copy && copyOk(copy.url) && Number(copy.width) > 0);
+    const parts = copies.map((copy) => `${copy.url} ${Math.round(Number(copy.width))}w`);
     if (!parts.length) return '';
     const own = Number(artifact && artifact.width) > 0 ? Number(artifact.width) : 0;
-    if (own && artifact.url) parts.push(`${artifact.url} ${own}w`);
+    if (own && artifact.url && !copies.some((copy) => Number(copy.width) >= own)) parts.push(`${artifact.url} ${own}w`);
     return parts.join(', ');
+  },
+
+  // The thumbnail copy's own address, or '': the middle layer a slot draws
+  // between the blurred preview and the sharp picture.
+  _shotThumb(artifact) {
+    const copy = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
+      .find((one) => one && one.size === 'thumb'
+        && /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}\?size=thumb$/.test(String(one.url || '')));
+    return copy ? copy.url : '';
   },
 
   // The blurred preview a slot draws until its still decodes: the 20 px WebP
@@ -13782,14 +13843,18 @@ const AppView = {
         // #6825: a still with smaller copies carries their `srcSet` and the
         // `placeholder` it draws until one arrives; one saved before them
         // carries neither, exactly as it always did.
+        // The thumbnail's address rides along too, as the layer between the
+        // preview and the sharp picture, and what a tile loads.
         const side = (artifact, height) => {
           const srcSet = AppView._shotSrcSet(artifact);
           const placeholder = AppView._shotPlaceholder(artifact);
+          const thumb = AppView._shotThumb(artifact);
           return {
             url: artifact.url,
             height,
             ...(srcSet ? { srcSet } : {}),
             ...(placeholder ? { placeholder } : {}),
+            ...(thumb ? { thumb } : {}),
           };
         };
         return {
@@ -18720,7 +18785,19 @@ const AppView = {
     // keeps the inline capsule — it already has a wide header, and a bar
     // that wide there would just read as a rule.
     const pillState = AppView.statusPillState(pr, { majority, locked: ctx.locked });
-    const pill = pillState && pillState.label ? { state: pillState, inline: noNav } : null;
+    // The one rule (frontend/src/lib/work-state.ts): the card says where the
+    // change stands in its stored row's words while that row is not up for a
+    // vote ("Taking screenshots", "Syncing with main"), as its own page's
+    // header does (_workPill), never "Vote · 0/2" beside a Homeroom bot tab
+    // that says otherwise. `state` stays the live vote's: its counts, and the
+    // key the change's page and its Votes card read (_changeThreadView,
+    // _changeVotesView). `row` is what a card, a row and the Needs you facts
+    // DRAW in its place (card/model.ts shownPill); absent while the row is up
+    // for a vote, or there is none.
+    const rowPill = pillState && pillState.label ? AppView._workPill(pr, pillState) : null;
+    const pill = pillState && pillState.label
+      ? { state: pillState, inline: noNav, ...(rowPill && rowPill !== pillState ? { row: rowPill } : {}) }
+      : null;
 
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
     // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
@@ -27466,10 +27543,13 @@ const AppView = {
         // #6825: the still takes the smallest copy sharp for this slot (its
         // stage is at most about 640 px wide), over its blurred preview, so
         // the picture arrives sooner and nothing moves when it lands.
+        // Behind it, the thumbnail over the blurred preview, so the slot goes
+        // blur, then soft, then sharp.
         const still = (artifact, cls) => {
           const set = AppView._shotSrcSet(artifact);
-          const preview = AppView._shotPlaceholder(artifact);
-          const style = preview ? ` style="${attr(`background-image:url("${preview}");background-size:cover;background-position:center`)}"` : '';
+          const layers = [AppView._shotThumb(artifact), AppView._shotPlaceholder(artifact)].filter(Boolean);
+          const each = (value) => layers.map(() => value).join(',');
+          const style = layers.length ? ` style="${attr(`background-image:${layers.map((one) => `url("${one}")`).join(',')};background-size:${each('cover')};background-position:${each('center')}`)}"` : '';
           // The slot's width, from the usable box (#THE USABLE BOX): the page
           // less its own margins, up to the stage's 640 px.
           const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) calc(var(--platform-usable-w) - 32px), 640px"` : '';
@@ -28034,6 +28114,18 @@ const AppView = {
   // off its standing). Its sessions are never `in_progress`, so before this
   // state a request it was building read as nobody's and offered Claim.
   //
+  // The one rule (frontend/src/lib/work-state.ts): a member's own work (a
+  // session, a claim) words the chip only while the request's stored row
+  // says the same, or says nobody has started (_rowOverPerson). When the row
+  // says something else, the row leads: Homeroom bot's state when it is on
+  // it (the same chip it has with nobody else there; a paused session beside
+  // the bot never named anybody either), else the row's own stage words with
+  // the person's work as the detail (the chip's title and the page's note
+  // still say who started what, and when it clears itself). The chip used to
+  // prefer any member's active session, so a request the bot was building,
+  // or one whose change was taking its screenshots, read "Being worked on ·
+  // zura" from a session that had nothing to do with where it stood.
+  //
   // Pure and DOM-free so it can be unit-tested directly, and shared by the
   // chip, the topic head's plain-language note and the report's row notes —
   // one derivation, so those three can never disagree. It is deliberately
@@ -28092,12 +28184,18 @@ const AppView = {
     // list: routes/issues.js), else the request's own row when that change is
     // its lead. Null while it is up for a vote: then "Waiting for approval".
     let rowWords = null;
+    // Homeroom bot's own chip word for the stage its stored row says
+    // (_botChipWords), when it has one.
+    let botLabelId = null;
+    // The stored row's words when they are not a person's work (above).
+    const over = review.length ? null : AppView._rowOverPerson(issue);
+    let rowLeads = false;
     if (review.length) {
       key = 'in_review'; tone = 'violet';
       const s = pick(review); who = named(s); at = s.lastActivityAt;
       rowWords = AppView._reviewRowWords(issue, s);
       if (rowWords && rowWords.busy) spinner = true;
-    } else if (active.length) {
+    } else if (active.length && !over) {
       key = 'working';
       // Emerald + spinner only while a turn is genuinely running, which is
       // the same `busy` the session card itself paints — the two surfaces
@@ -28108,6 +28206,41 @@ const AppView = {
     } else if (bot) {
       key = 'bot'; spinner = true;
       at = bot.since || null;
+      // The one rule (frontend/src/lib/work-state.ts): the chip names
+      // Homeroom bot only in the stage the stored row says (_botChipWords).
+      // A row whose word is another stage's says that word, and spins only
+      // while that stage is under way: a request waiting for its plan's OK
+      // read "Homeroom bot will build this", spinning, over a row that said
+      // "Waiting for the plan to be OK'd".
+      const said = AppView._botChipWords(issue);
+      if (said && said.row) {
+        rowWords = said.row;
+        spinner = AppView.WORK_BUSY_STAGES.has(said.stage);
+        tone = spinner ? 'sky' : 'zinc';
+      } else if (said) botLabelId = said.id;
+    } else if (over && (active.length || paused.length || claims.length)) {
+      // Somebody's session or claim is there, and the row says where the
+      // request stands: its words, quietly, naming nobody. The key stays the
+      // person's state, which the note under it (who, since when, and the
+      // day a paused session or a claim clears itself) and the board's
+      // column read.
+      rowLeads = true; rowWords = over;
+      tone = over.busy ? 'sky' : 'zinc'; spinner = !!over.busy;
+      if (active.length) {
+        key = 'working';
+        const s = pick(active); who = named(s); at = s.lastActivityAt;
+      } else if (paused.length) {
+        key = 'paused';
+        const s = pick(paused); who = named(s); at = s.lastActivityAt;
+        clearAt = clearMs(at, AppView.WORK_PAUSED_WINDOW_DAYS);
+      } else {
+        key = 'claimed';
+        const c = claims.find((x) => x.mine) || claims[0];
+        who = c.mine ? 'you' : (c.username || null);
+        at = c.claimedAt || null;
+        clearAt = Date.parse(c.expiresAt || '') || clearMs(at, AppView.WORK_CLAIM_TTL_DAYS);
+        if (!Number.isFinite(clearAt)) clearAt = 0;
+      }
     } else if (paused.length) {
       key = 'paused'; tone = 'zinc';
       const s = pick(paused); who = named(s); at = s.lastActivityAt;
@@ -28138,14 +28271,17 @@ const AppView = {
       // worked on now".
       paused: 'changes:chips.work.started',
       claimed: 'changes:chips.work.pickedUp',
-      bot: bot && bot.what === 'queued' ? 'changes:chips.work.botQueued'
-        : AppView._botWorkReading(bot) ? 'changes:chips.work.botReading' : 'changes:chips.work.botBuilding',
+      // With no stored row (an older payload, _issueStanding), what the bot
+      // is doing names the stage.
+      bot: botLabelId || (bot && bot.what === 'queued' ? 'changes:chips.work.botQueued'
+        : AppView._botWorkReading(bot) ? 'changes:chips.work.botReading' : 'changes:chips.work.botBuilding'),
     };
     // The bot state names nobody: there is no person to name.
     const namesAPerson = key === 'in_review' || key === 'working'
       || key === 'paused' || key === 'claimed';
     let label = rowWords ? PlatformI18n.t(rowWords.stage.id, rowWords.stage.values || {}) : PlatformI18n.t(LABEL_IDS[key]);
-    if (namesAPerson && who) {
+    // The row's own words are not about the person whose session is there.
+    if (namesAPerson && who && !rowLeads) {
       // `who` is the viewer ('you') or a username; the chip says either.
       const person = who === 'you' ? PlatformI18n.t('changes:chips.work.you') : who;
       label = people > 1
@@ -28155,11 +28291,70 @@ const AppView = {
 
     const note = AppView._workStateNote({
       key, who, at, clearAt, claimUsers, bot: bot ? (bot.what || 'building') : null,
+      botPlan: !!(bot && bot.plan),
       botMine: !!(bot && bot.mine),
       botAskedBy: bot && !bot.mine ? (bot.askedBy || null) : null,
       otherClaims: key !== 'claimed' && claims.length > 0,
     });
-    return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note, ...(rowWords ? { rowWords } : {}) };
+    return {
+      key, label, tone, spinner, who, people, at, clearAt, tip: note, note,
+      ...(rowWords ? { rowWords } : {}), ...(rowLeads ? { rowLeads: true } : {}),
+    };
+  },
+
+  // The bot chip's words, by the stage word the request's stored row says
+  // (its `words`, as this viewer reads them): Homeroom bot named in that
+  // same stage. A stage word with no entry is said as the row says it
+  // (_botChipWords). Keyed by the table's own phrase ids
+  // (src/services/work-stages.json), which tests/work-stages-client.test.js
+  // holds them to.
+  BOT_CHIP_IDS: {
+    'core:work.stage.reading': 'changes:chips.work.botReading',
+    'core:work.stage.notStarted': 'changes:chips.work.botQueued',
+    'core:work.stage.planning': 'changes:chips.work.botPlanning',
+    'core:work.stage.building': 'changes:chips.work.botBuilding',
+    'core:work.stage.readyToBuild': 'changes:chips.work.botQueued',
+  },
+
+  // The one rule, for the chip of a request Homeroom bot is on (_botOn):
+  // `{ id }`, the chip's word naming the bot in the stage the stored row
+  // says (BOT_CHIP_IDS), or `{ row, stage }`, the row's own words where
+  // naming the bot would say another stage (a plan waiting for its OK).
+  // Null with no stored row: a standing rebuilt from an older payload's
+  // fields (_issueStanding) is not one, and the chip says what the bot is
+  // doing, as it always did.
+  _botChipWords(issue) {
+    if (!issue) return null;
+    const s = AppView._issueStanding(issue);
+    const stored = !!s && (s === issue.standing || (!!issue.track && s === issue.track.work));
+    if (!stored) return null;
+    const words = AppView._standingWords(s);
+    if (!words) return null;
+    const own = Object.prototype.hasOwnProperty.call(AppView.BOT_CHIP_IDS, words.stage.id)
+      ? AppView.BOT_CHIP_IDS[words.stage.id] : null;
+    return own ? { id: own } : { row: words, stage: s.stage };
+  },
+
+  // The one rule: the request's stored row, when it does not say what a
+  // person's own work (a session, a claim) would: { stage, line, busy }, its
+  // words as this viewer reads them. Null when the row says somebody is
+  // building it (`claimed`, the builder's move) or that nobody has started,
+  // which is when a person's work is the truest thing to say (the same test
+  // the status card makes, _standingCard); and null with no stored row: a
+  // standing rebuilt from an older payload's fields (_issueStanding) is not
+  // one, so such a row keeps the order it always had.
+  _rowOverPerson(issue) {
+    if (!issue || issue.state === 'closed') return null;
+    const s = AppView._issueStanding(issue);
+    const stored = !!s && (s === issue.standing || (!!issue.track && s === issue.track.work));
+    if (!stored) return null;
+    const code = s.line && s.line.code;
+    const idle = s.stage === 'reading' && AppView.STANDING_NOT_STARTED.has(code);
+    const theirs = s.stage === 'building' && (code === 'claimed' || s.whoseMove === 'builder');
+    if (idle || theirs) return null;
+    const words = AppView._standingWords(s);
+    if (!words) return null;
+    return { ...words, busy: AppView.WORK_BUSY_STAGES.has(s.stage) };
   },
 
   // T2.5 (19 Nov 2026): the stored row's words for a change a request is in
@@ -28177,8 +28372,11 @@ const AppView = {
     const words = AppView._standingWords({ ...work, mine: true });
     if (!words) return null;
     const code = work.line && work.line.code;
-    const bad = work.stage === 'stopped' || code === 'checks_failing' || code === 'github_checks_failing';
-    return { ...words, busy: !bad && (work.stage === 'building' || work.stage === 'checking' || work.stage === 'going_live') };
+    // Failing tests do not spin, whoever fixes them: the same lines the
+    // header pill tints (_workPill). Homeroom bot's fix that failed was
+    // missing here, so its chip spun under "Homeroom bot couldn't fix it".
+    const bad = work.stage === 'stopped' || AppView.WORK_FAILING_LINES.has(code);
+    return { ...words, busy: !bad && AppView.WORK_BUSY_STAGES.has(work.stage) };
   },
 
   // The age a work-state sentence states, as the wording it needs and the
@@ -28395,7 +28593,9 @@ const AppView = {
         ? t('changes:chips.workNote.bot.askedYou')
         : (s.botAskedBy ? t('changes:chips.workNote.bot.askedNamed', { name: s.botAskedBy }) : '');
       if (s.bot === 'queued') {
-        main = then(asked || t('changes:chips.workNote.bot.askedSomebody'), t('changes:chips.workNote.bot.startsSoon'));
+        // Its plan waits for an OK: it starts then, not when a builder frees.
+        const next = s.botPlan ? t('changes:chips.workNote.bot.afterPlan') : t('changes:chips.workNote.bot.startsSoon');
+        main = then(asked || t('changes:chips.workNote.bot.askedSomebody'), next);
       } else {
         main = asked
           ? then(asked, started(AppView.WORK_BOT_STARTED_IDS.it, doing))

@@ -6747,6 +6747,10 @@
     "text": "Homeroom bot is building this",
     "description": "Chip on a request's card while the Homeroom bot (the platform's own building agent, a name) is building the request."
   },
+  "chips.work.botPlanning": {
+    "text": "Homeroom bot is planning this",
+    "description": "Chip on a request's card while the Homeroom bot (the platform's own building agent, a name) is writing the plan for the request, before it builds it."
+  },
   "chips.work.you": {
     "text": "you",
     "description": "Stands for the viewer in the chip on a request's card that says who is working on it, after the state and a dot, for example \"Being worked on · you\". Lower case in English because it follows the dot."
@@ -7310,6 +7314,10 @@
   "chips.workNote.bot.startsSoon": {
     "text": "It starts as soon as a builder is free.",
     "description": "Second sentence of the note on a request the Homeroom bot was asked to build and has not started. \"It\" is the bot's work; a \"builder\" is one of the machines that run it."
+  },
+  "chips.workNote.bot.afterPlan": {
+    "text": "It starts once the plan is OK'd.",
+    "description": "Second sentence of the note on a request whose plan the Homeroom bot wrote and that waits for the plan to be approved before it is built. \"It\" is the bot's work; \"OK'd\" means approved, as in \"Waiting for the plan to be OK'd\"."
   },
   "chips.workNote.bot.itStartedReading": {
     "text": "It started reading it.",

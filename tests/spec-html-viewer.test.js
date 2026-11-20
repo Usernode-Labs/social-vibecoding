@@ -121,9 +121,14 @@ test('a recovered spec stores the document beside its markdown, and the contract
 test('the browser half holds an author\'s markup to the rules: prose sanitised, screens sandboxed and offline', () => {
   const src = read('frontend/src/lib/spec-html.ts');
   // Screens: a sandbox with no tokens at all, and a policy that loads nothing off this site.
-  assert.match(src, /<iframe sandbox="" referrerpolicy="no-referrer"/);
-  assert.doesNotMatch(src, /allow-scripts|allow-same-origin|allow-forms|allow-popups|allow-top-navigation/);
-  assert.match(src, /const csp = `default-src 'none'; style-src 'unsafe-inline' \$\{origin\}; img-src data: \$\{origin\}; font-src data: \$\{origin\}`;/);
+  // Artifacts, stage 1: the one frame, static, and the one policy
+  // (frontend/src/features/artifact/; tests/artifact-frame.test.js draws it).
+  assert.match(src, /staticFrameHtml\(\{ doc: frameDoc\(markup, which, styles\), title: label, lazy: true \}\)/);
+  assert.match(src, /const csp = cspFor\('static', \{ site: origin \}\);/);
+  assert.doesNotMatch(src, /<iframe|allow-scripts|allow-same-origin|allow-forms|allow-popups|allow-top-navigation/);
+  const frameDocs = require('./lib/render-tsx').loadTsx('frontend/src/features/artifact/frame-doc.ts');
+  assert.equal(frameDocs.staticFrameHtml({ doc: '<p title="a">x</p>', title: 'After: "new"', lazy: true }),
+    '<iframe sandbox="" referrerpolicy="no-referrer" tabindex="-1" aria-hidden="true" title="After: &quot;new&quot;" data-srcdoc="&lt;p title=&quot;a&quot;&gt;x&lt;/p&gt;"></iframe>');
   assert.match(src, /const SCREEN_DROP = 'script,noscript,iframe,frame,frameset,object,embed,applet,base,meta,link,portal,template';/);
   // A screen loads only once it is the one showing.
   assert.match(src, /if \(showing && !frame\.getAttribute\('srcdoc'\) && frame\.dataset\.srcdoc\) frame\.setAttribute\('srcdoc', frame\.dataset\.srcdoc\);/);
