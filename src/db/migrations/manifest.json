@@ -540,6 +540,11 @@
       "id": "forgejo-publication-pending",
       "sha256": "58a15ded98e86480e61e7ca62d853d2ab37f50a5fa0fe7f7d595cd6569cd1bdd",
       "schemaSha256": "a2d6c3dee8f21341611effab62e85497b54aecd7166c261b623e241d207d3ae5"
+    },
+    {
+      "id": "live-drafts-after-propose",
+      "sha256": "1feeb0e079e107eb1ee1bfc2b0df5b945cece026f2bfffb131f9cf3a7df7e8e9",
+      "schemaSha256": "0dd3a3616ac7f90070ef69bfd633f468d659c2ec6e53399f1f16598cb819895b"
     }
   ]
 }

@@ -5577,7 +5577,17 @@ async function capabilityDeps(pool, { userId, conversationId, message, deps = {}
     (deps.liveDrafts || require('./live-drafts')).threadOf(pool, { userId, conversationId, message }),
     (deps.designThreads || require('./design-threads')).threadOf(pool, { userId, conversationId, message }),
   ]);
-  return { ...(design ? { threadDesign: design } : {}), ...(draft ? { threadLiveDraft: draft } : {}) };
+  // 20 Nov 2026 (live-draft review, C and I): what the screen had open beside
+  // the thread when they sent it (metadata.showing: an artifact or the live
+  // draft), so "this" can be read as the one they are looking at.
+  const raw = message?.metadata?.showing;
+  const showing = raw && typeof raw === 'object' && (Number(raw.artifactId) > 0 || Number(raw.liveDraftId) > 0)
+    ? (Number(raw.liveDraftId) > 0 ? { liveDraftId: Number(raw.liveDraftId) } : { artifactId: Number(raw.artifactId) })
+    : null;
+  return {
+    ...(design ? { threadDesign: design } : {}), ...(draft ? { threadLiveDraft: draft } : {}),
+    ...(showing ? { threadShowing: showing } : {}),
+  };
 }
 
 /** What noteUserMessage does with a message from somebody it works for, while the bot types. */

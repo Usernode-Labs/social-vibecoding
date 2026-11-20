@@ -543,16 +543,47 @@ function designThreadLines(design, { refused = null } = {}) {
  * (live-draft-bot.js draftPrompt). `refused`: why it cannot just now. Empty
  * with no draft open.
  */
-function draftThreadLines(liveDraft, { refused = null } = {}) {
+function draftThreadLines(liveDraft, { refused = null, design = null, showing = null } = {}) {
   if (!liveDraft) return [];
   const name = liveDraft.app_name || liveDraft.app_slug || 'the project';
   if (refused) {
     return [`- A live draft of ${name} is open beside this thread, but its code cannot be read just now. If they want something changed in it, say so: "${clip(refused, 200)}"`];
   }
-  return [
+  const lines = [
     `- A live draft of ${name} is open beside this thread. You change its code yourself, with the draft tools`,
     '  (THIS THREAD\'S LIVE DRAFT below says how), and anything else they ask you answer as in any other thread.',
   ];
+  // 20 Nov 2026 (live-draft review, C): a draft survives Propose. Its
+  // proposal is a change of its own, and what this turn changes is saved on
+  // the draft until they tap Update proposal.
+  if (liveDraft.state === 'proposed' && Number(liveDraft.proposal_session_id) > 0) {
+    const pr = Number(liveDraft.proposal_pr_number) > 0 ? `PR #${Number(liveDraft.proposal_pr_number)}` : 'a proposal';
+    const pending = Math.max(0, Number(liveDraft.pending_edits) || 0);
+    lines.push(
+      `- This draft is up for a vote as ${pr}. It is still this thread's draft, still running beside the chat: a fix`,
+      '  or a change they ask for now goes into the draft with the draft tools, never into an artifact and never as a',
+      '  new draft. What you change is saved on the draft, not in the proposal: it reaches the proposal only when they',
+      '  tap Update proposal in the preview\'s header, which clears the proposal\'s votes and runs its checks again.',
+      '  Say that once, the first time you change the draft after it was proposed. You never update or propose it',
+      '  yourself.',
+      pending > 0
+        ? `- ${pending} ${pending === 1 ? 'change is' : 'changes are'} not in the proposal yet.`
+        : '- The proposal has every change in the draft so far.',
+    );
+  }
+  // C: a thread with both an artifact and a draft says which is which, and
+  // which one they have open when the screen told us.
+  if (design) {
+    const looking = Number(showing?.liveDraftId) === Number(liveDraft.id) ? 'the app\'s live preview'
+      : Number(showing?.artifactId) > 0 ? `the artifact "${clip(design.title, 80)}"` : null;
+    lines.push(
+      `- This thread also holds an artifact, "${clip(design.title, 80)}": a page you wrote, not the app. A change to the`,
+      '  app goes into the draft; a change to the artifact into the artifact. Your reply names which one it changed',
+      '  ("in the app\'s preview", "on the page").',
+      ...(looking ? [`- They have ${looking} open beside the chat now: "this" and "it" most likely mean that one.`] : []),
+    );
+  }
+  return lines;
 }
 
 /**
@@ -577,7 +608,7 @@ function otherThreadLines(thread) {
     // #6683: a thread that holds a design answers like any other. Step 6:
     // the turn draws it itself, as it changes an open live draft's code.
     ...designThreadLines(thread.design, { refused: thread.designRefused || null }),
-    ...draftThreadLines(thread.liveDraft, { refused: thread.draftRefused || null }),
+    ...draftThreadLines(thread.liveDraft, { refused: thread.draftRefused || null, design: thread.design || null, showing: thread.showing || null }),
   ];
   const d = thread.draft;
   if (d?.kind === 'ask' && d.about) {
@@ -3002,9 +3033,13 @@ async function historyMessages(pool, {
     // Step 6: a comment pinned on a design's preview is read with its pin
     // (the version, the point and the element under it: design-bot.js
     // personLine), as the designer once read it.
+    // 20 Nov 2026 (live-draft review, J): and one pinned on a live draft's
+    // preview, with its place in the app (live-drafts.js pinLine).
     const said = !fromBot && m.metadata?.designPin
       ? require('./design-bot').personLine({ content: clip(m.content, 2000), metadata: m.metadata })
-      : clip(m.content, fromBot ? MAX_REPLY_CHARS : 2000);
+      : !fromBot && m.metadata?.previewPin
+        ? require('./live-drafts').pinLine({ content: clip(m.content, 2000), pin: m.metadata.previewPin })
+        : clip(m.content, fromBot ? MAX_REPLY_CHARS : 2000);
     // P1: its own long answers are read back whole.
     const text = [`${about}${said}`, ...lines].filter(Boolean).join('\n') || '(attachment)';
     const role = fromBot ? 'assistant' : 'user';
@@ -3404,6 +3439,19 @@ async function openAppPreview(pool, ctx, args = {}) {
   }
   ctx.openPreview = { draftId: Number(out.body.draft.id) };
   const loaded = typeof ctx.loadDraft === 'function' ? await ctx.loadDraft(ctx.openPreview.draftId) : null;
+  // 20 Nov 2026 (live-draft review, C): a thread whose draft is up for a vote
+  // keeps it: the same draft comes up again, never a second one from main.
+  const proposal = out.body.draft.proposal;
+  if (out.body.reused && proposal) {
+    const pr = proposal.prNumber ? `PR #${proposal.prNumber}` : 'its proposal';
+    return {
+      ok: true,
+      reused: true,
+      note: `This thread's draft is the one up for a vote as ${pr}, with every change made in it so far: its preview opens `
+        + 'beside the chat again. A change you make now is saved on the draft and reaches the proposal only when they '
+        + `tap Update proposal.${loaded?.ok ? ' If they asked for a change, make it now, then reply.' : ' Its code cannot be changed in this turn: say so.'}`,
+    };
+  }
   if (loaded?.ok) {
     return {
       ok: true,
@@ -4627,6 +4675,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
               ? {
                 draft: deps.threadDraft || null, design: deps.threadDesign || null, designRefused: caps.designRefused,
                 liveDraft: deps.threadLiveDraft || null, draftRefused: caps.draftRefused,
+                // 20 Nov 2026 (C, I): what the screen had open when they sent it.
+                showing: deps.threadShowing || null,
               }
               : null,
             extra: threadTools.promptLines(ctx),

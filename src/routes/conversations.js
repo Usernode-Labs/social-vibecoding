@@ -882,6 +882,28 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         metadata = { designPin: pin };
       }
       delete input.design_pin;
+      // 20 Nov 2026 (live-draft review, J): a comment pinned on a live
+      // draft's preview carries its point, checked against the draft of the
+      // thread it is written in (live-drafts.js pinFor).
+      if (input.preview_pin != null) {
+        const pin = await require('../services/live-drafts').pinFor(pool, {
+          user: req.user, threadRootId: input.thread_root_id, pin: input.preview_pin,
+        });
+        if (!pin) return res.status(400).json({ error: 'That comment\'s point is not on this preview.' });
+        metadata = { ...(metadata || {}), previewPin: pin };
+      }
+      delete input.preview_pin;
+      // 20 Nov 2026 (C, I): what the screen had open beside the thread (an
+      // artifact, or the live draft), so the bot reads "this" as that one.
+      // A hint only: the turn compares it with the thread's own.
+      if (input.showing != null && typeof input.showing === 'object' && !Array.isArray(input.showing)) {
+        const artifactId = Number(input.showing.artifactId);
+        const liveDraftId = Number(input.showing.liveDraftId);
+        const showing = Number.isSafeInteger(liveDraftId) && liveDraftId > 0 ? { liveDraftId }
+          : Number.isSafeInteger(artifactId) && artifactId > 0 ? { artifactId } : null;
+        if (showing) metadata = { ...(metadata || {}), showing };
+      }
+      delete input.showing;
       // 14 Nov 2026: Main Chat is gone, so a message to Homeroom bot is
       // always in a thread. One posted with none named (an older client, the
       // connector) gets one before it is sent: the thread of what it quotes,

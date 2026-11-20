@@ -1635,10 +1635,21 @@ function publicMetadata(raw, viewer = null) {
   return { [BOT_METADATA_KEY]: value };
 }
 
-/** #6071: what of a person's message's metadata a reader is shown: its design pin, or nothing. */
+/**
+ * #6071: what of a person's message's metadata a reader is shown: its design
+ * pin, or nothing. 20 Nov 2026 (live-draft review, J, C): and a pin on a live
+ * draft's preview (`previewPin`), and what the screen had open beside the
+ * thread when it was sent (`showing`), which the bot's turn reads.
+ */
 function personMetadata(raw) {
-  const pin = raw && typeof raw === 'object' ? raw.designPin : null;
-  return pin && typeof pin === 'object' && !Array.isArray(pin) ? { designPin: pin } : null;
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+  const out = {
+    ...(obj(raw.designPin) ? { designPin: raw.designPin } : {}),
+    ...(obj(raw.previewPin) ? { previewPin: raw.previewPin } : {}),
+    ...(obj(raw.showing) ? { showing: raw.showing } : {}),
+  };
+  return Object.keys(out).length ? out : null;
 }
 
 async function updateTitle(pool, user, conversationId, title) {
