@@ -5740,7 +5740,7 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
         in that test lists, so a feature added to Standard shows under
         this look too unless somebody decides otherwise there.
    ============================================================ */
-html[data-skin-wip] {
+html:not([data-skin]) {
   /* The page: its ground and its typeface. This config leaves both to the
      shell; another config may name its own. */
   --wip-page-bg: transparent;
@@ -5988,7 +5988,7 @@ html[data-skin-wip] {
    kit's own contrast table: black on blue 6.2:1, white would fail). Type is
    Geist, the kit's typeface for interface text; its serif is for headlines,
    and Home has none. */
-html[data-skin-wip][data-wip-tokens="brand"] {
+html:not([data-skin]) {
   /* The kit's three colours as the marks icons take turns in: each a pale
      wash of the colour (a quarter of it, or less, over the card) with the
      glyph in a deep tone of the same colour. */
@@ -6039,12 +6039,14 @@ html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-meter: #3090e1;
   /* The shell's own marks on a page of this config: where you are, in the
      kit's ink on a wash of it, not the standard blue. */
+}
+html[data-skin-wip][data-wip-tokens="brand"] {
   --lit-ink: #000000;
   --lit-tint: rgb(0 0 0 / 0.07);
   --lit-line: rgb(0 0 0 / 0.14);
 }
 /* In the dark it is the kit's other pairing, cream on black. */
-html[data-skin-wip][data-wip-tokens="brand"].dark {
+html:not([data-skin]).dark {
   --wip-mark-1-bg: rgb(255 238 111 / 0.16);
   --wip-mark-1-ink: #ffee6f;
   --wip-mark-2-bg: rgb(48 144 225 / 0.2);
@@ -6076,6 +6078,8 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
   --wip-fold-edge: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-fold-edge-down: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-count-line: transparent;
+}
+html[data-skin-wip][data-wip-tokens="brand"].dark {
   --lit-ink: #fffeea;
   --lit-tint: rgb(255 254 234 / 0.1);
   --lit-line: rgb(255 254 234 / 0.18);
@@ -6445,7 +6449,7 @@ html[data-skin-wip] .wip-filterbar > select {
    it keeps a clear step below the header's edge, which overlaps the top of
    the row (asked 19 Nov 2026; the field stood 5px under it). */
 @media (max-width: 767.98px) {
-  html[data-skin-wip] #home-search-bar > .wip-topbar { padding-top: var(--wip-topbar-pad-phone); }
+  html:not([data-skin]) #home-search-bar > .wip-topbar { padding-top: var(--wip-topbar-pad-phone); }
 }
 .wip-search { width: 100%; max-width: var(--wip-search-w); }
 /* A project tile's sentence and its line of facts (app-grid.tsx). */
@@ -6623,7 +6627,7 @@ html[data-skin-wip] .home-row > #home-challenges-section { margin-top: calc(var(
 /* A pinned project's press area, the search field and the sort menu: inside
    a card, or a field. */
 html[data-skin-wip] #app-list > .app-card,
-html[data-skin-wip] .wip-search > input,
+html:not([data-skin]) .wip-search > input,
 html[data-skin-wip] #home-join-section select { border-radius: var(--wip-radius-inner); }
 /* A community's card, and the placeholders that stand for one while it
    loads, are cards on the page. */
@@ -7816,14 +7820,14 @@ html[data-skin-wip][data-wip-tokens="brand"] {
 /* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
    is drawn from its own tokens, which are the filled action's unless the
    config names others. */
-html[data-skin-wip] :is(#home-new-project-top, #communities-new-top) {
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top) {
   background: var(--wip-top-cta-bg);
   color: var(--wip-top-cta-ink);
   font-weight: var(--wip-top-cta-weight);
   box-shadow: var(--wip-top-cta-edge);
 }
-html[data-skin-wip] :is(#home-new-project-top, #communities-new-top):hover { transform: var(--wip-top-cta-lift); }
-html[data-skin-wip] :is(#home-new-project-top, #communities-new-top):active {
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):hover { transform: var(--wip-top-cta-lift); }
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):active {
   box-shadow: var(--wip-top-cta-edge-down);
   transform: var(--wip-top-cta-press);
 }
@@ -8755,6 +8759,15 @@ html:not([data-skin]) .gc-vote-btn.gc-vote-btn-yes { background: var(--wip-btn-y
 html:not([data-skin]) .gc-vote-btn.gc-vote-btn-no { background: var(--wip-btn-no-bg); }
 html:not([data-skin]) .gc-vote-btn:is(.gc-vote-btn-yes, .gc-vote-btn-no):active:not(:disabled) { box-shadow: none; transform: var(--wip-btn-press); }
 /* END OF BUTTONS. */
+/* ── HOME, A PIECE AT A TIME (20 Nov 2026): the standard look takes Standard
+   (WIP)'s Home in steps. The look's tokens are both looks' now (the token
+   rules at the head of the STANDARD (WIP) block are scoped to
+   html:not([data-skin])); its wallpaper stays the standard look's own.
+   Step 1: the top row (the short search field and New project as the top
+   action, frontend/src/features/home/index.tsx `topRow`), and the kit's
+   typeface on the page. */
+html:not([data-skin]) #home-screen { font-family: var(--wip-font); }
+/* END OF HOME. */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
 @keyframes wip-hero-drift {
   from { transform: rotate(0deg) scale(1); }
