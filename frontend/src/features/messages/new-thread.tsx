@@ -55,7 +55,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
-import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SidebarIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, ListBulletIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -483,7 +483,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
           <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
             aria-label={t('messages:ai.list.show')} title={t('messages:ai.list.show')}
             onClick={() => setListClosed(false)}>
-            <SidebarIcon aria-hidden="true" />
+            <ListBulletIcon aria-hidden="true" />
           </button>
         ) : null}
         <div className="min-w-0 flex-1">

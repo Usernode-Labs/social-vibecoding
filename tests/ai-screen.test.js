@@ -2882,11 +2882,21 @@ test('the page is one pane only while it is docked, open, and with no preview be
 
 test('the way back to the list: a round head button first in a thread\'s head and a new chat\'s', () => {
   const messages = read('frontend/src/features/messages/index.tsx');
-  const header = messages.slice(messages.indexOf('<header className="messages-thread-header" data-reply-head={alone ? \'alone\' : undefined}>'));
-  assert.match(header.slice(0, 900),
-    /\{alone && !onBack && showList \? \(\s+<button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""\s+aria-label=\{t\('messages:ai\.list\.show'\)\} title=\{t\('messages:ai\.list\.show'\)\}\s+onClick=\{\(\) => setListClosed\(false\)\}>\s+<SidebarIcon aria-hidden="true" \/>/,
+  // One button node, drawn by both heads the thread can have: the compact
+  // sheet the bot tab draws it as (#6863) and the plain header elsewhere.
+  // It is the list's own glyph — never the rail's SidebarIcon, which is the
+  // Messages screen's full-width toggle (messages-full-width.test.js).
+  assert.match(messages,
+    /const showList = useShowListButton\(\);\s+const showListButton = alone && !onBack && showList \? \(\s+<button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""\s+aria-label=\{t\('messages:ai\.list\.show'\)\} title=\{t\('messages:ai\.list\.show'\)\}\s+onClick=\{\(\) => setListClosed\(false\)\}>\s+<ListBulletIcon aria-hidden="true" \/>/,
     'the same small round head button as the thread\'s ✕, named by its tooltip');
-  assert.match(messages, /const showList = useShowListButton\(\);/);
+  const bar = messages.slice(messages.indexOf('<ThreadHeadCard\n              attrs={{ \'data-reply-head\': \'alone\' }}'));
+  assert.match(bar.slice(0, 600), /lead=\{showListButton\}/,
+    'the compact sheet the bot tab draws a private thread as leads its head with it');
+  const header = messages.slice(messages.indexOf('<header className="messages-thread-header" data-reply-head={alone ? \'alone\' : undefined}>'));
+  assert.match(header.slice(0, 400), /\{showListButton\}/,
+    'and so does the plain header, before any other head button');
+  assert.ok(header.indexOf('{showListButton}') < header.indexOf('data-reply-back'),
+    'first in the head');
   const fresh = read('frontend/src/features/messages/new-thread.tsx');
   const freshHead = fresh.slice(fresh.indexOf('<header className="messages-thread-header">'));
   assert.match(freshHead.slice(0, 600),
