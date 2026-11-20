@@ -7607,6 +7607,19 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-line { color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-btn { align-self: center; min-width: 14rem; padding-inline: 1.5rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-back { margin-top: 0.875rem; color: var(--wip-ink); font-size: var(--wip-link-size); text-decoration: underline; text-underline-offset: 3px; }
+/* Second drawing (proposal, 20 Nov 2026): from 768px the end is one wide strip, as wide as the vote card it follows, so
+   the page does not shrink to a small box: the pile at its start, the two lines beside it, the action and the way back
+   at its far end. A phone keeps the stacked card. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 1.5rem; align-items: center; width: min(100%, calc(var(--wip-needs-main) + var(--wip-needs-side))); padding: 1.5rem 2rem; text-align: start; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-stack, .rf-end-mark) { grid-column: 1; grid-row: 1 / span 2; margin: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-title { grid-column: 2; grid-row: 1; align-self: end; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-line { grid-column: 2; grid-row: 1 / span 2; margin: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-line.rf-end-line-tight { grid-row: 2; align-self: start; margin-top: 0.125rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-btn { grid-column: 3; grid-row: 1 / span 2; min-width: 12rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-btn.rf-end-btn-go { grid-row: 1; align-self: end; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-back { grid-column: 3; grid-row: 2; align-self: start; justify-self: center; height: auto; margin-top: 0.625rem; }
+}
 /* WHAT A CHANGE DOES, BESIDE IT (asked 20 Nov 2026). From 1280px a project's Needs you keeps the card that the arrow in
    the change's bar opens (its summary, who made it, the way to its page and the three ways to look closer) open at the
    change's far side, in the same card past a hairline; review-flow.tsx marks the page (`data-rf-beside`) and takes the
