@@ -7387,27 +7387,37 @@ html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-s
 /* THE HERO WEARS A BRAND BACKGROUND (asked 20 Nov 2026): one of the kit's six pictures, the one the community's pinned
    card opens on, fills the hero's far side and fades into the card toward the words, so they stay on the card's own
    colour. It stands in place of the drifting washes; the dots and the rings are drawn over it. */
+html:not([data-skin]) {
+  --wip-hero-scene: var(--wip-scene-1);
+  --wip-hero-scene-mask: linear-gradient(to right, transparent 30%, #000000 78%);
+  --wip-hero-scene-mask-rtl: linear-gradient(to left, transparent 30%, #000000 78%);
+  --wip-hero-scene-mask-phone: linear-gradient(to right, transparent 45%, #000000 100%);
+  --wip-hero-scene-mask-phone-rtl: linear-gradient(to left, transparent 45%, #000000 100%);
+  --wip-hero-home-bg: #fffeea;
+  --wip-hero-home-rule: linear-gradient(to right, #ffee6f 0 40%, #3c7bd8 40% 70%, #a9cf97 70% 100%);
+}
+html:not([data-skin]).dark { --wip-hero-home-bg: transparent; }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene] {
-  background-image: var(--wip-hero-scene, var(--wip-scene-1));
+  background-image: var(--wip-hero-scene);
   background-size: cover;
   background-position: center;
-  -webkit-mask-image: linear-gradient(to right, transparent 30%, #000 78%);
-  mask-image: linear-gradient(to right, transparent 30%, #000 78%);
+  -webkit-mask-image: var(--wip-hero-scene-mask);
+  mask-image: var(--wip-hero-scene-mask);
 }
 html:not([data-skin])[dir="rtl"] #dev-workshop .wip-hero-wash[data-scene] {
-  -webkit-mask-image: linear-gradient(to left, transparent 30%, #000 78%);
-  mask-image: linear-gradient(to left, transparent 30%, #000 78%);
+  -webkit-mask-image: var(--wip-hero-scene-mask-rtl);
+  mask-image: var(--wip-hero-scene-mask-rtl);
 }
 /* On a phone the words run the hero's whole width, so the picture is a hint at the far edge and no more. */
 @media (max-width: 767.98px) {
   html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene] {
     opacity: 0.45;
-    -webkit-mask-image: linear-gradient(to right, transparent 45%, #000 100%);
-    mask-image: linear-gradient(to right, transparent 45%, #000 100%);
+    -webkit-mask-image: var(--wip-hero-scene-mask-phone);
+    mask-image: var(--wip-hero-scene-mask-phone);
   }
   html:not([data-skin])[dir="rtl"] #dev-workshop .wip-hero-wash[data-scene] {
-    -webkit-mask-image: linear-gradient(to left, transparent 45%, #000 100%);
-    mask-image: linear-gradient(to left, transparent 45%, #000 100%);
+    -webkit-mask-image: var(--wip-hero-scene-mask-phone-rtl);
+    mask-image: var(--wip-hero-scene-mask-phone-rtl);
   }
 }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="2"] { --wip-hero-scene: var(--wip-scene-2); }
@@ -7418,8 +7428,6 @@ html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="6"] { --wip-hero-
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene]::before { content: none; }
 /* HOMEROOM'S OWN HERO is the brand's own page (asked 20 Nov 2026): its cream, the people at the far side standing on
    the bottom edge, and the three-colour rule along it. On a dark page the card keeps its own colour under them. */
-html:not([data-skin]) { --wip-hero-home-bg: #fffeea; }
-html:not([data-skin]).dark { --wip-hero-home-bg: transparent; }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] {
   opacity: 1;
   background: var(--wip-hero-home-bg);
@@ -7431,7 +7439,7 @@ html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"]::after {
   position: absolute;
   inset: auto 0 0 0;
   height: 6px;
-  background-image: linear-gradient(to right, #ffee6f 0 40%, #3c7bd8 40% 70%, #a9cf97 70% 100%);
+  background-image: var(--wip-hero-home-rule);
 }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] + .wip-hero-art .wip-hero-stage { animation: none; place-items: end center; padding-block-end: 6px; }
 .wip-hero-people { position: absolute; inset-block-end: 6px; inset-inline-end: 1.25rem; height: calc(100% - 14px); width: auto; max-width: none; }

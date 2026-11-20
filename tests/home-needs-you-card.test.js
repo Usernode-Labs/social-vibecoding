@@ -220,7 +220,7 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   // No Invite card and no Share it card under the look: both actions are the hero's.
   assert.match(ws, /const wipLook = useLiveSkin\(\) === 'wip';/);
-  assert.match(ws, /inviteCard=\{!wipLook\}/);
+  assert.match(ws, /inviteCard=\{!kitHub\}/);
   assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
   assert.match(card, /\{wipLook \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
   assert.match(card, /function WipHeroPublic\([^)]*\): ReactNode \{\s*if \(data\.audience !== 'solo' \|\| !data\.can_manage \|\| data\.audience_change\) return null;\s*return <MakePublic /, 'Make it public is offered to exactly whom Share it offers it');
@@ -228,12 +228,15 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   assert.match(card, /\{member \? \(\s*<button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title=\{t\('project:communityCard\.invite\.title'\)\} onClick=\{openInviteLinks\}>/);
   assert.match(card, /\{wipLook \? null : \(\s*<>\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(/, 'one Invite on the page');
   // The hero's scenery is for show.
-  assert.match(card, /<span className="wip-hero-wash" aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
+  assert.match(card, /<span className="wip-hero-wash" data-scene=\{platform \? 'home' : String\(communityScene\(slug\)\)\} aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
+  // The standard look's hub too (20 Nov 2026), and a project's preview beside the hero where there is one.
+  assert.match(card, /const wipLook = isKitHome\(useLiveSkin\(\)\);/);
+  assert.match(card, /const previewBeside = wipLook && !platform && !!\(data\.cover\?\.preview_url \|\| data\.cover\?\.illustration_url\);/);
   // Needs you stays in the row with nothing waiting, shaped as its neighbours.
   assert.match(hub, /if \(alone && !claims && !wipLook\) return null;/);
   assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin-wip\] #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
   assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/, 'For you is three across from 768px');
 });
 
