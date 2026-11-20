@@ -794,7 +794,11 @@ export function AiScreen(): ReactNode {
     else {
       const where = botTabAt(hash);
       if (where?.threadRootId) {
-        openDetail({ kind: 'design', ref: { conversationId: botId, rootId: where.threadRootId }, version: at.version });
+        openDetail({
+          kind: 'design',
+          ref: { conversationId: botId, rootId: where.threadRootId, ...(at.artifactId ? { artifactId: at.artifactId } : {}) },
+          version: at.version,
+        });
       }
     }
   }, [mounted, botId]);

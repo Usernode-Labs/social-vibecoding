@@ -32,6 +32,7 @@
 const { ARTIFACT_LIMITS, ARTIFACT_TOOLS } = require('./bot-profiles');
 const botTools = require('./bot-tools');
 const log = require('./logger');
+const { MAX_ARTIFACTS_PER_THREAD } = require('./artifacts');
 
 // The most of a version the model reads and may edit (the same room a design
 // has): a bigger one is not changed, and they are told so.
@@ -47,11 +48,59 @@ const UNREAD_TEXT = 'I couldn\'t read this page\'s newest version just now. Ask 
 const NO_THREAD_TEXT = 'I couldn\'t open a thread for the page just now. Try again in a minute.';
 const FULL_TEXT = 'I couldn\'t keep that change: this page has as many versions as it can hold, or it grew too big.';
 // What the turn is told when a thread that holds a page is asked for what
-// only a design's thread does: a screen drawn into it, or a project made of it.
-const NO_SCREEN_TEXT = 'This thread holds a page, so no screen is drawn into it. Tell them to start a new thread on the '
-  + 'Homeroom bot page (New thread) and ask for the screen there.';
+// only a design's thread does: a project made of it. (K, 20 Nov 2026: a
+// screen asked for there is a new artifact beside the page.)
 const NO_PROJECT_TEXT = 'This thread holds a page you wrote with them, and a page is never made into a project. To start a '
   + 'project, tell them to start a new thread on the Homeroom bot page (New thread) and say there what it is for.';
+// 20 Nov 2026 (live-draft review, K): what the turn is told when a thread
+// holds as many artifacts as it may (artifacts.js MAX_ARTIFACTS_PER_THREAD).
+const FULL_THREAD_TEXT = `This thread holds ${MAX_ARTIFACTS_PER_THREAD} artifacts, the most one thread holds. Change one of them, `
+  + 'or tell them to start a new thread on the Homeroom bot page (New thread) for a new one.';
+// One artifact a turn: its version is saved with the turn's one reply.
+const ONE_A_TURN_TEXT = 'You changed an artifact this turn already, and one turn saves one. Reply now, and say you will '
+  + 'change the other one when they ask again.';
+
+// 20 Nov 2026 (live-draft review, F): what is a new version and what is a
+// new artifact, said in every artifact's section and in the thread's own
+// lines. The bot once wrote a new subject (iOS list layouts) as version 2 of
+// the old one ("style directions"), and the old one was gone from view.
+const NEW_SUBJECT_LINES = Object.freeze([
+  '- A change to what an artifact already shows is a new version of it: edit_artifact, or write_artifact with its',
+  '  number (artifact) to write it again whole. A different subject, or their asking for "a new one", is a new',
+  '  artifact: write_artifact with no number (start_design for a screen in a project\'s look). Never write one',
+  '  subject over another. When you are not sure it is the same subject, make a new artifact.',
+  '- When this thread holds more than one artifact, your reply names the one you wrote to, by its title.',
+]);
+
+/** Pure: an artifact's kind in the words the turn is told. */
+function kindWords(kind) {
+  return kind === 'page' ? 'a page' : 'a screen in a project\'s look';
+}
+
+/**
+ * Pure (20 Nov 2026, live-draft review, K): the thread's artifacts as the
+ * turn is told them, when it holds more than one (`artifact`: the open one,
+ * artifacts.js artifactFor, with `opened` from design-threads.js threadOf):
+ * each by number, title, kind and newest version, which one is open and how
+ * that is known. Empty for a thread that holds one or none.
+ */
+function artifactListLines(artifact) {
+  const list = Array.isArray(artifact?.artifacts) ? artifact.artifacts : [];
+  if (list.length < 2) return [];
+  const open = Number(artifact.artifactId) || 1;
+  const how = artifact.opened === 'showing' || artifact.opened === 'pin'
+    ? 'they have it open beside the thread'
+    : artifact.opened === 'reply'
+      ? 'their message answers one of its versions'
+      : 'the one you wrote last; they did not say which one they are looking at';
+  return [
+    `- This thread holds ${list.length} artifacts, numbered in the order they were made:`,
+    ...list.map((a) => `  ${Number(a.artifactId)}. "${clip(a.title, 80)}", ${kindWords(a.artifactKind)}, newest version `
+      + `${Number(a.latest) || 0}${Number(a.artifactId) === open ? ` (open: ${how})` : ''}`),
+    `- Your artifact tools work on the open one, artifact ${open}. To work on another, give its number (artifact) to`,
+    '  write_artifact or edit_artifact: it opens, and its whole HTML is shown to you.',
+  ];
+}
 
 /**
  * Pure: whether a chat turn's thread holds a plain page: the page's session
@@ -66,6 +115,16 @@ function holdsPage(ctx) {
 function clip(value, max) {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/**
+ * Pure (20 Nov 2026, live-draft review, K): the artifact a tool call names
+ * (its `artifact` argument): a positive integer, or null for none, which in
+ * write_artifact is a new artifact and elsewhere the open one.
+ */
+function artifactNumber(value) {
+  const n = Number(value);
+  return value != null && value !== '' && Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 /**
@@ -145,8 +204,13 @@ function pagePrompt({ username, artifact = null, version = 0, html = '', next = 
     '- A page is one self-contained HTML document: its own <style>, and its own inline <script> when it must do',
     '  something (add up, filter, switch a tab). Nothing may load from the network: no external src, href, @import,',
     '  fetch or font. The preview blocks it. Draw a picture in SVG or leave it out.',
-    '- write_artifact writes the whole page, once. To change the page that is here, use edit_artifact: exact',
-    '  find-and-replace pairs, each `find` copied exactly from the HTML and long enough to occur once.',
+    '- To change the page that is here, use edit_artifact: exact find-and-replace pairs, each `find` copied exactly',
+    '  from the HTML and long enough to occur once. write_artifact writes a whole page, once a turn:',
+    artifact
+      ? `  with this page's number (artifact ${Number(artifact.artifactId) || 1}) to write it again whole, with no number for a new artifact.`
+      : '  this new one, with no number.',
+    // F (20 Nov 2026): a new subject is a new artifact, never an overwrite.
+    ...NEW_SUBJECT_LINES,
     `- One version a turn: what you write and change in this turn is saved as version ${Number(next) || 1} when you reply.`,
     '- Real words and real numbers from what they said, never placeholder text. What they told you stays in the page.',
     '- A script in the page runs only for them, in a box that reaches nothing. Never ask for a password or anything',
@@ -186,10 +250,13 @@ function threadLines(artifact, { refused = null } = {}) {
   ];
   if (refused) lines.push(`- It cannot be changed in this turn. If they ask you to change it, say so: "${clip(refused, 200)}"`);
   else {
+    // K (20 Nov 2026): a screen in a project's look is a new artifact of
+    // this thread now (start_design), no longer a new thread's.
     lines.push('- You change it yourself, here, with the page tools (THIS THREAD\'S PAGE below says how), and your one reply',
-      '  says the version you saved. A screen of an app is not drawn into this thread: for that, tell them to start a',
-      '  new thread (New thread on the Homeroom bot page).');
+      '  says the version you saved.');
   }
+  // K, F (20 Nov 2026): the thread's other artifacts, and what is new.
+  lines.push(...artifactListLines(artifact), ...NEW_SUBJECT_LINES);
   return lines;
 }
 
@@ -205,7 +272,7 @@ async function openPage(pool, config, { user, artifact = null, room = null, star
   if (!room?.rootId) return { refused: NO_THREAD_TEXT, why: 'no_thread' };
   if (artifact && !['open', 'posted', 'filed'].includes(artifact.state)) return { refused: CLOSED_TEXT, why: 'closed' };
   const current = artifact?.latest
-    ? await store.versionOf(pool, { userId: user.id, rootId: artifact.rootId }).catch(() => null)
+    ? await store.versionOf(pool, { userId: user.id, rootId: artifact.rootId, artifactId: artifact.artifactId ?? null }).catch(() => null)
     : null;
   if (artifact?.latest && !current) return { refused: UNREAD_TEXT, why: 'unread' };
   if (current && current.html.length > MAX_ARTIFACT_CHARS) return { refused: TOO_BIG_TEXT, why: 'too_big' };
@@ -268,6 +335,11 @@ async function openPage(pool, config, { user, artifact = null, room = null, star
     capability: 'artifact',
     kind: 'page',
     design: artifact,
+    // 20 Nov 2026 (live-draft review, K): which of the thread's artifacts
+    // this session changes (1 for the first), or null while it writes a new
+    // one (`fresh`), which save() makes the thread's next.
+    artifactId: artifact ? Number(artifact.artifactId) || 1 : null,
+    fresh: !artifact,
     room,
     project: null,
     projectName: null,
@@ -311,7 +383,9 @@ async function openPage(pool, config, { user, artifact = null, room = null, star
     },
     /** What the reply carries when it shows a version it did not save (show_artifact). */
     meta() {
-      return showing && !changed() ? { designVersion: showing, designTitle: title() } : {};
+      return showing && !changed()
+        ? { designVersion: showing, designTitle: title(), artifactId: Number(artifact?.artifactId) || 1 }
+        : {};
     },
     /**
      * Save this turn's version, once its reply is in hand: `summary` is the
@@ -320,19 +394,27 @@ async function openPage(pool, config, { user, artifact = null, room = null, star
      */
     async save({ summary = null } = {}) {
       if (!changed()) return { ok: false, text: null };
+      // K (20 Nov 2026): a page this session wrote from nothing is a new
+      // artifact, the thread's next; one written again whole is the same one.
       const held = wrote || !artifact
         ? await store.ensureArtifact(pool, {
           user, thread: room, kind: 'page', title: title(), viewport: wrote?.size || artifact?.viewport || 'desktop', surface: 'new',
+          ...(artifact ? { artifactId: Number(artifact.artifactId) || 1 } : { fresh: true }),
         })
         : artifact;
       if (!held) return { ok: false, text: FULL_TEXT };
       const note = String(summary || '').replace(/\s+/g, ' ').trim() || (wrote && !artifact ? wrote.title : null) || null;
-      const made = await store.addVersion(pool, { threadId: held.threadId, html, author: 'bot', note });
+      const made = await store.addVersion(pool, {
+        threadId: held.threadId, artifactId: Number(held.artifactId) || 1, html, author: 'bot', note,
+      });
       if (!made) return { ok: false, text: FULL_TEXT };
       return { ok: true, held, made, captioned: null, onlyCapture: false, note };
     },
+    /** "Version N: <summary>.", named by the page's title when the thread holds more than one artifact (K). */
     versionLines(saved) {
-      return saved?.ok ? [threads.versionLine(saved.made.version, saved.note)] : [];
+      if (!saved?.ok) return [];
+      const named = (saved.held?.artifacts || []).length > 1 ? { title: saved.held.title } : {};
+      return [threads.versionLine(saved.made.version, saved.note, named)];
     },
     async close() {},
   };
@@ -368,14 +450,15 @@ async function startPage(pool, ctx, args = {}) {
         + '(New thread) and ask for the page there.',
     };
   }
-  if (ctx.caps?.design) return { ok: false, error: 'This thread already holds one: change it with its own tools.' };
-  if (ctx.deps?.threadDesign) {
-    return { ok: false, error: 'This thread holds a design or a page already, and it cannot be changed in this turn. Say so.' };
-  }
+  if (ctx.caps?.design) return { ok: false, error: 'An artifact is open in this turn already: write with its own tools.' };
+  // 20 Nov 2026 (live-draft review, K): a thread holds several artifacts. One
+  // that could not be opened in this turn (ctx.deps.threadDesign, refused)
+  // is not changed, but a new one is still written beside it.
+  const named = artifactNumber(args.artifact);
   const page = pageArgs(args);
   if (page.error) return { ok: false, error: page.error };
   if (typeof ctx.loadArtifact !== 'function') return { ok: false, error: 'A page cannot be written here.' };
-  const loaded = await ctx.loadArtifact({ kind: 'page', title: page.title });
+  const loaded = await ctx.loadArtifact({ kind: 'page', title: page.title, artifactId: named });
   if (!loaded?.ok) return { ok: false, error: loaded?.error || NO_THREAD_TEXT };
   const result = await ctx.caps.design.run('write_artifact', args);
   return result?.ok
@@ -392,11 +475,16 @@ module.exports = {
   UNREAD_TEXT,
   NO_THREAD_TEXT,
   FULL_TEXT,
-  NO_SCREEN_TEXT,
   NO_PROJECT_TEXT,
+  FULL_THREAD_TEXT,
+  ONE_A_TURN_TEXT,
+  NEW_SUBJECT_LINES,
   holdsPage,
   applyEdits,
   pageArgs,
+  artifactNumber,
+  artifactListLines,
+  kindWords,
   loadsNote,
   pagePrompt,
   threadLines,

@@ -30,7 +30,8 @@ const WIP_HIDES = [
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
   'html:not([data-skin])[data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
   // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.
-  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
+  // Under this look alone: the standard look's door opens the overview, and its board keeps the line (20 Nov 2026).
+  'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // The end of a run shows a picture of the brand's where the little pile, or the tick, was (20 Nov 2026).
@@ -269,6 +270,82 @@ test('the fold button leads the logo\'s line, on the same spot open and folded, 
   assert.match(tokens.body, /--wip-nav-ic-home: url\("[^"]*stroke-width='1\.8'/, 'the weight the rows\' glyphs are drawn at');
   const toggle = read('frontend', 'src', 'features', 'nav', 'sidebar-toggle.tsx');
   assert.deepEqual(toggle.match(/<[A-Za-z]*(Icon|svg)\b[^>]*>/g), ['<SidebarIcon className="w-5 h-5" />']);
+});
+
+test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {
+  const block = menuBlock();
+  const all = rules(block);
+  const cogRule = (r) => /\.platform-rail-settings(?!-)/.test(r.selector);
+  // It is not a row. With a row's height and start padding it stood 5px above
+  // You and its glyph sat off centre, so its hover and lit fill poked out over
+  // the row's corner (20 Nov 2026).
+  const row = all.find((r) => /min-height: var\(--wip-nav-row-h\);/.test(r.body));
+  assert.ok(row, 'the rows share one rule');
+  assert.ok(!cogRule(row), 'Settings takes no row measure');
+  for (const r of all.filter(cogRule)) {
+    assert.doesNotMatch(r.body, /min-height:/, `${r.selector} gives it a row's height`);
+    for (const m of r.body.matchAll(/padding[a-z-]*:\s*([^;]+);/g)) {
+      assert.match(m[1].trim(), /^0( 0)*$/, `${r.selector} pads it, which moves its glyph off its centre`);
+    }
+  }
+  // Unpadded, the shell's own rule for the button puts the glyph in its middle.
+  const css = read('public', 'css', 'app.css');
+  const desk = css.indexOf('\n  .platform-rail-settings {\n    position: relative;\n    z-index: 2;');
+  assert.ok(desk > 0, 'the shell\'s rule for the button');
+  assert.match(css.slice(desk, css.indexOf('}', desk)), /display: inline-flex;\s*align-items: center;\s*justify-content: center;/);
+  // Its own box, every measure from the menu's tokens.
+  const COG = 'html:not([data-skin]) #platform-tabs .platform-rail-settings';
+  const cog = all.find((r) => r.selector === COG && /width:/.test(r.body));
+  assert.ok(cog, 'Settings has a box of its own in the menu block');
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-row-h:/.test(r.body)).body;
+  const decl = (body, prop) => {
+    const m = body.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+);`));
+    assert.ok(m, `it sets ${prop}`);
+    return m[1].trim();
+  };
+  const parts = (value) => {
+    const out = [];
+    let depth = 0;
+    let from = 0;
+    for (let i = 0; i <= value.length; i += 1) {
+      const ch = value[i];
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+      else if ((ch === ' ' || ch === undefined) && depth === 0) { if (i > from) out.push(value.slice(from, i)); from = i + 1; }
+    }
+    return out;
+  };
+  const token = (name, given) => {
+    if (given && name in given) return given[name];
+    const m = tokens.match(new RegExp(`${name}:\\s*([0-9.]+)(px|rem);`));
+    assert.ok(m, `${name} is a length in the token rule`);
+    return Number(m[1]) * (m[2] === 'rem' ? 16 : 1);
+  };
+  const px = (expr, given) => {
+    const js = expr.replace(/var\((--wip-nav-[a-z0-9-]+)\)/g, (_, name) => `(${token(name, given)})`).replace(/calc\(/g, '(').replace(/(\d)px/g, '$1');
+    assert.match(js, /^[-+*/(). 0-9]+$/, `${expr} is arithmetic on the menu's tokens`);
+    return Function(`return (${js});`)();
+  };
+  assert.equal(decl(cog.body, 'width'), 'var(--wip-nav-settings)');
+  assert.equal(decl(cog.body, 'height'), 'var(--wip-nav-settings)');
+  assert.equal(token('--wip-nav-settings'), 32, 'a 32px square');
+  // The space it gives back is the menu's own space between rows.
+  assert.ok(block.includes(`${MENU_SCOPE} #platform-tabs.platform-tabs { padding-inline: var(--wip-nav-pad); gap: var(--wip-nav-row-space); }`));
+  // On the row's height as it is, and on a taller one: the margins follow the token.
+  for (const given of [{}, { '--wip-nav-row-h': 48 }]) {
+    const R = token('--wip-nav-row-h', given);
+    const S = px(decl(cog.body, 'width'), given);
+    const G = token('--wip-nav-row-space', given);
+    const [top, foot] = parts(decl(cog.body, 'margin-block')).map((v) => px(v, given));
+    const [start, end] = parts(decl(cog.body, 'margin-inline')).map((v) => px(v, given));
+    assert.equal(top + S + foot + G, 0, `row ${R}px: it takes no height, so You starts on its line`);
+    assert.equal(top + S / 2, R / 2, `row ${R}px: its centre is You's centre`);
+    assert.equal(start, 0);
+    assert.equal(end, top, `row ${R}px: the same air at the row's end as above and below it`);
+    assert.equal(px(decl(cog.body, 'border-radius'), given), token('--wip-nav-row-radius') - top, 'its corner runs beside the row\'s');
+  }
+  // Folded, the strip still puts it on a line of its own above You.
+  assert.ok(block.includes(`${MENU_SCOPE} #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-rail-settings { align-self: center; margin: 0 0 2px; }`));
 });
 
 test('buttons: the Sticker drawing, one block for the standard look and this one, every value a token', () => {

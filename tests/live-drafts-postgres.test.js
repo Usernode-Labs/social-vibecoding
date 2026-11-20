@@ -91,8 +91,10 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
   const calls = { push: [], preview: [], fetch: [], ws: [], promote: [] };
   let commit = 0;
   let files = new Map([['server.js', 'v1'], ['public/index.html', '<p>one</p>']]);
+  // C: a branch made from another change's starts at that one's head.
+  const branchHeads = new Map();
   const github = {
-    async getBranchSha() { return SHA('1'); },
+    async getBranchSha(owner, repo, branch) { return branchHeads.get(branch) || SHA('1'); },
     async pushFiles(owner, repo, list, opts) {
       calls.push.push({ owner, repo, list, opts });
       for (const f of list) files.set(f.path, f.content);
@@ -104,9 +106,14 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     async listRepoFiles() { return { files: [...files.keys()].map((p) => ({ path: p, size: 1 })) }; },
   };
   const lifecycle = {
-    async ensureSessionBranch({ pool: p, sessionId }) {
+    async ensureSessionBranch({ pool: p, sessionId, fromSessionId = null }) {
       const branchName = `dev/draft-${sessionId}`;
       await p.query('UPDATE chat_sessions SET branch_name = $2 WHERE id = $1', [sessionId, branchName]);
+      if (fromSessionId) {
+        const { rows: [d] } = await p.query('SELECT head_sha FROM live_drafts WHERE session_id = $1', [fromSessionId]);
+        calls.branchFrom = { sessionId, fromSessionId };
+        branchHeads.set(branchName, d.head_sha);
+      }
       return { branchName, created: true };
     },
   };
@@ -123,8 +130,14 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
   const ws = { pushToUser(id, payload) { calls.ws.push({ id, payload }); return 1; } };
   let promoteReply = { status: 200, body: { ok: true, status: 'promoted' } };
   const platform = { async promoteProposal(args) { calls.promote.push(args); return promoteReply; } };
+  // C: Update proposal's conductor operation, recorded.
+  let operationReply = { ok: true, updated: true, rebuilding: true };
+  const platformOperations = { async request(args) { calls.operations = [...(calls.operations || []), args]; return operationReply; } };
+  // C: the line a draft's thread is told when it closes on its own.
+  const said = [];
+  const dm = { async botAccount() { return { id: 1 }; }, async sendDm(_p, args) { said.push(args); return { messageId: 1 }; } };
   const deps = {
-    github, sessionLifecycle: lifecycle, previewWorkflow, fetch: fakeFetch, ws, platform,
+    github, sessionLifecycle: lifecycle, previewWorkflow, fetch: fakeFetch, ws, platform, platformOperations, dm,
     appAccess: { ...require('../src/services/app-access'), checkAppAccess: async () => true },
     communities: { appNeedsJoin: async () => null },
   };
@@ -338,25 +351,110 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     await liveDrafts.setEnabled(pool, { on: true });
   });
 
-  await t.test('Propose is the person\'s own promote, with what the edits said', async () => {
+  await t.test('Propose is the person\'s own promote, as a change of its own: the draft stays (C)', async () => {
     const draft = await theDraft();
     promoteReply = { status: 409, body: { error: 'promoted_cap' } };
     const refused = await liveDrafts.propose(pool, CONFIG, { user: person, draftId: draft.id, deps });
     assert.equal(refused.status, 409);
     assert.equal((await liveDrafts.byId(pool, draft.id)).state, 'open', 'a refused promote leaves it open');
+    const { rows: [{ n: left }] } = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM chat_sessions WHERE app_id = $1 AND session_title = 'Fix'", [project.id]);
+    assert.equal(left, 0, 'and leaves no proposal behind');
     promoteReply = { status: 200, body: { ok: true, status: 'promoted' } };
     const out = await liveDrafts.propose(pool, CONFIG, { user: person, draftId: draft.id, deps });
     assert.equal(out.status, 200, JSON.stringify(out.body));
     assert.equal(out.body.draft.state, 'proposed');
+    // The proposal is a change of its own, its branch made from the draft's.
     const asked = calls.promote[calls.promote.length - 1];
-    assert.deepEqual([asked.sessionId, asked.userId, asked.from, asked.pr], [draft.sessionId, person.id, 'paused', null]);
-    const { rows: [s] } = await pool.query('SELECT session_title FROM chat_sessions WHERE id = $1', [draft.sessionId]);
+    assert.notEqual(asked.sessionId, draft.sessionId);
+    assert.deepEqual([asked.userId, asked.from, asked.pr], [person.id, 'paused', null]);
+    assert.deepEqual(calls.branchFrom, { sessionId: asked.sessionId, fromSessionId: draft.sessionId });
+    const { rows: [s] } = await pool.query('SELECT session_title FROM chat_sessions WHERE id = $1', [asked.sessionId]);
     assert.equal(s.session_title, 'Fix');
-    const { rows: msgs } = await pool.query('SELECT role, content FROM chat_session_messages WHERE session_id = $1', [draft.sessionId]);
+    const { rows: msgs } = await pool.query('SELECT role, content FROM chat_session_messages WHERE session_id = $1', [asked.sessionId]);
     assert.match(msgs[msgs.length - 1].content, /- Bigger start button\n- Notes field/);
-    // No longer open: no edits, no supervisor on its next preview, its thread answered as any other.
-    assert.equal((await liveDrafts.applyEdit(pool, CONFIG, { draftId: draft.id, userId: person.id, files: [{ path: 'a.js', content: '' }], deps })).ok, false);
-    assert.equal(await liveDrafts.forThread(pool, { userId: person.id, rootId: draft.rootId }), null);
+    const head = (await liveDrafts.byId(pool, draft.id)).head_sha;
+    assert.deepEqual(out.body.draft.proposal, { sessionId: asked.sessionId, prNumber: null, open: true, pending: 0, headSha: head });
+    // Still this thread's draft: editable, its supervisor kept, and a second Propose is refused.
+    assert.equal(out.body.draft.editable, true);
+    assert.equal((await liveDrafts.forThread(pool, { userId: person.id, rootId: draft.rootId, deps })).id, draft.id);
+    assert.deepEqual((await liveDrafts.propose(pool, CONFIG, { user: person, draftId: draft.id, deps })).body.error, 'already_proposed');
+    // Opened again (open_app_preview), the same draft: never a second one from main.
+    const again = await liveDrafts.open(pool, CONFIG, { user: person, rootId: draft.rootId, deps });
+    assert.deepEqual([again.body.reused, again.body.draft.id, again.body.draft.state], [true, draft.id, 'proposed']);
+    // Nothing new yet: Update proposal has nothing to move.
+    assert.equal((await liveDrafts.updateProposal(pool, CONFIG, { user: person, draftId: draft.id, deps })).body.error, 'nothing_new');
+  });
+
+  await t.test('an edit after Propose stays on the draft until Update proposal moves the proposal (C)', async () => {
+    const draft = liveDrafts.describe(await liveDrafts.forThread(pool, {
+      userId: person.id, rootId: (await pool.query("SELECT root_message_id FROM live_drafts WHERE state = 'proposed'")).rows[0].root_message_id, deps,
+    }));
+    await pool.query("UPDATE chat_sessions SET status = 'promoted', pr_number = 142 WHERE id = $1", [draft.proposal.sessionId]);
+    preview = { status: { head: draft.headSha }, apply: () => [200, { ok: true, bootMs: 50 }] };
+    const out = await liveDrafts.applyEdit(pool, CONFIG, {
+      draftId: draft.id, userId: person.id, files: [{ path: 'public/index.html', content: '<p>wider rows</p>' }], summary: 'Wider rows', deps,
+    });
+    assert.equal(out.ok, true, JSON.stringify(out));
+    const now = liveDrafts.describe(await liveDrafts.byId(pool, draft.id));
+    assert.deepEqual([now.proposal.pending, now.prNumber, now.proposal.open], [1, 142, true], '1 change not in the proposal yet');
+    calls.operations = [];
+    const updated = await liveDrafts.updateProposal(pool, CONFIG, { user: person, draftId: draft.id, deps });
+    assert.equal(updated.status, 200, JSON.stringify(updated.body));
+    assert.deepEqual(calls.operations.map((o) => [o.op, o.input]), [['draft.update', {
+      draftId: draft.id, sessionId: draft.proposal.sessionId, head: out.head,
+    }]]);
+    // The operation moves proposed_head_sha on the conductor; stand in for it.
+    await pool.query('UPDATE live_drafts SET proposed_head_sha = $2 WHERE id = $1', [draft.id, out.head]);
+    assert.equal(liveDrafts.describe(await liveDrafts.byId(pool, draft.id)).proposal.pending, 0);
+    // A refusal on the conductor is said, not swallowed.
+    await liveDrafts.applyEdit(pool, CONFIG, {
+      draftId: draft.id, userId: person.id, files: [{ path: 'server.js', content: 'v5' }], summary: 'Hover tint', deps,
+    });
+    operationReply = { ok: false, status: 409, code: 'branch_moved', error: 'The proposal changed since this draft was proposed.' };
+    const moved = await liveDrafts.updateProposal(pool, CONFIG, { user: person, draftId: draft.id, deps });
+    assert.deepEqual([moved.status, moved.body.error], [409, 'branch_moved']);
+    operationReply = { ok: true, updated: true, rebuilding: true };
+  });
+
+  await t.test('a draft closes when its proposal goes live or is withdrawn, and when it sat idle with no edits (C)', async () => {
+    const { rows: [row] } = await pool.query("SELECT id, root_message_id, proposal_session_id FROM live_drafts WHERE state = 'proposed'");
+    said.length = 0;
+    await pool.query("UPDATE chat_sessions SET status = 'merged' WHERE id = $1", [row.proposal_session_id]);
+    assert.equal(await liveDrafts.forThread(pool, { userId: person.id, rootId: row.root_message_id, deps }), null);
+    assert.equal((await liveDrafts.byId(pool, row.id)).state, 'closed');
+    assert.equal(said.length, 1, 'its thread is told in one line');
+    assert.equal(said[0].threadRootId, Number(row.root_message_id));
+    assert.match(said[0].content, /went live/);
+
+    // A draft with no edits that nobody touched for IDLE_CLOSE_MS frees its slot.
+    const root = await thread(person, project);
+    const { body: { draft: idle } } = await liveDrafts.open(pool, CONFIG, { user: person, rootId: root, deps });
+    const later = { ...deps, now: () => Date.now() + liveDrafts.IDLE_CLOSE_MS + 60_000 };
+    assert.equal(await liveDrafts.forThread(pool, { userId: person.id, rootId: root, deps: later }), null);
+    assert.equal((await liveDrafts.byId(pool, idle.id)).state, 'closed');
+    assert.match(said[said.length - 1].content, /closed after two hours/);
+    // closeReason is pure: an edited draft never idles out.
+    assert.equal(liveDrafts.closeReason({ state: 'open', edits: 2, updated_at: new Date(0) }), null);
+    assert.equal(liveDrafts.closeReason({ state: 'proposed', proposal_session_id: 3, proposal_status: 'closed' }), 'proposal_ended');
+  });
+
+  await t.test('a comment pinned on the preview is checked against the thread\'s draft (J)', async () => {
+    const { body: { draft } } = await liveDrafts.open(pool, CONFIG, { user: person, rootId: await thread(person, project), deps });
+    const ok = await liveDrafts.pinFor(pool, {
+      user: person, threadRootId: draft.rootId, deps,
+      pin: { draftId: draft.id, x: 0.42, y: 0.183333, route: '/workouts?x=1', viewport: { width: 390, height: 844 },
+        element: { tag: 'button', id: 'del', text: 'Delete   workout' } },
+    });
+    assert.deepEqual(ok, {
+      draftId: draft.id, x: 0.42, y: 0.1833, route: '/workouts?x=1', viewport: { width: 390, height: 844 },
+      element: { tag: 'button', id: 'del', text: 'Delete workout' },
+    });
+    assert.equal(await liveDrafts.pinFor(pool, { user: person, threadRootId: draft.rootId, pin: { draftId: draft.id + 99, x: 0.5, y: 0.5 }, deps }), null);
+    assert.equal(await liveDrafts.pinFor(pool, { user: person, threadRootId: draft.rootId, pin: { draftId: draft.id, x: 2, y: 0.5 }, deps }), null);
+    const loose = await liveDrafts.pinFor(pool, { user: person, threadRootId: draft.rootId, pin: { draftId: draft.id, x: 0, y: 1, route: '//evil.example', viewport: { width: 9, height: 9 } }, deps });
+    assert.deepEqual(loose, { draftId: draft.id, x: 0, y: 1 }, 'a route that is not the app\'s, and a size that is not a view, are left out');
+    assert.match(liveDrafts.pinLine({ content: 'make this red', pin: ok }), /^\[Pinned on the app's live preview, 42% across and 18% down of a 390x844 view, on \/workouts\?x=1, on <button> "Delete workout"\. .*\] make this red$/);
   });
 
   await t.test('Propose needs an edit; Close puts a draft away', async () => {

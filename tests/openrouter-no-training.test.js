@@ -247,6 +247,8 @@ const NOT_SENDERS = new Map([
   ['src/services/bot-review.js', 'sends through openrouter-mayor.js'],
   ['src/services/homeroom-bot-already-done.js', 'sends through openrouter.js'],
   ['src/services/homeroom-bot-layout.js', 'sends through the turn\'s own transport, openrouter.js streamChat'],
+  // 20 Nov 2026 (live-draft review, E): the chat's web search (tests/bot-web-search.test.js holds its deny).
+  ['src/services/bot-web-search.js', 'sends through the turn\'s own transport, openrouter.js streamChat'],
   ['src/services/homeroom-bot-mayor.js', 'sends through openrouter.js and openrouter-mayor.js'],
   ['src/services/llm.js', 'sends through openrouter.js'],
   ['src/services/model-costs.js', 'names the catalog URL in a comment'],

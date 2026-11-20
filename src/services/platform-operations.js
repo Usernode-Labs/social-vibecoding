@@ -70,6 +70,8 @@ const OPERATIONS = new Map([
   ['previewProject.remove', () => require('./preview-project-operation')],
   // commits
   ['proposal.commit', () => require('./proposal-commit-operation')],
+  // 20 Nov 2026 (live-draft review, C): a live draft's Update proposal
+  ['draft.update', () => require('./live-draft-update-operation')],
   // git-host flows
   ['suggestBack.open', () => require('./suggest-back-operation')],
   ['upstream.open', () => require('./upstream-operation')],

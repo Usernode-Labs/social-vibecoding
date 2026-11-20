@@ -2,7 +2,7 @@
 
 // The release job's "Check branch tip before publishing" step, run as it is
 // written in .github/workflows/build-kubernetes-images.yml, against stand-ins
-// for git, gh, helm, date and sleep (a fake clock, so a ten-minute wait takes
+// for git, gh, node, date and sleep (a fake clock, so a ten-minute wait takes
 // no time).
 //
 // On 5 October 2026 merges landed every two to four minutes while each run
@@ -12,7 +12,7 @@
 // publishes too, when the branch contains it, the newest release in the
 // registry is older and numbered below it, and that release's revision was
 // merged at least RELEASE_EVERY_MINUTES before this one. An older revision
-// must never publish over a newer one: Argo CD runs the highest 0.1.* chart.
+// must never publish over a newer one: Argo CD follows the promoted OCI tag.
 //
 // On 7 October the tip published every time it was the tip, and the platform
 // rolled out four times in sixteen minutes (21:41:57 to 21:57:49 UTC). A
@@ -149,7 +149,9 @@ path="$2"
 case "$path" in
   */compare/*) pair="\${path##*/compare/}"; key="compare \${pair%%...*} \${pair##*...}";;
   */commits/*) key="date \${path##*/commits/}";;
-  */runs\\?head_sha=*) q="\${path##*head_sha=}"; key="finished \${q%%&*}";;
+  */runs\\?head_sha=*) q="\${path##*head_sha=}"; key="run \${q%%&*}";;
+  */runs/123/attempts/1/jobs\\?*) key="finished ${OLD}";;
+  */runs/456/jobs\\?*) key="ready-to-publish";;
   */runs\\?event=workflow_dispatch*) key="dispatched";;
   *) exit 2;;
 esac
@@ -164,9 +166,13 @@ done < "$STUB_GH"
 [ -n "$value" ] || exit 1
 echo "$value"
 `,
-  helm: `#!/usr/bin/env bash
-[ -s "$STUB_HELM" ] || exit 1
-cat "$STUB_HELM"
+  node: `#!/usr/bin/env bash
+[ "$*" = 'scripts/live-release.js --metadata' ] || exit 2
+echo "$*" >> "\${STUB_HELM_LOG:-/dev/null}"
+sha="$(sed -n 's/^appVersion: //p' "$STUB_HELM")"
+version="$(sed -n 's/^version: //p' "$STUB_HELM")"
+[ -n "$sha" ] && [ -n "$version" ] || exit 1
+printf '%s %s\\n' "$sha" "$version"
 `,
   date: `#!/usr/bin/env bash
 if [ "$*" = +%s ]; then cat "$STUB_CLOCK"; else exec /bin/date "$@"; fi
@@ -180,6 +186,7 @@ echo $(( $(cat "$STUB_CLOCK") + $1 )) > "$STUB_CLOCK"
 
 function run({
   chartVersion = '0.1.1600001', tip = TIP, tips = null, event = 'push',
+  revision = MINE, runNumber = 1600, now = NOW,
   gh = [], helm = `apiVersion: v2\nappVersion: ${OLD}\nname: social-vibecoding-platform\nversion: 0.1.1545001\n`,
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-rule-'));
@@ -199,27 +206,28 @@ function run({
     summary: path.join(dir, 'summary'),
     script: path.join(dir, 'step.sh'),
   };
-  fs.writeFileSync(files.gh, gh.map((l) => `${l}\n`).join(''));
+  fs.writeFileSync(files.gh, [
+    `compare ${OLD} ${MINE} ahead`, `run ${OLD} 123`, ...gh,
+  ].map((l) => `${l}\n`).join(''));
   fs.writeFileSync(files.helm, helm || '');
   fs.writeFileSync(files.tips, (tips || [[0, tip]]).map(([at, s]) => `${at} ${s}\n`).join(''));
-  fs.writeFileSync(files.clock, String(NOW));
+  fs.writeFileSync(files.clock, String(now));
   for (const f of ['ghLog', 'sleeps', 'output', 'summary']) fs.writeFileSync(files[f], '');
   fs.writeFileSync(files.script, step.run);
   const res = spawnSync('bash', ['-e', files.script], {
     encoding: 'utf8',
     env: {
-      PATH: `${bin}:/usr/bin:/bin`,
+      PATH: `${bin}:${process.env.PATH}`,
       HOME: dir,
-      GITHUB_SHA: MINE,
+      GITHUB_SHA: revision,
       GITHUB_REF: 'refs/heads/main',
       GITHUB_REPOSITORY: 'Usernode-Labs/social-vibecoding',
       GITHUB_EVENT_NAME: event,
-      GITHUB_RUN_NUMBER: '1600',
+      GITHUB_RUN_NUMBER: String(runNumber),
       GITHUB_OUTPUT: files.output,
       GITHUB_STEP_SUMMARY: files.summary,
       GH_TOKEN: 'test',
       CHART_VERSION: chartVersion,
-      CHART_REF: 'oci://ghcr.io/usernode-labs/charts/social-vibecoding-platform',
       RELEASE_EVERY_MINUTES: String(step.env.RELEASE_EVERY_MINUTES),
       RELEASE_MIN_GAP_MINUTES: String(step.env.RELEASE_MIN_GAP_MINUTES),
       STUB_TIPS: files.tips,
@@ -311,7 +319,10 @@ test('the release age is read from the run that published the newest release', (
   const lookup = r.ghCalls.find((c) => c.includes('/actions/workflows/build-kubernetes-images.yml/runs?head_sha='));
   assert.ok(lookup, 'the newest release\'s run is looked up');
   assert.match(lookup, new RegExp(`runs\\?head_sha=${OLD}&`));
-  assert.match(lookup, /select\(\.run_number == 1545 and \.status == "completed"\) \| \.updated_at \| fromdateiso8601/);
+  assert.match(lookup, /select\(\.run_number == 1545\) \| \.id/);
+  assert.doesNotMatch(lookup, /status|updated_at/, 'the publishing workflow may still be in progress');
+  const attempt = r.ghCalls.find((c) => c.includes('/actions/runs/123/attempts/1/jobs'));
+  assert.match(attempt, /Promote OCI release tag.*\.completed_at \| fromdateiso8601/);
 });
 
 test('a tip whose newest release is already RELEASE_MIN_GAP_MINUTES old publishes at once', () => {
@@ -327,21 +338,38 @@ test('a merge during the wait ends it: this run skips, and the newer merge\'s ru
   const r = run({ tips: [[0, MINE], [NOW + 2 * MIN, TIP]], gh: [releasedAgo(1)] });
   assert.equal(r.publish, false);
   assert.ok(r.waited >= 2 * MIN && r.waited <= 2 * MIN + 30, `stops within one poll of the merge, not after ${r.waited}s`);
-  assert.match(r.summary, /refs\/heads\/main moved to c{40} while this run waited .* That commit's run is queued behind this one and publishes once it has built\./);
+  assert.match(r.summary, /refs\/heads\/main moved to c{40} while this run waited .* That commit's run can publish once it has built\./);
 });
 
 test('a dispatched run queued behind a waiting tip ends the wait: it publishes at once instead', () => {
-  const r = run({ tip: MINE, gh: [releasedAgo(0), `@${NOW + 3 * MIN} dispatched 1`] });
+  const r = run({ tip: MINE, gh: [releasedAgo(0), `@${NOW + 3 * MIN} dispatched 456`, 'ready-to-publish 1'] });
   assert.equal(r.publish, false);
   assert.ok(r.waited >= 3 * MIN && r.waited <= 3 * MIN + 30, `stops within one poll of the dispatch, not after ${r.waited}s`);
   assert.match(r.summary, /dispatched by hand is queued behind this one, and it publishes refs\/heads\/main without waiting/);
   const lookup = r.ghCalls.find((c) => c.includes('runs?event=workflow_dispatch'));
+  assert.ok(lookup.includes(`head_sha=${MINE}`), 'only a dispatch for this exact tip');
   assert.match(lookup, /\.head_branch == "main" and \.status != "completed" and \.run_number > 1600/,
     'only a run dispatched on this branch after this one');
   // Already queued when the tip arrives: no wait at all.
-  const queued = run({ tip: MINE, gh: [releasedAgo(2), 'dispatched 1'] });
+  const queued = run({ tip: MINE, gh: [releasedAgo(2), 'dispatched 456', 'ready-to-publish 1'] });
   assert.equal(queued.publish, false);
   assert.equal(queued.waited, 0);
+});
+
+test('a dispatch still building or whose checks fail cannot displace a verified tip', () => {
+  const r = run({ tip: MINE, gh: [releasedAgo(2), 'dispatched 456', 'ready-to-publish 0'] });
+  assert.equal(r.publish, true);
+  assert.equal(r.waited, 2 * MIN);
+});
+
+test('a late lower-numbered run for the same tip, even a manual dispatch, never uploads a chart', () => {
+  for (const event of ['push', 'workflow_dispatch']) {
+    const r = run({ tip: MINE, event,
+      helm: `appVersion: ${MINE}\nversion: 0.1.1601001\n` });
+    assert.equal(r.publish, false);
+    assert.equal(r.waited, 0);
+    assert.match(r.summary, /numbered at or above/);
+  }
 });
 
 test('a dispatched run never waits', () => {
@@ -395,6 +423,39 @@ test('an older revision never publishes over a newer one', () => {
   // Or it is numbered at or above this run's chart.
   assert.equal(run({ gh: behind(66), chartVersion: '0.1.1545001' }).publish, false);
   assert.equal(run({ gh: behind(66), chartVersion: '0.1.1500001' }).publish, false);
+});
+
+test('replay the cold-worker burst: the newer verified run publishes while the older build is still running', () => {
+  // GitHub Actions runs 44758420838 and 44758569359. Replay observed
+  // per-run elapsed time from the plan step, with the later plan starting
+  // at its merge instead of after the previous publisher had finished.
+  const earlier = { run: 5490, workerFinishedAt: 326, publishCheckAt: 358 };
+  const tip = { run: 5491, mergeAt: 56, planAt: 370, promotedAt: 627 };
+  const phaseSeconds = tip.promotedAt - tip.planAt;
+  const replayPromotion = tip.mergeAt + phaseSeconds;
+  assert.equal(tip.promotedAt - replayPromotion, 314);
+  assert.ok(replayPromotion < earlier.workerFinishedAt);
+
+  assert.notEqual(earlier.run % 2, tip.run % 2, 'their worker and PostgreSQL checks can overlap');
+  const tipResult = run({ revision: TIP, runNumber: tip.run, now: NOW + replayPromotion, chartVersion: '0.1.5491001',
+    gh: [`compare ${OLD} ${TIP} ahead`, releasedAgo(10)] });
+  assert.equal(tipResult.publish, true);
+  assert.equal(tipResult.waited, 0);
+  const laterResult = run({ runNumber: earlier.run, now: NOW + earlier.publishCheckAt, chartVersion: '0.1.5490001',
+    helm: `appVersion: ${TIP}\nversion: 0.1.5491001\n`,
+    gh: [`compare ${MINE} ${TIP} ahead`, `compare ${TIP} ${MINE} behind`] });
+  assert.equal(laterResult.publish, false);
+  assert.match(laterResult.summary, /is not older than it/);
+});
+
+test('replay a failed tip and recovery: a verified preceding run can publish at the 15-minute threshold', () => {
+  const preceding = run({ gh: [...behind(15), releasedAgo(5)] });
+  assert.equal(preceding.publish, true);
+  const recovery = run({ revision: TIP, chartVersion: '0.1.1602001',
+    helm: `appVersion: ${MINE}\nversion: 0.1.1600001\n`,
+    gh: [`compare ${MINE} ${TIP} ahead`, `run ${MINE} 123`, releasedAgo(2)] });
+  assert.equal(recovery.publish, true);
+  assert.equal(recovery.waited, 2 * MIN, 'the recovery still respects the four-minute rollout gap');
 });
 
 test('a revision the branch no longer contains is not published', () => {

@@ -2272,6 +2272,8 @@ function botMessageSummary(meta) {
   if (typeof meta.html === 'string' && meta.html) out.htmlChars = meta.html.length;
   const version = positiveId(meta.designVersion);
   if (version) out.designVersion = version;
+  // K (20 Nov 2026): which of the thread's artifacts, when it is a later one.
+  if (version && positiveId(meta.artifactId) > 1) out.artifactId = positiveId(meta.artifactId);
   if (typeof meta.designTitle === 'string' && meta.designTitle.trim()) {
     out.designTitle = untrusted(meta.designTitle, MAX_TITLE_CHARS);
   }
@@ -2336,6 +2338,7 @@ function shapeBotThreadMessage(m, viewerId) {
   const bot = sender.bot && meta ? botMessageSummary(meta.homeroomBot) : null;
   const pin = !sender.bot && meta && meta.designPin && typeof meta.designPin === 'object'
     ? positiveId(meta.designPin.version) : null;
+  const pinnedOn = pin ? positiveId(meta.designPin.artifactId) : null;
   const name = sender.bot ? (sender.displayName || sender.username) : sender.username;
   return {
     id: Number(row.id),
@@ -2363,8 +2366,9 @@ function shapeBotThreadMessage(m, viewerId) {
       })),
     cards: hidden ? [] : (Array.isArray(row.objects) ? row.objects : []).map(shapeBotThreadCard),
     ...(bot ? { bot } : {}),
-    // A comment pinned on a design's preview: the version it was pinned on.
-    ...(pin ? { designPin: { version: pin } } : {}),
+    // A comment pinned on a design's preview: the version it was pinned on,
+    // and (K, 20 Nov 2026) the artifact of the thread when it is a later one.
+    ...(pin ? { designPin: { version: pin, ...(pinnedOn > 1 ? { artifactId: pinnedOn } : {}) } } : {}),
   };
 }
 

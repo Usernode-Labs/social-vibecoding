@@ -6521,11 +6521,11 @@
   },
   "topic.request.fromThread": {
     "text": "Open the thread it came from",
-    "description": "Link under a request's words, shown only to the person whose private Homeroom bot design thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
+    "description": "Link under a request's words, shown only to the person whose private Homeroom bot artifact thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
   },
   "topic.request.openDesign": {
-    "text": "Open the design, version {{version}}",
-    "description": "Link beside \"Open the thread it came from\" under a request's words, shown only to the person whose plan on the request was made from a screen design in their private Homeroom bot thread. Opens that design itself, at the version the plan shows, beside the thread. {{version}} is the version's number."
+    "text": "Open the artifact, version {{version}}",
+    "description": "Link beside \"Open the thread it came from\" under a request's words, shown only to the person whose plan on the request was made from a screen in their private Homeroom bot thread. Opens that artifact itself, at the version the plan shows, beside the thread. {{version}} is the version's number."
   },
   "frame.hub.people": {
     "text": "People",

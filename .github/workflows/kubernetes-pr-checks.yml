@@ -82,6 +82,14 @@ jobs:
           buildkitd-config-inline: |
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
+      - uses: azure/setup-helm@v4
+        if: matrix.component == 'worker'
+        with:
+          version: v3.19.0
+      - name: Read the promoted worker digest for its build cache
+        if: matrix.component == 'worker'
+        id: live
+        run: node scripts/live-release.js
       # Baselines are built lazily from the exact PR base. Never restore an
       # inventory cache that an earlier PR revision could have written.
       - name: Build and scan the finished image
@@ -92,6 +100,7 @@ jobs:
           CONTEXT: ${{ matrix.context }}
           SECURITY_BASELINE_REVISION: ${{ github.event.pull_request.base.sha }}
           SECURITY_SCAN_PLATFORM: linux/amd64
+          LIVE_WORKER_DIGEST: ${{ steps.live.outputs.worker }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/security-$COMPONENT"
@@ -102,7 +111,13 @@ jobs:
             CONTEXT="$RUNNER_TEMP/starter-source"
             DOCKERFILE="$CONTEXT/Dockerfile"
           fi
-          docker buildx build --load --pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE" "$CONTEXT"
+          build_args=(--load --pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE")
+          if [ "$COMPONENT" = worker ] && [[ "$LIVE_WORKER_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            # Import build layers only from the image promoted by main. The
+            # candidate still builds locally and gets all of its own checks.
+            build_args+=(--cache-from "type=registry,ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-worker@$LIVE_WORKER_DIGEST")
+          fi
+          docker buildx build "${build_args[@]}" "$CONTEXT"
           sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"
           sh scripts/check-image-security.sh "security-$COMPONENT" "$out" "$out/sbom.spdx.json" "$COMPONENT"
       - name: Verify capture browser and media

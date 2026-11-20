@@ -78,11 +78,11 @@ test('the designer has compare_versions and make_pictures between its own tools 
   });
   assert.match(prompt, /When they ask to compare versions, to see them side by side, or next to how the screen looks now, call\n {2}compare_versions/);
   assert.match(prompt, /make it with make_pictures/);
-  assert.match(prompt, /PICTURES THEY ADDED TO THE DESIGN \(use each as an <img> src, at its size or smaller, where they asked\):\n- Picture A · light: \/api\/conversations\/homeroom-bot\/pictures\/a{32} \(1024 by 1024\)\n\n/);
+  assert.match(prompt, /PICTURES THEY ADDED TO THE ARTIFACT \(use each as an <img> src, at its size or smaller, where they asked\):\n- Picture A · light: \/api\/conversations\/homeroom-bot\/pictures\/a{32} \(1024 by 1024\)\n\n/);
   assert.doesNotMatch(prompt, /Picture B/, 'only a picture by its id');
   assert.match(prompt, /THE CURRENT VERSION \(version 2\), its whole HTML:\n<p>x<\/p>$/, 'the version stays last');
   assert.doesNotMatch(prompt, /—/);
-  // Step 6: the chat's own turn puts the design's card under its reply: a
+  // Step 6: the chat's own turn puts the artifact's card under its reply: a
   // reply with no new version carries it as any chat card, and so does a
   // version's message.
   const src = read('src/services/homeroom-bot-mayor.js');

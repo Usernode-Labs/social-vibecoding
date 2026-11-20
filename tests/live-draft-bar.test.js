@@ -23,9 +23,11 @@ const draft = (over = {}) => ({
   edits: 0, headSha: null, prNumber: null, error: null, ...over,
 });
 
-test('its first render is nothing; the draft is read in an effect, and there is no standing button', () => {
-  assert.equal(renderComponent(BAR, 'LiveDraftBar', { rootId: 9 }), '');
-  assert.doesNotMatch(read(BAR), /data-live-draft-open/, 'a draft is opened by asking Homeroom bot, never by a bar on every thread');
+test('there is no bar (G): what it did besides drawing is a part that draws nothing, read in an effect', () => {
+  assert.equal(renderComponent(BAR, 'LiveDraftWatch', { rootId: 9 }), '');
+  assert.equal(renderComponent(BAR, 'LiveDraftControls', { draft: null }), '', 'no controls for a preview that is not a draft\'s');
+  assert.doesNotMatch(read(BAR), /export function LiveDraftBar/);
+  assert.doesNotMatch(read(BAR), /data-live-draft-open/, 'a draft is opened by asking Homeroom bot, never by a button on every thread');
   assert.match(read(BAR), /fetch\(path, \{ credentials: 'same-origin'/);
   assert.match(read(BAR), /\/api\/live-drafts\?rootId=/);
 });
@@ -40,11 +42,43 @@ test('the status line says where the preview stands', () => {
   assert.equal(message('messages:liveDraft.live_other').replace('{{count}}', '3'), 'Live preview · 3 changes');
 });
 
-test('the messages pane mounts it on an open thread of theirs; a newly opened draft brings its preview up', () => {
+test('the preview\'s header says where the draft stands in one short line, and offers its one action (G, C)', () => {
+  const { draftHeadLine, draftAction, liveDraftShown } = loadTsx(BAR);
+  assert.deepEqual(draftHeadLine(draft({ live: 'failed' })), { id: 'messages:liveDraft.head.failed', bad: true }, 'a preview that could not start is still said');
+  assert.deepEqual(draftHeadLine(draft({ live: 'starting' })), { id: 'messages:liveDraft.head.starting', bad: false });
+  assert.deepEqual(draftHeadLine(draft()), { id: 'messages:liveDraft.head.none', bad: false });
+  assert.deepEqual(draftHeadLine(draft({ edits: 2 })), { id: 'messages:liveDraft.head.edits', values: { count: 2 }, bad: false });
+  const proposed = (pending) => draft({ state: 'proposed', editable: true, edits: 4, proposal: { sessionId: 50, prNumber: 142, open: true, pending, headSha: null } });
+  assert.deepEqual(draftHeadLine(proposed(1)), { id: 'messages:liveDraft.head.pending', values: { count: 1 }, bad: false });
+  assert.equal(message('messages:liveDraft.head.pending_one').replace('{{count}}', '1'), '1 change not in the proposal yet');
+  assert.deepEqual(draftHeadLine(proposed(0)), { id: 'messages:liveDraft.head.inProposal', bad: false });
+  assert.equal(draftAction(draft()), null, 'nothing to propose before an edit');
+  assert.equal(draftAction(draft({ edits: 1 })), 'propose');
+  assert.equal(draftAction(proposed(2)), 'update');
+  assert.equal(draftAction(proposed(0)), null);
+  assert.equal(message('messages:liveDraft.update'), 'Update proposal');
+  assert.equal(liveDraftShown(proposed(0)), true, 'a draft up for a vote is still shown');
+  assert.equal(liveDraftShown(draft({ state: 'proposed' })), false, 'one proposed before drafts survived Propose is not');
+});
+
+test('the controls are the preview header\'s, beside its way out; Close draft asks first', () => {
+  const overlay = read('frontend/src/features/staging/staging-overlay.tsx');
+  assert.match(overlay, /const liveDraft = useDraftForSession\(state\.open \? state\.sessionId : null\);/);
+  assert.match(overlay, /<LiveDraftControls draft=\{liveDraft\} \/>\s*<div className="staging-tools">/);
+  const bar = read(BAR);
+  assert.match(bar, /data-live-draft-propose=""/);
+  assert.match(bar, /data-live-draft-update=""/);
+  assert.match(bar, /data-live-draft-close=""/);
+  assert.match(bar, /const ok = await confirmAction\(\{\s*title: t\('messages:liveDraft\.closeConfirm\.title'\)/);
+  assert.match(read('frontend/src/features/staging/placement.ts'), /sessionId: Number\(input\.sessionId\) \|\| null,/);
+});
+
+test('the messages pane reads the draft on an open thread of theirs, with no bar; a newly opened draft brings its preview up', () => {
   const pane = read('frontend/src/features/messages/index.tsx');
-  assert.match(pane, /import \{ LiveDraftBar \} from '\.\/live-draft-bar';/);
-  assert.match(pane, /privateMine && privateRoot && privateWhere\?\.state === 'open' \? \(\s*<LiveDraftBar rootId=\{privateRoot\} \/>/);
-  assert.match(read(BAR), /if \(detail\.opened && next\.state === 'open'\) openPreview\(next\);/);
+  assert.doesNotMatch(pane, /<LiveDraftBar/);
+  assert.match(pane, /import \{ useLiveDraft \} from '\.\/live-draft-bar';/);
+  assert.match(pane, /const liveDraft = useLiveDraft\(privateMine && privateRoot && privateWhere\?\.state === 'open' \? privateRoot : null\);/);
+  assert.match(read(BAR), /if \(detail\.opened && shown\) openPreview\(next\);/);
 });
 
 test('app.js hands the draft\'s socket frame on as the bar\'s window event', () => {

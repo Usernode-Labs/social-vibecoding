@@ -57,6 +57,7 @@ function DetailBody({ state, layout }: { state: DetailState; layout: DetailLayou
       <DesignPane
         conversationId={entry.ref.conversationId!}
         rootId={entry.ref.rootId!}
+        artifactId={entry.ref.artifactId ?? null}
         view="preview"
         onView={() => {}}
         version={entry.version}

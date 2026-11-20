@@ -1,6 +1,6 @@
 # Artifacts
 
-Status: stages 0 to 3 built, stage 4 light (November 2026).
+Status: stages 0 to 3 built, stage 4 light; several artifacts in a thread (K, F) built (November 2026).
 This replaces "design mode" as a separate thing: a design is one kind of
 artifact.
 
@@ -11,7 +11,9 @@ with its own styles and, when it must do something, its own inline scripts.
 It lives in one of the person's private threads with the bot, is shown in a
 sandboxed frame, is changed in place, and keeps every version.
 
-A thread holds at most one artifact. It has a **kind**:
+A thread holds up to 12 artifacts (`artifacts.js MAX_ARTIFACTS_PER_THREAD`), numbered
+in the order they were made (see "Several artifacts in a thread" below). Each
+has a **kind**, and one thread may hold both:
 
 | Kind | What it is | Who works on it |
 |---|---|---|
@@ -26,13 +28,18 @@ status, it comes from one place from the first day.
 ## The store
 
 `src/services/artifacts.js` is the store's one writer and its reader by
-thread. The tables keep the names they had when only designs were stored:
+thread. A thread's first artifact keeps the tables it had when only designs
+were stored; its later ones have their own (K):
 
-- `design_threads`: the artifact. `kind` (`design` or `page`, default
+- `design_threads`: the thread's first artifact. `kind` (`design` or `page`, default
   `design`), `viewport` (`phone` or `desktop`, null on a row from before,
   read off its width), `place` (`thread`, the only place there is), its
   title, what it is of (`surface`, `route`) and the size it is drawn at.
 - `design_versions`: its versions, whole each time, up to 80, 900 KB each.
+- `thread_artifacts`: each later artifact, number 2 and up, with the same
+  columns (and `pictures`).
+- `thread_artifact_versions`: their versions, numbered from 1 per artifact,
+  with the same limits.
 
 Every read is the thread owner's alone. Nothing in the store publishes an
 artifact. A chat message is at most 8,000 characters, so an artifact is never
@@ -58,6 +65,90 @@ only, and never failing a boot. Plans reached only through
 `chat_sessions.linked_issues` are not looked for: `postRequestSpec` makes every
 plan's record with `created_from_issue_number` set to its request and
 `linked_issues` holding that one number, and nothing else writes one.
+
+## Several artifacts in a thread (K, F, 20 Nov 2026)
+
+Asked for something new, the bot once saved iOS list layouts as version 2 of
+"Gym Tracker style directions": the store held one artifact per thread
+(`design_threads` is keyed by its thread, `design_versions` unique on
+thread and version). A thread now holds several, each with its own id and
+its own versions.
+
+**The id.** An artifact's id (`artifactId`) is its number in its thread, in
+the order it was made: 1 is the first. A row, message, pin or plan from
+before names none, and means the thread's first. Every address is under its
+thread already (`/designs/:rootId`), so the number needs no other scope.
+
+**The migration (`thread-artifacts`), additive only.**
+
+- What is added: `thread_artifacts` (a thread's artifacts after its first:
+  `number` 2 and up, unique per thread, with `design_threads`' columns and
+  `pictures`) and `thread_artifact_versions` (unique on artifact and
+  version), both `staging:private`; and `design_artifact_id`, nullable with
+  no default, on `chat_session_specs` (a plan) and
+  `homeroom_bot_first_versions` (a project made from a design).
+- How old rows get there: they do not move. A thread's first artifact stays
+  in `design_threads` and `design_versions`, numbered 1, so nothing is
+  copied, nothing needs adopting, and both builds number its versions under
+  the same lock (`addVersion` locks the thread's `private_threads` row, as
+  the build from before does). A new thread's first artifact is written
+  there too (`addArtifact`); only the second and later go to the new tables.
+  This is simpler than copying every row into new tables and mirroring the
+  first back: no doubled HTML, no row an older build writes mid-release to
+  adopt, and no numbering race between two copies.
+- What an old build still sees: every thread's first artifact, exactly as
+  before, with every version either build wrote to it. It never names the new
+  tables or columns, so a later artifact is invisible to it. Its writes
+  during a release land on the first artifact, which is what it always wrote.
+- How to undo: run the build from before. Nothing it reads changed. Later
+  artifacts stay stored, unseen, until a migration drops the two tables and
+  two columns (nothing else depends on them).
+
+The list queries that join a thread's title or newest version
+(`private-threads.js`, `ai-search.js`, `ai-history.js`, `ai-work.js`,
+`homeroom-bot-dm.js`, `plan-design-source.js`) still name `design_threads`
+and `design_versions` on purpose: they mean the thread's first artifact, its
+row exists exactly when the thread holds any, and written out whole each one
+is still read by the SQL check. Only `artifacts.js` names the new tables.
+
+**Routes** (`src/routes/conversations.js`). Every read carries `artifactId` and
+`artifacts: [{ artifactId, title, artifactKind, latest, viewport }]`, in
+creation order. `GET .../designs/:rootId/artifacts/:artifactId`,
+`.../artifacts/:artifactId/versions/:version` and `POST
+.../artifacts/:artifactId/propose` take one; the old addresses answer with the
+first.
+
+**Messages, pins and plans.** A version's message carries
+`metadata.homeroomBot.artifactId` beside `designVersion`. A pin may carry
+`design_pin.artifactId`, checked by `pinFor` and kept as
+`metadata.designPin.artifactId`. A plan stores `design_artifact_id` (null for
+the first), and the request page's door gets `artifactId` for a later one. A
+design offer's card carries it in `bot_cards.args.artifactId`, a make card in
+`metadata.makeProject.artifactId`.
+
+**The turn.** It opens the artifact the message is about
+(`design-threads.js threadOf`): the one the client says the person has open
+(`metadata.showing.artifactId`), else the one a pin is on, else the one whose
+version the message replies to, else the one the bot wrote last. Its context
+lists the thread's artifacts (title, kind, newest version) and which is open.
+A tool call that names another (`artifact`) opens it first, with its whole
+HTML and its kind's capability and limits (`homeroom-bot-mayor.js
+switchArtifact`); `write_artifact` with no number while one is open writes a
+new artifact of the open kind, and `start_design` a new screen. One artifact
+changes per turn. The version line names the artifact once the thread holds
+more than one: "Layouts, version 2: ...".
+
+**F: a new subject is a new artifact.** The skill says it
+(`src/prompts/artifact-design.md`, the page kind's section in
+`artifact-session.js`, the thread's own lines and the tool descriptions): a
+change to what an artifact shows is a new version of it; a different
+subject, or "a new one", is a new artifact; never one subject over another;
+when unsure, a new one; the reply names the artifact it wrote to when the
+thread holds more than one.
+
+**Shots.** `db/migrate.js seedStagingArtifactsThread` gives the shots member
+(`usernode-capture`) one thread holding two pages: "Staging demo: style
+directions" at version 2 and "Staging demo: list layouts" at version 1.
 
 ## One policy, three frame modes
 
@@ -127,7 +218,9 @@ capability by `artifactKind`.
 
 - `write_artifact` (the chat's own tool, `src/services/bot-tools/artifact.js`):
   writes a page in one step and loads the `artifact` capability for the rest of
-  the turn. Offered only while no artifact is loaded in the turn.
+  the turn. With an artifact open it is the open kind's own tool: with no
+  `artifact` number it writes a NEW artifact, with one it writes that one again
+  whole (K, F).
 - `edit_artifact`, `show_artifact`, `compare_artifacts`: the plain kind's
   session's tools. Edits are exact find-and-replace pairs (one `applyEdits`
   for every kind), because a step writes about 16,000 output tokens.
@@ -147,8 +240,9 @@ tap: as a plan (`design-threads.js postDesignPlan`, the pane's Request it,
 `design`, a first version's early plan and its plan). Each of these refuses a
 page with `not_a_design` (`design-threads.js isDesign`), and so does the
 thread's New project door (`private-threads.js stateOf`, the reply check's
-`newProjectDoorShown`), the chat's `offer_new_project` in a page's thread, and
-`start_design` in it (`artifact-session.js holdsPage`). A page's words are its
+`newProjectDoorShown`), and the chat's `offer_new_project` in a page's thread
+(`artifact-session.js holdsPage`). Since K, `start_design` in a page's thread
+draws a new artifact beside the page. A page's words are its
 own: "Page preview", "Version N of the page", "Writing" on the working card,
 "I'm writing ... in a new thread", and its own reply check (`page_done`).
 
@@ -242,6 +336,7 @@ path serves an artifact to anyone but its author.
 | 2 | The artifact capability and its tools, private threads only | built |
 | 3 | Design as a kind with a skill | built, with what is kept above |
 | 4 | Plans drawn by the same frame; the author's door to the design | light: built |
+| K, F | Several artifacts in a thread; a new subject is a new artifact | built |
 
 ## What is left
 
@@ -251,7 +346,8 @@ path serves an artifact to anyone but its author.
   descriptions of its other tools and its nudge notes (the checks that send a
   turn back to draw). They could move into the skill text too.
 - Renaming `design_threads` and `design_versions` to the store's own names,
-  once no build from before runs. Dropping nothing before that.
+  once no build from before runs. Dropping nothing before that. K's later
+  artifacts could then move in beside the first, into one table each.
 - Showing an artifact to anyone but its author: decided against for now. If it
   is ever wanted, it needs a route with a header policy on the separate site
   `browser-site-isolation.md` describes (built, switched off), and the viewer

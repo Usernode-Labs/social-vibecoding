@@ -69,7 +69,7 @@ test('a page is written in a thread that held nothing: one call, one reply, vers
   assert.equal(wrote.ok, true);
   assert.equal(wrote.version, 1);
   assert.deepEqual(turn.offered[1].filter((name) => /artifact/.test(name)), ['write_artifact', 'edit_artifact', 'show_artifact', 'compare_artifacts']);
-  assert.equal(turn.offered[1].includes('start_design'), false, 'a thread holds one artifact');
+  assert.equal(turn.offered[1].includes('start_design'), false, 'one new artifact a turn (K)');
   assert.match(pageSection(turn.seen[1]), /^THIS THREAD'S PAGE\nYou are writing a page with @evan in this thread\./);
   // Saved once, as the plain kind, whole, by the reply.
   assert.equal(made.length, 1);
@@ -101,7 +101,8 @@ test('a thread that holds a page changes it with exact edits, and the page is in
   assert.ok(section.includes(`THE CURRENT VERSION (version 1), its whole HTML:\n${PAGE_HTML}`));
   assert.match(section, /saved as version 2 when you reply/);
   assert.ok(turn.offered[0].includes('edit_artifact'));
-  assert.equal(turn.offered[0].includes('start_design'), false);
+  // K (20 Nov 2026): a screen is a new artifact beside the page, so start_design is offered.
+  assert.equal(turn.offered[0].includes('start_design'), true);
   // The chat's own section says what the thread holds, in the page's words.
   const chat = turn.seen[0][0].content;
   assert.match(chat, /- This thread holds a page you wrote with them, "Trip budget"\. Its newest version is version 1\./);
@@ -283,4 +284,172 @@ test('one way to edit every kind: exact pairs, each found once', () => {
   assert.match(session.loadsNote('<script src="https://cdn.example/x.js"></script>'), /loads from another address/);
   assert.match(session.loadsNote('<style>@import url(//fonts.example/a.css);</style>'), /loads from another address/);
   assert.equal(session.loadsNote(PAGE_HTML), null);
+});
+
+// ── K, F (20 Nov 2026, live-draft review): several artifacts in a thread ──
+//
+// The thread of the review: a page of style directions, then a request for
+// iOS list layouts, which the bot once saved as version 2 of the directions.
+
+const STYLES_HTML = '<!doctype html><html><body><h1>Style directions</h1><ol><li id="calm" style="color:#777">Calm</li>'
+  + '<li id="bold" style="color:#555">Bold</li></ol></body></html>';
+const LAYOUTS_HTML = '<!doctype html><html><body><h1>iOS list layouts</h1><ul><li>Plain rows</li><li>Inset grouped</li></ul></body></html>';
+
+function twoArtifacts() {
+  const base = {
+    threadId: 7, rootId: 500, conversationId: 41, state: 'open', kind: 'idea', app: null, surface: 'new', viewport: 'desktop',
+    width: 1280, height: 800,
+  };
+  const list = [
+    { artifactId: 1, title: 'Style directions', artifactKind: 'page', latest: 1, viewport: 'desktop' },
+    { artifactId: 2, title: 'iOS list layouts', artifactKind: 'page', latest: 1, viewport: 'desktop' },
+  ];
+  const styles = { ...base, artifactId: 1, artifactKind: 'page', title: 'Style directions', latest: 1, versions: [{ version: 1, author: 'bot', note: null, messageId: 880 }], artifacts: list };
+  const layouts = { ...base, artifactId: 2, artifactKind: 'page', title: 'iOS list layouts', latest: 1, versions: [{ version: 1, author: 'bot', note: null, messageId: 890 }], artifacts: list, opened: 'newest' };
+  return { styles, layouts };
+}
+
+// A store and a design-threads double that know a thread's artifacts by number.
+function numberedStore({ byNumber, html }) {
+  const made = [];
+  const saved = [];
+  const store = {
+    ...realStore,
+    async versionOf(_pool, { artifactId = null } = {}) {
+      const n = artifactId ?? 1;
+      return html[n] ? { version: byNumber[n]?.latest || 1, html: html[n] } : null;
+    },
+    async ensureArtifact(_pool, args) {
+      made.push(args);
+      if (args.fresh) {
+        const list = [...(byNumber[1]?.artifacts || []), { artifactId: 3, title: args.title, artifactKind: args.kind, latest: 0, viewport: args.viewport }];
+        return { ...byNumber[1], artifactId: 3, artifactKind: args.kind, title: args.title, latest: 0, versions: [], artifacts: list };
+      }
+      return byNumber[args.artifactId ?? 1];
+    },
+    async addVersion(_pool, args) {
+      saved.push(args);
+      return { version: (byNumber[args.artifactId]?.latest || 0) + 1 };
+    },
+  };
+  const threads = { async designFor(_pool, { artifactId = null } = {}) { return byNumber[artifactId ?? 1] || null; } };
+  return { store, threads, made, saved };
+}
+
+test('F: a thread that holds "Style directions", asked for iOS list layouts, makes a second artifact and leaves the first at its version', async () => {
+  const styles = { ...twoArtifacts().styles, artifacts: [twoArtifacts().styles.artifacts[0]] };
+  const made = [];
+  const saved = [];
+  const store = {
+    ...realStore,
+    async versionOf(_pool, { artifactId = null } = {}) { return (artifactId ?? 1) === 1 ? { version: 1, html: STYLES_HTML } : null; },
+    async ensureArtifact(_pool, args) {
+      made.push(args);
+      return {
+        ...styles, artifactId: 2, title: args.title, latest: 0, versions: [],
+        artifacts: [...styles.artifacts, { artifactId: 2, title: args.title, artifactKind: 'page', latest: 0, viewport: 'desktop' }],
+      };
+    },
+    async addVersion(_pool, args) { saved.push(args); return { version: 1 }; },
+  };
+  const turn = designChatTurn([
+    { calls: [call('write_artifact', { title: 'iOS list layouts', html: LAYOUTS_HTML })] },
+    { calls: [call('reply', { text: 'Here are the layouts, in a new artifact beside the directions.', summary: 'Three iOS list layouts' })] },
+  ], { design: styles, ask: 'can you research how ios apps usually lay out lists like this', deps: { artifacts: store } });
+  await turn.run;
+
+  // The rule is said where the turn reads it: the thread's lines and the page's own section.
+  assert.match(turn.seen[0][0].content, /A different subject, or their asking for "a new one", is a new/);
+  assert.match(pageSection(turn.seen[0]), /Never write one\s+subject over another\. When you are not sure it is the same subject, make a new artifact\./);
+  assert.match(pageSection(turn.seen[0]), /with this page's number \(artifact 1\) to write it again whole, with no number for a new artifact/);
+  // write_artifact with no number, while "Style directions" was open, opened a new one.
+  assert.equal(resultOf(turn.seen[1], 'cwrite_artifact').ok, true);
+  assert.match(pageSection(turn.seen[1]), /You are writing a page with @evan in this thread\./, 'the new one\'s section followed');
+  assert.equal(made.length, 1);
+  assert.equal(made[0].fresh, true, 'made as the thread\'s next artifact, never over the first');
+  assert.equal(made[0].artifactId, undefined);
+  assert.deepEqual(saved.map((s) => [s.artifactId, s.html]), [[2, LAYOUTS_HTML]], 'the first is not written');
+  // The version line names the artifact now that the thread holds two, and the message carries its number.
+  assert.equal(turn.sent[0].content,
+    'Here are the layouts, in a new artifact beside the directions.\n\niOS list layouts, version 1: Three iOS list layouts.');
+  assert.equal(turn.sent[0].metadata.designVersion, 1);
+  assert.equal(turn.sent[0].metadata.artifactId, 2);
+});
+
+test('F: with the layouts open, "make the second direction darker" makes version 2 of the first', async () => {
+  const { styles, layouts } = twoArtifacts();
+  const { store, threads, made, saved } = numberedStore({ byNumber: { 1: styles, 2: layouts }, html: { 1: STYLES_HTML, 2: LAYOUTS_HTML } });
+  const turn = designChatTurn([
+    { calls: [call('edit_artifact', { artifact: 1, edits: [{ find: '<li id="bold" style="color:#555">', replace: '<li id="bold" style="color:#111">' }] })] },
+    { calls: [call('reply', { text: 'Done.', summary: 'The second direction is darker' })] },
+  ], { design: layouts, ask: 'make the second direction darker', deps: { artifacts: store }, threads });
+  await turn.run;
+
+  // The turn is told the thread's artifacts, which one is open and how to reach the other.
+  const chat = turn.seen[0][0].content;
+  assert.match(chat, /- This thread holds 2 artifacts, numbered in the order they were made:/);
+  assert.match(chat, / {2}1\. "Style directions", a page, newest version 1\n/);
+  assert.match(chat, / {2}2\. "iOS list layouts", a page, newest version 1 \(open: the one you wrote last; they did not say which one/);
+  assert.match(chat, /give its number \(artifact\) to\n {2}write_artifact or edit_artifact/);
+  // The edit named artifact 1: it opened, and the edit applied to its HTML.
+  assert.equal(resultOf(turn.seen[1], 'cedit_artifact').ok, true);
+  assert.ok(pageSection(turn.seen[1]).includes(STYLES_HTML), 'the first\'s whole HTML followed');
+  assert.equal(made.length, 0, 'no artifact made');
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].artifactId, 1);
+  assert.match(saved[0].html, /<li id="bold" style="color:#111">/);
+  assert.equal(turn.sent[0].content, 'Done.\n\nStyle directions, version 2: The second direction is darker.');
+  assert.equal(turn.sent[0].metadata.artifactId, 1);
+  assert.equal(turn.sent[0].metadata.designVersion, 2);
+});
+
+test('K: one artifact a turn: after a change to one, another is not opened', async () => {
+  const { styles, layouts } = twoArtifacts();
+  const { store, threads, saved } = numberedStore({ byNumber: { 1: styles, 2: layouts }, html: { 1: STYLES_HTML, 2: LAYOUTS_HTML } });
+  const turn = designChatTurn([
+    { calls: [call('edit_artifact', { edits: [{ find: 'Plain rows', replace: 'Plain rows with a chevron' }] })] },
+    { calls: [call('write_artifact', { title: 'A checklist', html: '<ul><li>One</li></ul>' })] },
+    { calls: [call('edit_artifact', { artifact: 1, edits: [{ find: 'Calm', replace: 'Quiet' }] }, 'cedit_other')] },
+    { calls: [call('reply', { text: 'Changed the rows.', summary: 'Rows have a chevron' })] },
+  ], { design: layouts, ask: 'chevrons on the rows, and a checklist too', deps: { artifacts: store }, threads });
+  await turn.run;
+  assert.equal(resultOf(turn.seen[2], 'cwrite_artifact').error, session.ONE_A_TURN_TEXT);
+  assert.equal(resultOf(turn.seen[3], 'cedit_other').error, session.ONE_A_TURN_TEXT);
+  assert.deepEqual(saved.map((s) => s.artifactId), [2]);
+  assert.equal(turn.sent[0].content, 'Changed the rows.\n\niOS list layouts, version 2: Rows have a chevron.');
+});
+
+test('K: a thread that holds all it may opens no new one, and says so', async () => {
+  const { styles } = twoArtifacts();
+  const full = {
+    ...styles,
+    artifacts: Array.from({ length: realStore.MAX_ARTIFACTS_PER_THREAD }, (_, i) => ({ artifactId: i + 1, title: `Page ${i + 1}`, artifactKind: 'page', latest: 1, viewport: 'desktop' })),
+  };
+  const { store, threads, made } = numberedStore({ byNumber: { 1: full }, html: { 1: STYLES_HTML } });
+  const turn = designChatTurn([
+    { calls: [call('write_artifact', { title: 'One more', html: '<p>x</p>' })] },
+    { calls: [call('reply', { text: 'This thread is full.' })] },
+  ], { design: full, ask: 'a new page please', deps: { artifacts: store }, threads });
+  await turn.run;
+  assert.match(resultOf(turn.seen[1], 'cwrite_artifact').error, /holds 12 artifacts, the most one thread holds/);
+  assert.equal(made.length, 0);
+  assert.equal(turn.offered[0].includes('start_design'), false, 'nor is a new screen offered');
+});
+
+test('K: the tools take an artifact number; with none, write_artifact is a new artifact', () => {
+  const props = (name, scope) => botTools.toolsFor([name], scope)[0].function.parameters.properties;
+  for (const scope of ['artifact', 'design']) {
+    assert.match(props('write_artifact', scope).artifact.description, /Leave it out for a new artifact/);
+    assert.match(props('edit_artifact', scope).artifact.description, /Leave it out for the open one/);
+  }
+  assert.equal('artifact' in props('write_artifact', 'main'), false, 'the chat\'s own turn has none open: it pays for no number');
+  assert.match(props('show_artifact', 'artifact').artifact.description, /not the one open/);
+  assert.equal(session.artifactNumber(2), 2);
+  assert.equal(session.artifactNumber('3'), 3);
+  for (const none of [undefined, null, '', 0, -1, 'new', 1.5]) assert.equal(session.artifactNumber(none), null, String(none));
+  // F's rule, in the design kind's skill too.
+  const skill = require('../src/services/design-bot').designSkill().rules;
+  assert.match(skill, /A different screen or subject, or their asking for "a new one", is a new\s+artifact/);
+  assert.match(skill, /When you are not sure it is the\s+same subject, make a new artifact\./);
+  for (const line of session.NEW_SUBJECT_LINES) assert.doesNotMatch(line, /—/, 'no em dashes');
 });
