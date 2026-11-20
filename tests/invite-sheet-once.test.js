@@ -189,12 +189,13 @@ test('an open the sheet refuses leaves the menu on its first pane', async () => 
     'or the next open from the Homeroom mark would land on Invite');
 });
 
-// ── a community's Invite disc, where no project is in context ────────────
+// ── a community's Invite, from the Communities page ──────────────────────
 //
 // The Communities page draws communities, not an app, so `improveStore.slug`
-// is null there. `openInvite({ slug, name })` names the community the pane is
-// opened for without making it the app in context: the header chip and
-// Improve keep pointing where they did.
+// is null there. A row of its Invite people list calls
+// `openInvite({ slug, name })`, which names the community the pane is opened
+// for without making it the app in context: the header chip and Improve keep
+// pointing where they did.
 
 test('a community\'s Invite reads that community first and presents once, on it', async () => {
   const o = loadOpener();

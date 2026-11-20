@@ -206,8 +206,8 @@ export function InviteSkeleton({ label, unnamed = false, canShare }: { label: st
 
 /**
  * The subject the pane shows: the app in context it was given, unless the
- * opener named a community that is not the app in context — the Communities
- * page's Invite disc, where no project is in context at all
+ * opener named a community that is not the app in context — a row of the
+ * Communities page's Invite people list, where no project is in context at all
  * (app-context-controller `openInvite`, which publishes `inviteFor`). The
  * menu behind the pane still names the app in context, so the header is
  * unchanged.

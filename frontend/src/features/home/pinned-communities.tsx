@@ -37,7 +37,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { CheckIcon, PlusIcon, SpeechCheckIcon, UserGroupIcon, UserPlusIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon, SpeechCheckIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
@@ -63,15 +63,6 @@ const VOTES = 'absolute -top-1.5 -end-2 min-w-[22px] h-[22px] px-1.5 rounded-ful
 const CORNER = 'absolute -top-1.5 w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
 export const CORNER_UNPIN = 'bg-zinc-700 text-white dark:bg-zinc-500';
 export const CORNER_PIN = 'bg-white text-violet-700 dark:bg-zinc-800 dark:text-violet-400';
-/**
- * The Invite disc's corner: the grid's top-corner treatment, moved to the
- * bottom of the face so it never covers the blue votes-waiting number above
- * it. It carries the ring in its own shadow (the inset accent hairline), so
- * the two shadows never disagree about which one wins.
- */
-const CORNER_BOTTOM = 'absolute -bottom-1.5 w-6 h-6 rounded-full flex items-center justify-center '
-  + 'shadow-[0_0_0_2px_var(--dc-sheet-solid),inset_0_0_0_1px_theme(colors.violet.200)]';
-const CORNER_INVITE = 'bg-white text-violet-700 dark:bg-zinc-800 dark:text-violet-400';
 /** No MinusIcon in the kit's set: the glyph is the minus itself, as app-grid.tsx draws it. */
 export function MinusGlyph() {
   return <span aria-hidden="true" className="text-[15px] leading-none font-semibold">&minus;</span>;
@@ -178,7 +169,7 @@ export function CommunityApps({ slug, name, iconUrl, iconEmoji }: {
   );
 }
 
-export function PinTile({ pin, votes, editing, faded = false, detail, community = false, onUnpin, onPin, onInvite }: {
+export function PinTile({ pin, votes, editing, faded = false, detail, community = false, onUnpin, onPin }: {
   pin: Omit<HomePin, 'member'>;
   votes: number;
   editing: boolean;
@@ -188,13 +179,6 @@ export function PinTile({ pin, votes, editing, faded = false, detail, community 
   community?: boolean;
   onUnpin?: () => void;
   onPin?: () => void;
-  /**
-   * Opens this community's invite link (the Communities page passes it for a
-   * community the viewer is a member of). Drawn as a corner disc on the
-   * face, and never while the pins are being edited, so a press there cannot
-   * land on the wrong control.
-   */
-  onInvite?: () => void;
 }) {
   const t = useMessages('home');
   const tc = useMessages('communities');
@@ -217,18 +201,6 @@ export function PinTile({ pin, votes, editing, faded = false, detail, community 
           ? <CommunityLogo slug={pin.slug} name={pin.name} />
           : <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />}
         {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
-        {onInvite && !editing ? (
-          <button
-            type="button"
-            className={`${CORNER_BOTTOM} -end-1.5 ${CORNER_INVITE} un-touch-target`}
-            data-home-community-invite=""
-            aria-label={tc('communities:tile.invite', { community: pin.name })}
-            title={tc('communities:tile.invite', { community: pin.name })}
-            onClick={(event) => { event.preventDefault(); event.stopPropagation(); onInvite(); }}
-          >
-            <UserPlusIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        ) : null}
         {editing && onUnpin ? (
           <button
             type="button"

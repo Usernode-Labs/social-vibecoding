@@ -185,40 +185,66 @@ test('the page\'s words are in the catalog, and say nothing of pinning to Home',
   assert.equal(message('home:membership.joinedPinned', { community: 'Orchard' }), 'Joined Orchard · pinned to Communities');
 });
 
-/** One community's tile, from its <a> to its close (no anchors nest here). */
-function tile(html, slug) {
-  const at = html.indexOf(`data-home-community="${slug}"`);
-  assert.ok(at >= 0, `data-home-community="${slug}" renders`);
-  const start = html.lastIndexOf('<a ', at);
-  return html.slice(start, html.indexOf('</a>', at));
-}
-
-test('each community you are in shows an Invite disc on its tile', () => {
+test('Invite people is one action on the page, not a button on every tile', () => {
   const html = withStores(
     { ready: true, pins: PINS, joined: JOINED, owed: {} },
     { badgeNeeds: 0 },
     (mod) => renderToHtml(createElement(mod.CommunitiesScreen, {})),
   );
-  const label = message('communities:tile.invite', { community: 'Tide Table' });
-  const tide = tile(html, 'tide');
-  assert.match(tide, /data-home-community-invite=""/, 'a pinned community you are in');
-  assert.match(tide, new RegExp(`aria-label="${label}"`), 'named for what it does, with the community');
-  assert.match(tide, new RegExp(`title="${label}"`), 'and the same words as its tooltip');
-  assert.match(tide, /un-touch-target/, 'with the 44px area to press');
-  assert.doesNotMatch(tile(html, 'garden'), /data-home-community-invite/,
-    'a community pinned but not joined has no invite link to make');
-  assert.match(tile(html, 'orchard'), /data-home-community-invite=""/, 'and every Joined row is a membership');
+  const at = html.indexOf('id="communities-invite"');
+  assert.ok(at >= 0, '#communities-invite renders');
+  const action = html.slice(html.lastIndexOf('<button ', at), html.indexOf('</button>', at));
+  assert.match(action, new RegExp(`>${message('communities:page.invite')}<`));
+  assert.match(action, /aria-expanded="false"/, 'the list is closed until it is pressed');
+  assert.match(action, /aria-controls="communities-invite-section"/);
+  assert.match(action, /un-touch-target/);
+  // It is the page's action, beside Edit on the first group's heading.
+  const section = html.slice(html.indexOf('id="communities-pinned-section"'), html.indexOf('</section>', html.indexOf('id="communities-pinned-section"')));
+  const heading = section.slice(0, section.indexOf('</h2>'));
+  assert.ok(heading.indexOf('id="communities-invite"') < heading.indexOf('id="communities-edit"'), 'Invite people, then Edit');
+  // No tile carries a control of its own any more (Evan, 20 Nov 2026).
+  assert.doesNotMatch(html, /data-home-community-invite|data-communities-invite/,
+    'neither a corner button on a tile nor the list, which is closed on the first render');
+  const pinTile = read('frontend/src/features/home/pinned-communities.tsx');
+  assert.doesNotMatch(pinTile, /onInvite|UserPlusIcon/, 'a tile is its icon, its name and its pin');
+});
+
+test('a community you pinned but did not join is not one you can invite to', () => {
+  const html = withStores(
+    { ready: true, pins: [{ slug: 'garden', name: 'Garden Club', iconUrl: null, iconEmoji: '🌱', iconColor: null, member: false }], joined: [], owed: {} },
+    { badgeNeeds: 0 },
+    (mod) => renderToHtml(createElement(mod.CommunitiesScreen, {})),
+  );
+  assert.doesNotMatch(html, /id="communities-invite"/, 'there is no membership whose link you could make');
+  assert.match(read(PAGE), /if \(pin\.member\) bySlug\.set\(/, 'a pin counts only once you are in it');
+});
+
+test('the Invite people list names every community you are in, and opens its link', () => {
+  const mod = loadTsx(PAGE);
+  const html = renderToHtml(createElement(mod.InvitePeopleList, {
+    communities: [
+      { slug: 'tide', name: 'Tide Table', iconEmoji: '🌊' },
+      { slug: 'orchard', name: 'Orchard', iconEmoji: '🍎' },
+    ],
+    onPick: () => {},
+  }));
+  assert.match(html, /data-communities-invite="tide"/);
+  assert.match(html, /data-communities-invite="orchard"/);
+  assert.match(html, new RegExp(`aria-label="${message('communities:page.invite.to', { community: 'Tide Table' })}"`),
+    'the row says what pressing it does, since its visible words are the name');
+  assert.match(html, /class="community-switcher-row"/, 'the switcher\'s own row, so it is right in every look');
+  assert.match(html, /class="app-icon-tile community-switcher-tile"/);
 
   const page = read(PAGE);
-  assert.match(page, /onInvite=\{pin\.member && !editing \? \(\) => invite\(pin\.slug, pin\.name\) : undefined\}/);
-  assert.match(page, /onInvite=\{!editing \? \(\) => invite\(c\.slug, c\.name\) : undefined\}/);
+  assert.match(page, /onPick=\{\(c\) => \{ setInviting\(false\); invite\(c\.slug, c\.name\); \}\}/,
+    'picking one closes the list and opens that community\'s invite');
   assert.match(page, /win\?\.AppContext\?\.openInvite\?\.\(\{ slug, name \}\)/,
     'it opens that community\'s invite, not the app in context');
-  const pinTile = read('frontend/src/features/home/pinned-communities.tsx');
-  assert.match(pinTile, /onInvite && !editing \?/, 'no disc while the pins are being edited');
-  assert.match(pinTile, /event\.preventDefault\(\); event\.stopPropagation\(\); onInvite\(\);/,
-    'the disc does not open the tile');
-  assert.equal(message('communities:tile.invite', { community: 'Orchard' }), 'Invite people to Orchard');
+  assert.match(page, /\{state\.ready && inviting && invitable\.length \? \(\s*<section id="communities-invite-section"/);
+  assert.match(page, /onClick=\{\(\) => \{ setInviting\(false\); setEditing\(\(on\) => !on\); \}\}/, 'Edit closes the list');
+  assert.equal(message('communities:page.invite'), 'Invite people');
+  assert.equal(message('communities:page.invite.heading'), 'Choose a community');
+  assert.equal(message('communities:page.invite.to', { community: 'Orchard' }), 'Invite people to Orchard');
 });
 
 test('Standard (WIP) draws the page as Home is: its ground, cards with members and the week from 1024px, the kit\'s filled actions', () => {

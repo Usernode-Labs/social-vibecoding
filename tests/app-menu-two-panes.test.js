@@ -113,11 +113,11 @@ test('two panes of ONE sheet, not two sheets', () => {
 });
 
 test('the invite pane can be opened for a community that is not the app in context', () => {
-  // The Communities page's Invite disc opens a community's link from a page
-  // where no project is in context (app-context-controller `openInvite`).
-  // The pane takes `inviteFor` as its subject for that opening; the header
-  // and the menu keep naming the app in context, and the sheet still hands
-  // the pane the app it is on.
+  // A row of the Communities page's Invite people list opens a community's
+  // link from a page where no project is in context (app-context-controller
+  // `openInvite`). The pane takes `inviteFor` as its subject for that
+  // opening; the header and the menu keep naming the app in context, and the
+  // sheet still hands the pane the app it is on.
   assert.match(PANE, /const openedFor = appContextStore\.get\(\)\.inviteFor;/);
   assert.match(PANE, /if \(!openedFor \|\| openedFor\.slug === slug\) return \{ slug, label, unnamed \};/,
     'the app in context is the subject unless a community was named');

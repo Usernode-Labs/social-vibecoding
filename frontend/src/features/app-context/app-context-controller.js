@@ -76,10 +76,11 @@ export const AppContext = Object.assign(
      * From About's Invite the sheet is already open, and `back: 'about'`
      * makes its back disc return there.
      *
-     * A `slug` names a community that is not the app in context — the
-     * Communities page's Invite disc, where no project is in context at all:
-     * `inviteFor` carries that community to the pane, and the app in context
-     * (the header's chip, what Improve targets) is left untouched.
+     * A `slug` names a community that is not the app in context — a row of
+     * the Communities page's Invite people list, where no project is in
+     * context at all: `inviteFor` carries that community to the pane, and the
+     * app in context (the header's chip, what Improve targets) is left
+     * untouched.
      *
      * @param {{ back?: 'about', slug?: string, name?: string }} [opts]
      */

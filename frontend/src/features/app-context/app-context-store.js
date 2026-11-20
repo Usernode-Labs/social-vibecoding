@@ -41,9 +41,9 @@ export const appContextStore = createStore({
   back: 'menu',
   /**
    * A community the invite pane is opened for that is NOT the app in
-   * context: `{ slug, name }`, or null. The Communities page's Invite disc
-   * opens a community's link while no project is in context (that page is
-   * not inside an app), so the pane needs its own subject; the header chip
+   * context: `{ slug, name }`, or null. The Communities page's Invite people
+   * list opens a community's link while no project is in context (that page
+   * is not inside an app), so the pane needs its own subject; the header chip
    * and the Improve target stay untouched (app-context-controller.js
    * `openInvite`).
    *
