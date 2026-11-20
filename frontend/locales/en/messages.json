@@ -691,6 +691,10 @@
     "text": "I built it, but GitHub wouldn’t take the upload",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the build finished, and GitHub refused to take the code it made. The bot speaks as I."
   },
+  "bot.state.line.stop.credit": {
+    "text": "I ran out of building credit. I’ll pick it up again once it’s back",
+    "description": "Line under the title of Homeroom bot's activity card for a build that stopped because the platform ran out of building credit (money for the AI model). The bot speaks as \"I\"; it starts the build again by itself once credit is back. No full stop at the end, like the other lines of this card."
+  },
   "bot.state.line.stop.stopped": {
     "text": "A person stopped it",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": somebody stopped the bot's build of the request."

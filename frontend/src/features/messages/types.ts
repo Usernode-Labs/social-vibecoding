@@ -632,7 +632,9 @@ export interface HomeroomBotActivity {
   /** A `build_failed` ending: why the build stopped. */
   stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other'
     // T2.9: the one decoder's other causes (services/bot-stop-cause.js).
-    | 'plan' | 'push' | 'push_permanent' | 'push_gave_up' | 'stopped';
+    | 'plan' | 'push' | 'push_permanent' | 'push_gave_up' | 'stopped'
+    // T2.2: it stopped for building credit, and starts again by itself.
+    | 'credit';
   /**
    * A `held` ending: which of the bot's limits holds it back. #6156: the
    * project's builds (`builds_per_app`: it waits for the bot's turn) and its

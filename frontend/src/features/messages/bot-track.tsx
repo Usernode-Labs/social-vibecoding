@@ -49,9 +49,15 @@ const STEP_WORDS: Record<BotTrackStep, string> = {
   live: 'messages:bot.track.step.live',
 };
 
-// Why a build that did not finish stopped (homeroom-bot-track.js
-// buildStopWhy): the second line a stopped build says.
-const CAUSE_LINES: Record<string, string> = {
+// Why a stopped request stopped, by the cause the one decoder stored
+// (services/bot-stop-cause.js, as homeroom-bot-track.js trackCauseOf names
+// it): the second line a stopped track says. One entry for every cause a
+// stop can carry, so a new cause is said on purpose: `null` where the row's
+// own words already say it (a look that failed, a fix that stopped, a
+// closed change, a stall, a wait for building credit), and the row's second
+// line or its stage word is said instead. tests/work-stages-client.test.js
+// holds the keys to the decoder's.
+export const CAUSE_LINES: Readonly<Record<string, string | null>> = Object.freeze({
   time: 'messages:bot.track.line.stopped.time',
   restart: 'messages:bot.track.line.stopped.restart',
   restarts: 'messages:bot.track.line.stopped.restarts',
@@ -66,7 +72,12 @@ const CAUSE_LINES: Record<string, string> = {
   // T2.9: the one decoder's other causes (services/bot-stop-cause.js).
   plan: 'messages:bot.track.line.stopped.plan',
   stopped: 'messages:bot.track.line.stopped.stopped',
-};
+  credit: null,
+  look_failed: null,
+  fix_stopped: null,
+  change_closed: null,
+  stalled: null,
+});
 
 // Papote #3: what a request waits on, naming who it waits on, for a page
 // anyone can open (BotTrack.waitingFor): one entry for every why of the
@@ -129,7 +140,9 @@ export function trackLine(track: BotTrack): string {
   if (work.stage === 'stopped' && track.cause === 'stopped' && track.causeBy) {
     return translate('messages:bot.track.line.stopped.stoppedBy', { username: track.causeBy });
   }
-  if (work.stage === 'stopped' && track.cause && CAUSE_LINES[track.cause]) return translate(CAUSE_LINES[track.cause]);
+  const causeLine = work.stage === 'stopped' && track.cause && Object.prototype.hasOwnProperty.call(CAUSE_LINES, track.cause)
+    ? CAUSE_LINES[track.cause] : null;
+  if (causeLine) return translate(causeLine);
   return say(lineWords(work)) || trackStateWord(track);
 }
 

@@ -1579,7 +1579,10 @@ export async function listBlocks(): Promise<ConversationUser[]> {
   }).filter((user) => user.id);
 }
 
-const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
+// What an activity card can come to: the server's endings
+// (services/homeroom-bot-activity.js OUTCOME_LABELS, which
+// tests/work-stages-client.test.js holds this to). Any other reads as stopped.
+export const ACTIVITY_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
   'checking', 'needs_look', 'going_live',
@@ -1644,9 +1647,13 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
 const ASK_KINDS = new Set([
   'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
 ]);
-// T2.9: every cause the one decoder names a stop by (services/bot-stop-cause.js).
-const JOB_STOP_CAUSES = new Set([
+// T2.9: every cause the one decoder names a stop by (services/bot-stop-cause.js
+// BUILD_CAUSES, which tests/work-stages-client.test.js holds this to). A
+// stop for building credit was dropped here, and its card said only that
+// the build didn't finish.
+export const JOB_STOP_CAUSES: ReadonlySet<string> = new Set([
   'time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other', 'plan', 'push', 'push_permanent', 'push_gave_up', 'stopped',
+  'credit',
 ]);
 
 /**
