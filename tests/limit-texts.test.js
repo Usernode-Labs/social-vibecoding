@@ -119,6 +119,34 @@ test("couldn't check is texted only once it has lasted an hour, and only once", 
   assert.deepEqual([readable.mark.unknownSince, readable.mark.unknownTexted], [null, false], 'readable again: re-armed');
 });
 
+test('people turned away (#6901): the first refusal at once, then the count at most every three hours', () => {
+  const since = new Date(NOON_PARIS - 30 * 60 * 1000).toISOString();
+  const full = (n) => ({ ...appsRow(300, 'full'), turnedAway: n, turnedAwaySince: n ? since : null });
+  // Full and texted an hour ago, nobody refused yet.
+  const crossed = texts.decide(null, appsRow(300, 'warn'), { now: NOON_PARIS - HOUR, country: 'GB' });
+  assert.equal(crossed.action, 'crossing');
+  const first = texts.decide(crossed.mark, full(1), { now: NOON_PARIS, country: 'GB' });
+  assert.deepEqual([first.action, first.turnedAway, first.firstOfRun], ['turned_away', 1, true], 'the first refusal is texted at once');
+  const soon = texts.decide(first.mark, full(3), { now: NOON_PARIS + 2 * HOUR, country: 'GB' });
+  assert.equal(soon.action, null, 'more people, but within three hours: nothing yet');
+  const later = texts.decide(soon.mark, full(4), { now: NOON_PARIS + 3 * HOUR, country: 'GB' });
+  assert.deepEqual([later.action, later.turnedAway, later.firstOfRun], ['turned_away', 4, false]);
+  const same = texts.decide(later.mark, full(4), { now: NOON_PARIS + 6 * HOUR + 1, country: 'GB' });
+  assert.equal(same.action, null, 'no new people, and the refusal text counted as the reminder: six hours from it');
+  const reminder = texts.decide(later.mark, full(4), { now: NOON_PARIS + 9 * HOUR, country: 'GB' });
+  assert.deepEqual([reminder.action, reminder.turnedAway], ['reminder', 4], 'the six-hour reminder carries the count');
+  assert.equal(texts.REFUSAL_TEXT_MS, 3 * HOUR);
+});
+
+test('a crossing that already has people turned away carries the count instead of a second text', () => {
+  const since = new Date(NOON_PARIS - 10 * 60 * 1000).toISOString();
+  const row = { ...appsRow(300, 'warn'), turnedAway: 2, turnedAwaySince: since };
+  const hit = texts.decide(null, row, { now: NOON_PARIS, country: 'GB' });
+  assert.deepEqual([hit.action, hit.turnedAway], ['crossing', 2]);
+  assert.equal(texts.decide(hit.mark, row, { now: NOON_PARIS + 5 * 60 * 1000, country: 'GB' }).action, null,
+    'the two people were told with the crossing');
+});
+
 // ─── 2. The words ───────────────────────────────────────────────────────
 
 test('the words are short, carry the figures and the fix, and nothing personal', () => {
@@ -132,6 +160,12 @@ test('the words are short, carry the figures and the fix, and nothing personal',
   assert.match(texts.textFor({ key: 'sessions', state: 'at', used: 180, cap: 180 }, { action: 'crossing' }, { site }), /sessions at 180 of 180\./);
   assert.match(texts.textFor({ key: 'db_connections', state: 'at', used: 85, cap: 85 }, { action: 'crossing' }, { site }), /#admin\/status$/);
   assert.match(texts.textFor({ key: 'sessions', state: 'unknown' }, { action: 'unknown' }, { site }), /couldn't read the session count for an hour/);
+  assert.equal(texts.textFor(appsRow(300, 'full'), { action: 'turned_away', turnedAway: 1, firstOfRun: true }, { site }),
+    'Homeroom: someone was just turned away at the app limit (300 of 300). Raise the limit: https://app.onhomeroom.com/#admin/limits');
+  assert.match(texts.textFor(appsRow(300, 'full'), { action: 'turned_away', turnedAway: 4, firstOfRun: false }, { site }),
+    /^Homeroom: 4 people turned away at the app limit since it filled \(300 of 300\)\./);
+  assert.match(texts.textFor(appsRow(300, 'full'), { action: 'reminder', turnedAway: 4 }, { site }),
+    /New projects are being refused\. 4 people turned away so far\. Raise the limit:/);
   for (const words of [at, texts.textFor(credit('out'), { action: 'crossing' }, { site })]) {
     assert.ok(words.length <= 160, `one SMS: ${words.length}`);
     assert.doesNotMatch(words, /\+?\d{9,}/, 'no phone number');
@@ -218,12 +252,15 @@ function store({ provider = 'brevo' } = {}) {
       if (/^SELECT id, phone_e164, country FROM limit_alert_phones WHERE verified_at IS NOT NULL ORDER BY id$/.test(sql)) {
         return { rows: db.phones.filter((p) => p.verified_at) };
       }
-      if (/^SELECT phone_id, limit_key, level, texted_at, unknown_since, unknown_texted FROM limit_alert_marks/.test(sql)) {
+      if (/^SELECT phone_id, limit_key, level, texted_at, unknown_since, unknown_texted, refusals_texted_at, refusals_texted FROM limit_alert_marks/.test(sql)) {
         return { rows: db.marks.filter((m) => params[0].map(Number).includes(Number(m.phone_id))) };
       }
       if (/^INSERT INTO limit_alert_marks/.test(sql)) {
         const at = (v) => (v == null ? null : new Date(v));
-        const next = { phone_id: params[0], limit_key: params[1], level: params[2], texted_at: at(params[3]), unknown_since: at(params[4]), unknown_texted: params[5] };
+        const next = {
+          phone_id: params[0], limit_key: params[1], level: params[2], texted_at: at(params[3]), unknown_since: at(params[4]),
+          unknown_texted: params[5], refusals_texted_at: at(params[6]), refusals_texted: params[7],
+        };
         db.marks = db.marks.filter((m) => !(Number(m.phone_id) === Number(next.phone_id) && m.limit_key === next.limit_key));
         db.marks.push(next);
         return { rows: [] };
@@ -400,4 +437,23 @@ test('a second sweep running at the same moment skips instead of texting twice',
   assert.equal(second.skipped, true, 'the lock was held elsewhere: this pass does nothing');
   assert.equal(http.calls.length, 1);
   assert.deepEqual(taken, [LIMIT_TEXTS_LOCK, LIMIT_TEXTS_LOCK]);
+});
+
+test('the sweep texts the first person turned away and logs it as turned_away', async () => {
+  const pool = store();
+  const http = brevo();
+  const added = await texts.addPhone(pool, CONFIG, { phoneNumber: GB, label: 'On call' }, deps(http));
+  await texts.verifyPhone(pool, { id: added.id, code: '424242' });
+  http.calls.length = 0;
+  let rows = [appsRow(300, 'warn')];
+  const run = (now) => texts.sweep(pool, CONFIG, deps(http, { limits: async () => ({ rows }), now: () => now }));
+  await run(NOON_PARIS);
+  rows = [{ ...appsRow(300, 'full'), turnedAway: 1, turnedAwaySince: new Date(NOON_PARIS + 60 * 1000).toISOString() }];
+  await run(NOON_PARIS + 5 * 60 * 1000);
+  assert.equal(http.calls.length, 2);
+  assert.match(http.calls[1].body.content, /^Homeroom: someone was just turned away at the app limit \(300 of 300\)/);
+  const sends = pool.db.sends.filter((s) => s.what !== 'verify').map((s) => s.what);
+  assert.deepEqual(sends, ['crossing', 'turned_away']);
+  await run(NOON_PARIS + 10 * 60 * 1000);
+  assert.equal(http.calls.length, 2, 'the same run, minutes later: nothing more');
 });

@@ -121,9 +121,9 @@ test('several at once: every row, in the order the server ranked them', () => {
   assert.match(rowOf(html, 'db_connections'), /See connections/);
 });
 
-test('#6901 hook: a count of people turned away is said when it arrives', () => {
+test('#6901: the count of people turned away since the limit filled is said on the row', () => {
   const row = rowOf(card([{ ...APPS_AT, turnedAway: 3 }]), 'apps');
-  assert.match(row, /New projects are refused for everyone but full admins\. 3 people were turned away\./);
+  assert.match(row, /New projects are refused for everyone but full admins\. 3 people were turned away since it filled\./);
   assert.doesNotMatch(rowOf(card([APPS_AT]), 'apps'), /turned away/, 'nothing until it is counted');
 });
 

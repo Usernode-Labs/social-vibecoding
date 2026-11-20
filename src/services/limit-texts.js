@@ -14,6 +14,11 @@
 //            any hour; then a reminder at most every REMIND_MS while it stays
 //            at, over or out.
 //   unknown  once, when a figure has been unreadable for UNKNOWN_AFTER_MS.
+//   turned away  (the app limit only, from #6901's count) the first person
+//            refused while it is full, at once; then the count at most every
+//            REFUSAL_TEXT_MS. A refusal text counts as that limit's reminder,
+//            and a crossing or reminder carries the count, so the two
+//            rhythms never double up.
 //
 // A crossing is texted once. The level a number was last texted at is kept
 // per number and limit (limit_alert_marks), and it only re-arms when the row
@@ -44,6 +49,9 @@ const { quietHoursAllow } = require('./sms/countries');
 const { SmsError } = require('./sms/errors');
 
 const REMIND_MS = 6 * 60 * 60 * 1000;
+// #6901's rhythm for people turned away at the app limit: the first refusal
+// of a run at once, then the count at most this often.
+const REFUSAL_TEXT_MS = 3 * 60 * 60 * 1000;
 const UNKNOWN_AFTER_MS = 60 * 60 * 1000;
 const CODE_TTL_MS = 10 * 60 * 1000;
 const RESEND_AFTER_MS = 60 * 1000;
@@ -121,6 +129,8 @@ function decide(mark, row, { now = Date.now(), country = null } = {}) {
     textedAt: ms(mark && mark.textedAt),
     unknownSince: ms(mark && mark.unknownSince),
     unknownTexted: !!(mark && mark.unknownTexted),
+    refusalsAt: ms(mark && mark.refusalsAt),
+    refusalsCount: Number(mark && mark.refusalsCount) || 0,
   };
   const quietOk = () => quietHoursAllow(country, new Date(now));
   const level = alertLevel(row);
@@ -135,14 +145,27 @@ function decide(mark, row, { now = Date.now(), country = null } = {}) {
   }
 
   const base = { ...m, unknownSince: null, unknownTexted: false };
+  // #6901: people turned away at the app limit while it is full. Any text
+  // sent now carries the count and marks it told.
+  const away = level === 'broken' && row && row.key === 'apps' && Number(row.turnedAway) > 0 ? Number(row.turnedAway) : 0;
+  const awaySince = away ? ms(row.turnedAwaySince) : null;
+  const told = (next) => (away ? { ...next, refusalsAt: now, refusalsCount: away } : next);
   if (RANK[level] > RANK[m.level]) {
     if (level === 'near' && !quietOk()) return { action: null, level: m.level, mark: base, held: 'quiet_hours' };
-    return { action: 'crossing', level, mark: { ...base, level, textedAt: now } };
+    return { action: 'crossing', level, turnedAway: away, mark: told({ ...base, level, textedAt: now }) };
   }
   if (RANK[level] < RANK[m.level]) return { action: null, level, mark: { ...base, level } };
+  if (away && awaySince != null) {
+    const newRun = m.refusalsAt == null || m.refusalsAt < awaySince;
+    const more = away > m.refusalsCount && m.refusalsAt != null && now - m.refusalsAt >= REFUSAL_TEXT_MS;
+    if (newRun || more) {
+      // Counts as the limit's reminder too: the six hours start again.
+      return { action: 'turned_away', level, turnedAway: away, firstOfRun: newRun, mark: told({ ...base, textedAt: now }) };
+    }
+  }
   if (level === 'broken' && row && BROKEN_STATES.has(row.state)
       && (m.textedAt == null || now - m.textedAt >= REMIND_MS)) {
-    return { action: 'reminder', level, mark: { ...base, textedAt: now } };
+    return { action: 'reminder', level, turnedAway: away, mark: told({ ...base, textedAt: now }) };
   }
   return { action: null, level, mark: base };
 }
@@ -162,10 +185,18 @@ function textFor(row, step, { site = origin() } = {}) {
   const lead = step.action === 'reminder' ? 'Homeroom reminder: ' : 'Homeroom: ';
   const near = row.state === 'near';
   const figures = `${row.used} of ${row.cap}`;
+  const people = (n) => (n === 1 ? '1 person' : `${n} people`);
+  if (step.action === 'turned_away') {
+    if (step.firstOfRun && step.turnedAway === 1) {
+      return `Homeroom: someone was just turned away at the app limit (${figures}). Raise the limit: ${limits}`;
+    }
+    return `Homeroom: ${people(step.turnedAway)} turned away at the app limit since it filled (${figures}). Raise the limit: ${limits}`;
+  }
+  const away = step.turnedAway ? ` ${people(step.turnedAway)} turned away so far.` : '';
   if (row.key === 'apps') {
     if (near) return `${lead}apps at ${figures}, near the limit. New projects stop at ${row.cap}. Raise it: ${limits}`;
-    if (row.state === 'over') return `${lead}apps over the limit, ${figures}. New projects are being refused. Raise the limit: ${limits}`;
-    return `${lead}apps at ${figures}. New projects are being refused. Raise the limit: ${limits}`;
+    if (row.state === 'over') return `${lead}apps over the limit, ${figures}. New projects are being refused.${away} Raise the limit: ${limits}`;
+    return `${lead}apps at ${figures}. New projects are being refused.${away} Raise the limit: ${limits}`;
   }
   if (row.key === 'sessions') {
     if (near) return `${lead}sessions at ${figures}, near the limit. Raise it: ${limits}`;
@@ -431,7 +462,8 @@ async function removePhone(pool, { id }) {
 
 function sameMark(a, b) {
   return a.level === b.level && a.textedAt === b.textedAt
-    && a.unknownSince === b.unknownSince && a.unknownTexted === b.unknownTexted;
+    && a.unknownSince === b.unknownSince && a.unknownTexted === b.unknownTexted
+    && (a.refusalsAt ?? null) === (b.refusalsAt ?? null) && (a.refusalsCount || 0) === (b.refusalsCount || 0);
 }
 
 /**
@@ -476,17 +508,19 @@ async function sweepOnce(pool, config, deps = {}) {
     : await require('./platform-limits-view').compute(pool, config);
   const byKey = new Map((payload.rows || []).map((row) => [row.key, row]));
   const { rows: markRows } = await pool.query(
-    `SELECT phone_id, limit_key, level, texted_at, unknown_since, unknown_texted
+    `SELECT phone_id, limit_key, level, texted_at, unknown_since, unknown_texted, refusals_texted_at, refusals_texted
        FROM limit_alert_marks WHERE phone_id = ANY($1::bigint[])`,
     [phones.map((p) => p.id)],
   );
   const marks = new Map(markRows.map((m) => [`${m.phone_id}:${m.limit_key}`, {
     level: m.level, textedAt: ms(m.texted_at), unknownSince: ms(m.unknown_since), unknownTexted: !!m.unknown_texted,
+    refusalsAt: ms(m.refusals_texted_at), refusalsCount: Number(m.refusals_texted) || 0,
   }]));
   let ready = null;
   for (const phone of phones) {
     for (const key of KEYS) {
-      const before = marks.get(`${phone.id}:${key}`) || { level: 'ok', textedAt: null, unknownSince: null, unknownTexted: false };
+      const before = marks.get(`${phone.id}:${key}`)
+        || { level: 'ok', textedAt: null, unknownSince: null, unknownTexted: false, refusalsAt: null, refusalsCount: 0 };
       const row = byKey.get(key) || null;
       const step = decide(before, row, { now, country: phone.country });
       if (step.held) out.held += 1;
@@ -505,12 +539,16 @@ async function sweepOnce(pool, config, deps = {}) {
       }
       if (!sameMark(before, step.mark)) {
         await pool.query(
-          `INSERT INTO limit_alert_marks (phone_id, limit_key, level, texted_at, unknown_since, unknown_texted, updated_at)
-           VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000), to_timestamp($5::double precision / 1000), $6, NOW())
+          `INSERT INTO limit_alert_marks
+             (phone_id, limit_key, level, texted_at, unknown_since, unknown_texted, refusals_texted_at, refusals_texted, updated_at)
+           VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000), to_timestamp($5::double precision / 1000), $6,
+                   to_timestamp($7::double precision / 1000), $8, NOW())
            ON CONFLICT (phone_id, limit_key) DO UPDATE
              SET level = EXCLUDED.level, texted_at = EXCLUDED.texted_at, unknown_since = EXCLUDED.unknown_since,
-                 unknown_texted = EXCLUDED.unknown_texted, updated_at = NOW()`,
-          [phone.id, key, step.mark.level, step.mark.textedAt, step.mark.unknownSince, step.mark.unknownTexted],
+                 unknown_texted = EXCLUDED.unknown_texted, refusals_texted_at = EXCLUDED.refusals_texted_at,
+                 refusals_texted = EXCLUDED.refusals_texted, updated_at = NOW()`,
+          [phone.id, key, step.mark.level, step.mark.textedAt, step.mark.unknownSince, step.mark.unknownTexted,
+            step.mark.refusalsAt, step.mark.refusalsCount],
         );
       }
     }
@@ -521,6 +559,7 @@ async function sweepOnce(pool, config, deps = {}) {
 
 module.exports = {
   REMIND_MS,
+  REFUSAL_TEXT_MS,
   UNKNOWN_AFTER_MS,
   CODE_TTL_MS,
   MAX_CODE_ATTEMPTS,

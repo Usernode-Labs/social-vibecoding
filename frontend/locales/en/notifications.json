@@ -2040,11 +2040,11 @@
     "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when a limit's count could not be read."
   },
   "limits.turnedAway_one": {
-    "text": "1 person was turned away.",
+    "text": "1 person was turned away since it filled.",
     "description": "Sentence added to a row of the platform limits area (top of the notifications sheet, full admins only): how many people were refused because the limit was reached. English spells the one out."
   },
   "limits.turnedAway_other": {
-    "text": "{{count}} people were turned away.",
+    "text": "{{count}} people were turned away since it filled.",
     "description": "Sentence added to a row of the platform limits area (top of the notifications sheet, full admins only): {{count}} is how many people were refused because the limit was reached."
   },
   "limits.action.raise": {
@@ -2070,5 +2070,29 @@
   "limits.action.newTab": {
     "text": "(opens in a new tab)",
     "description": "Hidden text for screen readers after a button of the platform limits area (top of the notifications sheet, full admins only) that opens another site in a new tab."
+  },
+  "row.limit.connections.full.label": {
+    "text": "Database connections used up",
+    "description": "First line of a notification to an administrator: the shared database has no connections left for apps."
+  },
+  "row.limit.connections.warn.label": {
+    "text": "Database connections running low",
+    "description": "First line of a notification to an administrator: the shared database is past 80% of the connections apps may open."
+  },
+  "row.limit.connections.full.body_one": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> Apps can't open new ones, so their pages fail until some close.",
+    "description": "Second line of the \"Database connections used up\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.connections.full.body_other": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> Apps can't open new ones, so their pages fail until some close.",
+    "description": "Second line of the \"Database connections used up\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.connections.warn.body_one": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> At the limit, apps can't open new ones.",
+    "description": "Second line of the \"Database connections running low\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.connections.warn.body_other": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> At the limit, apps can't open new ones.",
+    "description": "Second line of the \"Database connections running low\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
   }
 }

@@ -8,6 +8,9 @@
 //             wall: past it, POST /api/apps and /fork answer 429 "This
 //             server is at its app limit" to everyone but full admins. Set
 //             in Admin → Limits, else MAX_APPS (services/app-limit.js).
+//   connections  the shared Postgres server's client connections against
+//             the line where ordinary logins are refused (max_connections
+//             less the reserved blocks). Postgres itself refuses past it.
 //   sessions  the session limit — active + promoted coding workers. A soft
 //             wall: at it, starting or reopening a session pauses somebody
 //             else's idle one, and 429s "Platform is at capacity" when
@@ -114,6 +117,30 @@ const LIMITS = Object.freeze([
     count: (pool) => require('./session-caps').countGlobalSessions(pool),
   }),
   Object.freeze({
+    // The shared Postgres server's client connections, against the line
+    // where ordinary logins (every app's) are refused: max_connections less
+    // the superuser and reserved blocks (services/server-budget.js keeps the
+    // platform's own pools inside the reserved block, so apps meet the wall
+    // first). Postgres itself enforces it; the count is the census the
+    // status screen shows (db/connection-census.js).
+    key: 'connections',
+    envKey: 'max_connections',
+    enabled: () => true,
+    async cap(_config, pool) {
+      const { rows } = await pool.query(
+        `SELECT current_setting('max_connections')::int
+                - current_setting('superuser_reserved_connections')::int
+                - COALESCE(NULLIF(current_setting('reserved_connections', true), ''), '0')::int AS cap`
+      );
+      return Number(rows[0] && rows[0].cap);
+    },
+    async count(pool) {
+      const census = await require('../db/connection-census').connectionCensus(pool);
+      if (!census) throw new Error('the connection census could not be taken');
+      return census.used;
+    },
+  }),
+  Object.freeze({
     key: 'github_app',
     // Read off GitHub's answers to this process: unknown (no cap) until it
     // has made a call, which says nothing about the level.
@@ -194,7 +221,7 @@ function detailToken(key, level, used, cap) {
   return `${key}_${level}:${figure(used)}:${figure(cap)}`;
 }
 
-const DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const DETAIL_RE = /^(apps|sessions|connections|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parseDetail(detail) {
   const m = DETAIL_RE.exec(String(detail || ''));
@@ -431,6 +458,8 @@ async function recordRefusal(pool, config, key, userId, deps = {}) {
     log.info('platform-limits', 'Someone was turned away at a platform limit', {
       limit: key, cap, detail: outcome.token, recipients: outcome.inserted.length, staging,
     });
+    // The admin limits area shows the count (services/platform-limits-view.js).
+    (deps.limitsChanged || (() => require('./platform-limits-view').changed()))();
   }
   return { notified: outcome.token, recipients: outcome.inserted.length };
 }

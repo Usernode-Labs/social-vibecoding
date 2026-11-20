@@ -17,15 +17,14 @@
 //                   key's own limit. Out, the bot stops planning and building.
 //   db_connections  client connections on the shared Postgres server against
 //                   the line where ordinary logins (every app's) are refused:
-//                   max_connections less the superuser and reserved blocks
-//                   (services/server-budget.js keeps the platform's own pools
-//                   inside the reserved block, so apps meet the wall first).
+//                   platform-limit-alerts.js's `connections` limit, so it
+//                   has a stored level and bell notices like the others.
 //
 // Nothing here makes a new outside call when the area is opened. The counted
 // limits are read through platform-limit-alerts.js's own LIMITS (the count and
 // cap queries the enforcing routes use) and its stored level, the credit from
-// the state its own sweep keeps, and the connections from the census the
-// status screen already runs. The figures are held for CACHE_MS. Only "Check
+// the state its own sweep keeps. The apps row's count of people turned away
+// is #6901's (refusalSummary). The figures are held for CACHE_MS. Only "Check
 // again" (`refresh`) runs the sweeps, which is what reads OpenRouter.
 //
 // A row's level is decided with platform-limit-alerts.decide(), so it leaves
@@ -45,7 +44,9 @@ const CACHE_MS = 30 * 1000;
 // The credit sweep runs every 15 minutes (workflow/clock/services.ts): three
 // missed reads make the last figure too old to stand on.
 const CREDIT_STALE_MS = 45 * 60 * 1000;
-const COUNTED = Object.freeze(['apps', 'sessions']);
+const COUNTED = Object.freeze(['apps', 'sessions', 'connections']);
+// The alerts' key for a limit, and the row's (the client's) key for it.
+const ROW_KEY = Object.freeze({ apps: 'apps', sessions: 'sessions', connections: 'db_connections' });
 // Worst first; then the order the mockup lists them in.
 const STATE_RANK = Object.freeze({ over: 0, at: 1, out: 1, near: 2, unknown: 3 });
 const KEY_RANK = Object.freeze({ apps: 0, openrouter_credit: 1, sessions: 2, db_connections: 3 });
@@ -55,9 +56,6 @@ const BROKEN = Object.freeze(new Set(['over', 'at', 'out']));
 const caches = new WeakMap();
 // Bumped by changed(): every held answer from before a level moved is dropped.
 let generation = 0;
-// The connections' level, held per process: there is no stored row for it,
-// and without the margin a count wobbling at the line would come and go.
-let connectionsLevel = 'ok';
 
 function alerts() {
   return require('./platform-limit-alerts');
@@ -131,15 +129,6 @@ function creditRow(status, { now = Date.now() } = {}) {
   return null;
 }
 
-/** The connections as a row, or null. Pure; `level` is the one held last. */
-function connectionsRow({ used, max, superuserReserved = 0, reserved = 0, percent, level = 'ok' }) {
-  const cap = Number(max) - Math.max(0, Number(superuserReserved) || 0) - Math.max(0, Number(reserved) || 0);
-  if (!Number.isFinite(cap) || cap <= 0) return { row: null, level: 'ok' };
-  const row = countedRow('db_connections', { used, cap, percent, level });
-  const held = row ? row.level : alerts().decide({ used, cap, percent, level }).level;
-  return { row, level: held };
-}
-
 function unknownRow(key, reason) {
   return { key, state: 'unknown', reason };
 }
@@ -167,28 +156,6 @@ async function storedLevels(pool) {
   return out;
 }
 
-async function readConnections(pool, percent) {
-  const census = await require('../db/connection-census').connectionCensus(pool);
-  if (!census || !(census.max > 0)) return unknownRow('db_connections', 'no_answer');
-  let superuserReserved = 0;
-  let reserved = 0;
-  try {
-    const { rows } = await pool.query(
-      `SELECT current_setting('superuser_reserved_connections')::int AS superuser_reserved,
-              COALESCE(NULLIF(current_setting('reserved_connections', true), ''), '0')::int AS reserved`,
-    );
-    superuserReserved = Number(rows[0]?.superuser_reserved) || 0;
-    reserved = Number(rows[0]?.reserved) || 0;
-  } catch (err) {
-    log.warn('platform-limits', 'Could not read the reserved connections', { err: err.message });
-  }
-  const out = connectionsRow({
-    used: census.used, max: census.max, superuserReserved, reserved, percent, level: connectionsLevel,
-  });
-  connectionsLevel = out.level;
-  return out.row;
-}
-
 /**
  * Every row, worst first, and whether anything is refusing now. Reads only
  * the database; never throws for one limit (that limit's row says it could
@@ -205,11 +172,22 @@ async function compute(pool, config) {
     try {
       const cap = await limit.cap(config, pool);
       const used = await limit.count(pool);
-      const row = countedRow(key, { used, cap, percent, level: levels.get(key) });
+      const row = countedRow(ROW_KEY[key], { used, cap, percent, level: levels.get(key) });
       if (row) rows.push(row);
     } catch (err) {
       log.warn('platform-limits', 'Could not read a limit', { limit: key, err: err.message });
-      rows.push(unknownRow(key, 'no_answer'));
+      rows.push(unknownRow(ROW_KEY[key], 'no_answer'));
+    }
+  }
+  // #6901 counts the people turned away at the app limit while it is full;
+  // the row says that count, from that one source.
+  const apps = rows.find((row) => row.key === 'apps' && BROKEN.has(row.state));
+  if (apps) {
+    try {
+      const refused = await limits.refusalSummary(pool, 'apps');
+      if (refused.turnedAway > 0) Object.assign(apps, { turnedAway: refused.turnedAway, turnedAwaySince: refused.since });
+    } catch (err) {
+      log.warn('platform-limits', 'Could not read the refusal count', { err: err.message });
     }
   }
   try {
@@ -217,12 +195,6 @@ async function compute(pool, config) {
     if (row) rows.push(row);
   } catch (err) {
     log.warn('platform-limits', 'Could not read the credit state', { err: err.message });
-  }
-  try {
-    const row = await readConnections(pool, percent);
-    if (row) rows.push(row);
-  } catch (err) {
-    log.warn('platform-limits', 'Could not count the database connections', { err: err.message });
   }
   const sorted = sortRows(rows);
   return {
@@ -285,9 +257,8 @@ function creditMoved(before, after, settings = {}, { now = Date.now() } = {}) {
   return false;
 }
 
-/** Tests only: forget the held connections level and figures. */
+/** Tests only: drop the held figures. */
 function resetForTests() {
-  connectionsLevel = 'ok';
   generation += 1;
 }
 
@@ -297,7 +268,6 @@ module.exports = {
   BROKEN,
   countedRow,
   creditRow,
-  connectionsRow,
   sortRows,
   compute,
   read,

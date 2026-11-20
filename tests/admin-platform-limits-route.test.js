@@ -38,9 +38,11 @@ function pool({ apps = 214, appLimit = 210 } = {}) {
         return { rows: params[0] === 'max_apps' ? [{ value: String(appLimit), updated_at: null, updated_by: 'ada' }] : [] };
       }
       if (/^SELECT key, value FROM platform_settings WHERE key = ANY/.test(sql)) return { rows: [] };
+      if (/superuser_reserved_connections/.test(sql)) return { rows: [{ cap: 97 }] };
       if (/current_setting\('max_connections'\)/.test(sql)) return { rows: [{ max: 100, used: 10, idle: 0 }] };
       if (/GROUP BY datname|homeroom_connection_counts\(\) WHERE datname/.test(sql)) return { rows: [] };
-      if (/superuser_reserved_connections/.test(sql)) return { rows: [{ superuser_reserved: 3, reserved: 0 }] };
+      if (/FROM platform_limit_alerts a WHERE a\.limit_key = \$1/.test(sql)) return { rows: [] };
+      if (/refusals_since, refusals_notified_at, NOW\(\) AS now/.test(sql)) return { rows: [] };
       if (/^INSERT INTO platform_limit_alerts|^UPDATE platform_limit_alerts|^INSERT INTO platform_settings/.test(sql)) return { rows: [] };
       if (/FROM platform_limit_alerts WHERE limit_key = \$1 FOR UPDATE/.test(sql)) return { rows: [{ level: 'full', window_ms: null }] };
       if (/FROM users WHERE username = \$1 AND is_synthetic/.test(sql)) return { rows: [] };

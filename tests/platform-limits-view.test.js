@@ -98,15 +98,6 @@ test('the credit row: out, low, urgent, could not check, and nothing to say', ()
     'never read (no management key, an unlimited bot key): not a limit anybody can watch');
 });
 
-test('the connections line is max_connections less the reserved blocks', () => {
-  const { row } = view.connectionsRow({ used: 80, max: 100, superuserReserved: 3, reserved: 12, percent: 80 });
-  assert.deepEqual([row.state, row.cap, row.used, row.left], ['near', 85, 80, 5]);
-  assert.equal(view.connectionsRow({ used: 85, max: 100, superuserReserved: 3, reserved: 12, percent: 80 }).row.state, 'at');
-  assert.equal(view.connectionsRow({ used: 40, max: 100, superuserReserved: 3, reserved: 12, percent: 80 }).row, null);
-  assert.equal(view.connectionsRow({ used: 4, max: 3, superuserReserved: 3, reserved: 0, percent: 80 }).row, null,
-    'no line left for ordinary logins: nothing sensible to say');
-});
-
 test('rows run worst first: over, at or out, near, could not check', () => {
   const rows = view.sortRows([
     { key: 'db_connections', state: 'near' },
@@ -125,7 +116,7 @@ test('rows run worst first: over, at or out, near, could not check', () => {
 function fakePool({
   apps = 0, appLimit = null, sessions = 0, levels = {}, creditState = null,
   census = { max: 100, used: 10 }, reserved = { superuser_reserved: 3, reserved: 0 },
-  failApps = false,
+  failApps = false, refusals = null,
 } = {}) {
   const queries = [];
   return {
@@ -149,9 +140,16 @@ function fakePool({
       if (/^SELECT key, value FROM platform_settings WHERE key = ANY/.test(sql)) {
         return { rows: creditState ? [{ key: credit.KEY_STATE, value: JSON.stringify(creditState) }] : [] };
       }
+      // platform-limit-alerts' `connections` limit: its line, then the census.
+      if (/superuser_reserved_connections/.test(sql)) {
+        return { rows: [{ cap: census.max - reserved.superuser_reserved - reserved.reserved }] };
+      }
       if (/current_setting\('max_connections'\)/.test(sql)) return { rows: [{ max: census.max, used: census.used, idle: 0 }] };
       if (/GROUP BY datname|homeroom_connection_counts\(\) WHERE datname/.test(sql)) return { rows: [] };
-      if (/superuser_reserved_connections/.test(sql)) return { rows: [reserved] };
+      // #6901's count of people turned away at the app limit.
+      if (/FROM platform_limit_alerts a WHERE a\.limit_key = \$1/.test(sql)) {
+        return { rows: refusals ? [{ refusals_since: refusals.since, n: refusals.n }] : [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     },
   };
@@ -190,11 +188,28 @@ test('a read that fails is a could-not-check row, never a thrown read', async ()
   assert.equal(out.broken, false, 'not knowing is not the same as refusing');
 });
 
-test('the connections row comes from the census', async () => {
+test('the connections row is platform-limit-alerts\' own limit: the census against max_connections less the reserved blocks', async () => {
   view.resetForTests();
-  const out = await view.compute(fakePool({ census: { max: 100, used: 90 }, reserved: { superuser_reserved: 3, reserved: 12 } }), CONFIG);
-  const row = out.rows.find((r) => r.key === 'db_connections');
+  const over = await view.compute(fakePool({ census: { max: 100, used: 90 }, reserved: { superuser_reserved: 3, reserved: 12 } }), CONFIG);
+  const row = over.rows.find((r) => r.key === 'db_connections');
   assert.deepEqual([row.state, row.used, row.cap], ['over', 90, 85]);
+  const near = await view.compute(fakePool({ census: { max: 100, used: 70 }, reserved: { superuser_reserved: 3, reserved: 12 } }), CONFIG);
+  assert.equal(near.rows.find((r) => r.key === 'db_connections').state, 'near', '70 of 85 is past 80%');
+  // The stored level holds it with the alerts' margin, as for apps and sessions.
+  const held = await view.compute(fakePool({ census: { max: 100, used: 62 }, reserved: { superuser_reserved: 3, reserved: 12 }, levels: { connections: 'warn' } }), CONFIG);
+  assert.equal(held.rows.find((r) => r.key === 'db_connections').state, 'near', 'just under the line, still a row');
+  const fine = await view.compute(fakePool({ census: { max: 100, used: 40 }, reserved: { superuser_reserved: 3, reserved: 12 }, levels: { connections: 'warn' } }), CONFIG);
+  assert.equal(fine.rows.find((r) => r.key === 'db_connections'), undefined);
+});
+
+test('the apps row carries #6901\'s count of people turned away, only while it is full', async () => {
+  view.resetForTests();
+  const since = '2026-11-20T09:00:00.000Z';
+  const full = await view.compute(fakePool({ apps: 300, appLimit: 300, levels: { apps: 'full' }, refusals: { since, n: 4 } }), CONFIG);
+  const apps = full.rows.find((r) => r.key === 'apps');
+  assert.deepEqual([apps.state, apps.turnedAway, apps.turnedAwaySince], ['at', 4, since]);
+  const near = await view.compute(fakePool({ apps: 260, appLimit: 300, levels: { apps: 'warn' }, refusals: { since, n: 4 } }), CONFIG);
+  assert.equal(near.rows.find((r) => r.key === 'apps').turnedAway, undefined, 'nobody is refused while there is room');
 });
 
 test('the answer is held, and a level change drops what is held and tells the admins', async () => {

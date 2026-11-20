@@ -490,6 +490,11 @@
       "id": "limit-alert-phones",
       "sha256": "efaf4f2dbbe4634641d618c81c939d9cbc42dee4a0aa1d5032ff3c36ae930e2f",
       "schemaSha256": "1d91f658c1ce0a14f21510c096582d20ccc221d856b361c66f500af1b0400ca2"
+    },
+    {
+      "id": "limit-alert-refusals",
+      "sha256": "822bfc3b809b180a7f5310e5d650d5facd457d051f969a888691a2e5c7f5a089",
+      "schemaSha256": "6d31041b3ecb9559e5016c5323d8eeeea96fac1368733bcfa4df22d57c6c97b5"
     }
   ]
 }
