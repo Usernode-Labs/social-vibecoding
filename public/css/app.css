@@ -8390,6 +8390,7 @@ html:not([data-skin]) {
   --wip-nav-mini-pad: 10px;
   --wip-nav-mini-mark: 32px;             /* Homeroom's mark at the strip's top */
   --wip-nav-mini-mark-radius: 8px;
+  --wip-nav-mini-rule-gap: 8px;          /* above and under the strip's hairline */
   --wip-nav-brand-mark: url('/brand/homeroom-mark.png');
   --wip-nav-mini-ease: 200ms cubic-bezier(0.2, 0, 0, 1);
   --wip-nav-pad: 10px;
@@ -8571,6 +8572,14 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab, .platform-rail-community, .platform-rail-settings, .platform-side-app) { justify-content: center; padding-inline: 0; gap: 0; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-row, .platform-side-app-row) { display: flex; justify-content: center; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-community, .platform-side-app) { flex: 1; }
+  /* A hairline between the places and the communities' logos, where the open menu has a heading (and one more between the pinned and the recent). */
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-pinned, .platform-rail-communities)::before {
+    content: "";
+    flex: none;
+    height: 1px;
+    margin: var(--wip-nav-mini-rule-gap) 4px;
+    background: var(--wip-nav-foot-line);
+  }
   /* Settings has a line of its own above You (open, it rides the end of You's row). */
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-rail-settings { align-self: center; margin: 0 0 2px; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) #platform-tab-me { padding-inline-end: 0; }
