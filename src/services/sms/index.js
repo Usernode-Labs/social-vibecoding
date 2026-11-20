@@ -10,6 +10,8 @@
 //   sendMarketingSms type "marketing", after consent, opt-out and quiet-hour
 //                    gates, with an opt-out line appended
 //   sendTestSms      the admin console's plain test message
+//   sendLimitAlertSms a platform limit alert to an admin's number, type
+//                    "transactional", tag "limit_alert"
 //
 // Every one validates first, resolves the Sender ID (fail closed), and then
 // sends — or, on a staging preview, logs the content and sends nothing, the
@@ -203,6 +205,19 @@ async function sendTestSms(pool, config, { phoneNumber }, deps = {}) {
   }, deps);
 }
 
+/**
+ * A platform limit alert (services/limit-texts.js): transactional, never
+ * marketing, tagged apart from sign-in codes and tests. `content` is the
+ * whole text (the alert or the number's verification code), already final.
+ */
+async function sendLimitAlertSms(pool, config, { phoneNumber, content }, deps = {}) {
+  const { phone, country } = validatePhone(phoneNumber);
+  return deliver(pool, config, {
+    kind: 'limit_alert', type: 'transactional', tag: 'limit_alert',
+    phone, country, content,
+  }, deps);
+}
+
 function optOutLine(entry) {
   return entry.optOut || DEFAULT_OPT_OUT;
 }
@@ -311,6 +326,7 @@ module.exports = {
   sendOtpSms,
   sendMarketingSms,
   sendTestSms,
+  sendLimitAlertSms,
   recordConsent,
   recordOptOut,
   isOptedOut,

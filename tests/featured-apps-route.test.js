@@ -71,6 +71,8 @@ stub(ids.rateLimits, {
   // The platform limits area's Check again (routes/admin-platform-limits.js),
   // composed into admin.js.
   platformLimitsCheckLimiter: (_req, _res, next) => next(),
+  limitTextSendLimiter: (_req, _res, next) => next(),
+  limitTextVerifyLimiter: (_req, _res, next) => next(),
 });
 stub(ids.status, { snapshot: async () => ({}) });
 

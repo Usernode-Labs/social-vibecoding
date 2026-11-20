@@ -44,6 +44,10 @@ function pool({ apps = 214, appLimit = 210 } = {}) {
       if (/^INSERT INTO platform_limit_alerts|^UPDATE platform_limit_alerts|^INSERT INTO platform_settings/.test(sql)) return { rows: [] };
       if (/FROM platform_limit_alerts WHERE limit_key = \$1 FOR UPDATE/.test(sql)) return { rows: [{ level: 'full', window_ms: null }] };
       if (/FROM users WHERE username = \$1 AND is_synthetic/.test(sql)) return { rows: [] };
+      if (sql === 'SELECT value FROM platform_settings WHERE key = $1') return { rows: [{ value: 'firebase' }] };
+      if (/FROM limit_alert_phones p LEFT JOIN users u ON u\.id = p\.added_by ORDER BY/.test(sql)) {
+        return { rows: [{ id: 1, phone_e164: '+447700900123', country: 'GB', label: 'On call', verified_at: new Date(), created_at: new Date() }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     },
   };
@@ -79,6 +83,52 @@ test('members and view-only admins never see the figures', async () => {
     } finally {
       await close();
     }
+  }
+});
+
+test('text alert numbers: members and view-only admins can neither read nor change them', async () => {
+  for (const user of [MEMBER, VIEW_ONLY]) {
+    const { base, close } = await serve(user);
+    try {
+      const calls = [
+        ['GET', '/api/admin/limit-texts'],
+        ['POST', '/api/admin/limit-texts'],
+        ['POST', '/api/admin/limit-texts/1/verify'],
+        ['POST', '/api/admin/limit-texts/1/resend'],
+        ['POST', '/api/admin/limit-texts/1/test'],
+        ['DELETE', '/api/admin/limit-texts/1'],
+      ];
+      for (const [method, url] of calls) {
+        const res = await fetch(base + url, {
+          method, redirect: 'manual', headers: { 'Content-Type': 'application/json' },
+          ...(method === 'GET' ? {} : { body: JSON.stringify({ phoneNumber: '+447700900123', label: 'x', code: '123456' }) }),
+        });
+        assert.ok([302, 403].includes(res.status), `${user.username} ${method} ${url}: ${res.status}`);
+      }
+    } finally {
+      await close();
+    }
+  }
+});
+
+test('a full admin reads the numbers, masked, and why texts cannot go', async () => {
+  const { base, close } = await serve(FULL);
+  try {
+    const res = await fetch(`${base}/api/admin/limit-texts`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    const body = await res.json();
+    assert.deepEqual([body.availability.ready, body.availability.reason], [false, 'firebase']);
+    assert.equal(body.phones[0].number, '•••• 0123');
+    assert.doesNotMatch(JSON.stringify(body), /7700900123/, 'a confirmed number never leaves whole');
+    const add = await fetch(`${base}/api/admin/limit-texts`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: '+447700900123', label: 'On call' }),
+    });
+    assert.equal(add.status, 409, 'Firebase: refused with its reason');
+    assert.equal((await add.json()).code, 'sms_unavailable');
+  } finally {
+    await close();
   }
 });
 
