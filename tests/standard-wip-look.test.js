@@ -19,8 +19,6 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 
 /** What Standard (WIP) deliberately does not display, by selector. */
 const WIP_HIDES = [
-  // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
-  'html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
   // Home has no Pinned communities section under the look.
   'html[data-skin-wip] #home-communities-section',
   // A pinned project's tile has no description under the look (asked 19 Nov 2026).
@@ -38,6 +36,31 @@ const WIP_HIDES = [
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
   'html[data-skin-wip] #app-list .app-card-opened',
 ];
+
+/**
+ * The left menu and the top bar were drawn for this look first and are the
+ * standard look's too since 20 Nov 2026: their rules moved to a block of
+ * their own, after this look's, scoped to the two together
+ * (html:not([data-skin])). The same rules hold there: every value a token,
+ * declared once, and nothing hidden but what MENU_HIDES lists.
+ */
+const MENU_SCOPE = 'html:not([data-skin])';
+const MENU_HIDES = [
+  // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
+  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
+  // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
+  'html:not([data-skin]) #platform-tabs::before',
+  'html:not([data-skin]) body #platform-header#platform-header::before',
+];
+
+function menuBlock() {
+  const css = read('public', 'css', 'app.css');
+  const start = css.indexOf('── THE LEFT MENU AND THE TOP BAR');
+  const end = css.indexOf('END OF THE LEFT MENU AND THE TOP BAR.');
+  assert.ok(start > 0 && end > start, 'app.css has the menu and top bar block, start to end');
+  assert.ok(start > css.indexOf('END OF STANDARD (WIP).'), 'after the look\'s own block, which it is no part of');
+  return css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, '');
+}
 
 function wipBlock() {
   const css = read('public', 'css', 'app.css');
@@ -108,6 +131,39 @@ test('colours are written once, as tokens in the block\'s first rule', () => {
       assert.ok(declared.has(m[1]), `${m[1]} (used by ${r.selector}) is declared in the block's first rule`);
     }
   }
+});
+
+test('the menu and the top bar: one block for the standard look and this one, every value a token', () => {
+  const all = rules(menuBlock());
+  assert.ok(all.length > 30, 'the block holds the menu\'s rules');
+  for (const { selector } of all) {
+    for (const one of topLevel(selector)) {
+      assert.ok(one.startsWith(MENU_SCOPE), `"${one}" is not scoped to the standard look and its brand drawing`);
+      assert.doesNotMatch(one, /data-skin-wip|data-skin="/, `"${one}" names a look: the block is the two together`);
+    }
+  }
+  // Colours are written in the token rules alone (light, then dark), and every token a rule reads is declared there.
+  const tokens = all.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-nav-/.test(r.body));
+  assert.equal(tokens.length, 2, 'one rule in light and one in dark');
+  const declared = new Set();
+  for (const r of tokens) for (const m of r.body.matchAll(/(--wip-nav-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
+  for (const r of all) {
+    if (tokens.includes(r)) continue;
+    assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector} writes a colour of its own; make it a --wip-nav-* token`);
+    for (const m of r.body.matchAll(/var\((--wip-[a-z0-9-]+)/g)) {
+      assert.ok(declared.has(m[1]), `${m[1]} (used by ${r.selector}) is declared in the block's token rule`);
+    }
+  }
+  // The standard look has none of the brand kit's own tokens, so the block's token rules read the shell's only.
+  for (const r of tokens) assert.doesNotMatch(r.body, /var\(--wip-(?!nav-)/, 'a token here points at the shell, never at the brand kit');
+  // The brand kit names its own values for the same tokens, in its own block.
+  assert.match(wipBlock(), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-nav-bg: #3c7bd8;[^}]*--wip-nav-on-bg: #ffee6f;/);
+  // Nothing of the old menu and bar is hidden but what MENU_HIDES lists.
+  const hidden = all.filter((r) => /display:\s*none|visibility:\s*hidden|content:\s*none/.test(r.body)).map((r) => r.selector);
+  assert.deepEqual(hidden.sort(), [...MENU_HIDES].sort());
+  // A folded sidebar opens from its arrow alone, in both.
+  assert.match(read('frontend', 'src', 'features', 'nav', 'rail-peek.ts'),
+    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
 });
 
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {

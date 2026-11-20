@@ -293,15 +293,15 @@ test('Standard (WIP): the board ties a request to the changes made for it, and o
 test('Standard (WIP): the menu is the token set\'s own panel, and a pinned project says who is in it', () => {
   const css = read('public/css/app.css');
   // The sidebar and the phone's bar are one panel, drawn from the menu's tokens at every width.
-  assert.match(css, /html\[data-skin-wip\] #platform-tabs \{[^}]*background: var\(--wip-nav-bg\);[^}]*font-family: var\(--wip-nav-font\);/);
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{\s*--wip-nav-bg: #3c7bd8;/, 'the brand kit wears the brand\'s own sky');
+  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \{[^}]*background: var\(--wip-nav-bg\);[^}]*font-family: var\(--wip-nav-font\);/);
+  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-nav-bg: #3c7bd8;/, 'the brand kit wears the brand\'s own sky');
   assert.match(css, /\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);\s*box-shadow: none;\s*color: var\(--wip-nav-on-ink\);/);
   // The brand is the logotype at the panel's top, and the top bar starts beside the panel.
-  assert.match(css, /html\[data-skin-wip\] #platform-tabs::before \{[^}]*mask: var\(--wip-nav-brand-logo\) left center \/ contain no-repeat;/);
+  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*mask: var\(--wip-nav-brand-logo\) left center \/ contain no-repeat;/);
   assert.match(css, /#platform-header \{ padding-inline-start: calc\(var\(--wip-nav-w\) \+ 1rem\); \}/);
   // A folded sidebar opens from its arrow alone.
   assert.match(read('frontend/src/features/nav/rail-peek.ts'),
-    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*hasAttribute\('data-skin-wip'\)\) return;/);
+    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
   // A pinned project: members, then contributors, each on its line; no sentence; the same air on four sides.
   const grid = read('frontend/src/features/home/app-grid.tsx');
   assert.match(grid, /t\('home:grid\.tile\.members', \{ count: app\.members, formatted: app\.members\.toLocaleString\(\) \}\)/);
@@ -340,5 +340,5 @@ test('Standard (WIP): one token set draws it, the brand kit, and the others are 
   assert.equal(skinMod.WIP_TOKEN_SETS, undefined);
   assert.equal(skinMod.parseLookChoice, undefined);
   // The sidebar's logotype is drawn in the menu's own ink, over nothing of the bar's glass.
-  assert.match(css, /html\[data-skin-wip\] #platform-tabs::before \{[^}]*background: var\(--wip-nav-ink-strong\);/);
+  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*background: var\(--wip-nav-ink-strong\);/);
 });
