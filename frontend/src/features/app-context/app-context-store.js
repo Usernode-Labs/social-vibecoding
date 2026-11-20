@@ -45,10 +45,15 @@ export const appContextStore = createStore({
    * opens a community's link while no project is in context (that page is
    * not inside an app), so the pane needs its own subject; the header chip
    * and the Improve target stay untouched (app-context-controller.js
-   * `openInvite`). Read only while `view` is `'invite'`, and cleared on
-   * every close, as `view` is.
+   * `openInvite`).
+   *
+   * Write it only from `openInvite`, which does so on EVERY opening: the
+   * community's own object when it is not the app in context, null when the
+   * pane is about the app in context. The pane takes it once, at mount
+   * (./invite-pane.tsx `useInviteSubject`), which is why a value left behind
+   * by an opening that closed is never shown to the next one.
    */
-  inviteFor: null,
+  inviteFor: /** @type {{ slug: string, name?: string } | null} */ (null),
   /**
    * Whether the presentation is a KIT sheet (touch) rather than the CSS
    * slide-over. The kit brings its own backdrop, so the web overlay only

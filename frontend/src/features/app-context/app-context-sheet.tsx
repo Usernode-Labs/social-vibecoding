@@ -413,7 +413,7 @@ type MenuItem = { key: string; run: () => void };
 
 export function AppsSwitcherSheet(): ReactNode {
   const t = useMessages('agent');
-  const { open, adopted, view, back, inviteFor } = useStoreState(appContextStore);
+  const { open, adopted, view, back } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
   // three the rows need — the name to label them with, the terminal's gate,
@@ -538,14 +538,6 @@ export function AppsSwitcherSheet(): ReactNode {
   // is the platform's own self-hosted row and the name may not have landed.
   const appName = name || slug || null;
   const appLabel = appName || t('agent:appContext.thisApp');
-  // A community the invite pane was opened for that is not the app in
-  // context (the Communities page's Invite disc, app-context-controller
-  // `openInvite`): the pane's subject while it is showing. The menu behind
-  // it still names the app in context, so the header is unchanged.
-  const invite = view === 'invite' && inviteFor ? inviteFor : null;
-  const inviteSlug = invite ? invite.slug : (slug || null);
-  const inviteLabel = invite ? (invite.name || invite.slug) : appLabel;
-  const inviteUnnamed = invite ? false : !appName;
   const shownVersion = onPlatform ? (loadedPlatformShort() || platformAbout?.version || version) : version;
   const versionText = open
     ? versionRowText(shownVersion || null, !!deploying && !onPlatform, onPlatform)
@@ -810,7 +802,7 @@ export function AppsSwitcherSheet(): ReactNode {
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
           {view === 'about' ? <AboutPane label={appLabel} unnamed={!appName} /> : view === 'invite' ? (
-            <InvitePane slug={inviteSlug} label={inviteLabel} unnamed={inviteUnnamed} />
+            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} />
           ) : (
           <>
           {/*

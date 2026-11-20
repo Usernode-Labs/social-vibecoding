@@ -66,6 +66,7 @@ import {
   type InviteOutcome,
   type InviteState,
 } from './invite-data';
+import { appContextStore } from './app-context-store.js';
 import { useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { withVia } from '../first-session/copy-invite';
@@ -204,12 +205,36 @@ export function InviteSkeleton({ label, unnamed = false, canShare }: { label: st
 }
 
 /**
+ * The subject the pane shows: the app in context it was given, unless the
+ * opener named a community that is not the app in context — the Communities
+ * page's Invite disc, where no project is in context at all
+ * (app-context-controller `openInvite`, which publishes `inviteFor`). The
+ * menu behind the pane still names the app in context, so the header is
+ * unchanged.
+ *
+ * Read ONCE, at mount: the pane cannot change subject under itself, and the
+ * store's value for the next opening must not repaint this pane on its way
+ * out.
+ */
+function useInviteSubject({ slug, label, unnamed }: { slug: string | null; label: string; unnamed: boolean }) {
+  const [subject] = useState(() => {
+    const openedFor = appContextStore.get().inviteFor;
+    if (!openedFor || openedFor.slug === slug) return { slug, label, unnamed };
+    return { slug: openedFor.slug, label: openedFor.name || openedFor.slug, unnamed: false };
+  });
+  return subject;
+}
+
+/**
  * `label` is the project's name. With `unnamed`, no name has loaded and `label`
  * is a stand-in: the sentences here use their unnamed wording instead of
  * taking the stand-in as a name.
  */
-export function InvitePane({ slug, label, unnamed = false }: { slug: string | null; label: string; unnamed?: boolean }) {
+export function InvitePane(subjectProps: { slug: string | null; label: string; unnamed?: boolean }) {
   const t = useMessages('agent');
+  const { slug, label, unnamed } = useInviteSubject({
+    slug: subjectProps.slug, label: subjectProps.label, unnamed: subjectProps.unnamed ?? false,
+  });
   // What AppContext.openInvite() read before the sheet went up, when it came
   // in time: the pane's first render is then the loaded one.
   const [prepared] = useState<InviteOutcome | null>(() => (slug ? preparedInvite(slug) : null));

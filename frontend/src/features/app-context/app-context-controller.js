@@ -89,7 +89,10 @@ export const AppContext = Object.assign(
         ? { slug: opts.slug, name: opts.name || opts.slug }
         : null;
       const slug = override ? override.slug : contextSlug;
-      if (override) appContextStore.set({ inviteFor: override });
+      // Every opening of this pane names its subject here, so a community's
+      // Invite cannot outlive the sheet it was opened for: the next opening
+      // from the mark or a hub writes null and shows the app in context.
+      appContextStore.set({ inviteFor: override });
       // The address the sheet is opening over, for the guard below.
       const hrefAtStart = typeof location !== 'undefined' ? location.href : null;
       const ready = slug
@@ -122,12 +125,12 @@ export const AppContext = Object.assign(
     },
     /** Back to the app's options. */
     showMenu() {
-      appContextStore.set({ view: 'menu', back: 'menu', inviteFor: null });
+      appContextStore.set({ view: 'menu', back: 'menu' });
     },
     /** The header's back disc: one step back, to the pane this one came from. */
     goBack() {
       const { view, back } = appContextStore.get();
-      appContextStore.set({ view: view === 'invite' && back === 'about' ? 'about' : 'menu', back: 'menu', inviteFor: null });
+      appContextStore.set({ view: view === 'invite' && back === 'about' ? 'about' : 'menu', back: 'menu' });
     },
   },
 );
@@ -174,7 +177,7 @@ function openAt(view) {
 let wasOpen = appContextStore.get().open;
 appContextStore.subscribe(() => {
   const { open } = appContextStore.get();
-  if (wasOpen && !open) appContextStore.set({ view: 'menu', back: 'menu', inviteFor: null });
+  if (wasOpen && !open) appContextStore.set({ view: 'menu', back: 'menu' });
   wasOpen = open;
 });
 

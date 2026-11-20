@@ -44,34 +44,6 @@ const CONTROLLER = read('frontend/src/features/app-context/app-context-controlle
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-/**
- * The `makeStoreStub` of tests/helpers/bundle-module.js, with subscriptions
- * that actually fire: the controller resets `inviteFor` from one, and a
- * harness that cannot fire it cannot tell whether closing forgets the
- * community or not.
- */
-function reactiveStore(initial) {
-  const subs = new Set();
-  const store = {
-    state: { ...initial },
-    sets: 0,
-    get: () => store.state,
-    set: (patch) => {
-      const next = { ...store.state, ...patch };
-      // As lib/plain-store.js: a patch that changes nothing does not notify,
-      // which is what stops a subscriber's own reset from re-entering itself.
-      const changed = Object.keys(next).some((key) => next[key] !== store.state[key]);
-      if (!changed) return;
-      store.state = next;
-      store.sets += 1;
-      for (const fn of [...subs]) fn();
-    },
-    subscribe: (fn) => { subs.add(fn); return () => subs.delete(fn); },
-    setFlush: () => {},
-  };
-  return store;
-}
-
 // ── the opener ───────────────────────────────────────────────────────────
 
 /**
@@ -99,7 +71,7 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
 
-  const store = reactiveStore({ open: false, view: 'menu', adopted: false, inviteFor: null });
+  const store = makeStoreStub({ open: false, view: 'menu', adopted: false, inviteFor: null });
   const improve = makeStoreStub({ slug });
   const presents = [];
   runModules(sandbox, [['sheet-controller.js', SHEET_CONTROLLER]], {
@@ -240,14 +212,18 @@ test('a community\'s Invite reads that community first and presents once, on it'
   assert.equal(o.store.state.back, 'none', 'there is no menu behind it to go back to');
 });
 
-test('closing a community\'s Invite forgets the community', async () => {
+test('an opening with no community in front of it forgets the last one', async () => {
+  // The pane takes `inviteFor` once, at mount, so an opening that names a
+  // community must not leave it for the next opening from the mark or a hub.
   const o = loadOpener();
-  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  const first = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
   o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
-  await done;
-  await o.AppContext.close();
-  assert.equal(o.store.state.inviteFor, null, 'the next open from the mark is not this community');
-  assert.equal(o.store.state.view, 'menu');
+  await first;
+  assert.equal(o.store.state.inviteFor.slug, 'garden-cd34');
+  const second = o.AppContext.openInvite();
+  assert.equal(o.store.state.inviteFor, null, 'the app in context is the subject again');
+  assert.deepEqual(o.reads.slice(-1), ['notes-ab12'], 'and the read is the app in context\'s');
+  await second;
 });
 
 test('with no app in context, a community is named by its slug', async () => {
