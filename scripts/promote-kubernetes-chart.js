@@ -36,17 +36,19 @@ async function ghcrRequest(path, options = {}) {
 }
 
 async function connectRegistry(repository, username, password) {
-  const query = new URLSearchParams({ service: 'ghcr.io', scope: `repository:${repository}:pull,push` });
-  const basic = Buffer.from(`${username}:${password}`).toString('base64');
-  const response = await ghcrRequest(`/token?${query}`, { headers: { Authorization: `Basic ${basic}` }, redirect: 'error' });
+  const permissions = username && password ? 'pull,push' : 'pull';
+  const query = new URLSearchParams({ service: 'ghcr.io', scope: `repository:${repository}:${permissions}` });
+  const headers = {};
+  if (permissions === 'pull,push') headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+  const response = await ghcrRequest(`/token?${query}`, { headers, redirect: 'error' });
   if (!response.ok) throw registryError('GHCR authentication', response.status);
   const { token } = await response.json();
   if (typeof token !== 'string' || !token) throw new Error('GHCR did not return a bearer token');
-  const headers = { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-cache' };
+  const registryHeaders = { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-cache' };
   return {
     async manifest(reference) {
       const response = await ghcrRequest(`/v2/${repository}/manifests/${reference}`, {
-        headers: { ...headers, Accept: MANIFEST }, redirect: 'error',
+        headers: { ...registryHeaders, Accept: MANIFEST }, redirect: 'error',
       });
       if (response.status === 404) {
         const body = await response.json();
@@ -64,7 +66,7 @@ async function connectRegistry(repository, username, password) {
       return { bytes, digest, version, configDigest: doc.config.digest };
     },
     async config(digest) {
-      const response = await ghcrRequest(`/v2/${repository}/blobs/${digest}`, { headers });
+      const response = await ghcrRequest(`/v2/${repository}/blobs/${digest}`, { headers: registryHeaders });
       if (!response.ok) throw registryError('Chart config lookup', response.status);
       const bytes = Buffer.from(await response.arrayBuffer());
       if (digestOf(bytes) !== digest) throw new Error('GHCR chart config digest mismatch');
@@ -72,7 +74,7 @@ async function connectRegistry(repository, username, password) {
     },
     async putRelease(bytes) {
       const response = await ghcrRequest(`/v2/${repository}/manifests/${TARGET}`, {
-        method: 'PUT', headers: { ...headers, 'Content-Type': MANIFEST }, body: bytes, redirect: 'error',
+        method: 'PUT', headers: { ...registryHeaders, 'Content-Type': MANIFEST }, body: bytes, redirect: 'error',
       });
       if (!response.ok) throw registryError('OCI release tag update', response.status);
     },

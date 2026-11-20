@@ -1,16 +1,14 @@
 'use strict';
-// What is live: the newest stable release chart's source revision and image
-// digests, from the values.release.yaml the release job packages into it.
-// The security gates compare against it, so a finding production already ships
-// is reported rather than blocking (scripts/security-findings.js).
+// Read the chart promoted to the release tag Argo follows. Image digests and
+// the source revision come from the values.release.yaml packaged with it.
 //
 // Writes `revision`, `platform`, `worker` and `capture` to $GITHUB_OUTPUT.
-// When the chart cannot be read it writes nothing and exits 0, and the gates
-// then treat every finding as blocking, as they did before a baseline existed.
+// An unreadable release tag leaves the baseline unavailable to callers.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { connectRegistry } = require('./promote-kubernetes-chart');
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const REVISION = /^[a-f0-9]{40}$/;
@@ -33,29 +31,36 @@ function parseReleaseValues(text) {
   return { revision, ...digests };
 }
 
-function liveRelease(owner, { run = spawnSync } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-release-'));
+async function liveRelease(owner, { connect = connectRegistry, run = spawnSync } = {}) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(owner || '')) return null;
+  let dir;
   try {
-    const pulled = run('helm', ['pull', `oci://ghcr.io/${owner}/charts/social-vibecoding-platform`, '--version', '0.1.*',
+    const repository = `${owner}/charts/social-vibecoding-platform`;
+    const registry = await connect(repository);
+    const promoted = await registry.manifest('release');
+    if (!promoted || !DIGEST.test(promoted.digest)) return null;
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-release-'));
+    const pulled = run('helm', ['pull', `oci://ghcr.io/${repository}@${promoted.digest}`,
       '--untar', '--untardir', dir], { encoding: 'utf8', timeout: 120000 });
     if (pulled.status !== 0) return null;
     return parseReleaseValues(fs.readFileSync(path.join(dir, 'social-vibecoding-platform', 'values.release.yaml'), 'utf8'));
   } catch {
     return null;
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
-if (require.main === module) {
+async function main() {
   const owner = String(process.env.GITHUB_REPOSITORY_OWNER || '').toLowerCase();
-  const live = owner ? liveRelease(owner) : null;
+  const live = await liveRelease(owner);
   if (!live) {
-    console.log('::warning title=Live release::The live release chart could not be read; security gates treat every finding as blocking.');
+    console.log('::warning title=Live release::Could not read the promoted chart. No release baseline is available.');
   } else {
     console.log(`Live release: ${live.revision} (platform ${live.platform}, worker ${live.worker}, capture ${live.capture})`);
     const lines = Object.entries(live).map(([k, v]) => `${k}=${v}`).join('\n');
     if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `${lines}\n`);
   }
 }
+if (require.main === module) main();
 module.exports = { parseReleaseValues, liveRelease };
