@@ -1384,6 +1384,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           });
           // Somebody was just refused: make sure the admins have heard.
           platformLimits.nudge(pool, config, 'apps');
+          // #6901: and that they hear about the refusal itself, whatever the
+          // level already says (a cap raised above a count that stayed over
+          // the re-arm line leaves it at "full").
+          platformLimits.noteRefusal(pool, config, 'apps', req.user.id);
           return res.status(429).json({
             error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
@@ -1830,6 +1834,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         );
         if (countRows[0].n >= maxApps) {
           platformLimits.nudge(pool, config, 'apps');
+          platformLimits.noteRefusal(pool, config, 'apps', req.user.id);
           return res.status(429).json({
             error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });

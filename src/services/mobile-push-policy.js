@@ -156,6 +156,10 @@ function minutesSince(value, now) {
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
 const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+// #6901: "apps_away:<people>:<cap>:<ago>", platform-limit-alerts.js
+// refusalToken. ago is the minutes from the run's start to the notice; 0 is
+// "someone was just turned away".
+const PLATFORM_REFUSAL_DETAIL_RE = /^apps_away:(\d{1,5}):(\d{1,7}):(\d{1,4})$/;
 
 // services/platform-incident-alerts.js tokens (#4296), parsed here for the
 // same reason: "digest:<total>:<kind>=<n>,..." or "hour:<kind>:<n>".
@@ -228,6 +232,29 @@ function platformIncidentCopy(detail) {
 }
 
 function platformLimitCopy(detail) {
+  // #6901: somebody was turned away at the app limit. Its own token, so it
+  // never depends on the level changing.
+  const refusal = PLATFORM_REFUSAL_DETAIL_RE.exec(detail);
+  if (refusal) {
+    const [, people, cap, ago] = refusal;
+    if (Number(ago) === 0) {
+      return {
+        title: 'Someone was turned away',
+        body: `The server is at its app limit (${cap} apps). Raise it in Admin → Limits or remove an app`,
+      };
+    }
+    // A push cannot know the reader's time zone, so it says how long ago
+    // rather than a clock time. "in the last hour", then whole hours, rounded
+    // up: 61 minutes is "2 hours".
+    const hours = Math.ceil(Number(ago) / 60);
+    const when = hours <= 1 ? 'in the last hour' : `in the last ${hours} hours`;
+    return {
+      title: 'People turned away at the app limit',
+      body: Number(people) === 1
+        ? `1 person was turned away ${when}`
+        : `${people} people were turned away ${when}`,
+    };
+  }
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
   if (!m) {
     return {

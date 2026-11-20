@@ -203,6 +203,37 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
 });
 
+test('buttons: the Sticker drawing, one block for the standard look and this one, every value a token', () => {
+  const css = read('public', 'css', 'app.css');
+  const start = css.indexOf('── BUTTONS (20 Nov 2026)');
+  const end = css.indexOf('END OF BUTTONS.');
+  assert.ok(start > css.indexOf('END OF THE LEFT MENU AND THE TOP BAR.') && end > start, 'its own block, after the menu\'s');
+  const all = rules(css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, ''));
+  assert.ok(all.length > 15);
+  for (const { selector } of all) {
+    for (const one of topLevel(selector)) {
+      assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
+      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn/, `"${one}" leaves the admin console alone`);
+    }
+  }
+  // Colours are written in the token rules alone, and every token a rule reads is declared there.
+  const tokens = all.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body));
+  assert.equal(tokens.length, 3, 'the levels in light and in dark, then the vote pair');
+  const declared = new Set();
+  for (const r of tokens) for (const m of r.body.matchAll(/(--wip-btn-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
+  for (const r of all) {
+    if (tokens.includes(r)) continue;
+    assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector.slice(0, 80)} writes a colour of its own; make it a --wip-btn-* token`);
+    for (const m of r.body.matchAll(/var\((--wip-[a-z0-9-]+)/g)) assert.ok(declared.has(m[1]), `${m[1]} is declared in the block's token rules`);
+  }
+  // The levels: the main action in the sun, the secondary in white, the destructive in red, a press onto the edge.
+  assert.match(tokens[0].body, /--wip-btn-1-bg: #ffee6f;[\s\S]*--wip-btn-2-bg: #ffffff;[\s\S]*--wip-btn-bad-ink: #a3281a;/);
+  assert.match(tokens[0].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-line\);/);
+  assert.match(tokens[0].body, /--wip-btn-font: 'Source Serif 4',/);
+  // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
+  assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
+});
+
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {
   const hidden = rules(wipBlock())
     .filter((r) => /display:\s*none|visibility:\s*hidden/.test(r.body))

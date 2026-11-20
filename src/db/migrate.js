@@ -141,6 +141,11 @@ async function migrate(config) {
   // nearly full, each saying how much is used and what the limit is. Staging
   // runs no sweep against a growing database, so they are seeded.
   await seedStagingStorageNotices(pool);
+  // #6901's shots: while the server is full, Admin → Limits says how many
+  // people were turned away, and the bell has a refusal notice. A fresh
+  // staging copy has no run of refusals at all, and staging notifies nobody,
+  // so both are seeded with obviously fake people.
+  await seedStagingLimitRefusals(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -2870,6 +2875,79 @@ async function seedStagingFoldedLiveNotifications(pool) {
 // for the same project, so a real bell holds one per project. The one at
 // half full has only the early notice, and the one nearly full has only the
 // warning (a sweep that jumped past both lines sends the highest alone).
+// #6901's shots: the run of refusals Admin → Limits counts, and the bell's
+// refusal notices. Obviously fake people, staging only, idempotent.
+async function seedStagingLimitRefusals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = (await pool.query(
+      `SELECT id FROM users
+        WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'staging-demo-user')
+        ORDER BY id`
+    )).rows;
+    if (!people.length) return;
+    const refusals = people.slice(0, 3);
+    await pool.query(
+      `INSERT INTO platform_limit_alerts
+         (limit_key, level, used, cap, measured_at, refusals_since, refusals_notified_at)
+       VALUES ('apps', 'full', 50, 50, NOW(), NOW() - interval '4 hours', NOW() - interval '4 hours')
+       ON CONFLICT (limit_key) DO UPDATE
+         SET refusals_since = COALESCE(platform_limit_alerts.refusals_since, NOW() - interval '4 hours'),
+             refusals_notified_at = COALESCE(platform_limit_alerts.refusals_notified_at, NOW() - interval '4 hours')`
+    );
+    for (const person of refusals) {
+      await pool.query(
+        `INSERT INTO platform_limit_refusals (limit_key, user_id, day, refused_at)
+         VALUES ('apps', $1, (NOW() AT TIME ZONE 'UTC')::date, NOW() - interval '2 hours')
+         ON CONFLICT DO NOTHING`,
+        [person.id]
+      );
+    }
+    // The bell's two notices, as the code writes them: the first refusal of
+    // the run, then a count a few hours later. The shots pair's own full admin
+    // (services/shots-fixtures.js) is inserted AFTER boot, so a seed here
+    // cannot write to it by lookup. On a shots copy only, make the row it will
+    // claim, unable to sign in and not an admin; installFullAdminFixture then
+    // promotes it in place. SHOTS_PHONE_TEST_CODE is set on the self app's
+    // pair and never on production or an ordinary staging preview, so no
+    // other copy grows this account. An ordinary staging copy still seeds the
+    // notices for the administrators it has, which is what the Admin → Limits
+    // card reads.
+    const shotsCopy = !!require('../config').shotsPhoneTestCodeFrom(process.env).code;
+    let fixtureUsername = null;
+    if (shotsCopy) {
+      const shotsFixtures = require('../services/shots-fixtures');
+      fixtureUsername = shotsFixtures.FULL_ADMIN_USERNAME;
+      await pool.query(
+        `INSERT INTO users (id, username, password, is_admin, admin_readonly,
+                            can_create_apps, has_platform_access)
+         VALUES ($1, $2, '__shots_not_a_login__', FALSE, FALSE, FALSE, FALSE)
+         ON CONFLICT DO NOTHING`,
+        [shotsFixtures.FULL_ADMIN_USER_ID, fixtureUsername]
+      );
+    }
+    const notices = [
+      { detail: 'apps_away:1:50:0', minutesAgo: 4 * 60 },
+      { detail: `apps_away:${refusals.length}:50:230`, minutesAgo: 10 },
+    ];
+    for (const notice of notices) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, source_user_id, kind, detail, created_at)
+         SELECT u.id, NULL, 'platform_limit', $1::varchar(32), NOW() - make_interval(mins => $2::int)
+           FROM users u
+          WHERE ((u.is_admin = TRUE AND u.admin_readonly = FALSE) OR u.username = $3)
+            AND NOT EXISTS (
+              SELECT 1 FROM notifications n
+               WHERE n.user_id = u.id AND n.kind = 'platform_limit' AND n.detail = $1::varchar(32)
+            )`,
+        [notice.detail, notice.minutesAgo, fixtureUsername]
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging limit refusals seed failed', { message: err.message });
+  }
+}
+
 async function seedStagingStorageNotices(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
