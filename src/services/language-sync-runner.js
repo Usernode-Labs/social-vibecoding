@@ -23,9 +23,15 @@
 // Every message goes as a direct request, a few at a time, in the pass that
 // finds it, on the platform's OpenRouter key (task 2275). Large passes went
 // as one Anthropic Message Batch at half the price before; OpenRouter has no
-// batches, so a batch a pass recorded then is let go by the next pass, which
-// plans again from the English. The clock looks every ten minutes (look): a
-// catalog it has not translated is a target of its own, one pass at a time.
+// batches, and this build has no Anthropic key to collect one with. So a
+// batch an older build submitted (recorded on the state, or only in the
+// target's steps when the write that recorded it failed, as can happen
+// during the rolling release) is let go on purpose: noted on the state as
+// `droppedBatch`, never collected, and the pass that finds it translates
+// directly from the English as it is now. Its answers are paid for and lost;
+// that is the cost of having no key, and production had none pending at the
+// move. The clock looks every ten minutes (look): a catalog it has not
+// translated is a target of its own, one pass at a time.
 //
 // A pass whose English and committed catalogs are what the last finished pass
 // read does nothing: what failed then is asked again once the English moves.
@@ -59,7 +65,10 @@ function isEnabled() {
 
 // ── State (one platform_settings row, JSON) ────────────────────────────
 //   checkedDigest  the build's catalogs (sourceDigest) the last finished pass read
-//   batch       { id, sourceDigest, english: { id: hash }, submittedAt, messages } while a batch runs
+//   batch       { id, sourceDigest, english: { id: hash }, submittedAt, messages }
+//               a batch an older build submitted, until a pass lets it go
+//   droppedBatch { id, submittedAt, messages, droppedAt } the batch a pass let
+//               go (task 2275), kept for an admin to read
 //   lastPass    { at, requested, written, failed, problems } what the last
 //               pass that translated anything got back (#4641: a pass that
 //               wrote nothing used to leave no trace of why)
@@ -137,21 +146,21 @@ function spendCents(answers) {
 // ── One pass ───────────────────────────────────────────────────────────
 
 /** Keeps what a pass accepted, and says so in the state. Returns what to log. */
-async function finishPass(pool, { summary, spent, checkedDigest, deps, extra = {} }) {
+async function finishPass(pool, { summary, spent, checkedDigest, deps, kept = {}, extra = {} }) {
   const cache = deps.cache || languageCache;
   await limits.recordSystemSpend(pool, spent);
   const cached = await cache.saveTranslations(pool, summary.entries, { model: sync.MODEL });
   const lastPass = passOutcome(summary);
   logOutcome(lastPass, extra);
-  await writeState(pool, { checkedDigest, lastPass });
+  await writeState(pool, { checkedDigest, lastPass, ...kept });
   return cached
     ? { cached, spentCents: spent, ...(lastPass.failed ? { failed: lastPass.failed } : {}) }
     : { nothingUsable: true, spentCents: spent, failed: lastPass.failed };
 }
 
 /**
- * The clock's look: nothing, or the one pass owed, as a target (an old
- * batch to let go, keyed by the batch; the build's catalogs not yet
+ * The clock's look: nothing, or the one pass owed, as a target (an older
+ * build's batch to let go, keyed by the batch; the build's catalogs not yet
  * translated, `catalog`). The catalog is one target whatever its English
  * (the clock carries a target's checkpoint on). Reads, never spends.
  */
@@ -172,7 +181,8 @@ async function look({ pool, deps = {} }) {
 /**
  * Translates what the running build's English is missing, beyond what the
  * cache already has, and keeps it in the cache. Returns what it did, for the
- * log.
+ * log. `deps.steps` (the clock's target, its work's steps) may hold a batch
+ * an older build's try of this target submitted and never recorded.
  */
 async function runOnce({ config, pool, deps = {} }) {
   void config;
@@ -182,28 +192,44 @@ async function runOnce({ config, pool, deps = {} }) {
   const source = deps.source !== undefined ? deps.source : cache.readSource();
   if (!source) return { skipped: 'no_source' };
   const digest = sourceDigest(source);
-  const state = await readState(pool);
+  let state = await readState(pool);
 
-  // A Message Batch a pass recorded before task 2275 was Anthropic's, and
-  // nothing can collect it now: it is let go, and the next pass plans again
-  // from the English.
-  if (state.batch) {
-    await writeState(pool, { lastPass: state.lastPass });
-    log.info('language-sync', 'Translation batch from before the OpenRouter move dropped', { batchId: state.batch.id });
-    return { dropped: state.batch.id };
+  // An older build's Message Batch (see the header): let go, noted, and
+  // the pass run now, directly. Forgetting the digest the last pass read
+  // is what makes this pass run: the batch was owed because the English
+  // had moved.
+  const older = state.batch || (deps.steps && deps.steps.has('batch') ? deps.steps.get('batch') : null);
+  let dropped = null;
+  if (older && typeof older === 'object' && older.id) {
+    dropped = String(older.id);
+    state = {
+      lastPass: state.lastPass,
+      droppedBatch: {
+        id: dropped,
+        submittedAt: older.submittedAt ?? null,
+        messages: older.messages ?? null,
+        droppedAt: new Date().toISOString(),
+      },
+    };
+    await writeState(pool, state);
+    log.warn('language-sync', 'Translation batch from an older build let go: no Anthropic key collects it (task 2275); its pass runs directly', {
+      batchId: dropped, messages: older.messages ?? null,
+    });
   }
+  const kept = state.droppedBatch ? { droppedBatch: state.droppedBatch } : {};
+  const said = (out) => (dropped ? { ...out, droppedBatch: dropped } : out);
 
-  if (digest === state.checkedDigest) return { skipped: 'unchanged' };
+  if (digest === state.checkedDigest) return said({ skipped: 'unchanged' });
   const root = await cache.liveRoot(pool, { source });
   try {
     const prepared = sync.prepareSync(root);
     const messages = [...prepared.plans.values()].reduce((sum, items) => sum + items.length, 0);
     if (!messages) {
-      await writeState(pool, { checkedDigest: digest, lastPass: state.lastPass });
-      return { skipped: 'nothing_missing' };
+      await writeState(pool, { checkedDigest: digest, lastPass: state.lastPass, ...kept });
+      return said({ skipped: 'nothing_missing' });
     }
     const budget = await limits.checkSystemBudget(pool);
-    if (budget.error) return { skipped: 'budget' };
+    if (budget.error) return said({ skipped: 'budget' });
 
     let spent = 0;
     const summary = await sync.syncTranslations({
@@ -217,7 +243,7 @@ async function runOnce({ config, pool, deps = {} }) {
         return answers;
       },
     });
-    return { ...(await finishPass(pool, { summary, spent, checkedDigest: digest, deps, extra: { sourceDigest: digest } })), messages };
+    return said({ ...(await finishPass(pool, { summary, spent, checkedDigest: digest, deps, kept, extra: { sourceDigest: digest } })), messages });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -225,9 +251,10 @@ async function runOnce({ config, pool, deps = {} }) {
 
 /**
  * Where the step stands, for a full admin (get_browser_languages): whether it
- * is on, a batch still running, what the last pass that translated anything
- * got back (how many it could use, and why the rest stayed English), and how
- * much of each language the shell has now, committed and cached together.
+ * is on, an older build's batch not yet let go, the one a pass let go, what
+ * the last pass that translated anything got back (how many it could use,
+ * and why the rest stayed English), and how much of each language the shell
+ * has now, committed and cached together.
  */
 async function status(pool, { deps = {} } = {}) {
   const state = await readState(pool);
@@ -240,6 +267,7 @@ async function status(pool, { deps = {} } = {}) {
   return {
     enabled: isEnabled(),
     batch: state.batch ? { submittedAt: state.batch.submittedAt, messages: state.batch.messages } : null,
+    droppedBatch: state.droppedBatch || null,
     lastPass: state.lastPass || null,
     coverage,
   };

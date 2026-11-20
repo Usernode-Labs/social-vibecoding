@@ -256,62 +256,63 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
     await pool.query(`DELETE FROM platform_processes WHERE id LIKE 'b1-%'`);
   });
 
-  await t.test('B8: translations: a batch paid for, unrecorded, is recorded by the newest build after the English changed, never paid for again', async (st) => {
+  // Task 2275 removed Message Batches and the Anthropic key, so this build
+  // cannot collect a batch an older build of the rolling release paid for.
+  // It lets it go on purpose: noted on the state as dropped, never
+  // collected, and the pass run again by direct calls. Its answers are paid
+  // for and lost (production had none pending at the move).
+  await t.test('B8: translations: a batch an older build paid for, unrecorded, is let go by the newest build, which translates directly', async (st) => {
     const runner = require('../src/services/language-sync-runner');
     const llm = require('../src/services/llm');
     const cache = require('../src/services/language-cache');
-    const real = { isEnabled: llm.isEnabled, submit: llm.submitCatalogBatch, status: llm.catalogBatchStatus, readSource: cache.readSource };
+    const real = { isEnabled: llm.isEnabled, direct: llm.translateCatalogDirect, readSource: cache.readSource };
     st.after(() => {
-      Object.assign(llm, { isEnabled: real.isEnabled, submitCatalogBatch: real.submit, catalogBatchStatus: real.status });
+      Object.assign(llm, { isEnabled: real.isEnabled, translateCatalogDirect: real.direct });
       cache.readSource = real.readSource;
     });
-    const submitted = [];
+    st.after(() => pool.query('DELETE FROM language_translations'));
+    st.after(() => pool.query(`DELETE FROM platform_settings WHERE key = '${runner.STATE_KEY}'`));
+    assert.equal(llm.submitCatalogBatch, undefined, 'this build has no batches to submit');
+    const asked = [];
     llm.isEnabled = () => true;
-    llm.submitCatalogBatch = async () => { submitted.push(1); return { id: `msgbatch_${submitted.length}` }; };
-    llm.catalogBatchStatus = async () => ({ status: 'in_progress' });
-    const english = real.readSource();
-    assert.ok(english, 'the build\'s catalogs');
-    let source = english;
+    // At the fetch boundary's far side: no answer, so every message stays
+    // English and the pass says so; what matters here is that it asked.
+    llm.translateCatalogDirect = async (requests) => { asked.push(...requests); return new Map(); };
+    // A small catalog (the build's own would be every message the test
+    // database's empty cache lacks): the older build's English, and the
+    // newest build's, which moved, so a message is owed.
+    const catalog = (hello) => ({ files: {
+      'config.json': { sourceLanguage: 'en', languages: { en: 'English', es: 'Español' } },
+      'en/carried.json': { greet: { text: hello, description: 'A greeting.' } },
+    } });
+    const english = catalog('Hello');
+    const source = catalog('Hello there');
     cache.readSource = () => source;
-    // The state write fails while the flag is up.
-    await pool.query(`CREATE TABLE b8_fail (up BOOLEAN NOT NULL);
-      INSERT INTO b8_fail VALUES (false);
-      CREATE FUNCTION b8_fail_state() RETURNS trigger AS $$
-      BEGIN IF NEW.key = '${runner.STATE_KEY}' AND (SELECT up FROM b8_fail) THEN RAISE EXCEPTION 'the state write failed'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
-      CREATE TRIGGER b8_fail_state BEFORE INSERT OR UPDATE ON platform_settings FOR EACH ROW EXECUTE FUNCTION b8_fail_state();`);
-    st.after(() => pool.query(`DROP TRIGGER IF EXISTS b8_fail_state ON platform_settings; DROP FUNCTION IF EXISTS b8_fail_state(); DROP TABLE IF EXISTS b8_fail;
-                               DELETE FROM platform_settings WHERE key = '${runner.STATE_KEY}'`));
     const job = JOBS.find((j) => j.name === 'language-sync');
     const services = clockServices([job], { config: {}, pool });
-    const older = createRuntime({ pool, machines: [clockMod.clock()], services, pollMs: 50, release: OLD });
     const newer = createRuntime({ pool, machines: [clockMod.clock()], services, pollMs: 50, release: NEW });
-    runtimes.push(older, newer);
-    // The older build: its pass submits a batch, and the write that records
-    // it fails. Its item waits out its retry, with the batch in its steps.
-    await serving(OLD);
-    process.env.GIT_SHA = OLD;
-    await pool.query('UPDATE b8_fail SET up = true');
-    await step(older, 'language-sync', 1, { arm: true, everyMs: job.everyMs });
-    await older.runServices();
-    await older.drain();
-    assert.equal(submitted.length, 1);
-    const [paid] = await itemsOfJob('language-sync');
-    assert.equal(paid.status, 'queued', 'waiting out its retry');
-    assert.equal(paid.checkpoint.batch.id, 'msgbatch_1');
-    await pool.query('UPDATE b8_fail SET up = false');
-    // A new build, whose English changed: its run hands the catalog on.
-    source = JSON.parse(JSON.stringify(english));
-    const en = Object.keys(source.files).find((f) => f.startsWith('en/'));
-    const id = Object.keys(source.files[en])[0];
-    source.files[en][id] = { ...source.files[en][id], text: `${source.files[en][id].text} (changed)` };
+    runtimes.push(newer);
     await serving(OLD, NEW);
     process.env.GIT_SHA = NEW;
-    await step(newer, 'language-sync', 2);
+    // The older build's item: its pass submitted a batch (kept in its
+    // steps) and the write that recorded it failed; it waits out its retry,
+    // and no process of its build is left to claim it.
+    const paid = { id: 'msgbatch_1', sourceDigest: runner.sourceDigest(english), english: {}, submittedAt: '2026-11-19T10:00:00Z', messages: 900 };
+    await pool.query(`INSERT INTO wf_work (machine, key, kind, work_key, input, status, checkpoint)
+                      VALUES ('clock', $1, 'clock.language-sync.item', 'item:catalog@run0', $2, 'queued', $3)`,
+      [clockMod.clockKey('language-sync'), JSON.stringify({ job: 'language-sync', target: 'catalog', input: {}, release: OLD }), JSON.stringify({ batch: paid })]);
+    await step(newer, 'language-sync', 1, { arm: true, everyMs: job.everyMs });
     await newer.runServices();
     await newer.drain();
-    assert.equal(submitted.length, 1, 'never paid for twice');
+    const items = await itemsOfJob('language-sync');
+    assert.equal(items.find((i) => i.work_key === 'item:catalog@run0').result.cancelled, true, 'the older build\'s item is given up');
+    assert.equal(items.find((i) => i.release === NEW).status, 'settled', 'this build\'s item ran');
     const { rows: [state] } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [runner.STATE_KEY]);
-    assert.equal(JSON.parse(state.value).batch.id, 'msgbatch_1', 'recorded, to be collected');
+    const value = JSON.parse(state.value);
+    assert.equal(value.batch, undefined, 'never recorded to be collected');
+    assert.equal(value.droppedBatch.id, 'msgbatch_1', 'noted as let go: carried on from the older build\'s item');
+    assert.equal(value.checkedDigest, runner.sourceDigest(source), 'the pass ran, for the English as it is now');
+    assert.ok(asked.some((r) => r.items.some((item) => item.id === 'carried:greet')), 'the moved message, asked directly');
     await pool.query(`DELETE FROM platform_processes WHERE id LIKE 'b1-%'`);
   });
 
@@ -365,7 +366,12 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
 
   await t.test('B3: translations: the one pass owed, as a target', async () => {
     const runner = require('../src/services/language-sync-runner');
-    const source = { files: { 'en/a.json': { x: { text: 'Hello' } } } };
+    // A catalog a pass can run on: its config names one language to
+    // translate (a pass reads it from the temporary checkout it lays out).
+    const source = { files: {
+      'config.json': { sourceLanguage: 'en', languages: { en: 'English', es: 'Español' } },
+      'en/a.json': { x: { text: 'Hello', description: 'A greeting.' } },
+    } };
     const llm = { isEnabled: () => true };
     const digest = runner.sourceDigest(source);
     assert.deepEqual(await runner.look({ pool, deps: { llm, source } }), { items: [{ target: 'catalog', input: {} }] });
@@ -374,19 +380,22 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
     await runner.writeState(pool, { checkedDigest: digest, batch: { id: 'msgbatch_01abc', sourceDigest: digest } });
     assert.deepEqual(await runner.look({ pool, deps: { llm, source } }), { items: [{ target: 'batch:msgbatch_01abc', input: {} }] });
     assert.deepEqual(await runner.look({ pool, deps: { llm: { isEnabled: () => false }, source } }), { skipped: 'no_key' });
-    // A pass carried on from one that paid for a batch it never recorded:
-    // recorded, whatever the English is now (here a few messages, which a
-    // pass would translate directly, paying again).
-    await runner.writeState(pool, {});
+    // A pass carried on from one that paid for a batch it never recorded (an
+    // older build, before task 2275): let go, noted, and the pass run
+    // directly; this build has no key to collect it (see B8).
+    await runner.writeState(pool, { checkedDigest: digest });
     const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
     const kept = { id: 'msgbatch_9', sourceDigest: 'older', english: {}, submittedAt: '2026-10-20T10:00:00Z', messages: 900 };
     const direct = [];
-    const paying = { isEnabled: () => true, translateCatalogDirect: async (r) => { direct.push(r); return []; },
-      submitCatalogBatch: async () => assert.fail('submitted again') };
+    const paying = { isEnabled: () => true, translateCatalogDirect: async (r) => { direct.push(r); return new Map(); } };
     const steps = makeSteps({ resumeFrom: { batch: kept }, checkpoint: async () => {} });
-    assert.deepEqual(await runner.runOnce({ pool, deps: { llm: paying, source, steps } }), { recorded: 'msgbatch_9' });
-    assert.deepEqual(direct, []);
-    assert.deepEqual((await runner.readState(pool)).batch, kept);
+    const pass = await runner.runOnce({ pool, deps: { llm: paying, source, steps } });
+    assert.equal(pass.droppedBatch, 'msgbatch_9');
+    assert.equal(pass.nothingUsable, true, 'asked, and (here) answered nothing');
+    assert.ok(direct.length > 0, 'asked directly, though the last pass had read this English');
+    const after = await runner.readState(pool);
+    assert.equal(after.batch, undefined, 'never recorded to be collected');
+    assert.equal(after.droppedBatch.id, 'msgbatch_9');
     await pool.query('DELETE FROM platform_settings WHERE key = $1', [runner.STATE_KEY]);
   });
 

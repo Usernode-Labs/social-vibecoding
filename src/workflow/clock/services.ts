@@ -694,10 +694,10 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // The translation of this build's new interface text
-    // (services/language-sync-runner.js): a catalog not yet translated, or a
-    // batch to collect, is a target, one pass at a time. Paid: a batch is
-    // submitted once per catalog. LANGUAGE_SYNC_ENABLED=false switches it
-    // off.
+    // (services/language-sync-runner.js): a catalog not yet translated, or
+    // an older build's batch to let go, is a target, one pass at a time.
+    // Paid, by direct calls (task 2275: no batches). LANGUAGE_SYNC_ENABLED=false
+    // switches it off.
     name: 'language-sync', everyMs: 10 * MIN, newestOnly: true,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/language-sync-runner').look({ pool }),
     item: {

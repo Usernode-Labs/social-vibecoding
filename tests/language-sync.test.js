@@ -371,16 +371,43 @@ test('a whole language goes as direct requests in the pass that finds it (task 2
   assert.deepEqual(await p.run(), { skipped: 'unchanged' });
 });
 
-test('a Message Batch a pass recorded before the move is let go, and the next pass plans again', async (t) => {
+// An older build's Message Batch (task 2275): this build has no Anthropic key
+// to collect it, so it is let go on purpose, noted on the state, and the
+// pass translates directly. Its answers are paid for and lost; production
+// had none pending at the move.
+test('a Message Batch an older build recorded is let go, noted, and its pass run directly', async (t) => {
   const p = platform(t);
-  p.db.state = { batch: { id: 'msgbatch_old', sourceDigest: 'x', english: {}, submittedAt: '2026-11-01T00:00:00Z', messages: 900 } };
+  p.db.state = { checkedDigest: runner.sourceDigest(p.deps.source),
+    batch: { id: 'msgbatch_old', sourceDigest: 'x', english: {}, submittedAt: '2026-11-01T00:00:00Z', messages: 900 } };
   const looked = await runner.look({ pool: p.pool, deps: p.deps });
   assert.deepEqual(looked.items.map((item) => item.target), ['batch:msgbatch_old'], 'the look still owes it a pass');
-  assert.deepEqual(await p.run(), { dropped: 'msgbatch_old' });
+  const pass = await p.run();
+  assert.equal(pass.droppedBatch, 'msgbatch_old');
+  assert.equal(pass.cached, 6, 'the same pass translates from the English, even one the last pass had read');
   assert.equal(p.db.state.batch, undefined);
-  assert.equal(p.model.calls.length, 0, 'dropping it costs no call');
-  const next = await p.run();
-  assert.ok(next.cached > 0, 'the next pass translates from the English');
+  assert.deepEqual({ ...p.db.state.droppedBatch, droppedAt: typeof p.db.state.droppedBatch.droppedAt },
+    { id: 'msgbatch_old', submittedAt: '2026-11-01T00:00:00Z', messages: 900, droppedAt: 'string' });
+  assert.deepEqual(await p.run(), { skipped: 'unchanged' }, 'let go once');
+  assert.equal(p.db.state.droppedBatch.id, 'msgbatch_old', 'and still noted for an admin');
+  assert.equal((await runner.status(p.pool, { deps: { cache: { live: async () => null } } })).droppedBatch.id, 'msgbatch_old');
+});
+
+test('a batch an older build paid for and never recorded (only in its target\'s steps) is let go the same way', async (t) => {
+  const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
+  const p = platform(t);
+  await p.run();
+  p.deploy({ ...ENGLISH, 'button.join': says('Join', 'Button: become a member.') });
+  SPANISH['core:button.join'] = { text: 'Unirse' };
+  t.after(() => { delete SPANISH['core:button.join']; });
+  const kept = { id: 'msgbatch_9', sourceDigest: 'older', english: {}, submittedAt: '2026-11-19T10:00:00Z', messages: 900 };
+  const calls = p.model.calls.length;
+  const pass = await runner.runOnce({ config: {}, pool: p.pool,
+    deps: { ...p.deps, steps: makeSteps({ resumeFrom: { batch: kept }, checkpoint: async () => {} }) } });
+  assert.equal(pass.droppedBatch, 'msgbatch_9');
+  assert.equal(pass.cached, 1, 'the English as it is now, asked directly');
+  assert.ok(p.model.calls.length > calls);
+  assert.equal(p.db.state.batch, undefined, 'never recorded to be collected');
+  assert.equal(p.db.state.droppedBatch.id, 'msgbatch_9');
 });
 
 test('a pass that could use nothing says why, in the state an admin reads, and caches nothing (#4641)', async (t) => {
