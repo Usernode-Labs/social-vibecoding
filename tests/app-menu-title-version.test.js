@@ -6,7 +6,9 @@
 //  - the running version at the foot, in About's own words, for whoever is
 //    about to report a bug: the app's on an app, Homeroom's on Homeroom, and
 //    "deploying…" while a new build of an app goes out;
-//  - a link out of Homeroom ends in the external-link glyph, not a chevron.
+//  - a link out of Homeroom ends in the external-link glyph, not a chevron;
+//  - a "User guide" row opens Settings' guide, for a signed-in person who can
+//    leave the app (items 2 and 5: the menu had nowhere to get help).
 //
 // Rendered through the real sheet on the same store instances it reads.
 //
@@ -28,6 +30,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const ui = loadTsx('tests/fixtures/app-context-sheet-api.ts');
 const initialImprove = { ...ui.improveStore.get() };
 const initialContext = { ...ui.appContextStore.get() };
+const initialNav = { ...ui.navStore.get() };
 
 function renderSheet(improve, context = { open: true }) {
   ui.improveStore.set({ ...initialImprove, ...improve });
@@ -261,4 +264,34 @@ test('the put-off close belongs to its own opening: a reopen before the tick sta
 
   const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(SHEET, /useEffect\(\(\) => cancelCommunityRowClose, \[\]\);/, 'the sheet drops it on unmount');
+});
+
+function renderSheetAs(nav) {
+  ui.navStore.set({ ...initialNav, ...nav });
+  try {
+    return renderSheet({ target: 'app', slug: 'bread-bot', name: 'Bread Bot' });
+  } finally {
+    ui.navStore.set(initialNav);
+  }
+}
+
+test('a signed-in person gets a User guide row that opens Settings\' guide', () => {
+  assert.equal(message('agent:appContext.row.guide'), 'User guide');
+  assert.equal(message('agent:appContext.row.guide'), message('settings:nav.part.guide'),
+    'the row is called what the page it opens is called');
+  const html = renderSheetAs({ viewer: 'ada' });
+  const row = html.match(/<a[^>]*id="app-menu-row-guide"[^>]*>/);
+  assert.ok(row, 'the row is drawn');
+  assert.match(row[0], /href="#settings\/guide"/);
+  assert.ok(html.indexOf('id="app-menu-row-guide"') > html.indexOf('id="app-menu-row-about"'),
+    'it follows About, with the other things to read');
+  assert.match(read('frontend/src/features/settings/settings.js'), /\{ key: 'guide', label: 'settings:nav\.part\.guide'/,
+    'Settings has the part the row names');
+});
+
+test('the User guide row is left out where Settings cannot be reached', () => {
+  assert.doesNotMatch(renderSheetAs({ viewer: null }), /app-menu-row-guide/,
+    'nobody signed in, which is also the prerender');
+  assert.doesNotMatch(renderSheetAs({ viewer: 'ada', privateMember: true }), /app-menu-row-guide/,
+    'a private member is held in their app');
 });

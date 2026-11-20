@@ -120,6 +120,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  DescriptionIcon,
   FlagIcon,
   InfoCircleIcon,
   PhonePlusIcon,
@@ -428,7 +429,7 @@ export function AppsSwitcherSheet(): ReactNode {
   // "Go to Homeroom", which is their way out of the app until they have used
   // it once (App._privateNoClose), and no Developer terminal: they suggest
   // changes to Homeroom bot instead.
-  const { privateMember } = useStoreState(navStore);
+  const { privateMember, viewer } = useStoreState(navStore);
   // Homeroom's privacy notice and terms, for the foot's two links (#5116,
   // #5927): the addresses GET /api/public/waitlist/options serves
   // (marketing-links.js privacyNoticeUrl; the current terms_versions row's
@@ -1064,6 +1065,27 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
           </button>
+          {/*
+              USER GUIDE (#5927, items 2 and 5): the menu had nowhere to get
+              help. Settings has had a guide since #6332 (the places in
+              Homeroom, this menu among them, and how a change gets voted
+              in), so the row opens that page, under About with the other
+              thing to read, and is called what the page is called.
+
+              ONLY FOR SOMEBODY WHO CAN GET THERE: a signed-in person
+              (`viewer`, null in the prerender, so the hydrating render has
+              no such row either), and not one still held in the app they
+              were invited into, whose one way onward is the Go to Homeroom
+              card above.
+          */}
+          {viewer && !privateMember && !newcomer && !walkOwed ? (
+            <MenuRow
+              id="app-menu-row-guide"
+              href="#settings/guide"
+              icon={<DescriptionIcon />}
+              label={t('agent:appContext.row.guide')}
+            />
+          ) : null}
           {homeroomOffer ? (
             <button
               id="app-menu-row-add-homeroom"
