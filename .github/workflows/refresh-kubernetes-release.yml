@@ -32,8 +32,8 @@ jobs:
             --jq 'any(.jobs[]; .name == "Publish atomic Helm release" and any(.steps[]; .name == "Publish OCI Helm release" and .conclusion == "success"))')"
           echo "published=$published" >> "$GITHUB_OUTPUT"
 
-      # A hard refresh bypasses Argo's cached lookup of the stable 0.1.* tag.
-      # Automated sync and periodic reconciliation still belong to Argo CD.
+      # Avoid a second comparison if Argo is already syncing the release.
+      # Argo records a chart version for Helm sources and a digest for OCI.
       - name: Ask Argo CD to refresh the release
         if: steps.chart.outputs.published == 'true'
         continue-on-error: true
@@ -41,12 +41,51 @@ jobs:
           ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
           ARGOCD_SERVER: argocd.platform.beta.usernodelabs.org
           ARGOCD_APPLICATION: social-vibecoding-platform
+          RELEASE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RELEASE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
         run: |
           [ -n "$ARGOCD_REFRESH_TOKEN" ] || exit 0
+          # The build names each immutable chart by its release run and attempt.
+          chart_version="0.1.$((RELEASE_RUN_NUMBER * 1000 + RELEASE_ATTEMPT))"
+          application_url="https://${ARGOCD_SERVER}/api/v1/applications/${ARGOCD_APPLICATION}"
+          application="$(curl --silent --fail --max-time 5 \
+            --header "Authorization: Bearer ${ARGOCD_REFRESH_TOKEN}" \
+            "$application_url" || true)"
+          active_revision="$(jq -er '
+            .status.operationState as $operation
+            | select($operation.phase == "Running" or $operation.phase == "Succeeded")
+            | ($operation.operation.sync.revisions[0] // $operation.syncResult.revisions[0] // empty)
+          ' 2>/dev/null <<< "$application" || true)"
+          if [ "$active_revision" = "$chart_version" ]; then
+            echo "Argo CD already started syncing chart ${chart_version}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          chart_repo="${REGISTRY_OWNER,,}/charts/social-vibecoding-platform"
+          if [[ "$active_revision" =~ ^sha256:[a-f0-9]{64}$ ]] && jq -e --arg url "oci://ghcr.io/$chart_repo" '
+            .spec.sources[0] | .repoURL == $url and .targetRevision == "release"
+          ' >/dev/null 2>&1 <<< "$application"; then
+            # An earlier workflow can finish refreshing after a newer release
+            # advances the tag. Compare with the digest Argo should serve now.
+            token="$(curl -fsS --max-time 5 --get --data-urlencode "scope=repository:$chart_repo:pull" \
+              'https://ghcr.io/token?service=ghcr.io' | jq -er '.token // empty' || true)"
+            if [ -n "$token" ]; then
+              desired_digest="$(curl -fsSI --max-time 5 --header "Authorization: Bearer $token" \
+                --header 'Cache-Control: no-cache' --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
+                "https://ghcr.io/v2/$chart_repo/manifests/release" \
+                | awk 'tolower($1) == "docker-content-digest:" { sub(/\r$/, "", $2); print $2 }' || true)"
+              if [ "$active_revision" = "$desired_digest" ]; then
+                echo "Argo CD already started syncing OCI release ${desired_digest}." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
+          fi
+
           status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --max-time 120 \
             --header "Authorization: Bearer ${ARGOCD_REFRESH_TOKEN}" \
-            "https://${ARGOCD_SERVER}/api/v1/applications/${ARGOCD_APPLICATION}?refresh=hard")" \
+            "${application_url}?refresh=hard")" \
             || status="curl exit $?"
           if [ "$status" = "200" ]; then
             echo "Argo CD re-read the chart registry and compared ${ARGOCD_APPLICATION}." >> "$GITHUB_STEP_SUMMARY"

@@ -1809,10 +1809,22 @@ async function dropPlacements(pool, appId, key) {
  * `from`). All side effects beyond the column UPDATE are best-effort.
  */
 async function applyVisibilityChange(pool, app, { collab, view }, { actorLabel = 'dapp.json', userId = null } = {}) {
-  await pool.query(
-    `UPDATE apps SET collab_visibility = $1, view_visibility = $2 WHERE id = $3`,
-    [collab, view, app.id]
-  );
+  const repoVisibility = require('./project-repo-visibility');
+  if (repoVisibility.enabled() && repoVisibility.managedApp(app)) {
+    const previous = await repoVisibility.record(pool, app, { collab, view });
+    if (!previous) return false;
+    app = previous;
+    if (view === 'public' && app.view_visibility === 'private') {
+      await repoVisibility.reconcileRepo(pool, app.id).catch((err) => {
+        log.warn('app-manifest', 'Repository publication will be retried', { appId: app.id, code: err.code });
+      });
+    }
+  } else {
+    await pool.query(
+      `UPDATE apps SET collab_visibility = $1, view_visibility = $2 WHERE id = $3`,
+      [collab, view, app.id]
+    );
+  }
 
   // collab private → public: pending invites become meaningless.
   // Delete them and resolve their drawer notifications.
@@ -1873,6 +1885,7 @@ async function applyVisibilityChange(pool, app, { collab, view }, { actorLabel =
   log.info('app-manifest', 'Applied visibility change', {
     appId: app.id, slug: app.slug, collab, view, actorLabel,
   });
+  return true;
 }
 
 /**
@@ -1898,7 +1911,7 @@ async function reconcileAppVisibility(pool, app, manifest) {
   if (!vis || (vis.build == null && vis.view == null)) return false;
 
   const { rows } = await pool.query(
-    `SELECT id, slug, self_hosted, collab_visibility, view_visibility FROM apps WHERE id = $1`,
+    `SELECT id, slug, self_hosted, collab_visibility, view_visibility, repo_url FROM apps WHERE id = $1`,
     [app.id]
   );
   if (!rows.length) return false;
@@ -1920,8 +1933,7 @@ async function reconcileAppVisibility(pool, app, manifest) {
     return false;
   }
 
-  await applyVisibilityChange(pool, cur, { collab, view }, { actorLabel: 'dapp.json', userId: null });
-  return true;
+  return applyVisibilityChange(pool, cur, { collab, view }, { actorLabel: 'dapp.json', userId: null });
 }
 
 /**

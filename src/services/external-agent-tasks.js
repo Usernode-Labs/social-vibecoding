@@ -806,7 +806,19 @@ function buildWorkOrder({
   // address changes. Nothing above this block clones, so `git remote add
   // upstream` is unconditional. A hosted app is cloned from the git host
   // itself, so its one remote is the app's repository.
-  if (hosted) {
+  if (gitHost?.source) {
+    setup.push(
+      `${CMD}bundle="$(mktemp)"`,
+      `${CMD}curl --fail --silent --show-error -H 'Authorization: Bearer ${gitHost.source.token}' '${gitHost.source.url}' -o "$bundle"`,
+      `${CMD}git clone --branch source "$bundle" ${gitHost.dir}`,
+      `${CMD}rm -f "$bundle"`,
+      `${CMD}cd ${gitHost.dir}`,
+      `${CMD}git remote remove origin`,
+      `${CMD}git checkout -b ${branch} ${baseSha}`,
+      '',
+      'This link expires after an hour. If it expires, prepare this same work order again.',
+    );
+  } else if (hosted) {
     setup.push(
       `${CMD}git clone ${gitHost.cloneUrl} ${gitHost.dir}`,
       `${CMD}cd ${gitHost.dir}`,
@@ -875,7 +887,7 @@ function buildWorkOrder({
   // the coding agent through an assistant that likes to paraphrase. Say what
   // failure looks like and how to recover, so a bad transcription corrects
   // itself instead of silently becoming a branch cut from somewhere else.
-  setup.push(
+  if (!gitHost?.source) setup.push(
     '',
     'If `git checkout` answers `fatal: not a valid object name` or',
     '`reference is not a tree`, that commit is simply not in your clone yet.',
@@ -1059,8 +1071,12 @@ function buildWorkOrder({
     'WHERE TO WORK',
     ...(hosted
       ? [
-        `- The app's repository (public):         ${gitHost.webUrl}`,
-        `- Clone it from:                         ${gitHost.cloneUrl}`,
+        ...(gitHost.source
+          ? ['- Private source: use the download command in this work order.']
+          : [
+            `- The app's repository (public):         ${gitHost.webUrl}`,
+            `- Clone it from:                         ${gitHost.cloneUrl}`,
+          ]),
         '  (read-only to you: there is no fork and nothing to push, and you hand',
         '   the change in as a patch.)',
         `- Suggested local branch name:           ${branch}`,
@@ -2234,7 +2250,7 @@ async function prepareWork(deps, params) {
       if (moved) existing.origin_session_id = moved;
       return renderPreparedTask({
         specs: Array.isArray(params.specs) ? params.specs : [],
-        task: existing, app, owner, repo, origin, clientId, clientName,
+        task: existing, app, owner, repo, origin, clientId, clientName, userId: user.id,
         prompts, agent, reused: true, targetProposal: update, openProposals,
         patchUpload: await uploadFor(existing),
       });
@@ -2410,7 +2426,7 @@ async function prepareWork(deps, params) {
     if (raced) {
       return renderPreparedTask({
         specs: Array.isArray(params.specs) ? params.specs : [],
-        task: raced, app, owner, repo, origin, clientId, clientName,
+        task: raced, app, owner, repo, origin, clientId, clientName, userId: user.id,
         prompts, agent, reused: true, targetProposal: update, openProposals,
         patchUpload: await uploadFor(raced),
       });
@@ -2458,7 +2474,7 @@ async function prepareWork(deps, params) {
       target_session_id: update ? update.proposalId : null,
       client_id: clientId || row.client_id || null,
     },
-    app, owner, repo, origin, clientId, clientName, prompts, agent,
+    app, owner, repo, origin, clientId, clientName, userId: user.id, prompts, agent,
     forkStatus, reused: false, targetProposal: update, openProposals,
     patchUpload: await uploadFor(row),
   });
@@ -2626,7 +2642,7 @@ async function findOpenProposalsForRequest(pool, appId, issueNumbers, viewerId) 
 // of main: re-basing a live reservation is exactly the churn that made one
 // production run rewrite a finished commit.
 function renderPreparedTask({
-  task, app, owner, repo, origin, clientId, clientName, prompts,
+  task, app, owner, repo, origin, clientId, clientName, prompts, userId,
   forkStatus, reused, agent: requestedAgent, targetProposal, openProposals, specs = [],
   patchUpload = null,
 }) {
@@ -2643,6 +2659,7 @@ function renderPreparedTask({
   // An app on Homeroom's own git host: no fork, cloned from there, a patch
   // back. Null for an app on GitHub.
   const gitHost = gitHostRepoFor(app.repo_url);
+  if (gitHost) gitHost.source = require('./project-source').workOrderRead({ app, task, userId, origin });
   const forkPageUrl = gitHost ? null : `https://github.com/${owner}/${repo}/fork`;
   // A reused task did not re-read GitHub, so its fork state is genuinely
   // unknown — and `unknown` is now a first-class state with hedged wording.
@@ -2702,7 +2719,7 @@ function renderPreparedTask({
     // Where the app's code is: 'git_host' (Homeroom's own; no fork, a patch
     // back, `cloneUrl` to clone) or 'github' (the fork fields below).
     repoHost: gitHost ? 'git_host' : 'github',
-    cloneUrl: gitHost ? gitHost.cloneUrl : null,
+    cloneUrl: gitHost && !gitHost.source ? gitHost.cloneUrl : null,
     // Present only in UPDATE mode (#1054), so a caller can tell the two kinds
     // of work order apart without re-deriving it from the text.
     proposalId: targetProposal ? targetProposal.proposalId : null,

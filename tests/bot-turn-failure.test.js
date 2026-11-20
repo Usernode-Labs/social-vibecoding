@@ -174,12 +174,12 @@ function settingsPool() {
 test('B1: creditState is the one question: asked from the stored outage, cached a few seconds, never a reason to stop answering', async () => {
   assert.equal(laneFacts.CREDIT_STATE_KEY, credit.KEY_STATE, 'the lane reads the row the sweep writes');
   const pool = settingsPool();
-  assert.deepEqual(await credit.creditState(pool), { out: false, since: null, words: null });
+  assert.deepEqual(await credit.creditState(pool), { out: false, since: null, words: null, cause: null });
   // A turn reports the 402: seen at once in this process.
   const noted = await credit.noteOutage(pool, { words: INSUFFICIENT }, { staging: true });
   assert.equal(noted.fresh, true);
   const out = await credit.creditState(pool);
-  assert.deepEqual({ out: out.out, words: out.words }, { out: true, words: INSUFFICIENT });
+  assert.deepEqual({ out: out.out, words: out.words, cause: out.cause }, { out: true, words: INSUFFICIENT, cause: 'credit' });
   assert.equal(out.since, noted.since);
   // Another process's change is seen once the short cache lapses.
   const stored = JSON.parse(pool.settings.get(credit.KEY_STATE));
@@ -188,7 +188,7 @@ test('B1: creditState is the one question: asked from the stored outage, cached 
   assert.equal((await credit.creditState(pool, { now: Date.now() + credit.STATE_CACHE_MS + 1 })).out, false);
   // A read that fails says "not out".
   const broken = { async query() { throw new Error('db down'); } };
-  assert.deepEqual(await credit.creditState(broken), { out: false, since: null, words: null });
+  assert.deepEqual(await credit.creditState(broken), { out: false, since: null, words: null, cause: null });
 });
 
 test('A5: the sweep stores the cleared outage before it wakes the lane, and a wake-up that fails loses nothing', async () => {
@@ -200,7 +200,7 @@ test('A5: the sweep stores the cleared outage before it wakes the lane, and a wa
   const order = [];
   const out = await credit.sweep(pool, {}, {
     staging: true,
-    readBalance: async () => ({ accountCents: 90000, keyCents: null, balanceCents: 90000, at: new Date().toISOString() }),
+    readBalance: async () => ({ accountCents: 90000, keyCents: null, at: new Date().toISOString() }),
     platform: () => ({
       async botCreditBack() {
         order.push(JSON.parse(pool.settings.get(credit.KEY_STATE)).outage ? 'woken while the outage was still stored' : 'woken after the write');

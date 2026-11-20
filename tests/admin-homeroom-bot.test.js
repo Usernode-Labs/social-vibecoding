@@ -674,6 +674,12 @@ test('the header says on or off and where it is live, and the chip says when it 
   assert.deepEqual(health(on, { at: '2026-10-03T10:00:00Z', paused: null, refusals: [{ app: 'a', error: 'session_busy' }] }),
     { tone: 'warn', text: '1 app backing off' });
   assert.equal(health(on, { at: '2026-10-03T10:00:00Z', paused: null, refusals: [] }).tone, 'ok');
+  // A pause on OpenRouter's refusal says which figure ran out (the stored outage's cause).
+  const paused = { at: '2026-11-20T10:00:00Z', paused: 'credit' };
+  assert.deepEqual(health(on, paused), { tone: 'bad', text: 'Paused: OpenRouter credit ran out' });
+  assert.deepEqual(health(on, paused, { outage: { since: '2026-11-20T09:00:00Z', cause: 'credit' } }), { tone: 'bad', text: 'Paused: OpenRouter credit ran out' });
+  assert.deepEqual(health(on, paused, { outage: { since: '2026-11-20T09:00:00Z', cause: 'budget' } }),
+    { tone: 'bad', text: 'Paused: the weekly budget is used up at OpenRouter' });
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-health"/);
@@ -861,4 +867,55 @@ test('Settings says what each stage runs on, from the current configurations, an
   assert.match(tsx, /<StagesInUse\n\s+configurations=\{payload\?\.configurations \|\| null\}/);
   assert.match(tsx, /onOpen=\{\(\) => showTab\('configs'\)\}/);
   assert.doesNotMatch(tsx, /href="#admin\/bot-configs"/, 'the old section\'s address is not linked');
+});
+
+// ── Credit is the account's; the key's week is the budget ──────────────
+
+test('the money tiles: the week against its budget with OpenRouter\'s count, and the account\'s credit', () => {
+  const { spendTile, creditTile } = loadBotSection();
+  const bot = { id: 7, username: 'homeroom_bot', weeklyLimitCents: 80000, weeklySpentCents: 28147, weeklyResetsAt: '2026-11-23T00:00:00.000Z' };
+  // Production on 20 Nov 2026: $1,923.86 in the account, $499.96 left of the key's $800 week.
+  const credit = {
+    creditCents: 192386, creditSource: 'account', creditRead: true, management: true,
+    accountCents: 192386, keyCents: 49996, keyLimitCents: 80000, keyReset: 'weekly', keyUsedCents: 30004,
+    daysLeft: null, burnDays: null, at: '2026-11-20T12:00:00Z', warnCents: 50000, urgentCents: 20000, outage: null,
+  };
+  assert.deepEqual(spendTile(bot, credit), {
+    value: '$281.47',
+    sub: 'of $800.00, the weekly budget. It resets on Monday.',
+    counts: 'OpenRouter counts $300.04.',
+  });
+  assert.deepEqual(spendTile(bot, { ...credit, keyUsedCents: 28147 }), {
+    value: '$281.47', sub: 'of $800.00, the weekly budget. It resets on Monday.',
+  }, 'OpenRouter\'s count is said only when it differs');
+  assert.equal(spendTile(bot, null).counts, undefined);
+  assert.equal(spendTile(bot, { ...credit, keyReset: null }).counts, undefined, 'a key that never resets has no week to count');
+  assert.deepEqual(spendTile(null, credit), { value: '–' });
+
+  assert.deepEqual(creditTile(credit), {
+    value: '$1,923.86',
+    sub: 'The account\'s credit. Warns at $500.00 and $200.00.',
+  }, 'the account\'s $1,923.86, never the $499.96 left of the week');
+  // The days estimate only with a rate read off the account's own credit.
+  assert.equal(creditTile({ ...credit, daysLeft: 12.4, burnDays: 7 }).sub,
+    'The account\'s credit. About 12.4 days at the rate of the last 7 days. Warns at $500.00 and $200.00.');
+  assert.equal(creditTile({ ...credit, daysLeft: 1, burnDays: 1 }).sub,
+    'The account\'s credit. About 1 day at the rate of the last day. Warns at $500.00 and $200.00.');
+  // No management key: said here, once, and never as a row in the limits area.
+  assert.deepEqual(creditTile({ ...credit, creditCents: null, creditSource: null, management: false }), {
+    value: '–',
+    sub: 'The account\'s credit can\'t be read: no OpenRouter management key is set (OPENROUTER_MANAGEMENT_API_KEY).',
+  });
+  assert.equal(creditTile({ ...credit, creditCents: 15000, creditSource: 'key', management: false }).sub,
+    'What is left on the bot\'s key (the account\'s credit can\'t be read). Warns at $500.00 and $200.00.');
+  assert.deepEqual(creditTile(null), { value: '–' });
+
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /tile\('Spent this week', spend\.value, 'admin-homeroom-bot-tile-spend', spend\.sub,/);
+  assert.match(tsx, /id="admin-homeroom-bot-spend-openrouter"/);
+  assert.match(tsx, /tile\('OpenRouter credit', creditWords\.value, 'admin-homeroom-bot-tile-credit', creditWords\.sub,/);
+  assert.match(tsx, /id="admin-homeroom-bot-credit-add"[\s\S]{0,120}href="https:\/\/openrouter\.ai\/settings\/credits">Add credit</);
+  assert.doesNotMatch(tsx, /balanceCents/, 'the lower-of-the-two figure is gone from the console');
+  // The payload carries the day the week turns, from the same rule the gate uses.
+  assert.match(read('src/services/homeroom-bot.js'), /weeklyResetsAt: limits\.weeklyResetAt\(\),/);
 });

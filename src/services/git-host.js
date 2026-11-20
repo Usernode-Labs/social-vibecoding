@@ -177,12 +177,18 @@ function redact(text) {
  * credential prompt with the service account; nothing else ever sees it.
  * Resolves { stdout, stderr }; rejects with stderr redacted.
  */
-function git(args, { cwd = undefined, home = path.join(os.tmpdir(), 'homeroom-git-home'), auth = false, timeout = GIT_TIMEOUT_MS, input = null, env: extra = {} } = {}) {
+function git(args, { cwd = undefined, home = path.join(os.tmpdir(), 'homeroom-git-home'), auth = false, readUrl = null, timeout = GIT_TIMEOUT_MS, input = null, env: extra = {} } = {}) {
   const s = settings();
   const write = require('./git-child').isWrite(args);
+  let credential = auth ? (write ? { username: s.user, token: s.token } : readCredential()) : null;
+  if (readUrl) {
+    const repo = parseRepoUrl(readUrl);
+    if (write || !repo || cloneUrl(repo) !== readUrl) throw new GitHostError('Invalid private source read');
+    if (credential) credential = { ...credential, url: readUrl };
+  }
   const childGit = require('./git-child').invocation(args, {
     home,
-    credential: auth ? (write ? { username: s.user, token: s.token } : readCredential()) : null,
+    credential,
     env: extra,
   });
   return new Promise((resolve, reject) => {
@@ -253,7 +259,7 @@ async function createRepo(name, { description = '', private: isPrivate = false, 
   }
   if (status === 409) log.info('git-host', 'Adopted an existing repository', { name: n });
   else log.info('git-host', 'Created a repository', { name: n });
-  return { owner: s.org, name: n, url: repoUrl(n) };
+  return { owner: s.org, name: n, url: repoUrl(n), ...(status === 409 ? { existed: true } : {}) };
 }
 
 /** Whether `repo` exists on the host. */

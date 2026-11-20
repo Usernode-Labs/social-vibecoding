@@ -948,7 +948,14 @@ cd "$WS"
 echo "${ROOT_SENTINEL}=$(pwd -P)"
 git init -q .
 git remote add origin "$REPO_URL"
-if git fetch -q --depth 1 origin "$GIT_REF"; then
+fetch_source() {
+  if [ -n "\${PROJECT_SOURCE_TOKEN:-}" ]; then
+    PROJECT_SOURCE_HEADER="Authorization: Bearer $PROJECT_SOURCE_TOKEN" git --config-env="http.$REPO_URL.extraHeader=PROJECT_SOURCE_HEADER" -c http.followRedirects=false fetch -q --depth 1 origin "$1"
+  else
+    git fetch -q --depth 1 origin "$1"
+  fi
+}
+if fetch_source "$GIT_REF"; then
   git checkout -q --detach FETCH_HEAD
 elif [ -n "\${PR_NUMBER:-}" ] && git fetch -q --depth 1 origin "pull/\${PR_NUMBER}/head"; then
   git checkout -q --detach "$GIT_REF" 2>/dev/null || git checkout -q --detach FETCH_HEAD
@@ -956,6 +963,7 @@ else
   echo "unit-suite: could not fetch $GIT_REF" >&2
   exit 90
 fi
+unset PROJECT_SOURCE_TOKEN
 git submodule update --init --recursive --depth 1 >/dev/null 2>&1 || true
 echo "${HEAD_SENTINEL}=$(git rev-parse HEAD)"
 echo "${CLONED_SENTINEL}"
@@ -1438,7 +1446,8 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   let shards = 1;
   let resultStdout = '';
   try {
-    const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
+    const privateRead = require('./project-source').workloadRead(repoOwner, repoName, { expiresIn: 7200 });
+    const cloneUrl = privateRead?.url || await github.getCloneUrl(repoOwner, repoName);
     const options = {
       onStdoutLine: observe,
       signal, previewRunId,
@@ -1447,6 +1456,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {
         REPO_URL: cloneUrl,
+        ...(privateRead ? { PROJECT_SOURCE_TOKEN: privateRead.token } : {}),
         GIT_REF: ref,
         PR_NUMBER: prNumber ? String(prNumber) : '',
         ...JOB_ENV,

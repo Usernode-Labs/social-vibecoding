@@ -296,6 +296,9 @@ app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUp
 // src/routes/connector-uploads.js has the rest.
 app.use(require('./src/routes/connector-uploads').connectorUploadRoutes(config));
 
+// Private source fetches use short-lived grants scoped to a repo or commit.
+app.use(require('./src/routes/project-source').internalProjectSourceRoutes(config));
+
 // ── Projects made inside a platform preview ────────────────────────────────
 // A platform preview asks production for the database, build and runtime of
 // a project someone makes in it (services/preview-projects.js). HERE for
@@ -766,6 +769,7 @@ app.use(require('./src/routes/user-content-translations').userContentTranslation
 // (src/services/firebase-phone-auth.js).
 app.use(require('./src/routes/phone-auth').phoneAuthRoutes(config));
 app.use(credentialRoutes(config));
+app.use(require('./src/routes/project-source').memberProjectSourceRoutes(config));
 app.use(appRoutes(config));
 app.use(illustrationRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()

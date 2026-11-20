@@ -134,15 +134,17 @@ async function moveRef(owner, repo, dir, branch, expected, sha) {
  * An app's repository, with a first commit on main (GitHub's auto_init, which
  * the callers build on with pushFiles). GitHub's repository shape.
  */
-async function createRepo(owner, name, { description = '', adoptExisting = false } = {}) {
+async function createRepo(owner, name, { description = '', adoptExisting = false, private: isPrivate = false } = {}) {
   require('./code-host-write').requireCodeHostWrite('hosted-git.createRepo');
-  const made = await gitHost.createRepo(name, { description, adoptExisting: true });
+  const made = await gitHost.createRepo(name, { description, adoptExisting: true, private: isPrivate });
   let adopted = false;
   const existing = await gitHost.readRef(made.name, 'main');
   if (existing) {
     if (!adoptExisting) throw coded(`A repository named ${name} already exists`, 'repo_exists', { status: 422 });
     adopted = true;
-  } else {
+  }
+  if (isPrivate && made.existed) await gitHost.setPrivate(made.name, true);
+  if (!existing) {
     await gitHost.pushInitialFiles(made.name, { 'README.md': `# ${name}\n${description ? `\n${description}\n` : ''}` },
       { message: 'Initial commit' });
   }
@@ -154,7 +156,7 @@ async function createRepo(owner, name, { description = '', adoptExisting = false
     html_url: html,
     clone_url: gitHost.cloneUrl(made.name, { internal: false }),
     default_branch: 'main',
-    private: false,
+    private: isPrivate,
     ...(adopted ? { adopted: true } : {}),
   };
 }

@@ -91,7 +91,7 @@ function mockPool(appRow) {
     calls,
     query: async (sql, params) => {
       calls.push({ sql, params });
-      if (/SELECT id, slug, self_hosted, collab_visibility, view_visibility FROM apps/.test(sql)) {
+      if (/SELECT id, slug, self_hosted, collab_visibility, view_visibility, repo_url FROM apps/.test(sql)) {
         return { rows: appRow ? [appRow] : [] };
       }
       if (/DELETE FROM app_collaborators/.test(sql)) {

@@ -379,7 +379,7 @@ test('a failed checkout clone is retried from a clean directory, a bounded numbe
   assert.equal(calls, environment.CLONE_ATTEMPTS);
 
   const src = require('node:fs').readFileSync(pathMod.join(__dirname, '../src/services/shots-environment.js'), 'utf8');
-  assert.match(src, /const checkoutDir = path\.join\(parentDir, side\);\n  await cloneWithRetry\(cloneUrl, checkoutDir\);/,
+  assert.match(src, /const checkoutDir = path\.join\(parentDir, side\);[\s\S]{0,200}await cloneWithRetry\(cloneUrl, checkoutDir, \{ checkoutGit \}\);/,
     'the exact-revision checkout clones through the retry');
 });
 

@@ -11,9 +11,13 @@
  * Back always leaves the run, for Communities or the project's hub. Next
  * PUSHES the next change in from the side; it goes only to a change you have
  * not voted on or skipped, and carries how many are left after this one (the
- * same number the Communities tab's badge shows). Before you answer, Skip
- * holds Next's place: it turns the page at once and records nothing. With
- * none left the button says Done, and Done takes the page down onto the end.
+ * same number the Communities tab's badge shows). Beside Yes | No, a round
+ * arrow goes back to the change shown just before this one (#6919), sliding
+ * the page in the other direction; Next and Skip then bring you forward to
+ * the change you came back from before looking for a new one. Before you
+ * answer, Skip holds Next's place: it turns the page at once and records
+ * nothing. With none left the button says Done, and Done takes the page down
+ * onto the end.
  * When everything had your vote, the end says so. When you skipped some, it
  * is not done: the skipped changes wait as a small stack, with one way to
  * look at them again and a quiet way back.
@@ -51,7 +55,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { reducedMotion } from '../../lib/reduced-motion';
-import { ProjectNeedsEmpty, ProjectWaysIn } from './project-needs';
+import { ProjectNeedsEmpty, ProjectWaysIn, useDescBeside } from './project-needs';
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
@@ -71,7 +75,7 @@ import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, takeRead, toReviewItems,
+  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, takeRead, toReviewItems, trailIndex,
   type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type PageKind, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
@@ -592,6 +596,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const safeRef = useRef<HTMLDivElement>(null);
   // What the change does in full, dropped from under the bar over the page.
   const [desc, setDesc] = useState(false);
+  // On a large screen a project's own Needs you keeps that card open beside the change instead of under the arrow
+  // (./project-needs.tsx useDescBeside, asked 20 Nov 2026).
+  const beside = useDescBeside(slug, project);
   const [barTop, setBarTop] = useState(0);
   // The run is fixed once it starts: a vote takes its change out of the
   // controller's feed, and the run must not move under you.
@@ -600,13 +607,21 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // run opens; the choice is not remembered.
   const [filter, setFilter] = useState<VoteFilter>('all');
   const [index, setIndex] = useState(0);
-  const [from, setFrom] = useState<{ index: number; view: View } | null>(null);
+  const [from, setFrom] = useState<{ index: number; view: View; dir: 1 | -1 } | null>(null);
+  // #6919: the changes this run has shown, as item keys, behind and ahead of
+  // the one on show. Back walks the first; Next and Skip take the second
+  // before looking for a new change, so back then forward lands where it was.
+  const [behind, setBehind] = useState<string[]>([]);
+  const [ahead, setAhead] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
   const [skipped, setSkipped] = useState<Record<string, true>>({});
   const [sheet, setSheet] = useState<SheetState>('ask');
   const views = useRef<Record<string, View>>({});
   const busy = useRef(false);
+  // #6919: which way the next move slides the page. Back sets it just before
+  // it moves; every other move slides forward.
+  const slide = useRef<1 | -1>(1);
   const timers = useRef<number[]>([]);
   const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
   const whenDone = (anim: Animation | undefined, fn: () => void, ms: number) => {
@@ -669,7 +684,14 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const passed = useMemo(() => ({ ...skipped, ...votes }), [skipped, votes]);
   const item = run[index] && run[index].kind !== 'governance' ? run[index] : null;
   const leaving = from ? run[from.index] : null;
+  // #6919: a change left behind, and a change ahead (where Next goes first).
+  const prev = trailIndex(run, behind);
+  const forward = trailIndex(run, ahead);
   const next = item ? nextIndex(run, index, passed) : -1;
+  // What the next press leads to first: the change this run came back from,
+  // else the next one waiting. The button says Done only when both run out.
+  const onward = forward.index >= 0 ? forward.index : next;
+  const hasPrev = prev.index >= 0;
   const open = !!item && !done;
 
   // The page's size once it is up; again if the window changes.
@@ -756,15 +778,38 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   };
 
   /* ── Push: this change → the next ── */
+  // #6919: `slide` says which way the page moves. Forward slides the next
+  // change in from the far side; back slides the one behind in from the near
+  // side.
   const goTo = (n: number) => {
     if (busy.current || !item) return;
+    const dir = slide.current;
+    slide.current = 1;
+    // Forward goes to the change it came back from before it looks for a new
+    // one; Skip comes through here too, so the trail decides the target.
+    if (dir === 1 && forward.index >= 0) n = forward.index;
     if (n < 0) { finishAll(); return; }
     busy.current = true;
     setSheet(votes[run[n].key] ? 'voted' : 'ask');
-    setFrom({ index, view: views.current[item.key] || SHEET_VIEW });
+    setFrom({ index, view: views.current[item.key] || SHEET_VIEW, dir });
+    // Moving forward leaves this change on the trail back; a back move left
+    // it on the trail ahead, where goBack put it.
+    if (dir === 1) {
+      setBehind((cur) => [...cur, item.key]);
+      if (forward.index >= 0) setAhead(forward.rest);
+    }
     setIndex(n);
   };
   const goNext = () => goTo(next);
+  // #6919: back to the change shown just before this one. A vote it already
+  // has shows as the sheet opens on it; nothing is taken back.
+  const goBack = () => {
+    if (busy.current || !item || prev.index < 0) return;
+    setAhead((cur) => [...cur, item.key]);
+    setBehind(prev.rest);
+    slide.current = -1;
+    goTo(prev.index);
+  };
   const skip = () => {
     if (!item) return;
     const now = { ...passed, [item.key]: true };
@@ -782,7 +827,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const arriving = stage.querySelector<HTMLElement>('[data-rf-arriving]');
     const gone = stage.querySelector<HTMLElement>('[data-rf-leaving]');
     const opts = { duration: PUSH_MS, easing: EASE };
-    const sign = dirSign();
+    const sign = dirSign() * from.dir;
     const sliding = arriving?.animate([{ transform: `translateX(${sign * w}px)`, boxShadow: `${sign * -12}px 0 32px rgba(0,0,0,.4)` }, { transform: 'none', boxShadow: `${sign * -12}px 0 32px rgba(0,0,0,0)` }], opts);
     gone?.animate([{ transform: 'none', filter: 'none' }, { transform: `translateX(${sign * -0.3 * w}px)`, filter: 'brightness(0.55)' }], { ...opts, fill: 'forwards' });
     whenDone(sliding, settle, PUSH_MS);
@@ -845,6 +890,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     setSkipped({});
     setIndex(first);
     setDone(false);
+    setBehind([]);
+    setAhead([]);
   };
   // #6199: a new kind of vote. The run restarts at the first change of that
   // kind with no vote or skip yet, else at its first change, so a press lands
@@ -857,6 +904,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const nextRun = list ? filterByVoteType(list, key, reviewVoteType) : [];
     const first = nextRun.findIndex((it) => it.kind !== 'governance' && !passed[it.key]);
     setIndex(first >= 0 ? first : Math.max(0, nextRun.findIndex((it) => it.kind !== 'governance')));
+    setBehind([]);
+    setAhead([]);
   };
   // A help sheet over the page, from the card: the card folds first.
   const help = (to: SheetState) => { setDesc(false); setSheet(to); };
@@ -885,7 +934,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const itemKey = item ? item.key : '';
   useEffect(() => { setDesc(false); }, [itemKey]);
 
-  const nextItem = next >= 0 ? run[next] : null;
+  const nextItem = onward >= 0 ? run[onward] : null;
   const pw = size ? size.w : Math.min(COLUMN, typeof window !== 'undefined' ? window.innerWidth : 390);
   const ph = size ? size.h : (typeof window !== 'undefined' ? window.innerHeight - 64 : 700);
   // The next change's stills are read ahead, so it lands at once.
@@ -992,7 +1041,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   }
 
   const page = open ? (
-    <div className="rf-page-wrap" data-rf-page="">
+    <div className="rf-page-wrap" data-rf-page="" data-rf-beside={beside ? '' : undefined}>
       <div
         ref={pageRef}
         className="rf-page"
@@ -1024,7 +1073,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           </button>
           <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} />
         </div>
-        <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={{ top: barTop }} aria-hidden={!desc} inert={!desc || undefined}>
+        <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={beside ? undefined : { top: barTop }} aria-hidden={!desc && !beside} inert={(!desc && !beside) || undefined}>
           <div className="rf-desc-dim" onClick={() => setDesc(false)} />
           <div className="rf-desc" id="rf-desc" data-rf-desc="">
             {appName ? <p className="rf-desc-app">{appName}</p> : null}
@@ -1070,10 +1119,12 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onVote={vote}
           onUndo={undo}
           onNext={goNext}
-          hasNext={next >= 0}
+          hasNext={onward >= 0}
           maxHeight={Math.max(240, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.82)}
           left={after}
           onSkip={skip}
+          onPrev={goBack}
+          hasPrev={hasPrev}
         />
       </div>
     </div>

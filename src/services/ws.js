@@ -325,6 +325,10 @@ function attach(server, config) {
   const pool = getPool(config);
   // The bot's voice is handed messages from here, and reads its config here.
   require('./homeroom-bot-voice').setConfig(config);
+  // A turn that meets OpenRouter's refusal asks which figure ran out (the
+  // account's credit or the bot's weekly budget), and its callers have no
+  // config of their own (openrouter-credit.js noteOutage).
+  require('./openrouter-credit').setConfig(config);
   // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
   // streams; the timer runs on every pod, independently of leader duties.
   const revocationTimer = setInterval(() => {

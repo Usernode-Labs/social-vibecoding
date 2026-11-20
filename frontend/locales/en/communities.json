@@ -503,6 +503,10 @@
     "text": "Skip this change for now",
     "description": "Screen-reader name of the Skip button beside the Yes | No pair in Needs you. It moves on without a vote; the change keeps waiting in Needs you."
   },
+  "review.vote.prevLabel": {
+    "text": "Go back to the previous change",
+    "description": "Screen-reader name of the round back arrow at the left of the Yes | No pair in Needs you. It shows the change seen just before this one; it is greyed out on the first change of a run."
+  },
   "review.no.placeholder": {
     "text": "One line for {{name}}",
     "description": "Placeholder in the optional one-line box under the answers for a No vote's reason. {{name}} is the username of the person who made the change."

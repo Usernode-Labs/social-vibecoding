@@ -374,7 +374,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
   const repoKind = repoAddress ? linkKind(repoAddress) : null;
   // Only an address that leaves for code is a Code row: GitHub's or the git
   // host's. Anything else (a Homeroom page, a non-web address) is none.
-  const repo = repoKind === 'github' || repoKind === 'code' ? repoAddress : null;
+  const repo = row?.sourceDownloadUrl || (repoKind === 'github' || repoKind === 'code' ? repoAddress : null);
   const platformA2hs = platform && !!os
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
@@ -645,7 +645,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
             <a
               id="improve-row-github"
               href={repo}
-              target="_blank"
+              target={row?.sourceDownloadUrl ? undefined : "_blank"}
               rel="noreferrer"
               className={ROW}
               onClick={() => { void AppContext.dismissForNav(); }}

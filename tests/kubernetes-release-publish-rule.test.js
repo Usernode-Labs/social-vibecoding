@@ -28,10 +28,98 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const YAML = require('yaml');
+const { promoteChart } = require('../scripts/promote-kubernetes-chart');
 
 const ROOT = path.join(__dirname, '..');
 const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
 const step = workflow.jobs.release.steps.find((s) => s.name === 'Check branch tip before publishing');
+
+test('the Argo refresh skips only the published attempt that Argo is already syncing or has synced', t => {
+  if (spawnSync('jq', ['--version']).status !== 0) return t.skip('jq is required to run the refresh step locally');
+  const refreshWorkflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/refresh-kubernetes-release.yml'), 'utf8'));
+  const refreshStep = refreshWorkflow.jobs.refresh.steps.find(s => s.name === 'Ask Argo CD to refresh the release');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-refresh-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'curl'), `#!/bin/sh
+for url do :; done
+case "$url" in
+  *'?refresh=hard') printf '200';;
+  https://ghcr.io/token*) printf '{"token":"fixture"}';;
+  https://ghcr.io/v2/*/manifests/release) printf 'Docker-Content-Digest: %s\\r\\n' "$FIXTURE_DIGEST";;
+  *) printf '%s' "$FIXTURE_APPLICATION";;
+esac
+`, { mode: 0o755 });
+
+  const chart = '0.1.5482002';
+  const previousChart = '0.1.5482001';
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const oldDigest = `sha256:${'b'.repeat(64)}`;
+  const ociSpec = { sources: [{ repoURL: 'oci://ghcr.io/usernode-labs/charts/social-vibecoding-platform', targetRevision: 'release' }] };
+  const operation = (phase, target, result = target, spec = {}) => JSON.stringify({ spec, status: { operationState: {
+    phase, operation: { sync: { revisions: [target, 'values-revision'] } }, syncResult: { revisions: [result] },
+  } } });
+  const summary = path.join(dir, 'summary');
+  for (const [description, response, skipped] of [
+    ['exact chart running', operation('Running', chart, previousChart), `chart ${chart}`],
+    ['exact chart succeeded', operation('Succeeded', chart), `chart ${chart}`],
+    ['previous attempt is the active target', operation('Running', previousChart, chart)],
+    ['exact chart failed', operation('Failed', chart)],
+    ['OCI channel digest running', operation('Running', digest, oldDigest, ociSpec), `OCI release ${digest}`],
+    ['OCI channel advanced beyond the active digest', operation('Succeeded', oldDigest, oldDigest, ociSpec)],
+    ['digest from a different source', operation('Running', digest)],
+    ['Argo status unavailable', ''],
+  ]) {
+    fs.writeFileSync(summary, '');
+    const result = spawnSync('bash', ['-e', '-c', refreshStep.run], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`,
+        RELEASE_RUN_NUMBER: '5482', RELEASE_ATTEMPT: '2', FIXTURE_APPLICATION: response,
+        REGISTRY_OWNER: 'Usernode-Labs', FIXTURE_DIGEST: digest,
+        ARGOCD_REFRESH_TOKEN: 'fixture-only', ARGOCD_SERVER: 'argo.example.test',
+        ARGOCD_APPLICATION: 'platform', GITHUB_STEP_SUMMARY: summary },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(summary, 'utf8').trim(), skipped
+      ? `Argo CD already started syncing ${skipped}.`
+      : 'Argo CD re-read the chart registry and compared platform.', description);
+  }
+});
+
+test('chart promotion advances only to an eligible verified digest and retries idempotently', async () => {
+  const version = '0.1.100';
+  const revision = 'a'.repeat(40);
+  const candidate = { version, digest: 'candidate-digest', bytes: Buffer.from('candidate'), configDigest: 'candidate-config' };
+  const newer = { version: '0.1.101', digest: 'newer-digest' };
+  let active = null;
+  let rejectedWrite = false;
+  let revisionOnRegistry = revision;
+  const writes = [];
+  const registry = {
+    manifest: async reference => reference === 'release' ? active : candidate,
+    config: async () => ({ name: 'social-vibecoding-platform', version, appVersion: revisionOnRegistry }),
+    putRelease: async bytes => {
+      writes.push(bytes);
+      if (!rejectedWrite) active = candidate;
+    },
+  };
+  const promote = (latest = version) => promoteChart({ version, revision, registry, newestVersion: async () => latest });
+  await assert.rejects(promote(newer.version), /initialize.*older chart/);
+  active = newer;
+  assert.deepEqual(await promote(), { version: newer.version, digest: newer.digest, updated: false });
+  active = { ...candidate, digest: 'different-digest' };
+  await assert.rejects(promote(), /different digest/);
+  active = null;
+  revisionOnRegistry = 'b'.repeat(40);
+  await assert.rejects(promote(), /config does not match/);
+  assert.deepEqual(writes, []);
+  revisionOnRegistry = revision;
+  rejectedWrite = true;
+  await assert.rejects(promote(), { retryable: true });
+  rejectedWrite = false;
+  assert.deepEqual(await promote(), { version, digest: candidate.digest, updated: true });
+  assert.deepEqual(await promote(), { version, digest: candidate.digest, updated: false });
+  assert.deepEqual(writes, [candidate.bytes, candidate.bytes]);
+});
 
 const sha = (c) => c.repeat(40);
 const OLD = sha('a'); // the newest release's revision

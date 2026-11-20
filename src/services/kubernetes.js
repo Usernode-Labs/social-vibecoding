@@ -252,7 +252,7 @@ function reusableBuildEnv(env, { includeRevision = false } = {}) {
 
 async function compatibleCompletedBuilds(config, body, repository) {
   // Mutable builder tags cannot establish that two builds used the same recipe.
-  if (!/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return [];
+  if (!body.spec.source.git || !/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return [];
   const appId = body.metadata.labels['social.usernode.io/app-id'];
   if (!appId) return [];
   try {
@@ -388,6 +388,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
     .digest('hex').slice(0, 12);
   const buildName = dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
   const tag = `${repository}:git-${revision}-${recipe}`;
+  const privateSource = require('./project-source').buildArchiveUrl(app.repo_url, revision, 7200);
   const body = {
     apiVersion: 'kpack.io/v1alpha2',
     kind: 'Build',
@@ -399,7 +400,9 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
       cache: { registry: { tag: cacheTag } },
       // A repository on Homeroom's git host is cloned from its clone address
       // (GIT_HOST_INTERNAL_URL, else the public one); GitHub's as before.
-      source: { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
+      source: privateSource
+        ? { blob: { url: privateSource } }
+        : { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
       ...batchWorkPlacement(cfg),
       env: buildEnv,

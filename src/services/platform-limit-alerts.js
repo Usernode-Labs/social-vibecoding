@@ -29,6 +29,16 @@
 //   node_pool the worker nodes' local volume pool, the fullest node's MiB
 //             taken against its size. Full, new volumes fail to mount.
 //
+// and Homeroom bot's own, measured by services/openrouter-credit.js `budget`:
+//
+//   bot_budget  the bot's weekly budget, in cents: the further along of
+//             OpenRouter's count of its key's week and Homeroom's own count
+//             of what its turns cost, each against its own cap. Used up, the
+//             bot stops building until the week turns (Monday 00:00 UTC) or
+//             the budget is raised. While a turn has met OpenRouter's refusal
+//             for it (a stored outage whose cause is the budget), it reads
+//             as used up whatever its count still shows.
+//
 // and one that is GitHub's rather than ours, its hourly REST budget as the
 // last response reported it (services/github-budget.js):
 //
@@ -187,7 +197,16 @@ const CAPACITY_LIMITS = Object.freeze(Object.entries(CAPACITY_ENV).map(([key, en
   enabled: (config) => capacity().enabled(config, key),
   measure: (config, _pool, deps) => capacity().measure(config, key, deps),
 })));
-const ALL_LIMITS = Object.freeze([...LIMITS, ...CAPACITY_LIMITS]);
+// Homeroom bot's weekly budget (services/openrouter-credit.js `budget`): one
+// measure too, of two counts, with which of them it is and when the week
+// turns kept in `detail`. Null before there is a bot account or a cap.
+const BOT_BUDGET_LIMIT = Object.freeze({
+  key: 'bot_budget',
+  envKey: 'OPENROUTER_MANAGEMENT_API_KEY',
+  enabled: () => true,
+  measure: (_config, pool, deps) => require('./openrouter-credit').budget(pool, deps),
+});
+const ALL_LIMITS = Object.freeze([...LIMITS, ...CAPACITY_LIMITS, BOT_BUDGET_LIMIT]);
 const LIMIT_BY_KEY = new Map(ALL_LIMITS.map((limit) => [limit.key, limit]));
 
 function isStaging() {
@@ -244,7 +263,7 @@ function decide({ used, cap, percent = DEFAULT_WARN_PERCENT, level }) {
 // notifications.detail token: "<limit>_<level>:<used>:<cap>", e.g.
 // "apps_warn:40:50". The drawer and the push copy parse it back; neither
 // shows it raw. Figures are clamped to seven digits so the widest token
-// ("node_pool_full:9999999:9999999", 30) stays inside the 32 characters every
+// ("bot_budget_full:9999999:9999999", 31) stays inside the 32 characters every
 // creator keeps to. A quota's figure is thousandths, clamped to four digits
 // (platform-capacity.js), so "quota_workers_full:9999:1000" is 28.
 const MAX_FIGURE = 9999999;
@@ -257,7 +276,7 @@ function detailToken(key, level, used, cap) {
   return `${key}_${level}:${figure(used)}:${figure(cap)}`;
 }
 
-const DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|bot_budget|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parseDetail(detail) {
   const m = DETAIL_RE.exec(String(detail || ''));
@@ -310,7 +329,7 @@ async function evaluate(pool, config, key, deps = {}) {
   let used;
   let detail = null;
   if (limit.measure) {
-    const measured = limit.enabled(config) ? await limit.measure(config, pool, deps.capacity || {}) : null;
+    const measured = limit.enabled(config) ? await limit.measure(config, pool, deps.measure || deps.capacity || {}) : null;
     if (!measured) return unknown;
     ({ used, cap } = measured);
     detail = measured.detail || null;
@@ -622,6 +641,7 @@ function nudge(pool, config, key) {
 module.exports = {
   LIMITS,
   CAPACITY_LIMITS,
+  BOT_BUDGET_LIMIT,
   ALL_LIMITS,
   REARM_RATIO,
   SWEEP_INTERVAL_MS,

@@ -2,7 +2,9 @@
  * The change page's vote, at its foot above the tab bar.
  *
  * At rest it is part of the page, not a sheet over it: one pair, Yes | No,
- * and Skip beside it. The row never moves. A tap on Yes counts at once; the
+ * and Skip beside it. The row never moves. A round arrow at its start
+ * (#6919) brings back the change shown just before this one; on the first
+ * change of a run it is there, greyed out. A tap on Yes counts at once; the
  * pair shows the choice (a filled thumb under it, with its mark), and Skip's
  * place becomes Next change, or Done on the last one. A tap on the other
  * answer changes the vote; a tap on your own answer takes it back (the server
@@ -94,7 +96,7 @@ const Icon = {
 
 type AskMsg = { who: 'you' | 'ai'; text: string; pending?: boolean };
 
-export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight, left = 0, onSkip }: {
+export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight, left = 0, onSkip, onPrev, hasPrev = false }: {
   item: ReviewItem;
   vote: Vote | null;
   state: SheetState;
@@ -110,6 +112,10 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   left?: number;
   /** Turn the page: on to the next change, or the end, with nothing recorded. */
   onSkip: () => void;
+  /** #6919: back to the change shown just before this one, in this run. */
+  onPrev?: () => void;
+  /** Whether there is such a change; without one the arrow is greyed out. */
+  hasPrev?: boolean;
 }) {
   const t = useMessages('communities');
   const ref = useRef<HTMLElement>(null);
@@ -363,6 +369,14 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
       <div className="rf-vote">
         <div className={why ? 'rf-why' : 'rf-why rf-why-off'}>{why}</div>
         <div className="rf-vrow">
+          <button
+            type="button"
+            className="rf-prev"
+            data-rf-prev=""
+            disabled={!hasPrev}
+            aria-label={t('communities:review.vote.prevLabel')}
+            onClick={onPrev}
+          >{Icon.back}</button>
           {pair()}
           <button
             type="button"
