@@ -78,24 +78,34 @@ test('raising a full limit with the count still near keeps the row, said as near
 });
 
 test('the credit row: out, low, urgent, could not check, and nothing to say', () => {
-  const base = { warnCents: 50000, urgentCents: 20000, daysLeft: 2, at: new Date(NOW - 60_000).toISOString() };
+  // openrouter-credit.status(): `creditCents` is the account's credit.
+  const at = new Date(NOW - 60_000).toISOString();
+  const base = { warnCents: 50000, urgentCents: 20000, daysLeft: 2, at, creditAt: at, creditRead: true, creditSource: 'account', management: true };
   const row = (status) => view.creditRow({ ...base, ...status }, { now: NOW });
-  assert.equal(row({ balanceCents: 90000, accountCents: 90000 }), null, 'above $500: no row');
+  assert.equal(row({ creditCents: 90000 }), null, 'above $500: no row');
   assert.deepEqual(
-    (({ state, urgent, balanceCents }) => ({ state, urgent, balanceCents }))(row({ balanceCents: 41200, accountCents: 41200 })),
+    (({ state, urgent, balanceCents }) => ({ state, urgent, balanceCents }))(row({ creditCents: 41200 })),
     { state: 'near', urgent: false, balanceCents: 41200 },
   );
-  assert.equal(row({ balanceCents: 18400, accountCents: 18400 }).urgent, true, 'under $200');
-  assert.equal(row({ balanceCents: 0, accountCents: 0 }).state, 'out');
-  const out = row({ balanceCents: 18400, accountCents: 18400, outage: { since: '2026-11-19T14:02:00Z' } });
+  assert.equal(row({ creditCents: 18400 }).urgent, true, 'under $200');
+  assert.equal(row({ creditCents: 0 }).state, 'out');
+  // What is left of the bot's key is not credit: $1,923 in the account and
+  // $500 of the week left is no row at all.
+  assert.equal(row({ creditCents: 192386, accountCents: 192386, keyCents: 49996, keyReset: 'weekly' }), null);
+  const out = row({ creditCents: 18400, outage: { since: '2026-11-19T14:02:00Z', cause: 'credit' } });
   assert.equal(out.state, 'out', 'a turn that found the credit gone outranks the figure');
   assert.equal(out.since, '2026-11-19T14:02:00Z');
-  const failed = row({ balanceCents: 41200, accountCents: null, keyCents: null });
+  assert.equal(row({ creditCents: 192386, outage: { since: '2026-11-19T14:02:00Z', cause: 'budget' } }), null,
+    'an outage whose cause is the weekly budget is the budget\'s row, not "credit: out"');
+  const failed = row({ creditCents: 41200, creditRead: false });
   assert.deepEqual([failed.state, failed.reason, failed.balanceCents], ['unknown', 'no_answer', 41200]);
-  const stale = view.creditRow({ ...base, balanceCents: 41200, accountCents: 41200, at: new Date(NOW - 2 * 3600_000).toISOString() }, { now: NOW });
+  const old = new Date(NOW - 2 * 3600_000).toISOString();
+  const stale = row({ creditCents: 41200, at: old, creditAt: old });
   assert.deepEqual([stale.state, stale.reason], ['unknown', 'stale']);
-  assert.equal(view.creditRow({ ...base, balanceCents: null, accountCents: null, keyCents: null }, { now: NOW }), null,
-    'never read (no management key, an unlimited bot key): not a limit anybody can watch');
+  assert.equal(row({ creditCents: null }), null,
+    'never read (an unlimited bot key, or an allowance): not a limit anybody can watch');
+  assert.equal(row({ creditCents: 41200, creditRead: false, management: false }), null,
+    'no management key: the account cannot be read, and no row says so for ever');
 });
 
 test('rows run worst first: over, at or out, near, could not check', () => {
@@ -296,10 +306,13 @@ test('the credit sweep says when the credit row would change', async () => {
   };
   await credit.sweep(pool, {}, {
     staging: true,
-    readBalance: async () => ({ accountCents: 41200, keyCents: null, balanceCents: 41200, at: new Date().toISOString() }),
-    creditMoved: (before, after) => moves.push([before.balanceCents, after.balanceCents]),
+    readBalance: async () => ({ accountCents: 41200, keyCents: null, at: new Date().toISOString() }),
+    creditMoved: (before, after) => moves.push([before.accountCents, after.creditCents]),
   });
   assert.deepEqual(moves, [[90000, 41200]], 'the sweep hands its before and after to the area');
+  // An outage that turns out to be the weekly budget changes the credit row too.
+  const out = { accountCents: 192386, creditCents: 192386, creditAt: at, at, outage: { since: at, cause: 'credit' } };
+  assert.equal(view.creditMoved(out, { ...out, outage: { since: at, cause: 'budget' } }, settings), true);
 });
 
 test('the route, the socket frame and both islands are wired', () => {
@@ -367,4 +380,45 @@ test('compute shows the cluster rows it has figures for, and never reads the clu
   } finally {
     capacity.measure = measure;
   }
+});
+
+// ─── 4. Homeroom bot's weekly budget (openrouter-credit.js budget) ───────
+
+test('the weekly budget is a stored row beside the credit row, and a budget outage is its row, not "credit: out"', async () => {
+  view.resetForTests();
+  const at = new Date().toISOString();
+  const pool = fakePool({
+    levels: {
+      bot_budget: {
+        level: 'full', used: 80000, cap: 80000, measured_at: at,
+        detail: { usedCents: 79960, capCents: 80000, source: 'openrouter', resetsAt: '2026-11-23T00:00:00.000Z', refused: true },
+      },
+    },
+    creditState: {
+      accountCents: 192386, keyCents: 40, keyLimitCents: 80000, keyReset: 'weekly', management: true,
+      creditCents: 192386, creditAt: at, creditSource: 'account', spendableCents: 40, at,
+      outage: { since: at, words: '402', cause: 'budget', causeFrom: 'figures' },
+    },
+  });
+  const out = await view.compute(pool, CONFIG);
+  assert.deepEqual(out.rows.map((r) => `${r.key}:${r.state}`), ['bot_budget:at'], 'no credit row: the account has $1,923.86');
+  assert.equal(out.broken, true, 'the bot has stopped: the bell shows its dot');
+  assert.equal(out.rows[0].detail.usedCents, 79960);
+  // The same stored state with the cause credit is the credit row.
+  view.resetForTests();
+  const credited = fakePool({ creditState: { accountCents: 12, creditCents: 12, creditAt: at, at, management: true, outage: { since: at, words: '402', cause: 'credit' } } });
+  assert.deepEqual((await view.compute(credited, CONFIG)).rows.map((r) => `${r.key}:${r.state}`), ['openrouter_credit:out']);
+});
+
+test('the state production held on 20 Nov reads as no credit row from the first request after the deploy, before any sweep', async () => {
+  view.resetForTests();
+  // Stored by the old sweep: the lower of the two figures as `balanceCents`.
+  const at = new Date().toISOString();
+  const pool = fakePool({ creditState: {
+    balanceCents: 49996, accountCents: 192386, keyCents: 49996, dailyCents: 4021, at, armed: { low: false, urgent: true }, outage: null,
+  } });
+  assert.deepEqual((await view.compute(pool, CONFIG)).rows, [], 'the account has $1,923.86: nothing is low');
+  const status = await credit.status(pool);
+  assert.deepEqual([status.creditCents, status.creditSource, status.keyReset], [192386, 'account', null],
+    'credit is the account\'s figure, and a key whose cadence was never read is not treated as prepaid');
 });

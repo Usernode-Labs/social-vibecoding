@@ -2340,7 +2340,7 @@ function conversationNotificationHref(n) {
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|bot_budget|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parsePlatformLimitDetail(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
@@ -2409,6 +2409,20 @@ function clockStamp(at) {
   const date = new Intl.DateTimeFormat(locale,
     inZone({ month: 'short', day: 'numeric' })).format(at);
   return `${date}, ${time}`;
+}
+
+// The day Homeroom bot's budget week turns, by name, for a notice sent at
+// `at`: the next week boundary after it. Weeks start on Monday 00:00 UTC
+// (services/limits.js weeklyResetAt, and a managed key's weekly reset), and
+// the day is named in UTC, as the push and the text name it, in the reader's
+// language.
+function weekTurnDay(at) {
+  const from = at && !Number.isNaN(at.getTime()) ? at : new Date();
+  const day = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const ahead = (8 - day.getUTCDay()) % 7;
+  day.setUTCDate(day.getUTCDate() + (ahead === 0 ? 7 : ahead));
+  const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
+  return new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' }).format(day);
 }
 
 // services/platform-incident-alerts.js tokens (#4296): "digest:<total>:<kind>=<n>,..."
@@ -3521,6 +3535,24 @@ function rowWords(n) {
         segments: messageSegments(bodyId, values),
       };
     }
+    // Homeroom bot's weekly budget, in cents (services/openrouter-credit.js
+    // budget): how much of it is used, and the day its week turns.
+    if (limit.limit === 'bot_budget') {
+      const money = (cents) => `$${Math.round(cents / 100).toLocaleString('en-US')}`;
+      const day = weekTurnDay(new Date(n.createdAt));
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '⚠️',
+        label: full
+          ? t('notifications:row.limit.botBudget.full.label')
+          : t('notifications:row.limit.botBudget.warn.label', { percent: Math.floor((limit.used / Math.max(1, limit.cap)) * 100) }),
+        segments: full
+          ? messageSegments('notifications:row.limit.botBudget.full.body', { day })
+          : messageSegments('notifications:row.limit.botBudget.warn.body', { used: money(limit.used), cap: money(limit.cap), day }),
+      };
+    }
     const figures = { used: limit.used, count: limit.cap };
     // The shared database's connections (services/platform-limit-alerts.js):
     // the admin limits area at the top of the sheet has the figures too.
@@ -3578,7 +3610,14 @@ function rowWords(n) {
         wrap: true,
         icon: hearts,
         label: t('notifications:row.credit.low.label', { threshold: dollars(alert.thresholdCents) }),
-        segments: [{ t: 'text', v: t('notifications:row.credit.low.body', { balance: dollars(alert.balanceCents), days: alert.days }) }],
+        // The account's credit, and how long it lasts at the rate it has
+        // been going down; a notice sent before there was a rate says none.
+        segments: [{
+          t: 'text',
+          v: alert.days > 0
+            ? t('notifications:row.credit.low.body', { balance: dollars(alert.balanceCents), count: alert.days })
+            : t('notifications:row.credit.low.bodyNoDays', { balance: dollars(alert.balanceCents) }),
+        }],
       };
     }
     if (alert && alert.type === 'private') {

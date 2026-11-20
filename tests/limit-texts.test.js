@@ -172,6 +172,39 @@ test('the words are short, carry the figures and the fix, and nothing personal',
   }
 });
 
+test('Homeroom bot\'s weekly budget is texted as a budget: dollars of the week, the day it turns, and where it is raised', () => {
+  const site = 'https://app.onhomeroom.com';
+  const detail = { usedCents: 64800, capCents: 80000, resetsAt: '2026-11-23T00:00:00.000Z' };
+  const near = { key: 'bot_budget', state: 'near', used: 64800, cap: 80000, percent: 81, detail };
+  const used = { key: 'bot_budget', state: 'at', used: 80000, cap: 80000, percent: 100, detail: { ...detail, usedCents: 80000 } };
+  assert.equal(texts.textFor(near, { action: 'crossing' }, { site }),
+    "Homeroom: bot's weekly budget at $648 of $800. It stops building at $800 until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings");
+  assert.equal(texts.textFor(used, { action: 'crossing' }, { site }),
+    "Homeroom: bot's weekly budget is used up, $800 of $800. Building stopped until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings");
+  assert.match(texts.textFor(used, { action: 'reminder' }, { site }), /^Homeroom reminder: bot's weekly budget is still used up\. Building stopped until Monday\./);
+  assert.match(texts.textFor({ key: 'bot_budget', state: 'unknown' }, { action: 'unknown' }, { site }), /couldn't read the bot's weekly budget for an hour/);
+  assert.ok(texts.KEYS.includes('bot_budget'), 'the budget is one of the limits texted');
+  const big = { usedCents: 1234500, capCents: 1500000, resetsAt: detail.resetsAt };
+  for (const [row, action] of [[near, 'crossing'], [used, 'crossing'], [used, 'reminder'],
+    [{ ...near, used: 1234500, cap: 1500000, detail: big }, 'crossing'], [{ ...used, used: 1500000, cap: 1500000, detail: { ...big, usedCents: 1500000 } }, 'crossing']]) {
+    const words = texts.textFor(row, { action }, { site });
+    assert.ok(words.length <= 160, `one SMS: ${words.length}`);
+    assert.doesNotMatch(words, /credit|days/i, 'a budget is never said as credit running out, or in days');
+  }
+  // It crosses, holds and re-arms as every limit does: once near, once used up.
+  const first = texts.decide({ level: 'ok', textedAt: null, unknownSince: null, unknownTexted: false, refusalsAt: null, refusalsCount: 0 }, near, { now: Date.parse('2026-11-20T12:00:00Z'), country: 'GB' });
+  assert.equal(first.action, 'crossing');
+  assert.equal(first.mark.level, 'near');
+  const then = texts.decide(first.mark, used, { now: Date.parse('2026-11-20T15:00:00Z'), country: 'GB' });
+  assert.deepEqual([then.action, then.mark.level], ['crossing', 'broken']);
+});
+
+test('the credit texts are about the account\'s credit', () => {
+  const site = 'https://app.onhomeroom.com';
+  const low = texts.textFor({ key: 'openrouter_credit', state: 'near', balanceCents: 18400, warnCents: 50000 }, { action: 'crossing' }, { site });
+  assert.equal(low, 'Homeroom: OpenRouter credit is down to $184. The bot stops at $0. Add credit: https://openrouter.ai/settings/credits');
+});
+
 test('the cluster\'s own limits are texted in the same words: the figure, what stops, and where to look', () => {
   const site = 'https://app.onhomeroom.com';
   const say = (row) => texts.textFor(row, { action: 'crossing' }, { site });
