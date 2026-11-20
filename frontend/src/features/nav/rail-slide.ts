@@ -78,8 +78,9 @@ export function slideRail(commit: () => void): void {
   const before = screen ? screen.mark.getBoundingClientRect().left : null;
   // The standard look and the brand kit's drawing of it (no data-skin on
   // <html>) fold the menu to a strip of icons (app.css, "FOLDED, THE MENU IS
-  // A STRIP"): it never leaves, so nothing of it slides. Its width eases in
-  // CSS, and the screen still plays from where it was.
+  // A STRIP"): it never leaves, so nothing of it slides. The panel takes
+  // its new width at once (a width played frame by frame would lay the
+  // page out on each), and the screen still plays from where it was.
   const strip = !document.documentElement.hasAttribute('data-skin');
   if (!open && !fromPeek && !strip) bar.classList.add('platform-tabs-leaving');
   // The class the fold reads is written in a layout effect, so the new

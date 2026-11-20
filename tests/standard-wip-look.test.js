@@ -51,6 +51,10 @@ const MENU_HIDES = [
   // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
   'html:not([data-skin]) #platform-tabs::before',
   'html:not([data-skin]) body #platform-header#platform-header::before',
+  // Folded, the menu is a strip of icons and logos: the mark heads it, so the top bar does not say the logo there either,
+  'html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
+  // and the words, counts, headings, pins and nested places are the open menu's (asked 20 Nov 2026).
+  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x)',
 ];
 
 function menuBlock() {
@@ -168,6 +172,35 @@ test('the menu and the top bar: one block for the standard look and this one, ev
   // A folded sidebar opens from its arrow alone, in both.
   assert.match(read('frontend', 'src', 'features', 'nav', 'rail-peek.ts'),
     /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
+});
+
+test('folded, the menu is a strip of icons and logos, and a medium display starts on it', () => {
+  const css = read('public', 'css', 'app.css');
+  const block = menuBlock();
+  const STRIP = 'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
+  const FOLDED = 'html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden))';
+  // It is still drawn (the shell's own rule takes a folded rail away), at the strip's width, which the page keeps clear.
+  assert.ok(block.includes(`${STRIP} { display: flex; }`));
+  assert.ok(block.includes(`${FOLDED} {\n    --platform-rail-full: var(--wip-nav-mini-w);\n    --platform-rail-w: var(--wip-nav-mini-w);`));
+  assert.ok(block.includes(`${FOLDED} #app-view {\n    padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));`));
+  // Homeroom's mark heads it, and a hairline parts the places from the communities' logos.
+  assert.ok(block.includes(`${STRIP}::before {`));
+  assert.match(block, /background: var\(--wip-nav-brand-mark\) center \/ contain no-repeat;/);
+  assert.ok(block.includes(`${STRIP} :is(.platform-rail-pinned, .platform-rail-communities)::before {`));
+  // The fold button: inside the panel at the end of the logo's line, and beside the strip, in the bar's ink, once folded.
+  assert.match(block, /#platform-header #sidebar-toggle \{\s*position: absolute;[^}]*inset-inline-start: calc\(var\(--wip-nav-w\) - var\(--wip-nav-fold-inset\) - var\(--wip-nav-fold\)\);[^}]*background: transparent;[^}]*color: var\(--wip-nav-ink\);/);
+  assert.ok(block.includes(`${FOLDED} #platform-header #sidebar-toggle {\n    position: static;\n    color: var(--wip-nav-bar-ink);`));
+  // Nothing slides away: the strip stays, so the rail's leaving slide is skipped where <html> has no data-skin.
+  const slide = read('frontend', 'src', 'features', 'nav', 'rail-slide.ts');
+  assert.match(slide, /const strip = !document\.documentElement\.hasAttribute\('data-skin'\);\s*if \(!open && !fromPeek && !strip\) bar\.classList\.add\('platform-tabs-leaving'\);/);
+  assert.match(slide, /if \(fromPeek \|\| strip\) return;/);
+  // A medium display starts on the strip, and only where a folded menu is a strip.
+  const auto = read('frontend', 'src', 'features', 'nav', 'rail-auto.ts');
+  assert.match(auto, /export const RAIL_MEDIUM = '\(min-width: 768px\) and \(max-width: 1023\.98px\)';/);
+  assert.match(auto, /if \(document\.documentElement\.hasAttribute\('data-skin'\)\) return;/);
+  assert.match(read('frontend', 'src', 'features', 'nav', 'tab-bar.tsx'), /useEffect\(\(\) => followDisplaySize\(\), \[\]\);/);
+  // A phone's bar keeps the shell's height: the lit pill's inset comes out of the tab, so the resume strip is not covered.
+  assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
 });
 
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {
