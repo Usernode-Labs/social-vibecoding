@@ -4,7 +4,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { resolveImage, isTransientRegistryError } = require('../scripts/resolve-kubernetes-image');
+const { resolveImage, prepareCaptureContext, isTransientRegistryError } = require('../scripts/resolve-kubernetes-image');
 
 const digest = `sha256:${'a'.repeat(64)}`;
 const manifest = { digest, manifests: [{
@@ -21,9 +21,10 @@ function repository(t) {
     fs.mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
     fs.writeFileSync(path.join(cwd, file), contents);
   };
-  for (const file of ['worker/Dockerfile', 'worker/worker-run.sh', 'capture/Dockerfile',
+  for (const file of ['.dockerignore', 'worker/Dockerfile', 'worker/worker-run.sh',
+    'worker/session-bootstrap.js', 'worker/shots-hosted-origins.js', 'worker/shots-hosted-app-contract.js', 'capture/Dockerfile',
     'capture/capture.js', 'shots/hosted-app-fixture.js', 'src/services/visible-changes.js',
-    '.github/workflows/build-kubernetes-images.yml',
+    '.github/workflows/build-kubernetes-images.yml', '.github/actions/build-kubernetes-image/action.yml',
     'scripts/resolve-kubernetes-image.js', 'frontend/ui.js']) write(file, `original ${file}\n`);
   // Real Git trees, without commits or user Git signing hooks/configuration.
   const revision = () => { git('add', '.'); return git('write-tree'); };
@@ -129,14 +130,78 @@ test('the resolved Claude Code version invalidates only the worker image', t => 
   }).reuse_tag, capture);
 });
 
-test('workflow and resolver changes invalidate both reusable components', t => {
+test('release scheduling and database workflow edits preserve the reusable build keys', t => {
   const repo = repository(t);
-  for (const file of ['.github/workflows/build-kubernetes-images.yml', 'scripts/resolve-kubernetes-image.js']) {
+  const components = ['worker', 'capture'];
+  const before = components.map(component => resolve(repo, { component }).reuse_tag);
+  repo.write('.github/workflows/build-kubernetes-images.yml', 'changed release lock and PostgreSQL check\n');
+  assert.deepEqual(components.map(component => resolve(repo, { component }).reuse_tag), before);
+});
+
+test('build action and context assembler changes invalidate both keys', t => {
+  const repo = repository(t);
+  for (const file of ['.github/actions/build-kubernetes-image/action.yml', 'scripts/resolve-kubernetes-image.js']) {
     const before = ['worker', 'capture'].map(component => resolve(repo, { component }).reuse_tag);
     repo.write(file, 'changed build recipe\n');
     for (const [index, component] of ['worker', 'capture'].entries()) {
       assert.notEqual(resolve(repo, { component }).reuse_tag, before[index]);
     }
+  }
+});
+
+test('capture keys change with root Docker ignore rules and every shared source it copies', t => {
+  const repo = repository(t);
+  const capture = () => resolve(repo, { component: 'capture' }).reuse_tag;
+  let previous = capture();
+  for (const file of ['.dockerignore', 'capture/Dockerfile.dockerignore', 'capture/Dockerfile',
+    'worker/session-bootstrap.js', 'worker/shots-hosted-origins.js', 'worker/shots-hosted-app-contract.js']) {
+    repo.write(file, `changed ${file}\n`);
+    const next = capture();
+    assert.notEqual(next, previous, file);
+    previous = next;
+  }
+  fs.chmodSync(path.join(repo.cwd, 'worker/session-bootstrap.js'), 0o755);
+  assert.notEqual(capture(), previous, 'shared file modes also affect the image');
+  previous = capture();
+  repo.write('worker/worker-run.sh', 'worker-only runtime change\n');
+  repo.write('shots/some-unrelated-tool.js', 'shots-only runtime change\n');
+  assert.equal(capture(), previous);
+});
+
+test('capture builds receive only the fingerprinted files from the exact Git revision', t => {
+  const repo = repository(t);
+  fs.chmodSync(path.join(repo.cwd, 'worker/session-bootstrap.js'), 0o755);
+  const revision = repo.revision();
+  repo.write('worker/session-bootstrap.js', 'worktree changed after checkout\n');
+  repo.write('capture/untracked.txt', 'untracked build input\n');
+  const context = prepareCaptureContext(revision, repo.cwd, repo.cwd);
+  const file = path.join(context, 'worker/session-bootstrap.js');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'original worker/session-bootstrap.js\n');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o755);
+  assert.ok(fs.existsSync(path.join(context, '.dockerignore')));
+  assert.ok(fs.existsSync(path.join(context, 'shots/hosted-app-fixture.js')));
+  for (const absent of ['frontend', 'worker/worker-run.sh', 'capture/untracked.txt']) {
+    assert.equal(fs.existsSync(path.join(context, absent)), false, absent);
+  }
+});
+
+test('a published input key can only reuse the build it names', t => {
+  for (const [component, file] of [
+    ['worker', 'worker/Dockerfile'],
+    ['capture', 'worker/shots-hosted-app-contract.js'],
+  ]) {
+    const repo = repository(t);
+    const published = resolve(repo, { component }).reuse_tag;
+    const inspect = tag => {
+      if (tag === published) return JSON.stringify(manifest);
+      throw registryError('manifest unknown');
+    };
+    repo.write('.github/workflows/build-kubernetes-images.yml', 'new release scheduler\n');
+    assert.equal(resolve(repo, { component }, inspect).digest, digest);
+    repo.write(file, 'changed build input\n');
+    const next = resolve(repo, { component }, inspect);
+    assert.equal(next.digest, '');
+    assert.equal(next.reason, 'image-not-found');
   }
 });
 

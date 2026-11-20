@@ -5,9 +5,18 @@
 const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const path = require('node:path');
 
-const WORKFLOW = '.github/workflows/build-kubernetes-images.yml';
+const BUILD_ACTION = '.github/actions/build-kubernetes-image';
 const RESOLVER = 'scripts/resolve-kubernetes-image.js';
+const CAPTURE_INPUTS = [
+  '.dockerignore',
+  'capture',
+  'shots/hosted-app-fixture.js',
+  'worker/session-bootstrap.js',
+  'worker/shots-hosted-origins.js',
+  'worker/shots-hosted-app-contract.js',
+];
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const NPM_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -46,20 +55,45 @@ function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function captureTree(revision, cwd, run = command) {
+  return run('git', ['ls-tree', '-rz', revision, '--', ...CAPTURE_INPUTS], cwd);
+}
+
+function prepareCaptureContext(revision, runnerTemp, cwd) {
+  const context = fs.mkdtempSync(path.join(runnerTemp, 'capture-context-'));
+  for (const entry of captureTree(revision, cwd).split('\0').filter(Boolean)) {
+    const separator = entry.indexOf('\t');
+    const filename = entry.slice(separator + 1);
+    const [mode, type, object] = entry.slice(0, separator).split(' ');
+    if (type !== 'blob' || !['100644', '100755', '120000'].includes(mode)) {
+      throw new Error(`Unsupported Git entry in capture build context: ${filename}`);
+    }
+    const file = path.join(context, filename);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const args = ['cat-file', 'blob', object];
+    if (mode === '120000') {
+      fs.symlinkSync(execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 60000 }), file);
+      continue;
+    }
+    const output = fs.openSync(file, 'wx', mode === '100755' ? 0o755 : 0o644);
+    try {
+      execFileSync('git', args, { cwd, stdio: ['ignore', output, 'pipe'], timeout: 60000 });
+    } finally {
+      fs.closeSync(output);
+    }
+  }
+  return context;
+}
+
 function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = command } = {}) {
-  // The Git tree includes names, contents, executable modes, Dockerfiles and
-  // .dockerignore. The worker's floating Claude Code dependency is resolved
-  // before this lookup and becomes an exact external input too. Workflow/
-  // resolver changes invalidate the build recipe. Keep reuse tags scoped to
-  // each branch, including branches that ran the older release workflow.
-  const componentInputs = component === 'capture'
-    ? ['capture', 'shots']
-    : [component];
-  const objects = [...componentInputs, WORKFLOW, RESOLVER].map(path =>
-    run('git', ['rev-parse', `${revision}:${path}`], cwd));
-  const inputs = {
-    component, ref, platform: 'linux/amd64', objects,
-  };
+  // The action configures BuildKit, and this script selects the Dockerfile
+  // and assembles the context. The release workflow only calls the recipe.
+  const recipe = [BUILD_ACTION, RESOLVER].map(file =>
+    run('git', ['rev-parse', `${revision}:${file}`], cwd));
+  const context = component === 'capture'
+    ? captureTree(revision, cwd, run)
+    : run('git', ['rev-parse', `${revision}:worker`], cwd);
+  const inputs = { component, ref, recipe, context };
   if (component === 'worker') inputs.claudeCodeVersion = claudeCodeVersion;
   return createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
 }
@@ -126,14 +160,18 @@ function resolveImage({
 
 if (require.main === module) {
   try {
-    const result = resolveImage({
-      component: process.env.COMPONENT,
-      owner: process.env.GITHUB_REPOSITORY_OWNER,
-      revision: process.env.GITHUB_SHA,
-      ref: process.env.GITHUB_REF,
-      forceRebuild: process.env.FORCE_REBUILD || 'none',
-      claudeCodeVersion: process.env.CLAUDE_CODE_VERSION,
-    });
+    const { COMPONENT: component, GITHUB_SHA: revision, GITHUB_REPOSITORY_OWNER: owner,
+      GITHUB_REF: ref, FORCE_REBUILD: forceRebuild, CLAUDE_CODE_VERSION: claudeCodeVersion } = process.env;
+    const result = resolveImage({ component, revision, owner, ref, forceRebuild, claudeCodeVersion });
+    if (!result.digest) {
+      if (component === 'capture') {
+        result.context = prepareCaptureContext(revision, process.env.RUNNER_TEMP);
+        result.dockerfile = path.join(result.context, 'capture/Dockerfile');
+      } else {
+        result.context = component === 'worker' ? 'worker' : '.';
+        result.dockerfile = component === 'worker' ? 'worker/Dockerfile' : 'Dockerfile.kubernetes';
+      }
+    }
     fs.appendFileSync(process.env.GITHUB_OUTPUT,
       Object.entries(result).map(([key, value]) => `${key}=${value}\n`).join(''));
     console.log(`${process.env.COMPONENT}: ${result.reason}${result.digest ? ` (${result.digest})` : ''}`);
@@ -143,4 +181,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { inputKey, resolveImage, isTransientRegistryError };
+module.exports = { inputKey, resolveImage, prepareCaptureContext, isTransientRegistryError };

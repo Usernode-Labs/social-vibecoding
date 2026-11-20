@@ -258,27 +258,25 @@ test('Kubernetes passes no workflow flag: every machine is the only path for wha
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const workerDockerfile = read('worker/Dockerfile');
-  for (const component of ['platform', 'worker', 'capture']) {
-    assert.match(workflow, new RegExp(`component: ${component},`));
-  }
+  const action = read('.github/actions/build-kubernetes-image/action.yml');
+  const resolver = read('scripts/resolve-kubernetes-image.js');
+  assert.match(workflow, /component: \[platform, worker, capture\]/);
   assert.match(workflow, /packages: write/);
-  assert.match(workflow, /owner="\$\{GITHUB_REPOSITORY_OWNER,,\}"/);
-  assert.match(workflow, /ghcr\.io\/\$\{\{ steps\.registry\.outputs\.owner \}\}\/social-vibecoding-\$\{\{ matrix\.component \}\}/);
-  assert.doesNotMatch(workflow, /ghcr\.io\/\$\{\{ github\.repository_owner \}\}/);
-  assert.match(workflow, /sha-\$\{\{ github\.sha \}\}/);
-  assert.match(workflow, /steps\.build\.outputs\.digest/);
-  assert.match(workflow, /if: steps\.reuse\.outputs\.digest == ''/);
-  assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
-  assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
-  assert.match(workflow, /pull: true/);
+  assert.match(workflow, /uses: \.\/\.github\/actions\/build-kubernetes-image/);
+  assert.match(resolver, /ghcr\.io\/\$\{owner\.toLowerCase\(\)\}\/social-vibecoding-\$\{component\}/);
+  assert.match(action, /steps\.reuse\.outputs\.image \}\}:sha-\$\{\{ github\.sha \}\}/);
+  assert.match(action, /steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest/);
+  assert.match(action, /if: steps\.reuse\.outputs\.digest == ''/);
+  assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.image\.outputs\.digest \}\}/);
+  assert.match(action, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
+  assert.match(action, /pull: true/);
   assert.match(workflow, /needs: \[plan, build, preview-schema-compatibility\]/);
-  assert.match(workflow, /npm view @anthropic-ai\/claude-code@latest version/);
   assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,
     'the dependency version is resolved once in the plan');
   assert.match(workflow, /if: needs\.plan\.outputs\.should_release == 'true'/);
-  assert.match(workflow, /CLAUDE_CODE_VERSION: \$\{\{ steps\.claude\.outputs\.version \}\}/);
-  assert.match(workflow, /build-args: \|\n\s+GIT_SHA=\$\{\{ github\.sha \}\}\n\s+\$\{\{ steps\.claude\.outputs\.build_arg \}\}/,
-    'the shell build needs the same exact revision as the runtime, while retaining the worker version');
+  assert.match(workflow, /claude-code-version: \$\{\{ needs\.plan\.outputs\.claude_code_version \}\}/);
+  assert.match(action, /inputs\.component == 'platform' && format\('GIT_SHA=\{0\}', github\.sha\)/);
+  assert.match(action, /inputs\.component == 'worker' && format\('CLAUDE_CODE_VERSION=\{0\}', inputs\.claude-code-version\)/);
   assert.match(workerDockerfile, /ARG CLAUDE_CODE_VERSION=latest/);
   assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
 });
@@ -294,7 +292,7 @@ test('every Kubernetes chart release validates its immutable platform image with
   const validation = build.slice(start, end);
   assert.match(validation, /if: matrix\.component == 'platform'/);
   assert.doesNotMatch(validation, /continue-on-error:/);
-  assert.match(validation, /IMAGE: \$\{\{ steps\.reuse\.outputs\.image \}\}@\$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
+  assert.match(validation, /IMAGE: \$\{\{ steps\.image\.outputs\.image \}\}@\$\{\{ steps\.image\.outputs\.digest \}\}/);
   assert.match(release, /needs\.build\.result == 'success'/, 'the publisher requires the platform check');
   assert.match(validation, /--env NODE_ENV=production --env GIT_SHA="\$GITHUB_SHA"/);
   assert.match(validation, /--entrypoint node "\$IMAGE"/);

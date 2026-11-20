@@ -35,6 +35,14 @@ differs or the result is missing, expired, or unreadable, the release runs
 the two-server role and preview-copy tests. The single-server workflow and
 access tests run on pull requests.
 
+Worker and capture image reuse is keyed to the shared build action, the
+resolver that supplies the context, and each image's tracked inputs. Changes
+to the release scheduler leave those keys alone. For capture, the resolver
+stages the files it keys, including the worker helpers copied by its Dockerfile.
+For worker, the key includes the exact resolved Claude Code version. Switching
+to these keys causes one build per component to populate them. Use
+`force_rebuild` to refresh mutable upstream layers.
+
 The workflow allows overlapping image builds and serializes publication.
 After the image and PostgreSQL checks pass, the publisher gives the slot
 to a newer verified commit on `main`. It gives a newer build up to 90
