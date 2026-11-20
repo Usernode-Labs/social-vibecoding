@@ -373,12 +373,9 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
     'the faint bar beside a community\'s nested rows');
 });
 
-test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps its own colour', () => {
-  const painted = lookRules().filter((rule) => rule.selectors.some((sel) => /#platform-header#platform-header(::before)?$/.test(sel)));
+test('on a phone the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps its own colour', () => {
+  const painted = lookRules().filter((rule) => rule.selectors.some((sel) => /:not\(\[data-community-tint\]\) body:has\(#platform-tabs\) #platform-header#platform-header(::before)?$/.test(sel)));
   assert.ok(painted.length >= 2, 'the top-level bar is restyled');
-  for (const rule of painted) {
-    for (const sel of rule.selectors) assert.match(sel, /:not\(\[data-community-tint\]\)/, `"${sel}" must leave a project's bar its community's colour`);
-  }
   const bar = painted.find((rule) => /background-color:/.test(rule.body));
   assert.match(bar.body, /background-color:\s*var\(--bl-bar\);/);
   assert.match(bar.body, /--brand-ink:\s*#ffffff;/, 'white words');
@@ -389,13 +386,55 @@ test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps
   }
   // A phone browser's own rule for the bar is two ids and a `body` deep.
   assert.match(bar.selectors[0], /body:has\(#platform-tabs\) #platform-header#platform-header$/, 'deep enough to outrank it');
-  // No other rule that reaches a community's bar gives it a fill.
+  // The navy bar, and the white words read off it, are a phone's alone:
+  // from 768px the bar is the page's (only the sidebar is blue, below).
+  const block = lookBlock();
+  assert.match(block, /@media \(max-width: 767\.98px\) \{\n {2}html\[data-skin="brand"\][^{\n]*:not\(\[data-community-tint\]\) body:has\(#platform-tabs\) #platform-header#platform-header \{[^}]*background-color: var\(--bl-bar\);/,
+    'the navy bar is drawn below 768px only');
+  assert.match(block, /@media \(max-width: 767\.98px\) \{\n {2}html\[data-skin="brand"\][^{\n]* #platform-header \{\n {4}--text-primary: #ffffff;/,
+    'and so are the white words read off it');
+  // No rule that reaches a community's bar gives it a fill of its own: it
+  // sets inks, or (from 768px) takes the bar's fill away.
   for (const rule of lookRules()) {
     for (const sel of rule.selectors) {
       if (!/#platform-header$/.test(sel) || /:not\(\[data-community-tint\]\)/.test(sel)) continue;
-      assert.doesNotMatch(rule.body, /(^|[;\s])background(-color)?:/, `"${sel}" sets inks only`);
+      const fill = rule.body.match(/(?:^|[;\s])background(?:-color)?:\s*([^;]+);/);
+      assert.ok(!fill || fill[1].trim() === 'transparent', `"${sel}" sets inks only, or no fill at all`);
     }
   }
+});
+
+test('from 768px only the sidebar is blue: it runs the window\'s height under Homeroom\'s logotype, and the bar is the page\'s', () => {
+  const block = lookBlock();
+  const at = block.indexOf('/* ONLY THE SIDEBAR IS BLUE');
+  assert.ok(at > 0, 'the look carries the block');
+  assert.match(block.slice(at), /^\/\* ONLY THE SIDEBAR IS BLUE[\s\S]*?\*\/\n@media \(min-width: 768px\) \{/, 'from 768px, where the bar is a sidebar');
+  // The docked sidebar, open: from the window's top, under the bar.
+  const docked = '#platform-tabs:not(.platform-tabs-folded):not(.platform-tabs-peek):not(.platform-tabs-route-hidden)';
+  const side = ruleAt(`${EITHER} ${docked}`);
+  assert.ok(side, 'the open, docked sidebar (a folded, peeking or app-route one keeps its place under the bar)');
+  assert.equal(valueOf(side.body, 'top'), '0', 'from the window\'s top');
+  assert.equal(valueOf(side.body, 'z-index'), '9', 'over the page, under the bar (10), whose fold button it frames');
+  const logo = ruleAt(`${EITHER} ${docked}::before`);
+  assert.ok(logo, 'Homeroom\'s logotype at its top');
+  assert.match(logo.body, /mask: url\('\/brand\/homeroom-logotype-black\.png'\) left center \/ contain no-repeat;/, 'the brand kit\'s own file');
+  assert.match(logo.body, /background: #ffffff;/, 'in the sidebar\'s white');
+  // The bar: no fill of its own, on every page (a project's too), in the page's ink.
+  const bar = ruleAt(`${EITHER} body:has(#platform-tabs) #platform-header#platform-header`);
+  assert.ok(bar, 'the bar, on every page, a community\'s included');
+  assert.match(bar.body, /background-color:\s*transparent;/, 'no fill of its own');
+  assert.match(bar.body, /color:\s*var\(--text-primary\);/, 'the page\'s ink');
+  for (const token of ['--brand-ink', '--brand-tint', '--brand-line']) {
+    assert.equal(valueOf(bar.body, token), 'inherit', `${token}: its controls read the page's tokens again`);
+  }
+  assert.match(ruleAt(`${EITHER} body:has(#platform-tabs) #platform-header#platform-header::before`).body, /content:\s*none !important;/, 'and no glass layer');
+  // While the sidebar is open its fold button is in it, and the bar's words start beside it.
+  const open = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))';
+  const toggle = ruleAt(`${EITHER} ${open} #platform-header #sidebar-toggle`);
+  assert.ok(toggle, 'the fold button, while the sidebar is open');
+  assert.equal(valueOf(toggle.body, 'position'), 'absolute', 'at the end of the logo\'s line');
+  assert.match(valueOf(toggle.body, 'inset-inline-start'), /var\(--platform-rail-full\)/, 'measured from the sidebar\'s own width');
+  assert.match(valueOf(ruleAt(`${EITHER} ${open} #platform-header`).body, 'padding-inline-start'), /var\(--platform-rail-full\)/, 'the bar\'s words start beside the sidebar');
 });
 
 test('the side panel starts below the flat bar, on the chat column\'s line', () => {

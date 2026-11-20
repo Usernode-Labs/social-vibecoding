@@ -33014,11 +33014,13 @@ html[data-skin="paper"][data-skin] .fr-facts.fr-f5 .fr-fact .fr-l{white-space:no
      for that without the ink outline its cards wear.) In dark the page is
      a very dark navy, a card is one step lighter in the same blue, and
      words are a white tinted the same way.
-   - A frame around the page: a deep sky sidebar with white words, and a
-     navy top bar, darker than the sidebar so the two read as two pieces. A
-     community's own header colour stays on its pages. In dark both are
-     much deeper, a dark blue sidebar under a navy bar, so the frame does
-     not glare beside a dark page.
+   - One blue for the frame: from 768px a deep sky sidebar with white
+     words runs the window's full height, Homeroom's logotype at its top,
+     and the top bar is the page's own, in the page's ink (ONLY THE SIDEBAR
+     IS BLUE, 20 Nov 2026: a navy bar beside it read as a second blue). On
+     a phone the bar is navy over the blue tab bar, and a community's own
+     header colour stays on its pages. In dark the blues are much deeper,
+     so the frame does not glare beside a dark page.
    - One job per colour. Sun (#ffee6f) means "you are here" on the sidebar
      and the tab bar, and "do this" on the main button, which in light also
      wears the website's ink outline and hard foot. In dark the sun is
@@ -33392,22 +33394,26 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   border-color: var(--brand-line);
 }
 
-/* THE TOP BAR is navy with white words on the top-level screens: a flat
-   bar with square corners, not the faked glass with the rounded notch. A
-   project's bar (html[data-community-tint]) keeps its community's colour.
+/* ON A PHONE THE TOP BAR is navy with white words on the top-level screens,
+   over the blue tab bar at the screen's foot: a flat bar with square
+   corners, not the faked glass with the rounded notch. A project's bar
+   (html[data-community-tint]) keeps its community's colour. From 768px the
+   bar is the page's own (ONLY THE SIDEBAR IS BLUE, below).
    `body:has(#platform-tabs)`, always true in the shell, and the doubled id
    outrank the route rules: the deepest of them, a phone browser's (two ids
    and a `body`), gives the bar the sheet's white. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header {
-  --brand-ink: #ffffff;
-  --brand-tint: rgba(255, 255, 255, 0.16);
-  --brand-line: rgba(255, 255, 255, 0.3);
-  background-color: var(--bl-bar);
-  color: #ffffff;
-  clip-path: none;
-  border-end-start-radius: 0;
-  border-end-end-radius: 0;
-  box-shadow: none;
+@media (max-width: 767.98px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header {
+    --brand-ink: #ffffff;
+    --brand-tint: rgba(255, 255, 255, 0.16);
+    --brand-line: rgba(255, 255, 255, 0.3);
+    background-color: var(--bl-bar);
+    color: #ffffff;
+    clip-path: none;
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+    box-shadow: none;
+  }
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header::before {
   display: none;
@@ -33418,35 +33424,131 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) .side-panel {
   top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) + .5rem);
 }
-/* On either bar, the navy one or a community's own, everything read off
-   the bar is white: its muted words, and what is lit on it (the sidebar's
-   switch while the sidebar is open) is a wash of white, not the page's
-   pale sun. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-header {
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.86);
-  --text-muted: rgba(255, 255, 255, 0.82);
-  --text-faint: rgba(255, 255, 255, 0.62);
-  --lit-ink: #ffffff;
-  --lit-tint: rgba(255, 255, 255, 0.2);
-  --lit-line: transparent;
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-950, .text-zinc-900, .text-zinc-800, .text-zinc-700) {
-  color: #ffffff;
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-600, .text-zinc-500, .text-zinc-400) {
-  color: rgba(255, 255, 255, 0.82);
-}
-html[data-skin="brand"].dark:not([data-app-tone="light"]) #platform-header :is(.dark\:text-zinc-100, .dark\:text-zinc-200, .dark\:text-zinc-300) {
-  color: #ffffff;
-}
-html[data-skin="brand"].dark:not([data-app-tone="light"]) #platform-header :is(.dark\:text-zinc-400, .dark\:text-zinc-500) {
-  color: rgba(255, 255, 255, 0.82);
+/* On a phone, on either bar, the navy one or a community's own, everything
+   read off the bar is white: its muted words, and what is lit on it is a
+   wash of white, not the page's pale sun. From 768px the bar's words are
+   the page's ink, so these stay on the phone. */
+@media (max-width: 767.98px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-header {
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.86);
+    --text-muted: rgba(255, 255, 255, 0.82);
+    --text-faint: rgba(255, 255, 255, 0.62);
+    --lit-ink: #ffffff;
+    --lit-tint: rgba(255, 255, 255, 0.2);
+    --lit-line: transparent;
+  }
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-950, .text-zinc-900, .text-zinc-800, .text-zinc-700) {
+    color: #ffffff;
+  }
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-600, .text-zinc-500, .text-zinc-400) {
+    color: rgba(255, 255, 255, 0.82);
+  }
+  html[data-skin="brand"].dark:not([data-app-tone="light"]) #platform-header :is(.dark\:text-zinc-100, .dark\:text-zinc-200, .dark\:text-zinc-300) {
+    color: #ffffff;
+  }
+  html[data-skin="brand"].dark:not([data-app-tone="light"]) #platform-header :is(.dark\:text-zinc-400, .dark\:text-zinc-500) {
+    color: rgba(255, 255, 255, 0.82);
+  }
 }
 /* A project's tile on the bar is a tile of its own: its letter keeps the
    tile's grey, not the bar's white. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-header .app-icon-tile {
   color: var(--bl-tile-ink);
+}
+
+/* ONLY THE SIDEBAR IS BLUE (from 768px; Evan's review of the look's frame,
+   20 Nov 2026: "only the sidebar is blue, header on the page"). The navy
+   bar over the sky sidebar was two blues meeting at a seam: the bar's
+   greyed navy (hue 226, 38% saturation) beside the sidebar's vivid sky
+   (hue 216, 67%). From 768px there is one blue, the sidebar's, and it runs
+   the window's full height, as the standard look's menu does (THE LEFT
+   MENU AND THE TOP BAR): Homeroom's logotype at its top, and the fold
+   button at the end of the logo's line, in the sidebar's white. The top bar
+   has no fill of its own: it is the page, its words and buttons in the
+   page's ink, on every page, a project's page too, which painted it in the
+   community's colour.
+   Folded, the sidebar slides away as it always has in this look
+   (features/nav/rail-slide.ts), so the fold button and the bar's own
+   logotype are back at the bar's start, in that ink. A peeking sidebar,
+   and one over a running app, keeps its place under the bar: they float
+   over the page, and the bar's controls stay over them. Phones keep the
+   navy bar over the blue tab bar (above). */
+@media (min-width: 768px) {
+  /* The bar is the page: its ground and its ink. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) #platform-header#platform-header {
+    --fake-glass-tint: transparent;
+    --brand-ink: inherit;
+    --brand-tint: inherit;
+    --brand-line: inherit;
+    background-color: transparent;
+    color: var(--text-primary);
+    clip-path: none;
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+    box-shadow: none;
+  }
+  /* (!important: the bar's glass layer is drawn per page by rules that
+     out-rank any one selector here.) */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) #platform-header#platform-header::before {
+    content: none !important;
+  }
+  /* A project's tile on the page's bar keeps a quiet edge, not the white
+     ring it wore on the community's colour. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) #platform-header #header-app-tile:not(:focus-visible) {
+    outline-color: var(--app-sheet-line);
+  }
+  /* The sidebar from the window's top to its floor, over the page and under
+     the bar (10), whose fold button it frames. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs:not(.platform-tabs-folded):not(.platform-tabs-peek):not(.platform-tabs-route-hidden) {
+    top: 0;
+    padding-top: 60px;
+    z-index: 9;
+    border-top: 0;
+  }
+  /* Homeroom's logotype at its top, the same on every page: the brand
+     kit's own file as a mask the sidebar's white fills. (The whole
+     `background` shorthand: the bar's glass layer would lie over the ink.) */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs:not(.platform-tabs-folded):not(.platform-tabs-peek):not(.platform-tabs-route-hidden)::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 12px;
+    inset-inline-start: 18px;
+    width: 124px;
+    height: 28px;
+    z-index: 0;
+    background: #ffffff;
+    -webkit-mask: url('/brand/homeroom-logotype-black.png') left center / contain no-repeat;
+    mask: url('/brand/homeroom-logotype-black.png') left center / contain no-repeat;
+    pointer-events: none;
+  }
+  /* The bar's words start beside the sidebar, and it does not say
+     Homeroom a second time. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header {
+    padding-inline-start: calc(var(--platform-rail-full) + 1rem);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) {
+    display: none;
+  }
+  /* The fold button is part of the sidebar: a quiet rounded square in its
+     white, at the end of the logo's line, with a wash of white under the
+     pointer. Its own air laps the sidebar's edge by 4px. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #sidebar-toggle {
+    position: absolute;
+    inset-block-start: 10px;
+    inset-inline-start: calc(var(--platform-rail-full) - 28px);
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    box-shadow: none;
+    color: rgba(255, 255, 255, 0.88);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #sidebar-toggle:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+  }
 }
 
 /* THE SIDEBAR (from 768px) is the deep sky, a deeper blue in dark, with
