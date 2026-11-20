@@ -345,3 +345,39 @@ test('#6784: a bullet idea, or a short idea with a short reply, is no problem', 
   assert.equal(claims.briefShortOfPlan('', PLAN_REPLY), false);
   assert.equal(claims.briefShortOfPlan('A line', PLAN_REPLY), true);
 });
+
+// ── 20 Nov 2026 (live-draft review, E): "I looked it up" needs a search ──
+
+test('E: "I researched" is backed only by a web search this turn, on the chat that counts them', async () => {
+  const chat = (webSearched) => ({ user: { id: 1 }, bot: { id: 2 }, appIds: new Set(), conversationId: 5, webSearched });
+  const said = 'I researched how iOS apps lay out a list like this. Most use an inset grouped list.';
+  assert.deepEqual(await kinds(pool(), chat(0), said), ['searched'], 'no search ran: shown false');
+  assert.deepEqual(await kinds(pool(), chat(1), said), [], 'a search ran: it stands');
+  assert.deepEqual(await kinds(pool(), { user: { id: 1 }, appIds: new Set() }, said), [], 'a surface that counts no searches is not checked for it');
+  for (const words of [
+    'I looked it up: iOS uses inset grouped lists.', 'I searched online and found three patterns.',
+    'From my research, most apps use a grouped list.', 'Let me research that.', 'Here is what I found on the web.',
+  ]) {
+    assert.deepEqual(await kinds(pool(), chat(0), words), ['searched'], words);
+  }
+  for (const words of [
+    'I searched the open requests and found none like it.', 'I looked it up in your requests: it is up for a vote.',
+    'Here is how iOS apps usually lay out a list, from what I know.', 'I can search the web for this if you want.',
+  ]) {
+    assert.deepEqual(await kinds(pool(), chat(0), words), [], words);
+  }
+});
+
+test('E: the repair asks for a search where there is one, else for "from what I know", and the cut drops the claim', async () => {
+  const problems = await claims.checkReply(pool(), { user: { id: 1 }, appIds: new Set(), webSearched: 0 },
+    'I researched it. Most iOS apps use an inset grouped list for settings.');
+  assert.deepEqual(problems.map((p) => p.kind), ['searched']);
+  const on = claims.repairNote(problems, { tools: new Set(['reply', 'web_search']) });
+  assert.match(on, /You did not search the web in this turn\. If they asked you to look something up, call web_search now and name the pages you used as links; otherwise say plainly that you are answering from what you know\./);
+  const off = claims.repairNote(problems, { tools: new Set(['reply']) });
+  assert.match(off, /You cannot search the web here: say plainly that you are answering from what you know/);
+  assert.doesNotMatch(off, /web_search/, 'a tool the place does not have is never named');
+  assert.doesNotMatch(`${on}${off}`, /—/);
+  assert.equal(claims.cut('I researched it. Most iOS apps use an inset grouped list for settings.', problems, {}),
+    'Most iOS apps use an inset grouped list for settings.');
+});

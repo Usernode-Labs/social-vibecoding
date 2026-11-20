@@ -8,5 +8,7 @@ const registry = require('./registry');
 require('./source');
 require('./platform');
 require('./artifact');
+// 20 Nov 2026 (live-draft review, E): web_search, the chat's look at the web.
+require('./web');
 
 module.exports = registry;

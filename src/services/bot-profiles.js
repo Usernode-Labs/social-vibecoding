@@ -46,6 +46,9 @@ const CHAT_LIMITS = Object.freeze({
   offers: 3,
   // Cards a reply names (requests, changes, projects).
   cards: 3,
+  // 20 Nov 2026 (live-draft review, E): web searches one turn may run
+  // (bot-web-search.js), each a few tenths of a cent on the bot's key.
+  searchesPerTurn: 3,
 });
 
 // A project's thread: one reply, short and quick, by the place's rules.
@@ -121,7 +124,7 @@ const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
   'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'write_artifact', 'open_app_preview', 'close_thread',
-  'report_problem', 'offer_new_project', 'change_plan', 'reply',
+  'report_problem', 'offer_new_project', 'change_plan', 'web_search', 'reply',
 ]);
 // What each capability adds to the private profile's tools (step 6). The
 // design's reads of its project's code and board are its own: they read the

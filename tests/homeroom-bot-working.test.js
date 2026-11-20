@@ -768,10 +768,12 @@ test('each tool says what the bot is doing, in kinds the screen words', () => {
   assert.deepEqual(mayor.doingFor('edit_file', {}), { kind: 'changing_draft' });
   assert.deepEqual(mayor.doingFor('apply_changes', {}), { kind: 'changing_draft' });
   assert.deepEqual(mayor.doingFor('offer_request', {}), { kind: 'drafting' });
+  // 20 Nov 2026 (live-draft review, E): a web search.
+  assert.deepEqual(mayor.doingFor('web_search', { query: 'ios list layout' }), { kind: 'searching' });
   assert.equal(mayor.doingFor('comment_on_request', {}), null, 'thinking');
   assert.equal(mayor.doingFor('reply', {}), undefined, 'the end changes nothing');
   for (const what of [{ kind: 'progress' }, { kind: 'request', number: 1 }, { kind: 'code' }, { kind: 'drawing' }, { kind: 'designing' },
-    { kind: 'drafting' }, { kind: 'changing_draft' }]) {
+    { kind: 'drafting' }, { kind: 'changing_draft' }, { kind: 'searching' }]) {
     assert.ok(realDm.DOING_KINDS.includes(what.kind), what.kind);
   }
   assert.deepEqual(realDm.typingDoing({ kind: 'drawing', version: 4 }), { kind: 'drawing', version: 4 });
@@ -937,6 +939,8 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   // #6864: the version the drawing is saved as, and a live draft's change.
   assert.equal(card.botDoingLine(t, { kind: 'drawing', version: 4 }), 'Drawing version 4');
   assert.equal(card.botDoingLine(t, { kind: 'changing_draft' }), 'Changing the draft');
+  // 20 Nov 2026 (live-draft review, E): one web search.
+  assert.equal(card.botDoingLine(t, { kind: 'searching' }), 'Searching the web');
   // #6354: Homeroom opening one of its own pages to copy for a design.
   assert.equal(card.botDoingLine(t, { kind: 'capturing', page: 'Homeroom bot page' }), 'Opening Homeroom bot page as it is now');
   assert.equal(card.botDoingLine(t, { kind: 'capturing' }), 'Opening the page as it is now');
