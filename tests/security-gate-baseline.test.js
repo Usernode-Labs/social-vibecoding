@@ -285,6 +285,10 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.equal(prScan.env.SECURITY_BASELINE_REVISION, '${{ github.event.pull_request.base.sha }}');
   assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
   assert.equal(prScan.env.SECURITY_AUDIT_ONLY, undefined, 'PRs retain the blocking scanner default');
+  assert.equal(prScan.env.LIVE_WORKER_DIGEST, '${{ steps.live.outputs.worker }}');
+  assert.match(prScan.run, /--cache-from "type=registry,ref=ghcr\.io\/.*social-vibecoding-worker@\$LIVE_WORKER_DIGEST"/);
+  assert.doesNotMatch(prScan.run, /type=gha|--cache-to/,
+    'PRs can import layers from the promoted image and publish no cache');
   assert.equal(pr.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
   const releaseScan = workflow.jobs.build.steps.find((step) => step.name === 'Verify runtime and scan the exact image SBOM');
