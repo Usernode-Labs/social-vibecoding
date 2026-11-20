@@ -1463,9 +1463,9 @@
       "expectText": "New project"
     },
     {
-      "name": "The Communities page's New community tile is present but locked without app quota, the last of Joined",
+      "name": "The Communities page's New community button is present but locked without app quota",
       "path": "/?demo=1&shot=create-disabled#communities",
-      "expectSelector": "#communities-screen:not(.hidden) #communities-joined-section:not([hidden]) #communities-new-community[data-panel-slot=\"create\"][data-create-enabled=\"false\"][aria-label^=\"New community. \"]:last-child:not([disabled])",
+      "expectSelector": "#communities-screen:not(.hidden) button#communities-new-top[data-create-enabled=\"false\"][aria-label^=\"New community. \"]:not([disabled])",
       "expectText": "New community"
     },
     {
@@ -3134,10 +3134,10 @@
       "expectText": "Go to community"
     },
     {
-      "name": "#communities opens the Communities tab's page with its tab lit: Pinned leads with Needs you and the votes waiting, Joined ends on New community, and Discover leads to the ones to join",
+      "name": "#communities opens the Communities tab's page with its tab lit: New community in the top row, then Pinned, Joined and the communities to join",
       "path": "/?demo=1#communities",
-      "expectSelector": "body:has(#platform-tab-workshop[aria-current=\"page\"]) #communities-screen:not(.hidden):has(#communities-joined-section #communities-new-community[data-panel-slot=\"create\"]):has(#communities-discover-section #communities-discover-btn) #communities-pinned-section:not([hidden]) a#communities-needs-tile[href=\"#needs\"][data-home-needs]",
-      "expectText": "Needs you"
+      "expectSelector": "body:has(#platform-tab-workshop[aria-current=\"page\"]) #communities-screen:not(.hidden):has(#communities-pinned-section:not([hidden]) [data-home-community]):has(#communities-all-section) button#communities-new-top[data-create-enabled]",
+      "expectText": "New community"
     },
     {
       "name": "Needs you (#needs) is the review flow, one change's page in the pane with its vote bar (#6276; One Home, #6361)",
