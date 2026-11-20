@@ -37,6 +37,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { sharedJson } from '../../lib/shared-read';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
+import { isHomeKitSkin, useLiveSkin } from '../../lib/skin';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { notificationsSheetStore } from '../notifications/notifications-sheet-store.js';
 import { SectionHeading } from './panels/ui';
@@ -184,6 +185,9 @@ function demoQuery(): string {
 
 export function NeedsYouCard(): ReactNode {
   const t = useMessages('home');
+  // The kit's looks (Standard and Standard (WIP)) draw the label plain and
+  // "See all" as a link at the end of its line. Paper keeps the pill.
+  const kit = isHomeKitSkin(useLiveSkin());
   // Until the list is read this load, the card stands on what the last visit
   // saw on this device, so its place is held from the first paint and nothing
   // under it moves when the list arrives. Somebody with no threads last time
@@ -228,16 +232,30 @@ export function NeedsYouCard(): ReactNode {
           label and a chevron, one thing to press, opening the sheet's list
           of every recent thread. No count: how many threads the viewer has
           ever taken part in is not what a card of recent ones is for. */}
-      <SectionHeading>
-        <WipHeadMore
+      <SectionHeading action={kit ? (
+        <button
+          type="button"
           id="home-needs-card-btn"
-          direction="right"
+          className="home-needs-card-see-all shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+          aria-label={t('home:needsCard.seeAll')}
           onClick={openThreadsList}
-          label={t('home:needsCard.seeAll')}
-          pill={t('home:needsCard.seeAll')}
         >
-          <span id="home-needs-card-title" className="wip-head-words">{t('home:needsCard.eyebrow')}</span>
-        </WipHeadMore>
+          <span className="whitespace-nowrap">{t('home:needsCard.seeAll')}</span>
+        </button>
+      ) : undefined}>
+        {kit ? (
+          <span id="home-needs-card-title">{t('home:needsCard.eyebrow')}</span>
+        ) : (
+          <WipHeadMore
+            id="home-needs-card-btn"
+            direction="right"
+            onClick={openThreadsList}
+            label={t('home:needsCard.seeAll')}
+            pill={t('home:needsCard.seeAll')}
+          >
+            <span id="home-needs-card-title" className="wip-head-words">{t('home:needsCard.eyebrow')}</span>
+          </WipHeadMore>
+        )}
       </SectionHeading>
       {/* What happened lately, in one to four columns by the room there is, each a row that opens its thread. */}
       {!feed ? (

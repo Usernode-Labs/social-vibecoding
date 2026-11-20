@@ -142,5 +142,5 @@ test('Home draws nothing before a search, or while the lists are still out', () 
 test('Home mounts it under the apps section, outside a look\'s own page', () => {
   const src = read('frontend/src/features/home/index.tsx');
   assert.match(src, /import \{ HomeSearchMake \} from '\.\/search-make';/);
-  assert.match(src, /\{wip \? null : <AppsMore \/>\}\s*<\/WipCard>\s*<\/section>\s*\{\/\*[\s\S]*?\*\/\}\s*\{frame \? null : <HomeSearchMake \/>\}/);
+  assert.match(src, /\{kit \? null : <AppsMore \/>\}\s*<\/WipCard>\s*<\/section>\s*\{\/\*[\s\S]*?\*\/\}\s*\{frame \? null : <HomeSearchMake \/>\}/);
 });

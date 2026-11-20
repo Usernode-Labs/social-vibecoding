@@ -183,7 +183,16 @@ const SECTION_VIEWS = {
 };
 
 function paintHosts(sandbox, hosts) {
-  const mod = loadTsx(SECTIONS);
+  // The shared card is what a look outside the kit draws (Paper). Standard and
+  // Standard (WIP) draw the kit's posters instead (tests/home-needs-you-card.test.js).
+  const mod = loadTsx(SECTIONS, {
+    stubs: {
+      '../../../lib/skin': {
+        isHomeKitSkin: (s) => s === 'standard' || s === 'wip',
+        useLiveSkin: () => 'brand',
+      },
+    },
+  });
   const state = sandbox.panelsStore.get();
   for (const host of hosts) {
     const key = host.dataset.panelSlot;
@@ -1026,7 +1035,7 @@ test('the heading is the prerender\'s own until the data lands', () => {
   assert.doesNotMatch(before, /home-panel-see-all|<article/);
   const [, sections] = PANEL_SOURCES.find(([n]) => n.endsWith('sections.tsx'));
   assert.match(sections,
-    /\) : challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}\s*action=\{challenges\?\.seeAll && !wip \? <SeeAllLink \/> : null\}/,
+    /label=\{challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}\s*action=\{challenges\?\.seeAll \? <SeeAllLink \/> : null\}/,
     'the content-named heading and its link follow the view, and fall back to the prerender\'s values');
   assert.equal(message('home:challenges.heading'), 'Challenges');
 });
@@ -1748,9 +1757,10 @@ test('index.html stacks the two section hosts below the grid, in order', () => {
   const grid = INDEX.indexOf('id="app-list"');
   assert.ok(grid > 0, 'the launcher grid is there');
   const at = (id) => INDEX.indexOf(`id="${id}"`);
-  // One Home (#6361): Pinned communities, Challenges, then Communities to
-  // join. Discover's lane is no section of Home's any more.
-  const order = ['home-communities-section', 'home-challenges-section', 'home-join-section'];
+  // One Home (#6361) in the kit's Home (#6906): Challenges follows Pinned
+  // projects in its own row, then the (hidden) own-communities section, then
+  // Communities to join. Discover's lane is no section of Home's any more.
+  const order = ['home-challenges-section', 'home-communities-section', 'home-join-section'];
   let prev = grid;
   for (const id of order) {
     const here = at(id);

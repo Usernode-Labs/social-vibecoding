@@ -59,7 +59,7 @@ export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending
   return [...featured, ...sortApps(apps, sort).filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, ids }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, ids, onHome = false }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -75,11 +75,16 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   headingAction?: ReactNode;
   /** The section's and its Featured label's ids where it is drawn a second time in the document (the Communities page): Home's own stay Home's. */
   ids?: { section: string; featured: string };
+  /** Drawn on Home: the kit's looks (Standard and Standard (WIP)) give it Home's one-line layout. */
+  onHome?: boolean;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
-  // Standard (WIP), lib/skin.ts: Featured is a row of Home's own there, so its label says of what.
-  const wip = useLiveSkin() === 'wip';
+  // The kit's Home (lib/skin.ts isHomeKitSkin) draws Featured as a row of
+  // its own and the filters as one line. The Communities page and the
+  // signed-out landing keep the list as it was under Standard.
+  const skin = useLiveSkin();
+  const wip = skin === 'wip' || (onHome && skin === 'standard');
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);

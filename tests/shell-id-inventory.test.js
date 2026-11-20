@@ -58,6 +58,13 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Home in the Standard look (#6906) ──────────────────────────────
+  // Standard draws the brand kit's Home. "Show all N apps" is a link at the
+  // end of the Pinned projects label line (#home-apps-see-all, a runtime id:
+  // it draws only while rows are held back), not a line under the grid; Paper
+  // keeps the line, mounted once its look is known, so it is out of the
+  // prerendered shell.
+  'home-apps-more': '"Show all N apps" under the launcher grid. The kit\'s Home draws it in the Pinned projects label line now (#home-apps-see-all); Paper keeps this line after the look is known.',
   // ── The native-offline proposal (18 Nov 2026) ──────────────────────
   // The full-width amber strip is gone: the header says it now, in
   // #connection-status (features/header/connection-status.tsx), as native
@@ -1040,7 +1047,14 @@ const ADDED_IDS = {
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
   'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
-  'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
+  // Home in the Standard look (#6906): Standard now draws the kit's Home, so
+  // the row that holds Recent threads and Challenges is in the prerender.
+  // (#home-aside itself waits for the viewer's read, as it did under WIP.)
+  'home-row': 'The row under Pinned projects that holds Recent threads and Challenges, in the kit\'s Home (Standard and Standard (WIP)).',
+  // #home-apps-more left this map with Home in the Standard look (#6906):
+  // Standard draws the kit's heading "Show all N apps" (#home-apps-see-all,
+  // a runtime id, drawn only when rows are held back), and Paper mounts the
+  // old line after the look is known. It is recorded in RETIRED_IDS.
   // #home-discover-section (area 2) left this map when One Home (#6361) took
   // Discover's lane off Home; #home-join-section, below #home-challenges-section,
   // is the directory there now.

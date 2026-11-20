@@ -86,7 +86,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { isFrameSkin, useSkin } from '../../lib/skin';
+import { isFrameSkin, isHomeKitSkin, useSkin } from '../../lib/skin';
 import { HomeFrame } from './frame/home-frame';
 
 import { SearchIcon } from '@/components/ui/icons';
@@ -103,7 +103,7 @@ import { NeedsYouCard } from './needs-you-card';
 import { HomeCommunityMatches } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
-import { WipCard, WipCta, WipHeadMore } from './wip-kit';
+import { WipCard, WipCta } from './wip-kit';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -130,6 +130,12 @@ function foldApps(fold: boolean) {
   home.render();
 }
 
+/** A heading action written as a link: app.css's Buttons block underlines it. */
+const HEAD_LINK = 'home-apps-fold shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target';
+
+/** Edit mode's own door, whose class the tests select (`.home-edit-start`). */
+const EDIT_LINK = 'home-edit-start shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target';
+
 export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -152,8 +158,9 @@ export function HomeScreen() {
   const [viewer, setViewer] = useState(false);
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
   const frame = isFrameSkin(skin) && viewer;
-  // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
-  const wip = skin === 'wip';
+  // The looks whose Home is the brand kit's (lib/skin.ts isHomeKitSkin):
+  // Standard and Standard (WIP). Paper draws its own Home below.
+  const kit = isHomeKitSkin(skin);
   // "Paper, simplified, with brand styling" (Drea's review of #6699) takes
   // two of Standard (WIP)'s pieces in its own colours (app.css, the brand
   // look's HOME): New project as a button on the search row, and the Recent
@@ -163,11 +170,11 @@ export function HomeScreen() {
   // picked while Home is up repaints it.
   // Only once the grid has drawn: a render before the apps are in would
   // publish an empty grid and take the loading placeholders away early.
-  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [wip, brand]);
+  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [kit, brand]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
-  // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
-  // member meets the communities to join first, and this pin when they
+  // ONE HOME (#6361): Pinned projects appears once something is pinned. A
+  // new member meets the communities to join first, and this pin when they
   // choose it (the app's Pin to Home, the hub's ⋯, "Pin its app too").
   // My apps is hidden only when the loaded grid has nothing at all to show:
   // an account at rest with no apps still draws the trailing New project tile
@@ -177,13 +184,13 @@ export function HomeScreen() {
   // agrees.
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
-  // Standard (WIP): the Recent threads card rides Challenges' row. (Its
+  // The kit's looks: the Recent threads card rides Challenges' row. (Its
   // component and file keep the names they had as the Needs you card; the
   // look's CSS knows the section by `#home-needs-card`, #6816.)
-  // Under Standard (WIP) it is mounted as soon as the look is known, not
-  // when the grid is ready: the card holds its place from the first paint
-  // (./needs-you-card.tsx). The brand look mounts it with the grid, as it did.
-  const aside = wip ? viewer : brand && grid.ready && !!grid.create;
+  // It is mounted as soon as the look is known, not when the grid is ready:
+  // the card holds its place from the first paint (./needs-you-card.tsx).
+  // The brand look mounts it with the grid, as it did.
+  const aside = kit ? viewer : brand && grid.ready && !!grid.create;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
@@ -246,10 +253,10 @@ export function HomeScreen() {
             already take. A phone keeps `pt-3`: its bar tucks under the
             header, and the reveal reads the bar's height, not a constant.
         */}
-        {/* Standard (WIP): the field is a short one at the row's start, and
+        {/* The kit's Home: the field is a short one at the row's start, and
             New project, the page's one filled action, ends the row. */}
-        <div className={wip ? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'}>
-          <div className={wip ? 'relative wip-search' : 'relative w-full'}>
+        <div className={kit ? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'}>
+          <div className={kit ? 'relative wip-search' : 'relative w-full'}>
             <SearchIcon
               className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
               aria-hidden="true"
@@ -272,7 +279,7 @@ export function HomeScreen() {
               &times;
             </button>
           </div>
-          {(wip || brand) && grid.ready && grid.create ? (
+          {(kit || brand) && grid.ready && grid.create ? (
             <WipCta id="home-new-project-top" onClick={() => { (window as any).App?.showCreateModal?.(); }}>
               {t('home:create.label')}
             </WipCta>
@@ -400,6 +407,47 @@ export function HomeScreen() {
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
               </span>
+            ) : kit ? (
+              /* The kit's Home: Edit, then "Show all N apps" / "Show less"
+                 as a link at the far right of the label line, in both looks
+                 (app.css's Buttons block underlines it). Editing keeps the
+                 Add / Done seat above. */
+              (canEdit || grid.create?.heldBack || moreCount > 0 || canFold) ? (
+                <span className="flex items-center gap-4">
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      className={EDIT_LINK}
+                      aria-label={t('home:edit.startLabel')}
+                      onClick={() => { (window as any).Home?.setEditing?.(true); }}
+                    >
+                      <span className="whitespace-nowrap">{t('home:edit.start')}</span>
+                    </button>
+                  ) : null}
+                  {grid.create?.heldBack ? <CreateCompact view={grid.create} /> : null}
+                  {moreCount > 0 ? (
+                    <button
+                      type="button"
+                      id="home-apps-see-all"
+                      className={HEAD_LINK}
+                      aria-expanded="false"
+                      onClick={() => { foldApps(false); }}
+                    >
+                      <span className="whitespace-nowrap">{t('home:grid.showAll', { count: moreCount })}</span>
+                    </button>
+                  ) : canFold ? (
+                    <button
+                      type="button"
+                      id="home-apps-see-less"
+                      className={HEAD_LINK}
+                      aria-expanded="true"
+                      onClick={() => { foldApps(true); }}
+                    >
+                      <span className="whitespace-nowrap">{t('home:grid.seeLess')}</span>
+                    </button>
+                  ) : null}
+                </span>
+              ) : null
             ) : (canEdit || grid.create?.heldBack) ? (
               /* #5871: "Edit" is edit mode's own door. A hold on a tile used
                  to start it beside the tile's menu, so one press showed both;
@@ -410,7 +458,7 @@ export function HomeScreen() {
                 {canEdit ? (
                   <button
                     type="button"
-                    className="home-edit-start shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                    className={EDIT_LINK}
                     aria-label={t('home:edit.startLabel')}
                     onClick={() => { (window as any).Home?.setEditing?.(true); }}
                   >
@@ -421,23 +469,11 @@ export function HomeScreen() {
               </span>
             ) : null}
           >
-            {/* Standard (WIP): the label and the chevron after it are one
-                thing to press, which unfolds the grid and folds it again.
-                Down while rows are held back; up once they are out and
-                folding would hide some; plain words when neither. */}
-            {wip && moreCount > 0 ? (
-              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} pill={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
-                {t('home:grid.headingProjects')}
-              </WipHeadMore>
-            ) : wip && canFold ? (
-              <WipHeadMore id="home-apps-see-less" direction="up" expanded label={t('home:grid.seeLess')} pill={t('home:grid.seeLess')} onClick={() => { foldApps(true); }}>
-                {t('home:grid.headingProjects')}
-              </WipHeadMore>
-            ) : wip ? t('home:grid.headingProjects') : t('home:grid.heading')}
+            {kit ? t('home:grid.headingProjects') : t('home:grid.heading')}
           </SectionHeading>
-          {/* In Standard (WIP) the grid and its "Show all" line are one card
-              (WipCard, ./wip-kit.tsx). */}
-          <WipCard on={wip}>
+          {/* Under the kit's looks the grid is one card (WipCard,
+              ./wip-kit.tsx) and the way to the rest rides the label line. */}
+          <WipCard on={kit}>
           {frame && grid.editing ? null : <AppGrid />}
           {/*
               "Show all N apps" — revealed by Home.render() only when the
@@ -445,8 +481,8 @@ export function HomeScreen() {
               and empty; it is React's now (chromeStore), which is what lets
               its listener be attached once instead of on every paint.
           */}
-          {/* Standard (WIP) has no "Show all" line: See all rides the heading. */}
-          {wip ? null : <AppsMore />}
+          {/* The kit's looks have no "Show all" line: it rides the heading. */}
+          {kit ? null : <AppsMore />}
           </WipCard>
         </section>
         {/*
@@ -456,10 +492,10 @@ export function HomeScreen() {
             want to make?" with the words typed in. Null in the prerender.
         */}
         {frame ? null : <HomeSearchMake />}
-        {/* Standard (WIP): Home is one column, and under Pinned projects the
-            Recent threads card is a row of its own, then Challenges
-            (app.css, "STANDARD (WIP)"), at every width. */}
-        {wip || brand ? (
+        {/* The kit's looks: Home is one column, and under Pinned projects the
+            Recent threads card is a row of its own, then Challenges (app.css,
+            "STANDARD (WIP)", scoped to both looks). Paper keeps its own. */}
+        {kit || brand ? (
           <div id="home-row" className="home-row">
             {aside ? (
               <aside id="home-aside" className="home-aside">
@@ -536,7 +572,7 @@ export function HomeScreen() {
             GitHub and X. Nothing in the prerender, like the card above.
         */}
         {frame ? null : <VerifyCard />}
-        {wip || brand ? null : <ChallengesSection />}
+        {kit || brand ? null : <ChallengesSection />}
         <HomeJoin />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth

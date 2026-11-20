@@ -26,7 +26,7 @@ test('W06, reversed by #6154: My apps keeps four columns across the whole column
   const className = grid[0].match(/class="([^"]*)"/)[1].split(/\s+/);
   assert.ok(className.includes('grid-cols-4'), 'four columns, the count a stored layout is keyed by');
   assert.deepEqual(className.filter((c) => /(^|:)max-w-/.test(c)), [], 'and no cap at any width');
-  assert.match(read('frontend/src/features/home/index.tsx'), /<div className=\{wip \? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'\}>/);
+  assert.match(read('frontend/src/features/home/index.tsx'), /<div className=\{kit \? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'\}>/);
 });
 
 test('W07: an empty Challenges tab is the card Home draws, on the tabs\' edge', () => {

@@ -715,13 +715,13 @@ const Home = {
     } catch { /* no address to read */ }
     let skin = 'standard';
     try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
-    // Standard (WIP) (lib/skin.ts 'wip') has New project as a button on the
-    // search row at every width, so its grid draws no tile. The brand look
-    // ('brand') has the same button from 768px, where the search row is on
-    // screen; a phone, whose search row waits to be pulled into view, keeps
-    // the tile. Every other look, Standard among them, ends Pinned apps with
-    // the tile.
-    if (skin === 'wip') return true;
+    // Standard and Standard (WIP) (lib/skin.ts isHomeKitSkin) have New
+    // project as a button on the search row at every width, so their grid
+    // draws no tile. The brand look ('brand') has the same button from
+    // 768px, where the search row is on screen; a phone, whose search row
+    // waits to be pulled into view, keeps the tile. Every other look ends
+    // Pinned projects with the tile.
+    if (skin === 'wip' || skin === 'standard') return true;
     if (skin !== 'brand') return false;
     try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },

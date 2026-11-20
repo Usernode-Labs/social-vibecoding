@@ -64,7 +64,7 @@ import { CopyIcon, LockIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
-import { useLiveSkin } from '../../lib/skin';
+import { isHomeKitSkin, useLiveSkin } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
@@ -177,7 +177,7 @@ function openedAgo(at: number, t: (id: string, params?: Record<string, unknown>)
 }
 
 function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null }: {
-  /** Standard (WIP): under the name, the app's sentence and its contributors. */
+  /** The kit's looks (Standard and Standard (WIP)): under the name, how many members and contributors. */
   rich?: boolean;
   app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
   /** When this account last left the app on this device, in milliseconds; null says nothing. */
@@ -435,7 +435,6 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
         ) : null}
         {rich && !app.statusLabel ? (
           <>
-            {app.description ? <p className="app-card-desc" title={app.description}>{app.description}</p> : null}
             {app.members ? (
               <p className="app-card-people">
                 <UserGroupIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -454,7 +453,7 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
             a phone's text lane is narrower than the sentence, and a line
             that is only a time is never cut. The tile's aria-label has the
             sentence at every width. */}
-        {opened ? (
+        {opened && !rich ? (
           <p className="app-card-status app-card-opened">
             <span className="app-card-opened-long">{opened}</span>
             <span className="app-card-opened-short">{t('home:grid.tile.openedShort', { when: openedWhen })}</span>
@@ -477,8 +476,9 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
 export function AppGrid() {
   const t = useMessages('home');
   const state = useStoreState(gridStore);
-  // Standard (WIP), lib/skin.ts: the tile also says what the app is.
-  const rich = useLiveSkin() === 'wip';
+  // The kit's looks (lib/skin.ts isHomeKitSkin): the tile says who uses it
+  // and who made it, and not what it is.
+  const rich = isHomeKitSkin(useLiveSkin());
   const live = useLiveAppSlugs();
   // When each app was last left on this device, for the tiles' "Opened" line.
   const { apps: recents } = useStoreState(recentAppsStore);

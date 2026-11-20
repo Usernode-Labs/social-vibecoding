@@ -380,9 +380,12 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   const { Home, model, moreCount, sandbox } = makeHome();
   sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 1280px)' });
   Home._apps = mine(12);
-  // The column is Standard (WIP)'s: Standard keeps the tile at every width.
+  // Standard draws the kit's Home now: New project is the search row's
+  // button at every width, so the grid draws no tile — the same as Standard (WIP).
   Home.render();
-  assert.equal(model().create.inCard, false, 'no card under Standard');
+  assert.equal(model().create.inCard, true, 'no card under Standard');
+  assert.equal(model().items.length, 12, 'four apps to the last row');
+  assert.equal(moreCount(), 0, 'nothing is held back');
   sandbox.Skin = { get: () => 'wip' };
   Home.render();
   const state = model();

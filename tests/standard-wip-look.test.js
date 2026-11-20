@@ -19,12 +19,11 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 
 /** What Standard (WIP) deliberately does not display, by selector. */
 const WIP_HIDES = [
-  // Home has no Pinned communities section under the look.
-  'html[data-skin-wip] #home-communities-section',
-  // A pinned project's tile has no description under the look (asked 19 Nov 2026).
-  'html[data-skin-wip] #app-list .app-card-desc',
+  // Home has no section of the viewer's own communities: they are the
+  // Communities tab's page (a search still finds them).
+  'html:not([data-skin]) #home-communities-section',
   // Under 1024px a project's tile is its icon and name alone.
-  'html[data-skin-wip] #app-list .app-card-people',
+  'html:not([data-skin]) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
@@ -33,8 +32,6 @@ const WIP_HIDES = [
   'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
-  // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
-  'html[data-skin-wip] #app-list .app-card-opened',
 ];
 
 /**
@@ -114,15 +111,16 @@ test('it is the standard look: the head sets data-skin-wip and no data-skin', ()
 test('every rule of its block is scoped to the look or is a component of its kit', () => {
   for (const { selector } of rules(wipBlock())) {
     for (const one of topLevel(selector)) {
-      assert.match(one, /data-skin-wip|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle the standard look`);
+      assert.match(one, /data-skin-wip|^html:not\(\[data-skin\]\)|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle the standard look`);
     }
   }
 });
 
 test('colours are written once, as tokens in the block\'s first rule', () => {
   const all = rules(wipBlock());
-  // The token rules: the look's own (the config called Current) and each other config's, in light and dark.
-  const tokens = all.filter((r) => /^html\[data-skin-wip\](\[data-wip-tokens="[a-z0-9]+"\])?(\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
+  // The token rules: the shared set, in light and dark (the Standard look
+  // and this one), and the brand kit look's own page values.
+  const tokens = all.filter((r) => /^(?:html\[data-skin-wip\](\[data-wip-tokens="[a-z0-9]+"\])?|html:not\(\[data-skin\]\))(\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
   assert.ok(tokens.length >= 1, 'the block declares its tokens');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
@@ -230,6 +228,9 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(tokens[0].body, /--wip-btn-1-bg: #ffee6f;[\s\S]*--wip-btn-2-bg: #ffffff;[\s\S]*--wip-btn-bad-ink: #a3281a;/);
   assert.match(tokens[0].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-line\);/);
   assert.match(tokens[0].body, /--wip-btn-font: 'Source Serif 4',/);
+  // The element levels sheet draws a label at 16px (small buttons stay 13px).
+  assert.match(tokens[0].body, /--wip-btn-size: 16px;/);
+  assert.match(tokens[0].body, /--wip-btn-size-small: 13px;/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
 });
@@ -246,14 +247,33 @@ test('nothing of the standard look is hidden under it but what WIP_HIDES lists',
 
 test('Home places what it does not name last, so a new standard section is drawn', () => {
   const block = wipBlock();
-  assert.match(block, /html\[data-skin-wip\] #home-screen \.home-main > \* \{ order: 4; \}/);
+  assert.match(block, /html:not\(\[data-skin\]\) #home-screen \.home-main > \* \{ order: 4; \}/);
 });
 
 test('its pieces come from the kit, not from classes spelled in place', () => {
   const kit = read('frontend', 'src', 'features', 'home', 'wip-kit.tsx');
   for (const name of ['WipCard', 'WipCta', 'WipHeadMore']) assert.match(kit, new RegExp(`export (function|const) ${name}\\b`));
   const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
-  assert.match(island, /<WipCard on=\{wip\}>/);
+  assert.match(island, /<WipCard on=\{kit\}>/);
   assert.match(island, /<WipCta id="home-new-project-top"/);
+  assert.match(island, /id="home-apps-see-all"[\s\S]{0,200}aria-expanded="false"[\s\S]{0,200}foldApps\(false\)/,
+    'the label line\'s Show all unfolds the grid');
+  assert.match(island, /id="home-apps-see-less"[\s\S]{0,200}aria-expanded="true"[\s\S]{0,200}foldApps\(true\)/,
+    'and Show less folds it back');
   assert.doesNotMatch(island, /bg-gradient-to-br/, 'the filled action\'s gradient is the kit\'s, from tokens');
+});
+
+test('only the brand kit look\'s page colour and lit marks stay its own', () => {
+  const block = wipBlock();
+  // The shared set leaves the page colour clear, so Standard's wallpaper shows.
+  assert.match(block, /html:not\(\[data-skin\]\) \{\s*--wip-page-bg: transparent;/);
+  // The cream (and the Communities page's green) is the brand kit look's: declared once, scoped to it.
+  const pageBgs = [...block.matchAll(/([^{}]+)\{[^{}]*--wip-page-bg: #fffeea;/g)].map((m) => m[1].trim());
+  assert.deepEqual(pageBgs, ['html[data-skin-wip][data-wip-tokens="brand"]'], 'the cream page is the brand kit look\'s alone');
+  assert.match(block, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--lit-ink: #000000;/);
+  // The body ground follows the page colour only on the brand kit look.
+  assert.match(block, /html\[data-skin-wip\]\[data-wip-tokens\] body:has\(#home-screen:not\(\.hidden\)\),/);
+  // New project and New community take the serif label at the Buttons block's weight, not one of their own.
+  assert.doesNotMatch(block, /--wip-top-cta-weight/);
+  assert.doesNotMatch(block, /font-weight: var\(--wip-top-cta-weight\)/);
 });

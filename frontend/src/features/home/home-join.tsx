@@ -63,6 +63,7 @@ export function HomeJoin() {
       exclude={exclude}
       signedIn
       query={query}
+      onHome
       onRetry={() => { setApps(null); setAttempt((n) => n + 1); }}
     />
   );

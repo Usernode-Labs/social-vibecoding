@@ -40,18 +40,19 @@ const thread = (threadId, extra = {}) => ({
   ...extra,
 });
 
-test('the island mounts it under Standard (WIP) and the brand look, in a row of its own before Challenges', () => {
+test('the island mounts it under the kit\'s looks and the brand look, in a row of its own before Challenges', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  // Standard (WIP) mounts it as soon as the look and the viewer are known, so its
-  // place is held from the first paint; the brand look mounts it with the grid.
-  assert.match(island, /const aside = wip \? viewer : brand && grid\.ready && !!grid\.create;/);
-  assert.match(island, /\{wip \|\| brand \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
-  assert.match(island, /\{wip \|\| brand \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
+  // The kit's looks (Standard and Standard (WIP)) mount it as soon as the
+  // look and the viewer are known, so its place is held from the first
+  // paint; the brand look mounts it with the grid.
+  assert.match(island, /const aside = kit \? viewer : brand && grid\.ready && !!grid\.create;/);
+  assert.match(island, /\{kit \|\| brand \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
+  assert.match(island, /\{kit \|\| brand \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
   // A row of its own, as wide as the column, placed right under Pinned projects.
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
-  assert.match(css, /html\[data-skin-wip\] #home-screen \.home-main > \.home-row \{ display: contents; \}/);
-  assert.match(css, /html\[data-skin-wip\] #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #home-screen \.home-main > \.home-row \{ display: contents; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
 });
 
 test('it is a section as Pinned apps is: its label line on the page, then one card of recent threads', () => {
@@ -60,11 +61,13 @@ test('it is a section as Pinned apps is: its label line on the page, then one ca
   assert.match(src, /const drawn = feed \? feed\.length > 0 : hint > 0;/);
   assert.match(src, /if \(!drawn\) return null;/);
   assert.match(src, /<section ref=\{sectionRef\} id="home-needs-card" aria-label=\{t\('home:needsCard\.eyebrow'\)\} data-threads=\{String\(count\)\}>/);
-  // The label and a chevron are one thing to press, opening the sheet's own
-  // list; it is a button, because the list is a sheet not a page.
-  assert.match(src, /<SectionHeading>\s*<WipHeadMore\s+id="home-needs-card-btn"\s+direction="right"\s+onClick=\{openThreadsList\}/);
-  assert.match(src, /<span id="home-needs-card-title" className="wip-head-words">\{t\('home:needsCard\.eyebrow'\)\}<\/span>\s*<\/WipHeadMore>/);
-  assert.match(src, /label=\{t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
+  // The kit's looks draw the label plain with "See all" as a link at the
+  // end of its line; Paper keeps the label-and-chevron pill.
+  assert.match(src, /<SectionHeading action=\{kit \? \(/);
+  assert.match(src, /id="home-needs-card-btn"[\s\S]{0,220}onClick=\{openThreadsList\}/);
+  assert.match(src, /<span id="home-needs-card-title">\{t\('home:needsCard\.eyebrow'\)\}<\/span>/);
+  assert.match(src, /<WipHeadMore\s+id="home-needs-card-btn"\s+direction="right"\s+onClick=\{openThreadsList\}/, 'Paper keeps the pill');
+  assert.match(src, /aria-label=\{t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
   assert.equal(message('home:needsCard.eyebrow'), 'Recent threads');
   assert.equal(message('home:needsCard.seeAll'), 'See all');
   // 19 Nov 2026: no count. How many threads the viewer ever took part in
@@ -176,7 +179,7 @@ test('a row is the thread\'s own page, and the card lists what is in the look\'s
   assert.match(css, /\.wip-rows-cols \{ grid-template-columns: repeat\(var\(--wip-cols, 1\), minmax\(0, 1fr\)\);/);
   // Four from 1024px, where Pinned projects' own four columns become rows: the lists share their lines.
   for (const [at, n] of [['640px', 2], ['1024px', 4]]) {
-    assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html\\[data-skin-wip\\] \\{ --wip-cols: ${n}; \\} \\}`));
+    assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html:not\\(\\[data-skin\\]\\) \\{ --wip-cols: ${n}; \\} \\}`));
   }
   assert.match(css, /\.wip-poster \{\s*display: flex;\s*flex: 0 0 calc\(\(100% - \(var\(--wip-cols, 1\) - 1\) \* var\(--wip-col-gap\)\) \/ var\(--wip-cols, 1\)\);/, 'a challenge is one of the same columns');
 });
@@ -209,9 +212,9 @@ test('a title\'s plain words have their own span, and a project\'s name is one s
   // A plain pill in a card that asks reads the card's own ink (Advisory was pale on yellow in the dark).
   assert.match(css, /--wip-ink-soft: var\(--wip-ask-ink\);/);
   // One size at every width, outside any media query.
-  assert.match(css, /\nhtml\[data-skin-wip\] #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
+  assert.match(css, /\nhtml:not\(\[data-skin\]\) #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
   // On a phone alone it is a size down: four across leaves a name about 85px.
-  assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html\[data-skin-wip\] #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
+  assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html:not\(\[data-skin\]\) #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
 });
 
 test('Standard (WIP): a project\'s hub folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
@@ -307,8 +310,9 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   assert.match(grid, /t\('home:grid\.tile\.members', \{ count: app\.members, formatted: app\.members\.toLocaleString\(\) \}\)/);
   assert.equal(message('home:grid.tile.members_other', { formatted: '1,284', count: 1284 }), '1,284 members');
   assert.match(read('frontend/src/features/home/home.js'), /members: Math\.max\(0, Number\(app\.member_count\) \|\| 0\),/);
-  assert.match(css, /html\[data-skin-wip\] #app-list \.app-card-desc \{ display: none; \}/);
-  assert.match(css, /html\[data-skin-wip\] #app-list \{ padding: var\(--wip-cell-pad\); \}/);
+  // No look draws a pinned project's sentence any more, so no rule hides it.
+  assert.doesNotMatch(grid, /app-card-desc/);
+  assert.match(css, /html:not\(\[data-skin\]\) #app-list \{ padding: var\(--wip-cell-pad\); \}/);
   // A recent thread is its title, its project and when, in every look now: there is no kind line to hide.
   assert.doesNotMatch(css, /#home-needs-card \.wip-item-kind/);
 });
@@ -327,8 +331,9 @@ test('Standard (WIP): one token set draws it, the brand kit, and the others are 
   assert.match(head, /if \(skin === 'wip'\) root\.setAttribute\('data-wip-tokens', WIP_TOKENS\);\s*else root\.removeAttribute\('data-wip-tokens'\);/,
     'on whenever the look is, so a rule that asks for a token set always applies under it');
   assert.doesNotMatch(head, /TOKEN_SETS|homeroom:wip-tokens'\)|getTokens|setTokens/, 'nothing is stored or pinned for it');
-  // It has a light rule and a dark rule.
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
+  // Its tokens are shared by both looks (Standard and Standard (WIP)), and
+  // its own page values stay brand-scoped, in light and dark.
+  assert.match(css, /html:not\(\[data-skin\]\) \{[^}]*--wip-font: 'Geist',/);
   assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\]\.dark \{[^}]*--lit-ink: #fffeea;/);
   // The menus name the look by it: one entry, no 'wip:<set>' entries, no second menu.
   const picker = read('frontend/src/features/frame/look-picker.tsx');

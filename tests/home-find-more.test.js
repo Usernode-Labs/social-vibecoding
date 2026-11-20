@@ -382,16 +382,17 @@ test('index.html stacks the three home areas in order', () => {
   // made every one of them feel optional. Then Create moved INTO Your apps as
   // the grid's trailing tile (the prototype's scrHome): not a widget with a
   // stored cell, but a tile whose cell is derived from the grid it ends.
-  // One Home (#6361): Pinned apps, Pinned communities, Challenges as a
-  // sideways row, then Communities to join; Discover's lane went with it.
+  // One Home (#6361) in the kit's Home (#6906): Pinned projects, then
+  // Challenges in the row under it, then the (hidden) own-communities
+  // section and Communities to join; Discover's lane went with it.
   const grid = INDEX.indexOf('id="home-apps-section"');
   const communities = INDEX.indexOf('id="home-communities-section"');
   const challenges = INDEX.indexOf('id="home-challenges-section"');
   const join = INDEX.indexOf('id="home-join-section"');
   assert.ok(grid > 0, 'the launcher grid is present');
-  assert.ok(communities > grid, 'Pinned communities comes after Pinned apps');
-  assert.ok(challenges > communities, 'Challenges after Pinned communities');
-  assert.ok(join > challenges, 'Communities to join last');
+  assert.ok(challenges > grid, 'Challenges follows Pinned projects in the kit\'s row');
+  assert.ok(communities > challenges, 'the hidden own-communities section comes after it');
+  assert.ok(join > communities, 'Communities to join last');
   assert.equal(INDEX.indexOf('id="home-discover-section"'), -1, 'no Discover lane on Home');
   assert.equal(INDEX.indexOf('id="home-create-section"'), -1,
     'Create app is no longer a section of its own');
@@ -422,8 +423,11 @@ test('the apps grid is four columns at every width, two rows by default', () => 
     /\{t\('home:grid\.showAll', \{ count: moreCount \}\)\}/
   );
   assert.equal(message('home:grid.showAll', { count: 9 }), 'Show all 9 apps');
-  assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
-    'the expander has a host outside #app-list');
+  // Standard draws the kit's Home, whose "Show all" rides the section label;
+  // Paper keeps the AppsMore line under the grid.
+  assert.equal(INDEX.indexOf('id="home-apps-more"'), -1,
+    'Standard\'s expander is the heading\'s Show all, not the AppsMore line');
+  assert.match(read('frontend/src/features/home/index.tsx'), /kit \? null : <AppsMore \/>/);
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a
@@ -485,9 +489,10 @@ test('the home feed is a 1024px centred column', () => {
   );
   const bar = main.slice(main.indexOf('id="home-search-bar"'), main.indexOf('id="home-body"'));
   assert.match(bar, /home-column/, "the search bar's content sits in the same column");
-  // The gutter moved onto that inner column so its content edges match
-  // #home-body's; the bar element itself must stay full-bleed for its bg.
-  assert.match(bar, /home-column[^"]*px-3/, 'the gutter is on the inner column');
+  // The kit's search row (Standard and Standard (WIP)) carries its own
+  // gutter and a short field; the bar element itself must stay full-bleed.
+  assert.match(bar, /home-column wip-topbar/, 'the kit\'s search row');
+  assert.match(bar, /relative wip-search/, 'and its short field');
   assert.doesNotMatch(INDEX.match(/<div id="home-search-bar"[^>]*>/)[0], /px-3/);
 
   const css = read('public/css/app.css');
@@ -495,6 +500,9 @@ test('the home feed is a 1024px centred column', () => {
   assert.match(rule, /max-width:\s*64rem/, '64rem = 1024px');
   assert.match(rule, /margin-inline-start:\s*auto/);
   assert.match(rule, /margin-inline-end:\s*auto/);
+  // The cap holds only for Paper: the kit's looks (Standard and Standard
+  // (WIP)) take the page's whole width.
+  assert.match(css, /html:not\(\[data-skin\]\) #home-screen \.home-column \{ max-width: none; \}/);
   // The old per-box bound is gone for good.
   assert.doesNotMatch(css, /\.home-section-block\b/);
   assert.doesNotMatch(HOME_SRC, /alignSections|--home-section-indent/,

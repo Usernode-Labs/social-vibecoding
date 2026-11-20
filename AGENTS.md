@@ -321,9 +321,12 @@ is no replay plan to write and nothing to verify locally.
   **Communities to join** (the public directory: **Featured**, what an
   admin featured, as its first sideways row, then the rest, more as you
   scroll, `features/home/communities-to-join.tsx`). Home lists none of the
-  communities you are in; its search still finds them
-  (`#home-communities-section`, `HomeCommunityMatches` in
-  `features/home/pinned-communities.tsx`, hidden until something is typed).
+  communities you are in. In the Standard look and Homeroom brand kit (WIP)
+  even its search no longer lists them, since they are the Communities page
+  (`#home-communities-section` is not displayed there); Paper's Home still
+  shows what `HomeCommunityMatches` in
+  `features/home/pinned-communities.tsx` finds, hidden until something is
+  typed.
   **Your communities are the Communities tab's page** (`#communities`,
   `#communities-screen`, `features/communities/index.tsx`,
   `App.navigateToCommunities`; the tab's key is still `workshop`): **Pinned**

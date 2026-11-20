@@ -40,8 +40,6 @@ import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-store';
 import { ChallengesPanel } from './challenges';
-import { useLiveSkin } from '../../../lib/skin';
-import { WipHeadMore } from '../wip-kit';
 import { SectionHeading, SeeAllLink, stampProps } from './ui';
 
 /**
@@ -151,18 +149,14 @@ const CHALLENGES_SKELETON = (
 // progress; see ./challenges.tsx.)
 export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
   const t = useMessages('home');
-  // Standard (WIP) (lib/skin.ts): the label itself, with a chevron after it, is the way to all of them.
-  const wip = useLiveSkin() === 'wip';
+  // Every look draws the label plain and "See all" as an underlined link at
+  // the end of its line (the kit's looks and Paper alike).
   return (
     <Section
       id="home-challenges-section"
       slot="challenges"
-      label={challenges?.seeAll && wip ? (
-        <WipHeadMore direction="right" href="#leaderboard/challenges" label={t('home:challenges.seeAll.label')} pill={t('home:challenges.seeAll.text')}>
-          {challenges.heading}
-        </WipHeadMore>
-      ) : challenges ? challenges.heading : t('home:challenges.heading')}
-      action={challenges?.seeAll && !wip ? <SeeAllLink /> : null}
+      label={challenges ? challenges.heading : t('home:challenges.heading')}
+      action={challenges?.seeAll ? <SeeAllLink /> : null}
       painted={painted}
       holdLabel
       skeleton={CHALLENGES_SKELETON}

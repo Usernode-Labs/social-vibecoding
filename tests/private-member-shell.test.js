@@ -236,7 +236,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   // What a search finds of your communities follows the launcher (it was
   // Pinned communities, One Home, #6361, and Discover before that, #4937);
   // the waitlist card keeps its place after it.
-  assert.match(read('frontend/src/features/home/index.tsx'), /\{wip \? null : <AppsMore \/>\}\s+<\/WipCard>\s+<\/section>[\s\S]*<HomeCommunityMatches \/>\s+[\s\S]*<WaitlistCard \/>/);
+  assert.match(read('frontend/src/features/home/index.tsx'), /\{kit \? null : <AppsMore \/>\}\s+<\/WipCard>\s+<\/section>[\s\S]*<HomeCommunityMatches \/>\s+[\s\S]*<WaitlistCard \/>/);
 });
 
 test('a private member is offered no New project on Home and no New community on the Communities page, and no Challenges or Create panels', () => {

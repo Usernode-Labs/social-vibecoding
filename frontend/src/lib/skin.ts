@@ -46,6 +46,15 @@ export function isFrameSkin(skin: Skin): skin is FrameSkin {
   return (FRAME_SKINS as readonly string[]).includes(skin);
 }
 
+/**
+ * True for the looks whose Home is the brand kit's: the Standard look and
+ * Homeroom brand kit (WIP). Home draws the kit's page under both, on
+ * Standard's own wallpaper (app.css's widened "STANDARD (WIP)" rules).
+ */
+export function isHomeKitSkin(skin: Skin): boolean {
+  return skin === 'standard' || skin === 'wip';
+}
+
 declare global {
   interface Window {
     Skin?: {

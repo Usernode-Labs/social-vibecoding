@@ -219,8 +219,8 @@ test('the Home apps section opens with its "Pinned apps" heading, and the catalo
   assert.notEqual(heading, -1, 'a heading over the tiles');
   assert.notEqual(grid, -1, 'the grid is here');
   assert.ok(heading < grid, 'the heading sits above the grid');
-  assert.match(section, /\) : wip \? t\('home:grid\.headingProjects'\) : t\('home:grid\.heading'\)\}/,
-    'and the heading asks for its text (Standard (WIP) reads "Pinned projects", as the link that unfolds the grid when there is more)');
+  assert.match(section, /kit \? t\('home:grid\.headingProjects'\) : t\('home:grid\.heading'\)\}/,
+    'and the heading asks for its text (the kit\'s looks read "Pinned projects"; Paper keeps "Pinned apps")');
   assert.equal(JSON.parse(read('frontend/locales/en/home.json'))['grid.heading'].text, 'Pinned apps',
     'the catalog entry is back, in the set\'s one name (Pinned apps since One Home, #6361)');
 });

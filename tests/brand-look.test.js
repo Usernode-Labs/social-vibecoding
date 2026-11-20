@@ -555,11 +555,11 @@ test('Geist loads from our own origin by an absolute path, and only for this loo
   assert.match(block, /@font-face\s*\{[^}]*font-family:\s*'Geist'[^}]*url\('\/fonts\/geist\/Geist-Variable\.woff2'\)/,
     'the face points at the self-hosted file by an absolute, same-origin path');
   // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026),
-  // but Standard (WIP)'s brand token config, which names it as that config's typeface and so
-  // loads the file only while that config is on.
+  // but the kit's shared token set, which Home reads under Standard and
+  // Standard (WIP) alike, so it loads the file only where Home is drawn.
   const outside = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
-  assert.ok(!/Geist/.test(outside), 'nothing outside this look, Standard (WIP)\'s brand config and the signed-out pages\' names Geist');
-  assert.match(read('public', 'css', 'app.css'), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
+  assert.ok(!/Geist/.test(outside), 'nothing outside this look, the kit\'s shared tokens and the signed-out pages\' names Geist');
+  assert.match(read('public', 'css', 'app.css'), /html:not\(\[data-skin\]\) \{[^}]*--wip-font: 'Geist',/);
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {
@@ -691,8 +691,8 @@ test('in light the cream wears six scattered lilac splotches, at every width, an
 test('Home takes Standard (WIP)\'s New project button and Needs you card, in the look\'s colours', () => {
   const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
   assert.match(island, /const brand = skin === 'brand';/);
-  assert.match(island, /\{\(wip \|\| brand\) && grid\.ready && grid\.create \? \(\s*<WipCta id="home-new-project-top"/);
-  assert.match(island, /<WipCard on=\{wip\}>/, 'Pinned apps keeps the look\'s own card, not WIP\'s');
+  assert.match(island, /\{\(kit \|\| brand\) && grid\.ready && grid\.create \? \(\s*<WipCta id="home-new-project-top"/);
+  assert.match(island, /<WipCard on=\{kit\}>/, 'Pinned apps keeps the look\'s own card, not the kit looks\'');
   const home = read('frontend', 'src', 'features', 'home', 'home.js');
   const side = home.slice(home.indexOf('hasSideCard() {'), home.indexOf('_wireRowBudget() {'));
   assert.match(side, /if \(skin !== 'brand'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,

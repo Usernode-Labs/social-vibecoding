@@ -45,8 +45,9 @@ const tile = (over = {}) => ({
   ...over,
 });
 
-/** The grid drawn for `apps`, with `recents` as the device's list of apps left. */
-function renderGrid(apps, recents, patch = {}) {
+/** The grid drawn for `apps`, with `recents` as the device's list of apps left.
+ *  Paper is the look that still draws the opened line; the kit's looks do not. */
+function renderGrid(apps, recents, patch = {}, skin = 'brand') {
   const state = {
     ...INITIAL_GRID,
     ready: true,
@@ -62,6 +63,10 @@ function renderGrid(apps, recents, patch = {}) {
     stubs: {
       './grid-store': { gridStore },
       '../nav/recent-apps-store.js': { ...real, recentAppsStore },
+      '../../lib/skin': {
+        isHomeKitSkin: (s) => s === 'standard' || s === 'wip',
+        useLiveSkin: () => skin,
+      },
     },
   });
   return renderToHtml(createElement(AppGrid, {}));
@@ -120,7 +125,7 @@ test('recentAppTimes: the latest time for each app, within 30 days, never a gues
   assert.equal(times.get('twice'), Date.parse('2026-11-19T11:00:00Z'), 'the later of two entries');
 });
 
-test('the line fits the tile\'s caption lane uncut, and Standard (WIP) does not draw it', () => {
+test('the line fits the tile\'s caption lane uncut, and the kit\'s looks do not draw it', () => {
   const css = read('public/css/app.css');
   const rule = css.match(/\n\.app-card-opened \{[^}]*\}/);
   assert.ok(rule, 'app.css styles the line');
@@ -129,8 +134,11 @@ test('the line fits the tile\'s caption lane uncut, and Standard (WIP) does not 
   assert.doesNotMatch(rule[0], /ellipsis|overflow|margin/, 'a time is never cut, and the line stays in its lane');
   assert.match(css, /\n\.app-card-opened-short \{ display: none; \}\n@media \(max-width: 639\.98px\) \{\n  \.app-card-opened-long \{ display: none; \}\n  \.app-card-opened-short \{ display: inline; \}\n\}/,
     'under the tile\'s own 640px breakpoint the time alone is shown');
-  assert.match(css, /html\[data-skin-wip\] #app-list \.app-card-opened \{ display: none; \}/,
-    'Standard (WIP) does not draw the line');
+  // Standard and Standard (WIP) draw no opened line (the component decides,
+  // not a CSS hide), so nothing under #app-list hides it.
+  assert.doesNotMatch(css, /#app-list \.app-card-opened/);
+  assert.match(read(GRID), /\{opened && !rich \? \(/);
+  assert.doesNotMatch(renderGrid([tile()], [left('plant-pal', ago(HOUR))], {}, 'standard'), /app-card-opened/);
 });
 
 test('past a week it still counts days, never a date with a year', () => {

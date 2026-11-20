@@ -177,9 +177,11 @@ test('the initial chrome renders exactly what the prerendered shell ships', () =
     '<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"></div>',
     'the expander ships hidden and empty',
   );
-  // The document the prerender wrote agrees, both ways round.
+  // The document the prerender wrote agrees, both ways round. The prerender
+  // renders as Standard, whose Home draws the kit's heading "Show all", so
+  // the AppsMore host is not in it (Paper mounts it after the look is known).
   const index = read('public/index.html');
-  assert.match(index, /<div id="home-apps-more" class="hidden px-2 pb-1 sm:px-3"><\/div>/);
+  assert.doesNotMatch(index, /id="home-apps-more"/);
   assert.match(index, /<section id="home-widget-strip-section" class="hidden px-3 pt-2"><\/section>/);
 });
 
