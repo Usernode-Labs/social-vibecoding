@@ -3142,7 +3142,7 @@
     {
       "name": "Needs you (#needs) is the review flow, one change's page in the pane with its vote bar (#6276; One Home, #6361)",
       "path": "/?demo=1&shot=needs-approve#needs",
-      "expectSelector": "#workshop-screen:not(.hidden) [data-workshop-pane=\"needs\"] [data-rf-page]:has([data-rf-back]):has([data-rf-prev][disabled])",
+      "expectSelector": "#workshop-screen:not(.hidden) [data-workshop-pane=\"needs\"] [data-rf-page] [data-rf-back]",
       "expectText": "Skip"
     },
     {

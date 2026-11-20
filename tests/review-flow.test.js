@@ -478,11 +478,11 @@ function sheetHtml(props) {
 
 test('Next passes the votes and the skips, and Done on the last one shows the run\'s end', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
-  assert.match(src, /const next = item \? \(forward\.index >= 0 \? forward\.index : nextIndex\(run, index, passed\)\) : -1;/);
+  assert.match(src, /const next = item \? nextIndex\(run, index, passed\) : -1;/);
   assert.match(src, /if \(n < 0\) \{ finishAll\(\); return; \}/);
   assert.match(src, /const finishAll = \(\) => \{ stop\(\); setDone\(true\); \};/);
   // Skip moves on without a vote; nothing is recorded.
-  assert.match(src, /goForward\(nextIndex\(run, index, now\)\);/);
+  assert.match(src, /goTo\(nextIndex\(run, index, now\)\);/);
   assert.match(src, /if \(done \|\| \(list && !item && Object\.keys\(votes\)\.length\)\) \{[\s\S]*?rf-end rf-end-alone/);
   assert.match(read('public/css/app.css'), /\.rf-end-alone \{ min-height: 56vh; justify-content: center;/);
 });
@@ -556,10 +556,14 @@ test('#6919: back then forward returns to the same change', () => {
 
   const flow = read('frontend/src/features/review-flow/review-flow.tsx');
   // Back puts the change on show onto the forward trail and goes to the one behind.
-  assert.match(flow, /const goBack = \(\) => \{[\s\S]*?setAhead\(\(cur\) => \[\.\.\.cur, item\.key\]\);\s*setBehind\(prev\.rest\);\s*goTo\(prev\.index, -1\);/);
+  assert.match(flow, /const goBack = \(\) => \{[\s\S]*?setAhead\(\(cur\) => \[\.\.\.cur, item\.key\]\);\s*setBehind\(prev\.rest\);\s*slide\.current = -1;\s*goTo\(prev\.index\);/);
   // Forward reads the trail it came back along before nextIndex, so the same
   // change comes back; the one left behind joins the trail back.
-  assert.match(flow, /if \(forward\.index >= 0\) \{\s*setBehind\(\(cur\) => \[\.\.\.cur, item\.key\]\);\s*setAhead\(forward\.rest\);\s*goTo\(forward\.index\);/);
+  assert.match(flow, /if \(dir === 1 && forward\.index >= 0\) n = forward\.index;/, 'forward reads the trail back first');
+  assert.match(flow, /if \(forward\.index >= 0\) setAhead\(forward\.rest\);/, 'the one left behind joins the trail back');
+  // The button is Done only when neither the trail ahead nor nextIndex has one.
+  assert.match(flow, /const onward = forward\.index >= 0 \? forward\.index : next;/);
+  assert.match(flow, /hasNext=\{onward >= 0\}/);
   assert.match(flow, /const prev = trailIndex\(run, behind\);/);
   assert.match(flow, /const hasPrev = prev\.index >= 0;/);
   // The push multiplies both sides by which way the page goes.

@@ -616,6 +616,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const [sheet, setSheet] = useState<SheetState>('ask');
   const views = useRef<Record<string, View>>({});
   const busy = useRef(false);
+  // #6919: which way the next move slides the page. Back sets it just before
+  // it moves; every other move slides forward.
+  const slide = useRef<1 | -1>(1);
   const timers = useRef<number[]>([]);
   const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
   const whenDone = (anim: Animation | undefined, fn: () => void, ms: number) => {
@@ -681,7 +684,10 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // #6919: a change left behind, and a change ahead (where Next goes first).
   const prev = trailIndex(run, behind);
   const forward = trailIndex(run, ahead);
-  const next = item ? (forward.index >= 0 ? forward.index : nextIndex(run, index, passed)) : -1;
+  const next = item ? nextIndex(run, index, passed) : -1;
+  // What the next press leads to first: the change this run came back from,
+  // else the next one waiting. The button says Done only when both run out.
+  const onward = forward.index >= 0 ? forward.index : next;
   const hasPrev = prev.index >= 0;
   const open = !!item && !done;
 
@@ -769,45 +775,44 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   };
 
   /* ── Push: this change → the next ── */
-  // #6919: `dir` is which way the page moves. Forward slides the next change
-  // in from the far side; back slides the one behind in from the near side.
-  const goTo = (n: number, dir: 1 | -1 = 1) => {
+  // #6919: `slide` says which way the page moves. Forward slides the next
+  // change in from the far side; back slides the one behind in from the near
+  // side.
+  const goTo = (n: number) => {
     if (busy.current || !item) return;
+    const dir = slide.current;
+    slide.current = 1;
+    // Forward goes to the change it came back from before it looks for a new
+    // one; Skip comes through here too, so the trail decides the target.
+    if (dir === 1 && forward.index >= 0) n = forward.index;
     if (n < 0) { finishAll(); return; }
     busy.current = true;
     setSheet(votes[run[n].key] ? 'voted' : 'ask');
     setFrom({ index, view: views.current[item.key] || SHEET_VIEW, dir });
+    // Moving forward leaves this change on the trail back; a back move left
+    // it on the trail ahead, where goBack put it.
+    if (dir === 1) {
+      setBehind((cur) => [...cur, item.key]);
+      if (forward.index >= 0) setAhead(forward.rest);
+    }
     setIndex(n);
   };
-  // Forward goes to the change it came back from first, and only then
-  // looks for a new one. The one left behind joins the trail back.
-  const goForward = (to: number) => {
-    if (busy.current || !item) return;
-    if (forward.index >= 0) {
-      setBehind((cur) => [...cur, item.key]);
-      setAhead(forward.rest);
-      goTo(forward.index);
-      return;
-    }
-    if (to < 0) { goTo(to); return; }
-    setBehind((cur) => [...cur, item.key]);
-    goTo(to);
-  };
-  const goNext = () => goForward(next);
+  const goNext = () => goTo(next);
   // #6919: back to the change shown just before this one. A vote it already
   // has shows as the sheet opens on it; nothing is taken back.
   const goBack = () => {
     if (busy.current || !item || prev.index < 0) return;
     setAhead((cur) => [...cur, item.key]);
     setBehind(prev.rest);
-    goTo(prev.index, -1);
+    slide.current = -1;
+    goTo(prev.index);
   };
   const skip = () => {
     if (!item) return;
     const now = { ...passed, [item.key]: true };
     setSkipped((cur) => ({ ...cur, [item.key]: true }));
     setSheet('ask');
-    goForward(nextIndex(run, index, now));
+    goTo(nextIndex(run, index, now));
   };
 
   useLayoutEffect(() => {
@@ -926,7 +931,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const itemKey = item ? item.key : '';
   useEffect(() => { setDesc(false); }, [itemKey]);
 
-  const nextItem = next >= 0 ? run[next] : null;
+  const nextItem = onward >= 0 ? run[onward] : null;
   const pw = size ? size.w : Math.min(COLUMN, typeof window !== 'undefined' ? window.innerWidth : 390);
   const ph = size ? size.h : (typeof window !== 'undefined' ? window.innerHeight - 64 : 700);
   // The next change's stills are read ahead, so it lands at once.
@@ -1111,7 +1116,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onVote={vote}
           onUndo={undo}
           onNext={goNext}
-          hasNext={next >= 0}
+          hasNext={onward >= 0}
           maxHeight={Math.max(240, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.82)}
           left={after}
           onSkip={skip}
