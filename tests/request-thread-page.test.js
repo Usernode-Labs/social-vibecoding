@@ -218,7 +218,7 @@ test('#6680: a request filed from a private thread links its owner back to it', 
 // sees the plan's own screens.
 test('artifacts: a plan made from its owner\'s design opens that design, at the version the plan shows, for its owner', () => {
   const html = renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372, designVersion: 3 } } });
-  assert.match(html, /href="#homeroom-bot\/thread\/17372\/design\/3" data-request-design-door="3">Open the design, version 3<\/a>/);
+  assert.match(html, /href="#homeroom-bot\/thread\/17372\/design\/3" data-request-design-door="3">Open the artifact, version 3<\/a>/);
   assert.match(html, /data-request-from-thread="17372">[\s\S]*?data-request-design-door="3"/, 'beside the link back to its thread');
   assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372 } } }), /data-request-design-door/,
     'a thread that filed no plan from a design opens no design');
