@@ -545,6 +545,11 @@
       "id": "live-drafts-after-propose",
       "sha256": "1feeb0e079e107eb1ee1bfc2b0df5b945cece026f2bfffb131f9cf3a7df7e8e9",
       "schemaSha256": "0dd3a3616ac7f90070ef69bfd633f468d659c2ec6e53399f1f16598cb819895b"
+    },
+    {
+      "id": "bot-cards-draft-offers",
+      "sha256": "fa9305d5a65bd1f86c297de24e91da44b73cd3a0a92a70480308126a4cd8da3e",
+      "schemaSha256": "04a41d3cc5f9c2a210dc2f06ef5a633801a13fb9aebd159604f0345d46c9ea93"
     }
   ]
 }

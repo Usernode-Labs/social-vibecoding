@@ -122,6 +122,9 @@ const CHAT_TOOLS = Object.freeze([
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
   'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'write_artifact', 'open_app_preview', 'close_thread',
   'report_problem', 'offer_new_project', 'change_plan', 'reply',
+  // 20 Nov 2026 (live-draft review, C): offered only while the turn has the
+  // thread's live draft loaded (homeroom-bot-mayor.js toolsFor).
+  'offer_propose_draft',
 ]);
 // What each capability adds to the private profile's tools (step 6). The
 // design's reads of its project's code and board are its own: they read the
