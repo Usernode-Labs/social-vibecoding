@@ -33,6 +33,48 @@ const ROOT = path.join(__dirname, '..');
 const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
 const step = workflow.jobs.release.steps.find((s) => s.name === 'Check branch tip before publishing');
 
+test('the Argo refresh skips only the published attempt that Argo is already syncing or has synced', t => {
+  if (spawnSync('jq', ['--version']).status !== 0) return t.skip('jq is required to run the refresh step locally');
+  const refreshWorkflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/refresh-kubernetes-release.yml'), 'utf8'));
+  const refreshStep = refreshWorkflow.jobs.refresh.steps.find(s => s.name === 'Ask Argo CD to refresh the release');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-refresh-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'curl'), `#!/bin/sh
+for url do :; done
+case "$url" in
+  *'?refresh=hard') printf '200';;
+  *) printf '%s' "$FIXTURE_APPLICATION";;
+esac
+`, { mode: 0o755 });
+
+  const chart = '0.1.5482002';
+  const previousChart = '0.1.5482001';
+  const operation = (phase, target, result = target) => JSON.stringify({ status: { operationState: {
+    phase, operation: { sync: { revisions: [target, 'values-revision'] } }, syncResult: { revisions: [result] },
+  } } });
+  const summary = path.join(dir, 'summary');
+  for (const [description, response, skip] of [
+    ['exact chart running', operation('Running', chart, previousChart), true],
+    ['exact chart succeeded', operation('Succeeded', chart), true],
+    ['previous attempt is the active target', operation('Running', previousChart, chart), false],
+    ['exact chart failed', operation('Failed', chart), false],
+    ['Argo status unavailable', '', false],
+  ]) {
+    fs.writeFileSync(summary, '');
+    const result = spawnSync('bash', ['-e', '-c', refreshStep.run], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`,
+        RELEASE_RUN_NUMBER: '5482', RELEASE_ATTEMPT: '2', FIXTURE_APPLICATION: response,
+        ARGOCD_REFRESH_TOKEN: 'fixture-only', ARGOCD_SERVER: 'argo.example.test',
+        ARGOCD_APPLICATION: 'platform', GITHUB_STEP_SUMMARY: summary },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(summary, 'utf8').trim(), skip
+      ? `Argo CD already started syncing chart ${chart}.`
+      : 'Argo CD re-read the chart registry and compared platform.', description);
+  }
+});
+
 const sha = (c) => c.repeat(40);
 const OLD = sha('a'); // the newest release's revision
 const MINE = sha('b'); // this run's revision
