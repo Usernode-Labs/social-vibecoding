@@ -73,18 +73,6 @@
       "description": "Read-only Forgejo token for web. Use a non-admin account with read-only access to app repositories and only read:repository scope. The conductor retains its separate writer credential."
     },
     {
-      "key": "ANTHROPIC_API_KEY",
-      "required": false,
-      "private": true,
-      "description": "Platform-wide fallback Claude key. Users can override with their own via BYOK; if neither is set, Mayor-driven flows are unavailable. Already optional, so no staging fallback needed — staging just inherits the unset state."
-    },
-    {
-      "key": "ANTHROPIC_ADMIN_KEY",
-      "required": false,
-      "private": true,
-      "description": "Anthropic ADMIN API key (`sk-ant-admin…`) — NOT the same credential as ANTHROPIC_API_KEY above, and not interchangeable with it. Used read-only for GET /v1/organizations/cost_report, which backs the \"Anthropic credits\" row in the hamburger status area (#555). Optional: with it unset, that row falls back to an estimate derived from the platform's own spend ledgers and says so. No staging_default — staging inherits the unset state, which is exactly the fallback path a reviewer should see."
-    },
-    {
       "key": "ADMIN_USERNAME",
       "required": true,
       "default": "admin",
@@ -137,6 +125,12 @@
       "description": "The 'Sign-in token read after the bridge' check on app proposals: flags a script the change adds above the bridge tag that reads the token from the address (the app then opens signed out in Homeroom). Reads already on main are never flagged. off: no row. advisory (default): a flag shows but does not stop the merge. blocking: a flag fails the checks. Fails open."
     },
     {
+      "key": "OUTSIDE_SCRIPT_CHECK_MODE",
+      "group": "Platform",
+      "default": "blocking",
+      "description": "The 'No script from another site' check on app proposals: fails a change that adds a <script> loaded from another site, naming the file and line. A tag already in an app never fails; relative paths, the hosted /usernode-*/v1/ files included, pass. off: no row. advisory: a flag shows but does not stop the merge. blocking (default): a flag fails the checks. Fails open."
+    },
+    {
       "key": "SMALL_CHANGE_TAG_MODE",
       "group": "Platform",
       "default": "on",
@@ -146,7 +140,7 @@
       "key": "HELPER_MODEL",
       "group": "Platform",
       "default": "glm",
-      "description": "The model behind the platform's short helper calls: titles, a new project's description and sketch card, grades, pills, chat reads, reports, the Workshop ask box, the content review, progress guesses. glm (default): GLM 5.3 Flash on the Homeroom bot's OpenRouter key, with Haiku 5.5 when it is late or fails. haiku: Haiku 5.5 only. Calls on a person's own Anthropic key stay on Haiku."
+      "description": "The model behind the platform's short helper calls: titles, a new project's description and sketch card, grades, pills, chat reads, reports, the Workshop ask box, the content review, progress guesses. glm (default): GLM 5.3 Flash on the Homeroom bot's OpenRouter key, with Haiku 5.5 (through OpenRouter, on the same key) when it is late or fails. haiku: Haiku 5.5 only."
     },
     {
       "key": "LOG_LEVEL",
@@ -372,7 +366,7 @@
       "group": "Platform keys",
       "required": false,
       "private": true,
-      "description": "The at-rest key: services/secrets.js derives AES-256-GCM from it, and every stored BYOK Anthropic key, app secret and platform-variable value is encrypted under it. Deploy-owned (from the USERNODE_JWT_SECRET repo secret) and NOT settable here — the values in this very table are encrypted with it. NEVER rotate: decrypt() returns null silently, orphaning every ciphertext. Boot exits 1 without it."
+      "description": "The at-rest key: services/secrets.js derives AES-256-GCM from it, and every stored OpenRouter key, app secret and platform-variable value is encrypted under it. Deploy-owned (from the USERNODE_JWT_SECRET repo secret) and NOT settable here — the values in this very table are encrypted with it. NEVER rotate: decrypt() returns null silently, orphaning every ciphertext. Boot exits 1 without it."
     },
     {
       "key": "IFRAME_JWT_PRIVATE_KEY",
@@ -669,7 +663,7 @@
       "group": "Social identity & credits",
       "required": false,
       "default": "legacy",
-      "description": "Rollout switch for platform-funded credits. legacy preserves the current default plus per-user admin overrides. tiered gives unverified accounts $0/day and users with verified GitHub OR X $10/day; providers do not stack, and admin overrides still win. BYOK works in both modes. Any other value fails boot instead of silently selecting the wrong allowance."
+      "description": "Rollout switch for platform-funded credits. legacy preserves the current default plus per-user admin overrides. tiered gives unverified accounts $0/day and users with verified GitHub OR X $10/day; providers do not stack, and admin overrides still win. Any other value fails boot instead of silently selecting the wrong allowance."
     },
     {
       "key": "USERNODE_DOMAIN",
@@ -2864,7 +2858,7 @@
     },
     {
       "name": "Settings renders the AI-credit allowance as inline text",
-      "path": "/#settings/api-key",
+      "path": "/#settings/usage",
       "expectSelector": "#drawer-row-ai-budget #ai-budget-slot"
     },
     {
@@ -3272,9 +3266,9 @@
       "expectText": "Edit profile"
     },
     {
-      "name": "The Anthropic API key renders at its deep link, on AI usage & models after Usage and OpenRouter",
+      "name": "The retired Anthropic key address opens AI usage & models, Usage then OpenRouter",
       "path": "/#settings/api-key",
-      "expectSelector": "[data-settings-section=\"usage\"]:not(.hidden):has(#drawer-row-ai-budget) + [data-settings-section=\"openrouter\"]:not(.hidden) + [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
+      "expectSelector": "[data-settings-section=\"usage\"]:not(.hidden):has(#drawer-row-ai-budget) + [data-settings-section=\"openrouter\"]:not(.hidden)"
     },
     {
       "name": "The Username part renders at its deep link, inside the whole Account page from Profile to Delete account",
@@ -3875,18 +3869,18 @@
     },
     {
       "name": "AI credit reads as one sentence, what is left of the week's allowance, no pill (#5284)",
-      "path": "/?demo=1#settings/api-key",
+      "path": "/?demo=1#settings/usage",
       "expectText": "of $50 left this week"
     },
     {
       "name": "AI credit value sits at the row's end edge, wrapped or not (the right in English, the left in Arabic)",
-      "path": "/?demo=1#settings/api-key",
+      "path": "/?demo=1#settings/usage",
       "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-end"
     },
     {
-      "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
+      "name": "The admin console's Limits section offers the platform's LLM budget dials",
       "path": "/#admin/limits",
-      "expectSelector": "#admin-section-content:has(#admin-app-limit #admin-app-limit-usage) #admin-credit-balance",
+      "expectSelector": "#admin-section-content:has(#admin-app-limit #admin-app-limit-usage) #admin-limit-global",
       "expectText": "How many live apps the whole server allows"
     },
     {
@@ -4027,7 +4021,7 @@
     },
     {
       "name": "The AI-credit row shows the remaining allowance in one sentence (#555, #593, #5284)",
-      "path": "/?demo=1#settings/api-key",
+      "path": "/?demo=1#settings/usage",
       "expectSelector": "[data-settings-section=\"usage\"]:has([data-building-time-request]) #drawer-row-ai-budget .ai-budget-meter [data-credits-remaining]",
       "expectText": "$36.40 of $50 left this week"
     },
@@ -4271,8 +4265,8 @@
     },
     {
       "name": "Settings is a frosted strip with each section as a sheet inside it",
-      "path": "/#settings/api-key",
-      "expectSelector": "#settings-screen.dc-lift.dc-lift-strip #settings-section-content.settings-sheet.dc-lift.dc-lift-session [data-settings-section=\"api-key\"]"
+      "path": "/#settings/usage",
+      "expectSelector": "#settings-screen.dc-lift.dc-lift-strip #settings-section-content.settings-sheet.dc-lift.dc-lift-session [data-settings-section=\"openrouter\"]"
     },
     {
       "name": "Settings' Sign out is a danger-tinted pill under the sections",

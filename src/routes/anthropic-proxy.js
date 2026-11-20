@@ -13,55 +13,46 @@ const limits = require('../services/limits');
 const spendCache = require('../services/spend-cache');
 const anthropicStream = require('../services/anthropic-stream');
 const budgetLive = require('../services/budget-live');
+const openrouterMessages = require('../services/openrouter-messages');
 const log = require('../services/logger');
 
-// Worker → platform Anthropic-proxy.
+// Worker → platform model relay (the "Anthropic proxy" by its route).
 //
 // Why this exists: the CC worker container runs `claude
 // --dangerously-skip-permissions` against user prompts. If the worker
-// holds the platform's real ANTHROPIC_API_KEY, any user can ask CC to
-// `echo $ANTHROPIC_API_KEY` and exfiltrate the platform-wide key.
+// held a real model key, any user could ask CC to `echo` it and
+// exfiltrate a platform-wide credential.
 //
 // Instead, the worker holds a session-scoped worker:anthropic-proxy token
-// (in ANTHROPIC_API_KEY, picked up by the SDK as x-api-key) and points
-// ANTHROPIC_BASE_URL at /api/internal/anthropic on the platform. This proxy
-// verifies that narrow purpose, swaps the header for the real key, and
-// forwards to api.anthropic.com. An exfiltrated proxy token cannot call the
-// platform's push/draft APIs or Anthropic directly, and expires with the
-// worker-token TTL.
+// (in ANTHROPIC_API_KEY, picked up by the CLI as x-api-key) and points
+// ANTHROPIC_BASE_URL at /api/internal/anthropic on the platform. This relay
+// verifies that narrow purpose and forwards the call to OpenRouter's Claude
+// Messages endpoint on the platform's OpenRouter key (services/openrouter-
+// messages.js, task 2275; it went to api.anthropic.com on a separate
+// Anthropic key before). An exfiltrated relay token cannot call the
+// platform's push/draft APIs or any provider directly, and expires with the
+// worker-token TTL. The turns that come here are the platform's own Claude
+// Code turns: before & after shots and Sync with main's conflict turns.
 //
-// The proxy also enforces the daily LLM cap mid-stream:
+// The relay also enforces the daily LLM cap mid-stream:
 //   1. Start-of-call gate. Cheap pre-check; if today's recorded spend
 //      already meets the cap, return 429 immediately so we don't even
-//      open a socket to Anthropic.
-//   2. Mid-stream kill. As Anthropic's SSE response flows through, the
-//      shared forward loop (services/anthropic-stream.js) tees each
-//      chunk into a tiny SSE parser, computes a running cost, and
-//      aborts the upstream socket the moment running_total + this
-//      call's running cost would cross the user's effective cap. The
-//      Anthropic SDK in the `claude` CLI sees the truncated stream as
-//      a normal API error and the turn ends. Worst-case overshoot is
-//      bounded to "what landed between two `message_delta` events" —
+//      open a socket upstream.
+//   2. Mid-stream kill. As the SSE response flows through, the shared
+//      forward loop (services/anthropic-stream.js) tees each chunk into a
+//      tiny SSE parser, computes a running cost, and aborts the upstream
+//      socket the moment running_total + this call's running cost would
+//      cross the effective cap. The `claude` CLI sees the truncated stream
+//      as a normal API error and the turn ends. Worst-case overshoot is
+//      bounded to "what landed between two `message_delta` events":
 //      typically a few cents.
 //
 // The stream-forwarding mechanics (SSE tee, header filtering, the
 // forward/kill loop) live in src/services/anthropic-stream.js, shared
 // with the app-LLM proxy (routes/app-llm-proxy.js, issue #34). What
-// stays here is worker-specific: session→user resolution, the user
-// budget cache, and the gates.
-//
-// BYOK turns bypass the proxy entirely (worker.js sets the user's key
-// directly in ANTHROPIC_API_KEY and leaves ANTHROPIC_BASE_URL unset),
-// so this enforcement only applies to the platform-key code path.
-//
-// #664: for build/scout turns the payer is resolved PER CALL, mirroring
-// the app-LLM proxy (routes/app-llm-proxy.js): while the daily allowance
-// (user cap AND global cap) has headroom the platform key pays; the
-// moment it's exhausted, calls from users with a BYOK key on file switch
-// to that key mid-turn instead of erroring (the first switched call also
-// posts a one-time in-chat notice). Keyless users keep the exact 429 /
-// mid-stream-kill behaviour they had. Sync turns never spill onto a
-// user's key — platform housekeeping bills the system budget only.
+// stays here is worker-specific: session→user resolution, the budget
+// caches, and the gates. There is no payer switch any more: people's own
+// Anthropic keys are gone, so the platform's allowance is the only payer.
 
 const ROUTE_PREFIX = '/api/internal/anthropic/';
 
@@ -186,99 +177,18 @@ async function refreshUserWeeklySpend(pool, userId) {
 // #1788: shown when BOTH caps are switched off for an account. Fails
 // closed by design — an account with no allowance configured has nothing
 // to draw from, so it is refused rather than granted the platform key.
+// #6898: the platform's OpenRouter key ran out of credit. The relay pays
+// with the same key the Homeroom bot builds on, so a 402 for credit here is
+// the one stored outage (openrouter-credit.js noteOutage): recorded, and the
+// full admins told once, as when one of the bot's own turns meets it. Never
+// fails or delays the call it was read from.
+function noteCreditOut(pool, result, words) {
+  if (!result || result.refusal !== 'credit_out') return;
+  void require('../services/openrouter-credit').noteOutage(pool, { words }).catch(() => null);
+}
+
 const NO_ALLOWANCE_MESSAGE =
   'No AI allowance is configured for this account. An admin can set a daily or weekly cap in the admin console.';
-
-// #664: process-local mirror of userBudgetCache for the GLOBAL daily cap
-// (sum across every user's platform-billed spend today). One tracker, same
-// checkpoint+liveDelta shape; platform-billed call costs fold into it at
-// settlement alongside the per-user tracker so a mid-turn global-cap
-// crossing is visible to the per-call payer decision.
-let globalBudgetCache = null; // { totalAtCheckpointCents, fetchedAt, liveDeltaCents }
-
-async function refreshGlobalSpend(pool) {
-  const now = Date.now();
-  if (globalBudgetCache && now - globalBudgetCache.fetchedAt < BUDGET_CACHE_TTL_MS) {
-    return globalBudgetCache;
-  }
-  try {
-    const { rows } = await pool.query(`SELECT ${limits.TODAY_GLOBAL_SPEND_SQL} AS total`);
-    const totalAtCheckpointCents = parseFloat(rows[0]?.total || 0);
-    globalBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
-    return globalBudgetCache;
-  } catch (err) {
-    log.warn('anthropic-proxy', 'Global spend refresh failed; failing closed', { err: err.message });
-    globalBudgetCache = spendCache.unavailable(globalBudgetCache, now, BUDGET_CACHE_TTL_MS);
-    return globalBudgetCache;
-  }
-}
-
-// #664: cheap cached "does this user have a BYOK key on file?" bit — an
-// EXISTS query, no decryption. Used to suppress the mid-stream kill on
-// the boundary call when a fallback exists (the NEXT call's gate does
-// the actual switch). Fails closed (false → kill stays active, exactly
-// today's behaviour) on a DB hiccup.
-const byokPresenceCache = new Map(); // userId -> { present, fetchedAt }
-
-async function hasByokKeyOnFile(pool, userId) {
-  const cached = byokPresenceCache.get(userId);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAt < BUDGET_CACHE_TTL_MS) return cached.present;
-  try {
-    const { rows } = await pool.query(
-      'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS present',
-      [userId]
-    );
-    const present = !!rows[0]?.present;
-    byokPresenceCache.set(userId, { present, fetchedAt: now });
-    return present;
-  } catch (err) {
-    log.warn('anthropic-proxy', 'BYOK key presence check failed; assuming none', {
-      userId, err: err.message,
-    });
-    byokPresenceCache.set(userId, { present: false, fetchedAt: now });
-    return false;
-  }
-}
-
-// #664: user-facing notice that the payer switched to their own key mid-turn.
-// Persists a system chat row (visible on reload) and fans the event out live
-// over the global WS. Entirely best-effort: a failed notice must never fail
-// the API call.
-//
-// #1088: the caller decides WHETHER to emit. This used to be gated only by the
-// per-turn registry flag, so it re-announced on every chat once credits were
-// out; it now runs at most once per user per UTC day
-// (limits.claimByokSwitchNotice). The copy is day-scoped to match — it is no
-// longer describing just "this turn".
-async function emitSwitchNotice(pool, sessionId, userId, window = 'daily') {
-  const text = window === 'weekly'
-    ? 'Your free weekly AI credits ran out. Work is now continuing on your Anthropic API key. Credits reset Monday 00:00 UTC.'
-    : 'Your free daily AI credits ran out. Work is now continuing on your Anthropic API key. Credits reset at midnight UTC.';
-  try {
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [sessionId, text, JSON.stringify({ billingSwitch: true })]
-    );
-  } catch (err) {
-    log.warn('anthropic-proxy', 'Failed to persist billing-switch notice', {
-      sessionId, userId, err: err.message,
-    });
-  }
-  // A proxy-minted _seq can't collide with the turn's own
-  // `${prefix}-${n}` stream.
-  const seq = `byok-switch-${sessionId}-${Date.now().toString(36)}`;
-  try {
-    const { broadcastGlobal } = require('../services/ws');
-    broadcastGlobal({
-      type: 'session_event', sessionId, event: 'billing_switched',
-      _seq: seq, text,
-    });
-  } catch (err) {
-    log.warn('anthropic-proxy', 'Failed to broadcast billing switch', { sessionId, err: err.message });
-  }
-}
 
 // #800: accumulate this call's cost onto the session's coding-agent
 // spend ledger (chat_sessions.agent_cost_cents) — the platform's only
@@ -287,9 +197,7 @@ async function emitSwitchNotice(pool, sessionId, userId, window = 'daily') {
 // (llm_usage), so without this the agent's spend — the large majority of
 // what a change costs — is unattributable to the change forever.
 //
-// Called from BOTH settle points (BYOK and platform key) so payer choice
-// doesn't change what gets recorded: this is a list-price cost record,
-// not a billing record.
+// This is a list-price cost record, not a billing record.
 //
 // Three gates, all "don't record it":
 //   - `isSyncTurn`: platform-driven merge-conflict / sync-with-main
@@ -302,7 +210,7 @@ async function emitSwitchNotice(pool, sessionId, userId, window = 'daily') {
 //
 // FIRE-AND-FORGET by contract: never awaited into the response path, and
 // a failure is a log.warn and nothing more. Bookkeeping must not be able
-// to fail or delay a turn — same posture as emitSwitchNotice above.
+// to fail or delay a turn.
 //
 // #2592: it records WHICH MODEL spent it, too. The ledger column has no
 // model dimension, so services/model-costs.js had to leave the agent's
@@ -358,12 +266,8 @@ function anthropicProxyRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
-  if (!config.anthropicApiKey) {
-    log.warn('anthropic-proxy', 'ANTHROPIC_API_KEY not set — proxy will 502 platform-key requests');
-  }
-
   // Scoped JSON parser. Global parser (server.js) is skipped for our
-  // path so we can carry our own 32mb limit — Anthropic itself caps
+  // path so we can carry our own 32mb limit — the Messages API caps
   // request bodies at 32MB, and a normal CC turn can carry several
   // MB of file context. See server.js comment near the global
   // express.json() mount for context.
@@ -408,6 +312,15 @@ function anthropicProxyRoutes(config) {
       return res.status(403).json({ ok: false, code: 'session_not_found' });
     }
 
+    // Only the two Messages routes are relayed (OpenRouter serves no other
+    // Claude endpoint); anything else Claude Code might ask for is refused
+    // before any budget work.
+    const upstreamPath = req.params[0] ? `/${req.params[0]}` : '/';
+    const upstreamUrl = openrouterMessages.upstreamUrlFor(config.openrouterApiBase, upstreamPath);
+    if (!upstreamUrl) {
+      return res.status(404).json({ ok: false, code: 'unsupported_path' });
+    }
+
     // #361: merge-conflict / sync turns are platform housekeeping and
     // bill the dedicated system-token budget, not the owner's allowance.
     // The worker records the in-flight turn's mode in its warm registry;
@@ -443,21 +356,22 @@ function anthropicProxyRoutes(config) {
       if (shotsEval.overCap(0)) {
         return res.status(429).json({ ok: false, code: 'budget_exceeded', message: 'This shots eval reached its cap.' });
       }
-      if (!config.anthropicApiKey) {
+      const evalKey = await openrouterMessages.platformKey(config, { pool });
+      if (!evalKey) {
         return res.status(502).json({ ok: false, code: 'no_platform_key' });
       }
-      const evalPath = req.params[0] ? `/${req.params[0]}` : '/';
-      const evalQs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
       const result = await anthropicStream.forwardCall({
         req,
         res,
-        upstreamUrl: `${anthropicStream.ANTHROPIC_UPSTREAM}${evalPath}${evalQs}`,
-        apiKey: config.anthropicApiKey,
+        upstreamUrl,
+        apiKey: evalKey,
+        origin: config.openrouterOrigin,
         logTag: 'anthropic-proxy',
-        logCtx: { sessionId, userId, upstreamPath: evalPath, shotsEval: true },
+        logCtx: { sessionId, userId, upstreamPath, shotsEval: true },
         shouldKill: (currentCallCents) => (shotsEval.overCap(currentCallCents) ? 'over_budget' : null),
       });
       shotsEval.noteSpend(result.costCents);
+      noteCreditOut(pool, result, 'a before & after shots eval call met OpenRouter\'s 402 for credit');
       return;
     }
 
@@ -494,12 +408,10 @@ function anthropicProxyRoutes(config) {
       : null;
     // #2513: an UNREADABLE ledger is not the same thing as an exhausted cap,
     // and must not be fed to the logic below as if it were. Left to arithmetic
-    // alone, the fail-closed sentinel reads as "over cap" — which on this path
-    // switches a user with a stored key onto BYOK and bills THEM for a
-    // Postgres blip, and on a failed global read lets a keyless caller
-    // through on the platform key. Both are the opposite of the intent.
-    // Refuse first, with a code that says "try again", and let the payer
-    // resolution below see only real numbers.
+    // alone, the fail-closed sentinel reads as "over cap", and a Postgres blip
+    // would end a turn as if its allowance were spent. Refuse first, with a
+    // code that says "try again", and let the gates below see only real
+    // numbers.
     if (spendCache.isUnavailable(budget)
       || (weeklyBudget && spendCache.isUnavailable(weeklyBudget))) {
       log.warn('anthropic-proxy', 'Spend ledger unavailable; refusing rather than billing', {
@@ -534,95 +446,15 @@ function anthropicProxyRoutes(config) {
     };
     const overMessage = messageFor(boundWindow);
 
-    const upstreamPath = req.params[0] ? `/${req.params[0]}` : '/';
-    const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-    const upstreamUrl = `${anthropicStream.ANTHROPIC_UPSTREAM}${upstreamPath}${qs}`;
-
-    // #664: per-call payer resolution for build/scout turns. The daily
-    // allowance is exhausted when EITHER the user's own cap or the
-    // platform-wide global cap is spent — in both cases a user with a
-    // BYOK key on file spills onto their own key instead of erroring.
-    // Sync turns never spill; keyless users fall through to the exact
-    // gate/kill behaviour below (the global-cap crossing deliberately
-    // does NOT add a new 429 for them — non-regressive).
-    if (!isSyncTurn) {
-      const userOver = dailyOver || weeklyOver || noAllowance;
-      const globalCap = await limits.getGlobalLimitCents(pool);
-      const globalSpend = await refreshGlobalSpend(pool);
-      // #2513: same distinction. An unreadable GLOBAL ledger must refuse
-      // rather than resolve to "not over", which would let a keyless caller
-      // spend the platform key during an outage.
-      if (spendCache.isUnavailable(globalSpend)) {
-        log.warn('anthropic-proxy', 'Global spend ledger unavailable; refusing', {
-          sessionId, userId,
-        });
-        return res.status(429).json({
-          ok: false,
-          code: 'budget_unavailable',
-          message: 'Spending records are briefly unavailable. Try again in a moment.',
-        });
-      }
-      const globalOver = spendCache.spendTotal(globalSpend) >= globalCap;
-      if (userOver || globalOver) {
-        const byokKey = await limits.loadUserApiKey(pool, userId, config.dataEncryptionKey);
-        if (byokKey) {
-          // Two gates, deliberately different in scope (#1088):
-          //   markTurnByokSwitched — per turn, cheap and in-process. Keeps the
-          //     operator log line at one per turn, exactly as before.
-          //   claimByokSwitchNotice — per user per UTC day, in the DB. Decides
-          //     whether the *user* is told. The per-turn flag alone re-announced
-          //     the switch on every chat for the rest of the day.
-          // The turn gate runs first so the day claim is only ever paid for
-          // once per turn, and the whole block stays non-fatal.
-          if (workerMod && workerMod.markTurnByokSwitched(sessionId)) {
-            const noticed = await limits.claimByokSwitchNotice(pool, userId);
-            log.info('anthropic-proxy', 'Turn switched to BYOK key mid-turn', {
-              sessionId, userId, notified: noticed,
-            });
-            if (noticed) await emitSwitchNotice(pool, sessionId, userId, boundWindow);
-          }
-          // The user's own key pays this call: no budget kill (it draws
-          // nothing from the allowance) and the observed cost lands in
-          // the per-turn BYOK tally for the split settlement at turn end.
-          const result = await anthropicStream.forwardCall({
-            req,
-            res,
-            upstreamUrl,
-            apiKey: byokKey,
-            logTag: 'anthropic-proxy',
-            logCtx: { sessionId, userId, upstreamPath, byok: true },
-          });
-          if (workerMod && result.costCents > 0) {
-            workerMod.noteTurnByokSpend(sessionId, result.costCents);
-          }
-          if (turnMode !== 'shots') {
-            void limits.noteTurnSpend(pool, { sessionId, userId, cents: result.costCents, byok: true, turn: spendTurn });
-          }
-          // #800: BYOK-paid work still costs the change the same at list
-          // price, so it lands on the ledger identically.
-          noteAgentSpend(pool, {
-            sessionId, costCents: result.costCents, isSyncTurn, model: result.model,
-          });
-          if (result.status === 401 || result.status === 403) {
-            log.warn('anthropic-proxy', 'BYOK key rejected by Anthropic upstream', {
-              sessionId, userId, status: result.status,
-            });
-          }
-          return;
-        }
-      }
-    }
-
-    if (!config.anthropicApiKey) {
+    const platformKey = await openrouterMessages.platformKey(config, { pool });
+    if (!platformKey) {
       return res.status(502).json({ ok: false, code: 'no_platform_key' });
     }
 
     // Start-of-call gate: if we already know we're over cap, refuse
-    // before opening any socket to Anthropic. The gate uses the cached
+    // before opening any socket upstream. The gate uses the cached
     // snapshot, so it's only as fresh as BUDGET_CACHE_TTL_MS — but
-    // mid-stream kill catches anything the gate misses. Since #664 this
-    // only fires for callers with NO usable BYOK key (key-holders were
-    // switched above).
+    // mid-stream kill catches anything the gate misses.
     if (dailyOver || weeklyOver || noAllowance) {
       log.info('anthropic-proxy', 'Start-of-call gate fired', {
         sessionId, userId, isSyncTurn, spentCents: spentBeforeCall, capCents,
@@ -637,20 +469,12 @@ function anthropicProxyRoutes(config) {
       });
     }
 
-    // #664: when the caller HAS a key on file, don't truncate the
-    // boundary call — the stream-kill would surface as a hard API error
-    // to the CLI even though the very next call would switch payers.
-    // Let this one call finish on the platform key (overshoot bounded to
-    // one call's cost, logged below) and let the next call's gate do the
-    // switch. Keyless users and sync turns keep the kill.
-    const killSuppressed = !isSyncTurn && await hasByokKeyOnFile(pool, userId);
-    let suppressionLogged = false;
-
     const result = await anthropicStream.forwardCall({
       req,
       res,
       upstreamUrl,
-      apiKey: config.anthropicApiKey,
+      apiKey: platformKey,
+      origin: config.openrouterOrigin,
       logTag: 'anthropic-proxy',
       logCtx: { sessionId, userId, upstreamPath },
       shouldKill: (currentCallCents, model) => {
@@ -672,22 +496,6 @@ function anthropicProxyRoutes(config) {
         const overDailyNow = caps.dailyApplies && spentEffectiveCents > capCents;
         const overWeeklyNow = caps.weeklyApplies && weeklyEffectiveCents > caps.weeklyLimitCents;
         if (overDailyNow || overWeeklyNow) {
-          if (killSuppressed) {
-            if (!suppressionLogged) {
-              suppressionLogged = true;
-              log.info('anthropic-proxy', 'Over budget mid-call — kill suppressed (BYOK fallback available)', {
-                sessionId, userId,
-                window: overWeeklyNow ? 'weekly' : 'daily',
-                spentEffectiveCents: spentEffectiveCents.toFixed(2),
-                capCents,
-                weeklyEffectiveCents: weeklyEffectiveCents.toFixed(2),
-                weeklyCapCents: caps.weeklyApplies ? caps.weeklyLimitCents : null,
-                currentCallCents: currentCallCents.toFixed(4),
-                model,
-              });
-            }
-            return null;
-          }
           log.info('anthropic-proxy', 'Mid-stream kill — over budget', {
             sessionId, userId,
             window: overWeeklyNow ? 'weekly' : 'daily',
@@ -707,9 +515,7 @@ function anthropicProxyRoutes(config) {
     // Fold this call's cost into the user's running tracker so the
     // next request sees it. Even on kill we count what we sent — the
     // worker really did consume those tokens (Anthropic charges for
-    // partial generations). Platform-billed user spend also counts
-    // toward the global tracker (#664) so the global-cap crossing is
-    // visible mid-turn.
+    // partial generations).
     if (result.costCents > 0) {
       const live = isSyncTurn ? systemBudgetCache : userBudgetCache.get(userId);
       if (live) {
@@ -726,16 +532,12 @@ function anthropicProxyRoutes(config) {
         // receipt is written. Every coding-agent call the platform key pays
         // for passes through here, which is what makes "$x left this week"
         // move every few seconds during a build. Sync turns bill the system
-        // bucket, which is nobody's meter, and a BYOK-switched call (handled
-        // far above) draws nothing from the pool.
+        // bucket, which is nobody's meter.
         budgetLive.notifySpend(pool, userId, {
           liveWeeklySpentCents: liveWeekly
             ? liveWeekly.totalAtCheckpointCents + liveWeekly.liveDeltaCents
             : null,
         });
-      }
-      if (!isSyncTurn && globalBudgetCache) {
-        globalBudgetCache.liveDeltaCents += result.costCents;
       }
     }
     // The call, kept against its turn as it is made: the caps count it at
@@ -751,6 +553,9 @@ function anthropicProxyRoutes(config) {
     noteAgentSpend(pool, {
       sessionId, costCents: result.costCents, isSyncTurn, model: result.model,
     });
+    noteCreditOut(pool, result, isSyncTurn
+      ? 'a Sync with main call met OpenRouter\'s 402 for credit'
+      : 'a before & after shots call met OpenRouter\'s 402 for credit');
     if (result.killed) {
       log.info('anthropic-proxy', 'Killed call settled', {
         sessionId, userId,

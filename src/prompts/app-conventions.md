@@ -1941,7 +1941,10 @@ const resp = await fetch(`${process.env.USERNODE_LLM_PROXY_URL}/v1/messages`, {
 ```
 
 The body/response are standard Anthropic Messages API shapes
-(streaming SSE included). Error codes the app must handle:
+(streaming SSE included). Name a Claude model the way Anthropic does
+(`claude-sonnet-5-5`); the platform serves it through OpenRouter, and a
+model that is not Claude is refused with `400 { code: 'unsupported_model' }`.
+Error codes the app must handle:
 
 - `403 { code: 'grant_required' }` — the user hasn't granted this app
   access (or revoked it). Surface this to the frontend, have it call
@@ -3830,10 +3833,12 @@ Rules:
   recorded in `public/vendor/README.md`), and the inline `tailwind.config`
   beside the tag keeps working untouched — so the swap is
   behaviour-identical, with no visual difference and no rebuild.
-- **No proposal check rejects a `cdn.tailwindcss.com` tag.** Nothing the
-  platform runs inspects an app's source for one, and apps still on the CDN
-  pass their checks — moving the fleet off it is housekeeping, never a merge
-  gate, and never a drive-by inside an unrelated proposal. (Vendoring the
+- **No proposal check rejects a `cdn.tailwindcss.com` tag already in an
+  app.** The "No script from another site" check reads only the lines a
+  change adds, so apps still on the CDN pass their checks (a tag the change
+  only moves or re-indents passes too) — moving the fleet off it is
+  housekeeping, never a merge gate, and never a drive-by inside an
+  unrelated proposal. A change that adds a new one fails that check. (Vendoring the
   hosted files into a repo is the rule that is real, and it too holds by
   convention rather than by a check — see the bridge section.)
 - **Why bother:** the CDN is one outside dependency shared by the entire
@@ -4249,7 +4254,9 @@ cannot override them.
   app would run code nobody voted on and nobody can see in the repo.
   Install libraries from npm and serve them from the app's own origin, as
   Homeroom Maps does with MapLibre. A legacy `cdn.tailwindcss.com` tag
-  (rule 1) is tolerated; new code adds none.
+  (rule 1) is tolerated; new code adds none. A change that adds such a
+  tag fails its checks ("No script from another site"), with the file and
+  line. Relative paths pass, the hosted `/usernode-*/v1/…` files included.
 
   Everything else from other sites is fine: images, video and audio hosted
   elsewhere; map tiles and map styles; web fonts; public API data (from the

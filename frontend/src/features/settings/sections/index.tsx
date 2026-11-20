@@ -45,7 +45,6 @@ import { AccessibilitySection } from './accessibility';
 import { AdminPreviewSection } from './admin-preview';
 import { AlertsSection } from './alerts';
 import { BlockedAppsSection } from './blocked-apps';
-import { ApiKeySection } from './api-key';
 import { AppAiSection } from './app-ai';
 import { AppPermissionsSection } from './app-permissions';
 import { CliSection } from './cli';
@@ -100,7 +99,6 @@ export function SettingsSections() {
       {/* ── AI models & usage ── */}
       <UsageSection />
       <OpenRouterSection />
-      <ApiKeySection />
       {/* ── Integrations & automation ── the chat connectors and CLI. */}
       <ConnectorsSection />
       <CliSection />

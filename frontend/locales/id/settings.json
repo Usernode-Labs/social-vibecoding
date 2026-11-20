@@ -735,30 +735,6 @@
     "text": "Direset Senin pukul 00.00 UTC.",
     "source": "8260c59430618de198b46e83610e7a2945840b03ccd8174e1d52020606f50498"
   },
-  "apiKey.title": {
-    "text": "Kunci API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.intro": {
-    "text": "Gunakan kunci API Anthropic milikmu sendiri agar tetap bisa bekerja setelah batas mingguan habis. Jatah mingguan platform dipakai lebih dulu; setelah habis, kuncimu akan mengambil alih secara otomatis, bahkan di tengah giliran yang sedang berjalan, dan biayanya langsung ditagihkan ke akun Anthropic-mu.",
-    "source": "5b0792bc208a2c15d311cd18b29c5aabb8d6bb4c085f13c01991ffe2eaad28ba"
-  },
-  "apiKey.savedKeyLabel": {
-    "text": "Kunci",
-    "source": "99a52df3ff3d499488e2fa28150c4106a2cb5e928891a830a9aa3922b2d32160"
-  },
-  "apiKey.fieldLabel": {
-    "text": "Kunci API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.remove": {
-    "text": "Hapus",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.safety": {
-    "text": "Dienkripsi saat disimpan, diverifikasi ke Anthropic sebelum disimpan, dan tidak pernah ditampilkan utuh setelah disimpan. Server mendekripsinya di memori untuk memanggil Anthropic atas namamu, jadi jangan tempel kunci ke layanan yang tidak kamu percayai dengan tingkat akses sebesar itu. <0>Atur batas pengeluaran yang ketat</0> pada kunci itu sendiri untuk perlindungan berlapis.",
-    "source": "964372764cebc98f971f0a8a93b91718b37a66b5e4dc6fe31778a665234ac478"
-  },
   "openrouter.intro": {
     "text": "Gunakan model apa pun yang kompatibel untuk semua obrolan dan pengodean dalam sesi OpenRouter. Sesi ini tidak memakai jatah Claude dari platform. Akunmu sudah dilengkapi kunci OpenRouter, jadi OpenRouter menjadi pilihan bawaan dan GLM 5.3 Flash dipilih jika tersedia, sementara daftar lengkap model yang terlihat oleh kunci tetap tersedia. Model bertanda Claude Code di daftar model berjalan di Claude Code. Kunci dienkripsi saat disimpan dan hanya disisipkan untuk setiap giliran.",
     "source": "227eef10170b9b0dc7009a9f48d95a0859acd84a1c5e2755f9c5415cf73d6c01"
@@ -1803,10 +1779,6 @@
     "text": "OpenRouter",
     "source": "eb70c3bc14fa7ae14285b750955958e63b64b8f19546c30fc2223ad9057a959c"
   },
-  "nav.part.apiKey": {
-    "text": "Kunci API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
   "nav.part.connectors": {
     "text": "Konektor",
     "source": "c3d2e79ebdd046c6b7363de7b69dc9fb5b38235f0d328fdff0b2f9ccf2854b07"
@@ -1938,10 +1910,6 @@
   "nav.keywords.usage": {
     "text": "jatah batas kredit anggaran pakai sisa mingguan",
     "source": "0adb04f257b23954eed88565204036d296f01d22c8f8910de60d1ec37715c568"
-  },
-  "nav.keywords.apiKey": {
-    "text": "claude byok kunci sk-ant tagihan",
-    "source": "c996fca19838c733331595e2a1ae5519bade7c758661edf20d108351488a7ef7"
   },
   "nav.keywords.openrouter": {
     "text": "model glm deepseek penalaran bawaan agen pengodean kunci",
@@ -2443,34 +2411,6 @@
     "text": "Tidak bisa menyimpan preferensi notifikasi push seluler",
     "source": "7c9cc454c737e22211eec5f1755a2a9f649e051365bf74886355d84ea0e96ff7"
   },
-  "apiKey.field.replacePlaceholder": {
-    "text": "Tempel kunci baru untuk mengganti",
-    "source": "8a347fdf5687f98be7defa6bc00ee1346e79f50c7ecaa801b91a57f74907d1ca"
-  },
-  "apiKey.button.replace": {
-    "text": "Ganti",
-    "source": "95e154398a4bc0091aa4d6b607472ac5a89e41fbc84a3a49f823314d6de9eebc"
-  },
-  "apiKey.status.pasteFirst": {
-    "text": "Tempel kunci API dulu.",
-    "source": "448710dc61de72d49cedf6c73808a66355e18e7fe52e4eb20f52886ec200bcf8"
-  },
-  "apiKey.status.verifying": {
-    "text": "Memverifikasi dengan Anthropic…",
-    "source": "cabd4656e84b52428a35326940ab951d522f9ada12f2b0c94a1ffea7c24d6c31"
-  },
-  "apiKey.status.saveFailed": {
-    "text": "Gagal menyimpan kunci.",
-    "source": "2ca6410dbed10cffc6c57ada961d1493471bb3565ec122ef9f331d08a1eac4ca"
-  },
-  "apiKey.status.saved": {
-    "text": "Tersimpan. Obrolanmu sekarang ditagihkan ke akun Anthropic-mu.",
-    "source": "94373a53a9d8cd2639fa1a6a89cd48aa9d9759d80621802dc1949f64570f0cac"
-  },
-  "apiKey.status.networkError": {
-    "text": "Kesalahan jaringan: {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
-  },
   "openrouter.cost.free": {
     "text": "Gratis",
     "source": "f411a1fb62758b4c54690d0a702b4955b54dd22115416fa7b1ce51b4a084818d"
@@ -2898,30 +2838,6 @@
   "signOut.failed": {
     "text": "Tidak bisa keluar. Periksa koneksimu lalu coba lagi.",
     "source": "0632a4853c68c1e1f46564d9df9aaabb335f62459c2b38543b87107e9fd0a158"
-  },
-  "apiKey.remove.confirmTitle": {
-    "text": "Hapus kunci API-mu?",
-    "source": "1ee469e473451824b7c32a8088b0d3f61de81c496df0a7d9b557b8a0ec15c301"
-  },
-  "apiKey.remove.confirmMessage": {
-    "text": "Obrolan berikutnya akan memakai anggaran harian bersama.",
-    "source": "cafee8d0d055378667b569721fd4f68f2a918d395544fe9006708cfab489b51e"
-  },
-  "apiKey.remove.confirmButton": {
-    "text": "Hapus",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.remove.failed": {
-    "text": "Gagal menghapus kunci.",
-    "source": "4b33ea92e4c7da9f490f106fded6a4b5033ce752e74e3eb11c5e89b3eb6c87e7"
-  },
-  "apiKey.remove.done": {
-    "text": "Dihapus.",
-    "source": "b4df0c43b59cfbb146d94d5610850a72afbd6844486643b3e025e7eee9891af2"
-  },
-  "apiKey.remove.networkError": {
-    "text": "Kesalahan jaringan: {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
   },
   "grants.status.demoData": {
     "text": "Data demo: perubahan tidak disimpan.",

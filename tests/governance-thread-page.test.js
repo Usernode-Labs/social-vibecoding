@@ -54,7 +54,7 @@ test('a governance vote is drawn in the request page’s sheet, named as a decis
   const html = renderComponent(SHELL, 'ThreadShell', {
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, decision: true,
   });
-  assert.match(html, /^<div class="dev-request dev-decision platform-kb-column">/, 'the decision layout of the same sheet');
+  assert.match(html, /^<div class="dev-request dev-decision platform-kb-column" data-thread-page="decision">/, 'the decision layout of the same sheet');
   assert.match(html, /aria-label="Decision"/);
   assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
   assert.match(html, /class="messages-composer messages-composer-thread chat-composer-bar platform-safe-bar"/, 'the replies composer');

@@ -139,31 +139,31 @@ test('app.css: the head floats over the scroller, the panels draw no sheet, the 
   assert.ok(at > 0);
   assert.ok(at < CSS.indexOf('/* looks:begin'), 'outside the generated looks section');
   const block = CSS.slice(at);
-  assert.match(block, /#dev-topic-thread \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{\s+display: block !important;\s+position: absolute;/);
+  assert.match(block, /:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{\s+display: block !important;\s+position: absolute;/);
   // 19 Nov 2026: a card, the cards' 20px corners and edge, its tile and ⋯
   // level at the top, where the capsule was a pill with a drop shadow.
   assert.match(block, /\.dev-request-bar \.messages-thread-header \{\s+pointer-events: auto;\s+display: flex;\s+align-items: flex-start;[\s\S]{0,140}border-radius: 20px;\s+background: var\(--thread-card-solid, var\(--dc-sheet-solid\)\);\s+box-shadow: var\(--thread-card-edge, inset 0 0 0 1px var\(--app-sheet-line\)\);\n\}/);
   assert.doesNotMatch(block.slice(0, block.indexOf('THE VOTE FOLDS INTO THE HEADER')), /border-radius: 999px;\s+background: var\(--thread-card-solid/, 'no capsule');
   // The scroller starts under the head's measured height (thread-head-fit.ts).
   assert.match(block, /--pill-h: var\(--thread-head-h, 104px\);/);
-  assert.match(block, /:is\(\.dev-ws-side, \.in-side-panel body\) \.dev-request:has\(\.dev-thread-card\) \{ --pill-top: 0px; \}/,
+  assert.match(block, /:is\(\.dev-ws-side, \.in-side-panel body\) \.dev-request:has\(\.dev-thread-card\),\n[^{]*#ai-screen \.dev-private-thread:has\(\.dev-thread-card\) \{ --pill-top: 0px; \}/,
     'in a panel the head starts on the column\'s top line');
   // The title in two lines, the small line over it, a request's and a change's alike.
-  assert.match(block, /#gc-thread-bar :is\(\.messages-thread-name\.dev-request-bar-title, \.dev-thread-bar-title\) \{\s+display: -webkit-box;\s+-webkit-box-orient: vertical;\s+-webkit-line-clamp: 2;/);
+  assert.match(block, /:is\(#gc-thread-bar, \.dev-request-bar\) :is\(\.messages-thread-name\.dev-request-bar-title, \.dev-thread-bar-title\) \{\s+display: -webkit-box;\s+-webkit-box-orient: vertical;\s+-webkit-line-clamp: 2;/);
   assert.match(block, /\.dev-thread-bar-text > \.messages-thread-sub \{ grid-row: 1; grid-column: 1; \}/);
   assert.match(block, /\.dev-thread-bar-text > \.messages-thread-name \{ grid-row: 2; grid-column: 1 \/ -1; \}/);
   // ⋯ is the one disc; ↗ and × are plain after a thin line.
   assert.match(block, /\.dev-request-bar \.messages-thread-action \{[^}]*background: transparent;\s+box-shadow: none;/);
-  assert.match(block, /\.dev-request-bar \.messages-thread-action\[data-card-menu\] \{ box-shadow: inset 0 0 0 1px var\(--app-sheet-line\); \}/);
-  assert.match(block, /\.messages-thread-header > \[data-card-menu\] \+ \.dev-thread-exits::before \{/);
+  assert.match(block, /\.dev-request-bar :is\(\.messages-thread-action\[data-card-menu\], \[data-private-thread-menu\] > \.messages-thread-action, \.messages-thread-action\.dev-thread-head-text\) \{ box-shadow: inset 0 0 0 1px var\(--app-sheet-line\); \}/);
+  assert.match(block, /\.messages-thread-header > :is\(\[data-card-menu\], \[data-private-thread-menu\]\) \+ \.dev-thread-exits::before \{/);
   // Scrolled, it tightens to one line of title over the small line.
-  assert.match(block, /\.dev-request\[data-thread-head-tight\]:has\(\.dev-thread-card\) #gc-thread-bar :is\(\.messages-thread-name\.dev-request-bar-title, \.dev-thread-bar-title\) \{ -webkit-line-clamp: 1; \}/);
+  assert.match(block, /\.dev-request\[data-thread-head-tight\]:has\(\.dev-thread-card\) :is\(#gc-thread-bar, \.dev-request-bar\) :is\(\.messages-thread-name\.dev-request-bar-title, \.dev-thread-bar-title\) \{ -webkit-line-clamp: 1; \}/);
   // The card does not say the title again, except while it is being edited.
   assert.match(block, /\.dev-request:has\(\.dev-thread-card\) \.dev-thread-card > div > \.dev-request-title:not\(:has\(input\)\) \{ display: none; \}/);
   assert.match(block, /\.dev-request-scroll \{\s+padding-top: var\(--pill-under\) !important;\s+scroll-padding-top: var\(--pill-under\);/);
   assert.match(block, /\.dev-request:has\(\.dev-thread-card\) \.dev-thread-kicker \{ display: none; \}/);
-  assert.match(block, /:is\(\.dev-ws-side, html\.in-side-panel\.side-panel-beside-ai\) \.dev-thread-exits \{ display: inline-flex; \}/,
-    'the discs show only in a panel');
+  assert.match(block, /:is\(\.dev-ws-side, html\.in-side-panel\.side-panel-beside-ai\) \.dev-thread-exits,\n#ai-screen \.dev-private-thread \.dev-thread-exits \{ display: inline-flex; \}/,
+    'the discs show only in a panel, and in the bot tab\'s column');
   assert.match(block, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) \.dev-ws-side \{\s+background: transparent;\s+box-shadow: none;/);
   assert.match(block, /\.dev-ws-side:has\(\.dev-thread-card\) > \.dev-ws-side-bar \{ display: none; \}/);
 });
@@ -174,7 +174,7 @@ test('app.css: the cards go under the pill and under the reply box, and no furth
   const block = CSS.slice(at, at + 6000);
   // The top: cut past the head's upper corners, on the id so the looks' own fade
   // (`html[data-skin] … #gc-thread-scroll`) no longer wins in the brand look.
-  assert.match(block, /\.dev-request:has\(\.dev-thread-card\) #gc-thread-scroll \{\n  --pill-cut: calc\(var\(--pill-top\) \+ 24px\);\n[\s\S]{0,300}?  -webkit-mask-image: linear-gradient\(to bottom, transparent var\(--pill-cut\), #000 var\(--pill-cut\)\), linear-gradient\(#000, #000\), linear-gradient\(#000, #000\);/);
+  assert.match(block, /\.dev-request:has\(\.dev-thread-card\) :is\(#gc-thread-scroll, \.dev-request-scroll\) \{\n  --pill-cut: calc\(var\(--pill-top\) \+ 24px\);\n[\s\S]{0,300}?  -webkit-mask-image: linear-gradient\(to bottom, transparent var\(--pill-cut\), #000 var\(--pill-cut\)\), linear-gradient\(#000, #000\), linear-gradient\(#000, #000\);/);
   assert.doesNotMatch(block, /transparent 4px/, 'no fade across the gap over the pill');
   // Both cuts are the cards' column's: the top one, and the strip under the
   // reply box, the whole scroller less the timeline's column (20 Nov 2026:
@@ -185,16 +185,16 @@ test('app.css: the cards go under the pill and under the reply box, and no furth
   assert.match(block, /\bmask-size: calc\(100% - var\(--composer-end, 0px\)\) calc\(100% - var\(--composer-tuck, 0px\)\), calc\(100% - var\(--composer-end, 0px\)\) var\(--composer-tuck, 0px\), var\(--composer-end, 0px\) 100%;/);
   assert.match(block, /\bmask-position: var\(--cards-x\) 0, var\(--cards-x\) 100%, calc\(\(1 \+ var\(--rtl-sign\)\) \* 50%\) 0;/);
   // The reply box is as wide as the cards over it: the bar has no side padding.
-  assert.match(block, /#dev-topic-thread \.dev-request:has\(\.dev-thread-card\) \.dev-request-sheet > \.messages-composer \{ padding-inline: 0; \}/);
+  assert.match(block, /:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) \.dev-request-sheet > \.messages-composer \{ padding-inline: var\(--thread-gutter, 0px\); \}/);
   // The scroller runs on under the card by its corner radius.
   assert.match(CSS, /\.messages-composer-card \{\n  border-radius: 22px;/, 'the tuck is the card\'s corner radius');
-  assert.match(block, /\.dev-request-sheet:has\(> \.chat-status:empty \+ \.messages-composer > \.messages-composer-card\):not\(:has\(> \.messages-composer > :is\(#gc-thread-reply-preview:not\(\.hidden\), \.dc-attach-error:not\(\.hidden\), \.dc-attach-strip:not\(:empty\)\)\)\) > #gc-thread-scroll \{\n  --composer-tuck: 22px;\n  margin-bottom: calc\(-1 \* var\(--composer-tuck\)\);\n\}/);
+  assert.match(block, /\.dev-request-sheet:has\(> \.chat-status:empty \+ \.messages-composer > \.messages-composer-card\):not\(:has\(> \.messages-composer > :not\(\.hidden, :empty\) ~ \.messages-composer-card\)\) > :is\(#gc-thread-scroll, \.dev-request-scroll\) \{\n  --composer-tuck: 22px;\n  margin-bottom: calc\(-1 \* var\(--composer-tuck\)\);\n\}/);
   // The newest reply ends 12px over the box, plus the tuck, by a spacer: WebKit
   // leaves a grid scroller's end padding out of what it scrolls, and the wide
   // page's scroller is the two-column grid.
-  assert.match(block, /#dev-topic-thread \.dev-request:has\(\.dev-thread-card\) #gc-thread-scroll \{ padding-bottom: 0 !important; \}/);
-  assert.match(block, /#dev-topic-thread \.dev-request:has\(\.dev-thread-card\) #gc-thread-scroll::after \{\n  content: "";\n  display: block;\n  grid-column: 1 \/ -1;\n  height: calc\(12px \+ var\(--composer-tuck, 0px\)\);\n\}/);
-  assert.doesNotMatch(block, /> #gc-thread-scroll \{[^}]*padding-bottom: calc/, 'no end padding for WebKit to drop');
+  assert.match(block, /:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) :is\(#gc-thread-scroll, \.dev-request-scroll\) \{ padding-bottom: 0 !important; \}/);
+  assert.match(block, /:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) :is\(#gc-thread-scroll, \.dev-request-scroll\)::after \{\n  content: "";\n  display: block;\n  grid-column: 1 \/ -1;\n  height: calc\(12px \+ var\(--composer-tuck, 0px\)\);\n\}/);
+  assert.doesNotMatch(block, /> :is\(#gc-thread-scroll, \.dev-request-scroll\) \{[^}]*padding-bottom: calc/, 'no end padding for WebKit to drop');
   // On a wide page the reply box ends where the card does, before the timeline.
   assert.match(CSS, /--thread-rail-gap: 20px;\n[\s\S]{0,200}--composer-end: calc\(var\(--thread-rail-w\) \+ var\(--thread-rail-gap\)\);/);
 });
@@ -315,18 +315,25 @@ test('the head measures itself while full and tightens once the thread scrolls (
   height = 0;
   const noop = fitThreadHead({ closest: () => null, getBoundingClientRect: () => ({ height }) });
   assert.equal(typeof noop, 'function');
-  // Both bars fit their head, only where they draw it (not under a frame look).
+  // 20 Nov 2026: every head is the one card (thread-head.tsx), which fits
+  // itself; both bars draw it only where they draw a head (not under a
+  // frame look), and a private thread with the bot draws it too.
+  const card = read('frontend/src/features/dev-board/topic/thread-head.tsx');
+  assert.match(card, /const head = useRef<HTMLElement>\(null\);\s+useThreadHeadFit\(head, true\);/);
+  assert.match(card, /<header \{\.\.\.attrs\} ref=\{head\} className="messages-thread-header">/);
   for (const file of [CHANGE, REQUEST]) {
     const src = read(file);
-    assert.match(src, /const head = useRef<HTMLElement>\(null\);\s+useThreadHeadFit\(head, !frame\);/);
-    assert.match(src, /<header ref=\{head\} className="messages-thread-header">/);
+    assert.match(src, /if \(frame\) return <TopicFrameHead /);
+    assert.match(src, /<ThreadHeadCard\s+tile=\{<ThreadBarTile \/>\}/);
+    assert.doesNotMatch(src, /useThreadHeadFit\(/, 'the card fits itself');
   }
+  assert.match(read('frontend/src/features/messages/index.tsx'), /<ThreadHeadCard\s+attrs=\{\{ 'data-reply-head': 'alone' \}\}/);
 });
 
 test('on a wide page the head is the thread column\'s, and the timeline stands level with it (20 Nov 2026)', () => {
   // The head no longer overrides the wide layout's own width for the bar.
   const one = CSS.slice(CSS.indexOf('ONE THREAD, ONE HEADER (18 Nov 2026)'));
-  const bar = one.match(/#dev-topic-thread \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{[^}]*\}/);
+  const bar = one.match(/:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{[^}]*\}/);
   assert.ok(bar, 'the head\'s bar rule');
   assert.doesNotMatch(bar[0], /margin-inline-end/, 'the bar takes the wide layout\'s end margin');
   const scope = 'html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty))';
@@ -342,7 +349,7 @@ test('the head eases between its sizes and is measured only once it has settled 
   const at = CSS.indexOf('THE HEAD EASES (20 Nov 2026)');
   assert.ok(at > 0);
   const block = CSS.slice(at, at + 3000);
-  assert.match(block, /#dev-topic-thread \.dev-request:has\(\.dev-thread-card\) \.dev-thread-bar-tile \{ transition: width 180ms ease, height 180ms ease, border-radius 180ms ease, font-size 180ms ease; \}/);
+  assert.match(block, /:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) \.dev-thread-bar-tile \{ transition: width 180ms ease, height 180ms ease, border-radius 180ms ease, font-size 180ms ease; \}/);
   assert.match(block, /\.dev-request:has\(\.dev-thread-card\) > \.dev-request-back \{ transition: top 180ms ease; \}/, 'the way back stays level with the tile');
   assert.match(CSS, /\.dev-request-bar > \.messages-thread-header \{ transition: border-radius 180ms ease, padding 180ms ease, box-shadow 180ms ease; \}/);
 
@@ -388,14 +395,29 @@ test('the head eases between its sizes and is measured only once it has settled 
   }
 });
 
-test('a private thread with the bot draws the same head: the lock line over its name in two lines, ⋯ the one disc', () => {
-  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet]';
-  const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\{\\s+flex: 0 0 auto;\\s+align-items: flex-start;\\s+gap: 12px;\\s+padding: 14px 12px 14px 16px;`));
-  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\[data-reply-avatar\\] > \\* \\{ width: 48px; height: 48px; \\}`), 'the face at the tile\'s size');
-  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\[data-private-thread-sub\\] \\{\\s+order: -1;`), 'the lock line is the small line over the name');
-  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\[data-reply-title\\] \\{\\s+display: -webkit-box;\\s+-webkit-box-orient: vertical;\\s+-webkit-line-clamp: 2;[^}]*font-size: 20px;\\s+line-height: 26px;`));
-  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\.messages-thread-action \\{[^}]*background: transparent;\\s+box-shadow: none;`));
-  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header :is\\(\\[data-private-thread-menu\\] > \\.messages-thread-action, \\.messages-thread-preview\\) \\{ box-shadow: inset 0 0 0 1px var\\(--app-sheet-line\\); \\}`));
-  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header > :is\\(\\[data-private-thread-menu\\], \\.messages-thread-preview\\) \\+ \\[data-reply-close\\]::before \\{`), 'a thin line before ×');
+test('a private thread with the bot is drawn on the public thread\'s page, from the same rules (20 Nov 2026)', () => {
+  const messages = read('frontend/src/features/messages/index.tsx');
+  // The page and the head are the public thread's own components.
+  assert.match(messages, /const page = sheet && !frameLook;/);
+  assert.match(messages, /<ThreadPage\s+kind="private"/);
+  assert.match(messages, /<ThreadHeadCard\s+attrs=\{\{ 'data-reply-head': 'alone' \}\}\s+tile=\{<span className="dev-thread-bar-tile dev-thread-bar-face" data-reply-avatar="">/);
+  assert.match(messages, /<div className="messages-thread-sub" data-private-thread-sub="">/, 'the lock line is the small line\'s part that gives way first');
+  assert.match(messages, /className="messages-thread-action messages-thread-preview dev-thread-head-text" data-reply-preview=""/);
+  // The opening message is the first card, its foot where the thread went; the replies the second.
+  assert.match(messages, /<div className="dev-thread-page-post" data-thread-page-post="">\s*<div className="dev-request-root dev-thread-card" data-thread-card="">/);
+  assert.match(messages, /<PrivateThreadFoot where=\{privateWhere\}/);
+  assert.match(messages, /<div className="dev-thread-page-replies" data-thread-page-replies="">\{repliesPart\}<\/div>/);
+  const page = read('frontend/src/features/group-chat/thread-page.tsx');
+  assert.match(page, /private: 'dev-request dev-private-thread',/);
+  assert.match(read('frontend/src/features/group-chat/thread-shell.tsx'), /<ThreadPage\s+kind=\{change \? 'change' : decision \? 'decision' : 'request'\}/);
+  // One set of rules: the private sheet's own copy is gone, the head's rules
+  // name the AI screen beside the topic page, and a panel's name the private page.
+  assert.doesNotMatch(CSS, /\.messages-reply-pane\[data-bot-sheet\] > \.messages-thread-header/, 'no copy of the head');
+  assert.doesNotMatch(CSS, /max-width: 446px/, 'no strip in the middle of the column');
+  assert.match(CSS, /:is\(#dev-topic-thread, #ai-screen\) \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{\s+display: block !important;/);
+  assert.match(CSS, /:is\(html\.in-side-panel\.side-panel-beside-ai, \.dev-ws-side\) \.dev-request,\n#ai-screen \.dev-private-thread \{\n  \/\* The page's gutter[^*]*\*\/\n  --thread-gutter: 12px;/);
+  assert.match(CSS, /#ai-screen \.dev-private-thread :is\(\[data-thread-page-post\], \[data-thread-page-replies\]\) \{\n  min-width: 0;\n  border-radius: var\(--thread-card-r\);/, 'its two cards are painted as a panel\'s');
+  assert.match(CSS, /#ai-screen \.dev-private-thread:has\(\.dev-thread-card\) \.dev-request-bar \.dev-thread-bar-tile\.dev-thread-bar-face \{ border-radius: 999px; \}/, 'its tile is the round face');
+  // The head's word button is sized to its word, never the 36px disc.
+  assert.match(CSS, /\.dev-request-bar \.messages-thread-action\.dev-thread-head-text \{\n  width: auto;\n  padding-inline: 14px;/);
 });

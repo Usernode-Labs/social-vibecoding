@@ -412,8 +412,8 @@
     "description": "Name of one place a change can be built: Homeroom's own servers, using the Claude AI model. Homeroom and Claude are product names; keep the middle dot."
   },
   "venue.usernodeClaude.blurb": {
-    "text": "Built on Homeroom with Claude, on weekly credits or the author's own Anthropic key.",
-    "description": "Explains the \"Homeroom · Claude\" way of building a change, in menus and tooltips where a person chooses where to build. A turn is one request to the coding agent and its reply. Claude and Anthropic are names; a key is an API key."
+    "text": "Built on Homeroom with Claude, on weekly credits.",
+    "description": "Explains the \"Homeroom · Claude\" way of building a change, in menus and tooltips where a person chooses where to build. Claude is a product name."
   },
   "venue.local.label": {
     "text": "Your computer · Homeroom session",

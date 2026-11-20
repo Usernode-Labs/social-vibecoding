@@ -8,10 +8,9 @@
  * open. Almost none of it runs on a load that stays on the board. What DOES
  * run at boot is small and specific:
  *
- *   - refresh(): /api/auth/me (joining the boot read) into Settings.state.
- *     app-view reads `hasApiKey` / `keyLast4`
- *     before the screen is ever opened, and the byok dot on the profile
- *     screen is published from here. This cannot wait for a chunk.
+ *   - refresh(): /api/auth/me (joining the boot read) into Settings.state,
+ *     which the shell reads before the screen is ever opened. This cannot
+ *     wait for a chunk.
  *   - the calls app.js makes on EVERY navigation — isOpen(), close(),
  *     syncChrome() — which have nothing to do while nothing is open.
  *
@@ -57,8 +56,6 @@ settingsChunkStore.setFlush(flushSync);
 // the takeover still lands where every reader looks. Same defaults as the
 // literal in settings.js; the parity test pins that.
 const state = {
-  hasApiKey: false,
-  keyLast4: null,
   usernodePubkey: null,
   walletLinkEnabled: false,
   locale: null,
@@ -191,12 +188,6 @@ async function readMe(meDemoQ) {
   return await r.json();
 }
 
-function renderIndicator() {
-  // Published rather than written by id: the dot rides the Profile screen's
-  // account group, which React renders only once profile data lands.
-  window.App?.Visibility?.publish?.('switcher-byok-dot', !!state.hasApiKey);
-}
-
 // Forward a call to the module, once it is in. `open` and `route` are what
 // app.js calls to put the screen up; a viewer who left before the chunk
 // arrived must not have the screen re-entered under whatever they moved to.
@@ -231,8 +222,6 @@ const Facade = {
       const j = await readMe(demoQuery());
       if (!j) return;
       const u = j.user || {};
-      state.hasApiKey = !!u.hasApiKey;
-      state.keyLast4 = u.keyLast4 || null;
       state.usernodePubkey = u.usernodePubkey || null;
       state.walletLinkEnabled = !!u.walletLinkEnabled;
       state.locale = u.locale || null;
@@ -244,7 +233,6 @@ const Facade = {
       const cliAuth = Promise.resolve(u.cliAuthEnabled !== false);
       Facade._cliAuthPromise = cliAuth;
       if (window.Settings && window.Settings !== Facade) window.Settings._cliAuthPromise = cliAuth;
-      renderIndicator();
     } catch { /* offline with no cached answer: the defaults stand, as before */ }
   },
 

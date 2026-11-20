@@ -107,7 +107,6 @@ In the repo's Settings → Secrets and variables → Actions:
   vault rather than generating it during deployment
 - `USERNODE_GITHUB_APP_ID`, `USERNODE_GITHUB_PRIVATE_KEY`
   (single line with literal `\n`), `USERNODE_GITHUB_BOT_TOKEN`
-- `USERNODE_ANTHROPIC_API_KEY` (optional — BYOK covers the rest)
 
 **Variables:**
 - `USERNODE_DOMAIN` — the domain DNS now points at

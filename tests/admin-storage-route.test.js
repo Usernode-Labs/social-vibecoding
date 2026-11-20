@@ -8,7 +8,7 @@
 // Postgres role may do and are full-admin only. The rest is validation and
 // the staging demo branch.
 //
-// Stubbed-pool + real-express pattern, cf. tests/anthropic-credits-route.test.js.
+// Stubbed-pool + real-express pattern.
 // The service underneath is the real one; only its two Postgres seams
 // (db-manager's measurement and role statements) and the notification
 // creator are replaced, by swapping the module exports the service reads

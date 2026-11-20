@@ -1,5 +1,6 @@
-// #30 — Settings (BYOK: bring your own Anthropic API key) — and, since the
-// settings-modal-to-screen conversion, the whole #settings SCREEN.
+// #30 — Settings (it began as the own-Anthropic-key modal, removed in task
+// 2275) — and, since the settings-modal-to-screen conversion, the whole
+// #settings SCREEN.
 //
 // The Settings row in the header drawer is a real anchor to #settings;
 // App.restoreFromHash → App.navigateToSettings mounts #settings-screen and
@@ -206,7 +207,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, locale: null, timeZone: null },
+    state: { usernodePubkey: null, walletLinkEnabled: false, locale: null, timeZone: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -353,12 +354,11 @@
       // and the connectors, into this group and the next: each row is faster
       // to find under a heading that says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
-      // find. OpenRouter follows it — the included key voice input uses —
-      // and the Anthropic key, the one you add when the allowance runs out,
-      // comes last.
+      // find. OpenRouter follows it: the included key voice input uses, or a
+      // key of your own. The Anthropic key part that came last went in task
+      // 2275 (PART_ALIASES sends its old deep link here).
       { key: 'usage', label: 'settings:nav.part.usage', group: 'settings:nav.group.aiModels', page: 'ai' },
       { key: 'openrouter', label: 'settings:nav.part.openrouter', group: 'settings:nav.group.aiModels', page: 'ai' },
-      { key: 'api-key', label: 'settings:nav.part.apiKey', group: 'settings:nav.group.aiModels', page: 'ai' },
 
       // ── Integrations & automation ───────────────────────────────────────
       // Everything about building from outside Homeroom: the chat connectors
@@ -521,7 +521,6 @@
       phones: 'settings:nav.keywords.phones',
       wallet: 'settings:nav.keywords.wallet',
       usage: 'settings:nav.keywords.usage',
-      'api-key': 'settings:nav.keywords.apiKey',
       openrouter: 'settings:nav.keywords.openrouter',
       connectors: 'settings:nav.keywords.connectors',
       cli: 'settings:nav.keywords.cli',
@@ -541,6 +540,12 @@
       'admin-preview': 'settings:nav.keywords.adminPreview',
     },
 
+    // Addresses of parts that are gone, and the page or part each opens
+    // now. #settings/api-key was the Anthropic key part (task 2275 removed
+    // it); links to it still exist in old messages and mail, so it opens the
+    // AI usage & models page instead of falling back to the first page.
+    PART_ALIASES: Object.freeze({ 'api-key': 'ai' }),
+
     DEFAULT_SECTION: 'account',
 
     init() {
@@ -557,8 +562,6 @@
       // without a navigation, and this event is how NativeChrome says so.
       window.addEventListener('usernode:native-session-admission',
         () => this._publishUsernode());
-      document.getElementById('settings-save').addEventListener('click', () => this.save());
-      document.getElementById('settings-remove').addEventListener('click', () => this.remove());
 
       // The static shell is still under the markup-parity migration guard,
       // so provider copy is normalized at runtime while this hidden section
@@ -886,8 +889,6 @@
         const meDemoQ = this._cliTokensDemo() ? '?demo=1' : '';
         const j = await this._readMe(meDemoQ);
         if (!j) return;
-        this.state.hasApiKey = !!j.user?.hasApiKey;
-        this.state.keyLast4 = j.user?.keyLast4 || null;
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.locale = j.user?.locale || null;
@@ -897,7 +898,6 @@
         // (_cliAuthAvailable), so neither order sends a second
         // /api/auth/me; both resolve to the same deployment-constant answer.
         this._cliAuthPromise = Promise.resolve(j.user?.cliAuthEnabled !== false);
-        this._renderIndicator();
         // `walletLinkEnabled` decides whether the Homeroom Wallet row is in
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
@@ -915,8 +915,7 @@
      * it. Returns the parsed body, or null when there is no usable answer.
      *
      * This runs from init(), which a React layout effect fires at document
-     * load on EVERY screen — the byok dot rides the Profile screen, so the
-     * state is genuinely needed before
+     * load on EVERY screen, and the shell reads the state before
      * #settings is ever opened. It just does not need its own request:
      * every field read above is on the same `user` object App.init is
      * fetching 16ms later, and the two were queueing behind each other for
@@ -960,21 +959,13 @@
       return read;
     },
 
-    _renderIndicator() {
-      // Published rather than written by id: the dot rides the Profile
-      // screen's account group, which React renders only once profile data
-      // lands. See App.renderAdminButton for the same move and why.
-      window.App?.Visibility?.publish?.('switcher-byok-dot', !!this.state.hasApiKey);
-    },
-
     isOpen() { return Settings._open; },
 
     // The panes are not in the prerendered document any more: the
     // island mounts them on the screen's first reveal (lib/mount-on-reveal.ts,
     // #settings-section-content ships empty like #admin-section-content).
-    // Everything below open() reads their ids on its next line — _renderBody
-    // dereferences #settings-key-display outright — so the interior has to
-    // exist BEFORE a single pane renders. The bridge mounts it inside
+    // Everything below open() reads their ids on its next line, so the
+    // interior has to exist BEFORE a single pane renders. The bridge mounts it inside
     // flushSync and returns with the nodes in the document; init() runs in
     // that same flush, so the id-bound listeners are live too. Reached by
     // name, not import: a dozen tests run this file as a script in a `vm`.
@@ -989,7 +980,6 @@
     // rendered lazily on first reveal, so its controls are correct whether
     // the viewer lands on it or switches to it later.
     _renderAllSections() {
-      this._renderBody();
       this._refreshSpend();
       this._refreshOpenRouter();
       this._renderLlmGrants();
@@ -1007,15 +997,12 @@
       this._renderExperimentalSection();
       this._renderAdminSection();
       this._renderUsernodeSection();
-      this._clearStatus();
     },
 
     // `section` is the hash's optional second segment (null for bare
-    // #settings). Intentionally do NOT auto-focus the API key field: on
-    // mobile, focusing an input on open immediately pops the on-screen
-    // keyboard, which is jarring when the user just wanted to view
-    // settings. The credits-exhausted banner (#463) deep-links straight to
-    // #settings/api-key instead of asking for a scroll.
+    // #settings). Intentionally do NOT auto-focus any field: on mobile,
+    // focusing an input on open immediately pops the on-screen keyboard,
+    // which is jarring when the user just wanted to view settings.
     // `opts.chrome === false` renders WITHOUT touching the platform
     // header (#979): app.js calls this while #settings-screen is still
     // hidden — invisible, so it may run before the screen transition —
@@ -1290,9 +1277,12 @@
     // address simply is the page (#settings/profile → Account at its top;
     // #settings/password → Account, scrolled to Password). Anything unknown
     // is `{ page: null }`, which every caller treats as "not a valid
-    // section".
+    // section". A retired address (PART_ALIASES) opens where its part went.
     _resolve(key) {
-      const k = key == null ? '' : String(key);
+      const asked = key == null ? '' : String(key);
+      const k = Object.prototype.hasOwnProperty.call(Settings.PART_ALIASES, asked)
+        ? Settings.PART_ALIASES[asked]
+        : asked;
       if (!k) return { page: null, anchor: null };
       const part = Settings.SECTIONS.find((s) => s.key === k);
       if (part) {
@@ -3547,8 +3537,6 @@
       Settings._open = false;
       Settings._pushedFromMenu = false;
       Settings._pendingSection = null;
-      const input = document.getElementById('settings-api-key');
-      if (input) input.value = '';
       this._stopWalletPolling();
       this._clearAlertsTestCountdown();
       this._clearUsernodeAuthStatusRetry();
@@ -3665,43 +3653,23 @@
       }
     },
 
-    _renderBody() {
-      const display = document.getElementById('settings-key-display');
-      const last4 = document.getElementById('settings-key-last4');
-      const removeBtn = document.getElementById('settings-remove');
-      const saveBtn = document.getElementById('settings-save');
-      const input = document.getElementById('settings-api-key');
-
-      if (this.state.hasApiKey) {
-        display.classList.remove('hidden');
-        last4.textContent = this.state.keyLast4 || '••••';
-        removeBtn.classList.remove('hidden');
-        input.placeholder = tr('settings:apiKey.field.replacePlaceholder');
-        saveBtn.textContent = tr('settings:apiKey.button.replace');
-      } else {
-        display.classList.add('hidden');
-        removeBtn.classList.add('hidden');
-        input.placeholder = 'sk-ant-...';
-        saveBtn.textContent = tr('core:common.save');
-      }
-    },
-
-    // #119 — "Today's spend" breakdown in the API-key section. Fetched
-    // fresh on every modal open; the block stays hidden while loading,
-    // on fetch failure, or when no key is saved, so it never shows
-    // stale or irrelevant figures.
+    // #119 — the spend breakdown on the Usage part: what the platform's
+    // allowance paid beside what the viewer's own key paid. Fetched fresh on
+    // every open; the block stays hidden while loading, on fetch failure,
+    // or when nothing was paid on the viewer's own key this week. That is an
+    // app's spend on their own OpenRouter key under a grant that allows it
+    // (an Anthropic key before task 2275).
     //
     // #6493: the platform line is the ONE shared allowance
     // (features/header/ai-credit.js `AiCredit.Budget`), so it cannot
     // disagree with the AI credit row above it. /api/budget is still fetched
-    // for the BYOK figure and the reset boundary only it carries; its
+    // for the own-key figure and the reset boundary only it carries; its
     // snapshot half is adopted into the shared state, and the platform line
     // reads that.
     async _refreshSpend() {
       const block = document.getElementById('settings-spend');
       if (!block) return;
       block.classList.add('hidden');
-      if (!this.state.hasApiKey) return;
       try {
         const AiCredit = window.AiCredit;
         const seq = AiCredit?.Budget?._takeTicket ? AiCredit.Budget._takeTicket() : null;
@@ -3711,6 +3679,7 @@
         if (AiCredit?.Budget?.adopt) {
           AiCredit.Budget.adopt(b, seq == null ? undefined : { seq });
         }
+        if (!(Number(b.byokSpentCents) > 0)) return;
         document.getElementById('settings-spend-byok').textContent =
           '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
         Settings._paintSpendPlatform(b);
@@ -3739,63 +3708,6 @@
         spent: '$' + ((state.spentCents || 0) / 100).toFixed(2),
         limit: '$' + ((state.limitCents || 0) / 100).toFixed(2),
       });
-    },
-
-    _setStatus(text, kind) {
-      const el = document.getElementById('settings-status');
-      paintStatus(el, text, kind);
-    },
-
-    _clearStatus() {
-      const el = document.getElementById('settings-status');
-      el.classList.add('hidden');
-      el.textContent = '';
-    },
-
-    async save() {
-      const input = document.getElementById('settings-api-key');
-      const saveBtn = document.getElementById('settings-save');
-      const removeBtn = document.getElementById('settings-remove');
-      const key = input.value.trim();
-      if (!key) {
-        // When replacing but the user hit Save with an empty input,
-        // that's almost certainly a misclick — treat as a no-op rather
-        // than clearing the existing key.
-        this._setStatus(tr('settings:apiKey.status.pasteFirst'), 'error');
-        return;
-      }
-
-      this._setStatus(tr('settings:apiKey.status.verifying'), 'info');
-      saveBtn.disabled = true;
-      removeBtn.disabled = true;
-
-      try {
-        const r = await fetch('/api/me/api-key', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ key }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this._setStatus(j.error || tr('settings:apiKey.status.saveFailed'), 'error');
-          return;
-        }
-        this.state.hasApiKey = true;
-        this.state.keyLast4 = j.keyLast4 || key.slice(-4);
-        this._renderIndicator();
-        this._setStatus(tr('settings:apiKey.status.saved'), 'ok');
-        input.value = '';
-        this._renderBody();
-        this._refreshSpend();
-        // Settings is a screen now, not a modal — a successful save leaves
-        // the success status visible in place instead of navigating away.
-      } catch (err) {
-        this._setStatus(tr('settings:apiKey.status.networkError', { reason: err.message }), 'error');
-      } finally {
-        saveBtn.disabled = false;
-        removeBtn.disabled = false;
-      }
     },
 
     // ── OpenRouter key ─────────────────────────────────────────
@@ -4497,31 +4409,6 @@
       });
     },
 
-    async remove() {
-      if (!await PlatformUI.confirm({ title: tr('settings:apiKey.remove.confirmTitle'), message: tr('settings:apiKey.remove.confirmMessage'), confirmLabel: tr('settings:apiKey.remove.confirmButton'), danger: true })) return;
-      const removeBtn = document.getElementById('settings-remove');
-      removeBtn.disabled = true;
-      try {
-        const r = await fetch('/api/me/api-key', { method: 'DELETE', credentials: 'same-origin' });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          this._setStatus(j.error || tr('settings:apiKey.remove.failed'), 'error');
-          return;
-        }
-        this.state.hasApiKey = false;
-        this.state.keyLast4 = null;
-        this._renderIndicator();
-        this._renderBody();
-        this._refreshSpend();
-        this._setStatus(tr('settings:apiKey.remove.done'), 'ok');
-        setTimeout(() => this.close(), 700);
-      } catch (err) {
-        this._setStatus(tr('settings:apiKey.remove.networkError', { reason: err.message }), 'error');
-      } finally {
-        removeBtn.disabled = false;
-      }
-    },
-
     // ── App AI permissions (issue #34) ───────────────────────────
     //
     // Fetched fresh on every modal open. Each active grant renders as
@@ -4543,26 +4430,29 @@
       publish({ phase: 'loading', grants: [] });
       const demo = new URLSearchParams(window.location.search).get('demo') === '1';
       let grants = [];
+      let ownKey = false;
       try {
         const r = await fetch('/api/me/llm-grants' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
         if (!r.ok) throw new Error('fetch failed');
         const j = await r.json();
         grants = j.grants || [];
+        ownKey = j.hasOwnKey === true;
       } catch {
         publish({ phase: 'error', grants: [] });
         return;
       }
-      publish({ phase: 'ready', grants: grants.map((g) => this._grantView(g)) });
+      publish({ phase: 'ready', grants: grants.map((g) => this._grantView(g, ownKey)) });
     },
 
     // One grant, as DATA. Every branch the row template used to evaluate
-    // inline is decided here, where `this.state.hasApiKey` and the demo flag
-    // already live — see the note in ./grants-store.js. The money is
+    // inline is decided here, beside the demo flag — see the note in
+    // ./grants-store.js. `ownKey`: the person has an OpenRouter key of their
+    // own (the list's hasOwnKey), which is what "use my own key" spends. The money is
     // pre-formatted for the same reason: cents-to-dollars is this module's
     // rule, not the component's. `appSlug` and `capCents` ride along for
     // Re-enable (#1957): the re-grant endpoint is keyed on slug, and the
     // previous cap is what it restores.
-    _grantView(g) {
+    _grantView(g, ownKey = false) {
       const spentCents = (Number(g.spentTodayCents) || 0) + (Number(g.byokSpentTodayCents) || 0);
       const spent = spentCents / 100;
       const cap = (g.dailyCapCents || 0) / 100;
@@ -4576,7 +4466,7 @@
         cap: cap.toFixed(2),
         capValue: cap.toFixed(2),
         capCents: Number(g.dailyCapCents) || 0,
-        showByok: !!(this.state.hasApiKey || g.allowByok),
+        showByok: !!(ownKey || g.allowByok),
         allowByok: !!g.allowByok,
       };
     },
@@ -6918,7 +6808,6 @@
       repaint(() => Settings._renderNav());
       repaint(() => Settings._syncChrome());
       repaint(() => Settings._normalizeOpenRouterCopy());
-      repaint(() => Settings._renderBody());
       // #6479: the Time zone list's Auto option is written here, not by React.
       repaint(() => Settings._labelTimeZoneAuto());
       repaint(() => { if (Settings._connectors.length) Settings._renderConnectors(); });

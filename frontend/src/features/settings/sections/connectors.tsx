@@ -327,7 +327,7 @@ export function ConnectorsSection() {
         <div className="flex flex-wrap sm:flex-nowrap gap-2 mb-2">
           {/*
               `mono` as a PROP, not className: this field writes `font-mono`
-              before the focus ring, where #settings-api-key writes it after.
+              before the focus ring, where #settings-openrouter-key writes it after.
               Input's variant table exists to reproduce both spellings.
           */}
           <Input

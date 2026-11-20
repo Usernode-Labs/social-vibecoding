@@ -13,12 +13,13 @@ const crypto = require('node:crypto');
 const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { Writable } = require('node:stream');
+const { setImmediate: yieldToConnections } = require('node:timers/promises');
 const { gunzipSync } = require('node:zlib');
 const { Client, Pool } = require('pg');
 const { applySchemaWithLockRetry } = require('../src/db/schema-migrations');
 const { seedReferenceData } = require('../src/db/reference-data');
 const access = require('../src/services/database-role-access');
-const { bootstrap } = require('../scripts/bootstrap-database-roles');
+const { bootstrap, extensionPlans } = require('../scripts/bootstrap-database-roles');
 const { ensureRuntimeGrants, takeWebWorkflowWrites } = require('../src/services/database-role-grants');
 
 // Explicit opt-in: this regression creates cluster roles on TWO disposable
@@ -47,6 +48,41 @@ async function migrateDatabase(url) {
 async function denied(c, sql) {
   await assert.rejects(c.query(sql), e => ['42501', '25006'].includes(e.code));
 }
+
+test('extension inventory bounds connections and closes a failed batch before rejecting', async t => {
+  const databases = ['app_a', 'app_b', 'app_c', 'app_d', 'platform'];
+  const scanned = [];
+  const failure = new Error('fixture extension read failed');
+  let failRead = false;
+  let open = 0;
+  let peak = 0;
+  t.mock.method(Client.prototype, 'connect', async () => { peak = Math.max(peak, ++open); });
+  t.mock.method(Client.prototype, 'end', async () => { open--; });
+  t.mock.method(Client.prototype, 'query', async function (sql) {
+    if (sql.includes('AS version')) return { rows: [{ rolsuper: true, version: 170000 }] };
+    if (sql.startsWith('SET log_statement')) return {};
+    if (sql.includes('FROM pg_catalog.pg_database')) return { rows: databases.map(datname => ({ datname })) };
+    assert.match(sql, /FROM pg_catalog\.pg_extension/);
+    scanned.push(this.database);
+    if (failRead && this.database === 'app_a') throw failure;
+    await yieldToConnections();
+    return { rows: this.database === 'platform' ? [{ extname: 'extra' }] : [] };
+  });
+
+  const url = 'postgres://fixture@localhost/postgres';
+  assert.deepEqual(await extensionPlans(url, 'platform'), [
+    ['pg_stat_statements'], [], ['extra'], ['extra', 'pg_stat_statements'],
+  ]);
+  assert.deepEqual(scanned, databases);
+  assert.equal(peak, 4);
+  assert.equal(open, 0);
+
+  failRead = true;
+  scanned.length = 0;
+  await assert.rejects(extensionPlans(url, 'platform'), error => error === failure);
+  assert.deepEqual(scanned, databases.slice(0, 4));
+  assert.equal(open, 0);
+});
 
 test('database identities preserve runtime, migration and tenant-copy behavior', { timeout: 180000 }, async t => {
   if (!PRIMARY || !PREVIEW) { t.skip('set both DATABASE_ROLES_TEST URLs for disposable PostgreSQL servers'); return; }

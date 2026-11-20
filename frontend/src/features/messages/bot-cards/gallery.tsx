@@ -16,12 +16,13 @@
 // design and More like are then said as the person's own words, which the
 // bot reads like anything they type.
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 
 import { CheckIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { ArtifactFrame } from '../../artifact/frame';
 import { ImageViewer, openInViewer } from '../../image-viewer/image-viewer';
 import { decideCard, sayAsMe, type BotCardProps } from './index';
 
@@ -321,65 +322,42 @@ function emailUrl(slug: string, sessionId: number, id: string): string {
 }
 
 // #6548: an opened email is drawn at its full length inside a box that
-// scrolls, at a phone's or the desktop email's own width. The measured frame
-// gets `allow-same-origin` only so the viewer can read its document's height;
-// nothing in the email runs.
+// scrolls, at a phone's or the desktop email's own width. Both passes are the
+// one frame every page the bot writes is drawn in (../../artifact/frame.tsx):
+// the thumbnail static, the opened viewer in the helper mode, whose own
+// nonce'd helper reports the document's height by message. Nothing in the
+// email runs, and no frame is same-origin with Homeroom.
 const MIN_EMAIL_HEIGHT = 160;
 const FALLBACK_EMAIL_HEIGHT = 2000;
 const EMAIL_WIDTHS = { phone: 'min(375px, 100%)', desktop: '680px' } as const;
 type EmailSize = keyof typeof EMAIL_WIDTHS;
 
-function EmailFrame({ html, title, className, width, height, onHeight }: {
+/** The email's body in the one frame, at `width` and `height`, measured by its helper. */
+function EmailBodyFrame({ html, title, frameRef, width, height, onLoad }: {
   html: string;
   title: string;
-  className?: string;
+  frameRef?: Ref<HTMLIFrameElement>;
   width?: string;
   height?: number;
-  onHeight?: (height: number) => void;
+  onLoad?: () => void;
 }): ReactNode {
-  const frame = useRef<HTMLIFrameElement | null>(null);
-  const measured = typeof onHeight === 'function';
-  const report = useCallback(() => {
-    if (!onHeight) return;
-    let found = 0;
-    try {
-      const doc = frame.current ? frame.current.contentDocument : null;
-      found = doc && doc.documentElement ? doc.documentElement.scrollHeight : 0;
-    } catch {
-      found = 0;
-    }
-    onHeight(found > 0 ? Math.max(MIN_EMAIL_HEIGHT, found) : FALLBACK_EMAIL_HEIGHT);
-  }, [onHeight]);
-  // A width change does not reload the frame, and scrollHeight never reports
-  // less than the frame's current height: shrink to the minimum, then measure
-  // once the new width has been painted.
-  useEffect(() => {
-    if (!measured) return undefined;
-    onHeight?.(MIN_EMAIL_HEIGHT);
-    let second = 0;
-    const first = requestAnimationFrame(() => { second = requestAnimationFrame(report); });
-    return () => {
-      cancelAnimationFrame(first);
-      cancelAnimationFrame(second);
-    };
-  }, [measured, width, onHeight, report]);
   return (
-    <iframe
-      ref={frame}
+    <ArtifactFrame
+      frameRef={frameRef}
+      mode="helper"
+      html={html}
+      site
       title={title}
-      sandbox={measured ? 'allow-same-origin' : ''}
-      srcDoc={html}
-      className={className || 'h-full w-full'}
+      inert
+      scrolling="no"
+      className="mx-auto block"
       style={{
         border: 0,
-        pointerEvents: 'none',
         background: '#f5f5f7',
         ...(width ? { width } : {}),
         ...(height != null ? { height } : {}),
       }}
-      inert={measured ? true : undefined}
-      tabIndex={measured ? -1 : undefined}
-      onLoad={measured ? report : undefined}
+      onLoad={onLoad}
     />
   );
 }
@@ -412,7 +390,17 @@ function EmailTile({ slug, sessionId, picture }: { slug: string; sessionId: numb
         aria-label={t('messages:botCards.gallery.openEmail', { subject: picture.caption })}
         onClick={() => setOpen(true)}
       >
-        {body ? <EmailFrame html={body.html} title={t('messages:botCards.gallery.emailFrame', { subject: picture.caption })} /> : <span className="block h-full w-full" aria-hidden="true" />}
+        {body ? (
+          <ArtifactFrame
+            mode="static"
+            html={body.html}
+            site
+            inert
+            title={title}
+            className="h-full w-full"
+            style={{ border: 0, background: '#f5f5f7' }}
+          />
+        ) : <span className="block h-full w-full" aria-hidden="true" />}
       </button>
       <span className="text-[12px] font-bold text-zinc-500 dark:text-zinc-400">{label}</span>
       <span className="truncate text-[13px]">{picture.caption}</span>
@@ -425,6 +413,19 @@ function EmailTile({ slug, sessionId, picture }: { slug: string; sessionId: numb
 }
 
 function EmailViewer({ body, caption, onClose }: { body: EmailBody; caption: string; onClose: () => void }): ReactNode {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <EmailViewerPanel body={body} caption={caption} onClose={onClose} />,
+    document.body,
+  );
+}
+
+/** The opened email's box: its full length, measured by the frame's helper. */
+export function EmailViewerPanel({ body, caption, onClose }: { body: EmailBody; caption: string; onClose: () => void }): ReactNode {
   const t = useMessages('messages');
   // #6548: the first width follows the viewer's own screen; reopening starts
   // again from the screen.
@@ -433,13 +434,50 @@ function EmailViewer({ body, caption, onClose }: { body: EmailBody; caption: str
       ? 'phone' : 'desktop'
   ));
   const [height, setHeight] = useState(MIN_EMAIL_HEIGHT);
-  const onHeight = useCallback((next: number) => setHeight(next), []);
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const settled = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ask = useCallback(() => {
+    const el = frame.current;
+    if (!el) return;
+    try { el.contentWindow?.postMessage({ __artifact: 'measure', selector: null }, '*'); } catch { /* the frame is gone */ }
+  }, []);
+  // What the frame's helper says: the email's height. Only the frame drawn
+  // here is believed, and a height never goes below the minimum.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return createPortal(
+    const onMessage = (event: MessageEvent) => {
+      const el = frame.current;
+      if (!el || !el.contentWindow || event.source !== el.contentWindow) return;
+      const data = event.data as { __artifact?: string; height?: number } | null;
+      if (!data || typeof data !== 'object' || data.__artifact !== 'size') return;
+      settled.current = true;
+      setHeight(Math.max(MIN_EMAIL_HEIGHT, Math.ceil(Number(data.height) || 0)));
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+  // A frame whose helper never answers still gets a full box.
+  const onLoad = useCallback(() => {
+    settled.current = false;
+    ask();
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => { if (!settled.current) setHeight(FALLBACK_EMAIL_HEIGHT); }, 1500);
+  }, [ask]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  // A width change does not reload the frame, and the height it reported may
+  // not change: shrink to the minimum, then ask again once the new width has
+  // been painted.
+  useEffect(() => {
+    setHeight(MIN_EMAIL_HEIGHT);
+    settled.current = false;
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(ask); });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [size, ask]);
+  return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="w-full max-w-[720px] rounded-2xl bg-white p-4 dark:bg-zinc-900" onClick={(event) => event.stopPropagation()}>
         <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -463,19 +501,18 @@ function EmailViewer({ body, caption, onClose }: { body: EmailBody; caption: str
         </div>
         {body.preheader ? <p className="mb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{body.preheader}</p> : null}
         <div className="max-h-[70vh] overflow-auto rounded-xl">
-          <EmailFrame
+          <EmailBodyFrame
             html={body.html}
             title={t('messages:botCards.gallery.emailFrame', { subject: body.subject || caption })}
-            className="mx-auto block"
+            frameRef={frame}
             width={EMAIL_WIDTHS[size]}
             height={height}
-            onHeight={onHeight}
+            onLoad={onLoad}
           />
         </div>
         <button type="button" className="messages-bot-secondary mt-3" onClick={onClose}>Close</button>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 

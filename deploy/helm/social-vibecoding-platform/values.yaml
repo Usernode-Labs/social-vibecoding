@@ -407,8 +407,6 @@ secrets:
   waitlistGithubClientSecret: ""
   waitlistXClientId: ""
   waitlistXClientSecret: ""
-  anthropicApiKey: ""
-  anthropicAdminKey: ""
   # Optional OpenRouter management credential, supplied through encrypted external values.
   # With the conductor on it is the conductor's alone (its own Secret, see
   # templates/secret.yaml): the web Pods ask it for every managed key.

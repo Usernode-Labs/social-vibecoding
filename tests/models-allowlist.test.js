@@ -76,14 +76,15 @@ test('the platform runs no call of its own on Sonnet 5 (#3579)', () => {
   }
 });
 
-test('the platform LLM default moved to Opus 5.5 (#2818); the Fable fallback is Anthropic\'s default, not a pinned model', () => {
+test('the platform LLM default moved to Opus 5.5 (#2818); there is no Fable fallback to configure', () => {
   const llm = require('../src/services/llm');
   assert.equal(llm.DEFAULT_MODEL, models.DEFAULT_MODEL);
-  // #2818 also pinned the Fable fallback to Opus 5.5, which is not in
-  // claude-fable-5-1's allowed_fallback_models: every Fable request 400'd.
-  assert.equal(llm.FALLBACK_MODE, 'default');
-  assert.equal(llm.FALLBACK_BETA, 'server-side-fallback-2026-07-01');
-  assert.equal(llm.FALLBACK_TARGET_MODEL, undefined, 'no model list to keep valid');
+  // The server-side refusal fallback was a beta of Anthropic's own API. The
+  // platform's calls go to OpenRouter since task 2275, so it is gone, and
+  // with it every setting #2818 once got wrong.
+  for (const gone of ['FALLBACK_MODE', 'FALLBACK_BETA', 'FALLBACK_TARGET_MODEL', 'FABLE_MODEL']) {
+    assert.equal(llm[gone], undefined, gone);
+  }
 });
 
 test('Opus 5.5 is billed at its own $4/$20 rate, and a recorded Opus 5 turn at $5/$25', () => {
