@@ -275,7 +275,7 @@ async function evaluate(pool, config, key, deps = {}) {
         detail: detailToken(key, decision.notify, used, cap),
       });
     }
-    return { decision, inserted };
+    return { decision, inserted, previous: stored };
   });
 
   if (outcome.stale) {
@@ -289,6 +289,12 @@ async function evaluate(pool, config, key, deps = {}) {
   }
   for (const row of outcome.inserted) {
     await Promise.resolve(publish(pool, row)).catch(() => {});
+  }
+  // The admin limits area at the top of Notifications reads this level
+  // (services/platform-limits-view.js): when it moves, an open sheet and the
+  // bell's dot read it again. GitHub's budget is not in the area.
+  if (outcome.previous !== outcome.decision.level && key !== 'github_app') {
+    (deps.limitsChanged || (() => require('./platform-limits-view').changed()))();
   }
   return {
     key, used, cap, level: outcome.decision.level,

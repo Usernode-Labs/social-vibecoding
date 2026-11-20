@@ -437,6 +437,12 @@ async function sweep(pool, config, deps = {}) {
     }
     await writeSetting(pool, KEY_STATE, JSON.stringify(next));
     out.state = next;
+    // The admin limits area (services/platform-limits-view.js) shows this
+    // credit: when its row would change (low, out, unknown, gone), an open
+    // sheet and the bell's dot read it again.
+    (deps.creditMoved || require('./platform-limits-view').creditMoved)(
+      stateOf(state), next, { warnCents, urgentCents },
+    );
   } catch (err) {
     log.warn('openrouter-credit', 'The credit sweep failed', { err: err.message });
   }
@@ -487,6 +493,8 @@ async function noteOutage(pool, { words = null } = {}, deps = {}) {
     const next = outageSet(before, { words });
     if (next !== before) await writeSetting(pool, KEY_STATE, JSON.stringify(next));
     if (!before.outage) {
+      // Out of credit is a row in the admin limits area: show it now.
+      (deps.limitsChanged || (() => require('./platform-limits-view').changed()))();
       await require('./platform-incidents').record(pool, {
         kind: require('./platform-incidents').KINDS.CREDIT_OUT,
         detail: { why: words ? String(words).slice(0, 300) : 'OpenRouter credit ran out' },
