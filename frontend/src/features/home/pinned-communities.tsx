@@ -117,32 +117,48 @@ function logoRandom(slug: string): () => number {
   };
 }
 
-/** How many glows a community's logo is drawn from (app.css `--wip-logo-orb-1` to `-4`). */
+/** How many glows the app slots are drawn from (app.css `--wip-logo-orb-1` to `-4`). */
 const LOGO_ORBS = 4;
 
+/** How many emblems a community's logo is drawn from (app.css `.home-community-emblem`). */
+export const EMBLEM_MARKS = 10;
+/** The kit's four emblem colours: yellow, blue, green and salmon (app.css `--wip-emblem-1` to `-4`). */
+export const EMBLEM_TONES = 4;
+
 /**
- * A COMMUNITY'S OWN LOGO (19 Nov 2026, third drawing, from the picture the
- * product owner supplied), where a look tells a community from the apps it
- * holds: a square of one soft glow, a deep colour at its heart opening to a
- * light one at its edge. Four glows (violet to cyan, green, pink to orange,
- * amber to yellow), and the heart sits a little off the middle, one of nine
- * places. Which glow and where come from the community's slug, so a
- * community always has the same one. It is a drawing, not a stored picture:
- * a community has no logo of its own yet, and its app's icon is the app's
- * (`CommunityApps` draws that one, small).
+ * A community's emblem, 1 to EMBLEM_MARKS, and its colour, 1 to EMBLEM_TONES:
+ * always the same for the same community, because both come from its address.
  */
-export function CommunityLogo({ slug }: { slug: string; name?: string }) {
+export function communityEmblem(slug: string): { mark: number; tone: number } {
   const next = logoRandom(slug);
-  const orb = Math.floor(next() * LOGO_ORBS) + 1;
-  const at = (n: number) => `${30 + Math.floor(n * 3) * 20}%`;
+  return {
+    mark: Math.floor(next() * EMBLEM_MARKS) + 1,
+    tone: Math.floor(next() * EMBLEM_TONES) + 1,
+  };
+}
+
+/**
+ * A COMMUNITY'S OWN LOGO (20 Nov 2026): one of ten simple emblems drawn in
+ * the kit's four colours, yellow, blue, green and salmon: a dot, a ring, a
+ * diamond, a triangle, a half moon, a plus, four dots, three stripes, a star
+ * and an arch. Which emblem and which colour come from the community's
+ * address, so a community always shows the same one. It replaces the soft
+ * glow (19 Nov 2026) and is a drawing, not a stored picture: a community has
+ * no logo of its own yet, and its app's icon is the app's (`CommunityApps`
+ * draws that one, small). It is CSS shapes, never an inline SVG glyph: the
+ * shell's icon set is the only place a glyph is drawn.
+ */
+export function CommunityEmblem({ slug }: { slug: string }) {
+  const { mark, tone } = communityEmblem(slug);
   return (
     <span
-      className={`${FACE} home-community-logo`}
-      data-scene={String(communityScene(slug))}
-      data-orb={String(orb)}
-      style={{ ['--logo-x' as string]: at(next()), ['--logo-y' as string]: at(next()) }}
+      className={`${FACE} home-community-emblem`}
+      data-emblem={String(mark)}
+      data-emblem-tone={String(tone)}
       aria-hidden="true"
-    />
+    >
+      <span className="home-community-emblem-mark" />
+    </span>
   );
 }
 
@@ -162,7 +178,7 @@ export function CommunityApps({ slug, name, iconUrl, iconEmoji }: {
       <span className="app-icon-tile home-community-app" data-icon={appIconKind(app as any)}>
         <AppIconContent app={app as any} />
       </span>
-      {/* The places for the apps to come wear the two glows after the community's own (CommunityLogo), so the three differ. */}
+      {/* The places for the apps to come wear the two glows after the community's own (CommunityApps' orb), so the three differ. */}
       <span className="home-community-app-slot" data-orb={String((orb % LOGO_ORBS) + 1)} />
       <span className="home-community-app-slot" data-orb={String(((orb + 1) % LOGO_ORBS) + 1)} />
     </span>
@@ -198,7 +214,7 @@ export function PinTile({ pin, votes, editing, faded = false, detail, community 
           stacking context a disc's own z-index cannot leave. */}
       <span className={editing ? `${FACE_WRAP} ${WIGGLE}` : FACE_WRAP}>
         {community
-          ? <CommunityLogo slug={pin.slug} name={pin.name} />
+          ? <CommunityEmblem slug={pin.slug} />
           : <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />}
         {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
         {editing && onUnpin ? (

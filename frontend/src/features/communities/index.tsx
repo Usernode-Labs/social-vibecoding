@@ -3,8 +3,11 @@
  *
  * The communities you are in, in two groups: the ones you PINNED, in your
  * order, and the others you have JOINED. Each is a tile that opens its hub.
- * Then a Discover card, whose button opens Home at Communities to join,
- * where the public communities you are not in are listed.
+ * The standard look and Standard (WIP) draw the brand kit's page (a shelf of
+ * pinned cards with emblems, compact Joined rows, Communities to join under
+ * them); every other look then adds a Discover card, whose button opens Home
+ * at Communities to join, where the public communities you are not in are
+ * listed.
  *
  * One Home (#6361) had retired the Communities screen and listed your
  * communities on Home, as Pinned communities with an All communities tile.
@@ -26,14 +29,16 @@
  *                        pinned. While editing, each takes a + that pins it.
  *   Needs you            the tile that opens Needs you (`#needs`), first in
  *                        Pinned, while a vote waits. Only in a look whose Home
- *                        has no Needs you card (Standard and the frame's
- *                        looks): Standard (WIP) and the brand look say it on
- *                        Home.
- *   New community        the create flow. In Standard (WIP) and the brand
- *                        look it is the filled button beside the search field
- *                        from 768px, as New project is on Home; everywhere
- *                        else, and on a phone, the last tile of Joined.
- *   Discover             the way to Home's Communities to join.
+ *                        has no Needs you card; the standard look has had that
+ *                        card since 20 Nov 2026, so only the frame's looks draw
+ *                        the tile now.
+ *   New community        the create flow. In the standard look, Standard (WIP)
+ *                        and the brand look it is the filled button beside the
+ *                        search field at every width, as New project is on
+ *                        Home; in the frame's looks the last tile of Joined.
+ *   Discover             the way to Home's Communities to join, drawn only
+ *                        where the list is not on this page (the brand and
+ *                        frame's looks).
  *
  * On a wide screen in the brand look each community is a card that says how
  * many members it has, what went live this week and who was active
@@ -56,7 +61,7 @@ import { Button } from '@/components/ui/button';
 import { PlusIcon, SearchIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { useSkin } from '../../lib/skin';
+import { isKitHome, useSkin } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
@@ -113,17 +118,21 @@ export function CommunitiesScreen() {
   const needs = Math.max(0, Number(badgeNeeds) || 0);
   // The look, read after mount only (useSkin): the prerender knows none.
   const skin = useSkin();
-  const wip = skin === 'wip';
+  // The standard look and Standard (WIP) draw this page with the kit
+  // (lib/skin.ts isKitHome), as they draw Home: the shelf of pinned cards,
+  // compact Joined rows, the fold and Communities to join. The brand look
+  // keeps the standard page's tiles and its own cards. The frame's looks keep
+  // today's page.
+  const kitPage = isKitHome(skin);
   const brand = skin === 'brand';
-  // Standard (WIP) and the brand look draw Home with the kit (../home/wip-kit):
-  // their Home has the Needs you card and New project as a filled button, so
-  // this page takes the same button and leaves the Needs you tile out.
-  const kit = wip || brand;
+  // Every kit page takes the filled New community button and leaves the
+  // Needs you tile out, since Home says Needs you; so does the brand look.
+  const kit = kitPage || brand;
   const wide = useWide();
   // THE CARDS (Drea's review of #6699): in the brand look on a wide screen
   // each community says what is going on there. Read only where it is drawn.
-  // Standard (WIP) says how many members on each tile, at every width it draws a row (app.css).
-  const cards = (brand && wide) || wip;
+  // The kit's page says how many members on each tile, at every width it draws a row (app.css).
+  const cards = (brand && wide) || kitPage;
   const activity = useStoreState(homePinsActivityStore);
   const listKey = `${state.pins.map((p) => p.slug).join(',')}|${state.joined.map((c) => c.slug).join(',')}`;
   useEffect(() => {
@@ -140,7 +149,7 @@ export function CommunitiesScreen() {
   const [directoryFailed, setDirectoryFailed] = useState(false);
   const [directoryAttempt, setDirectoryAttempt] = useState(0);
   useEffect(() => {
-    if (!wip || !shown) return undefined;
+    if (!kitPage || !shown) return undefined;
     let live = true;
     setDirectoryFailed(false);
     void readDirectory(directoryAttempt > 0).then((list) => {
@@ -149,7 +158,7 @@ export function CommunitiesScreen() {
       else { setDirectory(null); setDirectoryFailed(true); }
     });
     return () => { live = false; };
-  }, [wip, shown, directoryAttempt]);
+  }, [kitPage, shown, directoryAttempt]);
   const mine = useMemo(() => new Set([...state.joined.map((c) => c.slug), ...state.pins.map((p) => p.slug)]), [state.joined, state.pins]);
   useEffect(() => { if (q) setEditing(false); }, [q]);
 
@@ -175,13 +184,12 @@ export function CommunitiesScreen() {
   const create = () => { (window as any).App?.showCreateModal?.(); };
   // The Needs you tile, where Home has no card for it (see the header).
   const needsTile = !kit && needs > 0 && !q && !editing;
-  // New community as a tile: where the look has no filled button for it, and
-  // on a phone under every look (app.css hides whichever is not the width's).
-  // Standard (WIP) has the filled button at every width (app.css shows the
+  // New community as a tile: where the look has no filled button for it.
+  // Every kit page has the filled button at every width (app.css shows the
   // search row on a phone too), so it draws no tile.
-  const createTile = offerCreate && !q && !editing && !wip;
+  const createTile = offerCreate && !q && !editing && !kitPage;
   // Folded, a group shows its first rows; a search or an edit shows all of it.
-  const folds = wip && !q && !editing;
+  const folds = kitPage && !q && !editing;
   const pinnedShown = folds && !open.pinned ? pinned.slice(0, FOLD_AT) : pinned;
   const joinedShown = folds && !open.joined ? joined.slice(0, FOLD_AT) : joined;
   /** A group's label: the way to all of it while some are held back, and back again once they are out. */
@@ -220,9 +228,9 @@ export function CommunitiesScreen() {
   return (
     <main ref={screenRef} id="communities-screen" className="hidden flex-1 overflow-y-auto" data-page-bounce="">
       <div id="communities-body" className="home-column communities-page" data-editing={editing ? '' : undefined}>
-        {/* The search row, from 768px (app.css): the field, and in the looks
-            that draw Home with the kit, New community as the page's one
-            filled action at the row's end, as New project is on Home. */}
+        {/* The search row: at every width on a kit page (app.css), from 768px
+            elsewhere. The field, and New community as the page's one filled
+            action at the row's end, as New project is on Home. */}
         <div className="communities-top">
           <div className="relative communities-search">
             <SearchIcon
@@ -257,7 +265,7 @@ export function CommunitiesScreen() {
           <SectionHeading action={editOn === 'pinned' ? edit : null}>
             {groupLabel('pinned', t('communities:page.pinned'), pinned.length)}
           </SectionHeading>
-          <WipCard on={wip}>
+          <WipCard on={kitPage}>
             <div className={GRID}>
               {needsTile ? <NeedsTile count={needs} /> : null}
               {pinnedShown.map((pin) => (
@@ -266,7 +274,7 @@ export function CommunitiesScreen() {
                   pin={pin}
                   votes={state.owed[pin.slug] || 0}
                   editing={editing}
-                  community={wip}
+                  community={kitPage}
                   detail={cards ? activity.bySlug[pin.slug] : undefined}
                   onUnpin={() => { void setHomePin(pin, false, say(pin.name)); }}
                 />
@@ -279,7 +287,7 @@ export function CommunitiesScreen() {
           <SectionHeading action={editOn === 'joined' ? edit : null}>
             {groupLabel('joined', t('communities:page.joined'), joined.length)}
           </SectionHeading>
-          <WipCard on={wip}>
+          <WipCard on={kitPage}>
             <div className={GRID}>
               {joinedShown.map((c) => (
                 <PinTile
@@ -287,7 +295,8 @@ export function CommunitiesScreen() {
                   pin={c}
                   votes={state.owed[c.slug] || 0}
                   editing={false}
-                  community={wip}
+                  // A Joined row wears the project's own icon, not an emblem.
+                  community={false}
                   detail={cards ? activity.bySlug[c.slug] : undefined}
                   onPin={editing ? () => { void setHomePin({ ...c, member: true } as HomePin, true, say(c.name)); } : undefined}
                 />
@@ -329,7 +338,7 @@ export function CommunitiesScreen() {
           <p id="communities-not-saved" className="communities-note" role="status">{t('communities:page.notSaved')}</p>
         ) : null}
 
-        {wip && state.ready ? (
+        {kitPage && state.ready ? (
           <CommunitiesToJoin
             apps={directory}
             failed={directoryFailed}
@@ -341,7 +350,7 @@ export function CommunitiesScreen() {
           />
         ) : null}
         {/* Discover leads to that list on Home; where the list is on this page there is nothing to lead to. */}
-        {wip ? null : (
+        {kitPage ? null : (
           <section id="communities-discover-section" className="px-3">
             <SectionHeading>{t('communities:page.discover.heading')}</SectionHeading>
             <div className="communities-discover">
@@ -349,27 +358,20 @@ export function CommunitiesScreen() {
                 <b>{t('communities:page.discover.title')}</b>
                 {t('communities:page.discover.text')}
               </p>
-              {/* Standard (WIP): the kit's filled action. Elsewhere the shell's filled pill (the brand look draws it as its sun pill). */}
-              {wip ? (
-                <WipCta id="communities-discover-btn" glyph={false} onClick={discover}>
-                  <SearchIcon className="wip-cta-glyph" aria-hidden="true" />
-                  {t('communities:page.discover.button')}
-                </WipCta>
-              ) : (
-                <Button
-                  type="button"
-                  id="communities-discover-btn"
-                  layout="iconRow"
-                  variant="pillAccent"
-                  size="default"
-                  ink="solid"
-                  className="communities-discover-btn shrink-0 min-h-[44px]"
-                  onClick={discover}
-                >
-                  <SearchIcon className="w-[18px] h-[18px]" aria-hidden="true" />
-                  {t('communities:page.discover.button')}
-                </Button>
-              )}
+              {/* The shell's filled pill (the brand look draws it as its sun pill). */}
+              <Button
+                type="button"
+                id="communities-discover-btn"
+                layout="iconRow"
+                variant="pillAccent"
+                size="default"
+                ink="solid"
+                className="communities-discover-btn shrink-0 min-h-[44px]"
+                onClick={discover}
+              >
+                <SearchIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+                {t('communities:page.discover.button')}
+              </Button>
             </div>
           </section>
         )}

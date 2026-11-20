@@ -101,15 +101,15 @@
   },
   "page.showAll_one": {
     "text": "Show all {{count}} community",
-    "description": "Accessible label of the heading over a group of communities (Pinned or Joined) on the Communities page, in the Standard (WIP) look, while the group is folded to its first rows: pressing the heading unfolds the rest. {{count}} is how many communities the group has."
+    "description": "The link at the right end of the label over a group of communities (Pinned or Joined) on the Communities page, in the standard look and the Homeroom brand kit (WIP) look, while the group is folded to its first rows: the link at the right end of the label unfolds the rest. {{count}} is how many communities the group has."
   },
   "page.showAll_other": {
     "text": "Show all {{count}} communities",
-    "description": "Accessible label of the heading over a group of communities (Pinned or Joined) on the Communities page, in the Standard (WIP) look, while the group is folded to its first rows: pressing the heading unfolds the rest. {{count}} is how many communities the group has."
+    "description": "The link at the right end of the label over a group of communities (Pinned or Joined) on the Communities page, in the standard look and the Homeroom brand kit (WIP) look, while the group is folded to its first rows: the link at the right end of the label unfolds the rest. {{count}} is how many communities the group has."
   },
   "page.showLess": {
     "text": "Show less",
-    "description": "Accessible label of the heading over a group of communities (Pinned or Joined) on the Communities page, in the Standard (WIP) look, once the group has been unfolded: pressing the heading folds it back to its first rows."
+    "description": "The link at the right end of the label over a group of communities (Pinned or Joined) on the Communities page, in the standard look and the Homeroom brand kit (WIP) look, once the group has been unfolded: the link at the right end of the label folds the group back to its first rows."
   },
   "page.editLabel": {
     "text": "Edit your pinned communities",

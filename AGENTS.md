@@ -330,10 +330,12 @@ is no replay plan to write and nothing to verify locally.
   (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`: a
   tile opens the hub), then **Joined** (the ones you are in and have not
   pinned; Edit lets each be pinned), New community, which starts a project,
-  and a Discover card whose button opens Home at Communities to join. Its
+  and, in the looks without the kit's page, a Discover card whose button
+  opens Home at Communities to join (the standard look and its brand kit
+  (WIP) drawing list Communities to join under Joined instead). Its
   Needs you tile, drawn while a vote waits, opens Needs you, in a look whose
-  Home has no Needs you card (Standard (WIP) and the brand look have the
-  card on Home). The two pins are separate acts
+  Home has no Needs you card (the standard look has had the card since
+  20 Nov 2026). The two pins are separate acts
   and neither joins: you may pin what you have not joined. Joining pins the
   community (`communities.join`); leaving unpins it and keeps the app's
   pin. Signed out, the landing is the guest's Home, its pins kept on the

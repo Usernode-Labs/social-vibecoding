@@ -538,14 +538,14 @@ test('the declared Create checks select New project on Home and New community on
   // New community left Home with Pinned communities: it is the last tile of
   // Joined on the Communities tab's page (`#communities`), and the locked
   // treatment is checked there.
-  const community = creates.find((t) => t.path === '/?demo=1&shot=create-disabled#communities');
+  const community = creates.find((t) => t.path === '/?demo=1&shot=create-disabled&skin=brand#communities');
   assert.ok(community, 'the locked treatment is checked on the Communities page');
   assert.match(community.expectSelector,
     /#communities-screen:not\(\.hidden\) #communities-joined-section:not\(\[hidden\]\) #communities-new-community\[data-panel-slot="create"\]\[data-create-enabled="false"\]/);
   assert.match(community.expectSelector, /:last-child/);
   assert.equal(community.expectText, 'New community');
   // The page's own check holds the tile in Joined too.
-  const page = creates.find((t) => t.path === '/?demo=1#communities');
+  const page = creates.find((t) => t.path === '/?demo=1&skin=brand#communities');
   assert.ok(page, 'the Communities page\'s check');
   assert.match(page.expectSelector, /:has\(#communities-joined-section #communities-new-community\[data-panel-slot="create"\]\)/);
   // No check selects the tile where it was, in Home's section.

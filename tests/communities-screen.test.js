@@ -61,8 +61,12 @@ test('the page ships hidden, with both groups hidden and empty', () => {
   assert.match(html, /<section id="communities-joined-section" class="px-3" hidden="">/);
   assert.doesNotMatch(html, /data-home-community=/, 'the pins are client data: none of them in the first render');
   assert.doesNotMatch(html, /communities-new-community|communities-needs-tile|communities-new-top/);
-  // Discover needs no data, so it is in the first render.
-  assert.match(section(html, 'communities-discover-section'), new RegExp(message('communities:page.discover.button')));
+  // The standard look draws the kit's page, so Discover (which only the brand
+  // and frame looks draw) is absent from the prerender. It still mounts after
+  // mount in a look that draws it.
+  assert.doesNotMatch(html, /communities-discover-section/);
+  assert.doesNotMatch(read(PAGE), /const wip = skin === 'wip';/, 'Standard is a kit page now');
+  assert.match(read(PAGE), /\{kitPage \? null : \(\s*<section id="communities-discover-section"/);
   // The header names the page, so it has no heading of its own.
   assert.doesNotMatch(html, /<h1/);
   assert.match(read('frontend/src/Shell.tsx'), /<Island name="CommunitiesScreen"><CommunitiesScreen \/><\/Island>/);
@@ -97,7 +101,7 @@ test('#communities routes to the page, which is its tab\'s root; #workshop is re
   assert.match(scope, /export function openCommunitiesPage\(\): void \{[\s\S]*?_forgetWorkshopView[\s\S]*?if \(window\.location\.hash !== '#communities'\) window\.location\.hash = '#communities';\s*\}/);
 });
 
-test('the page draws Pinned, led by Needs you while a vote waits, then Joined, then Discover', () => {
+test('the standard look draws the kit\'s page: a pinned shelf with emblems, Joined rows with app icons, New community above', () => {
   const html = withStores(
     { ready: true, pins: PINS, joined: JOINED, owed: { tide: 2, orchard: 1 } },
     { badgeNeeds: 3 },
@@ -106,32 +110,54 @@ test('the page draws Pinned, led by Needs you while a vote waits, then Joined, t
   const pinned = section(html, 'communities-pinned-section');
   assert.doesNotMatch(pinned.slice(0, pinned.indexOf('>')), /hidden/);
   assert.match(pinned, new RegExp(`>${message('communities:page.pinned')}<`));
-  // The standard look's Home has no Needs you card, so its tile leads here.
-  assert.match(pinned, /<a href="#needs" id="communities-needs-tile"[^>]*data-home-needs="3"/);
-  assert.ok(pinned.indexOf('communities-needs-tile') < pinned.indexOf('data-home-community="tide"'), 'Needs you first');
-  assert.ok(pinned.indexOf('data-home-community="tide"') < pinned.indexOf('data-home-community="garden"'), 'then the pins, in their order');
+  // Home has the Needs you card in this look, so its tile is not drawn here.
+  assert.doesNotMatch(pinned, /communities-needs-tile/);
+  assert.ok(pinned.indexOf('data-home-community="tide"') < pinned.indexOf('data-home-community="garden"'), 'the pins, in their order');
   assert.match(pinned, /data-home-community="tide" data-home-community-pinned=""/);
   assert.match(pinned, /data-home-community-votes="2"/, 'a pinned community says its own votes');
+  assert.match(pinned, /class="app-icon-tile w-14 h-14 shrink-0 rounded-\[16px\] overflow-hidden flex items-center justify-center font-bold text-2xl home-community-emblem" data-emblem="[0-9]+" data-emblem-tone="[0-9]+"/,
+    'a pinned community wears one of the kit\'s emblems, in one of its four colours');
+  assert.doesNotMatch(pinned, /home-community-logo/, 'the soft glow is gone');
   assert.match(pinned, new RegExp(`id="communities-edit"[^>]*aria-label="${message('communities:page.editLabel')}"`), 'Edit rides Pinned');
 
   const joined = section(html, 'communities-joined-section');
   assert.match(joined, new RegExp(`>${message('communities:page.joined')}<`));
   assert.match(joined, /data-home-community="orchard"/, 'in it, not pinned');
   assert.doesNotMatch(joined, /data-home-community="tide"|data-home-community="garden"/, 'a pinned one is not listed twice');
+  assert.doesNotMatch(joined, /home-community-emblem/, 'a Joined row shows the project\'s own icon');
+  assert.match(joined, /class="app-icon-tile w-14 h-14 /, 'its icon face');
   assert.doesNotMatch(joined, /communities-edit/, 'one Edit on the page');
   assert.doesNotMatch(joined, new RegExp(message('home:communities.pinNamed', { community: 'Orchard' })), 'no + until Edit is pressed');
-  assert.match(joined, /id="communities-new-community"[^>]*data-panel-slot="create"/);
-  assert.ok(joined.indexOf('data-home-community="orchard"') < joined.indexOf('communities-new-community'), 'New community is the group\'s last tile');
-  assert.match(joined, new RegExp(`>${message('home:communities.new')}<`));
-  // No filled button in the standard look: it is the kit's, for Standard (WIP) and the brand look.
-  assert.doesNotMatch(html, /communities-new-top/);
-  assert.match(read(PAGE), /const kit = wip \|\| brand;/);
+  assert.doesNotMatch(joined, /communities-new-community/, 'the dashed New community tile is gone');
+
+  assert.match(html, /id="communities-new-top"/, 'New community is the filled button above, on every width');
+  assert.match(read(PAGE), /const kitPage = isKitHome\(skin\);/);
+  assert.match(read(PAGE), /const createTile = offerCreate && !q && !editing && !kitPage;/, 'a kit page draws the button, never the tile');
+  assert.match(read(PAGE), /const kit = kitPage \|\| brand;/);
   assert.match(read(PAGE), /const needsTile = !kit && needs > 0 && !q && !editing;/, 'those looks say Needs you on Home');
 
-  const discover = section(html, 'communities-discover-section');
-  assert.match(discover, new RegExp(message('communities:page.discover.title')));
-  assert.match(discover, /<button type="button" id="communities-discover-btn"/);
-  assert.match(read(PAGE), /win\.Home\?\.showCommunitiesToJoin\) win\.Home\.showCommunitiesToJoin\(\);/, 'it opens Home at Communities to join');
+  // Communities to join is listed under Joined, as on Home; Discover is not drawn.
+  const all = section(html, 'communities-all-section');
+  assert.match(all, /data-home-join-section/, 'the directory section is on the page');
+  assert.ok(html.indexOf('communities-joined-section') < html.indexOf('communities-all-section'), 'under Joined');
+  assert.doesNotMatch(html, /communities-discover-section|communities-discover-btn/);
+  assert.match(read(PAGE), /win\.Home\?\.showCommunitiesToJoin\) win\.Home\.showCommunitiesToJoin\(\);/, 'Discover opens Home at Communities to join');
+});
+
+test('a group folds to its first 12, and its label opens the rest', () => {
+  const many = Array.from({ length: 14 }, (_, i) => ({ slug: `c${i}`, name: `Community ${i}`, iconUrl: null, iconEmoji: null, iconColor: null, member: true }));
+  const html = withStores(
+    { ready: true, pins: many, joined: [], owed: {} },
+    { badgeNeeds: 0 },
+    (mod) => renderToHtml(createElement(mod.CommunitiesScreen, {})),
+  );
+  const pinned = section(html, 'communities-pinned-section');
+  assert.equal((pinned.match(/data-home-community="/g) || []).length, 12, 'the first 12');
+  assert.match(pinned, new RegExp(`id="communities-pinned-all"[^>]*aria-label="${message('communities:page.showAll', { count: 14 })}"`));
+  assert.match(read(PAGE), /const FOLD_AT = 12;/);
+  assert.match(read(PAGE), /const folds = kitPage && !q && !editing;/, 'a search or an edit shows all of a group');
+  assert.match(read(PAGE), /<WipHeadMore id=\{`communities-\$\{key\}-all`\} direction="down" expanded=\{false\} label=\{t\('communities:page\.showAll', \{ count \}\)\}/);
+  assert.match(read(PAGE), /<WipHeadMore id=\{`communities-\$\{key\}-less`\} direction="up" expanded label=\{t\('communities:page\.showLess'\)\}/);
 });
 
 test('a quiet account: no Needs you tile, Edit on Joined with nothing pinned, and words when there is nothing at all', () => {
@@ -150,7 +176,7 @@ test('a quiet account: no Needs you tile, Edit on Joined with nothing pinned, an
   );
   assert.match(none, new RegExp(`<p id="communities-empty"[^>]*>${message('communities:page.empty')}</p>`));
   assert.doesNotMatch(none, /communities-edit/, 'nothing to edit');
-  assert.match(section(none, 'communities-joined-section'), /communities-new-community/, 'New community is still offered');
+  assert.match(none, /communities-new-top/, 'New community is still offered, as the filled button');
 });
 
 test('Home lists none of your communities until you search, and then finds them', () => {
@@ -174,6 +200,21 @@ test('Home lists none of your communities until you search, and then finds them'
   assert.match(src, /const unwire = wireHomePins\(moved\);/);
 });
 
+test('a community\'s emblem is the same every time, and within the ten marks and four colours', () => {
+  const mod = loadTsx('frontend/src/features/home/pinned-communities.tsx');
+  assert.equal(mod.EMBLEM_MARKS, 10);
+  assert.equal(mod.EMBLEM_TONES, 4);
+  const tide = mod.communityEmblem('tide');
+  assert.deepEqual(mod.communityEmblem('tide'), tide, 'the same community, the same emblem');
+  for (const slug of ['tide', 'garden', 'orchard', 'book-swap', 'c0', 'zzz']) {
+    const e = mod.communityEmblem(slug);
+    assert.ok(e.mark >= 1 && e.mark <= 10, `${slug}: mark within 1..10`);
+    assert.ok(e.tone >= 1 && e.tone <= 4, `${slug}: tone within 1..4`);
+  }
+  const marks = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'].map((s) => mod.communityEmblem(s).mark);
+  assert.ok(new Set(marks).size > 1, 'two different addresses can differ');
+});
+
 test('the page\'s words are in the catalog, and say nothing of pinning to Home', () => {
   assert.equal(message('communities:page.pinned'), 'Pinned');
   assert.equal(message('communities:page.joined'), 'Joined');
@@ -185,25 +226,19 @@ test('the page\'s words are in the catalog, and say nothing of pinning to Home',
   assert.equal(message('home:membership.joinedPinned', { community: 'Orchard' }), 'Joined Orchard · pinned to Communities');
 });
 
-test('Standard (WIP) draws the page as Home is: its ground, cards with members and the week from 1024px, the kit\'s filled actions', () => {
+test('the standard look draws the page as Home is: its typeface, the short search row on a phone too, and Communities to join under Joined', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
   const page = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'communities', 'index.tsx'), 'utf8');
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \{\s*background-color: var\(--wip-page-bg-communities\);/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.home-column \{ max-width: none; \}/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \{\s*grid-template-columns: repeat\(var\(--wip-cols\), minmax\(0, 1fr\)\);/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \[data-home-community-meta\] \{\s*display: block;/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \[data-home-community-detail\] \{\s*display: flex;/, 'and what happened there this week');
-  assert.match(page, /const cards = \(brand && wide\) \|\| wip;/, 'the members are read under the look at every width');
-  // A group folds to three rows of four; its label unfolds the rest and folds it back.
-  assert.match(page, /const FOLD_AT = 12;/);
-  assert.match(page, /const folds = wip && !q && !editing;/, 'a search or an edit shows all of a group');
-  assert.match(page, /<WipHeadMore id=\{`communities-\$\{key\}-all`\} direction="down" expanded=\{false\} label=\{t\('communities:page\.showAll', \{ count \}\)\}/);
-  assert.match(page, /<WipHeadMore id=\{`communities-\$\{key\}-less`\} direction="up" expanded label=\{t\('communities:page\.showLess'\)\}/);
+  // The kit's page is the standard look's too; only its own ground stays Standard (WIP)'s.
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \{\s*font-family: var\(--wip-font\);/);
+  assert.match(css, /html\[data-skin-wip\] #communities-screen \{ background-color: var\(--wip-page-bg-communities\); \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \{\s*grid-template-columns: repeat\(var\(--wip-cols\), minmax\(0, 1fr\)\);/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \[data-home-community-meta\] \{\s*display: block;/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \[data-home-community-detail\] \{\s*display: flex;/, 'and what happened there this week');
+  assert.match(page, /const cards = \(brand && wide\) \|\| kitPage;/, 'the members are read at every width the kit page draws');
   // Every community there is to join is listed under Joined, by Home's own section under ids of its own.
   assert.match(page, /ids=\{\{ section: 'communities-all-section', featured: 'communities-all-featured-label' \}\}/);
-  assert.match(page, /\{wip \? null : \(\s*<section id="communities-discover-section"/, 'Discover leads to that list, so it is not drawn where the list is');
-  assert.match(css, /html\[data-skin-wip\] #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
-  assert.match(page, /<WipCta id="communities-discover-btn" glyph=\{false\} onClick=\{discover\}>/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
 });

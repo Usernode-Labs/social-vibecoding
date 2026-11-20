@@ -35,6 +35,8 @@ const WIP_HIDES = [
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
   'html:not([data-skin]) #app-list .app-card-opened',
+  // Under 1024px a pinned community's card is its band, its emblem and its name (asked 20 Nov 2026).
+  'html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community] :is([data-home-community-meta], [data-home-community-desc], [data-home-community-detail], .home-community-apps)',
 ];
 
 /**
@@ -214,7 +216,7 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
       assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|#home-new-project-top/, `"${one}" leaves the admin console alone`);
+      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.(?:rf-vrow|gc-vote-btn|rf-pair|rf-morph|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
     }
   }
   // Colours are written in the token rules alone, and every token a rule reads is declared there.
@@ -243,6 +245,22 @@ test('nothing of the standard look is hidden under it but what WIP_HIDES lists',
     .map((r) => r.selector);
   assert.deepEqual(hidden.sort(), [...WIP_HIDES].sort(),
     'a section the look stops displaying is a decision: add it to WIP_HIDES with its reason');
+});
+
+test('the Communities page: the kit\'s page, its emblems and the vote screen\'s buttons', () => {
+  const css = read('public', 'css', 'app.css');
+  assert.equal((css.match(/html\[data-skin-wip\] #communities-/g) || []).length, 1,
+    'only the page\'s own ground stays Standard (WIP)\'s; every other rule is the two looks\'');
+  // Ten emblems in the kit's four colours, drawn once, as tokens.
+  assert.match(css, /--wip-emblem-1: #ffee6f;[\s\S]*--wip-emblem-2: #3090e1;[\s\S]*--wip-emblem-3: #a9cf97;[\s\S]*--wip-emblem-4: #ff9c8a;/);
+  assert.match(css, /\.home-community-emblem\[data-emblem-tone="4"\] \{ --wip-emblem-bg: var\(--wip-emblem-4\); \}/);
+  assert.match(css, /\.home-community-emblem\[data-emblem="10"\] \.home-community-emblem-mark \{/);
+  assert.doesNotMatch(css, /\.home-community-logo|--wip-logo-soft-/, 'the soft glow is gone');
+  // The vote screen's Yes and No, Skip and Next, and Resume are Sticker buttons.
+  assert.match(css, /html:not\(\[data-skin\]\) \.rf-pair \.rf-pair-btn\[data-rf-vote="yes"\] \{ background: var\(--wip-btn-yes-bg\); \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) \.rf-pair \.rf-pair-btn\[data-rf-vote="no"\] \{ background: var\(--wip-btn-no-bg\); \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) \.rf-morph\[data-rf-morph="next"\] \{[^}]*background: var\(--wip-btn-1-bg\);/);
+  assert.match(css, /html:not\(\[data-skin\]\) \.platform-parked-pill \{[^}]*background: var\(--wip-btn-1-bg\);/);
 });
 
 test('Home places what it does not name last, so a new standard section is drawn', () => {
