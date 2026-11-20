@@ -720,7 +720,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       if (barRef.current && !barRef.current.hasAttribute('data-open')) foldedBar.current = barRef.current.getBoundingClientRect().height;
       const bar = foldedBar.current;
       const h = (Number.isFinite(max) && max > 0 ? max : pr.height) - bar - safe;
-      setSize({ w: Math.min(COLUMN, pr.width), h });
+      // Beside its details the change has a wider column of its own (app.css `--wip-needs-main`): the stage's own width.
+      const stageW = beside && stageRef.current ? stageRef.current.getBoundingClientRect().width : 0;
+      setSize({ w: stageW > 0 ? stageW : Math.min(COLUMN, pr.width), h });
     };
     measure();
     // Again once what is above it has settled (a project's header and tabs
@@ -737,7 +739,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       window.removeEventListener('resize', measure);
       if (seen) seen.disconnect();
     };
-  }, [open]);
+  }, [open, beside]);
 
   // The run comes up in the pane: the page fades in.
   useLayoutEffect(() => {
