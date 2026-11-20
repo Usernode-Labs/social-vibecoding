@@ -284,6 +284,14 @@ const POST_PLAN = 'Post it as a plan';
 const NOT_YET = 'Not yet';
 const NEW_REQUEST = 'New request';
 const ADD_TO_EXISTING = 'Add to an existing request…';
+// 20 Nov 2026 (live-draft review, C): the answers under this thread's live
+// draft offered for a vote, or its proposal offered the changes made since.
+const PROPOSE = 'Propose';
+const UPDATE_PROPOSAL = 'Update proposal';
+// The cards whose yes is a tap (or a reply quoting the card with its words),
+// never a plain "yes" typed under the reply (decideTyped): Update proposal
+// clears the votes.
+const DRAFT_OFFER_KINDS = new Set(['propose_draft', 'update_draft_proposal']);
 // The answers under each kind of offer (bot_cards.kind), the
 // one that does it first.
 // The bring-a-friend nudge's card (homeroom-bot-dm.js INVITE_NUDGE_KIND,
@@ -303,6 +311,9 @@ const OFFER_ANSWERS = Object.freeze({
   // card's own words name the request (designPlanAnswers); these are what a
   // client that knows no better reads.
   post_design: Object.freeze([POST_PLAN, NOT_YET]),
+  // 20 Nov 2026 (live-draft review, C): this thread's live draft, at a tap.
+  propose_draft: Object.freeze([PROPOSE, NOT_YET]),
+  update_draft_proposal: Object.freeze([UPDATE_PROPOSAL, NOT_YET]),
 });
 
 /**
@@ -572,9 +583,19 @@ function draftThreadLines(liveDraft, { refused = null, design = null, showing = 
       '  tap Update proposal in the preview\'s header, which clears the proposal\'s votes and runs its checks again.',
       '  Say that once, the first time you change the draft after it was proposed. You never update or propose it',
       '  yourself.',
+      // 20 Nov 2026 (live-draft review, C): the tap can be offered under the
+      // reply too; the bot still never does it itself.
+      `- When they want ${pr} to have the changes, offer_propose_draft puts Update proposal under your reply (once`,
+      '  you saved them). Only their tap updates it. Never offer to change a proposal any other way.',
       pending > 0
         ? `- ${pending} ${pending === 1 ? 'change is' : 'changes are'} not in the proposal yet.`
         : '- The proposal has every change in the draft so far.',
+    );
+  } else if (liveDraft.state === 'open') {
+    // C: and Propose, for a draft not put to the vote yet.
+    lines.push(
+      '- When they want the draft put to the project\'s vote, offer_propose_draft puts Propose under your reply. Only',
+      '  their tap proposes it: you never propose it yourself, and never offer to change a proposal any other way.',
     );
   }
   // C: a thread with both an artifact and a draft says which is which, and
@@ -1272,6 +1293,25 @@ const TOOLS = [
         type: 'object',
         properties: {
           project: { type: 'string', description: 'The project, by name or slug, when this thread is not about one yet.' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      // 20 Nov 2026 (live-draft review, C): the bot offered "Apply this
+      // page's look onto PR #142 now" when no tool could do it (thread
+      // 58972, 16:05). Proposing and updating are the person's taps on the
+      // card this puts under the reply (decideDraftProposal), and the turn
+      // offers it only while it has the thread's live draft loaded.
+      name: 'offer_propose_draft',
+      description: 'Put a button under your reply for this thread\'s live draft, with Not yet beside it. While the draft is not up for a vote: Propose, which puts it to the project\'s vote as their change. While it is up for a vote and has changes its proposal does not: Update proposal, which moves those changes into the proposal; its votes are cleared and its checks run again, so say that once. Use it when they say the draft is ready, ask to propose it, or ask for the latest changes to go into the proposal; save any change first (apply_changes). Nothing happens until they tap it, and you never propose or update it yourself, so never say it was proposed or updated. It is the only way to offer either: never offer a button, or promise, to change a proposal any other way. The result says which button they see, or why there is none.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'For Propose: the proposal\'s title in a few plain words, when they named it or the change has a clear name. Leave it out to use the latest change\'s summary.' },
         },
         additionalProperties: false,
       },
@@ -3895,6 +3935,7 @@ async function runTool(pool, ctx, name, args) {
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_copy_request': return await offerCopyRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
+      case 'offer_propose_draft': return await offerProposeDraft(pool, ctx, args);
       case 'reply': {
         // #6272: a list the model still wrote into its text becomes buttons.
         const lifted = liftTextSuggestions(String(args.text == null ? '' : args.text), args.suggestions,
@@ -4795,6 +4836,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         const base = baseTools
           .filter((tl) => !own(tl.function.name)
             && !(caps.design && STARTS_ARTIFACT.has(tl.function.name) && (caps.design.fresh || full())))
+          // 20 Nov 2026 (live-draft review, C): Propose and Update proposal
+          // only while this turn has the thread's live draft loaded.
+          .filter((tl) => tl.function.name !== 'offer_propose_draft' || !!caps.draft)
           .map((tl) => {
             if (!caps.design) return tl;
             if (tl.function.name === 'reply') return DESIGN_REPLY_TOOL;
@@ -5030,7 +5074,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // or offered, a draft's change saved), as every surface's turn does.
       const checkNow = async (words) => {
         Object.assign(ctx, caps.design ? caps.design.facts() : {}, caps.draft ? caps.draft.facts() : {});
-        const found = await claims.checkReply(pool, ctx, words);
+        // 20 Nov 2026 (live-draft review, C): what an offer to change a
+        // proposal, in the words or a button, may stand on.
+        ctx.proposalTaps = proposalTapsOf(ctx);
+        const found = await claims.checkReply(pool, ctx, words, { buttons: suggestionLabels(ctx.reply?.suggestions) });
         return caps.design ? caps.design.filterClaims(found, words) : found;
       };
       await runRounds();
@@ -5315,7 +5362,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // closes them once the bot says something newer). #4046, #6404: one set of
   // answers at a time: a Questions card under this reply is the answer set,
   // so the reply's suggestions are dropped rather than stored beside it.
-  const next = toolCard?.type === 'questions' ? [] : suggestionLabels(ctx.reply?.suggestions);
+  // 20 Nov 2026 (live-draft review, C): less a button that offers to change
+  // a proposal nothing in this turn can change (reply-claims.js keptButtons).
+  const next = toolCard?.type === 'questions' ? [] : claims.keptButtons(suggestionLabels(ctx.reply?.suggestions), ctx);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
@@ -5558,6 +5607,26 @@ function postOfferText({ name, issueNumber, revise = false, text = null, draft }
   ].join('\n');
 }
 
+// 20 Nov 2026 (live-draft review, C): this thread's live draft offered for
+// the vote, or its proposal offered the changes made since, as the card's
+// message says it: the reply's words, then what the tap does.
+function draftOfferText({ name, text = null, offer: o }) {
+  const update = o.kind === 'update_draft_proposal';
+  const pr = Number(o.prNumber) > 0 ? `PR #${Number(o.prNumber)}` : 'its proposal';
+  return [
+    text || (update ? `Want ${pr} to have the changes made since it was proposed?` : `Want to put this draft of ${name} to the vote?`),
+    '',
+    update ? `**${name}** · ${pr}: ${o.title}` : `**${name}** · a proposal from this draft: ${o.title}`,
+    ...(o.details ? ['', o.details] : []),
+  ].join('\n');
+}
+
+/** C: the question over the draft card's buttons. */
+function draftOfferQuestion({ name, offer: o }) {
+  if (o.kind !== 'update_draft_proposal') return `Propose this draft of ${name}?`;
+  return `Update ${Number(o.prNumber) > 0 ? `PR #${Number(o.prNumber)}` : 'the proposal'} with the changes since?`;
+}
+
 function closeOfferMeta({ app, name, actionId, issueNumber }) {
   return confirmMeta('close_request', {
     app, name, actionId, question: `Propose closing request #${issueNumber} on ${name}?`,
@@ -5688,7 +5757,11 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // #6019: words from this chat waiting to go public as theirs, on a
   // request (`issueNumber`), or on the change it asks to revise (`sessionId`).
   const post = o.kind === 'post_reply';
-  const kind = withdraw || move || copy || close || post ? o.kind : 'file_request';
+  // 20 Nov 2026 (live-draft review, C): this thread's live draft put to the
+  // vote, or its proposal given the changes since, at their tap
+  // (decideDraftProposal). The card names the draft (args.draftId).
+  const draftAct = DRAFT_OFFER_KINDS.has(o.kind);
+  const kind = withdraw || move || copy || close || post || draftAct ? o.kind : 'file_request';
   // Step 3 (11 Nov 2026): the offer's card, written with its message
   // (dm.sendDm `card`), whose metadata then names it (`actionId`).
   const card = {
@@ -5700,10 +5773,13 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // its card carries the target so a redrawn button says the same.
     ...(move && o.targetAppId ? { targetAppId: Number(o.targetAppId) } : {}),
     ...(move && o.targetName ? { args: { issueNumber: o.issueNumber, targetName: o.targetName, join: !!o.join } } : {}),
+    ...(draftAct ? { args: { draftId: Number(o.draftId), ...(o.proposeTitle ? { title: o.proposeTitle } : {}) } } : {}),
   };
   const moveSvc = require('./homeroom-bot-move');
   const body = post
     ? postOfferText({ name, issueNumber: o.issueNumber, revise: !!o.sessionId, text, draft: o.details })
+    : draftAct
+    ? draftOfferText({ name, text, offer: o })
     : move
     ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details, targetName: o.targetName })
     : copy
@@ -5751,6 +5827,8 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     ...(opened ? { threadRootId: opened.messageId } : {}),
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
+      // C: the proposal Update proposal moves, to open before deciding.
+      : draftAct ? (o.proposalSessionId ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.proposalSessionId) }] : null)
       : move || copy || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
     card,
     metadata: {
@@ -5758,6 +5836,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
         app: o.app, name, actionId: null,
         question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
       })
+        : draftAct ? confirmMeta(o.kind, { app: o.app, name, actionId: null, question: draftOfferQuestion({ name, offer: o }) })
         : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: null, targetName: o.targetName, join: o.join })
         : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: null })
         : close ? closeOfferMeta({ app: o.app, name, actionId: null, issueNumber: o.issueNumber })
@@ -6202,8 +6281,12 @@ async function decideTyped(pool, config, { bot, user, settings, conversationId, 
       ORDER BY a.id DESC LIMIT 4`,
     [user.id, conversationId, OFFER_TYPED_MINUTES],
   );
+  // 20 Nov 2026 (live-draft review, C): a live draft's Propose and Update
+  // proposal are its tap's, never a "yes" typed under a reply that may have
+  // asked something else.
+  const typable = found.filter((a) => !DRAFT_OFFER_KINDS.has(a.kind));
   // A button's words decide only an offer of their own kind.
-  const open = decision.kind ? found.filter((a) => (a.kind || 'file_request') === decision.kind) : found;
+  const open = decision.kind ? typable.filter((a) => (a.kind || 'file_request') === decision.kind) : typable;
   if (open.length !== 1) {
     // Two drafts open: which one is meant is the model's to ask. "File it"
     // with nothing filed yet is said to the model as such.
@@ -6512,6 +6595,9 @@ async function settleOffer(pool, config, {
   if (action.kind === 'post_reply') return decidePost(pool, { bot, user, settings, action, yes, ack, deps: actDeps });
   // 1 Nov 2026 (C2.2): a design posted as a plan, at the person's tap.
   if (action.kind === 'post_design') return decidePostDesign(pool, config, { user, action, yes, ack, key, deps: actDeps });
+  // 20 Nov 2026 (live-draft review, C): this thread's live draft proposed,
+  // or its proposal updated, at their tap.
+  if (DRAFT_OFFER_KINDS.has(action.kind)) return decideDraftProposal(pool, config, { user, action, yes, ack, deps: actDeps });
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
     `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [action.app_id],
@@ -6611,6 +6697,9 @@ const DECLINED_LINES = Object.freeze({
   move_request: 'Left where it is.',
   copy_request: 'Not copied.',
   post_design: 'Not posted yet.',
+  // 20 Nov 2026 (live-draft review, C).
+  propose_draft: 'Not proposed yet.',
+  update_draft_proposal: 'Not updated. The proposal stays as it is.',
 });
 
 /**
@@ -7914,6 +8003,153 @@ async function offerCloseRequest(pool, ctx, args) {
 }
 
 /**
+ * Pure (20 Nov 2026, live-draft review, C): what the reply check reads about
+ * this thread's live draft's proposal (reply-claims.js proposal_action): its
+ * PR while it is up for a vote, and whether Update proposal is a real tap
+ * now: the card this turn put under the reply, or the preview header's,
+ * shown while the draft has changes the proposal lacks (one saved this turn
+ * among them). Every chat turn carries it, draft or not.
+ */
+function proposalTapsOf(ctx) {
+  const offers = [ctx?.offer, ...(ctx?.moreOffers || [])].filter(Boolean);
+  const session = ctx?.caps?.draft || null;
+  const draft = session?.draft || null;
+  const up = require('./live-drafts').proposalOpen(draft) ? Number(draft.proposal_pr_number) || null : null;
+  const lacking = !!up && (Number(draft.pending_edits) > 0 || !!session?.saved?.());
+  return {
+    pr: up,
+    update: offers.some((o) => o.kind === 'update_draft_proposal') || lacking,
+    propose: offers.some((o) => o.kind === 'propose_draft'),
+  };
+}
+
+/**
+ * 20 Nov 2026 (live-draft review, C): offer_propose_draft. Nothing is
+ * proposed or updated here: the card goes under the reply with Propose (a
+ * draft not put to the vote yet) or Update proposal (one whose proposal is up
+ * for a vote and lacks some of its changes), and Not yet, and only a tap does
+ * it (decideDraftProposal), every gate read again then. The draft is read
+ * again now, so a change this turn saved counts.
+ */
+async function offerProposeDraft(pool, ctx, args = {}) {
+  const { user, deps } = ctx;
+  const held = ctx.caps?.draft?.draft;
+  if (!held?.id) return { ok: false, error: 'No live draft is open in this thread, so there is nothing to propose.' };
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL} Nothing was offered.` };
+  const liveDrafts = deps?.liveDrafts || require('./live-drafts');
+  const draft = await liveDrafts.byId(pool, held.id, { userId: user.id });
+  if (!liveDrafts.editable(draft)) return { ok: false, error: 'This thread\'s live draft is closed, so there is nothing to propose. Say so.' };
+  const name = draft.app_name || draft.app_slug;
+  const app = { id: Number(draft.app_id), slug: draft.app_slug, name };
+  const pr = Number(draft.proposal_pr_number) > 0 ? Number(draft.proposal_pr_number) : null;
+  const count = (n) => `${n} ${n === 1 ? 'change' : 'changes'}`;
+  let o;
+  if (draft.state === 'open') {
+    const edits = Number(draft.edits) || 0;
+    if (!(edits > 0)) {
+      return { ok: false, error: 'Nothing has changed in the draft yet, so there is nothing to propose. Make and save the change first (apply_changes).' };
+    }
+    const asked = withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ').trim()).slice(0, 120);
+    const latest = (await liveDrafts.editsOf(pool, draft.id).catch(() => [])).slice(-1)[0]?.summary || '';
+    o = {
+      kind: 'propose_draft', app, draftId: Number(draft.id), proposeTitle: asked || null,
+      title: clip(withoutEmDashes(asked || latest || `Changes to ${name}`), MAX_TITLE_CHARS),
+      details: `${count(edits)}. The project's group votes on it, and this draft stays open here for more.`,
+    };
+  } else {
+    const prName = pr ? `PR #${pr}` : 'The proposal';
+    if (!liveDrafts.proposalOpen(draft)) return { ok: false, error: 'This draft\'s proposal is over, so there is nothing to update. Say so.' };
+    const pending = Number(draft.pending_edits) || 0;
+    if (!(pending > 0)) {
+      return { ok: false, error: `${prName} already has every change in the draft, so there is nothing to update. Say so; nothing was offered.` };
+    }
+    if (draft.proposal_status !== 'promoted') return { ok: false, error: `${prName} cannot be updated right now: it may be going live. Say so.` };
+    o = {
+      kind: 'update_draft_proposal', app, draftId: Number(draft.id), prNumber: pr,
+      proposalSessionId: Number(draft.proposal_session_id),
+      title: `${count(pending)} not in it yet`,
+      details: 'Updating it clears its votes and runs its checks again.',
+    };
+  }
+  // Proposing is a member's (the promote route's gate): a tap that would be
+  // refused is never offered.
+  const join = await (deps?.communities || require('./communities')).appNeedsJoin(pool, draft.app_slug, user);
+  if (join) {
+    return { ok: false, code: 'join_required', error: `They need to join ${name} before they can propose to it. They can join it from its page. Nothing was offered.` };
+  }
+  ctx.appIds.add(Number(draft.app_id));
+  if (!addOffer(ctx, o)) return { ok: false, error: SAME_OFFER };
+  const button = o.kind === 'update_draft_proposal' ? UPDATE_PROPOSAL : PROPOSE;
+  return {
+    ok: true,
+    offered: button,
+    shown: o.kind === 'update_draft_proposal'
+      ? `They see ${button} and ${NOT_YET} under your reply. Nothing changes until they tap ${button}, which clears ${pr ? `PR #${pr}'s` : 'the proposal\'s'} votes and runs its checks again: say that once, and never say it was updated.`
+      : `They see ${button} and ${NOT_YET} under your reply. Nothing is proposed until they tap ${button}: never say it was proposed.`,
+  };
+}
+
+// 20 Nov 2026 (live-draft review, C): a refusal of the draft's own gates
+// (live-drafts.js propose, updateProposal) that passes within a minute or
+// so: a preview still starting after the turn's last save, a proposal busy
+// going live, a branch not made yet. The tap's act is tried again by its
+// work (retryAct), its claim kept.
+const DRAFT_TRY_AGAIN = new Set(['preview_building', 'not_started', 'proposal_busy']);
+
+/**
+ * 20 Nov 2026 (live-draft review, C): a tap under this thread's live draft's
+ * card. Propose puts it to the vote (live-drafts.js propose), Update proposal
+ * moves its proposal to the draft's head (updateProposal), each with every
+ * gate read again now: still theirs, still open, changes to put in, a member.
+ * Not yet leaves it as it is. Already done (the preview's own button, or this
+ * act's first try) is said as done.
+ */
+async function decideDraftProposal(pool, config, { user, action, yes, ack, deps = {} }) {
+  const update = action.kind === 'update_draft_proposal';
+  if (!yes) return ack(update ? 'OK, the proposal stays as it is.' : 'OK, not yet. Tell me when it is ready.');
+  const failed = async (error, text) => {
+    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    return ack(text, { failed: true });
+  };
+  const couldNot = update ? 'I couldn\'t update the proposal' : 'I couldn\'t propose it';
+  const draftId = Number(action.args?.draftId);
+  if (!Number.isSafeInteger(draftId) || draftId <= 0) return failed('gone', `${couldNot}: that draft is gone.`);
+  const liveDrafts = deps.liveDrafts || require('./live-drafts');
+  // The person as the propose route sees them: a full admin's caps are an admin's.
+  const { rows: [u] } = await pool.query('SELECT is_admin, admin_readonly FROM users WHERE id = $1', [Number(user.id)]);
+  const who = { ...user, canAdminWrite: !!u?.is_admin && !u?.admin_readonly };
+  let out;
+  try {
+    out = update
+      ? await liveDrafts.updateProposal(pool, config, { user: who, draftId })
+      : await liveDrafts.propose(pool, config, { user: who, draftId, title: action.args?.title || null });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not act on a live draft from a tap', { draftId, update, err: err.message });
+    if (retryAct(err, deps.actKey)) throw err;
+    return failed(err.message, `${couldNot} just now. Try again in a minute.`);
+  }
+  const body = out?.body || {};
+  const proposal = body.draft?.proposal || null;
+  const name = body.draft?.app?.name || 'the project';
+  const pr = Number(proposal?.prNumber) > 0 ? `PR #${Number(proposal.prNumber)}` : null;
+  const objects = proposal?.sessionId && action.app_id
+    ? [{ type: 'proposal', appId: Number(action.app_id), sessionId: Number(proposal.sessionId) }] : [];
+  if (out?.status === 200 && body.ok) {
+    return ack(update
+      ? `Done. ${pr || 'The proposal'} has the draft's changes now. Its votes were cleared and its checks run again.`
+      : `Done. It is going up for a vote on ${name}${pr ? ` as ${pr}` : ''}. The draft stays open here: a change you make now reaches the proposal when you tap Update proposal.`,
+    objects.length ? { objects } : {});
+  }
+  const code = body.code === 'join_required' ? 'join_required' : String(body.error || 'refused');
+  if (!update && code === 'already_proposed') return ack('It is already up for a vote.', objects.length ? { objects } : {});
+  if (update && code === 'nothing_new') return ack('The proposal already has every change in the draft.', objects.length ? { objects } : {});
+  if (DRAFT_TRY_AGAIN.has(code) && deps.actKey) throw Object.assign(new Error(code), { status: 503 });
+  const why = code === 'join_required' ? `you need to be a member of ${body.app?.name || 'that project'} first. You can join it from its page.`
+    : withoutEmDashes(String(body.message || '')).trim() || 'something changed.';
+  return failed(code, `${couldNot}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`);
+}
+
+/**
  * #6019: a tap under words from this private chat waiting to go public.
  * Post it posts them as the person's own, exactly as drafted: on the
  * request's discussion (homeroom-bot-dm.js postOnRequest, which answers the
@@ -8515,6 +8751,12 @@ module.exports = {
   closeGate,
   offerCloseRequest,
   decideClose,
+  // 20 Nov 2026 (live-draft review, C).
+  offerProposeDraft,
+  proposalTapsOf,
+  decideDraftProposal,
+  draftOfferText,
+  DRAFT_OFFER_KINDS,
   offerPost,
   decidePost,
   // #3772, #3769, #3768, #3771

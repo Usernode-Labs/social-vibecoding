@@ -550,6 +550,11 @@
       "id": "thread-artifacts",
       "sha256": "41395b252dbf5b93394ecb9e03da2d8f25e6b5727ad1ab1e235c9fca64cb43d8",
       "schemaSha256": "349c880de302dead31771ef6eb25c7460b09cd724f366fbe007a2c75263e9d92"
+    },
+    {
+      "id": "bot-cards-draft-offers",
+      "sha256": "fa9305d5a65bd1f86c297de24e91da44b73cd3a0a92a70480308126a4cd8da3e",
+      "schemaSha256": "31a9051336203261d90f0775a1a45e60f18c7586c20e93f107afac657bc513bb"
     }
   ]
 }
