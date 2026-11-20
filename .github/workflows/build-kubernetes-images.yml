@@ -34,15 +34,14 @@ jobs:
         with:
           node-version: '22.23.4'
 
-      # Skip builds that already trail the release cadence. The publisher
-      # checks again under the release lock. Read failures build.
+      # Skip revisions already carried by the promoted chart. A newer
+      # build may fail, so every unpublished revision is a fallback.
       - name: Check whether this run can release
         id: behind
         if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_EVERY_MINUTES: '15'
         run: |
           set -uo pipefail
           build() { echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; }
@@ -58,16 +57,9 @@ jobs:
           [[ "$published_sha" =~ ^[a-f0-9]{40}$ ]] || build
           status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$published_sha...$GITHUB_SHA" --jq .status 2>/dev/null || echo unknown)"
           case "$status" in
-            behind|identical) skip "No build: main is at $tip, and the newest release ($published_sha) already contains $GITHUB_SHA." ;;
-            ahead) ;;
+            behind|identical) skip "No build: main is at $tip, and the promoted release ($published_sha) already contains $GITHUB_SHA." ;;
             *) build ;;
           esac
-          merged_at() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq '.commit.committer.date | fromdateiso8601' 2>/dev/null || echo; }
-          this_at="$(merged_at "$GITHUB_SHA")"
-          published_at="$(merged_at "$published_sha")"
-          [[ "$this_at" =~ ^[0-9]+$ && "$published_at" =~ ^[0-9]+$ ]] || build
-          [ $(( this_at - published_at )) -lt $(( RELEASE_EVERY_MINUTES * 60 )) ] || build
-          skip "No build: main is at $tip, whose run releases $GITHUB_SHA, and the newest release ($published_sha) is under $RELEASE_EVERY_MINUTES minutes older, so this run could not release ahead of the tip."
 
       - name: Select release work
         id: release
@@ -326,9 +318,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     permissions:
-      # Reads this workflow's own runs: when the newest release went out, and
-      # whether a dispatched run is queued (see "Check branch tip before
-      # publishing").
+      # Reads sibling builds to find newer verified releases.
       actions: read
       contents: read
       packages: write
@@ -451,132 +441,15 @@ jobs:
           echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
           echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
 
-      # Argo tracks the promoted OCI release. During a burst, an older run
-      # can publish only over an older source revision and lower chart version.
-      # The 15-minute interval batches those runs without starving releases.
-      # The tip waits out the four-minute rollout gap, measured from the
-      # exact promotion step's finish. A newer tip or urgent dispatch ends the wait.
+      # Decide under the publication lock, after image and database checks.
       - name: Check branch tip before publishing
         id: current_head
-        shell: bash
-        # The wait is at most RELEASE_MIN_GAP_MINUTES; this only stops a hung
-        # read from holding the release queue.
-        timeout-minutes: 20
+        timeout-minutes: 8
         env:
           GH_TOKEN: ${{ github.token }}
           CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
-          RELEASE_EVERY_MINUTES: '15'
-          RELEASE_MIN_GAP_MINUTES: '4'
-        run: |
-          set -euo pipefail
-          branch_tip() { git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1; }
-          current_sha="$(branch_tip)"
-          test -n "$current_sha"
-          decide() {
-            echo "publish=$1" >> "$GITHUB_OUTPUT"
-            echo "$2" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          }
-          # base...head: "ahead" when head contains base and more.
-          compare() { gh api "repos/$GITHUB_REPOSITORY/compare/$1...$2" --jq .status 2>/dev/null || echo unknown; }
-          merged_at() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq '.commit.committer.date | fromdateiso8601' 2>/dev/null || echo; }
-          runs="repos/$GITHUB_REPOSITORY/actions/workflows/build-kubernetes-images.yml/runs"
-          gap=$(( RELEASE_MIN_GAP_MINUTES * 60 ))
-
-          newest_release() {
-            read -r published_sha published_version <<< "$(node scripts/live-release.js --metadata)" || return 1
-            [[ "$published_sha" =~ ^[a-f0-9]{40}$ && "$published_version" =~ ^0\.1\.[0-9]+$ ]]
-          }
-          # Read the exact attempt's promotion, even if GitHub still shows
-          # that workflow in progress or a later attempt is running.
-          release_age() {
-            local patch run_id attempt at
-            patch="${published_version##*.}"
-            attempt=$(( patch % 1000 ))
-            run_id="$(gh api "$runs?head_sha=$published_sha&per_page=100" \
-              --jq "[.workflow_runs[] | select(.run_number == $(( patch / 1000 ))) | .id][0] // empty" \
-              2>/dev/null || true)"
-            [[ "$run_id" =~ ^[0-9]+$ && "$attempt" -gt 0 ]] || return 0
-            at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.name == "Publish atomic Helm release") | .steps[] | select(.name == "Promote OCI release tag" and .completed_at != null) | .completed_at | fromdateiso8601][0] // empty' \
-              2>/dev/null || true)"
-            [[ "$at" =~ ^[0-9]+$ ]] || return 0
-            at=$(( $(date +%s) - at ))
-            echo $(( at < 0 ? 0 : at ))
-          }
-
-          # Yield the promotion slot only to a dispatch for this same tip
-          # whose checks already passed and whose release job can take it.
-          dispatched() {
-            local ids id queued
-            ids="$(gh api "$runs?event=workflow_dispatch&head_sha=$GITHUB_SHA&per_page=20" \
-              --jq ".workflow_runs[] | select(.head_branch == \"${GITHUB_REF#refs/heads/}\" and .status != \"completed\" and .run_number > $GITHUB_RUN_NUMBER) | .id" \
-              2>/dev/null || true)"
-            for id in $ids; do
-              [[ "$id" =~ ^[0-9]+$ ]] || continue
-              queued="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
-                --jq '[.jobs[] | select(.name == "Publish atomic Helm release" and (.status == "queued" or .status == "pending" or .status == "waiting"))] | length' \
-                2>/dev/null || true)"
-              [ "$queued" != 1 ] || return 0
-            done
-            return 1
-          }
-
-          if [ "$current_sha" = "$GITHUB_SHA" ]; then
-            publishing="Publishing $GITHUB_SHA, the tip of $GITHUB_REF"
-            newest_release || decide true "$publishing; the newest release could not be read."
-            [ "${published_version##*.}" -lt "${CHART_VERSION##*.}" ] \
-              || decide false "Skipping $GITHUB_SHA: the newest release ($published_version) is numbered at or above $CHART_VERSION."
-            if [ "$published_sha" != "$GITHUB_SHA" ]; then
-              [ "$(compare "$published_sha" "$GITHUB_SHA")" = ahead ] \
-                || decide false "Skipping $GITHUB_SHA: it does not contain the newest release ($published_version, $published_sha)."
-            fi
-            [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] \
-              || decide true "$publishing, at once: it was dispatched by hand."
-            age="$(release_age)"
-            [ -n "$age" ] \
-              || decide true "$publishing; when the newest release ($published_version) went out could not be read."
-            [ "$age" -lt "$gap" ] \
-              || decide true "$publishing: the newest release ($published_version) went out $(( age / 60 )) minutes ago."
-
-            waited_from="$(date +%s)"
-            wait_until=$(( waited_from + gap - age ))
-            echo "The newest release ($published_version) went out $(( age / 60 )) minutes ago. Waiting up to $(( (gap - age + 59) / 60 )) more minutes, until it is $RELEASE_MIN_GAP_MINUTES minutes old. To release now, run this workflow on $GITHUB_REF by hand."
-            while :; do
-              if dispatched; then
-                decide false "Skipping $GITHUB_SHA: a run of this workflow dispatched by hand is queued behind this one, and it publishes $GITHUB_REF without waiting."
-              fi
-              now="$(date +%s)"
-              [ "$now" -lt "$wait_until" ] || break
-              sleep $(( wait_until - now < 30 ? wait_until - now : 30 ))
-              current_sha="$(branch_tip)" && [ -n "$current_sha" ] || current_sha="$GITHUB_SHA"
-              [ "$current_sha" = "$GITHUB_SHA" ] \
-                || decide false "Skipping $GITHUB_SHA: $GITHUB_REF moved to $current_sha while this run waited for the newest release ($published_version) to be $RELEASE_MIN_GAP_MINUTES minutes old. That commit's run can publish once it has built."
-            done
-            decide true "$publishing, after waiting $(( ($(date +%s) - waited_from + 30) / 60 )) minutes for the newest release ($published_version) to be $RELEASE_MIN_GAP_MINUTES minutes old."
-          fi
-          skipping="Skipping $GITHUB_SHA: $GITHUB_REF is now $current_sha"
-          [ "$(compare "$GITHUB_SHA" "$current_sha")" = ahead ] \
-            || decide false "$skipping, which does not contain it."
-
-          newest_release || decide false "$skipping, and the newest release could not be read."
-          [ "$(compare "$published_sha" "$GITHUB_SHA")" = ahead ] \
-            || decide false "$skipping, and the newest release ($published_version, $published_sha) is not older than it."
-          [ "${published_version##*.}" -lt "${CHART_VERSION##*.}" ] \
-            || decide false "$skipping, and the newest release ($published_version) is numbered at or above $CHART_VERSION."
-
-          this_at="$(merged_at "$GITHUB_SHA")"
-          published_at="$(merged_at "$published_sha")"
-          [[ "$this_at" =~ ^[0-9]+$ && "$published_at" =~ ^[0-9]+$ ]] \
-            || decide false "$skipping, and when its revisions were merged could not be read."
-          [ $(( this_at - published_at )) -ge $(( RELEASE_EVERY_MINUTES * 60 )) ] \
-            || decide false "$skipping, and the newest release ($published_version) is less than $RELEASE_EVERY_MINUTES minutes older; a later run releases it."
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
-            age="$(release_age)"
-            [ -z "$age" ] || [ "$age" -ge "$gap" ] \
-              || decide false "$skipping, and the newest release ($published_version) went out $(( age / 60 )) minutes ago, under $RELEASE_MIN_GAP_MINUTES; the tip's run releases it."
-          fi
-          decide true "Publishing $GITHUB_SHA ahead of $GITHUB_REF's tip ($current_sha): the newest release ($published_version, $published_sha) is $(( (this_at - published_at) / 60 )) minutes older."
+          ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
+        run: node scripts/choose-kubernetes-release.js
 
       - name: Log in to GHCR for Helm
         if: steps.current_head.outputs.publish == 'true'

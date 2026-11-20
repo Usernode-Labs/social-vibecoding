@@ -262,7 +262,7 @@ test('release pacing reads the verified config of the promoted chart without pul
     }),
   });
   const config = { appVersion: revision, version, name: 'social-vibecoding-platform' };
-  assert.deepEqual(await liveReleaseMetadata('usernode-labs', lookup(config)), { revision, version });
+  assert.deepEqual(await liveReleaseMetadata('usernode-labs', lookup(config)), { revision, version, digest });
   for (const corrupt of [{ version: '0.1.1550002' }, { appVersion: 'main' }, { name: 'other' }]) {
     assert.equal(await liveReleaseMetadata('usernode-labs', lookup({ ...config, ...corrupt })), null);
   }

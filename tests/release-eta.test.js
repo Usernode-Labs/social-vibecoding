@@ -1,26 +1,7 @@
 // When a merged change of the platform's own app goes live (#4309
 // follow-up).
 //
-// Since #4309 main releases at most once every RELEASE_MIN_GAP_MINUTES (10,
-// and 4 since 10 Oct 2026),
-// and a release also takes its image build and its rollout, so a merge into
-// Homeroom itself read a bare "Going live" for ten to twenty minutes. Every
-// surface now says why and when, in one sentence:
-//
-//   Merged; goes live in the next release (about 8 minutes)
-//   Merged; goes live in the next release (in about a minute)
-//   Merged; going live now
-//   Merged; waiting for a release
-//
-// This file pins the two halves that make it: the words
-// (frontend/src/lib/release-eta.ts) at each boundary, and the estimate
-// (src/services/release-watch.js: estimate, releaseOf, outlook, releasesFor,
-// and the run the drift poller records for it). The surfaces are
-// tests/release-eta-surfaces.test.js.
-//
-// Run with: node --test tests/release-eta.test.js
-
-'use strict';
+// The release estimate uses the build clock and the rollout duration.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -122,20 +103,17 @@ test('the words follow the copy rules: no em dash, no "deploy"', () => {
 
 const ETA = (release) => (release && release.etaAt ? Date.parse(release.etaAt) - NOW : null);
 
-test('the gap pending: the running release went out a minute ago, so the next one is 4 minutes off', () => {
-  // ready = max(released + gap, merged + build) = max(+3, +2); + rollout.
+test('a recent rollout adds no fixed wait to the estimate', () => {
   const release = releaseWatch.estimate({ releasedAt: at(NOW - MIN), newestMergedAt: at(NOW - 3 * MIN) });
   assert.equal(release.state, 'next');
-  assert.equal(ETA(release), 4 * MIN);
-  assert.equal(words.releaseSentence(release, NOW), 'Merged; goes live in the next release (about 4 minutes)');
-  // The staging demo is exactly this.
-  assert.deepEqual(releaseWatch.demoRelease(NOW), release);
-  assert.equal(releaseWatch.RELEASE_MIN_GAP_MS, 4 * MIN);
+  assert.equal(ETA(release), 3 * MIN);
+  assert.equal(words.releaseSentence(release, NOW), 'Merged; goes live in the next release (about 3 minutes)');
+  assert.equal(ETA(releaseWatch.demoRelease(NOW)), 4 * MIN);
   assert.equal(releaseWatch.RELEASE_BUILD_MS, 5 * MIN);
   assert.equal(releaseWatch.RELEASE_ROLLOUT_MS, MIN);
 });
 
-test('the build is the wait when the gap has passed: timed from the merge, or the run\'s own start', () => {
+test('the build is timed from the merge or the run\'s own start', () => {
   const released = at(NOW - 30 * MIN);
   // No run read (or none yet): the merge a minute ago, plus the build, plus the rollout.
   assert.equal(ETA(releaseWatch.estimate({ releasedAt: released, newestMergedAt: at(NOW - MIN) })), 5 * MIN);
@@ -183,9 +161,9 @@ test('a failed run, or a recorded stall, promises nothing', () => {
   assert.equal(ETA(release), 5 * MIN);
 });
 
-test('no Actions access (no run recorded): the merge and the gap alone', () => {
+test('a release without Actions access is timed from the merge', () => {
   const release = releaseWatch.estimate({ releasedAt: at(NOW - MIN), newestMergedAt: at(NOW - 4 * MIN), run: null });
-  assert.equal(ETA(release), 4 * MIN, 'gap: 3 more minutes, then the rollout');
+  assert.equal(ETA(release), 2 * MIN, 'one more minute of build, then the rollout');
   // Nothing at all to time it from: no time, still the next release.
   assert.deepEqual(releaseWatch.estimate({}), { state: 'next', etaAt: null });
 });
@@ -197,8 +175,7 @@ test('releaseOf: a release rolling out now carries what merged before it', () =>
   };
   assert.deepEqual(releaseWatch.releaseOf(view, { mergedAt: at(NOW - 8 * MIN), id: 38 }), { state: 'rolling', etaAt: null });
   assert.deepEqual(releaseWatch.releaseOf(view, { mergedAt: at(NOW - 6 * MIN), id: 40 }), { state: 'rolling', etaAt: null });
-  // Merged after the release's commit: the release after it. With a gap of
-  // four minutes, its build from the newest merge is what it waits for.
+  // A later merge uses the next build's estimate.
   const later = releaseWatch.releaseOf(view, { mergedAt: at(NOW - 30 * 1000), id: 41 });
   assert.equal(later.state, 'next');
   assert.equal(Date.parse(later.etaAt) - NOW, -30 * 1000 + releaseWatch.RELEASE_BUILD_MS + MIN);

@@ -48,7 +48,7 @@ async function liveReleaseMetadata(owner, { connect = connectRegistry } = {}) {
     const config = await registry.config(promoted.configDigest);
     if (config.name !== 'social-vibecoding-platform' || config.version !== promoted.version
         || !REVISION.test(config.appVersion || '')) return null;
-    return { revision: config.appVersion, version: promoted.version };
+    return { revision: config.appVersion, version: promoted.version, digest: promoted.digest };
   } catch {
     return null;
   }

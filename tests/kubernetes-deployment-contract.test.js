@@ -303,7 +303,7 @@ test('every Kubernetes chart release validates its immutable platform image with
   assert.match(validation, /loadShellRelease\('\/app\/public'\)/);
 });
 
-test('Kubernetes workflow retains queued releases, publishes the tip, and never an older revision over a newer one', () => {
+test('Kubernetes workflow retains queued builds and checks readiness under the publication lock', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const release = workflow.slice(workflow.indexOf('\n  release:\n'));
   assert.doesNotMatch(workflow, /^concurrency:/m, 'verified releases must not wait behind unrelated earlier builds');
@@ -318,27 +318,10 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
   assert.match(release,
     /concurrency:\n      group: kubernetes-images-\$\{\{ github\.ref \}\}\n      cancel-in-progress: false\n      queue: max/,
     'the publisher shares a single lock with old workflow revisions');
-  assert.match(release, /git ls-remote --exit-code origin "\$GITHUB_REF"/);
-  assert.match(release, /if \[ "\$current_sha" = "\$GITHUB_SHA" \]; then/);
-  // Behind the tip (5 October: twelve queued runs in a row skipped, so
-  // nothing deployed for an hour and a half), a stable run publishes only
-  // ahead of an older, lower-numbered release, at most every
-  // RELEASE_EVERY_MINUTES. tests/kubernetes-release-publish-rule.test.js runs
-  // the step against every case.
-  assert.match(release, /node scripts\/live-release\.js --metadata/,
-    'the promoted release Argo CD follows, read from the registry');
-  assert.match(release, /compare "\$published_sha" "\$GITHUB_SHA"\)" = ahead/, 'only over an older revision');
-  assert.match(release, /compare "\$GITHUB_SHA" "\$current_sha"\)" = ahead/, 'only a revision the branch still contains');
-  // The tip too (7 October: four rollouts in sixteen minutes) goes out no
-  // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
-  // in the step, re-reading the branch, and a dispatched run never waits.
-  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '4'/);
-  assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
-    'a run dispatched by hand is the way to release at once');
-  assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,
-    'every wait is followed by a fresh read of the branch tip');
+  assert.match(release, /run: node scripts\/choose-kubernetes-release\.js/);
+  assert.match(release, /ARGOCD_REFRESH_TOKEN: \$\{\{ secrets\.ARGOCD_REFRESH_TOKEN \}\}/);
   assert.match(release, /^    permissions:\n(?:      #.*\n)*      actions: read$/m,
-    'the release age is read from this workflow\'s own runs');
+    'the publisher can read the verification jobs of newer releases');
   for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Promote OCI release tag', 'Record atomic release']) {
     assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
   }
@@ -367,7 +350,7 @@ test('Kubernetes workflow retries the chart push before it fails a release (#665
 test('Argo refresh runs separately and only for a published stable chart', () => {
   const release = read('.github/workflows/build-kubernetes-images.yml');
   const refresh = read('.github/workflows/refresh-kubernetes-release.yml');
-  assert.doesNotMatch(release, /ARGOCD_REFRESH_TOKEN|refresh=hard/);
+  assert.doesNotMatch(release, /refresh=hard/);
   assert.match(refresh, /workflows: \[Build Kubernetes images\]\n    branches: \[main\]\n    types: \[completed\]/);
   assert.match(refresh, /workflow_run\.conclusion == 'success'/);
   assert.match(refresh, /workflow_run\.head_repository\.full_name == github\.repository/);
@@ -423,8 +406,8 @@ test('Kubernetes chart preserves both social account-linking credential pairs', 
   ]) {
     assert.match(values, new RegExp(`${provider.value}ClientId: ""`));
     assert.match(values, new RegExp(`${provider.value}ClientSecret: ""`));
-    assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
-    assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \{\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \{\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
     assert.match(readme, new RegExp(`/api/me/${provider.callback}/callback`));
   }
 });

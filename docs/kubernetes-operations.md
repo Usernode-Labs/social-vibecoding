@@ -35,27 +35,19 @@ differs or the result is missing, expired, or unreadable, the release runs
 the two-server role and preview-copy tests. The single-server workflow and
 access tests run on pull requests.
 
-Each stable release rolls the platform, so the workflow spaces rollouts
-during bursts of merges. It runs one push to `main` at a time, and
-"Check branch tip before publishing" decides which runs publish:
+The workflow allows overlapping image builds and serializes publication.
+After the image and PostgreSQL checks pass, the publisher gives the slot
+to a newer verified commit on `main`. It gives a newer build up to 90
+seconds to finish. If that build fails or the wait ends, the verified
+revision holding the slot can publish. After the oldest unpublished
+merge reaches 15 minutes, a verified revision can publish without waiting
+for further builds.
 
-- **Spacing.** A stable release goes out no sooner than
-  `RELEASE_MIN_GAP_MINUTES` (4) after the previous one. The gap is timed
-  from the end of the run that pushed the previous stable chart.
-- **The tip run waits.** The run for `main`'s tip waits inside that step for
-  the rest of the gap, then publishes. A newer merge landing during the wait
-  ends it: the waiting run skips, and the newer merge's run, queued behind it,
-  publishes once built. The newest merge is always released.
-- **Runs behind the tip** publish only when the newest release's revision
-  merged at least `RELEASE_EVERY_MINUTES` (15) before theirs, and they skip
-  inside the gap.
-
-On 7 October 2026 the platform rolled out four times in sixteen minutes
-(21:41:57 to 21:57:49 UTC) while approved proposals merged one after another;
-that is what the gap prevents.
-
-If the age of the previous release cannot be read, the run publishes as it
-did before the gap existed.
+Before a regular promotion, Argo CD must report the current OCI chart
+digest synced and healthy with a successful sync and no pending
+operation. The publisher polls for up to six minutes and fails the run if
+it cannot confirm that rollout. The `release` tag stays on its current
+digest in that case.
 
 **To release at once, for example an urgent fix,** run the workflow on
 `main` by hand:
@@ -64,9 +56,9 @@ did before the gap existed.
 gh workflow run build-kubernetes-images.yml --ref main
 ```
 
-A dispatched run never waits. A run that is waiting when the dispatched run
-is queued behind it skips in its favour, so `main` goes out as soon as the
-dispatched run has built, with one restart.
+A manual run still verifies the image digests and the database and can
+publish while Argo CD is unhealthy. If its checks have completed, an
+automatic run waiting on the same revision gives it the slot.
 
 Argo owns the platform Deployment, database, namespaces, service accounts and
 runtime permissions. The platform owns generated apps, previews, workers and
@@ -99,7 +91,7 @@ a run that succeeded without a rollout, or no run at all is reported after
 so after a burst of merges the newest one's run waits for the others. The
 tip's run may also wait out the release gap above. So a run that has not
 finished is reported only once no run of the workflow on `main` has finished
-for the grace plus `RELEASE_MIN_GAP_MINUTES`. A run that succeeded gives the
+for the grace. A run that succeeded gives the
 rollout its own grace from when it finished. Re-running the failed workflow
 jobs, or the next merge, releases the commit; a build that already carries the recorded commit
 reads as resolved at once, and the poller clears the record on the new build's
