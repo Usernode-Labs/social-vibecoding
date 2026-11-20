@@ -285,14 +285,36 @@ test('Standard (WIP): the board ties a request to the changes made for it, and o
   assert.doesNotMatch(src, /classList|setAttribute\('class'|\.style\./, 'no class or style is written to a row');
   const row2 = read('frontend/src/features/dev-board/workshop/work-row.tsx');
   assert.match(row2, /\{\.\.\.\(board && wipLook && b\.n \? \{\s*'data-ws-noun': b\.noun,\s*'data-ws-num': String\(b\.n\),/);
-  // The Workshop's door opens the board, and the board is by stage alone.
+  // The Workshop's door opens the board under this look alone (the standard look's opens the overview, below), and the board is by stage alone.
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /if \(!wipLook \|\| tab !== 'workshop'\) return;\s*if \(was === 'all' \|\| was === 'bot'\) return;\s*if \(traversed\.current\) \{ traversed\.current = false; return; \}\s*cameFrom\.current = 'all';\s*setTab\('all'\);/);
+  assert.match(ws, /const boardDoor = useLiveSkin\(\) === 'wip';/);
+  assert.match(ws, /if \(!boardDoor \|\| tab !== 'workshop'\) return;\s*if \(was === 'all' \|\| was === 'bot'\) return;\s*if \(traversed\.current\) \{ traversed\.current = false; return; \}\s*cameFrom\.current = 'all';\s*setTab\('all'\);/);
   assert.doesNotMatch(ws, /_setWorkshopGroup|GroupStrip/, 'in every look since request 6708: there is no switch to put on By stage');
   assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
   // Advanced mode is on <html> for the look's one detail kept for it.
   assert.match(read('frontend/src/head.html'), /root\.setAttribute\('data-interface-mode', basic \? 'basic' : 'advanced'\);/);
   assert.match(read('public/css/app.css'), /html:not\(\[data-skin\]\)\[data-interface-mode="basic"\] #dev-kanban \[data-attr-field="category"\] \{ display: none; \}/);
+});
+
+test('The standard look: the Workshop opens on its overview, and the board is the page under it, with its way back (20 Nov 2026)', () => {
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const { isKitHome } = loadTsx('frontend/src/lib/skin.ts');
+  // The standard look draws the kit's board (its ties, its cards), but the door that skips the overview is Standard (WIP)'s.
+  assert.equal(isKitHome('standard'), true);
+  assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
+  assert.match(ws, /const boardDoor = useLiveSkin\(\) === 'wip';/, 'the door reads the look itself, not isKitHome');
+  assert.match(ws, /\}, \[tab, boardDoor\]\);/, 'and nothing else moves the Workshop on to All items');
+  // The board shows its own head, "‹ All items", in the standard look: the only rules that hide it belong to other looks.
+  const css = read('public/css/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const hiding = [...css.replace(/@media[^{]*\{/g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => /\.dev-ws-pagehead\b/.test(m[1]) && /display:\s*none/.test(m[2]))
+    .flatMap((m) => m[1].split(/,(?![^(]*\))/).map((s) => s.trim()).filter((s) => /\.dev-ws-pagehead\b/.test(s)));
+  assert.ok(hiding.includes('html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead'), 'Standard (WIP) puts it away');
+  for (const one of hiding) assert.match(one, /^html\[data-skin(-wip)?\]/, `"${one}" hides the board's way back in the standard look`);
+  // The overview's declared checks run in the standard look again (#6936 had moved them to the brand look).
+  const overview = JSON.parse(read('dapp.json')).tests.filter((check) => (check.expectSelector || '').includes('[data-ws-part="overview"]'));
+  assert.ok(overview.length >= 3, 'the overview has declared checks');
+  for (const check of overview) assert.doesNotMatch(check.path, /[?&]skin=/, `"${check.name}" runs in the standard look`);
 });
 
 test('Standard (WIP): the menu is the token set\'s own panel, and a pinned project says who is in it', () => {

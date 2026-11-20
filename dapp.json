@@ -2129,13 +2129,13 @@
     },
     {
       "name": "A project's Workshop tab opens on its Overview: All items' four number tiles, under the Overview label",
-      "path": "/?demo=1&ws=workshop&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"overview\"] + [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] + [data-ws-dash-cell=\"votes\"] + [data-ws-dash-cell=\"shipped\"] > b",
       "expectText": "by this time last week"
     },
     {
       "name": "Workshop: Your work is a row under Overview, opening Homeroom bot narrowed to this project, and under it New chat about the project, which opens a new chat with the bot set to it",
-      "path": "/?demo=1&ws=workshop&skin=brand#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"] ~ a[data-ws-desk-new][href=\"#homeroom-bot/new?project=usernode-2d5619\"]",
       "expectText": "New chat about"
     },
@@ -2452,7 +2452,7 @@
     },
     {
       "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417)",
-      "path": "/?demo=1&ws=workshop&q=nothing-matches-this&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
       "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
       "expectText": "All items"
     },
@@ -2510,19 +2510,19 @@
     },
     {
       "name": "What happened lists this week's news as rows, each a link with its dot, under Mark all seen, then a row for each week before it (#2183, #4457)",
-      "path": "/?demo=1&shot=since-visit&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&shot=since-visit&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop [data-ws-happened-head]:has(> [data-ws-since-clear]:enabled) + [data-ws-happened]:has(> [data-ws-this-week] > .dev-ws-hlist > .dev-ws-hrow[data-new] .dev-ws-hrow-link[href*=\"/dev/\"]) > .dev-ws-wlist > button.dev-ws-week[data-ws-week]",
       "expectText": "What happened"
     },
     {
       "name": "What happened with nothing new says so in one line, Mark all seen waits disabled, and this week is still there (#4457)",
-      "path": "/?demo=1&shot=since-seen&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&shot=since-seen&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-happened-head]:has(> button[data-ws-since-clear][disabled]) + [data-ws-happened] > p[data-ws-since-none] + [data-ws-this-week]",
       "expectText": "Nothing new since you were last here."
     },
     {
       "name": "This week's All of this week opens the week as its own page in the Workshop tab, with the way back and its items grouped (#3947, #4457)",
-      "path": "/?demo=1&shot=week-page&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&shot=week-page&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"] .dev-ws-weekpage[data-ws-week-page=\"thisWeek\"] > [data-ws-pagehead]:has(button[data-ws-page-back]) ~ [data-ws-week-group] > .dev-ws-wlist > .dev-ws-wrow",
       "expectText": "This week"
     },
@@ -2552,13 +2552,13 @@
     },
     {
       "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and a Private badge, last on the tab",
-      "path": "/?demo=1&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"] [data-private-badge]",
       "expectText": "Staging demo private request"
     },
     {
       "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then Your work, with no notices panel (#3487, #3528)",
-      "path": "/?demo=1&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-desk]",
       "expectText": "goes live when its checks pass"
     },

@@ -5149,7 +5149,7 @@ test('10 Nov 2026: somebody who has made nothing here is asked who should build,
   // as two declared checks of the demo's Workshop expect (dapp.json).
   assert.match(src, /new URLSearchParams\(window\.location\.search\)\.get\('demo'\) === '1'\) return Promise\.resolve\(null\);\n\s+const read = fetch\(/, 'asked before anything is read');
   const DAPP_CHECKS = JSON.parse(read('dapp.json')).tests;
-  assert.ok(DAPP_CHECKS.some((check) => /\?demo=1&ws=workshop(&skin=brand)?#app\//.test(check.path) && /\[data-ws-dashboard\] \+ \[data-ws-desk\]/.test(check.expectSelector || '')),
+  assert.ok(DAPP_CHECKS.some((check) => /\?demo=1&ws=workshop#app\//.test(check.path) && /\[data-ws-dashboard\] \+ \[data-ws-desk\]/.test(check.expectSelector || '')),
     'the demo Workshop\'s Your work has a declared check');
   assert.match(src, /return \{ show: !closed && !readOnly && firstChangeFor\(desk, made\), close \};/);
   assert.match(read('frontend/src/features/dev-board/workshop/your-work.tsx'),

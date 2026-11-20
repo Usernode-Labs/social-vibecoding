@@ -7664,12 +7664,14 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[d
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc > .rf-desc-by { color: var(--wip-ink-muted); }
 /* THE BOARD (All items), framed as Home and the hub are: on the page's own
    ground with no sheet behind it, under the place's name as a label of the
-   look (both shared with the hub and Needs you, above). The Workshop's door
-   opens the board under this look, so the board has no "‹ All items" line
-   of its own: the place's name is its title. Its toolbar is the look's: the
-   search is Home's field, and the filters are plain pills on the card's
-   ground. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead { display: none; }
+   look (both shared with the hub and Needs you, above). Under Standard
+   (WIP) the Workshop's door opens the board, so there the board has no
+   "‹ All items" line of its own: the place's name is its title. The
+   standard look's door opens the Workshop's overview (asked 20 Nov 2026),
+   so its board keeps the line, its way back up (THE STANDARD LOOK'S BOARD,
+   below). Its toolbar is the look's: the search is Home's field, and the
+   filters are plain pills on the card's ground. */
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead { display: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-actions { padding-inline: 0; padding-top: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar { padding-inline: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban-search {
