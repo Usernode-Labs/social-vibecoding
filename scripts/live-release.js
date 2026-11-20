@@ -31,14 +31,35 @@ function parseReleaseValues(text) {
   return { revision, ...digests };
 }
 
-async function liveRelease(owner, { connect = connectRegistry, run = spawnSync } = {}) {
+async function connectRelease(owner, connect) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(owner || '')) return null;
+  const repository = `${owner}/charts/social-vibecoding-platform`;
+  const registry = await connect(repository);
+  const promoted = await registry.manifest('release');
+  if (!promoted || !DIGEST.test(promoted.digest)) return null;
+  return { repository, registry, promoted };
+}
+
+async function liveReleaseMetadata(owner, { connect = connectRegistry } = {}) {
+  try {
+    const release = await connectRelease(owner, connect);
+    if (!release) return null;
+    const { registry, promoted } = release;
+    const config = await registry.config(promoted.configDigest);
+    if (config.name !== 'social-vibecoding-platform' || config.version !== promoted.version
+        || !REVISION.test(config.appVersion || '')) return null;
+    return { revision: config.appVersion, version: promoted.version };
+  } catch {
+    return null;
+  }
+}
+
+async function liveRelease(owner, { connect = connectRegistry, run = spawnSync } = {}) {
   let dir;
   try {
-    const repository = `${owner}/charts/social-vibecoding-platform`;
-    const registry = await connect(repository);
-    const promoted = await registry.manifest('release');
-    if (!promoted || !DIGEST.test(promoted.digest)) return null;
+    const release = await connectRelease(owner, connect);
+    if (!release) return null;
+    const { repository, promoted } = release;
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-release-'));
     const pulled = run('helm', ['pull', `oci://ghcr.io/${repository}@${promoted.digest}`,
       '--untar', '--untardir', dir], { encoding: 'utf8', timeout: 120000 });
@@ -53,6 +74,12 @@ async function liveRelease(owner, { connect = connectRegistry, run = spawnSync }
 
 async function main() {
   const owner = String(process.env.GITHUB_REPOSITORY_OWNER || '').toLowerCase();
+  if (process.argv[2] === '--metadata') {
+    const metadata = await liveReleaseMetadata(owner);
+    if (!metadata) process.exitCode = 1;
+    else console.log(`${metadata.revision} ${metadata.version}`);
+    return;
+  }
   const live = await liveRelease(owner);
   if (!live) {
     console.log('::warning title=Live release::Could not read the promoted chart. No release baseline is available.');
@@ -63,4 +90,4 @@ async function main() {
   }
 }
 if (require.main === module) main();
-module.exports = { parseReleaseValues, liveRelease };
+module.exports = { parseReleaseValues, liveRelease, liveReleaseMetadata };

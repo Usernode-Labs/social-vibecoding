@@ -71,7 +71,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import { useLiveSkin, isKitHome } from '../../../lib/skin';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
 import type { ChallengeRowView, ChallengesView } from '../panels-store';
-import { WipCard } from '../wip-kit';
+import { WIP_CARD } from '../wip-kit';
 import { PanelShell, panels } from './ui';
 
 /** A challenge's picture as a column's banner: its illustration on its tone, else its kind's icon. */
@@ -88,14 +88,18 @@ function WipChallengeArt({ row }: { row: ChallengeRowView }) {
 }
 
 /**
- * Standard (WIP) (lib/skin.ts): the challenges as posters in the look's own
- * kit (../wip-kit.tsx, app.css "STANDARD (WIP)"), inside the section's one
- * card and with no card of their own. Each is as wide as one of the look's
- * columns, and the row scrolls sideways for the rest. A poster is the
- * challenge's picture across its top on the picture's own tone, then its
+ * The standard look and Standard (WIP) (lib/skin.ts isKitHome): the
+ * challenges as posters in the look's own kit (../wip-kit.tsx, app.css
+ * "STANDARD (WIP)"), each a card of its own: the kit's card, in the "goal"
+ * colours (`data-tone`, which re-points the tokens its insides read). The
+ * row around them draws no card. Each is as wide as one of the look's
+ * columns, a card gap from the next, so the cards' edges fall on the lines
+ * of the cards above, and the row scrolls sideways for the rest. A poster is
+ * the challenge's picture at its side on the picture's own tone, then its
  * goal, where the viewer stands and what it is worth on one line, and a
  * meter: empty before it is started, the accent as far as it has come, green
- * when it is done.
+ * when it is done. The whole card is the one thing to press: it has no arrow
+ * of its own, and its progress is the meter, not a pill.
  */
 function WipChallengePosters({ view }: { view: ChallengesView }) {
   const t = useMessages('home');
@@ -129,7 +133,7 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
     el.scrollBy({ left: dir * (rtl ? -1 : 1) * el.clientWidth, behavior: 'smooth' });
   };
   return (
-    <WipCard className="wip-posters-card" data-tone="goal" data-wip-challenges="">
+    <div className="wip-posters-box" data-wip-challenges="">
       <div ref={rail} className="wip-posters">
         {view.rows.map((row) => {
           const pct = row.state === 'done' ? 100
@@ -139,7 +143,8 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
             <button
               key={row.id}
               type="button"
-              className="wip-poster"
+              className={`${WIP_CARD} wip-poster`}
+              data-tone="goal"
               data-challenge-id={row.id}
               data-state={row.state}
               onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
@@ -171,7 +176,7 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
           <ChevronRightIcon className="wip-rail-arrow-glyph" strokeWidth="2.4" aria-hidden="true" />
         </button>
       ) : null}
-    </WipCard>
+    </div>
   );
 }
 
