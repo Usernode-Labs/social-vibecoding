@@ -1827,6 +1827,14 @@
     "text": "The thread with Homeroom bot could not be started just now. Try again in a minute.",
     "description": "Toast when \"Work on it with Homeroom bot\" on the confirmation after posting a request could not open its thread with Homeroom bot, the platform's assistant."
   },
+  "feedback.sent.request": {
+    "text": "Open this request",
+    "description": "Quiet button under the other buttons of the confirmation after a request is posted: opens the request's own page, where its status, votes and replies are. \"Open\" is a verb."
+  },
+  "feedback.sent.requestFailed": {
+    "text": "Could not open the request just now. You can find it in your requests.",
+    "description": "Toast when the \"Open this request\" button on the confirmation after posting a request could not open the request's page."
+  },
   "feedback.sent.mine": {
     "text": "See your requests",
     "description": "Small link under the buttons of the confirmation after a request was posted: opens the list of this person's own requests on their profile. It can sit beside an \"Edit\" link, with a dot between them."

@@ -554,6 +554,7 @@ const ADDED_IDS = {
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
   // ── 1 Nov 2026 (threads, one loop: phase B): plan it with the bot ───────
   'feedback-sent-work': 'Work on it with Homeroom bot, the quiet button under Done on the filed-request confirmation: a thread only the person can see, about the request just filed, on the Homeroom bot tab (lib/thread-about.ts); the bot waits for their plan. Ships hidden; the controller shows it when the post says where the request went (`filed`).',
+  'feedback-sent-request': '#6897: Open this request, the quiet button under the other buttons of the filed-request confirmation: opens the request\'s own page, where its status, votes and replies are. Ships hidden; the controller shows it when the post says where the request went (`filed`), so the private request kept only for you, which has no page on the board, never shows it.',
   'feedback-first-work': 'The same Work on it with Homeroom bot on the first-request confirmation, above Done. Ships hidden; shown where the request has a board.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
   'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
