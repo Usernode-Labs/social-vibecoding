@@ -3,7 +3,7 @@
 // The plan job's "Check whether this run can release" and "Select release
 // work" steps, run as they are written in
 // .github/workflows/build-kubernetes-images.yml against stand-ins for git, gh
-// and helm.
+// and the live chart lookup.
 //
 // Runs on main are queued one at a time, and a run whose commit is no longer
 // main's tip used to build all three images and then skip its publish. In a
@@ -52,10 +52,13 @@ value="$(sed -n "s/^$key //p" "$STUB_GH" | tail -n 1)"
 [ -n "$value" ] || exit 1
 echo "$value"
 `,
-  helm: `#!/usr/bin/env bash
-echo "$*" >> "$STUB_HELM_LOG"
-[ -s "$STUB_HELM" ] || exit 1
-cat "$STUB_HELM"
+  node: `#!/usr/bin/env bash
+[ "$*" = 'scripts/live-release.js --metadata' ] || exit 2
+echo "$*" >> "\${STUB_HELM_LOG:-/dev/null}"
+sha="$(sed -n 's/^appVersion: //p' "$STUB_HELM")"
+version="$(sed -n 's/^version: //p' "$STUB_HELM")"
+[ -n "$sha" ] && [ -n "$version" ] || exit 1
+printf '%s %s\\n' "$sha" "$version"
 `,
 };
 
@@ -113,8 +116,8 @@ test('a run behind the tip that could not release ahead of it builds nothing', (
   const r = runBehind({ gh: behind(5) });
   assert.equal(r.skip, true);
   assert.match(r.reason, /^No build: main is at c{40}, whose run releases b{40}, and the newest release \(a{40}\) is under 15 minutes older/);
-  assert.match(r.helmCalls, /show chart oci:\/\/ghcr\.io\/usernode-labs\/charts\/social-vibecoding-platform --version 0\.1\.\*/,
-    'the registry the publish step reads, with the owner lowercased');
+  assert.match(r.helmCalls, /^scripts\/live-release\.js --metadata/m,
+    'the same promoted chart the publisher reads');
 });
 
 test('a run whose commit the newest release already contains builds nothing', () => {

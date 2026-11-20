@@ -2,7 +2,7 @@
 
 // The release job's "Check branch tip before publishing" step, run as it is
 // written in .github/workflows/build-kubernetes-images.yml, against stand-ins
-// for git, gh, helm, date and sleep (a fake clock, so a ten-minute wait takes
+// for git, gh, node, date and sleep (a fake clock, so a ten-minute wait takes
 // no time).
 //
 // On 5 October 2026 merges landed every two to four minutes while each run
@@ -12,7 +12,7 @@
 // publishes too, when the branch contains it, the newest release in the
 // registry is older and numbered below it, and that release's revision was
 // merged at least RELEASE_EVERY_MINUTES before this one. An older revision
-// must never publish over a newer one: Argo CD runs the highest 0.1.* chart.
+// must never publish over a newer one: Argo CD follows the promoted OCI tag.
 //
 // On 7 October the tip published every time it was the tip, and the platform
 // rolled out four times in sixteen minutes (21:41:57 to 21:57:49 UTC). A
@@ -164,9 +164,13 @@ done < "$STUB_GH"
 [ -n "$value" ] || exit 1
 echo "$value"
 `,
-  helm: `#!/usr/bin/env bash
-[ -s "$STUB_HELM" ] || exit 1
-cat "$STUB_HELM"
+  node: `#!/usr/bin/env bash
+[ "$*" = 'scripts/live-release.js --metadata' ] || exit 2
+echo "$*" >> "\${STUB_HELM_LOG:-/dev/null}"
+sha="$(sed -n 's/^appVersion: //p' "$STUB_HELM")"
+version="$(sed -n 's/^version: //p' "$STUB_HELM")"
+[ -n "$sha" ] && [ -n "$version" ] || exit 1
+printf '%s %s\\n' "$sha" "$version"
 `,
   date: `#!/usr/bin/env bash
 if [ "$*" = +%s ]; then cat "$STUB_CLOCK"; else exec /bin/date "$@"; fi
@@ -219,7 +223,6 @@ function run({
       GITHUB_STEP_SUMMARY: files.summary,
       GH_TOKEN: 'test',
       CHART_VERSION: chartVersion,
-      CHART_REF: 'oci://ghcr.io/usernode-labs/charts/social-vibecoding-platform',
       RELEASE_EVERY_MINUTES: String(step.env.RELEASE_EVERY_MINUTES),
       RELEASE_MIN_GAP_MINUTES: String(step.env.RELEASE_MIN_GAP_MINUTES),
       STUB_TIPS: files.tips,
