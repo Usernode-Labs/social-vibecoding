@@ -89,7 +89,7 @@ import { changeHref } from '../../../lib/change-href';
 import { communityScene } from '../../home/pinned-communities';
 import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import type { ApprovalPayload } from '../../who-decides/model';
-import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, type ProjectCover } from '../../guest/project-card';
+import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, ProjectPreview, type ProjectCover } from '../../guest/project-card';
 import type { GuestApp } from '../../guest/guest-data';
 
 type Audience = 'open' | 'invited' | 'solo';
@@ -1319,9 +1319,14 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
     );
   }
 
+  // The project's preview (its picture, with the moving loop over it when it has one) stands beside the hero, in its
+  // row, where the look is the kit's and there is one (asked 20 Nov 2026).
+  const previewBeside = wipLook && !platform && !!(data.cover?.preview_url || data.cover?.illustration_url);
   return (
+    <>
     <section
       ref={cardRef}
+      data-has-preview={previewBeside ? '' : undefined}
       // THE HUB'S HEAD (the hub as the project's summary): the hero leads
       // with what it is, then who is around, and on a wide window what you
       // can do sits across from the name (app.css `.dev-ws-hero-summary`).
@@ -1411,6 +1416,12 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
         </a>
       ) : null}
     </section>
+    {previewBeside ? (
+      <div className="wip-hero-preview" data-ws-hero-preview="">
+        <ProjectPreview app={{ slug, name: displayName, icon_url: iconUrl, icon_emoji: iconEmoji }} cover={data.cover} />
+      </div>
+    ) : null}
+    </>
   );
 }
 
