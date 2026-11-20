@@ -596,6 +596,18 @@ jobs:
             sleep "$delay"
           done
 
+      # The numeric chart remains available for audits and pinned rollbacks.
+      # Only this serialized job advances the tag Argo follows.
+      - name: Promote OCI release tag
+        if: steps.current_head.outputs.publish == 'true'
+        timeout-minutes: 2
+        env:
+          REGISTRY_OWNER: ${{ steps.chart.outputs.registry_owner }}
+          CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: node scripts/promote-kubernetes-chart.js
+
       - name: Record atomic release
         if: steps.current_head.outputs.publish == 'true'
         run: |
