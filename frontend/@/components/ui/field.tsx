@@ -43,7 +43,7 @@ function SectionHeading({ title, children, className, blurbClassName }: SectionH
         {title}
       </h3>
       {children === undefined ? null : (
-        <p className={cn('ui-secblurb text-xs text-zinc-500 dark:text-zinc-500 mb-3', blurbClassName)}>
+        <p className={cn('ui-secblurb text-xs text-zinc-500 dark:text-zinc-400 mb-3', blurbClassName)}>
           {children}
         </p>
       )}

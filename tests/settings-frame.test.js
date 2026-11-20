@@ -132,7 +132,7 @@ test('the primitives keep their stable names', () => {
   assert.match(src, /cn\('ui-lrow-s mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\] text-zinc-500 dark:text-zinc-400', subtitleClassName\)/);
   const field = read('frontend/@/components/ui/field.tsx');
   assert.match(field, /<h3 className=\{cn\('ui-sechead text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', className\)\}>/);
-  assert.match(field, /<p className=\{cn\('ui-secblurb text-xs text-zinc-500 dark:text-zinc-500 mb-3', blurbClassName\)\}>/);
+  assert.match(field, /<p className=\{cn\('ui-secblurb text-xs text-zinc-500 dark:text-zinc-400 mb-3', blurbClassName\)\}>/);
 });
 
 test('a section\'s parts stack with no rule between them, and a one-part page\'s label is not drawn twice', () => {
