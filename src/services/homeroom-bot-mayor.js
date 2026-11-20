@@ -95,6 +95,8 @@
 // capability's while one is loaded (step 6).
 const { CHAT_LIMITS, turnLimits } = require('./bot-profiles');
 const botTools = require('./bot-tools');
+// 20 Nov 2026 (live-draft review, E): the chat's web search, and its switch.
+const webSearch = require('./bot-web-search');
 const log = require('./logger');
 const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
@@ -2201,6 +2203,9 @@ function doingFor(name, args = {}, { project = null, version = null, kind = null
       return { kind: 'writing' };
     case 'offer_request':
       return { kind: 'drafting' };
+    // 20 Nov 2026 (live-draft review, E): "Searching the web".
+    case 'web_search':
+      return { kind: 'searching' };
     case 'reply':
       return undefined;
     default:
@@ -3830,6 +3835,9 @@ async function runTool(pool, ctx, name, args) {
       case 'list_source':
       case 'read_source':
         return await botTools.run(name, args, { pool, user, scope: 'main', deps: { ...deps, mayor: module.exports } });
+      // 20 Nov 2026 (live-draft review, E): one search, through this turn's own (bot-web-search.js forTurn).
+      case 'web_search':
+        return await botTools.run(name, args, { pool, user, scope: 'main', deps, webSearch: ctx.webSearch });
       case 'answer_question': {
         const dm = dmModule(deps);
         let filter = {};
@@ -4371,6 +4379,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // records, a revision of a proposal they asked about. #11 (WP3): a
     // proposal withdrawn, a report sent to the team.
     started: null, workBusy: false, recentRevision: false, withdrew: null, reported: null,
+    // 20 Nov 2026 (live-draft review, E): web searches that ran this turn,
+    // the only proof of "I looked it up" (reply-claims.js `searched`).
+    webSearched: 0,
     conversationId,
     // The projects this turn looked at, for the request numbers its reply names.
     appIds: new Set(),
@@ -4519,7 +4530,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // whether this is a full admin's own chat with the bot).
       if (typeof threadTools.beforeTurn === 'function') await threadTools.beforeTurn(pool, ctx);
       const extraTools = threadTools.toolsFor(ctx);
-      const baseTools = [...TOOLS, ...extraTools, ...platformTools];
+      // 20 Nov 2026 (live-draft review, E): the web, unless an admin switched it off (bot-web-search.js).
+      ctx.webSearch = await webSearch.forTurn(pool, { t, ctx });
+      const webTools = ctx.webSearch ? botTools.toolsFor(['web_search'], 'main') : [];
+      const baseTools = [...TOOLS, ...webTools, ...extraTools, ...platformTools];
       // #3733: the conversation could not be read: their message alone is
       // still answered.
       try {
@@ -4679,7 +4693,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
                 showing: deps.threadShowing || null,
               }
               : null,
-            extra: threadTools.promptLines(ctx),
+            extra: [...threadTools.promptLines(ctx), ...webSearch.promptLines(!!ctx.webSearch)],
             designing: !!deps.threadDesign,
           }),
         },

@@ -1282,9 +1282,11 @@ const typingSends = new Map();
 // 'looking': a helper sent to look into a project's code (P3, look_into).
 // Step 6 (#6864): 'drawing' names the design version it is saved as
 // ("Drawing version 4"), and 'changing_draft' is a live draft's code being
-// changed in the chat's own turn.
+// changed in the chat's own turn. 20 Nov 2026 (live-draft review, E):
+// 'searching' is a web search (bot-web-search.js).
 const DOING_KINDS = Object.freeze([
   'progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking', 'changing_draft',
+  'searching',
 ]);
 const MAX_DOING_PROJECT = 60;
 

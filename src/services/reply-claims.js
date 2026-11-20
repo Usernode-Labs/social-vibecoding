@@ -251,6 +251,34 @@ const UNREAD_DESCRIPTION_RE = new RegExp(
   'i',
 );
 
+// 20 Nov 2026 (live-draft review, E): a reply that says it looked something
+// up on the web. Asked to "research how ios apps usually lay out this", the
+// bot said "Looking into it:" and answered from what it knew, with no way to
+// look. Only a web_search that ran this turn backs it (bot-web-search.js):
+// "I researched", "I looked it up", "I searched online", "from my
+// research", "I'll research it" (with nothing searched). Not "I searched
+// the open requests", which list_requests does.
+const SEARCHED_WEB = new RegExp([
+  String.raw`\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+|quickly\s+)?(?:researched|googled)\b`,
+  String.raw`\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+|quickly\s+)?(?:did|done)\s+(?:some\s+|a bit of\s+|a little\s+|a quick\s+|quick\s+)?(?:research|digging online|searching)\b`,
+  String.raw`\bI(?:'m| am)\s+(?:now\s+|just\s+)?(?:researching|googling)\b`,
+  String.raw`\b(?:I(?:'ll| will)|let me)\s+(?:now\s+|just\s+|quickly\s+|go\s+)?(?:research|google)\b`,
+  String.raw`\b(?:I(?:'ve| have)?|I(?:'m| am)|I(?:'ll| will)|let me)\s+(?:just\s+|now\s+|already\s+|quickly\s+)?(?:searched|searching|search|looked|looking|look|checked|checking|check|read|found)\b[^.!?\n]{0,40}?\b(?:online|on the web|the web|on the internet|the internet|on Google)\b`,
+  String.raw`\b(?:my|the|a quick|some|this)\s+(?:research|web search(?:es)?|online search(?:es)?|search results?)\s+(?:shows?|showed|found|finds|turned up|says?|said|suggests?|suggested|points?)\b`,
+  String.raw`\b(?:from|after|based on|according to)\s+(?:my|some|a quick|the)\s+(?:research|web search|online search|searching)\b`,
+].join('|'), 'i');
+// "I looked it up", unless the sentence says it was one of Homeroom's own
+// records ("I looked it up in your requests", "looked up request #12").
+const LOOKED_UP = /\bI(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+|quickly\s+)?looked\s+(?:it|this|that|them|those|these)\s+up\b|\b(?:I(?:'ll| will)|let me)\s+(?:just\s+|quickly\s+|go\s+)?look\s+(?:it|this|that)\s+up\b/i;
+const HOMEROOM_RECORDS = /\b(?:requests?|records?|code|workshop|my_work|progress|discussion|proposals?|changes?|threads?)\b|#\d/i;
+const SEARCHED_CLAIM = new RegExp(`${SEARCHED_WEB.source}|${LOOKED_UP.source}`, 'i');
+
+/** Pure: a sentence that says it looked something up on the web (SEARCHED_WEB, LOOKED_UP). */
+function claimsSearch(sentence) {
+  const text = String(sentence || '');
+  return SEARCHED_WEB.test(text) || (LOOKED_UP.test(text) && !HOMEROOM_RECORDS.test(text));
+}
+
 /** The bot's own work on a request, by its stored stage, never started or since stopped. */
 const NOT_STARTED_STAGES = new Set(['waiting_for_you', 'stopped', 'closed']);
 
@@ -549,6 +577,18 @@ const CLAIMS = Object.freeze([
     turn: (t) => (t.readChanges instanceof Set ? t.readChanges.size : t.readChanges.length) > 0,
     said: 'describes what a change\'s description says without reading it in this turn',
   },
+  {
+    // 20 Nov 2026 (live-draft review, E): "I looked it up", "I researched",
+    // with no web search run this turn. Only on the chat, which counts its
+    // searches (homeroom-bot-mayor.js `webSearched`), switched on or off.
+    kind: 'searched',
+    proof: 'turn',
+    re: SEARCHED_CLAIM,
+    applies: (t) => Number.isInteger(t.webSearched),
+    when: (sentence) => claimsSearch(sentence),
+    turn: (t) => t.webSearched > 0,
+    said: 'says you looked it up, searched the web or researched it',
+  },
 ]);
 
 const BY_KIND = new Map(CLAIMS.map((c) => [c.kind, c]));
@@ -640,7 +680,7 @@ function mentions(text, { receipt = null } = {}) {
 // a design thread, design, drew, filedDesign, designBuilds; in a plain
 // page's thread (artifacts), page, drew; with a live draft
 // open (step 6), liveDraft, draftSaved; on the voice,
-// readChanges.
+// readChanges; on the chat (E, 20 Nov 2026), webSearched.
 
 // ── What a turn's tools returned ──────────────────────────────────────────
 
@@ -1487,13 +1527,19 @@ function repairNote(problems, { tools = null } = {}) {
   const unread = kinds.has('unread_description')
     ? ` You described a change's description without reading it in this reply.${offered('get_change') ? ' Read it with get_change, or say you cannot see it.' : ' Leave out what it says, or say you cannot see it.'}`
     : '';
+  // 20 Nov 2026 (live-draft review, E): a look at the web said with none run.
+  const searched = kinds.has('searched')
+    ? (offered('web_search')
+      ? ' You did not search the web in this turn. If they asked you to look something up, call web_search now and name the pages you used as links; otherwise say plainly that you are answering from what you know.'
+      : ' You cannot search the web here: say plainly that you are answering from what you know, never that you looked it up, searched or researched it.')
+    : '';
   const canDoLine = canDo.length ? `If they want it done now, call the tool that does it: ${canDo.join(', ')}.` : '';
   return [
     `[Homeroom check, not from them: your reply ${list}.`,
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${noControl}${notBuilt}${unread}${searched}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1591,6 +1637,8 @@ module.exports = {
   DESIGN_DONE,
   NOT_BUILT,
   UNREAD_DESCRIPTION_RE,
+  SEARCHED_CLAIM,
+  claimsSearch,
   squashWords,
   sentences,
   sentencesOf,

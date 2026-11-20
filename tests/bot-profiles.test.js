@@ -114,6 +114,22 @@ test('no surface offers a tool its profile does not list, and every rule named i
   }
 });
 
+// 20 Nov 2026 (live-draft review, E): the chat searches the web, a few times
+// a turn at most; a project's thread does not.
+test('E: a private thread may search the web, up to its profile\'s cap; no project thread does', () => {
+  assert.ok(profiles.profileOf('private').tools.includes('web_search'));
+  for (const kind of ['request', 'change', 'channel', 'reply']) assert.ok(!profiles.profileOf(kind).tools.includes('web_search'), kind);
+  for (const name of profiles.profileOf('private').capabilities) {
+    assert.ok(!profiles.capabilityOf(name).tools.includes('web_search'), `${name}: the chat's own, in every capability`);
+  }
+  assert.equal(profiles.CHAT_LIMITS.searchesPerTurn, 3);
+  assert.equal(require('../src/services/bot-web-search').SEARCHES_PER_TURN, profiles.CHAT_LIMITS.searchesPerTurn);
+  const tools = require('../src/services/bot-tools');
+  assert.equal(tools.toolsFor(['web_search'], 'main')[0].function.name, 'web_search');
+  assert.ok(!tools.offers('web_search', 'thread') && !tools.offers('web_search', 'design'));
+  assert.match(read('src/services/homeroom-bot-mayor.js'), /const webTools = ctx\.webSearch \? botTools\.toolsFor\(\['web_search'\], 'main'\) : \[\];/);
+});
+
 test('#6389: the change thread may make its own version of somebody else\'s change', () => {
   assert.ok(profiles.profileOf('change').tools.includes('make_own_version'));
   const voice = require('../src/services/homeroom-bot-voice');
