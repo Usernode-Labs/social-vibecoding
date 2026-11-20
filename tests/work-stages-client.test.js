@@ -130,6 +130,7 @@ test('every client table keyed by a stage or a why covers exactly the table\'s',
     ['frontend/src/lib/work-stages.ts', 'STAGE_LOOK'],
     ['frontend/src/features/dev-board/topic/rail-model.ts', 'STAGE_ICON'],
     ['frontend/src/features/dev-board/topic/card-model.ts', 'STAGE_NOTES'],
+    ['frontend/src/features/dev-board/topic/thread-model.ts', 'STAGE_PILLS'],
   ];
   const byWhy = [
     ['frontend/src/features/dev-board/topic/card-model.ts', 'WHY_NOTES'],
@@ -319,7 +320,7 @@ test('every surface says every state of the table in the server\'s words, for it
       // the short "Stopped" (the foot says the reason).
       const steps = requestRail({ asker: 'maya', askedAt: '2026-11-07T09:12:00Z', specs: [], changes: [], standing: work, yours });
       const last = steps[steps.length - 1];
-      assert.deepEqual(plain(last.title), s.stage === 'stopped' ? { id: table.STAGE.stopped.phrase } : plain(stageWordsOf(phrase, last.title)), `rail: ${at}`);
+      assert.deepEqual(plain(last.title), s.stage === 'stopped' ? { id: table.STAGE.stopped.phrase } : plain(phrase), `rail: ${at}`);
       // A track.
       if (yours) assert.equal(trackStateWord({ work }), say(phrase), `track: ${at}`);
       // The classic script's own reading of the same row.
@@ -329,11 +330,6 @@ test('every surface says every state of the table in the server\'s words, for it
     }
   }
 });
-
-/** The rail's title is the row's words, except a ballot or a stop: it is `phrase` wherever it says the row. */
-function stageWordsOf(phrase, title) {
-  return title && title.id === 'project:topic.card.ballot.choosing' ? title : phrase;
-}
 
 // ── 5. The classic script's copies are the table's ──────────────────────
 

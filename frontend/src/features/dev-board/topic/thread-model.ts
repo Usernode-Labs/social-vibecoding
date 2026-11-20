@@ -14,7 +14,7 @@
 
 import { isSettled, lineWords, stageWords, type WorkState } from '../../../lib/work-state';
 import { testsFailing } from './card-model';
-import { lookOf } from '../../../lib/work-stages';
+import { lookOf, type Stage } from '../../../lib/work-stages';
 
 export type ThreadItemType = 'request' | 'change' | 'close' | 'decision';
 
@@ -554,6 +554,26 @@ export function requestPill(
 }
 
 /**
+ * Each stage's pill in a request's header: its `data-request-status` key,
+ * its tone and whether it spins. One entry for every stage of the one table
+ * (lib/work-stages.ts), so a new stage is drawn on purpose
+ * (tests/work-stages-client.test.js holds the keys to the table's); the
+ * row's words refine three of them (`rowPill`).
+ */
+export const STAGE_PILLS: Readonly<Record<Stage, { key: string; tone: string; spinner: boolean }>> = Object.freeze({
+  reading: { key: 'reading', tone: 'neutral', spinner: false },
+  planning: { key: 'planning', tone: 'neutral', spinner: false },
+  waiting_for_you: { key: 'waiting_for_you', tone: 'neutral', spinner: false },
+  building: { key: 'building', tone: 'progress', spinner: true },
+  checking: { key: 'checking', tone: 'progress', spinner: true },
+  up_for_vote: { key: 'vote', tone: 'neutral', spinner: false },
+  going_live: { key: 'going_live', tone: 'progress', spinner: true },
+  live: { key: 'live', tone: 'ok', spinner: false },
+  stopped: { key: 'stopped', tone: 'blocked', spinner: false },
+  closed: { key: 'closed', tone: 'neutral', spinner: false },
+});
+
+/**
  * Pure: the request's pill from its stored row: the row's own words (as its
  * requester reads them, or anyone else) and a tone from its stage, with the
  * row's second line on hover. The keys are the ones the thread's items give
@@ -571,23 +591,17 @@ function rowPill(
   const phrase = stageWords(work, { yours });
   const said = work.words?.stage.id || '';
   const line = lineWords(work);
-  const failing = testsFailing(work);
-  let key: string = work.stage;
-  let tone = 'neutral';
-  let spinner = false;
-  switch (work.stage) {
-    case 'live': key = 'live'; tone = 'ok'; break;
-    case 'going_live': key = said === 'core:work.stage.approved' ? 'approved' : 'going_live'; tone = 'progress'; spinner = true; break;
-    case 'checking': key = 'checking'; tone = failing ? 'blocked' : 'progress'; spinner = !failing; break;
-    case 'building': {
-      const ready = said === 'core:work.stage.readyToBuild';
-      key = ready ? 'ready_to_build' : 'building'; tone = ready ? 'neutral' : 'progress'; spinner = !ready;
-      break;
-    }
-    case 'up_for_vote': key = choosing ? 'choosing' : 'vote'; break;
-    case 'stopped': tone = 'blocked'; break;
-    default: break;
-  }
+  const own = Object.prototype.hasOwnProperty.call(STAGE_PILLS, work.stage) ? STAGE_PILLS[work.stage] : null;
+  let key: string = own ? own.key : work.stage;
+  let tone = own ? own.tone : 'neutral';
+  let spinner = own ? own.spinner : false;
+  // What the row's words say more than its stage, by the words the server
+  // chose: Approved, held by GitHub, is still going live; a build that
+  // waits is Ready to build and does not spin; failing tests do not spin.
+  if (work.stage === 'going_live' && said === 'core:work.stage.approved') key = 'approved';
+  if (work.stage === 'building' && said === 'core:work.stage.readyToBuild') { key = 'ready_to_build'; tone = 'neutral'; spinner = false; }
+  if (work.stage === 'checking' && testsFailing(work)) { tone = 'blocked'; spinner = false; }
+  if (work.stage === 'up_for_vote' && choosing) key = 'choosing';
   // Two whole facts, joined as the catalog joins them.
   const facts = [line ? say(line.id, line.values) : '', choosing || ''].filter(Boolean);
   const title = facts.length > 1 ? say('project:facts.pair', { first: facts[0], second: facts[1] }) : facts[0] || '';
