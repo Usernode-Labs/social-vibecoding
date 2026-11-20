@@ -828,7 +828,9 @@ test('on a wide window the run is one column as wide as the page', () => {
   const css = read('public/css/app.css');
   const cap = Number((src.match(/^const COLUMN = (\d+);$/m) || [])[1]);
   assert.equal(cap, 520, 'the change page\'s own width');
-  assert.match(src, /setSize\(\{ w: Math\.min\(COLUMN, pr\.width\), h \}\)/);
+  assert.match(src, /setSize\(\{ w: stageW > 0 \? stageW : Math\.min\(COLUMN, pr\.width\), h \}\)/);
+  // Beside its details (a project's Needs you on a large screen) the change's column is wider, and the picture is the stage's own width.
+  assert.match(src, /const stageW = beside && stageRef\.current \? stageRef\.current\.getBoundingClientRect\(\)\.width : 0;/);
   assert.doesNotMatch(src, /Math\.min\(520\b/, 'one number, not two copies of it');
   const col = css.match(/\.rf-run, \.rf-feed-note \{([^}]*)\}/);
   assert.ok(col, 'the run\'s pane and its notes share one column rule');
