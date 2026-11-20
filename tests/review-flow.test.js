@@ -823,6 +823,24 @@ test('an opened screen is framed on its declared change, at real size at most', 
 
 // ── 7. A wide window ─────────────────────────────────────────────────────
 
+// The vote card's hairline is drawn OUTSIDE its edge. Under the standard
+// look the page, its bar and the stage behind the picture are all the card's
+// own colour and fill the card, so an inset line is painted over on their
+// sides and only shows round the details panel. Just outside the rounded
+// edge nothing covers it, and the brand look draws its card line there too.
+test('the vote card\'s hairline is drawn outside its edge, so every side shows it', () => {
+  const css = read('public/css/app.css');
+  const rule = css.match(/^html:not\(\[data-skin\]\) #dev-workshop \.dev-ws\[data-ws-tab="needs"\] \.rf-page \{([^}]*)\}$/m);
+  assert.ok(rule, 'the standard look\'s Needs you vote card rule is there');
+  const shadow = (rule[1].match(/box-shadow:\s*([^;]*);/) || [])[1];
+  assert.equal(shadow && shadow.trim(), '0 0 0 1px var(--wip-card-line)',
+    'the line sits outside the card: its bar and stage are its own colour and would cover an inset line');
+  assert.doesNotMatch(rule[1], /inset 0 0 0 1px var\(--wip-card-line\)/);
+  // The card itself is unchanged: the look's corners and colour.
+  assert.match(rule[1], /border-radius: var\(--wip-card-radius\);/);
+  assert.match(rule[1], /background: var\(--wip-card-bg\);/);
+});
+
 test('on a wide window the run is one column as wide as the page', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   const css = read('public/css/app.css');
