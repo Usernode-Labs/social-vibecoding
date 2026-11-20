@@ -17,7 +17,7 @@ const YAML = require('yaml');
 const { npmGate, npmFindings, imageGate, imageFindings, lockPackages, sbomPackages, report, imageAssessment } = require('../scripts/security-findings');
 const { buildBaseline } = require('../scripts/security-image-baseline');
 const { baselineLock } = require('../scripts/security-audit');
-const { parseReleaseValues, liveRelease } = require('../scripts/live-release');
+const { parseReleaseValues, liveRelease, liveReleaseMetadata } = require('../scripts/live-release');
 
 const ROOT = path.join(__dirname, '..');
 const NOW = Date.parse('2026-10-29T19:00:00Z');
@@ -243,6 +243,31 @@ test('the release baseline follows the promoted chart digest and is unavailable 
   assert.equal(calls.length, 1, 'a failed lookup must never try a numeric tag or version range');
 });
 
+test('release pacing reads the verified config of the promoted chart without pulling chart contents', async () => {
+  const digest = `sha256:${'d'.repeat(64)}`;
+  const configDigest = `sha256:${'e'.repeat(64)}`;
+  const revision = 'a'.repeat(40);
+  const version = '0.1.1550001';
+  const lookup = config => ({
+    connect: async repository => ({
+      manifest: async ref => {
+        assert.equal(repository, 'usernode-labs/charts/social-vibecoding-platform');
+        assert.equal(ref, 'release');
+        return { digest, configDigest, version };
+      },
+      config: async ref => {
+        assert.equal(ref, configDigest);
+        return config;
+      },
+    }),
+  });
+  const config = { appVersion: revision, version, name: 'social-vibecoding-platform' };
+  assert.deepEqual(await liveReleaseMetadata('usernode-labs', lookup(config)), { revision, version });
+  for (const corrupt of [{ version: '0.1.1550002' }, { appVersion: 'main' }, { name: 'other' }]) {
+    assert.equal(await liveReleaseMetadata('usernode-labs', lookup({ ...config, ...corrupt })), null);
+  }
+});
+
 test('PR findings block against the exact base; post-merge findings are advisory', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
   const pr = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
@@ -317,6 +342,7 @@ case "$*" in
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
   *"--entrypoint node"*) input=$(cat); [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8
     case "$input" in *ms-playwright*) if [ -n "\${FAKE_BROWSERS:-}" ]; then cat "$FAKE_BROWSERS"; else echo '{}'; fi ;; *) echo '{}' ;; esac ;;
+  *" image --download-db-only"*) [ "\${FAKE_DB_FAILURE:-}" != 1 ] || exit 7 ;;
   *" image --skip-db-update"*) [ "\${FAKE_IMAGE_SCAN_FAILURE:-}" != 1 ] || exit 9; cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
   *" sbom "*) if [ "$report" = playwright-browser-advisories.json ]; then cp "$FAKE_BROWSER_ADVISORIES" "$out/$report"; else cp "${path.join(dir, 'report.json')}" "$out/$report"; fi ;;
 esac
@@ -416,6 +442,23 @@ test('a failed full-image scan invalidates an earlier clean assessment and canno
   assert.equal(data.complete, false);
   assert.equal(data.status, 'unavailable');
   assert.match(data.reason, /full-image scan/);
+});
+
+test('a failed database download cannot open the offline scanner or complete an assessment', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-db-failure-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const out = path.join(dir, 'out');
+  const sbom = path.join(dir, 'sbom.json');
+  fs.writeFileSync(sbom, '{}');
+  const result = spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', out, sbom, 'standalone'], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${fakeDocker(dir)}:${process.env.PATH}`, FAKE_DB_FAILURE: '1', SECURITY_AUDIT_ONLY: '1' },
+  });
+  assert.equal(result.status, 7, result.stderr);
+  const data = JSON.parse(fs.readFileSync(path.join(out, 'assessment.json')));
+  assert.equal(data.complete, false);
+  assert.equal(data.status, 'unavailable');
+  assert.match(data.reason, /vulnerability database download/);
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, 'calls.log'), 'utf8'), /--skip-db-update/);
 });
 
 test('a clean candidate skips baseline builds; a potential finding generates a fresh exact-base inventory', (t) => {

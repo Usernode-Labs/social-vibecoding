@@ -35,10 +35,9 @@ jobs:
       postgres_verified: ${{ steps.postgres.outputs.verified }}
     steps:
       - uses: actions/checkout@v6
-      - uses: azure/setup-helm@v4
-        if: github.event_name == 'push'
+      - uses: actions/setup-node@v6
         with:
-          version: v3.19.0
+          node-version: '22.23.4'
 
       # Skip builds that the publish rule would reject. The registry cannot
       # advance while this run holds the release queue. Read failures build.
@@ -60,9 +59,7 @@ jobs:
           tip="$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)"
           [[ "$tip" =~ ^[a-f0-9]{40}$ ]] || build
           [ "$tip" != "$GITHUB_SHA" ] || build
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          chart="$(helm show chart "oci://ghcr.io/$owner/charts/social-vibecoding-platform" --version '0.1.*' 2>/dev/null || true)"
-          published_sha="$(printf '%s\n' "$chart" | sed -n 's/^appVersion: *//p' | tr -d '"' | head -n 1)"
+          read -r published_sha _ <<< "$(node scripts/live-release.js --metadata)" || build
           [[ "$published_sha" =~ ^[a-f0-9]{40}$ ]] || build
           status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$published_sha...$GITHUB_SHA" --jq .status 2>/dev/null || echo unknown)"
           case "$status" in
@@ -90,10 +87,6 @@ jobs:
             echo 'should_release=true' >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-node@v6
-        if: steps.release.outputs.should_release == 'true'
-        with:
-          node-version: '22.23.4'
       - if: steps.release.outputs.should_release == 'true'
         run: |
           npm install --global npm@11.21.1 undici@6.29.1
@@ -220,7 +213,9 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=social-vibecoding-${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=social-vibecoding-${{ matrix.component }}
+          cache-to: |
+            type=gha,mode=max,scope=social-vibecoding-${{ matrix.component }}
+            ${{ matrix.component == 'worker' && 'type=inline' || '' }}
           provenance: mode=max
           sbom: true
 
@@ -256,6 +251,23 @@ jobs:
           path: ${{ runner.temp }}/security-${{ matrix.component }}/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Validate platform shell release
+        if: matrix.component == 'platform'
+        timeout-minutes: 5
+        shell: bash
+        env:
+          IMAGE: ${{ steps.reuse.outputs.image }}@${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
+        run: |
+          [[ "${IMAGE##*@}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          docker run --rm -i --network none --read-only \
+            --env NODE_ENV=production --env GIT_SHA="$GITHUB_SHA" \
+            --entrypoint node "$IMAGE" - <<'NODE'
+          const { loadShellRelease } = require('./src/services/shell-release');
+          const release = loadShellRelease('/app/public');
+          console.log(`Verified platform shell release ${release.revision}: ${release.id}`);
+          NODE
 
       - name: Record immutable reference
         env:
@@ -314,7 +326,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      # No npm here: these steps run node, Helm and Docker, never npm.
+      # No npm here: these steps run node and Helm, never npm.
 
       - uses: azure/setup-helm@v4
         with:
@@ -326,29 +338,6 @@ jobs:
           pattern: image-digest-*
           path: ${{ runner.temp }}/image-digests
           merge-multiple: true
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Check the packaged image before a chart can reach Argo CD.
-      - name: Validate platform shell release
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          digest="$(cat "$RUNNER_TEMP/image-digests/platform.txt")"
-          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-platform@$digest"
-          docker run --rm -i --network none --read-only \
-            --env NODE_ENV=production --env GIT_SHA="$GITHUB_SHA" \
-            --entrypoint node "$image" - <<'NODE'
-          const { loadShellRelease } = require('./src/services/shell-release');
-          const release = loadShellRelease('/app/public');
-          console.log(`Verified platform shell release ${release.revision}: ${release.id}`);
-          NODE
 
       - name: Prepare and validate release chart
         id: chart
@@ -451,7 +440,7 @@ jobs:
           echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
           echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
 
-      # Argo tracks the highest stable chart. During a burst, an older run
+      # Argo tracks the promoted OCI release. During a burst, an older run
       # can publish only over an older source revision and lower chart version.
       # The 15-minute interval batches those runs without starving releases.
       # The tip waits out the four-minute rollout gap, measured from the
@@ -465,7 +454,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
-          CHART_REF: oci://ghcr.io/${{ steps.chart.outputs.registry_owner }}/charts/social-vibecoding-platform
           RELEASE_EVERY_MINUTES: '15'
           RELEASE_MIN_GAP_MINUTES: '4'
         run: |
@@ -484,12 +472,8 @@ jobs:
           runs="repos/$GITHUB_REPOSITORY/actions/workflows/build-kubernetes-images.yml/runs"
           gap=$(( RELEASE_MIN_GAP_MINUTES * 60 ))
 
-          # The newest stable release in the registry, the one Argo CD runs.
           newest_release() {
-            local chart
-            chart="$(helm show chart "$CHART_REF" --version '0.1.*' 2>/dev/null || true)"
-            published_sha="$(printf '%s\n' "$chart" | sed -n 's/^appVersion: *//p' | tr -d '"' | head -n 1)"
-            published_version="$(printf '%s\n' "$chart" | sed -n 's/^version: *//p' | tr -d '"' | head -n 1)"
+            read -r published_sha published_version <<< "$(node scripts/live-release.js --metadata)" || return 1
             [[ "$published_sha" =~ ^[a-f0-9]{40}$ && "$published_version" =~ ^0\.1\.[0-9]+$ ]]
           }
           # Seconds since the run that published the newest release finished,
