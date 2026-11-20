@@ -248,7 +248,20 @@ test('Standard (WIP): a project\'s empty Needs you says so as good news, with th
   const beside = read('frontend/src/features/review-flow/project-needs.tsx');
   assert.match(flow, /<ProjectNeedsEmpty slug=\{slug\} project=\{project\} anchorRef=\{anchorRef\}>\s*<p ref=\{anchorRef as never\}[^>]*data-needs-empty="" data-review-flow="">/, 'the plain line is every other look\'s');
   assert.match(flow, /<ProjectWaysIn slug=\{slug\} project=\{project\} \/>/, 'under what waits, too');
-  assert.match(beside, /return useLiveSkin\(\) === 'wip' && !!slug && !!project;/);
+  // Standard took the pieces on 20 Nov 2026, so both kit looks draw them; the
+  // first render's 'standard' is one of them, so the prerender agrees.
+  assert.match(beside, /return isKitHome\(useLiveSkin\(\)\) && !!slug && !!project;/);
+  assert.match(beside, /import \{ isKitHome, useLiveSkin \} from '\.\.\/\.\.\/lib\/skin';/);
+  // A project's Needs you is laid out as its hub is under the standard look
+  // too: the page's whole width, the look's ground, and the paused notice a
+  // pill at the name bar's end from 900px.
+  const css = read('public/css/app.css');
+  assert.ok(css.includes('html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="needs"])'), 'the full-width shell');
+  assert.ok(css.includes('html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"])'), 'no sheet behind it');
+  assert.ok(css.includes('html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) { background-color: transparent; }'), 'the wallpaper stays');
+  assert.ok(css.includes('html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs)'), 'the run takes the page\'s width');
+  assert.ok(css.includes('html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note'), 'and its note is the look\'s');
+  assert.ok(css.includes('html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice > [data-code-pause]'), 'the paused notice is the name bar\'s pill');
   assert.match(beside, /if \(!drawn\) return children;\s*return \(\s*<div ref=\{anchorRef\} className="wip-needs" data-needs-empty="" data-review-flow="">/, 'the same hooks the plain line carries');
   assert.match(beside, /door\('1', 'workshop'[\s\S]{0,400}door\('3', 'discussion'[\s\S]{0,400}door\('2', 'status'/);
   assert.equal(message('communities:reel.caughtUp.title'), 'You\'re all caught up');

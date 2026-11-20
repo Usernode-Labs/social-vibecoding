@@ -2463,7 +2463,7 @@
     {
       "name": "A project's Needs you draws the review flow, one change's page at a time",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-rf-project=\"usernode-2d5619\"] [data-review-flow]"
+      "expectSelector": "#dev-workshop [data-rf-project=\"usernode-2d5619\"]:has([data-review-flow]):has([data-rf-desc-help] [data-rf-help=\"try\"] .rf-help-tile)"
     },
     {
       "name": "Needs you draws the review flow's change page in place in the pane, not over the shell, with its own Back (#6276); the old #workshop?ws=needs address lands on it (One Home, #6361)",

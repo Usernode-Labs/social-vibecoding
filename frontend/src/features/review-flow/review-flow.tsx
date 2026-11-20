@@ -58,6 +58,7 @@ import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon
 
 import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
+import { isKitHome, useLiveSkin } from '../../lib/skin';
 import { watch } from '../../lib/live-reads';
 import { usePageDark } from '../../lib/page-theme';
 import { pushIsFor } from '../../lib/work-state';
@@ -287,10 +288,15 @@ function Strip({ item, plates, shot, folded, ready, onAll, onTile }: {
 type View = { shot: number | null; phase: 'sheet' | 'opening' | 'live' | 'closing' };
 const SHEET_VIEW: View = { shot: null, phase: 'sheet' };
 
-function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, appName = '' }: {
+function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, appName = '', side = false }: {
   item: ReviewItem;
   width: number;
   pageH: number;
+  /**
+   * The change is shown beside its details (from 1280px under a kit look):
+   * its lead line is said there in full, so none is drawn here.
+   */
+  side?: boolean;
   /**
    * The project's name, in bold before the line and above the full
    * description. Drawn only in the all-projects Needs you, where nothing
@@ -453,7 +459,7 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, 
     <div className="rf-page-body" data-rf-body={item.key} data-rf-view={view.shot == null ? 'sheet' : `screen-${view.shot}`}>
       {/* The line is a way in too: a tap anywhere on it opens the change in
           full, as the bar's ⌄ does. The copy Next leaves behind is still. */}
-      {onMore ? (
+      {side ? null : onMore ? (
         <button type="button" className="rf-claim-row" onClick={onMore} aria-controls="rf-desc" data-rf-more="">
           <span className="rf-claim" key={line || 'none'}>
             {appName ? (
@@ -583,6 +589,22 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   onSettled?: (id: number) => void;
 }) {
   const t = useMessages('communities');
+  // A project's Needs you under a kit look draws the kit's card, and from
+  // 1280px what the change does beside its picture. Both are read after
+  // mount, so the first render is today's markup (skin.ts, and the query
+  // below), and the skin's own 'standard' is a kit look, so the prerender
+  // and the hydrated page agree.
+  const kit = header === 'project' && isKitHome(useLiveSkin());
+  const [wideSide, setWideSide] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(min-width: 1280px)');
+    const on = () => setWideSide(mq.matches);
+    on();
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  const side = kit && wideSide;
   const anchorRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -734,7 +756,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const stage = stageRef.current;
     if (!item || !stage || stage.scrollTop > 0 || sheetOpen(sheet) || desc || busy.current) return;
     const el = e.target as Element | null;
-    if (el?.closest('[data-rf-picture], .rf-sheet, .rf-desc-wrap[data-open], button, a, input, textarea')) return;
+    if (el?.closest('[data-rf-picture], .rf-sheet, .rf-desc-wrap[data-open], .rf-desc-wrap[data-side], button, a, input, textarea')) return;
     swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY };
   };
   const swipeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -996,6 +1018,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       <div
         ref={pageRef}
         className="rf-page"
+        data-rf-side={side ? '' : undefined}
         role="region"
         aria-label={item.title}
         onPointerDown={swipeStart}
@@ -1009,23 +1032,34 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
             <ChevronLeftIcon aria-hidden="true" width={24} height={24} strokeWidth="2.2" />
           </button>
           <h1 className="rf-bar-title" key={item.key}>
-            <button type="button" className="rf-bar-title-btn" onClick={() => setDesc((d) => !d)} aria-expanded={desc} aria-controls="rf-desc">{item.title}</button>
+            {side ? item.title : (
+              <button type="button" className="rf-bar-title-btn" onClick={() => setDesc((d) => !d)} aria-expanded={desc} aria-controls="rf-desc">{item.title}</button>
+            )}
           </h1>
-          <button
-            type="button"
-            className="rf-bar-toggle"
-            aria-expanded={desc}
-            aria-controls="rf-desc"
-            aria-label={desc ? t('communities:review.desc.hide') : t('communities:review.desc.show')}
-            onClick={() => setDesc((d) => !d)}
-            data-rf-desc-toggle=""
-          >
-            <ChevronDownIcon aria-hidden="true" width={18} height={18} strokeWidth="2.4" />
-          </button>
+          {side ? null : (
+            <button
+              type="button"
+              className="rf-bar-toggle"
+              aria-expanded={desc}
+              aria-controls="rf-desc"
+              aria-label={desc ? t('communities:review.desc.hide') : t('communities:review.desc.show')}
+              onClick={() => setDesc((d) => !d)}
+              data-rf-desc-toggle=""
+            >
+              <ChevronDownIcon aria-hidden="true" width={18} height={18} strokeWidth="2.4" />
+            </button>
+          )}
           <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} />
         </div>
-        <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={{ top: barTop }} aria-hidden={!desc} inert={!desc || undefined}>
-          <div className="rf-desc-dim" onClick={() => setDesc(false)} />
+        <div
+          className="rf-desc-wrap"
+          data-open={desc ? '' : undefined}
+          data-side={side ? '' : undefined}
+          style={side ? undefined : { top: barTop }}
+          aria-hidden={side ? undefined : !desc}
+          inert={side ? undefined : (!desc || undefined)}
+        >
+          {side ? null : <div className="rf-desc-dim" onClick={() => setDesc(false)} />}
           <div className="rf-desc" id="rf-desc" data-rf-desc="">
             {appName ? <p className="rf-desc-app">{appName}</p> : null}
             <p className="rf-desc-text">{item.summary || item.line}</p>
@@ -1036,16 +1070,16 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
               ) : null}
             </div>
             <nav className="rf-desc-help" aria-label={t('communities:review.help.label')} data-rf-desc-help="">
-              <button type="button" className="rf-help-row" data-rf-help="askq" onClick={() => help('askq')}><SparklesIcon aria-hidden="true" width={20} height={20} /><span>{t('communities:review.help.ask')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
-              <button type="button" className="rf-help-row" data-rf-help="talk" onClick={() => help('talk')}><ChatIcon aria-hidden="true" width={20} height={20} /><span>{t('communities:review.help.talk')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
-              <button type="button" className="rf-help-row" data-rf-help="try" onClick={() => help('try')}><PlayIcon aria-hidden="true" width={20} height={20} /><span>{t('communities:review.help.try')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
+              <button type="button" className="rf-help-row" data-rf-help="askq" onClick={() => help('askq')}><span className="rf-help-tile" data-mark="1"><SparklesIcon aria-hidden="true" width={20} height={20} /></span><span>{t('communities:review.help.ask')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
+              <button type="button" className="rf-help-row" data-rf-help="talk" onClick={() => help('talk')}><span className="rf-help-tile" data-mark="3"><ChatIcon aria-hidden="true" width={20} height={20} /></span><span>{t('communities:review.help.talk')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
+              <button type="button" className="rf-help-row" data-rf-help="try" onClick={() => help('try')}><span className="rf-help-tile" data-mark="2"><PlayIcon aria-hidden="true" width={20} height={20} /></span><span>{t('communities:review.help.try')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
             </nav>
           </div>
         </div>
         <div ref={stageRef} className="rf-stage">
           {leaving && from ? (
             <div className="rf-stage-layer rf-stage-leaving" data-rf-leaving="" aria-hidden="true" inert>
-              <ChangeBody item={leaving} width={pw} pageH={ph} arrive="still" still={from.view} appName={leavingAppName} />
+              <ChangeBody item={leaving} width={pw} pageH={ph} arrive="still" still={from.view} appName={leavingAppName} side={side} />
             </div>
           ) : null}
           <div className={leaving ? 'rf-stage-layer rf-stage-arriving' : 'rf-stage-layer'} data-rf-arriving="">
@@ -1056,6 +1090,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
               pageH={ph}
               arrive={from ? 'push' : 'enter'}
               appName={appName}
+              side={side}
               onView={(v) => { views.current[item.key] = v; }}
               onMore={() => setDesc(true)}
             />

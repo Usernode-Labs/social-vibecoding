@@ -1,7 +1,7 @@
 /**
  * A project's own Needs you, around its run (./review-flow.tsx), under the
- * Standard (WIP) look: what stands in the page when nothing waits, and the
- * ways on into the project under whatever does.
+ * kit looks (the standard look and Standard (WIP)): what stands in the page
+ * when nothing waits, and the ways on into the project under whatever does.
  *
  * The run itself knows no look (the stage is the product's on every one),
  * so the look is read here, in the two pieces that are drawn beside it.
@@ -12,11 +12,15 @@
 import type { ReactNode, RefObject } from 'react';
 import { ChatIcon, CheckIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
-import { useLiveSkin } from '../../lib/skin';
+import { isKitHome, useLiveSkin } from '../../lib/skin';
 
-/** Whether this is a project's page under the look that draws these. */
+/**
+ * Whether this is a project's page under a look that draws these. The first
+ * render's 'standard' is one of them, so the prerendered document and the
+ * hydrated one agree.
+ */
 function useDrawn(slug?: string, project?: string): boolean {
-  return useLiveSkin() === 'wip' && !!slug && !!project;
+  return isKitHome(useLiveSkin()) && !!slug && !!project;
 }
 
 /**

@@ -43,9 +43,14 @@ test('the stage is the product\'s on both pages: nothing is drawn in its place u
   const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(page, /\{tab === 'needs' && slug \? \(/);
   assert.match(page, /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} project=\{projectName\} \/>/);
-  for (const file of ['review-flow/review-flow.tsx', 'review-flow/vote-sheet.tsx', 'review-flow/compare.tsx', 'workshop/index.tsx', 'workshop/vote-filter.tsx']) {
+  for (const file of ['review-flow/vote-sheet.tsx', 'review-flow/compare.tsx', 'workshop/index.tsx', 'workshop/vote-filter.tsx']) {
     assert.doesNotMatch(read('frontend/src/features', file), /useSkin|useLiveSkin|isFrameSkin|components\/ui\/kit/, `${file} does not know the look`);
   }
+  // The run knows the kit looks alone, for a project's page: a frame look
+  // draws nothing in the stage's place, and its card is unchanged.
+  const flow = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.doesNotMatch(flow, /useSkin\b|isFrameSkin|components\/ui\/kit/, 'no frame look draws anything in its place');
+  assert.match(flow, /const kit = header === 'project' && isKitHome\(useLiveSkin\(\)\);/, 'only a project\'s page under the standard look or Standard (WIP)');
 });
 
 test('the stage wears the kit by the wear map, each a wearer of its own', () => {

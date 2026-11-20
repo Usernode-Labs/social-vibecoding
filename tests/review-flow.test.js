@@ -331,7 +331,7 @@ test('the page leads with what the change does, then its picture, then the strip
   const strip = body.indexOf('<Strip');
   assert.ok(claim > 0 && claim < picture && picture < strip, 'the line, the picture, the strip');
   // The title is the bar's, one line; the line under it is body text.
-  assert.match(src, /className="rf-page"\s+role="region"\s+aria-label=\{item\.title\}/);
+  assert.match(src, /className="rf-page"\s+data-rf-side=\{side \? '' : undefined\}\s+role="region"\s+aria-label=\{item\.title\}/);
   assert.doesNotMatch(src, /rf-head|rf-preview|rf-thumbs|planTitleFlight|coverGhost/, 'no old head, no feed card, no flight');
   const css = read('public/css/app.css');
   assert.match(css, /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px; font-size: 15px; font-weight: 400; line-height: 21px; color: var\(--rf-muted\);/, 'body text under the title, not a second title');
@@ -438,7 +438,7 @@ test('across all projects, the line and the card lead with the project\'s name i
   // The opened card: the name on its own line, before the full description.
   const card = src.slice(src.indexOf('className="rf-desc"'), src.indexOf('className="rf-desc-foot"'));
   assert.match(card, /\{appName \? <p className="rf-desc-app">\{appName\}<\/p> : null\}\s*<p className="rf-desc-text">\{item\.summary \|\| item\.line\}<\/p>/, 'the name, then the description as it was');
-  assert.match(src, /<ChangeBody item=\{leaving\} width=\{pw\} pageH=\{ph\} arrive="still" still=\{from\.view\} appName=\{leavingAppName\} \/>/, 'the copy Next leaves behind keeps the name it had');
+  assert.match(src, /<ChangeBody item=\{leaving\} width=\{pw\} pageH=\{ph\} arrive="still" still=\{from\.view\} appName=\{leavingAppName\} side=\{side\} \/>/, 'the copy Next leaves behind keeps the name it had');
   assert.match(src, /appName=\{appName\}/);
   // It is name text, not interface text: no catalog entry.
   assert.doesNotMatch(src, /t\('communities:[^']*app[^']*name/i);
@@ -844,6 +844,44 @@ test('on a wide window the run is one column as wide as the page', () => {
   assert.match(src, /t\('communities:reel\.pages\.note'\)/);
   assert.match(src, /<div ref=\{anchorRef\} className="rf-run rf-loading" data-review-flow=""/);
 });
+test('under a kit look a project\'s Needs you is the look\'s card, and from 1280px what it does stands beside it', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const css = read('public/css/app.css');
+  // A project's own page under a kit look, and only there: the query is read
+  // after mount, so the first render is today's markup.
+  assert.match(src, /const kit = header === 'project' && isKitHome\(useLiveSkin\(\)\);/);
+  assert.match(src, /window\.matchMedia\('\(min-width: 1280px\)'\)/);
+  assert.match(src, /const on = \(\) => setWideSide\(mq\.matches\);\s*on\(\);\s*mq\.addEventListener\?\.\('change', on\);/);
+  assert.match(src, /const side = kit && wideSide;/);
+  // In side mode the page, its bar and its details say so.
+  assert.match(src, /data-rf-side=\{side \? '' : undefined\}/);
+  assert.match(src, /data-side=\{side \? '' : undefined\}/);
+  assert.match(src, /\{side \? item\.title : \(/, 'the title is plain words, not the toggle');
+  assert.match(src, /\{side \? null : \(/, 'no details arrow');
+  assert.match(src, /inert=\{side \? undefined : \(!desc \|\| undefined\)\}/, 'the side column is always readable');
+  assert.match(src, /\{side \? null : <div className="rf-desc-dim" onClick=\{\(\) => setDesc\(false\)\} \/>\}/, 'nothing dims');
+  assert.match(src, /\{side \? null : onMore \? \(/, 'no lead line: it is said in the column');
+  // The three help rows carry the hub's tiles, in its order.
+  assert.match(src, /<span className="rf-help-tile" data-mark="1"><SparklesIcon/);
+  assert.match(src, /<span className="rf-help-tile" data-mark="3"><ChatIcon/);
+  assert.match(src, /<span className="rf-help-tile" data-mark="2"><PlayIcon/);
+  // The card: the look's surface and one hairline, no rules inside.
+  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws\[data-ws-tab="needs"\] \.rf-page-wrap \{\s*--rf-page: var\(--wip-card-bg\);\s*--rf-sheet: var\(--wip-card-bg\);\s*--rf-line: var\(--wip-card-line\);/);
+  assert.match(css, /\.rf-help-row \+ \.rf-help-row::before \{ content: none; \}/);
+  assert.match(css, /\.rf-desc-help \{ background: transparent; \}/);
+  assert.match(css, /\.rf-sheet\.rf-sheet-rest \{ box-shadow: none; \}/);
+  // The kit's round control, the tiles, the white switch with the sun's knob.
+  assert.match(css, /:is\(\.rf-back, \.rf-bar-toggle\) \{\s*width: 36px;\s*height: 36px;/);
+  assert.match(css, /\.rf-help-tile \{[^}]*width: 2\.5rem;[^}]*background-color: var\(--wip-mark-1-bg\);/);
+  assert.match(css, /\.rf-help-tile\[data-mark="2"\] \{ background-color: var\(--wip-mark-2-bg\);/);
+  assert.match(css, /\.rf-help-tile\[data-mark="3"\] \{ background-color: var\(--wip-mark-3-bg\);/);
+  assert.match(css, /\.rf-switch\[data-view="before"\] \.rf-knob \{[^}]*background: #ffee6f;/);
+  assert.match(css, /\.rf-why-off \{ height: 0; margin-bottom: 0; \}/);
+  // From 1280px: the change's column and its details', the picture's width unchanged.
+  assert.match(css, /@media \(min-width: 1280px\) \{[\s\S]{0,400}\.rf-page\[data-rf-side\] \{\s*width: min\(100%, 1040px\);\s*display: grid;\s*grid-template-columns: 520px minmax\(0, 1fr\);/);
+  assert.match(css, /\.rf-desc-wrap\[data-side\] \{\s*grid-column: 2;\s*grid-row: 1 \/ 4;\s*position: static;/);
+});
+
 test('a small change inside a close-up is drawn from it, big and sharp; without one it keeps the still\'s size', () => {
   const small = { ...SCREEN, regions: [{ n: 1, b: [100, 300, 50, 20], a: [100, 300, 50, 20] }] };
   const card = { w: 358, h: 358 };
@@ -895,7 +933,7 @@ test('a downward swipe on a change moves on: Skip before a vote, Next after one,
   assert.match(src, /if \(e\.pointerType !== 'touch' && e\.pointerType !== 'pen'\) return;/);
   assert.match(src, /const stage = stageRef\.current;\s*if \(!item \|\| !stage \|\| stage\.scrollTop > 0 \|\| sheetOpen\(sheet\) \|\| desc \|\| busy\.current\) return;/);
   // The picture keeps its own gestures, and controls their taps.
-  assert.match(src, /el\?\.closest\('\[data-rf-picture\], \.rf-sheet, \.rf-desc-wrap\[data-open\], button, a, input, textarea'\)/);
+  assert.match(src, /el\?\.closest\('\[data-rf-picture\], \.rf-sheet, \.rf-desc-wrap\[data-open\], \.rf-desc-wrap\[data-side\], button, a, input, textarea'\)/, 'selecting text in the side column is not a swipe');
   // On release: down, and clearly down rather than sideways.
   assert.match(src, /if \(dy >= 72 && dy > 2 \* Math\.abs\(dx\)\) \{/);
   assert.match(src, /onPointerMove=\{swipeMove\}/);

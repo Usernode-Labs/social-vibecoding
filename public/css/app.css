@@ -6742,7 +6742,8 @@ html:not([data-skin]) #home-communities-section { display: none; }
    their markup and are still two sections; the look joins them where they
    are neighbours. */
 html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="status"]),
-html[data-skin-wip] body #dev-workshop:has(> .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="needs"]),
+html[data-skin-wip] body #dev-workshop:has(> .dev-ws[data-ws-tab="all"]) {
   max-width: none;
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
@@ -6753,7 +6754,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabb
    is cleared while the hub is the place on show, so its cards are the only
    cards. */
 html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]),
-html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]),
+html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) {
   border-radius: 0;
   border-color: transparent;
   background-color: var(--wip-page-bg);
@@ -6762,7 +6764,7 @@ html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #
   box-shadow: none;
 }
 /* The standard look keeps its wallpaper behind the hub's cards, as on Home: the page's own ground is Standard (WIP)'s alone. */
-html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]) { background-color: transparent; }
+html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) { background-color: transparent; }
 /* The hub has no Topics card under the look: a topic's channel is reached by its own address. */
 html:not([data-skin]) #dev-workshop [data-ws-hub-topics] { display: none; }
 /* A section's label, outside its card: Home's label, from the same tokens. */
@@ -7465,7 +7467,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou
    columns, and under it the ways on into the project as three doors in a
    row. With nothing waiting, the good news stands where the rows would: a
    tick in the "going well" colour, a heading and its line. */
-html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"]) .dev-ws-place-title {
+html:not([data-skin]) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) .dev-ws-place-title,
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-place-title {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
   font-weight: var(--wip-label-weight);
@@ -7478,11 +7481,12 @@ html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws:is([data-ws-tab="stat
   text-underline-offset: -0.16em;
   text-decoration-skip-ink: none;
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs) { display: flex; flex-direction: column; gap: 0.5rem; max-width: none; margin: 0; padding: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs) { display: flex; flex-direction: column; gap: 0.5rem; max-width: none; margin: 0; padding: 0; }
 /* The place's own name bar spans the page too (on the hub as well), so the name starts where the cards do. */
-html[data-skin-wip] #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"]) > .dev-ws-placebar { max-width: none; margin-inline: 0; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
+html:not([data-skin]) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) > .dev-ws-placebar,
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
   display: grid;
   grid-template-columns: repeat(var(--wip-cols, 1), minmax(0, 1fr));
   gap: 0.25rem var(--wip-col-gap);
@@ -7492,17 +7496,17 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] {
   gap: var(--wip-tile-gap);
   padding: 0.5rem var(--wip-cell-pad);
   border: 0;
   border-radius: var(--wip-radius-inner);
   box-shadow: none;
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row]:hover { background-color: var(--wip-ghost); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .workshop-reel-tile { border-radius: var(--wip-item-icon-radius); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :first-child { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :last-child:not(:first-child) { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row]:hover { background-color: var(--wip-ghost); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .workshop-reel-tile { border-radius: var(--wip-item-icon-radius); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :first-child { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :last-child:not(:first-child) { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 .wip-ways { margin-top: var(--wip-row-gap); display: flex; flex-direction: column; gap: 0.5rem; }
 .wip-ways-label {
   margin: 0;
@@ -7636,6 +7640,7 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips :
    reach the title. Under 900px it is the full-width line above the page it
    always was. */
 @media (min-width: 900px) {
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice,
   html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) > #dev-code-pause-notice {
     position: relative;
     z-index: 2;
@@ -7646,6 +7651,7 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips :
     overflow: visible;
     pointer-events: none;
   }
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice > [data-code-pause],
   html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) > #dev-code-pause-notice > [data-code-pause] {
     flex: none;
     max-width: 62%;
@@ -27749,6 +27755,104 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-hero-quiet { width: 100%; }
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
 .rf-scrim-on { opacity: 1; pointer-events: auto; }
+
+/* ── A project's Needs you under the kit looks (the standard look and
+   Standard (WIP)) ────────────────────────────────────────────────────────
+   The vote card is the look's own card: white in light, the dark card in
+   dark, one hairline, and no rules inside it. Its controls are the kit's:
+   round arrows, the hub's coloured tiles beside Ask privately, Discussion
+   and Try it, and a white switch with the sun for a knob. From 1280px what
+   the change does stands beside its picture, in a column of its own, and
+   the lead line under the bar goes, so it is said once. Only a project's
+   Needs you wears these: the same run drawn for Home and the Communities
+   page keeps today's card. */
+.rf-help-tile { display: contents; color: var(--rf-muted); }
+.rf-help-tile > svg { flex: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap {
+  --rf-page: var(--wip-card-bg);
+  --rf-sheet: var(--wip-card-bg);
+  --rf-line: var(--wip-card-line);
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page {
+    border-radius: var(--wip-card-radius);
+    box-shadow: inset 0 0 0 1px var(--wip-card-line);
+    overflow: hidden;
+  }
+}
+/* No rules inside the card. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-help-row + .rf-help-row::before { content: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-desc-help { background: transparent; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-sheet.rf-sheet-rest { box-shadow: none; }
+/* The kit's round control: the back arrow and the details arrow. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-back, .rf-bar-toggle) {
+  width: 36px;
+  height: 36px;
+  margin-block: 4px 0;
+  border-radius: 999px;
+  background: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  color: var(--wip-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-back, .rf-bar-toggle):is(:hover, :focus-visible) { background: var(--wip-ghost); }
+/* The help rows' glyphs, on the hub's three mark tiles, in its order. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-help-tile {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--wip-radius-inner);
+  background-color: var(--wip-mark-1-bg);
+  color: var(--wip-mark-1-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-help-tile[data-mark="2"] { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-help-tile[data-mark="3"] { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+/* The before/after switch: white, the ink's outline, the sun for a knob. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-switch,
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-switch[data-view="before"] {
+  background: var(--wip-card-bg);
+  border-color: var(--wip-ink);
+  color: var(--wip-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-knob,
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-switch[data-view="before"] .rf-knob {
+  background: #ffee6f;
+  color: #000;
+}
+/* Nothing said about the vote takes no room: Yes and No sit under the picture. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-why-off { height: 0; margin-bottom: 0; }
+/* From 1280px, what the change does stands beside it. */
+@media (min-width: 1280px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page[data-rf-side] {
+    width: min(100%, 1040px);
+    display: grid;
+    grid-template-columns: 520px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page[data-rf-side] > .rf-bar { grid-column: 1; grid-row: 1; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page[data-rf-side] > .rf-stage { grid-column: 1; grid-row: 2; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page[data-rf-side] > .rf-sheet { grid-column: 1; grid-row: 3; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page[data-rf-side] > .rf-scrim { grid-column: 1 / -1; grid-row: 1 / -1; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-desc-wrap[data-side] {
+    grid-column: 2;
+    grid-row: 1 / 4;
+    position: static;
+    pointer-events: auto;
+    overflow-y: auto;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-desc-wrap[data-side] .rf-desc {
+    position: static;
+    transform: none;
+    box-shadow: none;
+    max-height: none;
+    padding: 24px;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-desc-wrap[data-side] .rf-desc-foot,
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-desc-wrap[data-side] .rf-desc-help {
+    margin-inline: 0;
+  }
+}
 
 /* The slider. The switch sits at the foot of the picture, where a thumb
    pressing it covers the least of the shot. */
