@@ -1040,7 +1040,7 @@ const ADDED_IDS = {
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
   'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
-  'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
+  'home-row': 'The row under Pinned projects that holds Recent threads and Challenges. The standard look\'s Home is the kit\'s since 20 Nov 2026, so the prerendered document draws it.',
   // #home-discover-section (area 2) left this map when One Home (#6361) took
   // Discover's lane off Home; #home-join-section, below #home-challenges-section,
   // is the directory there now.

@@ -131,9 +131,10 @@ test('Accessibility has a Reduce motion switch, read and written through window.
 const MOTION_PROP = /^(animation|transition|scroll-behavior$|transform$)/;
 
 // A selector on <html> itself takes the attribute at the end of its first
-// compound (html[data-side-strip]:where(…) .x); any other goes under it.
+// compound (html[data-side-strip]:where(…) .x, html:not([data-skin]):where(…) .x);
+// any other goes under it.
 function scoped(sel) {
-  const m = sel.match(/^(?:html|:root)(?:[.#[][^\s:]*?)*?(?=\s|::|$)/);
+  const m = sel.match(/^(?:html|:root)(?:[.#[][^\s:]*?|:not\([^)]*\))*?(?=\s|::|$)/);
   return m ? `${m[0]}:where(${ON})${sel.slice(m[0].length)}` : `:where(html${ON}) ${sel}`;
 }
 const norm = (s) => s.replace(/\s+/g, ' ').trim();

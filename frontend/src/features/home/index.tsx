@@ -86,7 +86,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { isFrameSkin, useSkin } from '../../lib/skin';
+import { isFrameSkin, useSkin, isKitHome } from '../../lib/skin';
 import { HomeFrame } from './frame/home-frame';
 
 import { SearchIcon } from '@/components/ui/icons';
@@ -153,7 +153,11 @@ export function HomeScreen() {
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
   const frame = isFrameSkin(skin) && viewer;
   // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
-  const wip = skin === 'wip';
+  // The standard look's Home too since 20 Nov 2026 (lib/skin.ts isKitHome).
+  // `useSkin()` answers 'standard' on the first render, so this is also what
+  // the prerendered document draws.
+  const wip = isKitHome(skin);
+  const topRow = wip;
   // "Paper, simplified, with brand styling" (Drea's review of #6699) takes
   // two of Standard (WIP)'s pieces in its own colours (app.css, the brand
   // look's HOME): New project as a button on the search row, and the Recent
@@ -163,7 +167,7 @@ export function HomeScreen() {
   // picked while Home is up repaints it.
   // Only once the grid has drawn: a render before the apps are in would
   // publish an empty grid and take the loading placeholders away early.
-  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [wip, brand]);
+  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [wip, brand, topRow]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -248,8 +252,8 @@ export function HomeScreen() {
         */}
         {/* Standard (WIP): the field is a short one at the row's start, and
             New project, the page's one filled action, ends the row. */}
-        <div className={wip ? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'}>
-          <div className={wip ? 'relative wip-search' : 'relative w-full'}>
+        <div className={topRow ? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'}>
+          <div className={topRow ? 'relative wip-search' : 'relative w-full'}>
             <SearchIcon
               className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
               aria-hidden="true"
@@ -272,7 +276,7 @@ export function HomeScreen() {
               &times;
             </button>
           </div>
-          {(wip || brand) && grid.ready && grid.create ? (
+          {(topRow || brand) && grid.ready && grid.create ? (
             <WipCta id="home-new-project-top" onClick={() => { (window as any).App?.showCreateModal?.(); }}>
               {t('home:create.label')}
             </WipCta>
