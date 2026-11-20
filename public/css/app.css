@@ -7599,6 +7599,14 @@ html:not([data-skin]):where([data-motion="reduce"]) .wip-caught-door:is(:hover, 
 /* The project's notice (changes to its code are paused) is not shown on Needs you (asked 20 Nov 2026): the page is for
    voting, which the pause does not stop; the hub and the board still say it. */
 html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice { display: none; }
+/* THE END OF A RUN (asked 20 Nov 2026) is a card of the look, as "You're all caught up" is: the little pile of changes,
+   the two lines, then its one action as a button of its own width (it ran the page's whole width) and the way back as
+   a plain link under it. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone { align-self: center; width: min(100%, 32rem); min-height: 0; margin-block: 1.5rem 0; padding: 2.5rem 1.5rem 2rem; border-radius: var(--wip-card-radius); background: var(--wip-card-bg); box-shadow: 0 0 0 1px var(--wip-card-line); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-title { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-line { color: var(--wip-ink-soft); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-btn { align-self: center; min-width: 14rem; padding-inline: 1.5rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-back { margin-top: 0.875rem; color: var(--wip-ink); font-size: var(--wip-link-size); text-decoration: underline; text-underline-offset: 3px; }
 /* WHAT A CHANGE DOES, BESIDE IT (asked 20 Nov 2026). From 1280px a project's Needs you keeps the card that the arrow in
    the change's bar opens (its summary, who made it, the way to its page and the three ways to look closer) open at the
    change's far side, in the same card past a hairline; review-flow.tsx marks the page (`data-rf-beside`) and takes the
