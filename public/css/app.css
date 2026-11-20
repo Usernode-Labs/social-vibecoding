@@ -8763,6 +8763,56 @@ html:not([data-skin]) .gc-vote-btn:is(.gc-vote-btn-yes, .gc-vote-btn-no) {
 html:not([data-skin]) .gc-vote-btn.gc-vote-btn-yes { background: var(--wip-btn-yes-bg); }
 html:not([data-skin]) .gc-vote-btn.gc-vote-btn-no { background: var(--wip-btn-no-bg); }
 html:not([data-skin]) .gc-vote-btn:is(.gc-vote-btn-yes, .gc-vote-btn-no):active:not(:disabled) { box-shadow: none; transform: var(--wip-btn-press); }
+/* THE VOTE SCREEN (Needs you): Yes and No stay one joined control, with its
+   thumb that slides to the answer, drawn as a level 2 pill; the thumb is
+   the answer's own colour (green for Yes, salmon for No), so the pair keeps
+   its equal weight until one is chosen. Skip is a level 2 button, and Next,
+   which it becomes once you have answered, is the level 1. */
+html:not([data-skin]) .rf-pair {
+  border: 1px solid var(--wip-btn-2-line);
+  background: var(--wip-btn-2-bg);
+  box-shadow: var(--wip-btn-edge);
+}
+html:not([data-skin]) .rf-pair-btn {
+  color: var(--wip-btn-2-ink);
+  font-family: var(--wip-btn-font);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
+html:not([data-skin]) .rf-pair-btn[aria-checked="true"] { color: var(--wip-btn-vote-ink); }
+html:not([data-skin]) .rf-pair[data-rf-voted="yes"] .rf-pair-thumb { background: var(--wip-btn-yes-bg); }
+html:not([data-skin]) .rf-pair[data-rf-voted="no"] .rf-pair-thumb { background: var(--wip-btn-no-bg); }
+html:not([data-skin]) .rf-pair-div { background: var(--wip-btn-2-ink); }
+html:not([data-skin]) .rf-pair-btn:focus-visible,
+html:not([data-skin]) .rf-morph:focus-visible { outline-color: var(--wip-btn-focus); }
+html:not([data-skin]) .rf-morph {
+  border: 1px solid var(--wip-btn-2-line);
+  background: var(--wip-btn-2-bg);
+  box-shadow: var(--wip-btn-edge);
+  color: var(--wip-btn-2-ink);
+}
+html:not([data-skin]) .rf-morph .rf-morph-in {
+  font-family: var(--wip-btn-font);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
+html:not([data-skin]) .rf-morph[data-rf-morph="next"] {
+  border-color: var(--wip-btn-1-line);
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+}
+html:not([data-skin]) .rf-morph:active { box-shadow: none; scale: 1; transform: var(--wip-btn-press); }
+/* RESUME, in the strip that offers to go back into an app: the strip's one action, a small level 1 pill. */
+html:not([data-skin]) .platform-parked-pill {
+  border: 1px solid var(--wip-btn-1-line);
+  background: var(--wip-btn-1-bg);
+  box-shadow: var(--wip-btn-edge-small);
+  color: var(--wip-btn-1-ink);
+  font-family: var(--wip-btn-font);
+  font-size: var(--wip-btn-size-small);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
 /* END OF BUTTONS. */
 /* ── HOME, A PIECE AT A TIME (20 Nov 2026): the standard look takes Standard
    (WIP)'s Home in steps. The look's tokens are both looks' now (the token
