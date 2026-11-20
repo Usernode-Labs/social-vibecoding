@@ -183,6 +183,7 @@ async function seedStarter(config, pool, row, sketch, ctx, category = null) {
       // the repo_url write has the SAME slug, so the repository is there.
       const repo = await github.createRepo(botUsername, row.slug, {
         description: `${row.name}: built on Homeroom`,
+        ...(require('./project-repo-visibility').privateAtCreation(row) ? { private: true } : {}),
         adoptExisting: true,
       });
       const repoUrl = repo.html_url;
@@ -245,6 +246,7 @@ async function seedVersion(config, pool, row, sketch, ctx, source, category = nu
   const made = await repoQueue.withRetries(pool, async () => {
     const repo = await github.createRepo(botUsername, row.slug, {
       description: `${row.name}: built on Homeroom`,
+      ...(require('./project-repo-visibility').privateAtCreation(row) ? { private: true } : {}),
       adoptExisting: true,
     });
     const repoUrl = repo.html_url;
@@ -349,6 +351,7 @@ async function copyFork(config, pool, row) {
     const botUsername = await github.getBotUsername();
     const copied = await forker.copyRepoTree({
       sourceApp, botUsername, forkSlug: row.slug, forkName: row.name, tempDir, follow,
+      privateRepo: require('./project-repo-visibility').privateAtCreation(row),
     });
     const shas = forker.forkLineageShas(copied);
     const synced = shas.sourceSha && shas.forkBaseSha

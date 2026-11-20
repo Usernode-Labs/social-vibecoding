@@ -266,6 +266,8 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: GIT_HOST_ORG, value: {{ .Values.config.gitHost.org | quote }}}
             - {name: GIT_HOST_USER, value: {{ .Values.config.gitHost.user | quote }}}
             - {name: GIT_HOST_READ_USER, value: {{ .Values.config.gitHost.readUser | default .Values.config.gitHost.user | quote }}}
+            - {name: GIT_HOST_PRIVATE_PROJECTS, value: {{ .Values.config.gitHost.privateProjects | default "" | quote }}}
+            - {name: GIT_HOST_PRIVATE_PROJECTS_WRITE, value: {{ .Values.config.gitHost.privateProjectsWrite | default false | quote }}}
             - {name: NODE_RPC_URL, value: {{ .Values.config.nodeRpcUrl | quote }}}
             - {name: EXPLORER_UPSTREAM, value: {{ .Values.config.explorerUpstream | quote }}}
             - {name: EXPLORER_UPSTREAM_BASE, value: {{ .Values.config.explorerUpstreamBase | quote }}}

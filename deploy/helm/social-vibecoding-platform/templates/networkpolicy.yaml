@@ -38,6 +38,15 @@ spec:
               kubernetes.io/metadata.name: {{ . | quote }}
         {{- end }}
       ports: [{protocol: TCP, port: 3000}]
+    {{- if and .Values.config.gitHost.privateProjects .Values.networkPolicy.projectSourceCallerNamespaces }}
+    - from:
+        {{- range .Values.networkPolicy.projectSourceCallerNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports: [{protocol: TCP, port: 3000}]
+    {{- end }}
     {{- if and .Values.monitoring.enabled .Values.platform.conductor.enabled .Values.platform.conductor.metricsPort }}
     # Prometheus scrapes the conductor's workflow metrics (src/workflow/metrics.ts).
     - from:

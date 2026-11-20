@@ -472,7 +472,7 @@ if usernode_settle_session_branch; then
   usernode_commit_leftovers "$TURN_START_SHA" "$COMMIT_MSG"
 fi
 
-git fetch origin main --quiet 2>/dev/null || true
+usernode_source_git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")

@@ -2959,6 +2959,10 @@
     "text": "Everyone who can see it can suggest changes. The rule below decides what goes live.",
     "description": "Note under the two visibility choices on the Who can see & change it sheet, where a project's visibility and approval rule are set. \"Suggest changes\" means propose them; \"the rule below\" is the approval rule picked next, which decides which changes go live."
   },
+  "whoDecides.see.publicSource": {
+    "text": "Making this project public also publishes its source code, Git history, and branches.",
+    "description": "Shown when changing a managed project from private to public."
+  },
   "whoDecides.see.limitedName": {
     "text": "Public, invite-only building",
     "description": "Name of an older setting some projects still have: anyone can see the project, only collaborators can build it."
