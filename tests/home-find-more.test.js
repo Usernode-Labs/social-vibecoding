@@ -389,9 +389,12 @@ test('index.html stacks the three home areas in order', () => {
   const challenges = INDEX.indexOf('id="home-challenges-section"');
   const join = INDEX.indexOf('id="home-join-section"');
   assert.ok(grid > 0, 'the launcher grid is present');
-  assert.ok(communities > grid, 'Pinned communities comes after Pinned apps');
-  assert.ok(challenges > communities, 'Challenges after Pinned communities');
-  assert.ok(join > challenges, 'Communities to join last');
+  // The standard look's Home is the kit's since 20 Nov 2026: Challenges sits in
+  // the row right under Pinned projects, and Pinned communities (which that
+  // Home does not show) keeps its host after it.
+  assert.ok(challenges > grid, 'Challenges comes after Pinned projects');
+  assert.ok(communities > challenges, 'the Pinned communities host after Challenges');
+  assert.ok(join > communities, 'Communities to join last');
   assert.equal(INDEX.indexOf('id="home-discover-section"'), -1, 'no Discover lane on Home');
   assert.equal(INDEX.indexOf('id="home-create-section"'), -1,
     'Create app is no longer a section of its own');
@@ -422,8 +425,10 @@ test('the apps grid is four columns at every width, two rows by default', () => 
     /\{t\('home:grid\.showAll', \{ count: moreCount \}\)\}/
   );
   assert.equal(message('home:grid.showAll', { count: 9 }), 'Show all 9 apps');
-  assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
-    'the expander has a host outside #app-list');
+  // The kit's Home (the prerendered one since 20 Nov 2026) folds the grid from
+  // its heading's link instead, so the document carries no expander host.
+  assert.equal(INDEX.indexOf('id="home-apps-more"'), -1,
+    'the expander is the heading\'s own link under the kit\'s Home');
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a
@@ -487,7 +492,7 @@ test('the home feed is a 1024px centred column', () => {
   assert.match(bar, /home-column/, "the search bar's content sits in the same column");
   // The gutter moved onto that inner column so its content edges match
   // #home-body's; the bar element itself must stay full-bleed for its bg.
-  assert.match(bar, /home-column[^"]*px-3/, 'the gutter is on the inner column');
+  assert.match(bar, /home-column wip-topbar/, 'the gutter is on the inner column (the kit\'s top row carries it)');
   assert.doesNotMatch(INDEX.match(/<div id="home-search-bar"[^>]*>/)[0], /px-3/);
 
   const css = read('public/css/app.css');

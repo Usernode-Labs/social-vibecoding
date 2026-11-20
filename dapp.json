@@ -1028,12 +1028,12 @@
     },
     {
       "name": "Challenges: every unfinished Home card draws the shared progress rail beside its arrow (Iteration 03 card, #4563)",
-      "path": "/?demo=1",
+      "path": "/?demo=1&skin=brand",
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card:not([data-challenge-state=done]) [role=progressbar][aria-valuetext] + span.bg-zinc-100 > svg[aria-hidden=true]"
     },
     {
       "name": "Challenges: Home names the block by what it holds, with no season progress above the cards",
-      "path": "/?demo=1",
+      "path": "/?demo=1&skin=brand",
       "expectSelector": "#home-challenges-section:not(:has(.home-panel-season)) > h2.home-area-label + article.home-panel > .home-panel-body .home-challenge-card [role=progressbar]",
       "expectText": "Next challenges"
     },
@@ -1045,24 +1045,24 @@
     },
     {
       "name": "Challenges: with two open, Next challenges shows just those two",
-      "path": "/?demo=1&challenges=few",
+      "path": "/?demo=1&challenges=few&skin=brand",
       "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"2\"] > .home-panel-body .home-challenge-card",
       "expectText": "Next challenges"
     },
     {
       "name": "Challenges: Next challenges shows at most three, the furthest along first",
-      "path": "/?demo=1",
+      "path": "/?demo=1&skin=brand",
       "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"3\"]:not(:has(.home-panel-expand)) .home-panel-rows > .home-challenge-card[data-challenge-id=\"900512\"]:first-child",
       "expectText": "4/8 Apps tested this week"
     },
     {
-      "name": "Challenges: a Home card with an illustration draws its artwork (Iteration 03)",
+      "name": "Challenges: a Home poster with an illustration draws its artwork (the standard look's Home is the kit's, 20 Nov 2026)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section .home-challenge-card img[src^=\"/illustrations/challenges/\"]"
+      "expectSelector": "#home-body.home-column #home-challenges-section [data-wip-challenges] .wip-poster img[src^=\"/illustrations/challenges/\"]"
     },
     {
       "name": "Challenges: on Home, Next challenges lists only unfinished ones, under no group headers",
-      "path": "/?demo=1",
+      "path": "/?demo=1&skin=brand",
       "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card[data-challenge-state=done])) > .home-challenge-card"
     },
     {
@@ -1477,14 +1477,14 @@
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
       "path": "/?demo=1",
-      "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
+      "expectSelector": "#home-body #home-apps-section > h2.home-area-label #home-apps-see-all.wip-head-more > .wip-fold-pill",
       "expectText": "Show all"
     },
     {
-      "name": "Each home area is introduced by its own label (#1478; One Home #6361 calls the first Pinned apps)",
+      "name": "Each home area is introduced by its own label (#1478; the standard look's Home calls the first Pinned projects since 20 Nov 2026)",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
-      "expectText": "Pinned apps"
+      "expectText": "Pinned projects"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -3148,7 +3148,7 @@
     {
       "name": "The Challenges area's See all opens the Challenges tab",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label > a.home-panel-see-all[href=\"#leaderboard/challenges\"][aria-label=\"See all challenges\"]",
+      "expectSelector": "#home-challenges-section > h2.home-area-label a.wip-head-more[href=\"#leaderboard/challenges\"][aria-label=\"See all challenges\"] > .wip-fold-pill",
       "expectText": "See all"
     },
     {

@@ -20,11 +20,11 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 /** What Standard (WIP) deliberately does not display, by selector. */
 const WIP_HIDES = [
   // Home has no Pinned communities section under the look.
-  'html[data-skin-wip] #home-communities-section',
+  'html:not([data-skin]) #home-communities-section',
   // A pinned project's tile has no description under the look (asked 19 Nov 2026).
-  'html[data-skin-wip] #app-list .app-card-desc',
+  'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
-  'html[data-skin-wip] #app-list .app-card-people',
+  'html:not([data-skin]) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
@@ -34,7 +34,7 @@ const WIP_HIDES = [
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
-  'html[data-skin-wip] #app-list .app-card-opened',
+  'html:not([data-skin]) #app-list .app-card-opened',
 ];
 
 /**
@@ -114,7 +114,8 @@ test('it is the standard look: the head sets data-skin-wip and no data-skin', ()
 test('every rule of its block is scoped to the look or is a component of its kit', () => {
   for (const { selector } of rules(wipBlock())) {
     for (const one of topLevel(selector)) {
-      assert.match(one, /data-skin-wip|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle the standard look`);
+      // Home's rules are the standard look's too since 20 Nov 2026 (html:not([data-skin]): the two looks, and no other).
+      assert.match(one, /data-skin-wip|^html:not\(\[data-skin\]\)|^\.wip-|^\.app-card-(desc|people)$/, `"${one}" would restyle another look`);
     }
   }
 });
@@ -122,7 +123,7 @@ test('every rule of its block is scoped to the look or is a component of its kit
 test('colours are written once, as tokens in the block\'s first rule', () => {
   const all = rules(wipBlock());
   // The token rules: the look's own (the config called Current) and each other config's, in light and dark.
-  const tokens = all.filter((r) => /^html\[data-skin-wip\](\[data-wip-tokens="[a-z0-9]+"\])?(\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
+  const tokens = all.filter((r) => /^html(\[data-skin-wip\]|:not\(\[data-skin\]\))(\[data-wip-tokens="[a-z0-9]+"\])?(\.dark)?$/.test(r.selector) && /--(wip|lit)-/.test(r.body));
   assert.ok(tokens.length >= 1, 'the block declares its tokens');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
@@ -213,7 +214,7 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
       assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn/, `"${one}" leaves the admin console alone`);
+      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|#home-new-project-top/, `"${one}" leaves the admin console alone`);
     }
   }
   // Colours are written in the token rules alone, and every token a rule reads is declared there.
@@ -246,7 +247,7 @@ test('nothing of the standard look is hidden under it but what WIP_HIDES lists',
 
 test('Home places what it does not name last, so a new standard section is drawn', () => {
   const block = wipBlock();
-  assert.match(block, /html\[data-skin-wip\] #home-screen \.home-main > \* \{ order: 4; \}/);
+  assert.match(block, /html:not\(\[data-skin\]\) #home-screen \.home-main > \* \{ order: 4; \}/);
 });
 
 test('its pieces come from the kit, not from classes spelled in place', () => {

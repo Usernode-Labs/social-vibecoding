@@ -7818,21 +7818,6 @@ html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-nav-bar-tint: var(--wip-ghost);
   --wip-nav-bar-line: var(--wip-card-line);
 }
-/* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
-   is drawn from its own tokens, which are the filled action's unless the
-   config names others. */
-html:not([data-skin]) :is(#home-new-project-top, #communities-new-top) {
-  background: var(--wip-btn-1-bg);
-  color: var(--wip-btn-1-ink);
-  font-size: var(--wip-btn-size);
-  font-weight: var(--wip-btn-weight);
-  box-shadow: var(--wip-btn-edge);
-}
-html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):hover { background: var(--wip-btn-1-hover); transform: none; }
-html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):active {
-  box-shadow: none;
-  transform: var(--wip-btn-press);
-}
 /* The hub's "All in Workshop", beside Recently live, is the same button: the way to the rest of a section reads as one everywhere under the look. */
 html[data-skin-wip] #dev-workshop [data-ws-recent-all] {
   display: inline-flex;
@@ -8744,6 +8729,22 @@ html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .hom
   text-underline-offset: 3px;
 }
 html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; }
+/* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
+   is a level 1 button: its fill, its edge and its serif label at the block's
+   own weight, not a face of its own. (The ids outrank the class rules
+   above, so they are said here.) */
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top) {
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+  font-size: var(--wip-btn-size);
+  font-weight: var(--wip-btn-weight);
+  box-shadow: var(--wip-btn-edge);
+}
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):hover { background: var(--wip-btn-1-hover); transform: none; }
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):active {
+  box-shadow: none;
+  transform: var(--wip-btn-press);
+}
 /* YES AND NO ON A VOTE: Homeroom's own pair, equal weight on purpose (neither answer is the main action). */
 html:not([data-skin]) {
   --wip-btn-yes-bg: #a9cf97;

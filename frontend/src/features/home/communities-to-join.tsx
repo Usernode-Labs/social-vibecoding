@@ -79,7 +79,11 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const t = useMessages('home');
   const ta = useMessages('auth');
   // Standard (WIP), lib/skin.ts: Featured is a row of Home's own there, so its label says of what.
-  const wip = isKitHome(useLiveSkin());
+  // The standard look's Home too since 20 Nov 2026 (isKitHome), and only its
+  // signed-in Home: the visitor's landing and the Communities page draw this
+  // same list, and keep the standard drawing of it.
+  const live = useLiveSkin();
+  const wip = live === 'wip' || (isKitHome(live) && signedIn && !ids);
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);
