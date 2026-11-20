@@ -462,7 +462,11 @@ async function openSession(pool, config, { user, draft, opening = false, deps = 
         log.warn('live-draft-bot', 'A draft tool failed', { tool: clip(name, 40), draftId: draft.id, err: clip(err?.message, 200) });
         const sorted = botFailure.sort({ err });
         if (sorted.class === 'credit') {
-          return { ok: false, error: require('./homeroom-bot-mayor').CREDIT_TEXT };
+          const pause = require('./bot-pause-words');
+          return {
+            ok: false,
+            error: await pause.budgetNow(pool) ? pause.chat.now(pause.resetDay()) : require('./homeroom-bot-mayor').CREDIT_TEXT,
+          };
         }
         // A model's bad arguments come back as results and never throw, so
         // this is Homeroom's own failure, said as its, with no fix asked for.

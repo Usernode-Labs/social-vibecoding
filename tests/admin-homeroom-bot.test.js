@@ -883,8 +883,10 @@ test('the money tiles: the week against its budget with OpenRouter\'s count, and
   assert.deepEqual(spendTile(bot, credit), {
     value: '$281.47',
     sub: 'of $800.00, the weekly budget. It resets on Monday.',
-    counts: 'OpenRouter counts $300.04.',
+    counts: 'OpenRouter counts $300.04, which includes screenshots, sync and helpers.',
   });
+  assert.equal(spendTile(bot, { ...credit, keyUsedCents: 20000 }).counts, 'OpenRouter counts $200.00.',
+    'a lower count is said without a reason: nothing explains it');
   assert.deepEqual(spendTile(bot, { ...credit, keyUsedCents: 28147 }), {
     value: '$281.47', sub: 'of $800.00, the weekly budget. It resets on Monday.',
   }, 'OpenRouter\'s count is said only when it differs');

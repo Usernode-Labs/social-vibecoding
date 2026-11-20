@@ -2348,20 +2348,20 @@
     "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly spending could not be read."
   },
   "limits.budget.near": {
-    "text": "At {{cap}} the bot stops building until {{day}}, or until the budget is raised.",
-    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used. {{cap}} is the budget as a dollar amount, {{day}} the name of the day it starts again, such as Monday."
+    "text": "At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until {{day}} or until the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used. {{cap}} is the budget as a dollar amount, {{day}} the name of the day it starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   },
   "limits.budget.nearNoDay": {
-    "text": "At {{cap}} the bot stops building until the budget is raised.",
-    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used and the day it starts again is not known. {{cap}} is the budget as a dollar amount."
+    "text": "At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used and the day it starts again is not known. {{cap}} is the budget as a dollar amount. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   },
   "limits.budget.at": {
-    "text": "The bot has stopped building. It starts again on {{day}}, or as soon as the budget is raised.",
-    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent. {{day}} is the name of the day the budget starts again, such as Monday."
+    "text": "The bot has stopped building, and screenshots, sync with main and apps' AI features have stopped with it. They start again on {{day}}, or as soon as the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent. {{day}} is the name of the day the budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   },
   "limits.budget.atNoDay": {
-    "text": "The bot has stopped building. It starts again as soon as the budget is raised.",
-    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent and the day it starts again is not known."
+    "text": "The bot has stopped building, and screenshots, sync with main and apps' AI features have stopped with it. They start again as soon as the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent and the day it starts again is not known. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   },
   "limits.action.budget": {
     "text": "Raise the budget",
@@ -2476,15 +2476,15 @@
     "description": "First line of a notification to an administrator: Homeroom bot has used most of the money it may spend on AI models this week. {{percent}} is how much of the week's budget is used, from 80 to 99."
   },
   "row.limit.botBudget.warn.body": {
-    "text": "<0>{{used}} of {{cap}} used.</0> At {{cap}} the bot stops building until {{day}}.",
-    "description": "Second line of that notification to an administrator. {{used}} and {{cap}} are dollar amounts: what Homeroom bot has spent this week and its weekly budget. {{day}} is the name of the day the budget starts again, such as Monday."
+    "text": "<0>{{used}} of {{cap}} used.</0> At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until {{day}}.",
+    "description": "Second line of the \"weekly budget is … used\" notification to an administrator. {{used}} and {{cap}} are dollar amounts: what Homeroom bot's key has spent this week and its weekly budget. {{day}} is the name of the day the budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   },
   "row.limit.botBudget.full.label": {
     "text": "Homeroom bot's weekly budget is used up",
     "description": "First line of a notification to an administrator: Homeroom bot has spent all the money it may spend on AI models this week."
   },
   "row.limit.botBudget.full.body": {
-    "text": "The bot stopped building. It starts again on {{day}}, or once the budget is raised.",
-    "description": "Second line of that notification to an administrator. {{day}} is the name of the day the weekly budget starts again, such as Monday."
+    "text": "The bot stopped building, and screenshots, sync with main and apps' AI features stopped with it. They start again on {{day}}, or once the budget is raised.",
+    "description": "Second line of the \"weekly budget is used up\" notification to an administrator. {{day}} is the name of the day the weekly budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   }
 }

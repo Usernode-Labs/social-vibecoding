@@ -497,9 +497,15 @@ async function dispatchClaude(config, options, deps) {
     const exit = deps.agentTurn.sanitizeError({
       message: result?.fatalError || `exit ${result?.exitCode ?? result?.agentExit ?? 'unknown'}`,
     });
+    // The agent's model calls are paid with the platform's key, which is
+    // the Homeroom bot's. When the provider refused it (its credit, or the
+    // bot's weekly budget, as the runtime's own notice says), the run says
+    // so, and when the shots can be taken again.
+    const pause = require('./bot-pause-words');
+    const refused = pause.platformTurnRefused(result, 'shots', { budget: await pause.budgetNow(options.pool) });
     const error = new ShotsAgentError(
       'shots_agent_failed',
-      'The shots agent stopped with an error before it finished.',
+      refused || 'The shots agent stopped with an error before it finished.',
       exitCode == null && !exitCause ? exit : {
         exit, ...(exitCode != null ? { exitCode } : {}), ...(exitCause ? { exitCause } : {}),
       }

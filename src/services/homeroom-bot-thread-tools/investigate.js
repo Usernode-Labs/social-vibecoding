@@ -96,6 +96,9 @@ const SKIP_LINES = Object.freeze({
   bot_budget: 'Skipped: Homeroom bot has used its own time for the week.',
   // Review A2: an outage skips a check-in; it never counts as a failure.
   credit: 'Skipped: Homeroom bot is out of building credit right now.',
+  // The same outage when its cause is the bot's weekly budget (look-into.js
+  // gate `budget`, bot-pause-words.js).
+  credit_budget: require('../bot-pause-words').CHECKIN_SKIPPED,
 });
 
 // Its end, as the bot says it in the chat (none for a Stop: they did it).
@@ -184,7 +187,10 @@ async function checkIn(ctx, { pool, config, deps = {} }) {
     const settings = await botSvc.readSettings(pool, { strict: true });
     const bot = deps.bot || await botSvc.ensureBotUser(pool, config);
     const refused = await L.gate(pool, { user, app, settings, bot, deps });
-    if (refused) return refused.code === 'bot_off' || refused.code === 'paused' ? { stop: refused.code } : { skipped: refused.code };
+    if (refused) {
+      return refused.code === 'bot_off' || refused.code === 'paused' ? { stop: refused.code }
+        : { skipped: refused.code, ...(refused.budget ? { budget: true } : {}) };
+    }
     if (Number(inv.spent_cents) >= Number(inv.budget_cents)) return { stop: 'budget' };
     const started = await L.startLookRow(pool, {
       user, app, question: inv.goal, conversationId: inv.conversation_id, threadRootId: inv.thread_root_id,
@@ -210,7 +216,8 @@ async function checkIn(ctx, { pool, config, deps = {} }) {
   const at = new Date().toISOString();
   if (done.stop || done.busy) return { stop: done.stop || null, busy: !!done.busy, ran: false, costCents: 0 };
   if (done.skipped) {
-    await steps.once('skip', () => recordCheckin(pool, id, { n, seq, at, line: SKIP_LINES[done.skipped] || 'Skipped.', skipped: true }));
+    const line = done.skipped === 'credit' && done.budget ? SKIP_LINES.credit_budget : SKIP_LINES[done.skipped];
+    await steps.once('skip', () => recordCheckin(pool, id, { n, seq, at, line: line || 'Skipped.', skipped: true }));
     return { skipped: done.skipped, ran: false, costCents: 0 };
   }
   const costCents = Number.isFinite(done.costUsd) && done.costUsd > 0 ? Math.ceil(done.costUsd * 100) : 0;
@@ -421,6 +428,7 @@ module.exports = {
   runningCount,
   recordCheckin,
   // Pure, for tests and the card.
+  SKIP_LINES,
   modelName,
   proposedCard,
   rowParts,

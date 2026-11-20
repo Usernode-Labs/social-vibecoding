@@ -225,7 +225,8 @@ test('the budget row, near: amber, dollars used of the week, the day it turns, a
   assert.match(row, /data-limit-tone="near"/);
   assert.match(row, /Near the limit/);
   assert.match(row, /Homeroom bot's weekly budget: \$648 of \$800 used/);
-  assert.match(row, /At \$800 the bot stops building until Monday, or until the budget is raised\./);
+  assert.match(row,
+    /At \$800 the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until Monday or until the budget is raised\./);
   assert.match(row, /width:\s*81%/, 'a meter, like the counted limits');
   assert.match(row, /data-limit-action="budget"/);
   assert.match(row, /Raise the budget/);
@@ -239,7 +240,8 @@ test('the budget row, used up: red, and when the bot starts again', () => {
   assert.match(row, /data-limit-tone="broken"/);
   assert.match(row, /Used up/);
   assert.match(row, /Homeroom bot's weekly budget: \$800 of \$800 used/);
-  assert.match(row, /The bot has stopped building\. It starts again on Monday, or as soon as the budget is raised\./);
+  assert.match(row,
+    /The bot has stopped building, and screenshots, sync with main and apps' AI features have stopped with it\. They start again on Monday, or as soon as the budget is raised\./);
   assert.match(row, /text-red-600/);
   assert.match(row, /Raise the budget/);
   // Refused by OpenRouter a few dollars short: the count is said as it is.
@@ -259,7 +261,7 @@ test('the credit row and the budget row are two rows, each with its own fix', ()
 
 test('a budget whose week has no known turn says only the fix, and one gone stale offers Check again', () => {
   const none = rowOf(card([{ ...BUDGET_NEAR, detail: { ...BUDGET_NEAR.detail, resetsAt: null } }]), 'bot_budget');
-  assert.match(none, /At \$800 the bot stops building until the budget is raised\./);
+  assert.match(none, /At \$800 the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until the budget is raised\./);
   const stale = rowOf(card([{ key: 'bot_budget', state: 'unknown', reason: 'stale', measuredAt: '2026-11-20T11:30:00Z' }]), 'bot_budget');
   assert.match(stale, /Homeroom bot's weekly budget/);
   assert.match(stale, /data-limit-action="check"/);

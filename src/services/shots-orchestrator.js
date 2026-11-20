@@ -1304,8 +1304,11 @@ function agentErrorOf(error) {
 function followedErrorOf(result) {
   if (!shotsAgent.failedResult(result)) return null;
   const exitCause = shotsAgent.EXIT_CAUSES.has(result?.markerlessCause) ? result.markerlessCause : null;
+  // A turn whose provider refused the key says so (shots-agent.js does the
+  // same for a turn it watched end).
+  const refused = require('./bot-pause-words').platformTurnRefused(result, 'shots');
   const error = Object.assign(new ShotsOrchestrationError('shots_agent_failed',
-    'The shots agent stopped with an error before it finished.'), { shotsExitCause: exitCause });
+    refused || 'The shots agent stopped with an error before it finished.'), { shotsExitCause: exitCause });
   return agentErrorOf(error);
 }
 

@@ -839,6 +839,10 @@
     "text": "Waiting for building credit. Homeroom bot picks this up again by itself.",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a build stopped because the credit that pays for building ran out, and nothing needs doing."
   },
+  "work.line.budgetWait": {
+    "text": "Waiting until Monday: this week's building budget is used up. Homeroom bot picks this up again by itself, or sooner if an admin raises it.",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a build stopped because the money Homeroom bot may spend on AI models this week is used up. The budget starts again on Monday, and nothing needs doing."
+  },
   "work.line.reply": {
     "text": "Reading your reply",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot is reading what the person replied."

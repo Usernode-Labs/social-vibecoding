@@ -2393,7 +2393,10 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     };
     record.outcome = 'held';
     if (resumed) return { outcome: 'held', messageId: null };
-    text = HELD_TEXT;
+    // Which figure ran out (the stored outage's cause): a weekly budget that
+    // is used up says the day it starts again.
+    const pause = require('./bot-pause-words');
+    text = await pause.budgetNow(pool, deps.credit || null) ? pause.threadHeld(pause.resetDay()) : HELD_TEXT;
   } else if (!text) {
     // Nothing to say came back. Somebody who wrote to it hears that, once.
     text = 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
