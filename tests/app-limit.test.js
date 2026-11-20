@@ -139,7 +139,7 @@ test('adminPayload says what is in force and where it comes from', async () => {
   assert.deepEqual(
     await appLimit.adminPayload(makeStore({ live: 48 }), config),
     { limit: 50, source: 'default', defaultLimit: 50, setting: null, used: 48,
-      max: appLimit.MAX_SETTING, warnPercent: 80 });
+      max: appLimit.MAX_SETTING, warnPercent: 80, turnedAway: 0, turnedAwaySince: null });
   const admin = await appLimit.adminPayload(makeStore({ setting: 120, live: 48 }), config);
   assert.equal(admin.limit, 120);
   assert.equal(admin.source, 'admin');
@@ -290,4 +290,27 @@ test('the App limit card renders its ids and stays disabled until it has read th
 test('the section is called Limits now that it holds more than spend', () => {
   assert.match(read('frontend/src/features/admin/admin-console.js'),
     /\{ key: 'limits', label: 'Limits', group: 'People' \}/);
+});
+
+test('#6901: the App limit card says how many were turned away, and nothing at zero', () => {
+  globalThis.window = globalThis.window || globalThis;
+  const mod = loadTsx('frontend/src/features/admin/admin-limits.tsx', {
+    stubs: {
+      './admin-console.js': { AdminUI: new Proxy({}, { get: (_t, key) => (key === 'btn' ? new Proxy({}, { get: () => 'btn' }) : String(key)) }) },
+      '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} },
+    },
+  });
+  assert.equal(mod.turnedAwayLine({ turnedAway: 0, turnedAwaySince: null }), null,
+    'no line once the server has room again');
+  assert.equal(mod.turnedAwayLine({}), null);
+  assert.equal(mod.turnedAwayLine(null), null);
+  const line = mod.turnedAwayLine({ turnedAway: 7, turnedAwaySince: '2026-11-13T17:31:00.000Z' });
+  assert.equal(line.count, 7);
+  assert.match(line.when, /\d/, 'the run\'s start, in the viewer\'s own form');
+
+  const html = renderToHtml(createElement(mod.AppLimitCard, { canWrite: true }));
+  assert.match(html, /While it is full, they are also told when someone is turned away\./,
+    'the card explains the refusals too');
+  assert.doesNotMatch(html, /id="admin-app-limit-turned-away"/,
+    'nothing is drawn before the read lands');
 });
