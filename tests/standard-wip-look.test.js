@@ -356,6 +356,22 @@ test('nothing of the standard look is hidden under it but what WIP_HIDES lists',
     'a section the look stops displaying is a decision: add it to WIP_HIDES with its reason');
 });
 
+test('no sheen: a pointer sends no band of light across a project\'s icon, a community\'s or the hub\'s filled action (20 Nov 2026)', () => {
+  assert.doesNotMatch(read('public', 'css', 'app.css'), /--wip-sheen/, 'its colour and its time went with it');
+  const all = rules(wipBlock());
+  for (const { selector } of all) {
+    for (const one of topLevel(selector)) {
+      // Nothing is laid over an icon's tile (the sheen was ::after, the gloss before it ::before) ...
+      assert.doesNotMatch(one, /\.app-icon-tile::(after|before)/, `"${one}" draws over an icon`);
+      // ... or over the hub's Open app and Join.
+      assert.doesNotMatch(one, /\[data-ws-community-(open-app|join)\]\)(:hover)?::(after|before)/, `"${one}" draws over the hub's filled action`);
+    }
+  }
+  // What the pointer does there stays: a community's tint deepens a step, and nothing moves.
+  assert.ok(all.some((r) => r.selector === 'html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) .communities-grid > :is(a, button):hover'
+    && /background-color: var\(--wip-soft-bg-on\);/.test(r.body)));
+});
+
 test('Home places what it does not name last, so a new standard section is drawn', () => {
   const block = wipBlock();
   assert.match(block, /html:not\(\[data-skin\]\) #home-screen \.home-main > \* \{ order: 4; \}/);
