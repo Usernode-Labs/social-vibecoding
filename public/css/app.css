@@ -7822,15 +7822,16 @@ html[data-skin-wip][data-wip-tokens="brand"] {
    is drawn from its own tokens, which are the filled action's unless the
    config names others. */
 html:not([data-skin]) :is(#home-new-project-top, #communities-new-top) {
-  background: var(--wip-top-cta-bg);
-  color: var(--wip-top-cta-ink);
-  font-weight: var(--wip-top-cta-weight);
-  box-shadow: var(--wip-top-cta-edge);
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+  font-size: var(--wip-btn-size);
+  font-weight: var(--wip-btn-weight);
+  box-shadow: var(--wip-btn-edge);
 }
-html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):hover { transform: var(--wip-top-cta-lift); }
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):hover { background: var(--wip-btn-1-hover); transform: none; }
 html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):active {
-  box-shadow: var(--wip-top-cta-edge-down);
-  transform: var(--wip-top-cta-press);
+  box-shadow: none;
+  transform: var(--wip-btn-press);
 }
 /* The hub's "All in Workshop", beside Recently live, is the same button: the way to the rest of a section reads as one everywhere under the look. */
 html[data-skin-wip] #dev-workshop [data-ws-recent-all] {
@@ -8788,6 +8789,10 @@ html:not([data-skin]) .wip-fold-pill {
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
 }
+/* It ends the label's row (asked 20 Nov 2026): the label at the start, the link at the end. */
+html:not([data-skin]) :is(.home-area-label > span:first-child, #home-needs-card-title):has(.wip-fold-pill),
+html:not([data-skin]) .wip-head-more:has(> .wip-fold-pill) { display: flex; flex: 1 1 auto; }
+html:not([data-skin]) .wip-head-more > .wip-fold-pill { margin-inline-start: auto; }
 html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; }
 html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none; transform: none; }
 /* END OF HOME. */
