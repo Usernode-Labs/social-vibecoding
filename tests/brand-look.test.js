@@ -172,9 +172,20 @@ function lookBlock() {
 // The sheet before the look's block, less the one other block that may name
 // the look's typefaces: the signed-out pages wear the website's look too,
 // between two marks of their own. Where that block is absent, nothing is cut.
+// The standard look's thread page is this look's own rules written a second
+// time (scripts/thread-look.js, held by tests/thread-look.test.js): a block
+// between two marks just before this one, which is this look, not "outside" it.
+function lessTheThreadPage(css) {
+  const a = css.indexOf('/* ── THE THREAD PAGE IN THE STANDARD LOOK');
+  if (a < 0) return css;
+  const end = '/* ── END OF THE THREAD PAGE IN THE STANDARD LOOK. ── */';
+  const b = css.indexOf(end, a);
+  assert.ok(b > a, 'the thread page\'s block is one block between its two marks');
+  return css.slice(0, a) + css.slice(b + end.length);
+}
 function outsideTheLooks() {
   const css = read('public', 'css', 'app.css');
-  const before = css.slice(0, css.indexOf(HEADING));
+  const before = lessTheThreadPage(css.slice(0, css.indexOf(HEADING)));
   const a = before.indexOf("/* ── THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES");
   if (a < 0) return before;
   const end = "/* the website's look on the signed-out pages: end */";
@@ -601,7 +612,7 @@ test('the empty-state figures are committed beside their provenance, and drawn o
   }
   assert.match(read('public', 'illustrations', 'people', 'README.md'), /onhomeroom\.com/, 'where the figures come from');
   const css = read('public', 'css', 'app.css');
-  const before = css.slice(0, css.indexOf(HEADING));
+  const before = lessTheThreadPage(css.slice(0, css.indexOf(HEADING)));
   assert.ok(!before.includes('/illustrations/people/'), 'nothing outside this look loads them');
 });
 
