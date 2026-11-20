@@ -219,3 +219,25 @@ test('Standard (WIP) draws the page as Home is: its ground, cards with members a
   assert.match(css, /html:not\(\[data-skin\]\) #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
   assert.match(page, /<WipCta id="communities-discover-btn" glyph=\{false\} onClick=\{discover\}>/);
 });
+
+test('Pinned is a grid that wraps onto rows: four cards where four fit, the small tiles under 1024px, nothing sideways', () => {
+  const css = read('public/css/app.css');
+  const P = 'html:not\\(\\[data-skin\\]\\) #communities-body #communities-pinned-section \\.communities-grid';
+  // Each card at least --wip-pin-card wide, and no more in a row than the look's columns (four from 1024px).
+  assert.match(css, new RegExp(`${P} \\{\\s*display: grid;\\s*grid-template-columns: repeat\\(auto-fill, minmax\\(max\\(var\\(--wip-pin-card\\), \\(100% - \\(var\\(--wip-cols\\) - 1\\) \\* var\\(--wip-card-gap\\)\\) / var\\(--wip-cols\\)\\), 1fr\\)\\);\\s*grid-auto-rows: 1fr;\\s*gap: var\\(--wip-card-gap\\);\\s*padding: 0;\\s*\\}`));
+  // Under 1024px a card is the small tile: as many as fit, three on a phone.
+  assert.match(css, new RegExp(`@media \\(max-width: 1023\\.98px\\) \\{\\s*${P} \\{ grid-template-columns: repeat\\(auto-fill, minmax\\(var\\(--wip-pin-tile\\), 1fr\\)\\); \\}\\s*\\}`));
+  assert.match(css, /--wip-pin-card: 16\.5rem;/);
+  assert.match(css, /--wip-pin-tile: 6\.25rem;/);
+  assert.doesNotMatch(css, /--wip-shelf-card/, 'the one sideways row is gone, and its widths with it');
+  // Nothing in the section scrolls or snaps sideways, and only the standard look's rules (the brand look has its own grid).
+  const rules = [...css.matchAll(/([^{}]*#communities-pinned-section[^{}]*)\{([^{}]*)\}/g)];
+  assert.ok(rules.length > 5, 'the section\'s rules are found');
+  for (const [, selector, body] of rules) {
+    assert.doesNotMatch(body, /overflow-x|scroll-snap|overscroll-behavior|flex-basis|flex: 0 0/, `no sideways row: ${selector.trim()}`);
+    const last = selector.trim().split('\n').pop().trim();
+    assert.match(last, /^html:not\(\[data-skin\]\) /, `the standard look's own: ${last}`);
+  }
+  // Four across, a card's last line of this week stops short of its row of apps instead of running under them.
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen #communities-pinned-section \.communities-grid \[data-home-community-detail\] > :last-child \{\s*padding-inline-end: calc\(3 \* var\(--wip-app-chip\) \+ 2 \* 0\.375rem \+ 0\.5rem\);/);
+});

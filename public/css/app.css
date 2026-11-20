@@ -5944,9 +5944,10 @@ html:not([data-skin]) {
   /* One of a community's apps, small, in the row of them. */
   --wip-app-chip: 1.5rem;
   --wip-app-chip-radius: 0.375rem;
-  /* A card on the Communities page's shelf (a drawing to compare): its width, and under 1024px. */
-  --wip-shelf-card: 19rem;
-  --wip-shelf-card-narrow: 7.5rem;
+  /* A pinned community's card on the Communities page: the least width a row
+     of them gives each, and under 1024px, where it is the small tile. */
+  --wip-pin-card: 16.5rem;
+  --wip-pin-tile: 6.25rem;
   --wip-face: 1.375rem;        /* a person's face on a card's foot */
   --wip-item-icon: 2.25rem;
   --wip-item-icon-radius: 0.5625rem; /* 9px, the same quarter of a small icon's side */
@@ -8316,26 +8317,28 @@ html:not([data-skin]) #communities-body #communities-joined-section .communities
 @media (min-width: 1024px) {
   html:not([data-skin]) #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* PINNED IS A SHELF (19 Nov 2026): one row of cards that moves sideways,
-   each a card on the page with the cell described above inside it (the
-   logo, the name, the members, what it says it is and this week). So the
-   few you chose are large and the many you are in are a list. */
+/* PINNED IS A GRID OF CARDS (20 Nov 2026; until then one row that moved
+   sideways, where a fifth pin was cut off at the edge): each a card on the
+   page with the cell described above inside it (the logo, the name, the
+   members, what it says it is and this week). So the few you chose are large
+   and the many you are in are a list. The cards wrap onto rows, so every pin
+   is in sight and the sections under them move down. A row gives each card
+   at least --wip-pin-card and holds no more than the look's columns
+   (--wip-cols, four from 1024px): four where four fit, fewer as it narrows.
+   Every row is as tall as the tallest, so the cards stay one set, as they
+   were in one row. */
 html:not([data-skin]) #communities-body #communities-pinned-section > .wip-card {
   background-color: transparent;
   box-shadow: none;
 }
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(var(--wip-pin-card), (100% - (var(--wip-cols) - 1) * var(--wip-card-gap)) / var(--wip-cols)), 1fr));
+  grid-auto-rows: 1fr;
   gap: var(--wip-card-gap);
-  padding: 0 0 var(--wip-cell-pad);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scroll-snap-type: x proximity;
-  scrollbar-width: thin;
+  padding: 0;
 }
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > :is(a, button) {
-  flex: 0 0 var(--wip-shelf-card);
-  scroll-snap-align: start;
   padding: var(--wip-card-pad);
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
@@ -8362,7 +8365,7 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
   pointer-events: none;
   background: var(--wip-scene-1) center / cover no-repeat;
 }
-/* Which one is the community's own (pinned-communities.tsx `communityScene`), three on from its logo's, so the logo stands out on it and a reordered shelf keeps every card's picture. */
+/* Which one is the community's own (pinned-communities.tsx `communityScene`), three on from its logo's, so the logo stands out on it and a reordered grid keeps every card's picture. */
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="1"]::before { background-image: var(--wip-scene-4); }
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="2"]::before { background-image: var(--wip-scene-5); }
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="3"]::before { background-image: var(--wip-scene-6); }
@@ -8372,8 +8375,11 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
 @media (min-width: 1024px) {
   html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community] > span:first-child { margin-top: var(--wip-scene-icon-rise); }
 }
+/* Under 1024px a card is the small tile (its picture, its logo and its name),
+   so a row holds as many as are at least --wip-pin-tile wide: three on a
+   phone, five or more on a tablet. */
 @media (max-width: 1023.98px) {
-  html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > :is(a, button) { flex-basis: var(--wip-shelf-card-narrow); }
+  html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid { grid-template-columns: repeat(auto-fill, minmax(var(--wip-pin-tile), 1fr)); }
 }
 @media (hover: hover) {
   html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) #communities-pinned-section .communities-grid > :is(a, button):hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
@@ -8434,6 +8440,12 @@ html:not([data-skin]) #communities-screen .communities-grid [data-home-community
     grid-area: 4 / 1 / auto / -1;
     justify-self: end;
     align-self: end;
+  }
+  /* That line stops short of the apps (the one app and the two places for
+     those to come), so in a card as narrow as four across makes it a long
+     count is cut short instead of running under them. */
+  html:not([data-skin]) #communities-screen #communities-pinned-section .communities-grid [data-home-community-detail] > :last-child {
+    padding-inline-end: calc(3 * var(--wip-app-chip) + 2 * 0.375rem + 0.5rem);
   }
 }
 /* EVERY COMMUNITY THERE IS TO JOIN, under Joined, as Home lists them (asked
