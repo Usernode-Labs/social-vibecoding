@@ -510,6 +510,16 @@
       "id": "shots-copy-content-types",
       "sha256": "db77afe6c58fcc0ba0da17decf55361c43c7865f88f108424fa35dd4d766deea",
       "schemaSha256": "fa13135f40668c253a33f9d48be8209d0e2e90a3ca05b664432cceafc5baaefe"
+    },
+    {
+      "id": "limit-alert-phones",
+      "sha256": "efaf4f2dbbe4634641d618c81c939d9cbc42dee4a0aa1d5032ff3c36ae930e2f",
+      "schemaSha256": "45e6a506a11df7c118ba93b3350670e25e323d2a8938869b002623a32aed1877"
+    },
+    {
+      "id": "limit-alert-refusals",
+      "sha256": "822bfc3b809b180a7f5310e5d650d5facd457d051f969a888691a2e5c7f5a089",
+      "schemaSha256": "0ab30a170689052f8e68942215edd57e92611d1addff0b14602e321946b7fefa"
     }
   ]
 }

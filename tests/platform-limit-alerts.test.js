@@ -138,7 +138,7 @@ test('the detail token round-trips and fits the 32-character column', () => {
 
 // ─── 2. evaluate() against a recording pool ─────────────────────────────
 
-function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, setting = null, windowMs = null, refusalsSince = null } = {}) {
+function fakePool({ apps = 0, sessions = 0, connections = 10, level = 'ok', countError = null, setting = null, windowMs = null, refusalsSince = null } = {}) {
   const state = { level, windowMs, refusalsSince, queries: [], updates: [] };
   return {
     state,
@@ -151,6 +151,11 @@ function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, set
         return { rows: [{ n: apps }] };
       }
       if (/FROM chat_sessions/.test(sql)) return { rows: [{ cnt: sessions }] };
+      // The connections limit: its line, and the census's count.
+      if (/superuser_reserved_connections/.test(sql)) return { rows: [{ cap: 97 }] };
+      if (/FROM pg_stat_activity|homeroom_connection_counts/.test(sql)) {
+        return { rows: /GROUP BY datname|WHERE datname/.test(sql) ? [] : [{ max: 100, used: connections, idle: 0 }] };
+      }
       // services/app-limit.js: the admin's app limit, when one is stored.
       if (/FROM platform_settings s/.test(sql)) {
         return { rows: setting == null ? [] : [{ value: String(setting), updated_at: null, updated_by: 'ada' }] };
@@ -301,10 +306,10 @@ test('the sweep checks every cap and one failure does not stop the others', asyn
   const { calls, deps } = recorder();
   const out = await limits.sweep(pool, CONFIG, deps);
   assert.deepEqual(out.errors, ['apps: db down']);
-  assert.deepEqual(out.results.map((r) => r.key), ['sessions', 'github_app']);
+  assert.deepEqual(out.results.map((r) => r.key), ['sessions', 'connections', 'github_app']);
   // A process that has not heard from GitHub yet records nothing: "ok"
   // would re-arm a crossing already told (each new leader used to).
-  assert.deepEqual(out.results.slice(1).map((r) => [r.level, r.unknown]), [[null, true]],
+  assert.deepEqual(out.results.slice(2).map((r) => [r.level, r.unknown]), [[null, true]],
     'nothing known about GitHub records nothing');
   assert.ok(!pool.state.queries.some((q) => /platform_limit_alerts/.test(q.sql) && /github/.test(JSON.stringify(q.params))),
     'no GitHub level is written');
@@ -753,7 +758,7 @@ test('refusals are recorded once a day and reported, against a real database', {
 });
 
 test('the detail format is spelled identically wherever it is parsed', () => {
-  const literal = String.raw`/^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
+  const literal = String.raw`/^(apps|sessions|connections|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
   for (const rel of [
     'src/services/platform-limit-alerts.js',
     'src/services/mobile-push-policy.js',
@@ -761,7 +766,7 @@ test('the detail format is spelled identically wherever it is parsed', () => {
   ]) {
     assert.ok(read(rel).includes(literal), `${rel} parses the same token`);
   }
-  assert.deepEqual(limits.LIMITS.map((l) => l.key), ['apps', 'sessions', 'github_app'],
+  assert.deepEqual(limits.LIMITS.map((l) => l.key), ['apps', 'sessions', 'connections', 'github_app'],
     'a new cap must be added to the token pattern in all three places');
 });
 
@@ -771,4 +776,19 @@ test('both tunables are declared so the Platform variables panel lists them', ()
   assert.equal(keys.get('MAX_APPS')?.default, '50', 'matches src/config.js');
   assert.equal(keys.get('PLATFORM_LIMIT_WARN_PERCENT')?.default, String(limits.DEFAULT_WARN_PERCENT));
   assert.match(read('src/config.js'), /maxApps: parseInt\(process\.env\.MAX_APPS \|\| '50', 10\)/);
+});
+
+test('database connections cross like the other limits: one notice per crossing, with the margin', async () => {
+  const pool = fakePool({ connections: 80 });
+  const { calls, deps } = recorder();
+  const warn = await limits.evaluate(pool, CONFIG, 'connections', deps);
+  assert.deepEqual([warn.level, warn.used, warn.cap], ['warn', 80, 97], 'the line is max_connections less the reserved blocks');
+  assert.deepEqual(calls.create, [{ detail: 'connections_warn:80:97' }]);
+  await limits.evaluate(pool, CONFIG, 'connections', deps);
+  assert.equal(calls.create.length, 1, 'still near: no second notice');
+  const full = await limits.evaluate(fakePool({ connections: 97, level: pool.state.level }), CONFIG, 'connections', deps);
+  assert.equal(full.level, 'full');
+  assert.deepEqual(calls.create[1], { detail: 'connections_full:97:97' });
+  assert.ok('connections_full:9999999:9999999'.length <= 32, 'the widest token fits every creator');
+  assert.deepEqual(limits.parseDetail('connections_warn:80:97'), { limit: 'connections', level: 'warn', used: 80, cap: 97 });
 });

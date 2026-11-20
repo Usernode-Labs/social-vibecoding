@@ -68,6 +68,11 @@ stub(ids.rateLimits, {
   smsTestLimiter: (_req, _res, next) => next(),
   smsTestNumberLimiter: (_req, _res, next) => next(),
   featuredAdminLimiter: (_req, _res, next) => next(),
+  // The platform limits area's Check again (routes/admin-platform-limits.js),
+  // composed into admin.js.
+  platformLimitsCheckLimiter: (_req, _res, next) => next(),
+  limitTextSendLimiter: (_req, _res, next) => next(),
+  limitTextVerifyLimiter: (_req, _res, next) => next(),
 });
 stub(ids.status, { snapshot: async () => ({}) });
 
