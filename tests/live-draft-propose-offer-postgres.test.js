@@ -150,9 +150,9 @@ test('C: a live draft\'s Propose and Update proposal, offered under the reply an
   };
 
   // A turn in the draft's thread: their message is the thread's root.
-  async function turn(text, steps, { withDraft = true } = {}) {
+  async function turn(text, steps, { withDraft = true, draft = draftId } = {}) {
     const { message } = await conversations.sendMessage(pool, evan, opened.conversationId, { content: text });
-    await pool.query('UPDATE live_drafts SET root_message_id = $2 WHERE id = $1', [draftId, message.id]);
+    await pool.query('UPDATE live_drafts SET root_message_id = $2 WHERE id = $1', [draft, message.id]);
     const offered = [];
     const sent = await mayor.runDmTurn(pool, CONFIG, {
       bot, user: evan, settings, conversationId: opened.conversationId, message,
@@ -160,7 +160,7 @@ test('C: a live draft\'s Propose and Update proposal, offered under the reply an
         chat: scripted(steps, offered), apiKey: 'sk-test', sleep: async () => {}, schedule: () => {},
         openMcp: async () => { throw new Error('no grant'); }, domain: 'app.test', draftBot,
         threadRootId: message.id,
-        ...(withDraft ? { threadLiveDraft: await liveDrafts.byId(pool, draftId) } : {}),
+        ...(withDraft ? { threadLiveDraft: await liveDrafts.byId(pool, draft) } : {}),
       },
     });
     return { sent, offered };
@@ -242,5 +242,29 @@ test('C: a live draft\'s Propose and Update proposal, offered under the reply an
     await tap(await cardOf(again.sent.messageId), 'yes');
     assert.deepEqual(asked[1], ['update', Number(draftId), Number(evan.id)]);
     assert.match((await read(again.sent)).metadata.homeroomBot.outcome.text, /^PR #142 has the draft's changes now\. Its votes were cleared/);
+  });
+
+  // The claims check (reply-claims.js proposal_action): thread 58972 at
+  // 16:05, a second draft opened from main, with none of PR 142's work.
+  await t.test('16:05: a button offering to apply the page onto PR #142, which nothing can do, is never sent', async () => {
+    const { rows: [{ id: fresh }] } = await pool.query(
+      `INSERT INTO live_drafts (app_id, user_id, root_message_id, state, base_sha, head_sha, edits, live_state)
+       VALUES ($1, $2, -1, 'open', $3, $3, 0, 'live') RETURNING id`, [appId, evan.id, SHA('0')],
+    );
+    const buttons = ["Apply this page's look onto PR #142 now", 'Keep iterating on the page first', "Show me #142's before and after"];
+    const { sent, offered } = await turn('can you make the app look like the page?', [
+      [['reply', { text: 'The page has the look you liked.', suggestions: buttons }]],
+    ], { draft: fresh });
+    assert.equal(offered.length, 2, 'asked once more, told to leave the offer out');
+    const meta = (await read(sent)).metadata.homeroomBot;
+    assert.deepEqual((meta.actions || []).map((a) => a.label), buttons.slice(1));
+    assert.equal(asked.length, 2, 'nothing asked of the draft store');
+
+    // The same button in the thread whose draft IS PR 142, with a change not in it: Update proposal is a real tap.
+    await pool.query('UPDATE live_drafts SET head_sha = $2, edits = 4 WHERE id = $1', [draftId, SHA('d')]);
+    await pool.query('INSERT INTO live_draft_edits (draft_id, commit_sha, summary) VALUES ($1, $2, \'Undo toast\')', [draftId, SHA('d')]);
+    const kept = await turn('and the page look?', [[['reply', { text: 'Ready when you are.', suggestions: buttons }]]]);
+    assert.deepEqual((await read(kept.sent)).metadata.homeroomBot.actions.map((a) => a.label), buttons);
+    assert.equal(kept.offered.length, 1, 'nothing to put right');
   });
 });

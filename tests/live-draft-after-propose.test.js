@@ -227,6 +227,22 @@ test('a plain yes typed under the card never proposes: only the tap does', () =>
   assert.equal(mayor.typedDecision('propose'), null);
 });
 
+test('what the reply check is told about the draft\'s proposal: its PR, and whether Update proposal is a real tap', () => {
+  const caps = (draft, saved = false) => ({ caps: { draft: { draft, saved: () => saved } } });
+  const up = { ...proposed, proposal_status: 'promoted' };
+  // Changes the proposal lacks: the preview header's Update proposal.
+  assert.deepEqual(mayor.proposalTapsOf(caps(up)), { pr: 142, update: true, propose: false });
+  // Every change in it: nothing to tap, unless this turn saved one or put the card under the reply.
+  assert.deepEqual(mayor.proposalTapsOf(caps({ ...up, pending_edits: 0 })), { pr: 142, update: false, propose: false });
+  assert.equal(mayor.proposalTapsOf(caps({ ...up, pending_edits: 0 }, true)).update, true);
+  assert.equal(mayor.proposalTapsOf({ ...caps({ ...up, pending_edits: 0 }), offer: { kind: 'update_draft_proposal' } }).update, true);
+  // A proposal that went live is no tap, and an open draft has no PR.
+  assert.deepEqual(mayor.proposalTapsOf(caps({ ...up, proposal_status: 'merged' })), { pr: null, update: false, propose: false });
+  assert.deepEqual(mayor.proposalTapsOf({ ...caps(open), moreOffers: [{ kind: 'propose_draft' }] }), { pr: null, update: false, propose: true });
+  // No draft at all: the facts are still there, so the check runs.
+  assert.deepEqual(mayor.proposalTapsOf({}), { pr: null, update: false, propose: false });
+});
+
 test('the bot_cards kinds widen by a migration of their own that only adds the two', () => {
   const fs = require('node:fs');
   const sql = fs.readFileSync(require.resolve('../src/db/migrations/bot-cards-draft-offers.sql'), 'utf8');

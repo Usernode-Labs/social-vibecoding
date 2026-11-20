@@ -4942,7 +4942,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // or offered, a draft's change saved), as every surface's turn does.
       const checkNow = async (words) => {
         Object.assign(ctx, caps.design ? caps.design.facts() : {}, caps.draft ? caps.draft.facts() : {});
-        const found = await claims.checkReply(pool, ctx, words);
+        // 20 Nov 2026 (live-draft review, C): what an offer to change a
+        // proposal, in the words or a button, may stand on.
+        ctx.proposalTaps = proposalTapsOf(ctx);
+        const found = await claims.checkReply(pool, ctx, words, { buttons: suggestionLabels(ctx.reply?.suggestions) });
         return caps.design ? caps.design.filterClaims(found, words) : found;
       };
       await runRounds();
@@ -5221,7 +5224,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // closes them once the bot says something newer). #4046, #6404: one set of
   // answers at a time: a Questions card under this reply is the answer set,
   // so the reply's suggestions are dropped rather than stored beside it.
-  const next = toolCard?.type === 'questions' ? [] : suggestionLabels(ctx.reply?.suggestions);
+  // 20 Nov 2026 (live-draft review, C): less a button that offers to change
+  // a proposal nothing in this turn can change (reply-claims.js keptButtons).
+  const next = toolCard?.type === 'questions' ? [] : claims.keptButtons(suggestionLabels(ctx.reply?.suggestions), ctx);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
@@ -7854,6 +7859,27 @@ async function offerCloseRequest(pool, ctx, args) {
 }
 
 /**
+ * Pure (20 Nov 2026, live-draft review, C): what the reply check reads about
+ * this thread's live draft's proposal (reply-claims.js proposal_action): its
+ * PR while it is up for a vote, and whether Update proposal is a real tap
+ * now: the card this turn put under the reply, or the preview header's,
+ * shown while the draft has changes the proposal lacks (one saved this turn
+ * among them). Every chat turn carries it, draft or not.
+ */
+function proposalTapsOf(ctx) {
+  const offers = [ctx?.offer, ...(ctx?.moreOffers || [])].filter(Boolean);
+  const session = ctx?.caps?.draft || null;
+  const draft = session?.draft || null;
+  const up = require('./live-drafts').proposalOpen(draft) ? Number(draft.proposal_pr_number) || null : null;
+  const lacking = !!up && (Number(draft.pending_edits) > 0 || !!session?.saved?.());
+  return {
+    pr: up,
+    update: offers.some((o) => o.kind === 'update_draft_proposal') || lacking,
+    propose: offers.some((o) => o.kind === 'propose_draft'),
+  };
+}
+
+/**
  * 20 Nov 2026 (live-draft review, C): offer_propose_draft. Nothing is
  * proposed or updated here: the card goes under the reply with Propose (a
  * draft not put to the vote yet) or Update proposal (one whose proposal is up
@@ -8581,6 +8607,7 @@ module.exports = {
   decideClose,
   // 20 Nov 2026 (live-draft review, C).
   offerProposeDraft,
+  proposalTapsOf,
   decideDraftProposal,
   draftOfferText,
   DRAFT_OFFER_KINDS,
