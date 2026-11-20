@@ -707,6 +707,18 @@
     "text": "Apps have spent ${{spent}} today",
     "description": "Line above the list of apps in Settings > App AI permissions: what all the apps together have spent on AI today, the same day each row's own figure covers. {{spent}} is an amount in US dollars such as 0.37; the dollar sign is part of the text."
   },
+  "grants.usedOfCapLabel": {
+    "text": "{{app}} has used {{percent}}% of today's cap",
+    "description": "Screen reader name of the small bar on an app's row in Settings > App AI permissions, which shows how much of its daily spending cap the app has used today. {{app}} is the app's name and {{percent}} is a whole number from 0 to 100."
+  },
+  "grants.nearCap": {
+    "text": "Close to today's cap.",
+    "description": "Short line on an app's row in Settings > App AI permissions, shown when the app has spent 80% or more of its daily AI spending cap but has not reached it yet."
+  },
+  "grants.atCap": {
+    "text": "Reached today's cap. Its AI is paused until tomorrow, or until you raise the cap.",
+    "description": "Short line on an app's row in Settings > App AI permissions, shown when the app has spent its whole daily AI spending cap. The field to raise the cap is on the same row."
+  },
   "grants.capLabel": {
     "text": "Cap $",
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
