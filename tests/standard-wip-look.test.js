@@ -64,8 +64,8 @@ const MENU_HIDES = [
   // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
   'html:not([data-skin]) #platform-tabs::before',
   'html:not([data-skin]) body #platform-header#platform-header::before',
-  // Folded, the menu is a strip of icons and logos: the mark heads it, so the top bar does not say the logo there either,
-  'html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
+  // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
+  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
   // and the words, counts, headings, pins and nested places are the open menu's (asked 20 Nov 2026).
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x)',
 ];
@@ -218,13 +218,12 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   assert.ok(block.includes(`${STRIP} { display: flex; }`));
   assert.ok(block.includes(`${FOLDED} {\n    --platform-rail-full: var(--wip-nav-mini-w);\n    --platform-rail-w: var(--wip-nav-mini-w);`));
   assert.ok(block.includes(`${FOLDED} #app-view {\n    padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));`));
-  // Homeroom's mark heads it, and a hairline parts the places from the communities' logos.
-  assert.ok(block.includes(`${STRIP}::before {`));
-  assert.match(block, /background: var\(--wip-nav-brand-mark\) center \/ contain no-repeat;/);
+  // The fold button heads it, so no brand is drawn in the strip (20 Nov 2026; it was Homeroom's mark), and a hairline parts the places from the communities' logos.
+  assert.ok(block.includes(`${STRIP}::before { content: none; }`));
   assert.ok(block.includes(`${STRIP} :is(.platform-rail-pinned, .platform-rail-communities)::before {`));
-  // The fold button: inside the panel at the end of the logo's line, and beside the strip, in the bar's ink, once folded.
-  assert.match(block, /#platform-header #sidebar-toggle \{\s*position: absolute;[^}]*inset-inline-start: calc\(var\(--wip-nav-w\) - var\(--wip-nav-fold-inset\) - var\(--wip-nav-fold\)\);[^}]*background: transparent;[^}]*color: var\(--wip-nav-ink\);/);
-  assert.ok(block.includes(`${FOLDED} #platform-header #sidebar-toggle {\n    position: static;\n    color: var(--wip-nav-bar-ink);`));
+  // The top bar starts beside the strip as it does beside the open menu, and says Homeroom there: only the open menu hides the bar's own brand.
+  assert.ok(block.includes(`${FOLDED} #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + 1rem); }`));
+  assert.ok(!rules(block).some((r) => r.selector.startsWith(FOLDED) && r.selector.includes('#header-title')), 'folded, the top bar shows its own title');
   // Nothing slides away: the strip stays, so the rail's leaving slide is skipped where <html> has no data-skin.
   const slide = read('frontend', 'src', 'features', 'nav', 'rail-slide.ts');
   assert.match(slide, /const strip = !document\.documentElement\.hasAttribute\('data-skin'\);\s*if \(!open && !fromPeek && !strip\) bar\.classList\.add\('platform-tabs-leaving'\);/);
@@ -236,6 +235,40 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   assert.match(read('frontend', 'src', 'features', 'nav', 'tab-bar.tsx'), /useEffect\(\(\) => followDisplaySize\(\), \[\]\);/);
   // A phone's bar keeps the shell's height: the lit pill's inset comes out of the tab, so the resume strip is not covered.
   assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
+});
+
+test('the fold button leads the logo\'s line, on the same spot open and folded, with one glyph', () => {
+  const css = read('public', 'css', 'app.css');
+  const block = menuBlock();
+  const all = rules(block);
+  const RAIL = 'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden))';
+  // ONE RULE PLACES IT, whatever the menu's state: its glyph in the rows' icon column, on the logo's line.
+  assert.ok(block.includes(`${RAIL} #platform-header #sidebar-toggle {\n    position: absolute;\n`
+    + '    inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);\n'
+    + '    inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) - (var(--wip-nav-fold) - var(--wip-nav-ic-size)) / 2);'));
+  assert.deepEqual(all.filter((r) => r.selector.includes('#sidebar-toggle') && /folded|peek/.test(r.selector)).map((r) => r.selector), [],
+    'no rule moves or repaints it for the folded menu (it jumped 240px to the top bar\'s start there)');
+  // …and the strip centres its glyphs on that same column, which is what keeps the one rule true folded.
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-/.test(r.body));
+  const px = (name) => {
+    const m = tokens.body.match(new RegExp(`${name}: ([0-9.]+)px;`));
+    assert.ok(m, `${name} is a length in px`);
+    return Number(m[1]);
+  };
+  assert.equal((px('--wip-nav-mini-w') - px('--wip-nav-ic-size')) / 2, px('--wip-nav-pad') + px('--wip-nav-row-pad'),
+    'the strip\'s glyphs stand where the open rows\' do');
+  // The logotype starts where the rows' words do, after the button.
+  assert.match(block, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*inset-inline-start: calc\(var\(--wip-nav-pad\) \+ var\(--wip-nav-row-pad\) \+ var\(--wip-nav-ic-size\) \+ var\(--wip-nav-row-gap\)\);/);
+  // ONE GLYPH: the shell's own SidebarIcon, the same in both states, at the rows' weight; no drawing of the look's own.
+  assert.doesNotMatch(css, /--wip-nav-ic-(un)?fold\b/);
+  const glyph = all.find((r) => r.selector === 'html:not([data-skin]) #platform-header #sidebar-toggle > svg');
+  assert.ok(glyph, 'the look styles the icon the button renders');
+  assert.match(glyph.body, /stroke-width: var\(--wip-nav-fold-stroke\);/);
+  assert.doesNotMatch(glyph.body, /mask|background/, 'it is the icon itself, not a mask over it');
+  assert.match(tokens.body, /--wip-nav-fold-stroke: 1\.8;/);
+  assert.match(tokens.body, /--wip-nav-ic-home: url\("[^"]*stroke-width='1\.8'/, 'the weight the rows\' glyphs are drawn at');
+  const toggle = read('frontend', 'src', 'features', 'nav', 'sidebar-toggle.tsx');
+  assert.deepEqual(toggle.match(/<[A-Za-z]*(Icon|svg)\b[^>]*>/g), ['<SidebarIcon className="w-5 h-5" />']);
 });
 
 test('buttons: the Sticker drawing, one block for the standard look and this one, every value a token', () => {
