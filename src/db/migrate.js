@@ -13978,21 +13978,41 @@ async function seedStagingRestartEligibleMerge(pool, config) {
 // frontend/src/features/notifications/platform-limits.tsx): a fresh staging
 // copy carries production's credit state, which is usually well above the
 // warning line, so the area would have nothing to show. This writes a sample
-// state under it: $184 left, about two days at the week's spend, read just
-// now. Staging only; the preview's own credit sweep replaces it on its next
-// read (and with no OpenRouter key in the preview, keeps the figure and says
-// it could not check, which the area also shows). Warnings are never sent
-// from staging (openrouter-credit.js isStaging), so no admin is told.
+// read, as the credit sweep stores one (openrouter-credit.js): the account's
+// credit at $184, going down about $92 a day over two days of readings, and
+// the bot's key with $152 left of an $800 week, so $648 used. The area then
+// shows both rows: the account's credit under its $200 line, and Homeroom
+// bot's weekly budget at 81%. Staging only. A preview has no OpenRouter key
+// and no management key, so its own credit sweep has nothing to ask and
+// leaves this standing. A read goes stale after 45 minutes (the area then
+// says it could not check), and a preview outlives that, so the sample read
+// is dated twelve hours ahead: it stays "just read" for the preview's life.
+// The readings behind the days estimate stay in the past, where a rate is
+// measured. Warnings are never sent from staging (openrouter-credit.js and
+// platform-limit-alerts.js isStaging), so no admin is told.
+const STAGING_SAMPLE_READ_AHEAD_MS = 12 * 60 * 60 * 1000;
+
 async function seedStagingPlatformLimit(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
+  const now = Date.now();
+  const at = new Date(now + STAGING_SAMPLE_READ_AHEAD_MS).toISOString();
   const state = {
-    balanceCents: 18400,
     accountCents: 18400,
-    keyCents: null,
-    dailyCents: 9200,
-    at: new Date().toISOString(),
+    keyCents: 15200,
+    keyLimitCents: 80000,
+    keyReset: 'weekly',
+    management: true,
+    creditCents: 18400,
+    creditAt: at,
+    creditSource: 'account',
+    spendableCents: 15200,
+    at,
     armed: { low: false, urgent: false },
     outage: null,
+    readings: [48, 36, 24, 12, 0].map((hours) => ({
+      at: new Date(now - hours * 60 * 60 * 1000).toISOString(),
+      cents: 18400 + Math.round((hours * 9200) / 24),
+    })),
     stagingFixture: 'platform limits area',
   };
   try {
@@ -14002,7 +14022,11 @@ async function seedStagingPlatformLimit(pool) {
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
       [JSON.stringify(state)],
     );
-    log.info('db', 'Staging platform-limit fixture seeded', { balanceCents: state.balanceCents });
+    // The weekly budget's row is built from its limit's stored level, which
+    // its sweep writes every five minutes: measured once here, by that same
+    // code, so the row is there before the first sweep.
+    await require('../services/platform-limit-alerts').evaluate(pool, {}, 'bot_budget', { staging: true, limitsChanged: () => {} });
+    log.info('db', 'Staging platform-limit fixture seeded', { creditCents: state.creditCents, keyCents: state.keyCents });
   } catch (err) {
     log.warn('db', 'Staging platform-limit fixture failed', { err: err.message });
   }

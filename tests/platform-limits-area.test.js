@@ -83,7 +83,7 @@ test('credit low: the amount, the line, the days, and Add credit on OpenRouter',
   const row = rowOf(card([CREDIT_LOW]), 'openrouter_credit');
   assert.match(row, /Running low/);
   assert.match(row, /OpenRouter credit: \$184 left/);
-  assert.match(row, /Under \$200\. At this week's spend that lasts about 2 days\. At \$0 the bot stops planning and building\./);
+  assert.match(row, /Under \$200\. At the recent rate that lasts about 2 days\. At \$0 the bot stops planning and building\./);
   assert.match(row, /href="https:\/\/openrouter\.ai\/settings\/credits"/);
   assert.match(row, /target="_blank"/);
   assert.match(row, /rel="noopener noreferrer"/);
@@ -206,4 +206,61 @@ test("a cluster figure gone stale says when it was last read, and offers Check a
   assert.match(row, /Builds quota/);
   assert.match(row, /Not read since /);
   assert.match(row, /data-limit-action="check"/);
+});
+
+// ─── Homeroom bot's weekly budget (services/openrouter-credit.js budget) ──
+
+const MONDAY = '2026-11-23T00:00:00.000Z';
+const BUDGET_NEAR = {
+  key: 'bot_budget', state: 'near', used: 64800, cap: 80000, left: 15200, percent: 81,
+  detail: { usedCents: 64800, capCents: 80000, source: 'openrouter', resetsAt: MONDAY, refused: false },
+};
+const BUDGET_USED_UP = {
+  key: 'bot_budget', state: 'at', used: 80000, cap: 80000, left: 0, percent: 100,
+  detail: { usedCents: 80000, capCents: 80000, source: 'openrouter', resetsAt: MONDAY, refused: true },
+};
+
+test('the budget row, near: amber, dollars used of the week, the day it turns, a meter, and Raise the budget', () => {
+  const row = rowOf(card([BUDGET_NEAR]), 'bot_budget');
+  assert.match(row, /data-limit-tone="near"/);
+  assert.match(row, /Near the limit/);
+  assert.match(row, /Homeroom bot's weekly budget: \$648 of \$800 used/);
+  assert.match(row, /At \$800 the bot stops building until Monday, or until the budget is raised\./);
+  assert.match(row, /width:\s*81%/, 'a meter, like the counted limits');
+  assert.match(row, /data-limit-action="budget"/);
+  assert.match(row, /Raise the budget/);
+  assert.match(row, /href="#admin\/homeroom-bot\/settings"/, 'where the weekly budget is set');
+  assert.doesNotMatch(row, /days/, 'an allowance that resets is never given a days estimate');
+  assert.doesNotMatch(row, /Add credit|openrouter\.ai/, 'adding credit would fix nothing');
+});
+
+test('the budget row, used up: red, and when the bot starts again', () => {
+  const row = rowOf(card([BUDGET_USED_UP]), 'bot_budget');
+  assert.match(row, /data-limit-tone="broken"/);
+  assert.match(row, /Used up/);
+  assert.match(row, /Homeroom bot's weekly budget: \$800 of \$800 used/);
+  assert.match(row, /The bot has stopped building\. It starts again on Monday, or as soon as the budget is raised\./);
+  assert.match(row, /text-red-600/);
+  assert.match(row, /Raise the budget/);
+  // Refused by OpenRouter a few dollars short: the count is said as it is.
+  const short = rowOf(card([{ ...BUDGET_USED_UP, detail: { ...BUDGET_USED_UP.detail, usedCents: 79700 } }]), 'bot_budget');
+  assert.match(short, /Homeroom bot's weekly budget: \$797 of \$800 used/);
+  assert.match(short, /Used up/);
+  // Over (Homeroom's own count can pass its cap) reads as used up too.
+  assert.match(rowOf(card([{ ...BUDGET_USED_UP, state: 'over', used: 80500, detail: { ...BUDGET_USED_UP.detail, usedCents: 80500 } }]), 'bot_budget'), /Used up/);
+});
+
+test('the credit row and the budget row are two rows, each with its own fix', () => {
+  const html = card([CREDIT_LOW, BUDGET_NEAR]);
+  assert.match(rowOf(html, 'openrouter_credit'), /OpenRouter credit: \$184 left/);
+  assert.match(rowOf(html, 'openrouter_credit'), /Add credit/);
+  assert.match(rowOf(html, 'bot_budget'), /Raise the budget/);
+});
+
+test('a budget whose week has no known turn says only the fix, and one gone stale offers Check again', () => {
+  const none = rowOf(card([{ ...BUDGET_NEAR, detail: { ...BUDGET_NEAR.detail, resetsAt: null } }]), 'bot_budget');
+  assert.match(none, /At \$800 the bot stops building until the budget is raised\./);
+  const stale = rowOf(card([{ key: 'bot_budget', state: 'unknown', reason: 'stale', measuredAt: '2026-11-20T11:30:00Z' }]), 'bot_budget');
+  assert.match(stale, /Homeroom bot's weekly budget/);
+  assert.match(stale, /data-limit-action="check"/);
 });

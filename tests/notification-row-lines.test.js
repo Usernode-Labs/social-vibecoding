@@ -378,6 +378,31 @@ test('platform limit rows say which cap, how full, and what happens next', async
   assert.equal(nodePool.label, 'Node volume pool full');
   assert.match(nodePool.subject, /^9\.8 of 9\.8 GiB taken\. +New worker and preview volumes fail to mount\./);
 
+  // Homeroom bot's weekly budget (services/openrouter-credit.js budget):
+  // dollars of the week, and the day it turns, from the notice's own date
+  // (Friday 20 Nov 2026: the week turns on Monday).
+  const budget = await lines({ kind: 'platform_limit', detail: 'bot_budget_warn:64800:80000',
+    appName: null, sourceUsername: null, createdAt: '2026-11-20T12:00:00Z' });
+  assert.equal(budget.label, "Homeroom bot's weekly budget is 81% used");
+  assert.match(budget.subject, /^\$648 of \$800 used\. +At \$800 the bot stops building until Monday\./);
+  const budgetFull = await lines({ kind: 'platform_limit', detail: 'bot_budget_full:80000:80000',
+    appName: null, sourceUsername: null, createdAt: '2026-11-22T23:30:00Z' });
+  assert.equal(budgetFull.label, "Homeroom bot's weekly budget is used up");
+  assert.equal(budgetFull.subject, 'The bot stopped building. It starts again on Monday, or once the budget is raised.');
+
+  // The account's credit (services/openrouter-credit.js detailToken), with
+  // the days it lasts only when a rate was known.
+  const low = await lines({ kind: 'platform_incident', detail: 'credit:low:500:480:6',
+    appName: null, sourceUsername: null });
+  assert.equal(low.label, 'OpenRouter credit is below $500');
+  assert.equal(low.subject, '$480 left, about 6 days at the recent rate. Add credit before Homeroom bot stops building.');
+  const lowOne = await lines({ kind: 'platform_incident', detail: 'credit:urgent:200:184:1',
+    appName: null, sourceUsername: null });
+  assert.equal(lowOne.subject, '$184 left, about a day at the recent rate. Add credit before Homeroom bot stops building.');
+  const lowNoRate = await lines({ kind: 'platform_incident', detail: 'credit:low:500:480:0',
+    appName: null, sourceUsername: null });
+  assert.equal(lowNoRate.subject, '$480 left. Add credit before Homeroom bot stops building.');
+
   // GitHub's hourly budget, the bot token's and the App's.
   const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
     appName: null, sourceUsername: null });
