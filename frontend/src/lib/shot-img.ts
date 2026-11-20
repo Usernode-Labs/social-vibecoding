@@ -68,6 +68,84 @@ export function shotPreview(
     : undefined;
 }
 
+/** How many times a slot asks again for a still that ended with no picture. */
+export const SHOT_RETRIES = 2;
+/** How often a slot looks at a still that has not shown yet, in ms. */
+export const SHOT_CHECK_MS = 1500;
+
+type ShotElement = EventTarget & { complete: boolean; naturalWidth: number };
+
+/**
+ * Whether a still's load is over with nothing to show. WebKit fires neither
+ * `load` nor `error` when an image's load is cancelled from outside the
+ * element (ImageLoader::notifyFinished returns early on `wasCanceled()`):
+ * the element is complete, has no pixels, and nothing else happens.
+ */
+export function shotBroken(img: ShotElement | null | undefined): boolean {
+  return !!img && img.complete && !(img.naturalWidth > 0);
+}
+
+/**
+ * Watches one still until it shows. When its load is over with no picture,
+ * `retry` is called so the slot can mount a new element, which asks again:
+ * at most `budget.left` times across the slot's elements, and that budget
+ * is full again when the page comes back (shown again, or back online), the
+ * moment a load cut off while it was away is found. Without this the slot
+ * kept its blurred preview, and the alt text over it, until another screen
+ * was opened and this one again (the 20 Nov report). Returns the cleanup.
+ */
+export function watchShot(
+  img: ShotElement,
+  budget: { left: number },
+  retry: () => void,
+  {
+    max = SHOT_RETRIES,
+    every = SHOT_CHECK_MS,
+    win = (typeof window !== 'undefined' ? window : null) as EventTarget | null,
+    doc = (typeof document !== 'undefined' ? document : null) as (EventTarget & { visibilityState?: string }) | null,
+    timers = globalThis as { setInterval: typeof setInterval; clearInterval: typeof clearInterval },
+  } = {},
+): () => void {
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let done = false;
+  const away = () => !!doc && doc.visibilityState === 'hidden';
+  const stop = () => {
+    if (done) return;
+    done = true;
+    if (timer != null) timers.clearInterval(timer);
+    timer = null;
+    img.removeEventListener('load', look);
+    win?.removeEventListener('online', back);
+    win?.removeEventListener('pageshow', back);
+    doc?.removeEventListener('visibilitychange', back);
+  };
+  function look() {
+    if (done) return;
+    if (img.complete && img.naturalWidth > 0) { stop(); return; }
+    if (away() || !shotBroken(img)) return;
+    if (budget.left <= 0) {
+      // Out of tries: stop looking, but a comeback still asks again.
+      if (timer != null) timers.clearInterval(timer);
+      timer = null;
+      return;
+    }
+    budget.left -= 1;
+    stop();
+    retry();
+  }
+  function back() {
+    if (done || away()) return;
+    budget.left = Math.max(budget.left, max);
+    look();
+  }
+  img.addEventListener('load', look);
+  win?.addEventListener('online', back);
+  win?.addEventListener('pageshow', back);
+  doc?.addEventListener('visibilitychange', back);
+  timer = timers.setInterval(look, every);
+  return stop;
+}
+
 /** The thumbnail's own address, for a slot that must never load more than that. */
 export function shotThumb(image: ShotImage | null | undefined): string | null {
   const thumb = (image?.sizes || []).find((copy) => copy && copy.size === 'thumb' && shotUrlOk(copy.url));
