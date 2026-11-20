@@ -86,7 +86,7 @@ import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type Invi
 import { hubShot, hubShotPayload } from './hub-shot';
 import { useHubDismissed } from './hub-dismissed';
 import { changeHref } from '../../../lib/change-href';
-import { useLiveSkin } from '../../../lib/skin';
+import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import type { ApprovalPayload } from '../../who-decides/model';
 import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, type ProjectCover } from '../../guest/project-card';
 import type { GuestApp } from '../../guest/guest-data';
@@ -710,7 +710,7 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
   const t = useMessages('project');
   // Standard (WIP): who it is for and who is in it are two things on the
   // line, each with its own mark, in place of one run of words.
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   return (
     <div className="dev-ws-hero-id" data-ws-community-id="">
       <span className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
@@ -1015,7 +1015,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   const t = useMessages('project');
   const data = useCommunity(slug);
   // Standard (WIP) draws the hero as a poster, with the project's picture at its side.
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   // The invite link this page was opened from, if it was (#3700).
   const offer = useInviteOffer(slug);
   // The Invite card's ✕ (InviteHeroCard): once closed, the row's small
@@ -1567,7 +1567,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
   // Standard (WIP) has both of its actions in the hero (CommunityCard).
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   const [closed, close] = useHubDismissed(slug, 'share');
   if (!data || data.audience !== 'solo' || closed) return null;
   if (wipLook) return null;
