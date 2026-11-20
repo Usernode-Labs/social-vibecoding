@@ -179,8 +179,7 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
       {turnedAway ? (
         <p id="admin-app-limit-turned-away"
           className={`${AdminUI.muted} mb-3 font-semibold text-amber-700 dark:text-amber-400`}>
-          {turnedAway.count} {turnedAway.count === 1 ? 'person' : 'people'} turned away since{' '}
-          {turnedAway.when}
+          {turnedAway.count} {turnedAway.count === 1 ? 'person' : 'people'} turned away since {turnedAway.when}
         </p>
       ) : null}
       <p className={`${AdminUI.muted} mb-3`}>

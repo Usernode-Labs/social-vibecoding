@@ -51,7 +51,7 @@
 // hand-rolled relative age with no floor, so a year-old row read "412d ago";
 // the shared helper prints a real date past a week. Bundled, not imported by
 // Node, in tests/notification-row-lines.test.js — see the note there.
-import { agoStamp, messageStamp } from '../../lib/timestamp';
+import { agoStamp } from '../../lib/timestamp';
 
 // The rows' own words (frontend/locales/en/notifications.json), read when a
 // row is built so they follow the language on screen. Through the global the
@@ -2357,6 +2357,28 @@ function parsePlatformRefusalDetail(detail) {
   return m ? { people: Number(m[1]), cap: Number(m[2]), agoMinutes: Number(m[3]) } : null;
 }
 
+// #6901: the clock time a run of refusals began, in the reader's own zone and
+// language: "9:00 AM", with the day in front when it was not today ("13 Nov,
+// 9:00 AM"), the shape lib/timestamp.ts's messageStamp prints. Spelled here
+// rather than importing that second helper: the bell's suites evaluate this
+// file as a classic script in a vm and strip its one import, so a second one
+// would be left in the source they run. The zone is the account's pick,
+// published on PlatformI18n (#6479); the vm harness has none, which is the
+// device's zone, the same fallback as Auto.
+function clockStamp(at) {
+  if (!at || Number.isNaN(at.getTime())) return '';
+  const zone = typeof PlatformI18n.timeZone === 'function' ? PlatformI18n.timeZone() : undefined;
+  const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
+  const inZone = (options) => (zone ? { ...options, timeZone: zone } : options);
+  const time = new Intl.DateTimeFormat(locale, inZone({ hour: 'numeric', minute: '2-digit' })).format(at);
+  const day = (date) => new Intl.DateTimeFormat(locale,
+    inZone({ year: 'numeric', month: 'numeric', day: 'numeric' })).format(date);
+  if (day(at) === day(new Date())) return time;
+  const date = new Intl.DateTimeFormat(locale,
+    inZone({ month: 'short', day: 'numeric' })).format(at);
+  return `${date}, ${time}`;
+}
+
 // services/platform-incident-alerts.js tokens (#4296): "digest:<total>:<kind>=<n>,..."
 // (the previous UTC day, per kind) or "hour:<kind>:<n>" (one kind past its
 // hourly line).
@@ -3306,7 +3328,7 @@ function rowWords(n) {
     const refusal = parsePlatformRefusalDetail(n.detail);
     if (refusal) {
       const at = new Date(new Date(n.createdAt).getTime() - refusal.agoMinutes * 60000);
-      const since = messageStamp(at, { now: new Date() }).text;
+      const since = clockStamp(at);
       return {
         ...base,
         appLine: t('notifications:row.source.admin'),
