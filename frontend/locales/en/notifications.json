@@ -811,6 +811,62 @@
     "text": "A change was too large to check in full",
     "description": "Second line of the \"Not read in full\" notification when the change has no name to show."
   },
+  "row.releaseHold.capabilityLabel": {
+    "text": "{{app}} now asks for {{what}}",
+    "description": "First line of a notification sent to platform administrators: a proposed change to a project starts asking for a device capability, such as the camera. The change is not held and nothing is asked of the reader: each person is asked before the app can use it. {{app}} is the project's name; {{what}} is what it asks for, such as \"the camera\" or \"the camera and the microphone\". The change's name is on the line below."
+  },
+  "row.releaseHold.capabilityLabelUnnamed": {
+    "text": "A project now asks for {{what}}",
+    "description": "The same first line when the project's name is not known. {{what}} is what it asks for, such as \"the camera\"."
+  },
+  "row.releaseHold.capabilityLabelAny": {
+    "text": "{{app}} now asks for a device capability",
+    "description": "The same first line when the notification does not say which capability, such as one sent before it did. {{app}} is the project's name."
+  },
+  "row.releaseHold.capabilityLabelAnyUnnamed": {
+    "text": "A project now asks for a device capability",
+    "description": "The same first line when neither the project nor the capability is known."
+  },
+  "row.releaseHold.capabilityBody": {
+    "text": "Each person is asked before it can use it",
+    "description": "Second line of that notification when the change has no name to show: the change is not held, because each person is asked before the app can use the capability."
+  },
+  "row.releaseHold.capability.geolocation": {
+    "text": "your location",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the location capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.microphone": {
+    "text": "the microphone",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the microphone capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.camera": {
+    "text": "the camera",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the camera capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.display-capture": {
+    "text": "screen sharing",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the screen sharing capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.usb": {
+    "text": "USB devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the USB devices capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.serial": {
+    "text": "serial devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the serial devices capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.hid": {
+    "text": "input devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the input devices such as keyboards and gamepads capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.bluetooth": {
+    "text": "Bluetooth devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the Bluetooth devices capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.midi": {
+    "text": "MIDI devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the MIDI devices capability, with the words a sentence needs before it."
+  },
   "row.releaseHold.peopleLabel": {
     "text": "{{app}} now keeps people's {{what}}",
     "description": "First line of a notification sent to platform administrators: a proposed change to a project starts keeping a kind of personal detail about the people who use it. The change is not held and nothing is asked of the reader. {{app}} is the project's name; {{what}} is what it keeps, such as \"email addresses\" or \"email addresses and phone numbers\". The change's name is on the line below."

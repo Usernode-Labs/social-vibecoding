@@ -392,9 +392,10 @@ test('the bell row is an admin\'s only, settles with the change, and wears the w
   assert.equal(message('notifications:row.releaseHold.label'), 'Needs your approval');
   assert.equal(message('push:releaseHold.title'), 'A change needs your approval');
   // A change that is only told about: no warning sign, and no ask.
-  // (20 Nov 2026: the notice row has its own function, which also says what
-  // the change now keeps or uses; tests/release-notices-and-script-check.test.js
-  // renders it.)
+  // (20 Nov 2026: the notice row has its own function, which also names a
+  // device capability and says what the change now keeps or uses;
+  // tests/device-permissions-ask.test.js and
+  // tests/release-notices-and-script-check.test.js render it.)
   assert.match(client, /if \(\/\^notice:\/\.test\(String\(n\.detail \|\| ''\)\)\) return releaseHoldNoticeRow\(n, base, prLabel\);/,
     'the row reads the detail the server wrote');
   const notice = client.slice(client.indexOf('function releaseHoldNoticeRow('), client.indexOf('function rowView('));

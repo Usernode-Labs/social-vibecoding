@@ -3038,13 +3038,27 @@ function rowTone(n, view) {
 }
 
 // A release_hold notice's detail ("notice:<rules>|<rule>:<value>,…",
-// src/services/release-holds.js notifyIfDue) as { rules, tags }.
+// src/services/release-holds.js notifyIfDue) as { rules, tags, capabilities }.
+// Each capability's words, by its id, in the catalogue's order.
+const RELEASE_HOLD_CAPABILITY_WHAT = Object.freeze({
+  geolocation: 'notifications:row.releaseHold.capability.geolocation',
+  microphone: 'notifications:row.releaseHold.capability.microphone',
+  camera: 'notifications:row.releaseHold.capability.camera',
+  'display-capture': 'notifications:row.releaseHold.capability.display-capture',
+  usb: 'notifications:row.releaseHold.capability.usb',
+  serial: 'notifications:row.releaseHold.capability.serial',
+  hid: 'notifications:row.releaseHold.capability.hid',
+  bluetooth: 'notifications:row.releaseHold.capability.bluetooth',
+  midi: 'notifications:row.releaseHold.capability.midi',
+});
+const RELEASE_HOLD_CAPABILITIES = Object.keys(RELEASE_HOLD_CAPABILITY_WHAT);
 function releaseHoldNotice(detail) {
   const body = String(detail || '').replace(/^notice:/, '');
   const [rulesPart, tagsPart] = body.split('|');
   const rules = String(rulesPart || '').split(',').map((r) => r.trim()).filter(Boolean);
   const tags = String(tagsPart || '').split(',').map((r) => r.trim()).filter(Boolean);
-  return { rules, tags };
+  const named = new Set(tags.filter((tag) => tag.startsWith('capability:')).map((tag) => tag.slice('capability:'.length)));
+  return { rules, tags, capabilities: RELEASE_HOLD_CAPABILITIES.filter((c) => named.has(c)) };
 }
 
 // The kinds of personal detail a change's new tables keep, by their id, in the
@@ -3057,12 +3071,8 @@ const RELEASE_HOLD_PEOPLE_WHAT = Object.freeze({
   name: 'notifications:row.releaseHold.people.name',
 });
 
-// "email addresses", "email addresses and phone numbers": joined the way the
-// reader's language joins a list.
-function peoplePhrase(tags) {
-  const kinds = new Set((tags || []).filter((tag) => tag.startsWith('people:')).map((tag) => tag.slice('people:'.length)));
-  const words = Object.keys(RELEASE_HOLD_PEOPLE_WHAT).filter((k) => kinds.has(k))
-    .map((k) => t(RELEASE_HOLD_PEOPLE_WHAT[k])).filter(Boolean);
+// Words joined the way the reader's language joins a list.
+function joinWords(words) {
   if (!words.length) return '';
   try {
     const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
@@ -3072,19 +3082,41 @@ function peoplePhrase(tags) {
   }
 }
 
+// "the camera", "the microphone and the camera": each capability in the
+// catalogue's words.
+function capabilityPhrase(capabilities) {
+  return joinWords((capabilities || []).map((c) => t(RELEASE_HOLD_CAPABILITY_WHAT[c])).filter(Boolean));
+}
+
+// "email addresses", "email addresses and phone numbers".
+function peoplePhrase(tags) {
+  const kinds = new Set((tags || []).filter((tag) => tag.startsWith('people:')).map((tag) => tag.slice('people:'.length)));
+  return joinWords(Object.keys(RELEASE_HOLD_PEOPLE_WHAT).filter((k) => kinds.has(k))
+    .map((k) => t(RELEASE_HOLD_PEOPLE_WHAT[k])).filter(Boolean));
+}
+
 // A release_hold row that only tells (detail "notice:…"). 20 Nov 2026: a
-// change that starts keeping data about people, or adds a private key for an
-// outside service, is told about rather than held, and the row says what
-// the project now does ("Stylist now keeps people's email addresses",
-// "Stylist now uses a private key for an outside service"). Otherwise it is
-// a change the rules could not read in full. The first rule of RULES' order
-// names the row; the mail lists every reason. None asks anything of the
-// reader, so none wears the warning sign.
+// change that asks for a device capability, starts keeping data about
+// people, or adds a private key for an outside service is told about rather
+// than held, and the row says what the project now does ("Stylist now asks
+// for the camera", "Stylist now keeps people's email addresses", "Stylist now
+// uses a private key for an outside service"), from the names the detail
+// carries after a `|`. A row from before the names says it in general words.
+// Otherwise it is a change the rules could not read in full. The first rule
+// of RULES' order names the row; the mail lists every reason. None asks
+// anything of the reader, so none wears the warning sign.
 function releaseHoldNoticeRow(n, base, prLabel) {
   const notice = releaseHoldNotice(n.detail);
   const app = n.appName || '';
   let label = null;
-  if (notice.rules.includes('people')) {
+  let fallback = 'notifications:row.releaseHold.toldBody';
+  if (notice.rules.includes('capability')) {
+    const what = capabilityPhrase(notice.capabilities);
+    label = what
+      ? t(app ? 'notifications:row.releaseHold.capabilityLabel' : 'notifications:row.releaseHold.capabilityLabelUnnamed', { app, what })
+      : t(app ? 'notifications:row.releaseHold.capabilityLabelAny' : 'notifications:row.releaseHold.capabilityLabelAnyUnnamed', { app });
+    fallback = 'notifications:row.releaseHold.capabilityBody';
+  } else if (notice.rules.includes('people')) {
     const what = peoplePhrase(notice.tags);
     label = what
       ? t(app ? 'notifications:row.releaseHold.peopleLabel' : 'notifications:row.releaseHold.peopleLabelUnnamed', { app, what })
@@ -3097,7 +3129,7 @@ function releaseHoldNoticeRow(n, base, prLabel) {
       ...base,
       icon: '\u2139\uFE0F',
       by: n.sourceUsername || null,
-      ...headline(label, prLabel || n.sessionTitle || t('notifications:row.releaseHold.toldBody')),
+      ...headline(label, prLabel || n.sessionTitle || t(fallback)),
     };
   }
   return {
@@ -3673,9 +3705,9 @@ function rowWords(n) {
   // is the one ask in the bell that something risky waits on this reader.
   if (n.kind === 'release_hold') {
     // A detail that starts "notice:" is a change the admins are only told
-    // about (it keeps data about people, adds a private key, or could not be
-    // read in full): it is not held, so the row asks for nothing and carries
-    // no warning sign.
+    // about (it asks for a device capability, keeps data about people, adds a
+    // private key, or could not be read in full): it is not held, so the row
+    // asks for nothing and carries no warning sign.
     if (/^notice:/.test(String(n.detail || ''))) return releaseHoldNoticeRow(n, base, prLabel);
     return {
       ...base,
@@ -4317,6 +4349,7 @@ function stampFields(ts) {
 // list be lifted wholesale into the hamburger without this module noticing.
 Notifications._rowView = rowView;
 Notifications._releaseHoldNotice = releaseHoldNotice;
+Notifications._capabilityPhrase = capabilityPhrase;
 // B4: the sheet's rows, folded, for tests (a bot moment never folds).
 Notifications._screenViews = screenViews;
 // "One story": where a conversation row (and its push) opens, for tests.

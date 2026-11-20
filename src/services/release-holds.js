@@ -24,7 +24,10 @@
 // the data rules forbid it outright, so it is a failing check
 // (services/outside-script-check.js) rather than something a vote can allow.
 //
-// One rule tells without holding: `unread`, a change too large to read whole
+// Rules that tell without holding: `capability`, a change that asks for a
+// device capability: each person grants that to the app themselves, so the
+// admins are told which project now asks for what, and nothing waits on
+// them (20 Nov 2026). And `unread`, a change too large to read whole
 // or whose diff could not be loaded. It used to hold, and nearly every time
 // the reason was a rebuilt bundle committed beside a few lines of source, so
 // an admin was put in front of changes that carried nothing. The admins are
@@ -62,7 +65,7 @@ const NOTICE_DETAIL = 'notice:';
 
 // The gated capabilities an app declares in dapp.json's `permissions`
 // (services/app-permissions.js), as they are spelled there.
-const { GATED_NAMES } = require('./app-permissions');
+const { GATED_NAMES, capabilityInfo } = require('./app-permissions');
 const CAPABILITY = new RegExp(`"(${GATED_NAMES.join('|')})"`);
 // A column that holds a person's contact or personal details, by the words in
 // its name ("email", "contact_email", "phone_number", "date_of_birth",
@@ -140,9 +143,19 @@ const RULES = Object.freeze([
     holds: false,
     read: (c) => c.files.some((f) => isManifest(f.path) && f.added.some((l) => /"private"\s*:\s*true/.test(l))),
   }),
+  // A device capability (camera, microphone, location and the rest) tells the
+  // admins and holds nothing (`holds: false`, as `unread`). Declaring one is
+  // not the risk: it reaches nobody until each person grants it to that app
+  // in the platform's own prompt (services/app-permissions.js), once or
+  // always. What the admins still want is to KNOW a project started asking,
+  // so the notice names the project and what it asks for ("Stylist now asks
+  // for the camera"), from the `capability:<name>` tags evaluate() stores
+  // beside the rule. A change that trips a rule that does hold is still held,
+  // and this is one of its reasons.
   Object.freeze({
     key: 'capability',
     words: 'It asks for a device capability such as location',
+    holds: false,
     read: (c) => c.files.some((f) => isManifest(f.path) && f.added.some((l) => CAPABILITY.test(l))),
   }),
   // Retired 20 Nov 2026: a <script> from another site fails the checks now
@@ -214,8 +227,31 @@ function cleanRules(list) {
 // A hold row's `rules` carries, beside a rule, `<rule>:<value>` tags that say
 // what that rule saw, so a notice can name it without a column of its own:
 // `people:email` for each kind of personal detail the change's new tables
-// keep. cleanRules drops the tags, so every gate, card and list reads the
+// keep, `capability:<name>` for each gated capability its dapp.json lines
+// add. cleanRules drops the tags, so every gate, card and list reads the
 // rules as before.
+const CAPABILITY_TAG = 'capability:';
+const CAPABILITY_NAMES = new RegExp(`"(${GATED_NAMES.join('|')})"`, 'g');
+
+/** Pure: the gated capabilities a diff's dapp.json lines add, in catalogue order. */
+function capabilitiesAdded(diff) {
+  const found = new Set();
+  for (const f of addedByFile(diff)) {
+    if (!isManifest(f.path)) continue;
+    for (const line of f.added) {
+      for (const m of line.matchAll(CAPABILITY_NAMES)) found.add(m[1]);
+    }
+  }
+  return GATED_NAMES.filter((name) => found.has(name));
+}
+
+/** The capability names a stored `rules` array carries as tags, in catalogue order. */
+function capabilitiesOf(list) {
+  const tagged = new Set((Array.isArray(list) ? list : []).map(String)
+    .filter((r) => r.startsWith(CAPABILITY_TAG)).map((r) => r.slice(CAPABILITY_TAG.length)));
+  return GATED_NAMES.filter((name) => tagged.has(name));
+}
+
 function tagsOf(list) {
   return (Array.isArray(list) ? list : []).map(String).filter((r) => /^[a-z]+:[a-z-]+$/.test(r));
 }
@@ -265,11 +301,14 @@ function ruleWords(list) {
 }
 
 // The mail's reasons: ruleWords, with a rule that tells saying what the
-// change now does, where its tags say ("It now keeps people's email
-// addresses", "It now uses a private key for an outside service").
+// change now does, where its tags say ("It now asks to see and record video
+// from your camera", "It now keeps people's email addresses", "It now uses a
+// private key for an outside service").
 function reasonWords(list) {
+  const caps = capabilitiesOf(list).map((name) => capabilityInfo(name)?.blurb).filter(Boolean);
   const kept = valuesOf(list, 'people').map((k) => PEOPLE_WORDS[k]).filter(Boolean);
   return cleanRules(list).map((k) => {
+    if (k === 'capability' && caps.length) return `It now asks to ${caps.join(', and to ')}`;
     if (k === 'people' && kept.length) return `It now keeps people's ${englishList(kept)}`;
     if (k === 'secret') return 'It now uses a private key for an outside service';
     return RULE_BY_KEY.get(k).words;
@@ -400,6 +439,9 @@ async function evaluate({
       rules = tripped({ diff, contentFlagged, unread });
       // What a rule that tells saw, as tags its notice names (cleanRules
       // drops them everywhere else).
+      if (rules.includes('capability')) {
+        rules = rules.concat(capabilitiesAdded(diff).map((name) => `${CAPABILITY_TAG}${name}`));
+      }
       if (rules.includes('people')) rules = rules.concat(peopleKept(diff).map((kind) => `people:${kind}`));
       // A failed read is not remembered: the next run asks again.
       if (!failed) {
@@ -495,9 +537,10 @@ async function notifyIfDue({ config = null, pool, sessionId, deps = {} } = {}) {
     // A row that only tells says so in the bell row's detail and the mail's
     // `held`, which is what the words of both are chosen by.
     const held = hold.status !== 'notice';
-    // What the rules saw rides the detail after a `|`, so the bell row and
-    // the push can name it ("notice:people|people:email"). A handful of short
-    // tags at most: the column holds 1200 characters.
+    // What the rules saw rides the detail after a `|`, as `<rule>:<value>`
+    // tags, so the bell row and the push can name it
+    // ("notice:people|people:email", "notice:capability|capability:camera").
+    // A handful of short tags at most: the column holds 1200 characters.
     const tags = tagsOf(hold.rules);
     const detail = `${held ? '' : NOTICE_DETAIL}${rules.join(',')}${tags.length ? `|${tags.join(',')}` : ''}`;
 
@@ -543,7 +586,9 @@ async function mailAdmins({ config, pool, hold, rules, held = true, adminIds, de
     author: author?.username || '',
     reasons: reasonWords(rules),
     held,
-    // Whether it was read in full, for the mail's not-held paragraph.
+    // What a change that is only told about is told for (the mail's
+    // paragraphs): it asks for a device capability, it was not read in full.
+    asks: !held && cleanRules(rules).includes('capability'),
     unread: cleanRules(rules).includes('unread'),
     url: changeUrl(hold.app_slug, hold.session_id),
   };
@@ -729,7 +774,8 @@ function _resetCache() { evaluated.clear(); }
 
 module.exports = {
   KIND, CLOSE_REASON, NOTICE_DETAIL, RULES, RULE_KEYS,
-  addedByFile, tripped, cleanRules, ruleWords, reasonWords, holds, tagsOf, valuesOf, peopleKept, personKind,
+  addedByFile, tripped, cleanRules, ruleWords, reasonWords, holds, capabilitiesAdded, capabilitiesOf,
+  tagsOf, valuesOf, peopleKept, personKind,
   heldSql, approvedSql, gateFor, forSessions,
   evaluate, apply, notifyIfDue, sweep, onVote, listForAdmin, changeUrl,
   _resetCache,
