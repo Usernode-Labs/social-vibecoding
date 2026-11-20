@@ -3877,6 +3877,33 @@ async function platformCall(platform, name, args, pictures = null) {
   }
 }
 
+// 20 Nov 2026 (live-draft review, B): a draft turn called
+// get_platform_conventions four to six times, each answer the same. Within
+// one turn a second call with the same arguments answers from the first: a
+// pointer to it while it is still among the turn's messages, else the answer
+// kept from it (compactRounds may have folded it away).
+const READ_ONCE = new Set(['get_platform_conventions']);
+const READ_ONCE_NOTE = 'You read exactly this earlier in this turn, and its answer is above, unchanged: use it.';
+const readOnceKey = (name, args) => `${name}:${JSON.stringify(args && typeof args === 'object' ? args : {})}`;
+
+/** The earlier answer this turn to the same READ_ONCE read, or null. */
+function readOnce(ctx, messages, name, args) {
+  if (!READ_ONCE.has(name)) return null;
+  const earlier = ctx?.readOnce?.get(readOnceKey(name, args));
+  if (!earlier) return null;
+  return (messages || []).some((m) => m?.role === 'tool' && m.tool_call_id === earlier.id)
+    ? { ok: true, same: true, note: READ_ONCE_NOTE }
+    : earlier.result;
+}
+
+/** Keep a READ_ONCE read's answer for the rest of the turn. */
+function keepRead(ctx, call, name, args, result) {
+  if (!ctx || !READ_ONCE.has(name) || !result || result.error || result.same) return;
+  ctx.readOnce ||= new Map();
+  const key = readOnceKey(name, args);
+  if (!ctx.readOnce.has(key)) ctx.readOnce.set(key, { id: call?.id || null, result });
+}
+
 function parseArgs(raw) {
   if (raw && typeof raw === 'object') return raw;
   try { return JSON.parse(String(raw || '{}')) || {}; } catch { return {}; }
@@ -4742,6 +4769,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           // the look at its version) and its forced first drawing.
           const designing = caps.design ? caps.design.offerFor({ rounds, last }) : { notes: [] };
           for (const said of designing.notes) messages.push({ role: 'user', content: said });
+          // 20 Nov 2026 (live-draft review, B): a draft turn near its limit
+          // with nothing changed is told so (live-draft-bot.js offerFor).
+          const drafting = typeof caps.draft?.offerFor === 'function' ? caps.draft.offerFor({ rounds, limit, last }) : null;
+          for (const said of drafting?.notes || []) messages.push({ role: 'user', content: said });
           return {
             note,
             tools: ending,
@@ -4800,10 +4831,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           let result;
           if (session) result = await session.run(name, args, round);
           else if (onPlatform) {
-            result = await botTools.run(name, args, {
+            // B: a read made once a turn answers again from the first (readOnce).
+            result = readOnce(ctx, messages, name, args) || await botTools.run(name, args, {
               pool, user: ctx.user, scope: 'main', deps,
               platformCall: (tool, given) => platformCall(platform, tool, given, pictures),
             });
+            keepRead(ctx, call, name, args, result);
           } else {
             // Step 6: what a loaded capability asks of the chat's own tools
             // first: a draft's unsaved changes saved before its reply, a
@@ -8290,6 +8323,8 @@ module.exports = {
   picturesMessage,
   withoutPictures,
   modelSeesImages,
+  readOnce,
+  keepRead,
   resolveCards,
   runTool,
   runDmTurn,
