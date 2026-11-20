@@ -7958,10 +7958,10 @@ html:not([data-skin]) body > :is(.dev-ws-side) {
    tiles say less. */
 html:not([data-skin]) #app-list .app-card-opened { display: none; }
 /* THE STANDARD LOOK'S BOARD KEEPS ITS WALLPAPER (20 Nov 2026), so the head that stays put while the columns scroll
-   under it (the place's name, then the filter line and the columns' names) is frosted: the wallpaper shows through it,
-   softened, where Standard (WIP) paints its flat page colour. */
+   under it (the place's name, then the filter line and the columns' names) wears the card's colour, nearly solid, where
+   Standard (WIP) paints its flat page colour. No blur: the shell keeps none over a few pixels (tests/no-glass-one-scheme). */
 html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar,
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: color-mix(in srgb, var(--wip-card-bg) 55%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); }
+html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: color-mix(in srgb, var(--wip-card-bg) 90%, transparent); }
 /* THE LEFT MENU AND THE TOP BAR are the standard look's too since 20 Nov
    2026: their rules and tokens, the menu's colours among them, are the
    block after this one ("THE LEFT MENU AND THE TOP BAR"). What is left here
