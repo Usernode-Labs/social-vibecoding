@@ -17897,7 +17897,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-ask-text { font-size: 15px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
 .dev-request-ask-text .dev-issue-body { font-size: inherit; color: inherit; }
 .dev-request-ask-text p,
-.dev-request-ask-text .dc-p { margin: 0 0 4px; }
+.dev-request-ask-text .dc-p { margin: 0 0 8px; }
+.dev-request-ask-text :is(.dc-h3, .dc-h4, .dc-h5):first-child { margin-top: 0; }
 .dev-request-ask-text ul { margin: 0 0 4px; padding-inline-start: 20px; list-style: disc; }
 .dev-request-ask-text ol { margin: 0 0 4px; padding-inline-start: 20px; list-style: decimal; }
 .dev-request-ask-text strong { color: var(--text-primary); }
