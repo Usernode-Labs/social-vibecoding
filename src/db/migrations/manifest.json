@@ -477,24 +477,29 @@
       "schemaSha256": "b1ba5d805ef1af6d088ca4a6c89cd6b69ca2169c7a0612f90ede5f664a8c6e22"
     },
     {
+      "id": "private-thread-make-refusal",
+      "sha256": "e7efcf19f95f64919f2042ed2b2eaa8fcfba4daa0130470bc33ff21d26de0194",
+      "schemaSha256": "933757d701ecab7769895883fab51f7a807e716507d20017b766bd71776e8a9a"
+    },
+    {
       "id": "plan-design-source",
       "sha256": "76f81d8dea4eb885cff349fc7d39164f342c5070cfce38c4e28bb55928f8983a",
-      "schemaSha256": "19df16ffd70fe0dca8af24164182e29f28fdc7c41f40c7e7fe1b8976d1aeacd7"
+      "schemaSha256": "99d9cd271a4130ce58a93b10b73b9cd169e0af0a4f70bcafacfb808d8f2ffdba"
     },
     {
       "id": "artifact-store",
       "sha256": "0b2b396e8efa0057a68bb5bf7ecbc24eda697b9efe8153102b10a19ad1b23fd8",
-      "schemaSha256": "2f22555e45c9c119433bd409bf53331555290284659c4017394f23cfc71408f8"
+      "schemaSha256": "7d7155cebeccc763caf9825d5ef34798292e18c8ae1df721349a8f7093932915"
     },
     {
       "id": "work-state-one-writer",
       "sha256": "48d01fd14d04ff8558f5ecb3cb0f2d560219fbf93c9ed82c3a20fa0532ad28a6",
-      "schemaSha256": "2499a1d3768e7f47b0296b495addb8bb532abad8827a5df55aa93a7f5787eb7c"
+      "schemaSha256": "e8a039061c206df3fec8fc5eabefcd59b8c0709ea7c85e7829b642ab276e7096"
     },
     {
       "id": "homeroom-bot-run-stop-cause",
       "sha256": "1d0288278492a7df3df5ecb040643d9912ff77639a535cf354a9159b4882ee0d",
-      "schemaSha256": "918b752fef10b150cde58e4600e2dcef6649e396968a52db36cb92af086b8d21"
+      "schemaSha256": "6814c8acb8d65be5b418cf8e6b0f799e08f56fafe9bcc7d6fd220a0a49829e83"
     }
   ]
 }

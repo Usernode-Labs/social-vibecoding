@@ -21,11 +21,13 @@ const PICKER = 'frontend/src/features/frame/look-picker.tsx';
 const view = (props) => renderComponent(PICKER, 'LookPickerView', { onPick() {}, ...props }, { cache: false });
 
 test('it is one small control: a glyph, and under it the system\'s own menu of looks', () => {
-  const html = view({ variant: 'frame', skin: 'paper' });
+  const html = view({ variant: 'frame', skin: 'brand' });
   assert.match(html, /^<label class="fr-ib fr-look" title="Look" data-look-picker="frame"><svg[^>]*>.*?<\/svg><select aria-label="Look">/s);
   assert.deepEqual([...html.matchAll(/<option value="([a-z]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]), [
-    ['standard', 'Standard', false], ['wip', 'Standard (WIP)', false], ['brand', 'Paper, simplified, with brand styling', false], ['paper', 'Paper', true],
-  ], 'Standard, its work-in-progress copy, then brand and Paper, the device\'s own chosen');
+    ['standard', 'Standard', false], ['wip', 'Homeroom brand kit (WIP)', false], ['brand', 'Paper, simplified, with brand styling', true],
+  ], 'three looks (20 Nov 2026): Standard, the brand kit, and Paper simplified, the device\'s own chosen');
+  // Paper, the frame's last look, is offered no more: a head that still answered it reads as Standard.
+  assert.match(view({ variant: 'frame', skin: 'paper' }), /<option value="standard" selected="">/);
 });
 
 test('brand keeps the platform\'s header, and the menu there reads it', () => {
@@ -136,15 +138,15 @@ test('the toggle is the theme\'s own switch, and follows it wherever it is chang
   assert.equal((src.match(/window\.Theme\?\.onChange\?\.\(/g) || []).length, 1, 'one listener, however many pickers are mounted');
 });
 
-test('Standard (WIP) is listed once per token set, beside the looks, each named with (WIP), and a pick sets both', () => {
+test('the brand kit is one entry, named by its token set, and a pick is a look alone', () => {
   const picked = [];
-  const html = renderComponent(PICKER, 'LookPickerView', { variant: 'shell', skin: 'wip', tokens: 'brand2', onPick: (s) => picked.push(['look', s]), onTokens: (s) => picked.push(['tokens', s]) }, { cache: false });
+  const html = renderComponent(PICKER, 'LookPickerView', { variant: 'shell', skin: 'wip', onPick: (s) => picked.push(s) }, { cache: false });
   const options = [...html.matchAll(/<option value="([a-z0-9:]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]);
-  assert.deepEqual(options.slice(0, 5), [
-    ['standard', 'Standard', false], ['wip', 'Standard (WIP)', false], ['wip:brand', 'Homeroom brand kit (WIP)', false],
-    ['wip:brand2', 'Homeroom brand kit V2 (WIP)', true], ['wip:highlighter', 'Highlighter (WIP)', false],
-  ], 'the look, then each of its token sets, the device\'s own chosen');
-  assert.doesNotMatch(html, /data-look-tokens/, 'no second menu for the token sets');
+  assert.deepEqual(options, [
+    ['standard', 'Standard', false], ['wip', 'Homeroom brand kit (WIP)', true], ['brand', 'Paper, simplified, with brand styling', false],
+  ]);
+  assert.doesNotMatch(html, /data-look-tokens/, 'no second menu for token sets');
   const src = read(PICKER);
-  assert.match(src, /if \(next\.skin === 'wip'\) onTokens\?\.\(next\.tokens\);\s*onPick\(next\.skin\);/, 'the set is written before the look, so the look arrives already drawn with it');
+  assert.match(src, /wip: 'settings:experimental\.wipTokens\.brand',/, 'a whole literal id');
+  assert.doesNotMatch(src, /setTokens|onTokens|'wip:/, 'there is no token set to choose: the head draws the look with its one');
 });

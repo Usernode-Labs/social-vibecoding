@@ -363,6 +363,42 @@
     "text": "This challenge counts up to {{cap}}, and you have {{cap}}. More before it ends don't add to it.",
     "description": "Note on the page of a challenge once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"More\" means more of whatever the challenge counts."
   },
+  "challenges.scoring.note": {
+    "text": "Progress is counted every {{every}}. Last counted {{last}} ago, next count in about {{next}}.",
+    "description": "Under the progress bar on a challenge's page when it is counted on a schedule: how often it is counted and when the next count is due. {{every}} is an interval such as \"10 minutes\", {{last}} how long ago the last count ran (\"4 minutes\"), and {{next}} the time until the next one (\"6 minutes\")."
+  },
+  "challenges.scoring.noteJustNow": {
+    "text": "Progress is counted every {{every}}. Last counted just now, next count in about {{next}}.",
+    "description": "Under the progress bar on a challenge's page when it is counted on a schedule and the last count ran less than a minute ago. {{every}} is an interval such as \"10 minutes\" and {{next}} the time until the next count (\"9 minutes\")."
+  },
+  "challenges.scoring.pending": {
+    "text": "Progress is counted every {{every}}. Last counted {{last}} ago. The next count is due now, so recent progress may not show yet.",
+    "description": "Under the progress bar on a challenge's page when its scheduled count is due or late. {{every}} is an interval such as \"10 minutes\" and {{last}} how long ago the last count ran (\"14 minutes\")."
+  },
+  "challenges.scoring.duration.minutes_one": {
+    "text": "{{count}} minute",
+    "description": "A length of time inserted into the sentence under a challenge's progress bar, e.g. \"1 minute\"."
+  },
+  "challenges.scoring.duration.minutes_other": {
+    "text": "{{count}} minutes",
+    "description": "A length of time inserted into the sentence under a challenge's progress bar, e.g. \"4 minutes\"."
+  },
+  "challenges.scoring.duration.hours_one": {
+    "text": "{{count}} hour",
+    "description": "A length of time inserted into the sentence under a challenge's progress bar, e.g. \"1 hour\"."
+  },
+  "challenges.scoring.duration.hours_other": {
+    "text": "{{count}} hours",
+    "description": "A length of time inserted into the sentence under a challenge's progress bar, e.g. \"2 hours\"."
+  },
+  "challenges.scoring.duration.days_one": {
+    "text": "{{count}} day",
+    "description": "A length of time inserted into the sentence under a challenge's progress bar, e.g. \"1 day\"."
+  },
+  "challenges.scoring.duration.days_other": {
+    "text": "{{count}} days",
+    "description": "A length of time inserted into the sentence under a challenge's progress bar, e.g. \"3 days\"."
+  },
   "bp.checking": {
     "text": "Checking your block-production status…",
     "description": "Shown on the block-production challenge's page while the viewer's wallet state is being fetched. \"Block production\" is running a node that produces blocks of the blockchain."

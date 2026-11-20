@@ -70,8 +70,10 @@ COPY --from=shell /build/public/index.html ./public/index.html
 COPY frontend ./frontend
 RUN npm run build:css
 
-# Docker CLI from the upstream Go security rebuild.
-FROM docker:29.9.2-cli AS docker-tools
+# Docker CLI: the 29.10.0 release. Its official image is built with Go 1.27.4,
+# which fixes the standard library findings the daily audit reported against
+# 29.9.2's Go 1.26.10. 29.9.3 still shipped that Go, so it does not help.
+FROM docker:29.10.0-cli AS docker-tools
 # Keep the RC's patched x/net, remove its obsolete Docker module and update
 # go-archive. Every other dependency remains in the upstream vendored tree.
 FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine AS buildx-tools

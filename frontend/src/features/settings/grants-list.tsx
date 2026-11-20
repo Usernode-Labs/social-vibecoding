@@ -99,8 +99,30 @@ function RevokedRow({ grant }: { grant: GrantView }) {
   );
 }
 
+/** From this share of the daily cap, the row says the app is close to it. */
+const NEAR_CAP = 0.8;
+
+/**
+ * #6512 item 6: how much of today's cap the app has used, as the bar
+ * Settings > Usage draws for building time (./building-time.tsx), and in
+ * words once it is close (80%) or there. The figures are the row's own: the
+ * cap bounds both what the budget and the person's own key paid, which is
+ * what `spentCents` adds up. A call that was running when the cap was
+ * reached can end past it, so the bar stops at full.
+ */
+function capUse(grant: GrantView): { percent: number; level: 'under' | 'near' | 'at' } | null {
+  const cap = Number(grant.capCents) || 0;
+  if (!(cap > 0)) return null;
+  const share = Math.max(0, Number(grant.spentCents) || 0) / cap;
+  return {
+    percent: Math.min(100, Math.floor(share * 100)),
+    level: share >= 1 ? 'at' : share >= NEAR_CAP ? 'near' : 'under',
+  };
+}
+
 function GrantRow({ grant }: { grant: GrantView }) {
   const t = useMessages('settings');
+  const use = capUse(grant);
   return (
     <div className={ROW_CLASS}>
       <div className="flex items-center justify-between gap-2">
@@ -109,6 +131,29 @@ function GrantRow({ grant }: { grant: GrantView }) {
           {t('settings:grants.spentToday', { spent: grant.spent, cap: grant.cap })}
         </span>
       </div>
+      {use ? (
+        <div
+          data-role="spend-bar"
+          className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+          role="meter"
+          aria-label={t('settings:grants.usedOfCapLabel', { app: grant.appName, percent: use.percent })}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={use.percent}
+        >
+          <div
+            className={use.level === 'under'
+              ? 'h-full rounded-full bg-[color:var(--lit-ink)]'
+              : 'h-full rounded-full bg-[color:var(--state-attention)]'}
+            style={{ width: `${use.percent}%` }}
+          />
+        </div>
+      ) : null}
+      {use && use.level !== 'under' ? (
+        <p data-role="cap-note" className="mt-1.5 text-zinc-600 dark:text-zinc-400">
+          {use.level === 'at' ? t('settings:grants.atCap') : t('settings:grants.nearCap')}
+        </p>
+      ) : null}
       <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
         <label className="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
           {t('settings:grants.capLabel')}

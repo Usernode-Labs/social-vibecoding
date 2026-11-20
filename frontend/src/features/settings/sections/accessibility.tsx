@@ -18,13 +18,11 @@
  *  - The initial render carries no selection: `size` starts null and the
  *    switch starts off, which is exactly the markup the prerender ships.
  *    Reading storage during render would mismatch the prerendered document.
- *  - The segmented track reuses the .theme-seg class strings — app.css keys
- *    the recessed-track / raised-face look off the class, not the track id —
- *    and drops the caret (`--theme-caret-index` belongs to the one control
- *    that has it). No new components, no new colours.
+ *  - Text size is a slider of five stops (#6510), a native range input in
+ *    the accent, as the photo crop's zoom is. No new colours.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
 import { Switch } from '@/components/ui/switch';
@@ -32,44 +30,44 @@ import { Switch } from '@/components/ui/switch';
 import { onPreviewsPref, previewsOn, setPreviewsOn } from '../../../lib/card-previews';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
-import { radioGroupKeys } from '../../../lib/radio-group';
 
-// Order of the three segments in the DOM, also the storage contract:
-// Normal removes the key; Large and Larger store their value.
-const TEXT_SIZES = ['normal', 'large', 'larger'] as const;
+// The slider's five stops, smallest first, and what each stores: Normal
+// removes the key; the others store their name. `large` and `larger` are the
+// two presets of #3969, so a size picked before the slider still applies.
+const TEXT_SIZES = ['normal', 'large', 'larger', 'xlarge', 'xxlarge'] as const;
 type TextSize = (typeof TEXT_SIZES)[number];
 
-const SIZE_SEG_CLASS =
-  'theme-seg ui-row ui-row-sm flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
-
-const SIZE_LABELS: Record<TextSize, string> = {
-  normal: 'settings:accessibility.textSize.normal',
-  large: 'settings:accessibility.textSize.large',
-  larger: 'settings:accessibility.textSize.larger',
+// What each stop makes the root font, as app.css sets it; shown rounded.
+const SIZE_PERCENT: Record<TextSize, number> = {
+  normal: 100,
+  large: 112.5,
+  larger: 125,
+  xlarge: 137.5,
+  xxlarge: 150,
 };
 
 /**
- * The radio mark a row wears under one of the frame's looks (looks v2: the
- * choices are radio rows in a card there). Never drawn by the standard look
- * (`ui-look-only`, app.css), whose segment says which one is chosen by its own fill.
- */
-function RadioMark({ on }: { on: boolean }) {
-  return (
-    <span aria-hidden="true" className={on ? 'ui-chk ui-chk-on ui-look-only' : 'ui-chk ui-look-only'}>
-      {on ? <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" /> : null}
-    </span>
-  );
-}
-
-/**
- * The Normal / Large / Larger segmented control. Three things re-read the
- * size, like the theme's: a click, Display.onChange (another tab, the
- * storage event), and every entry into this section
+ * The text size slider (#6510): five stops from 100% to 150%, in place of
+ * the Normal / Large / Larger segments. A native range input, so the arrow
+ * keys, Home and End move it, and a screen reader hears its name and the
+ * size as a percentage (`aria-valuetext`).
+ *
+ * The size is applied when the browser's own `change` fires: on release for
+ * a drag, and on every key press. React's onChange is the `input` event,
+ * which fires all through a drag; it only moves the figure beside the
+ * slider. Applying mid-drag would resize the page under the pointer, the
+ * slider with it.
+ *
+ * Three things re-read the size, like the theme's: a pick, Display.onChange
+ * (another tab, the storage event), and every entry into this section
  * (`usernode:settings-section`).
  */
 function TextSizeControl() {
   const t = useMessages('settings');
   const [size, setSize] = useState<TextSize | null>(null);
+  // Where the thumb is while it is being dragged; null once applied.
+  const [dragAt, setDragAt] = useState<number | null>(null);
+  const input = useRef<HTMLInputElement>(null);
 
   const sync = useCallback(() => {
     const current = window.Display?.getTextSize?.();
@@ -85,39 +83,53 @@ function TextSizeControl() {
 
   useWindowEvent('usernode:settings-section', sync);
 
-  const choose = useCallback(
-    (next: TextSize) => {
+  useEffect(() => {
+    const el = input.current;
+    if (!el) return undefined;
+    const apply = () => {
+      const next = TEXT_SIZES[Number(el.value)] ?? 'normal';
       window.Display?.setTextSize?.(next);
+      setDragAt(null);
       sync();
-    },
-    [sync],
-  );
-  // One tab stop, and the arrow keys move the pick (#6510).
-  const keys = radioGroupKeys(TEXT_SIZES, size, choose);
+    };
+    el.addEventListener('change', apply);
+    return () => el.removeEventListener('change', apply);
+  }, [sync]);
 
+  const at = dragAt ?? Math.max(0, TEXT_SIZES.indexOf(size ?? 'normal'));
+  const percent = Math.round(SIZE_PERCENT[TEXT_SIZES[at]]);
+  const value = t('settings:accessibility.textSize.percent', { percent });
+
+  // `ui-card ui-pad` (looks v2): one padded card under a look, nothing in
+  // the standard one.
   return (
-    <div
-      id="settings-text-size-track"
-      role="radiogroup"
-      aria-label={t('settings:accessibility.textSize.controlName')}
-      onKeyDown={keys.onKeyDown}
-      className="ui-card ui-radios relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
-    >
-      {TEXT_SIZES.map((s) => (
-        <button
-          key={s}
-          type="button"
-          role="radio"
-          aria-checked={size === s ? 'true' : 'false'}
-          tabIndex={keys.tabIndex(s)}
-          data-text-size-option={s}
-          className={size === s ? `${SIZE_SEG_CLASS} theme-seg-active` : SIZE_SEG_CLASS}
-          onClick={() => choose(s)}
-        >
-          <RadioMark on={size === s} />
-          {t(SIZE_LABELS[s])}
-        </button>
-      ))}
+    <div id="settings-text-size-track" className="ui-card ui-pad flex items-center gap-3">
+      <span aria-hidden="true" className="shrink-0 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+        {t('settings:accessibility.textSize.sample')}
+      </span>
+      <input
+        ref={input}
+        type="range"
+        min={0}
+        max={TEXT_SIZES.length - 1}
+        step={1}
+        value={at}
+        data-text-size-slider=""
+        aria-label={t('settings:accessibility.textSize.controlName')}
+        aria-valuetext={value}
+        className="flex-1 min-w-0 h-11 accent-violet-600"
+        onChange={(e) => setDragAt(Number(e.currentTarget.value))}
+      />
+      <span aria-hidden="true" className="shrink-0 text-xl font-semibold text-zinc-500 dark:text-zinc-400">
+        {t('settings:accessibility.textSize.sample')}
+      </span>
+      <span
+        aria-hidden="true"
+        data-text-size-value=""
+        className="shrink-0 w-12 text-end text-sm tabular-nums text-zinc-800 dark:text-zinc-200"
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -276,7 +288,7 @@ export function AccessibilitySection() {
         <SectionHeading title={t('settings:accessibility.textSize.title')}>
           {t('settings:accessibility.textSize.intro')}
         </SectionHeading>
-        <div className="max-w-xs">
+        <div className="max-w-sm">
           <TextSizeControl />
         </div>
         <HighContrastRow />

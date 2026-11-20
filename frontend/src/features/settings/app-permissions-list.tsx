@@ -17,10 +17,17 @@ import { Button } from '@/components/ui/button';
 
 import { closeLiveApp, isLiveApp } from '../app-frame/live-apps';
 import { useMessages } from '../../lib/i18n/react';
+import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { appPermissionsStore } from './app-permissions-store.js';
 
-type PermissionItem = { capability: string; label: string; revoked: boolean };
+type PermissionItem = {
+  capability: string;
+  label: string;
+  revoked: boolean;
+  /** When it was last allowed, or on a revoked row when it was revoked (#6512). */
+  at?: string | null;
+};
 type PermissionAppView = {
   appId: number;
   appName: string;
@@ -65,6 +72,11 @@ function capabilityNote(t: ReturnType<typeof useMessages>, capability: string): 
 function CapabilityRow({ app, item }: { app: PermissionAppView; item: PermissionItem }) {
   const t = useMessages('settings');
   const note = capabilityNote(t, item.capability);
+  // #6512: when it was allowed, or revoked, in the card form Blocked apps
+  // uses ("3d ago", a date from a week on) with the full stamp on hover.
+  // When it was last USED is not something Homeroom records: the browser
+  // hands the camera to the app's frame and tells nobody.
+  const when = agoStamp(item.at);
   return (
     <div className="flex items-center gap-2 py-1">
       <div className="min-w-0 flex-1">
@@ -75,6 +87,13 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
         >
           {item.label}
         </span>
+        {when.text ? (
+          <time data-role="permission-at" dateTime={item.at ?? undefined} title={when.title} className="mt-0.5 block text-zinc-500 dark:text-zinc-400">
+            {item.revoked
+              ? t('settings:appPermissions.revokedAt', { when: when.text })
+              : t('settings:appPermissions.allowedAt', { when: when.text })}
+          </time>
+        ) : null}
         {/* 12px like the label above it (ROW_CLASS is text-xs): the "15 over 13"
             rule is ListRow's, and a 13px note would outsize its own label. */}
         {note ? (

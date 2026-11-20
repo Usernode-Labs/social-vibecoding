@@ -707,6 +707,18 @@
     "text": "Apps have spent ${{spent}} today",
     "description": "Line above the list of apps in Settings > App AI permissions: what all the apps together have spent on AI today, the same day each row's own figure covers. {{spent}} is an amount in US dollars such as 0.37; the dollar sign is part of the text."
   },
+  "grants.usedOfCapLabel": {
+    "text": "{{app}} has used {{percent}}% of today's cap",
+    "description": "Screen reader name of the small bar on an app's row in Settings > App AI permissions, which shows how much of its daily spending cap the app has used today. {{app}} is the app's name and {{percent}} is a whole number from 0 to 100."
+  },
+  "grants.nearCap": {
+    "text": "Close to today's cap.",
+    "description": "Short line on an app's row in Settings > App AI permissions, shown when the app has spent 80% or more of its daily AI spending cap but has not reached it yet."
+  },
+  "grants.atCap": {
+    "text": "Reached today's cap. Its AI is paused until tomorrow, or until you raise the cap.",
+    "description": "Short line on an app's row in Settings > App AI permissions, shown when the app has spent its whole daily AI spending cap. The field to raise the cap is on the same row."
+  },
   "grants.capLabel": {
     "text": "Cap $",
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
@@ -1215,32 +1227,16 @@
     "text": "Standard",
     "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
   },
-  "experimental.look.wip": {
-    "text": "Standard (WIP)",
-    "description": "Option of the Look menu in Settings, Experimental, right after Standard: Homeroom's usual visual style with the changes still being tried on it. WIP is short for work in progress."
-  },
   "experimental.look.brand": {
     "text": "Paper, simplified, with brand styling",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
-  },
-  "experimental.look.paper": {
-    "text": "Paper",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (one white sheet on the wallpaper with quiet grey panels). A proper name; translate it as a short name, not a sentence."
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way a look named Paper did (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is a proper name here."
   },
   "experimental.wipTokens.brand": {
     "text": "Homeroom brand kit (WIP)",
-    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.brand2": {
-    "text": "Homeroom brand kit V2 (WIP)",
-    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with a second drawing from Homeroom's brand guidelines (serif section titles, black and cream). V2 means version two. Homeroom is the product name. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.highlighter": {
-    "text": "Highlighter (WIP)",
-    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with a white page and yellow used like a marker pen. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): Homeroom's usual visual style with the changes still being tried on it, drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress. Translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
-    "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
+    "text": "Try another look for Homeroom, in light and dark. One draws every page in the website's colours. The other is the usual look with changes still being tried on it, in the brand kit's colours and typefaces. Admins see this menu, and the same one beside the bell, while the looks are drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "theme.title": {
@@ -1280,24 +1276,20 @@
     "description": "Heading of the Text size part of Settings > Accessibility."
   },
   "accessibility.textSize.intro": {
-    "text": "Makes text bigger everywhere on this browser.",
+    "text": "Makes text bigger everywhere on this browser, up to one and a half times the normal size.",
     "description": "Line under the Text size heading in Settings > Accessibility, saying what the control does."
   },
   "accessibility.textSize.controlName": {
     "text": "Text size",
-    "description": "Name of the Text size choice in Settings > Accessibility, announced to a screen reader for the three-way control."
+    "description": "Name of the Text size slider in Settings > Accessibility, announced to a screen reader."
   },
-  "accessibility.textSize.normal": {
-    "text": "Normal",
-    "description": "Choice in the Text size control in Settings > Accessibility: today's text size."
+  "accessibility.textSize.percent": {
+    "text": "{{percent}}%",
+    "description": "The chosen text size beside the Text size slider in Settings > Accessibility, also read to a screen reader as the slider's value. {{percent}} is a whole number from 100 to 150, where 100 is the normal size."
   },
-  "accessibility.textSize.large": {
-    "text": "Large",
-    "description": "Choice in the Text size control in Settings > Accessibility: about one eighth bigger than Normal."
-  },
-  "accessibility.textSize.larger": {
-    "text": "Larger",
-    "description": "Choice in the Text size control in Settings > Accessibility: about a quarter bigger than Normal."
+  "accessibility.textSize.sample": {
+    "text": "A",
+    "description": "One letter drawn small before the Text size slider in Settings > Accessibility and large after it, to show which way makes text bigger. Use one plain letter of your script."
   },
   "accessibility.contrast.label": {
     "text": "High contrast",
@@ -1826,6 +1818,14 @@
   "appPermissions.note.screen": {
     "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
     "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
+  },
+  "appPermissions.allowedAt": {
+    "text": "Allowed {{when}}",
+    "description": "Small grey line under a permission's name (such as Camera) on an app's row in Settings > App device permissions, saying when the person last allowed it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
+  },
+  "appPermissions.revokedAt": {
+    "text": "Revoked {{when}}",
+    "description": "Small grey line under a revoked permission's name (such as Camera) on an app's row in Settings > App device permissions, saying when the person revoked it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
   },
   "appPermissions.revokeAll": {
     "text": "Revoke all",
