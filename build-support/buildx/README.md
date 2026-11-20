@@ -40,7 +40,8 @@ The runtime binary identifies itself as `v0.39.0-rc1-homeroom.1` and retains
 the upstream revision. The compiler is pinned to Go 1.26.11, the supported
 1.26 patch that fixes the standard library findings of the November 2026
 audit. The build uses the target OS and architecture even when its compiler
-runs natively.
+runs natively. The Docker CLI copied beside Buildx into the standalone image
+is the 29.10.0 release, built with Go 1.27.4.
 
 ## Verification
 

@@ -22,7 +22,7 @@ GitHub PR; no Homeroom proposal or production deployment was created.
 | tar under bcrypt's node-pre-gyp installer | **7.5.22**, scoped override |
 | Root / worker-global Zod | **3.25.76**, remaining finding below |
 | Capture Puppeteer / basic-ftp | **23.11.1 / 6.2.1** |
-| Standalone Docker / Buildx | **29.9.2 / 0.38.1**, upstream binaries built with Go **1.26.10** |
+| Standalone Docker / Buildx | Docker **29.10.0**, built with Go **1.27.4**; Buildx **0.38.1**, built here with Go **1.26.11** |
 | SBOM / scanner | Syft **1.55.0**, Trivy **0.76.1** |
 
 `security/validation-2026-10-23.json` records every changed lockfile package,
