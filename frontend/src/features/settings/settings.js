@@ -746,25 +746,19 @@
 
       // The Look menu (an admin's preview of the looks), kept on the device
       // by the head's window.Skin: the change is the save, and the look
-      // applies at once. Its options are every look there is ('brand',
-      // which keeps the standard pages, and the frame's five); nothing
-      // stored reads as Standard. New look's switch, which set 'brand' on
-      // its own, is gone: that look is the menu's first option now.
+      // applies at once. Its options are the looks the head stores ('wip'
+      // and 'brand', lib/skin.ts MENU_SKINS); nothing stored reads as
+      // Standard.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
-        const skin = window.Skin?.get?.();
-        // Standard (WIP) is listed once per token set ('wip:<set>'; the look as it is drawn is 'wip').
-        const set = skin === 'wip' ? window.Skin?.getTokens?.() : null;
-        const entry = set && set !== 'current' ? `wip:${set}` : skin;
+        const entry = window.Skin?.get?.();
         if (lookSelect) {
           lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === entry) ? entry : '';
         }
       };
       if (lookSelect) {
         lookSelect.addEventListener('change', (e) => {
-          const [look, set] = String(e.target.value || 'standard').split(':');
-          if (look === 'wip') window.Skin?.setTokens?.(set || 'current');
-          window.Skin?.set?.(look);
+          window.Skin?.set?.(String(e.target.value || 'standard'));
           paintLooks();
         });
         // Another tab changing it repaints the menu here too.

@@ -463,14 +463,18 @@
     //                      styling": the standard pages in the website's
     //                      colours and typefaces. The id is the old New
     //                      look's, whose switch is gone.
-    //                    → 'paper'  the one look of the one frame
+    //                    → 'wip'    "Homeroom brand kit V2 (WIP)": the
+    //                      standard look with the changes still being
+    //                      tried on it, drawn with the brand kit's
+    //                      second token set
     //                      Both are drawn in light and dark, and are
     //                      the Look menu's, an admin's preview.
     //                    → anything else, a retired look's id among them
     //                      ('brandkit', 'workbench', 'today', 'playground',
     //                      gone 12 Nov 2026; 'glass', 'pastel', 'mosaic',
-    //                      'sunrise', gone 19 Nov 2026), reads as the
-    //                      standard look
+    //                      'sunrise', gone 19 Nov 2026; 'paper', the one
+    //                      frame's last look, gone 20 Nov 2026), reads as
+    //                      the standard look
     //                    → key removed for the standard look (the default)
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
     // every rule of a look to html[data-skin="<look>"]. Every storage access
@@ -484,14 +488,13 @@
     // parameter out of the address, so a reload keeps what was picked.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
-      // 'brand' keeps the standard pages; the five after it are the looks
-      // of the one frame (the 2026-11-06 screen tour), in the tour's order.
-      // The same list is MENU_SKINS in src/lib/skin.ts and, less 'brand',
-      // its FRAME_SKINS.
-      // 'wip' is "Standard (WIP)": the standard look itself, where a change
-      // to it is tried before it is the standard's. It sets no data-skin (no
-      // rule of a look applies), only data-skin-wip for a rule of its own.
-      const SKINS = ['wip', 'brand', 'paper'];
+      // The two looks the Look menu offers after Standard (20 Nov 2026: it
+      // keeps three). The same list is MENU_SKINS in src/lib/skin.ts.
+      // 'brand' keeps the standard pages. 'wip' is the standard look itself,
+      // where a change to it is tried before it is the standard's. It sets no
+      // data-skin (no rule of a look applies), only data-skin-wip for a rule
+      // of its own, and data-wip-tokens for the token set that draws it.
+      const SKINS = ['wip', 'brand'];
       const _listeners = [];
 
       let pinned = null;
@@ -502,38 +505,12 @@
         if (want === 'standard' || SKINS.includes(want)) pinned = want;
       } catch {}
 
-      // Standard (WIP)'s token config: which set of --wip-* values draws it.
-      // 'current' is the look as it is drawn (nothing stored, no attribute);
-      // 'brand' is Homeroom's brand kit (cream, yellow, blue, Geist). Kept on
-      // the device like the look, and `?tokens=` pins one for this load.
-      const TOKENS_KEY = 'homeroom:wip-tokens';
-      const TOKEN_SETS = ['brand', 'brand2', 'highlighter'];
-      let pinnedTokens = null;
-      let chosenTokens = null;
-      try {
-        const wantTokens = new URLSearchParams(window.location.search).get('tokens');
-        if (wantTokens === 'current' || TOKEN_SETS.includes(wantTokens)) pinnedTokens = wantTokens;
-      } catch {}
-      function getTokens() {
-        if (pinnedTokens) return pinnedTokens;
-        if (chosenTokens) return chosenTokens;
-        try {
-          const val = window.localStorage.getItem(TOKENS_KEY);
-          return TOKEN_SETS.includes(val) ? val : 'current';
-        } catch {
-          return 'current';
-        }
-      }
-      function setTokens(name) {
-        pinnedTokens = null;
-        chosenTokens = TOKEN_SETS.includes(name) ? name : 'current';
-        try {
-          if (TOKEN_SETS.includes(name)) window.localStorage.setItem(TOKENS_KEY, name);
-          else window.localStorage.removeItem(TOKENS_KEY);
-        } catch { /* unwritable storage: the pick still holds in memory */ }
-        apply();
-        _listeners.forEach(function (fn) { try { fn(); } catch {} });
-      }
+      // The set of --wip-* values that draws 'wip'. It had a choice of four
+      // (as drawn, the brand kit, its second version, Highlighter); since 20
+      // Nov 2026 the second brand kit is the one drawing of that look, so
+      // nothing is stored or pinned for it ('homeroom:wip-tokens' and
+      // `?tokens=` are read no more).
+      const WIP_TOKENS = 'brand2';
 
       function get() {
         if (pinned) return pinned;
@@ -560,8 +537,7 @@
         let basic = false;
         try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
         root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
-        const tokens = skin === 'wip' ? getTokens() : 'current';
-        if (tokens !== 'current') root.setAttribute('data-wip-tokens', tokens);
+        if (skin === 'wip') root.setAttribute('data-wip-tokens', WIP_TOKENS);
         else root.removeAttribute('data-wip-tokens');
         if (skin !== 'standard' && skin !== 'wip') {
           root.setAttribute('data-skin', skin);
@@ -601,9 +577,8 @@
       // through the same listener). The in-memory pick is dropped first, so
       // a choice made in another tab still wins here.
       window.addEventListener('storage', function (e) {
-        if (e.key === SKIN_KEY || e.key === TOKENS_KEY) {
-          if (e.key === SKIN_KEY) chosen = null;
-          else chosenTokens = null;
+        if (e.key === SKIN_KEY) {
+          chosen = null;
           apply();
           _listeners.forEach(function (fn) { try { fn(); } catch {} });
         }
@@ -612,7 +587,7 @@
       // Apply before first paint: the no-flash guard.
       apply();
 
-      return { get, set, apply, onChange, getTokens, setTokens };
+      return { get, set, apply, onChange };
     }());
   </script>
   <script>

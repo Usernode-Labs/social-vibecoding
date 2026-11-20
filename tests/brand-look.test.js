@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*(?:<option value="wip:[a-z0-9]+">\{t\('settings:experimental\.wipTokens\.[a-z0-9]+'\)\}<\/option>\s*)+<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard and its work-in-progress copy (listed once per token set since 19 Nov 2026): it is the one look that redraws the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.wipTokens\.brand2'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard and its work-in-progress copy (one entry, the brand kit\'s second drawing, since 20 Nov 2026): it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -134,8 +134,9 @@ test('settings.js sets it only through the menu, and paints what is stored', () 
   const src = settingsJs();
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch is wired');
   assert.doesNotMatch(src, /'brand' : 'standard'/, 'nothing sets brand but the menu\'s own value');
-  // An entry is a look, or Standard (WIP) with one of its token sets ('wip:<set>'): the set is written, then the look.
-  assert.match(src, /const \[look, set\] = String\(e\.target\.value \|\| 'standard'\)\.split\(':'\);\s*if \(look === 'wip'\) window\.Skin\?\.setTokens\?\.\(set \|\| 'current'\);\s*window\.Skin\?\.set\?\.\(look\);/, 'the change is the save');
+  // An entry is a look: the menu's value is the head's own id for it.
+  assert.match(src, /window\.Skin\?\.set\?\.\(String\(e\.target\.value \|\| 'standard'\)\);/, 'the change is the save');
+  assert.doesNotMatch(src, /setTokens|getTokens/, 'no token set is chosen: the head draws the look with its one');
   assert.match(src, /window\.Skin\?\.onChange\?\.\(/, 'a change in another tab re-paints the menu');
 });
 
@@ -558,7 +559,7 @@ test('Geist loads from our own origin by an absolute path, and only for this loo
   // loads the file only while that config is on.
   const outside = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
   assert.ok(!/Geist/.test(outside), 'nothing outside this look, Standard (WIP)\'s brand config and the signed-out pages\' names Geist');
-  assert.match(read('public', 'css', 'app.css'), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
+  assert.match(read('public', 'css', 'app.css'), /html\[data-skin-wip\]\[data-wip-tokens="brand2"\] \{[^}]*--wip-font: 'Geist',/);
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {

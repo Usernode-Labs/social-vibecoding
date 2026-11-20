@@ -66,34 +66,52 @@ function runSkin({ stored = null, search = '', broken = false, storageThrows = f
 
 // ── The inline head module ───────────────────────────────────────────────
 
-test('paper is stored and applied like brand', () => {
+test('brand is stored and applied, and Standard clears it', () => {
   const { Skin, store, attrs } = runSkin();
-  Skin.set('paper');
-  assert.equal(store.get('homeroom:skin'), 'paper');
-  assert.equal(attrs.get('data-skin'), 'paper');
-  assert.equal(Skin.get(), 'paper');
+  Skin.set('brand');
+  assert.equal(store.get('homeroom:skin'), 'brand');
+  assert.equal(attrs.get('data-skin'), 'brand');
+  assert.equal(Skin.get(), 'brand');
   Skin.set('standard');
   assert.equal(store.has('homeroom:skin'), false);
   assert.equal(attrs.has('data-skin'), false);
 });
 
-test('a stored paper is on <html> as soon as the module runs', () => {
-  assert.equal(runSkin({ stored: 'paper' }).attrs.get('data-skin'), 'paper');
+test('a stored brand is on <html> as soon as the module runs', () => {
+  assert.equal(runSkin({ stored: 'brand' }).attrs.get('data-skin'), 'brand');
 });
 
-test('brand still works beside paper', () => {
-  const { Skin, attrs } = runSkin({ stored: 'paper' });
+// 'wip' is the standard look with the changes still being tried on it: no
+// data-skin (no rule of a look applies), its own attribute, and the one
+// token set that draws it since 20 Nov 2026.
+test('wip sets its own attribute and its one token set, never data-skin', () => {
+  const { Skin, store, attrs } = runSkin({ stored: 'brand' });
+  Skin.set('wip');
+  assert.equal(store.get('homeroom:skin'), 'wip');
+  assert.equal(Skin.get(), 'wip');
+  assert.equal(attrs.has('data-skin'), false);
+  assert.equal(attrs.get('data-skin-wip'), '');
+  assert.equal(attrs.get('data-wip-tokens'), 'brand2');
   Skin.set('brand');
   assert.equal(attrs.get('data-skin'), 'brand');
-  assert.equal(Skin.get(), 'brand');
+  assert.equal(attrs.has('data-skin-wip'), false);
+  assert.equal(attrs.has('data-wip-tokens'), false, 'the token set is that look\'s alone');
+  // A set a device had stored, or one named in the address, draws nothing else.
+  const old = runSkin({ stored: 'wip', search: '?tokens=highlighter' });
+  old.store.set('homeroom:wip-tokens', 'brand');
+  old.Skin.apply();
+  assert.equal(old.attrs.get('data-wip-tokens'), 'brand2');
+  assert.equal(typeof old.Skin.getTokens, 'undefined', 'there is no set to choose');
+  assert.equal(typeof old.Skin.setTokens, 'undefined');
 });
 
 test('?skin= pins the look for this load and stores nothing', () => {
-  const r = runSkin({ stored: 'brand', search: '?skin=paper' });
-  assert.equal(r.attrs.get('data-skin'), 'paper');
-  assert.equal(r.Skin.get(), 'paper');
+  const r = runSkin({ stored: 'brand', search: '?skin=wip' });
+  assert.equal(r.attrs.has('data-skin'), false);
+  assert.equal(r.attrs.get('data-skin-wip'), '');
+  assert.equal(r.Skin.get(), 'wip');
   assert.equal(r.store.get('homeroom:skin'), 'brand', 'the pin is for this load only');
-  const off = runSkin({ stored: 'paper', search: '?skin=standard' });
+  const off = runSkin({ stored: 'brand', search: '?skin=standard' });
   assert.equal(off.attrs.has('data-skin'), false, 'standard pins the standard look over a stored one');
   assert.equal(runSkin({ search: '?skin=neon' }).Skin.get(), 'standard', 'an unknown pin is ignored');
 });
@@ -101,20 +119,20 @@ test('?skin= pins the look for this load and stores nothing', () => {
 test('a pick applies and holds even when the browser refuses to store it', () => {
   const fired = [];
   // Storage can be read but not written: the old value stays stored.
-  const r = runSkin({ stored: 'paper', storageThrows: true });
-  assert.equal(r.attrs.get('data-skin'), 'paper');
+  const r = runSkin({ stored: 'wip', storageThrows: true });
+  assert.equal(r.attrs.get('data-skin-wip'), '');
   r.Skin.onChange(() => fired.push(r.Skin.get()));
   r.Skin.set('brand');
   assert.equal(r.attrs.get('data-skin'), 'brand', 'the picked look is on <html> at once');
   assert.equal(r.Skin.get(), 'brand', 'and is what every reader gets, not the stale stored look');
   assert.deepEqual(fired, ['brand'], 'and the listeners repaint');
-  assert.equal(r.store.get('homeroom:skin'), 'paper', 'storage still holds the old value: the write was refused');
+  assert.equal(r.store.get('homeroom:skin'), 'wip', 'storage still holds the old value: the write was refused');
 });
 
 test('a pick replaces a look named in the address, keeping the rest of it', () => {
   const r = runSkin({
-    search: '?skin=paper&tab=2',
-    href: 'https://app.example/wall?skin=paper&tab=2#section',
+    search: '?skin=wip&tab=2',
+    href: 'https://app.example/wall?skin=wip&tab=2#section',
   });
   assert.equal(r.replaced.length, 0, 'a load alone never rewrites the address');
   r.Skin.set('brand');
@@ -125,35 +143,41 @@ test('a pick replaces a look named in the address, keeping the rest of it', () =
 });
 
 test('a pick made in another tab takes over, after a local pick', () => {
-  const r = runSkin({ stored: 'paper' });
+  const r = runSkin({ stored: 'wip' });
   r.Skin.set('brand');
   assert.equal(r.Skin.get(), 'brand');
-  r.store.set('homeroom:skin', 'paper');
+  r.store.set('homeroom:skin', 'wip');
   for (const fn of r.listeners) fn({ key: 'homeroom:skin' });
-  assert.equal(r.attrs.get('data-skin'), 'paper', 'the in-memory pick is dropped for the other tab\'s');
-  assert.equal(r.Skin.get(), 'paper');
+  assert.equal(r.attrs.has('data-skin'), false, 'the in-memory pick is dropped for the other tab\'s');
+  assert.equal(r.Skin.get(), 'wip');
 });
 
-// ── The look of the frame ────────────────────────────────────────────────
+// ── The looks that are gone ──────────────────────────────────────────────
 //
-// Paper is the one look left of the tour's looks over the one frame.
-// `brand` ("Paper, simplified, with brand styling", the old New look
-// redrawn) is a look of the menu too, but not one of the frame's: it keeps
-// the standard pages. Four were drawn and retired on 12 Nov 2026 (Brand kit,
-// Workbench, Today, Playground), and four more on 19 Nov 2026 (Glass,
-// Pastel, Mosaic, Sunrise).
+// The Look menu keeps three since 20 Nov 2026: Standard, 'wip' and 'brand'
+// ("Paper, simplified, with brand styling", the old New look redrawn, which
+// keeps the standard pages). Four looks of the one frame were retired on 12
+// Nov 2026 (Brand kit, Workbench, Today, Playground) and four more on 19 Nov
+// 2026 (Glass, Pastel, Mosaic, Sunrise). Paper, the frame's last, left the
+// menus and the head on 20 Nov 2026: its drawing is still in the tree, with
+// nothing that reaches it, until it is removed in its own change.
 
 const FRAME_LOOKS = ['paper'];
 const RETIRED_LOOKS = ['brandkit', 'workbench', 'today', 'playground', 'glass', 'pastel', 'mosaic', 'sunrise'];
 
-test('every frame look is stored, applied and pinned alike', () => {
+test('paper is neither stored, applied nor pinned any more', () => {
   for (const look of FRAME_LOOKS) {
-    const { Skin, store, attrs } = runSkin();
-    Skin.set(look);
-    assert.equal(store.get('homeroom:skin'), look);
-    assert.equal(attrs.get('data-skin'), look);
-    assert.equal(runSkin({ stored: look }).attrs.get('data-skin'), look, `${look} is on <html> as the module runs`);
-    assert.equal(runSkin({ search: `?skin=${look}` }).Skin.get(), look, `?skin=${look} pins it`);
+    const stored = runSkin({ stored: look });
+    assert.equal(stored.Skin.get(), 'standard', `${look} in storage reads as standard`);
+    assert.equal(stored.attrs.has('data-skin'), false);
+    const pinned = runSkin({ search: `?skin=${look}` });
+    assert.equal(pinned.Skin.get(), 'standard', `?skin=${look} pins nothing`);
+    assert.equal(pinned.attrs.has('data-skin'), false);
+    const picked = runSkin({ stored: 'brand' });
+    picked.Skin.set(look);
+    assert.equal(picked.Skin.get(), 'standard', 'a pick of it is a pick of Standard');
+    assert.equal(picked.store.has('homeroom:skin'), false);
+    assert.doesNotMatch(experimentalSrc(), new RegExp(`value="${look}"`), `${look} is not offered in Settings`);
   }
 });
 
@@ -169,11 +193,11 @@ test('a retired look, stored or named in the address, is the standard design', (
     assert.equal(pinned.Skin.get(), 'standard', `?skin=${look} pins nothing`);
     assert.equal(pinned.attrs.has('data-skin'), false);
     // The address cannot bring one back over a look that is stored.
-    assert.equal(runSkin({ stored: 'paper', search: `?skin=${look}` }).Skin.get(), 'paper');
+    assert.equal(runSkin({ stored: 'brand', search: `?skin=${look}` }).Skin.get(), 'brand');
     // A pick after it works as on a fresh device.
-    stored.Skin.set('paper');
-    assert.equal(stored.attrs.get('data-skin'), 'paper');
-    assert.equal(stored.store.get('homeroom:skin'), 'paper');
+    stored.Skin.set('brand');
+    assert.equal(stored.attrs.get('data-skin'), 'brand');
+    assert.equal(stored.store.get('homeroom:skin'), 'brand');
   }
   const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
   for (const look of RETIRED_LOOKS) {
@@ -191,19 +215,23 @@ test('a retired look, stored or named in the address, is the standard design', (
   }
 });
 
-test('the head and the hook list the same looks, the frame\'s one after brand', () => {
+test('the head and the hook list the same two looks, and neither is the frame\'s', () => {
   const head = skinModuleSrc().match(/const SKINS = \[([^\]]*)\]/);
   assert.ok(head, 'the head module lists its looks');
   const listed = head[1].split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean);
-  assert.deepEqual(listed, ['wip', 'brand', ...FRAME_LOOKS]);
+  assert.deepEqual(listed, ['wip', 'brand']);
   const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
   assert.deepEqual([...mod.FRAME_SKINS], FRAME_LOOKS);
   assert.deepEqual([...mod.MENU_SKINS], listed, 'the menu offers exactly the looks the head stores');
-  for (const look of FRAME_LOOKS) assert.equal(mod.isFrameSkin(look), true, look);
+  assert.deepEqual([...mod.LOOK_CHOICES], ['standard', ...listed], 'three entries, Standard first');
   assert.equal(mod.isFrameSkin('standard'), false);
+  assert.equal(mod.isFrameSkin('wip'), false);
   assert.equal(mod.isFrameSkin('brand'), false, 'brand keeps the standard pages');
+  // Even a head module that still answered paper (a cached shell) is not believed.
   globalThis.window = { Skin: { get: () => 'paper', onChange() {} } };
-  try { assert.equal(mod.currentSkin(), 'paper'); } finally { delete globalThis.window; }
+  try { assert.equal(mod.currentSkin(), 'standard'); } finally { delete globalThis.window; }
+  globalThis.window = { Skin: { get: () => 'wip', onChange() {} } };
+  try { assert.equal(mod.currentSkin(), 'wip'); } finally { delete globalThis.window; }
 });
 
 // ── The settings switch ──────────────────────────────────────────────────
@@ -214,10 +242,12 @@ test('the head and the hook list the same looks, the frame\'s one after brand', 
 // non-admin"). New look's own switch stood above it until 13 Nov 2026;
 // its look, redrawn, is the menu's first option now.
 
-const LOOK_NAMES = { wip: 'Standard (WIP)', brand: 'Paper, simplified, with brand styling', paper: 'Paper' };
-const MENU_LOOKS = ['wip', 'brand', ...FRAME_LOOKS];
+const LOOK_NAMES = { wip: 'Homeroom brand kit V2 (WIP)', brand: 'Paper, simplified, with brand styling' };
+// 'wip' is named by the token set that draws it, the one kept of its four.
+const LOOK_IDS = { wip: 'experimental.wipTokens.brand2', brand: 'experimental.look.brand' };
+const MENU_LOOKS = ['wip', 'brand'];
 
-test('Settings › Experimental offers every look in one menu, shipped hidden, and no New look switch', () => {
+test('Settings › Experimental offers the three looks in one menu, shipped hidden, and no New look switch', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/settings/sections/experimental.tsx', 'ExperimentalSection', {});
   const section = html.match(/<div id="settings-look-section" class="([^"]*)">([\s\S]*?)<\/select>/);
@@ -225,10 +255,8 @@ test('Settings › Experimental offers every look in one menu, shipped hidden, a
   assert.match(section[1], /^hidden /, 'hidden until the admin gate lifts it');
   assert.match(section[2], /<label[^>]*for="settings-look"[^>]*>Look<\/label>/);
   const options = [...section[2].matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
-  // Standard (WIP) is listed once per token set, each named with (WIP), right after the look itself.
-  const WIP_SETS = [['wip:brand', 'Homeroom brand kit (WIP)'], ['wip:brand2', 'Homeroom brand kit V2 (WIP)'], ['wip:highlighter', 'Highlighter (WIP)']];
-  assert.deepEqual(options, [['', 'Standard'], ...MENU_LOOKS.flatMap((id) => (id === 'wip' ? [[id, LOOK_NAMES[id]], ...WIP_SETS] : [[id, LOOK_NAMES[id]]]))],
-    'Standard, then Standard (WIP) and each of its token sets, brand and Paper, each by its name');
+  assert.deepEqual(options, [['', 'Standard'], ...MENU_LOOKS.map((id) => [id, LOOK_NAMES[id]])],
+    'three looks: Standard, the brand kit\'s second drawing, and Paper simplified, each by its name');
   assert.doesNotMatch(html, /new-look-enabled/, 'the New look switch is gone: its look is the menu\'s');
   assert.doesNotMatch(experimentalSrc(), /settings:experimental\.newLook\./, 'and so are its words');
   assert.doesNotMatch(html, /settings-local-agents-section/, 'the Local coding agent list it sat above is retired');
@@ -268,8 +296,8 @@ test('a device left in one of the looks keeps the menu, so the way back to Stand
   // An admin's device used by someone else, or an admin who lost the role:
   // the look is stored on the device, and the menu is the control that
   // clears it.
-  assert.equal(runAdminGate({ realAdmin: false, skin: 'paper' }).menuShown, true);
-  assert.equal(runAdminGate({ realAdmin: false, skin: 'paper' }).adminShown, false, 'only the menu, never the admin preview');
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'wip' }).menuShown, true);
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'wip' }).adminShown, false, 'only the menu, never the admin preview');
   // A device that had the old New look switch on stored 'brand'. The switch
   // is gone, so the menu is its way back too.
   assert.equal(runAdminGate({ realAdmin: false, skin: 'brand' }).menuShown, true);
@@ -294,43 +322,48 @@ function runLooksWiring({ skin = 'standard' } = {}) {
 
 test('the Look menu sets the look through window.Skin, and Standard clears it', () => {
   const { select, state } = runLooksWiring();
-  select.listeners.change({ target: { value: 'paper' } });
-  assert.equal(state.skin, 'paper');
-  assert.equal(select.value, 'paper');
+  select.listeners.change({ target: { value: 'wip' } });
+  assert.equal(state.skin, 'wip');
+  assert.equal(select.value, 'wip');
   select.listeners.change({ target: { value: '' } });
   assert.equal(state.skin, 'standard');
 });
 
 test('the menu paints what is stored, brand among its looks, and follows another tab', () => {
-  const on = runLooksWiring({ skin: 'paper' });
-  assert.equal(on.select.value, 'paper', 'the stored look is selected');
+  const on = runLooksWiring({ skin: 'wip' });
+  assert.equal(on.select.value, 'wip', 'the stored look is selected');
   // A device the old New look switch left in brand reads as that option.
   assert.equal(runLooksWiring({ skin: 'brand' }).select.value, 'brand');
   on.select.listeners.change({ target: { value: 'brand' } });
   assert.equal(on.state.skin, 'brand');
   assert.equal(on.select.value, 'brand');
-  on.select.listeners.change({ target: { value: 'wip' } });
-  assert.equal(on.state.skin, 'wip');
   // Another tab changes the look: this pane repaints.
+  on.state.skin = 'wip';
+  on.state.onChange();
+  assert.equal(on.select.value, 'wip');
+  // A look the menu does not offer (a cached head still answering paper) reads as Standard.
   on.state.skin = 'paper';
   on.state.onChange();
-  assert.equal(on.select.value, 'paper');
+  assert.equal(on.select.value, '');
 });
 
 test('the Look menu\'s words are English source with descriptions', () => {
   const en = JSON.parse(read('frontend', 'locales', 'en', 'settings.json'));
   for (const key of ['experimental.look.label', 'experimental.look.description', 'experimental.look.standard',
-    ...MENU_LOOKS.map((id) => `experimental.look.${id}`)]) {
+    ...MENU_LOOKS.map((id) => LOOK_IDS[id])]) {
     assert.ok(en[key], `${key} exists`);
     assert.equal(typeof en[key].text, 'string');
     assert.ok(en[key].description.length > 20, `${key} says where it appears`);
   }
-  for (const id of MENU_LOOKS) assert.equal(en[`experimental.look.${id}`].text, LOOK_NAMES[id]);
+  for (const id of MENU_LOOKS) assert.equal(en[LOOK_IDS[id]].text, LOOK_NAMES[id]);
+  for (const gone of ['experimental.look.wip', 'experimental.look.paper', 'experimental.wipTokens.brand', 'experimental.wipTokens.highlighter']) {
+    assert.equal(en[gone], undefined, `${gone} went with its menu entry`);
+  }
   assert.equal(en['experimental.glassLook.label'], undefined, 'the one-look switch\'s words are gone');
   assert.equal(en['experimental.newLook.label'], undefined, 'New look\'s words are gone with its switch');
   assert.equal(en['experimental.newLook.description'], undefined);
   const src = experimentalSrc();
-  for (const id of MENU_LOOKS) assert.ok(src.includes(`t('settings:experimental.look.${id}')`), `${id}'s name is read by a whole literal id`);
+  for (const id of MENU_LOOKS) assert.ok(src.includes(`t('settings:${LOOK_IDS[id]}')`), `${id}'s name is read by a whole literal id`);
 });
 
 // The stylesheet's side (each look's block, tokens, typeface and rules) is
@@ -351,9 +384,9 @@ test('useSkin reads standard on the first render and currentSkin reads window.Sk
   assert.equal(mod.currentSkin(), 'standard', 'no window.Skin in the test: the standard look');
   const html = renderToHtml(createElement(() => createElement('i', null, mod.useSkin())));
   assert.equal(html, '<i>standard</i>');
-  globalThis.window = { Skin: { get: () => 'paper', onChange() {} } };
+  globalThis.window = { Skin: { get: () => 'brand', onChange() {} } };
   try {
-    assert.equal(mod.currentSkin(), 'paper');
+    assert.equal(mod.currentSkin(), 'brand');
     assert.equal(renderToHtml(createElement(() => createElement('i', null, mod.useSkin()))), '<i>standard</i>',
       'the first render stays standard even when the device has a look on');
   } finally {
