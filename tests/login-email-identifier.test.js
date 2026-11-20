@@ -35,6 +35,7 @@ let capturedQueries = [];
 const USER_COLS = (u) => ({
   id: u.id, username: u.username, password: u.password,
   is_admin: !!u.is_admin, admin_readonly: !!u.admin_readonly,
+  is_synthetic: !!u.is_synthetic,
 });
 poolMod.getPool = () => ({
   query: async (sql, params) => {
@@ -86,6 +87,9 @@ function startApp() {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
+  // The sign-in limiters count refusals per address. A test that makes
+  // several sets its own address, so the file's tests do not share a budget.
+  app.use((req, _res, next) => { if (testIp) req.clientIp = testIp; next(); });
   app.use(authRoutes({ nodeRpcUrl: 'http://unused' }));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
@@ -110,7 +114,9 @@ function login(
   }).then(async (res) => ({ res, body: await res.json().catch(() => ({})) }));
 }
 
+let testIp = null;
 function reset() {
+  testIp = null;
   users = [];
   history = [];
   liveSessions = new Set();
@@ -376,4 +382,137 @@ test('#1861: a live account wearing the name wins, and the retired ledger is not
     assert.ok(!capturedQueries.some((q) => q.sql.includes('FROM username_history')),
       'an exact live match never falls through to retired handles');
   } finally { server.close(); }
+});
+
+// ─── #6717: a space the keyboard added does not refuse the sign-in ────────
+//
+// The password is tried as typed first. Only when no account takes it, and
+// it starts or ends with white space, is it tried once more without that
+// white space (src/services/password-check.js). So a password that really
+// ends in a space still signs in, and nothing that worked before stops.
+
+const passwordCheck = require('../src/services/password-check');
+
+test('#6717: a trailing space the keyboard added still signs in', async () => {
+  reset();
+  testIp = '203.0.113.1';
+  const hash = await bcrypt.hash('simpati-pw', COST);
+  users.push({ id: 70, username: 'simpati', password: hash, email: 'simpati@example.com' });
+  const server = await startApp();
+  try {
+    for (const typed of ['simpati-pw ', ' simpati-pw', 'simpati-pw\n', '  simpati-pw \t']) {
+      compareCalls = 0;
+      const r = await login(server, 'simpati', typed);
+      assert.strictEqual(r.res.status, 200, JSON.stringify(typed));
+      assert.strictEqual(r.body.user.id, 70);
+      assert.strictEqual(compareCalls, 2, 'as typed, then once without the white space');
+    }
+    // By email too.
+    const r = await login(server, 'simpati@example.com', 'simpati-pw ');
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.user.id, 70);
+  } finally { server.close(); }
+});
+
+test('#6717: a password that really ends in a space signs in as typed, in one compare', async () => {
+  reset();
+  testIp = '203.0.113.2';
+  const hash = await bcrypt.hash('ends-in-space ', COST);
+  users.push({ id: 71, username: 'spacey', password: hash, email: null });
+  const server = await startApp();
+  try {
+    compareCalls = 0;
+    let r = await login(server, 'spacey', 'ends-in-space ');
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(compareCalls, 1, 'the typed value matched: no second try');
+
+    // Without its space it is a different password: nothing is added back.
+    r = await login(server, 'spacey', 'ends-in-space');
+    assert.strictEqual(r.res.status, 401);
+  } finally { server.close(); }
+});
+
+test('#6717: a wrong password is still refused, and one with no outer white space is compared once', async () => {
+  reset();
+  testIp = '203.0.113.3';
+  const hash = await bcrypt.hash('right-pw', COST);
+  users.push({ id: 72, username: 'careful', password: hash, email: null });
+  const server = await startApp();
+  try {
+    compareCalls = 0;
+    let r = await login(server, 'careful', 'wrong-pw');
+    assert.strictEqual(r.res.status, 401);
+    assert.strictEqual(compareCalls, 1, 'nothing to trim, no second compare');
+
+    compareCalls = 0;
+    r = await login(server, 'careful', 'wrong-pw ');
+    assert.strictEqual(r.res.status, 401);
+    assert.deepStrictEqual(r.body, { error: 'Invalid credentials' });
+    assert.strictEqual(compareCalls, 2, 'one request, at most one extra compare per account');
+    assert.ok(warned('Login failed - bad password'));
+
+    // White space inside a password is never touched.
+    r = await login(server, 'careful', 'right -pw');
+    assert.strictEqual(r.res.status, 401);
+
+    // Only white space: nothing left to try.
+    compareCalls = 0;
+    r = await login(server, 'careful', '   ');
+    assert.strictEqual(r.res.status, 401);
+    assert.strictEqual(compareCalls, 1);
+  } finally { server.close(); }
+});
+
+test('#6717: the typed password is tried on every candidate before the trimmed one on any', async () => {
+  reset();
+  testIp = '203.0.113.4';
+  // The email's owner has "pw-one"; the account whose username is that
+  // address really has "pw-one " with the space. The typed value is the
+  // second account's exact password, so that account signs in.
+  users.push({ id: 80, username: 'owner', password: await bcrypt.hash('pw-one', COST), email: 'both@example.com' });
+  users.push({ id: 81, username: 'both@example.com', password: await bcrypt.hash('pw-one ', COST), email: null });
+  const server = await startApp();
+  try {
+    const r = await login(server, 'both@example.com', 'pw-one ');
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.user.id, 81, 'an exact match beats a trimmed one');
+  } finally { server.close(); }
+});
+
+test('#6717: a synthetic account is not reached by the second try either', async () => {
+  reset();
+  testIp = '203.0.113.5';
+  const hash = await bcrypt.hash('partner-pw', COST);
+  users.push({ id: 82, username: 'partner', password: hash, email: null, is_synthetic: true });
+  const server = await startApp();
+  try {
+    compareCalls = 0;
+    const r = await login(server, 'partner', 'partner-pw ');
+    assert.strictEqual(r.res.status, 401);
+    assert.strictEqual(compareCalls, 0);
+  } finally { server.close(); }
+});
+
+test('#6717: password-check helpers', async () => {
+  assert.strictEqual(passwordCheck.withoutOuterSpace('abc '), 'abc');
+  assert.strictEqual(passwordCheck.withoutOuterSpace(' a b '), 'a b');
+  assert.strictEqual(passwordCheck.withoutOuterSpace('abc'), null, 'nothing to trim');
+  assert.strictEqual(passwordCheck.withoutOuterSpace('   '), null, 'nothing left');
+  assert.strictEqual(passwordCheck.withoutOuterSpace(''), null);
+  assert.strictEqual(passwordCheck.withoutOuterSpace(undefined), null);
+  assert.strictEqual(passwordCheck.withoutOuterSpace({ a: 1 }), null);
+
+  const hash = await bcrypt.hash('one-hash-pw', COST);
+  assert.strictEqual(await passwordCheck.matches('one-hash-pw', hash), true);
+  assert.strictEqual(await passwordCheck.matches('one-hash-pw ', hash), true);
+  assert.strictEqual(await passwordCheck.matches('one-hash-pw x', hash), false);
+  const spaced = await bcrypt.hash(' kept ', COST);
+  assert.strictEqual(await passwordCheck.matches(' kept ', spaced), true);
+  assert.strictEqual(await passwordCheck.matches('kept', spaced), false);
+});
+
+test('#6717: both routes that sign in with a password use the check', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/auth.js'), 'utf8');
+  const walletLink = src.slice(src.indexOf("router.post('/api/auth/wallet-link-login'"));
+  assert.match(walletLink.slice(0, 1600), /passwordCheck\.matches\(password, user\.password\)/);
 });
