@@ -35,8 +35,12 @@ const JOINED = [
   { slug: 'orchard', name: 'Orchard', icon_emoji: '🍎', is_member: true },
 ];
 
+// The page as the brand look and every look before 20 Nov 2026 drew it (the
+// tiles these tests hold). The standard look's page is the kit's since then
+// (lib/skin.ts isKitHome): the last test here holds that one.
+const LEGACY_PAGE = { stubs: { '../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } };
 function withStores(pins, scope, run) {
-  const mod = loadTsx('tests/fixtures/communities-page-api.ts');
+  const mod = loadTsx('tests/fixtures/communities-page-api.ts', LEGACY_PAGE);
   const before = [mod.homePinsStore.get(), mod.communityScopeStore.get()];
   mod.homePinsStore.set(pins);
   mod.communityScopeStore.set(scope);
@@ -54,7 +58,7 @@ const section = (html, id) => {
 };
 
 test('the page ships hidden, with both groups hidden and empty', () => {
-  const html = renderComponent(PAGE, 'CommunitiesScreen', {});
+  const html = renderComponent(PAGE, 'CommunitiesScreen', {}, LEGACY_PAGE);
   assert.match(html, /<main id="communities-screen" class="hidden /,
     'the root ships hidden, with `hidden` first in a constant class string');
   assert.match(html, /<section id="communities-pinned-section" class="px-3" hidden="">/);
@@ -191,10 +195,18 @@ test('Standard (WIP) draws the page as Home is: its ground, cards with members a
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
   const page = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'communities', 'index.tsx'), 'utf8');
   assert.match(css, /html\[data-skin-wip\] #communities-screen \{\s*background-color: var\(--wip-page-bg-communities\);/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.home-column \{ max-width: none; \}/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \{\s*grid-template-columns: repeat\(var\(--wip-cols\), minmax\(0, 1fr\)\);/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \[data-home-community-meta\] \{\s*display: block;/);
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \[data-home-community-detail\] \{\s*display: flex;/, 'and what happened there this week');
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.home-column \{ max-width: none; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \{\s*grid-template-columns: repeat\(var\(--wip-cols\), minmax\(0, 1fr\)\);/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \[data-home-community-meta\] \{\s*display: block;/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.communities-grid \[data-home-community-detail\] \{\s*display: flex;/, 'and what happened there this week');
+  // The standard look's page too (20 Nov 2026), on its own wallpaper: the page's ground is Standard (WIP)'s alone.
+  assert.match(page, /const wip = isKitHome\(skin\);/);
+  assert.doesNotMatch(css, /html:not\(\[data-skin\]\) #communities-screen \{[^}]*background-color/);
+  const first = renderComponent(PAGE, 'CommunitiesScreen', {});
+  assert.doesNotMatch(first, /communities-discover-section|communities-needs-tile|communities-new-community/, 'the first render is the kit page: no Discover card, no tiles');
+  // A community's own logo is an emblem on the pinned cards; a joined row wears its app's icon.
+  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /<CommunityEmblem className="home-community-emblem" emblem=\{emblem\} colours=\{colours\} \/>/);
+  assert.match(page, /community=\{false\}/);
   assert.match(page, /const cards = \(brand && wide\) \|\| wip;/, 'the members are read under the look at every width');
   // A group folds to three rows of four; its label unfolds the rest and folds it back.
   assert.match(page, /const FOLD_AT = 12;/);
@@ -204,6 +216,6 @@ test('Standard (WIP) draws the page as Home is: its ground, cards with members a
   // Every community there is to join is listed under Joined, by Home's own section under ids of its own.
   assert.match(page, /ids=\{\{ section: 'communities-all-section', featured: 'communities-all-featured-label' \}\}/);
   assert.match(page, /\{wip \? null : \(\s*<section id="communities-discover-section"/, 'Discover leads to that list, so it is not drawn where the list is');
-  assert.match(css, /html\[data-skin-wip\] #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
+  assert.match(css, /html:not\(\[data-skin\]\) #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
   assert.match(page, /<WipCta id="communities-discover-btn" glyph=\{false\} onClick=\{discover\}>/);
 });

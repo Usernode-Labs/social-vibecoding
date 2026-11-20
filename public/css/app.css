@@ -8231,9 +8231,8 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
    for the same community; pinned-communities.tsx `CommunityLogo`),
    and the app's icon is one small icon in a row of the community's apps,
    with two places after it for the apps to come. */
-.home-community-emblem { display: none; }
 /* THE EMBLEMS (asked 20 Nov 2026): the logo is one of ten drawings in the kit's four colours, on the card's own quiet
-   ground; the soft glow it replaced is gone. A look that draws no emblem hides the drawing (the rule after these). */
+   ground; the soft glow it replaced is gone. Only these two looks draw a community's own logo (the page's `community`). */
 html:not([data-skin]) {
   --wip-emblem-1: #ffee6f;
   --wip-emblem-2: #3090e1;

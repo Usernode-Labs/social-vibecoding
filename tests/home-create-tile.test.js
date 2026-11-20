@@ -524,7 +524,7 @@ test('the Create section is retired everywhere it was mounted', () => {
 test('the declared Create checks select New project on Home and New community on the Communities page (#6522)', () => {
   const declared = JSON.parse(read('dapp.json')).tests || [];
   const creates = declared.filter((t) => /data-panel-slot=\\?"create\\?"|data-panel-slot="create"/.test(t.expectSelector || ''));
-  assert.equal(creates.length, 3, 'New project enabled, New community locked, and the page\'s own check, which names the tile');
+  assert.equal(creates.length, 1, 'New project enabled; New community is the Communities page\'s top button since 20 Nov 2026, which is no panel slot');
   // New project is the grid's own trailing tile, back on Pinned apps (#6522),
   // with no :not(:has()) guard asserting it gone. Home lists none of the
   // viewer's communities beside it: the section is hidden until a search.
@@ -535,19 +535,16 @@ test('the declared Create checks select New project on Home and New community on
   assert.match(project.expectSelector, /#home-body:has\(#home-communities-section\[hidden\]\)/);
   assert.doesNotMatch(project.expectSelector, /:not\(:has\(#home-create-tile\)\)/);
   assert.equal(project.expectText, 'New project');
-  // New community left Home with Pinned communities: it is the last tile of
-  // Joined on the Communities tab's page (`#communities`), and the locked
-  // treatment is checked there.
-  const community = creates.find((t) => t.path === '/?demo=1&shot=create-disabled#communities');
+  // New community left Home with Pinned communities, and since 20 Nov 2026
+  // the Communities page offers it as the top row's button in every look the
+  // checks run in (`#communities-new-top`); the locked treatment is checked there.
+  const community = declared.find((t) => t.path === '/?demo=1&shot=create-disabled#communities');
   assert.ok(community, 'the locked treatment is checked on the Communities page');
-  assert.match(community.expectSelector,
-    /#communities-screen:not\(\.hidden\) #communities-joined-section:not\(\[hidden\]\) #communities-new-community\[data-panel-slot="create"\]\[data-create-enabled="false"\]/);
-  assert.match(community.expectSelector, /:last-child/);
+  assert.match(community.expectSelector, /#communities-screen:not\(\.hidden\) button#communities-new-top\[data-create-enabled="false"\]/);
   assert.equal(community.expectText, 'New community');
-  // The page's own check holds the tile in Joined too.
-  const page = creates.find((t) => t.path === '/?demo=1#communities');
+  const page = declared.find((t) => t.path === '/?demo=1#communities');
   assert.ok(page, 'the Communities page\'s check');
-  assert.match(page.expectSelector, /:has\(#communities-joined-section #communities-new-community\[data-panel-slot="create"\]\)/);
+  assert.match(page.expectSelector, /button#communities-new-top\[data-create-enabled\]/);
   // No check selects the tile where it was, in Home's section.
   for (const t of declared) assert.doesNotMatch(t.expectSelector || '', /#home-new-community|#home-all-communities|#home-needs-tile/, t.name);
   // And the page draws it with the hook the checks select on.
