@@ -127,16 +127,6 @@ export function botChangeServices({ pool, config }: Deps): Record<string, WorkHa
       },
     },
 
-    // A yes was a quiet line in the request's thread. Not said any more
-    // (5 Nov 2026, decision 6): work owed before this release settles here.
-    [WORK.approved]: {
-      maxAttempts: 1,
-      backoffMs: backoff,
-      async run(): Promise<Json> {
-        return { skipped: 'retired' };
-      },
-    },
-
     // #6264: a promise somebody asked for, kept at the change's own moment:
     // one line where they asked, mentioning them. A close cancels every
     // promise still waiting and says so.

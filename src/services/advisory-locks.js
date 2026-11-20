@@ -154,9 +154,19 @@ const INVITE_NUDGE_LOCK = 991031;
 // for one pass, so two processes' clocks cannot both text the same crossing
 // before either has written its mark. A pass that cannot take it skips.
 const LIMIT_TEXTS_LOCK = 991032;
+// Review B3 (19 Nov 2026): one writer at a time of one stored work state
+// (services/work-state.js refresh): the CLASSIFIER half of
+// `pg_try_advisory_xact_lock(classifier, hashtext(item))`, transaction-
+// scoped, taken before the item's facts are read. Only ever TRIED, never
+// waited on: a writer that finds the item taken leaves it to the one that
+// holds it (whatever it wrote marked the item, and the drain derives it
+// again after that commit). Waiting could deadlock with a machine's
+// transition, which holds its change's chat_sessions row FOR UPDATE while
+// a holder's bell row (notifications.session_id) needs a key share on it.
+const WORK_STATE_ITEM_LOCK = 991036;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
   CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK,
-  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK, INVITE_NUDGE_LOCK, LIMIT_TEXTS_LOCK };
+  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK, INVITE_NUDGE_LOCK, LIMIT_TEXTS_LOCK, WORK_STATE_ITEM_LOCK };

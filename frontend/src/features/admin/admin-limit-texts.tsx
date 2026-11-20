@@ -149,8 +149,7 @@ export function LimitTextsCard({ canWrite, initialData = null }: { canWrite: boo
             </p>
           ) : (
             <p id="admin-limit-texts-provider" className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-              Sent through {PROVIDER_NAME[data.availability.provider] || data.availability.provider} to numbers in{' '}
-              {data.availability.countries.join(', ')}.
+              {`Sent through ${PROVIDER_NAME[data.availability.provider] || data.availability.provider} to numbers in ${data.availability.countries.join(', ')}.`}
             </p>
           )}
 

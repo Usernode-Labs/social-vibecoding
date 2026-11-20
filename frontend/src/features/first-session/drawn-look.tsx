@@ -17,17 +17,21 @@
  *                                       ../app-frame/live-band.tsx
  *
  * The screen is model-written HTML, so it is shown the way the spec's
- * screens are (../../lib/spec-html.ts): in a frame with `sandbox=""` (no
+ * screens are (../../lib/spec-html.ts): in the one frame every page the bot
+ * writes is drawn in, static (../artifact/frame.tsx; `sandbox=""`: no
  * scripts, no forms, no navigation, an origin of its own), drawn at the
  * phone's size, 390 × 844, and scaled to its box, which crops it to the
  * top 844 pixels as the picture is. Its document comes from the server
- * (routes/apps.js GET /api/apps/:slug/first-version/first-look/drawn) under a
- * CSP that sandboxes it and lets nothing load but its inline styles and data:
+ * (routes/apps.js GET /api/apps/:slug/first-version/first-look/drawn) under
+ * the same static policy as a header (src/services/artifact-policy.js),
+ * which sandboxes it and lets nothing load but its inline styles and data:
  * images and fonts. Nothing in it can be tapped or focused: the box takes
  * no pointer, and the frame is out of the tab order and named by its box.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+
+import { ArtifactFrame } from '../artifact/frame';
 
 /** The phone the screen is drawn at: the picture's own size (services/first-version-screens.js PHONE). */
 export const DRAWN_LOOK_WIDTH = 390;
@@ -81,15 +85,13 @@ export function DrawnLook({ src, label, width, hidden = false, onLoad, className
       data-first-look-drawn=""
       className={`pointer-events-none absolute inset-0 overflow-hidden ${className}`}
     >
-      <iframe
+      <ArtifactFrame
+        mode="static"
         src={src}
         title={label}
-        sandbox=""
-        loading="lazy"
-        referrerPolicy="no-referrer"
+        lazy
         scrolling="no"
-        tabIndex={-1}
-        aria-hidden="true"
+        inert
         onLoad={onLoad}
         className={`absolute start-0 top-0 h-[844px] w-[390px] origin-top-left border-0 [color-scheme:light] ${scale > 0 ? '' : 'opacity-0'}`}
         style={scale > 0 ? { transform: `scale(${scale})` } : undefined}

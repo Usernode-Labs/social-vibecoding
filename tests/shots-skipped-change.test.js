@@ -198,6 +198,10 @@ test('what the bot says about it is about the shots, not about checks or a broke
   for (const t of [revised]) assert.ok(!/—|PR #|proposal/.test(t), t);
 });
 
+// Review A3: ready to try is the change's stored work state, so the pool
+// answers forChanges with the row the derive stores for these columns.
+const { storedChange, readsStoredChange } = require('./lib/stored-change');
+
 function readinessPool(row) {
   const asked = [];
   return {
@@ -206,6 +210,7 @@ function readinessPool(row) {
       const s = String(sql);
       asked.push(s);
       if (/FROM chat_sessions WHERE id = \$1/.test(s)) return { rows: [row] };
+      if (readsStoredChange(s)) return { rows: [storedChange(row, { id: 7818, appId: 9 })] };
       if (/FROM homeroom_bot_runs r JOIN apps a/.test(s)) return { rows: [{ run_id: 50, issue_number: 4747, id: 9, slug: 'homeroom', name: 'Homeroom' }] };
       return { rows: [] };
     },
@@ -221,8 +226,9 @@ function sessionRow(extra = {}) {
 }
 
 test('ready to try waits on the bot\'s round for a seedable skip; with no round due, its card goes out as usual', async () => {
-  const settled = await dm.changeReadiness(readinessPool(sessionRow()), 7818);
+  const settled = await dm.changeReadyFacts(readinessPool(sessionRow()), 7818);
   assert.equal(settled.ready, true);
+  assert.equal(settled.work.stage, 'up_for_vote', 'a seedable skip does not hold its vote');
   assert.equal(settled.skipped.length, 1);
   assert.deepEqual(settled.broken, []);
 

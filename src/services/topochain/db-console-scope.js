@@ -223,11 +223,14 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // offline-guessable, so both are masked. attempts/expires_at stay
   // readable, which is what "my code did not work" needs.
   sms_otp_codes: ['session_hash', 'code_hash'],
-  // A text alert number's confirmation code (services/limit-texts.js),
+  // A text alert number (services/limit-texts.js). Its confirmation code is
   // stored as a SHA-256 of the row and the code: a six-digit code's hash is
-  // offline-guessable within its ten minutes, so it is masked. The number's
-  // label, country and when it was confirmed stay readable.
-  limit_alert_phones: ['verify_code_hash'],
+  // offline-guessable within its ten minutes, so it is masked. The number
+  // itself is an admin's own phone, which Admin > Limits shows only as its
+  // last four digits, so it is masked here too (limit_alert_sends keeps the
+  // last four for "was I texted?"). Its label, country, when it was
+  // confirmed and how its last text went stay readable.
+  limit_alert_phones: ['verify_code_hash', 'phone_e164'],
   // Account email proof and the password snapshot are both offline-guessable.
   account_email_verifications: ['code_hash', 'password_hash'],
   // #5281: the username-change proof, the same two secrets as the row above.

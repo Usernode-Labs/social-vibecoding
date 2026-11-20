@@ -2,7 +2,7 @@
 // designer's reply in a design thread (services/design-bot-compare.js):
 // two or three of the thread's versions, or the screen as it is now beside
 // them, drawn small side by side, each in the design card's own frame
-// (../design-card.tsx: its own origin, scripts and nothing else).
+// (../design-card.tsx: the one frame, ../../artifact/frame.tsx, running).
 //
 //   SIDE BY SIDE                    [Phone] [Desktop]
 //   ┌──────┐ ┌──────┐ ┌──────┐
@@ -23,11 +23,13 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { CheckIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
-import { currentSheets, designFrameDoc, DESIGN_SANDBOX } from '../../design/frame';
+import { ArtifactFrame } from '../../artifact/frame';
+import { currentSheets } from '../../artifact/frame-doc';
 import { inlinePictures } from '../../design/pictures';
 import { openPreview } from '../../ai/preview';
 import type { DesignThread } from '../api';
 import { readDesign, readVersion } from '../design-card';
+import { paneWordIds, requestable } from '../artifact-kind';
 import { ProposeCard } from '../design-pane';
 import { decideCard, sayAsMe, type BotCardProps } from './index';
 
@@ -40,7 +42,6 @@ const SCREENS = { phone: { width: 390, height: 844 }, desktop: { width: 1280, he
 // Each picture's width on the card, and the most it may be tall.
 const BOX_W = { phone: 140, desktop: 240 } as const;
 const MAX_H = 240;
-const POSTABLE = ['open', 'posted', 'filed'];
 
 /** Pure: an item's key as the card stores it, or null. */
 export function compareKeyOf(value: unknown): CompareKey | null {
@@ -87,6 +88,7 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
   const validRoot = Number.isSafeInteger(rootId) && rootId > 0;
   const [design, setDesign] = useState<DesignThread | null>(null);
   const [docs, setDocs] = useState<Record<number, string>>({});
+  const [sheets, setSheets] = useState<string[]>([]);
   const [failed, setFailed] = useState(false);
   const [size, setSize] = useState<CompareSize | null>(null);
   const [mine, setMine] = useState<CompareKey | null>(null);
@@ -102,12 +104,12 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
     readDesign(rootId, newest).then((found) => {
       if (!live) return;
       setDesign(found);
-      const sheets = found.surface === 'platform' ? currentSheets() : [];
+      setSheets(found.surface === 'platform' ? currentSheets() : []);
       for (const version of new Set(versionsKey.split(',').map(Number))) {
         readVersion(rootId, version)
           .then((v) => inlinePictures(v.html))
           .then((html) => {
-            if (live) setDocs((had) => ({ ...had, [version]: designFrameDoc(html, { origin: window.location.origin, sheets }) }));
+            if (live) setDocs((had) => ({ ...had, [version]: html }));
           })
           .catch(() => { if (live) setFailed(true); });
       }
@@ -137,7 +139,8 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
       setBusy(false);
     }
   };
-  const postable = !!design?.app && POSTABLE.includes(design.state);
+  // Artifacts: only a design is requested as a plan (../artifact-kind.ts requestable).
+  const postable = requestable(design);
   const pickedVersion = typeof picked === 'number' ? picked : null;
   const box = compareBox(design, shown);
 
@@ -176,22 +179,23 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
                 style={{ width: box.width, height: box.height }}
               >
                 {doc && design ? (
-                  <iframe
+                  <ArtifactFrame
                     key={shown}
+                    mode="run"
+                    viewer="author"
+                    html={doc}
+                    sheets={sheets}
+                    site={design.kind !== 'page'}
+                    inert
                     title={t('messages:botCards.compare.frameTitle', { label })}
-                    sandbox={DESIGN_SANDBOX}
-                    referrerPolicy="no-referrer"
-                    srcDoc={doc}
-                    tabIndex={-1}
-                    aria-hidden="true"
                     style={{
                       width: box.frame.width, height: box.frame.height, transform: `scale(${box.scale})`, transformOrigin: '0 0',
-                      border: 0, background: '#fff', pointerEvents: 'none',
+                      border: 0, background: '#fff',
                     }}
                   />
                 ) : (
                   <span className="absolute inset-0 flex items-center justify-center p-2 text-center text-[12px] text-zinc-500">
-                    {failed ? t('messages:design.card.failed') : t('messages:design.pane.loading')}
+                    {failed ? t('messages:design.card.failed') : t(paneWordIds(design?.kind).loading)}
                   </span>
                 )}
                 <button

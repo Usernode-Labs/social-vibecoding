@@ -46,7 +46,7 @@ import { StatusPill, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
 import type { BotTrack } from '../../messages/types';
-import { normalizeWorkState, type WorkState } from '../../../lib/work-state';
+import { normalizeWorkState, type Standing, type WorkState } from '../../../lib/work-state';
 import { TrackCard, trackClock, trackEyebrow, trackLinks } from '../../messages/bot-track';
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
@@ -757,8 +757,13 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // server stored and worded it (issue.standing; from an older server, the
   // track's own work state). A standing gone live never draws a vote, and a
   // build waiting its turn is Ready to build (thread-model.ts requestPill).
+  // Its word and tone are the standing's, as its requester or anyone else
+  // reads them; the thread's changes only add detail.
   const standing = useMemo(() => normalizeWorkState(r.standing) || track?.work || null, [r.standing, track]);
-  const pill = requestPill(layout, r.status.closed ? 'closed' : standing, (id) => translate(id));
+  const pill = requestPill(
+    layout, r.status.closed ? 'closed' : standing, (id, values) => translate(id, values),
+    (r.standing as { mine?: boolean } | null | undefined)?.mine !== false,
+  );
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one
@@ -837,8 +842,16 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // One summary for the request and its one change, as the card credits it:
   // the change's own words are not said again under it.
   const covers = cardLook && !editing && summary?.basis === 'change';
-  const cardContext = useMemo(() => ({ card: cardLook, page, covers }), [cardLook, page, covers]);
   const yours = (r.standing as { mine?: boolean } | null | undefined)?.mine !== false;
+  // The request's own stored row, for the foot of its one change
+  // (./thread-changes.tsx): the page is the request's, so that foot says
+  // where the request stands, as the timeline's last step does (requestRail).
+  // A closed request's page says how it ended; its change keeps its own foot.
+  const row = useMemo<Standing | null>(
+    () => (standing && !r.status.closed ? { ...standing, mine: yours } : null),
+    [standing, r.status.closed, yours],
+  );
+  const cardContext = useMemo(() => ({ card: cardLook, page, covers, row }), [cardLook, page, covers, row]);
   const planOpen = openNow?.kind === 'plan' ? specs.find((card) => card.key === openNow.key) || null : null;
   /** One of the ballot's changes, which the card look opens over the card (./thread-changes.tsx LookedChange). */
   const competes = (id: number) => typeof document !== 'undefined' && !!document.querySelector(`#gc-thread-head [data-thread-look="${id}"]`);
@@ -966,6 +979,21 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               >
                 {t('project:topic.request.fromThread')}
               </a>
+              {/* Artifacts, stage 4: the design the plan was made from, running,
+                  at the version the plan shows: for its author alone, as the
+                  link above is. Everyone else sees the plan's own screens. */}
+              {r.fromThread.designVersion ? (
+                <>
+                  <span aria-hidden="true"> · </span>
+                  <a
+                    className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                    href={`#homeroom-bot/thread/${r.fromThread.rootId}/design/${r.fromThread.designVersion}`}
+                    data-request-design-door={r.fromThread.designVersion}
+                  >
+                    {t('project:topic.request.openDesign', { version: r.fromThread.designVersion })}
+                  </a>
+                </>
+              ) : null}
             </p>
           ) : null}
           {(working && !r.status.closed) || cardLook ? null : (

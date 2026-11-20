@@ -198,13 +198,15 @@ test('the chat reads the copy off a message, only a bot\'s chat answer\'s', () =
 
 test('the frame runs nothing and loads nothing, and is in the bubble\'s own tokens and font', () => {
   const frame = loadTsx('frontend/src/features/messages/bot-html.tsx');
-  const sandbox = frame.REPLY_SANDBOX.split(/\s+/);
-  for (const never of ['allow-scripts', 'allow-forms', 'allow-top-navigation', 'allow-top-navigation-by-user-activation', 'allow-modals', 'allow-downloads']) {
-    assert.equal(sandbox.includes(never), false, never);
-  }
-  const csp = frame.replyCsp('https://app.onhomeroom.com');
-  assert.match(csp, /^default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data: https:\/\/app\.onhomeroom\.com; script-src 'none'/);
-  for (const part of ["connect-src 'none'", "frame-src 'none'", "form-action 'none'", "base-uri 'none'"]) assert.ok(csp.includes(part), part);
+  // Artifacts, stage 1: the answer is drawn in the one frame, static
+  // (frontend/src/features/artifact/frame.tsx), under the one policy with no
+  // origin named. Its own frame is never same-origin with the chat: the
+  // helper inside it says its size (tests/artifact-frame.test.js draws it).
+  assert.equal(frame.REPLY_SANDBOX, undefined, 'no sandbox of its own');
+  assert.equal(frame.replyCsp, undefined, 'no policy of its own');
+  const source = read('frontend/src/features/messages/bot-html.tsx');
+  assert.doesNotMatch(source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ''), /allow-same-origin|contentDocument|<iframe/,
+    'nothing reaches into the frame, and the frame is the shared one');
 
   for (const tag of ['script', 'form', 'input', 'button', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'video', 'audio', 'animate', 'set']) {
     assert.ok(frame.REPLY_PURIFY.FORBID_TAGS.includes(tag), tag);
@@ -215,7 +217,6 @@ test('the frame runs nothing and loads nothing, and is in the bubble\'s own toke
   assert.equal(frame.withoutOutsideUrls('@import url(https://x.example/a.css); .a{background:url("https://x.example/b.png")} .b{background:url(data:image/png;base64,AAAA)}'),
     ' .a{background:none} .b{background:url(data:image/png;base64,AAAA)}');
   assert.equal(frame.withoutOutsideUrls("background-image: url('/img/x.png')"), 'background-image: none');
-  const source = read('frontend/src/features/messages/bot-html.tsx');
   for (const step of [
     /querySelectorAll\('style'\)\)\) el\.textContent = withoutOutsideUrls/,
     /querySelectorAll\('\[style\]'\)\)\) el\.setAttribute\('style', withoutOutsideUrls/,
@@ -231,18 +232,24 @@ test('the frame runs nothing and loads nothing, and is in the bubble\'s own toke
     vars: Object.fromEntries(frame.REPLY_TOKENS.map(([name, , fallback]) => [name, fallback])),
     dark: true, font: "'Geist', ui-sans-serif, system-ui, sans-serif", size: '17px',
   };
-  const doc = frame.replyFrameDoc('<p>Hi</p>', look, 'https://app.onhomeroom.com');
-  assert.match(doc, /^<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none';/);
+  // The brand font is written in as data: a frame with an origin of its
+  // own cannot fetch this site's file, and the policy names no origin.
+  const geist = 'data:font/woff2;base64,d09GMgABAAAAAA==';
+  const doc = frame.replyFrameDoc('<p>Hi</p>', look, geist);
+  assert.match(doc, /^<!doctype html><html><head><meta charset="utf-8"><style>/);
   assert.match(doc, /:root\{--ink:#0a0a0a;--ink-2:#3a3a3c;[^}]*;color-scheme:dark\}/);
-  assert.match(doc, /@font-face\{font-family:'Geist';src:url\('https:\/\/app\.onhomeroom\.com\/fonts\/geist\/Geist-Variable\.woff2'\)/);
+  assert.match(doc, /@font-face\{font-family:'Geist';src:url\('data:font\/woff2;base64,d09GMgABAAAAAA=='\) format\('woff2'\)/);
+  assert.doesNotMatch(doc, /https?:\/\//, 'no address anywhere in the document');
+  assert.doesNotMatch(frame.replyFrameDoc('<p>Hi</p>', look, null), /@font-face/, 'no face until the font was read');
+  assert.doesNotMatch(frame.replyFrameDoc('<p>Hi</p>', look, "data:font/woff2;base64,AA')}body{x:url('https://x.example"), /@font-face|x\.example/, 'only a plain data: font');
   assert.match(doc, /body\{color:var\(--ink\);font-family:'Geist', ui-sans-serif, system-ui, sans-serif;font-size:17px;line-height:1\.4\}/);
   assert.match(doc, /<body><div class="reply" dir="auto"><p>Hi<\/p><\/div><\/body><\/html>$/);
   assert.doesNotMatch(doc, /<script/i);
-  const plain = frame.replyFrameDoc('<p>Hi</p>', { ...look, dark: false, font: 'system-ui, sans-serif' }, 'https://app.onhomeroom.com');
+  const plain = frame.replyFrameDoc('<p>Hi</p>', { ...look, dark: false, font: 'system-ui, sans-serif' }, geist);
   assert.doesNotMatch(plain, /@font-face/, 'no font file unless the chat draws in Geist');
   assert.match(plain, /color-scheme:light/);
   // A token value cannot close the block it is written into.
-  const odd = frame.replyFrameDoc('<p>Hi</p>', { ...look, vars: { '--ink': 'red}</style><script>x()</script>' } }, 'https://app.onhomeroom.com');
+  const odd = frame.replyFrameDoc('<p>Hi</p>', { ...look, vars: { '--ink': 'red}</style><script>x()</script>' } }, geist);
   assert.doesNotMatch(odd, /<\/style><script>/);
 
   // The tokens it sets are the chat's own.

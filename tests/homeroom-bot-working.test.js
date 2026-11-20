@@ -306,7 +306,7 @@ test('a turn that started a design goes on after Evan\'s "Drawing it now…" wit
   assert.equal(turn.seen.length, 4);
   assert.deepEqual(turn.seen[2].slice(-2), [{ role: 'assistant', content: EVANS_SECOND }, { role: 'user', content: mayor.PREAMBLE_NOTE }],
     'words that only say what comes next go back with the note to do it');
-  assert.equal(designBot.DRAW_NOTE, '[Homeroom check, not from them: you have not drawn anything yet. Call write_screen (or edit_design) now, then reply.]');
+  assert.equal(designBot.DRAW_NOTE, '[Homeroom check, not from them: you have not drawn anything yet. Call write_artifact (or edit_artifact) now, then reply.]');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'Here it is, in the app\'s own style.\n\nVersion 1: Main screen.');
   assert.equal(turn.sent[0].metadata.kind, 'design_version');
@@ -380,10 +380,10 @@ test('#6144: a design reads in its first 7 rounds, and a first drawing draws by 
   assert.equal(designBot.READ_UNTIL, 7);
   assert.equal(designBot.DRAW_BY_ROUND, 8);
   assert.deepEqual(designBot.ACT_TOOLS.map((tool) => tool.function.name), ACT_NAMES);
-  assert.ok(ACT_NAMES.includes('write_screen') && ACT_NAMES.includes('edit_design') && !ACT_NAMES.includes('reply'),
+  assert.ok(ACT_NAMES.includes('write_artifact') && ACT_NAMES.includes('edit_artifact') && !ACT_NAMES.includes('reply'),
     'the chat\'s own reply ends a design turn');
   assert.equal(designBot.READING_OVER_NOTE, '[Homeroom check, not from them: reading is over for this turn. Draw or change the '
-    + 'screen now with write_screen or edit_design, or reply.]');
+    + 'screen now with write_artifact or edit_artifact, or reply.]');
   // Step 6: its turn has the chat's sixteen rounds, which the design's
   // twelve, counted from where it opened, never shorten.
   assert.equal(require('../src/services/bot-profiles').turnLimits(['design']).rounds, 16);
@@ -392,7 +392,7 @@ test('#6144: a design reads in its first 7 rounds, and a first drawing draws by 
 test('#6141: a turn that started a design and only read never posts its last words as the answer', async () => {
   const turn = startTurn([...times(11, READ), reply('placeholder')], { thread: SPOKEN });
   await turn.run;
-  assert.deepEqual(turn.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_screen'), 'auto'],
+  assert.deepEqual(turn.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_artifact'), 'auto'],
     'the design\'s round 8 (the turn\'s 9th) draws');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, designBot.NOT_DRAWN_TEXT, 'never "placeholder"');
@@ -418,7 +418,7 @@ test('#6142: a first drawing that reads long is made to draw in its round 8, and
     edit('<main class="keys">', '<main class="keys"><h1>Ear Trainer</h1>'),
     reply('Here it is, with the score.', 'The main screen, with the score')], { thread: SPOKEN });
   await turn.run;
-  assert.deepEqual(turn.choices.slice(0, 13), [...times(8, 'auto'), FORCED('write_screen'), ...times(4, 'auto')]);
+  assert.deepEqual(turn.choices.slice(0, 13), [...times(8, 'auto'), FORCED('write_artifact'), ...times(4, 'auto')]);
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'Here it is, with the score.\n\nVersion 1: The main screen, with the score.');
   assert.equal(turn.sent[0].metadata.kind, 'design_version');
@@ -430,7 +430,7 @@ test('#6142: a first drawing that reads long is made to draw in its round 8, and
 
   const short = startTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, reply('Here it is.')], { thread: SPOKEN });
   await short.run;
-  assert.deepEqual(short.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_screen'), 'auto']);
+  assert.deepEqual(short.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_artifact'), 'auto']);
   assert.equal(short.sent[0].content, 'Here it is.\n\nVersion 1: Main screen.');
 });
 
@@ -759,6 +759,10 @@ test('each tool says what the bot is doing, in kinds the screen words', () => {
   // Step 6 (#6864): "Drawing version 4", the version the turn saves.
   assert.deepEqual(mayor.doingFor('write_screen', {}, { version: 4 }), { kind: 'drawing', version: 4 });
   assert.deepEqual(mayor.doingFor('edit_design', {}, { version: 4 }), { kind: 'drawing', version: 4 });
+  // Stage 3: the generic names draw a design, and write a plain page.
+  assert.deepEqual(mayor.doingFor('write_artifact', {}, { version: 4, kind: 'design' }), { kind: 'drawing', version: 4 });
+  assert.deepEqual(mayor.doingFor('edit_artifact', {}, { kind: 'design' }), { kind: 'designing' });
+  assert.deepEqual(mayor.doingFor('write_artifact', {}, { version: 4, kind: 'page' }), { kind: 'writing' });
   // A live draft's code, read and changed in the chat's own turn.
   assert.deepEqual(mayor.doingFor('read_file', { path: 'a.js' }, { project: 'Gym Tracker' }), { kind: 'code', project: 'Gym Tracker' });
   assert.deepEqual(mayor.doingFor('edit_file', {}), { kind: 'changing_draft' });

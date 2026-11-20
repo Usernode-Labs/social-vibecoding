@@ -207,8 +207,8 @@ test('#6311: filing a copy on Homeroom\'s own board, and keeping the original op
       [ears.id, ada.id],
     );
     const { rows: [offer] } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id)
-       VALUES ($1, 'copy_request', $2, $3, $4) RETURNING id`,
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id)
+       VALUES ('thread', $1, 'copy_request', $2, $3, $4) RETURNING id`,
       [ears.id, JSON.stringify({ issueNumber: 8, title: 'Signed-out Try it sends me to an authorize page' }), ada.id, message.id],
     );
     const before = gh.created.length;
@@ -219,7 +219,7 @@ test('#6311: filing a copy on Homeroom\'s own board, and keeping the original op
     assert.equal(out.decision, 'done');
     assert.equal(gh.created.length, before + 1, 'a new copy from a different ask');
     const { rows: [settled] } = await pool.query(
-      'SELECT status, result, decided_at FROM homeroom_bot_voice_offers WHERE id = $1', [offer.id],
+      'SELECT status, result, decided_at FROM bot_cards WHERE id = $1', [offer.id],
     );
     assert.equal(settled.status, 'done');
     assert.ok(Number(settled.result.issueNumber) > 0);

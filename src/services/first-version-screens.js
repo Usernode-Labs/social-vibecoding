@@ -570,7 +570,11 @@ async function readScreen(pool, appId, kind, position) {
 // error on the page that frames it, as the spec's screens are cleaned for
 // the same reason (spec-html.ts cleanScreenMarkup).
 
-const DRAWN_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
+// Artifacts, stage 1: the one policy every page the bot writes is drawn
+// under (artifact-policy.js), static, as a response header, naming no
+// origin: "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src
+// data:; font-src data:; script-src 'none'; …".
+const DRAWN_CSP = require('./artifact-policy').cspFor('static', { header: true });
 
 // Elements that would run or load something, with what they hold, and the
 // empty ones.

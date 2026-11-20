@@ -487,14 +487,34 @@
       "schemaSha256": "075e0e0ccb2fc560922614a69af29a6a90f8e356b53e8cf96eeba7530aad99e4"
     },
     {
+      "id": "plan-design-source",
+      "sha256": "76f81d8dea4eb885cff349fc7d39164f342c5070cfce38c4e28bb55928f8983a",
+      "schemaSha256": "cb835f31348306fdbbce630a443beeee6bebf1cf6c76150f5bde58659df4d3f1"
+    },
+    {
+      "id": "artifact-store",
+      "sha256": "0b2b396e8efa0057a68bb5bf7ecbc24eda697b9efe8153102b10a19ad1b23fd8",
+      "schemaSha256": "c5dd3b08b4ed6ee92e22ee8fb3ed5fde6b2f7c331448f98eb4c98ab9bf392f7d"
+    },
+    {
+      "id": "work-state-one-writer",
+      "sha256": "48d01fd14d04ff8558f5ecb3cb0f2d560219fbf93c9ed82c3a20fa0532ad28a6",
+      "schemaSha256": "82150ee4b2549bbfd952093d4a820f421ba4190e22b7f2fa91cc9f7cf6aa802e"
+    },
+    {
+      "id": "homeroom-bot-run-stop-cause",
+      "sha256": "1d0288278492a7df3df5ecb040643d9912ff77639a535cf354a9159b4882ee0d",
+      "schemaSha256": "d9bd3e082e9a0aaa67beea11645c25588e6e3e9ea3062a77a65a2f62d793a679"
+    },
+    {
       "id": "limit-alert-phones",
       "sha256": "efaf4f2dbbe4634641d618c81c939d9cbc42dee4a0aa1d5032ff3c36ae930e2f",
-      "schemaSha256": "1d91f658c1ce0a14f21510c096582d20ccc221d856b361c66f500af1b0400ca2"
+      "schemaSha256": "283d7514573bd145c9c403db14d53e9658449743bdc98ab04c168c9604b11429"
     },
     {
       "id": "limit-alert-refusals",
       "sha256": "822bfc3b809b180a7f5310e5d650d5facd457d051f969a888691a2e5c7f5a089",
-      "schemaSha256": "6d31041b3ecb9559e5016c5323d8eeeea96fac1368733bcfa4df22d57c6c97b5"
+      "schemaSha256": "2108a829b5ff0e0561232d9dfcda92892a6e867885ae1742fbfa5a4ed3709364"
     }
   ]
 }
