@@ -40,6 +40,16 @@ export const appContextStore = createStore({
    */
   back: 'menu',
   /**
+   * A community the invite pane is opened for that is NOT the app in
+   * context: `{ slug, name }`, or null. The Communities page's Invite disc
+   * opens a community's link while no project is in context (that page is
+   * not inside an app), so the pane needs its own subject; the header chip
+   * and the Improve target stay untouched (app-context-controller.js
+   * `openInvite`). Read only while `view` is `'invite'`, and cleared on
+   * every close, as `view` is.
+   */
+  inviteFor: null,
+  /**
    * Whether the presentation is a KIT sheet (touch) rather than the CSS
    * slide-over. The kit brings its own backdrop, so the web overlay only
    * raises when this is false — see lib/sheet-controller.js.

@@ -44,6 +44,34 @@ const CONTROLLER = read('frontend/src/features/app-context/app-context-controlle
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+/**
+ * The `makeStoreStub` of tests/helpers/bundle-module.js, with subscriptions
+ * that actually fire: the controller resets `inviteFor` from one, and a
+ * harness that cannot fire it cannot tell whether closing forgets the
+ * community or not.
+ */
+function reactiveStore(initial) {
+  const subs = new Set();
+  const store = {
+    state: { ...initial },
+    sets: 0,
+    get: () => store.state,
+    set: (patch) => {
+      const next = { ...store.state, ...patch };
+      // As lib/plain-store.js: a patch that changes nothing does not notify,
+      // which is what stops a subscriber's own reset from re-entering itself.
+      const changed = Object.keys(next).some((key) => next[key] !== store.state[key]);
+      if (!changed) return;
+      store.state = next;
+      store.sets += 1;
+      for (const fn of [...subs]) fn();
+    },
+    subscribe: (fn) => { subs.add(fn); return () => subs.delete(fn); },
+    setFlush: () => {},
+  };
+  return store;
+}
+
 // ── the opener ───────────────────────────────────────────────────────────
 
 /**
@@ -71,7 +99,7 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
 
-  const store = makeStoreStub({ open: false, view: 'menu', adopted: false });
+  const store = reactiveStore({ open: false, view: 'menu', adopted: false, inviteFor: null });
   const improve = makeStoreStub({ slug });
   const presents = [];
   runModules(sandbox, [['sheet-controller.js', SHEET_CONTROLLER]], {
@@ -111,6 +139,7 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   return {
     AppContext: sandbox.AppContext,
     wait: sandbox.__wait,
+    location: sandbox.location,
     store,
     improve,
     presents,
@@ -186,6 +215,70 @@ test('an open the sheet refuses leaves the menu on its first pane', async () => 
   assert.equal(o.store.state.open, false);
   assert.equal(o.store.state.view, 'menu',
     'or the next open from the Homeroom mark would land on Invite');
+});
+
+// ── a community's Invite disc, where no project is in context ────────────
+//
+// The Communities page draws communities, not an app, so `improveStore.slug`
+// is null there. `openInvite({ slug, name })` names the community the pane is
+// opened for without making it the app in context: the header chip and
+// Improve keep pointing where they did.
+
+test('a community\'s Invite reads that community first and presents once, on it', async () => {
+  const o = loadOpener();
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  assert.deepEqual(o.reads, ['garden-cd34'], 'the pane reads the community it was asked for');
+  assert.equal(o.improve.get().slug, 'notes-ab12', 'the app in context is not touched');
+  await flush();
+  assert.equal(o.presents.length, 0, 'nothing goes up while the read is on its way');
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.presents.length, 1, 'one present');
+  assert.equal(o.presents[0].view, 'invite');
+  assert.equal(o.store.state.inviteFor.slug, 'garden-cd34');
+  assert.equal(o.store.state.inviteFor.name, 'Garden Club');
+  assert.equal(o.store.state.back, 'none', 'there is no menu behind it to go back to');
+});
+
+test('closing a community\'s Invite forgets the community', async () => {
+  const o = loadOpener();
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  await o.AppContext.close();
+  assert.equal(o.store.state.inviteFor, null, 'the next open from the mark is not this community');
+  assert.equal(o.store.state.view, 'menu');
+});
+
+test('with no app in context, a community is named by its slug', async () => {
+  const o = loadOpener({ slug: null });
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34' });
+  assert.deepEqual(o.reads, ['garden-cd34']);
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.store.state.inviteFor.slug, 'garden-cd34');
+  assert.equal(o.store.state.inviteFor.name, 'garden-cd34');
+  assert.equal(o.presents.length, 1, 'the sheet still opens');
+});
+
+test('a navigation during the wait drops a community\'s Invite, and forgets it', async () => {
+  const o = loadOpener();
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  o.location.href = 'https://homeroom.test/#home';
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.presents.length, 0);
+  assert.equal(o.store.state.inviteFor, null, 'nothing is left named for the next opening');
+});
+
+test('an open the sheet refuses forgets the community too', async () => {
+  const o = loadOpener({ panel: false });
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.store.state.open, false);
+  assert.equal(o.store.state.inviteFor, null);
+  assert.equal(o.store.state.view, 'menu');
 });
 
 test('the hub and the Share dialog open it with one call, not open() then a pane switch', () => {

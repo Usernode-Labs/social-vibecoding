@@ -83,6 +83,10 @@
     "text": "{{count}} to vote",
     "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
   },
+  "tile.invite": {
+    "text": "Invite people to {{community}}",
+    "description": "Name and tooltip of the small round button on a community's tile on the Communities page: opens that community's invite link to copy or share. {{community}} is the community's name."
+  },
   "page.search.placeholder": {
     "text": "Search your communities",
     "description": "Placeholder inside the search field at the top of the Communities page (desktop widths), which filters the person's pinned and joined communities by name."

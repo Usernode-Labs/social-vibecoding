@@ -185,6 +185,42 @@ test('the page\'s words are in the catalog, and say nothing of pinning to Home',
   assert.equal(message('home:membership.joinedPinned', { community: 'Orchard' }), 'Joined Orchard · pinned to Communities');
 });
 
+/** One community's tile, from its <a> to its close (no anchors nest here). */
+function tile(html, slug) {
+  const at = html.indexOf(`data-home-community="${slug}"`);
+  assert.ok(at >= 0, `data-home-community="${slug}" renders`);
+  const start = html.lastIndexOf('<a ', at);
+  return html.slice(start, html.indexOf('</a>', at));
+}
+
+test('each community you are in shows an Invite disc on its tile', () => {
+  const html = withStores(
+    { ready: true, pins: PINS, joined: JOINED, owed: {} },
+    { badgeNeeds: 0 },
+    (mod) => renderToHtml(createElement(mod.CommunitiesScreen, {})),
+  );
+  const label = message('communities:tile.invite', { community: 'Tide Table' });
+  const tide = tile(html, 'tide');
+  assert.match(tide, /data-home-community-invite=""/, 'a pinned community you are in');
+  assert.match(tide, new RegExp(`aria-label="${label}"`), 'named for what it does, with the community');
+  assert.match(tide, new RegExp(`title="${label}"`), 'and the same words as its tooltip');
+  assert.match(tide, /un-touch-target/, 'with the 44px area to press');
+  assert.doesNotMatch(tile(html, 'garden'), /data-home-community-invite/,
+    'a community pinned but not joined has no invite link to make');
+  assert.match(tile(html, 'orchard'), /data-home-community-invite=""/, 'and every Joined row is a membership');
+
+  const page = read(PAGE);
+  assert.match(page, /onInvite=\{pin\.member && !editing \? \(\) => invite\(pin\.slug, pin\.name\) : undefined\}/);
+  assert.match(page, /onInvite=\{!editing \? \(\) => invite\(c\.slug, c\.name\) : undefined\}/);
+  assert.match(page, /win\?\.AppContext\?\.openInvite\?\.\(\{ slug, name \}\)/,
+    'it opens that community\'s invite, not the app in context');
+  const pinTile = read('frontend/src/features/home/pinned-communities.tsx');
+  assert.match(pinTile, /onInvite && !editing \?/, 'no disc while the pins are being edited');
+  assert.match(pinTile, /event\.preventDefault\(\); event\.stopPropagation\(\); onInvite\(\);/,
+    'the disc does not open the tile');
+  assert.equal(message('communities:tile.invite', { community: 'Orchard' }), 'Invite people to Orchard');
+});
+
 test('Standard (WIP) draws the page as Home is: its ground, cards with members and the week from 1024px, the kit\'s filled actions', () => {
   const fs = require('node:fs');
   const path = require('node:path');

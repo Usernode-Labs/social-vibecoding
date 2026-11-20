@@ -91,6 +91,17 @@ if (typeof window !== 'undefined') {
   };
 }
 
+/**
+ * Open a community's invite link straight away: `AppContext.openInvite`
+ * carries the slug to the invite pane, which reads that community's links
+ * while the header keeps naming no project (this page is outside an app).
+ * `name` names the pane ("Invite people to …").
+ */
+function invite(slug: string, name: string) {
+  const win = typeof window !== 'undefined' ? (window as any) : null;
+  win?.AppContext?.openInvite?.({ slug, name });
+}
+
 /** Open Home at Communities to join, the public directory (Home.showCommunitiesToJoin). */
 function discover() {
   const win = window as any;
@@ -269,6 +280,9 @@ export function CommunitiesScreen() {
                   community={wip}
                   detail={cards ? activity.bySlug[pin.slug] : undefined}
                   onUnpin={() => { void setHomePin(pin, false, say(pin.name)); }}
+                  // A pin you have not joined shows no Invite: there is no
+                  // membership whose link you could make.
+                  onInvite={pin.member && !editing ? () => invite(pin.slug, pin.name) : undefined}
                 />
               ))}
             </div>
@@ -290,6 +304,8 @@ export function CommunitiesScreen() {
                   community={wip}
                   detail={cards ? activity.bySlug[c.slug] : undefined}
                   onPin={editing ? () => { void setHomePin({ ...c, member: true } as HomePin, true, say(c.name)); } : undefined}
+                  // Every row under Joined is a membership.
+                  onInvite={!editing ? () => invite(c.slug, c.name) : undefined}
                 />
               ))}
               {createTile ? (

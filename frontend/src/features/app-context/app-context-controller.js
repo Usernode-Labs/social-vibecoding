@@ -76,10 +76,22 @@ export const AppContext = Object.assign(
      * From About's Invite the sheet is already open, and `back: 'about'`
      * makes its back disc return there.
      *
-     * @param {{ back?: 'about' }} [opts]
+     * A `slug` names a community that is not the app in context — the
+     * Communities page's Invite disc, where no project is in context at all:
+     * `inviteFor` carries that community to the pane, and the app in context
+     * (the header's chip, what Improve targets) is left untouched.
+     *
+     * @param {{ back?: 'about', slug?: string, name?: string }} [opts]
      */
     openInvite(opts = {}) {
-      const { slug } = improveStore.get();
+      const { slug: contextSlug } = improveStore.get();
+      const override = typeof opts.slug === 'string' && opts.slug !== '' && opts.slug !== contextSlug
+        ? { slug: opts.slug, name: opts.name || opts.slug }
+        : null;
+      const slug = override ? override.slug : contextSlug;
+      if (override) appContextStore.set({ inviteFor: override });
+      // The address the sheet is opening over, for the guard below.
+      const hrefAtStart = typeof location !== 'undefined' ? location.href : null;
       const ready = slug
         ? Promise.race([
           prepareInvite(slug),
@@ -87,23 +99,35 @@ export const AppContext = Object.assign(
         ])
         : Promise.resolve();
       return ready.then(() => {
-        // Somewhere else by now (a tab, Back): its project is not in context.
-        if (improveStore.get().slug !== slug) return;
+        if (override) {
+          // Somewhere else by now: the sheet closed, another community took
+          // this one's place, or the page navigated during the wait.
+          const { inviteFor } = appContextStore.get();
+          if (!inviteFor || inviteFor.slug !== override.slug) return;
+          if (hrefAtStart != null && typeof location !== 'undefined' && location.href !== hrefAtStart) {
+            appContextStore.set({ inviteFor: null });
+            return;
+          }
+        } else if (improveStore.get().slug !== slug) {
+          // Somewhere else by now (a tab, Back): its project is not in context.
+          return;
+        }
         // Audit D07: from About, Back retraces the step. From anywhere else
-        // (the hub's Invite, the Share dialog) the sheet opened on this pane,
-        // so there is no menu behind it to go back to: only the close.
+        // (the hub's Invite, the Share dialog, a community's tile) the sheet
+        // opened on this pane, so there is no menu behind it to go back to:
+        // only the close.
         appContextStore.set({ back: opts.back === 'about' ? 'about' : 'none' });
         openAt('invite');
       });
     },
     /** Back to the app's options. */
     showMenu() {
-      appContextStore.set({ view: 'menu', back: 'menu' });
+      appContextStore.set({ view: 'menu', back: 'menu', inviteFor: null });
     },
     /** The header's back disc: one step back, to the pane this one came from. */
     goBack() {
       const { view, back } = appContextStore.get();
-      appContextStore.set({ view: view === 'invite' && back === 'about' ? 'about' : 'menu', back: 'menu' });
+      appContextStore.set({ view: view === 'invite' && back === 'about' ? 'about' : 'menu', back: 'menu', inviteFor: null });
     },
   },
 );
@@ -121,7 +145,9 @@ export const AppContext = Object.assign(
 function openAt(view) {
   appContextStore.set({ view });
   AppContext.open();
-  if (!AppContext.isOpen()) appContextStore.set({ view: 'menu' });
+  // The inviteFor reset matters as much: an open the sheet refused must not
+  // leave a community named for the next opening's pane.
+  if (!AppContext.isOpen()) appContextStore.set({ view: 'menu', inviteFor: null });
 }
 
 // ── The two panes (#2718) ──────────────────────────────────────────────
@@ -148,7 +174,7 @@ function openAt(view) {
 let wasOpen = appContextStore.get().open;
 appContextStore.subscribe(() => {
   const { open } = appContextStore.get();
-  if (wasOpen && !open) appContextStore.set({ view: 'menu', back: 'menu' });
+  if (wasOpen && !open) appContextStore.set({ view: 'menu', back: 'menu', inviteFor: null });
   wasOpen = open;
 });
 

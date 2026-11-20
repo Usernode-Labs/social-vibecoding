@@ -8183,6 +8183,19 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
   color: var(--wip-count-ink);
   box-shadow: 0 0 0 2px var(--wip-card-bg);
 }
+/* THE INVITE DISC (pinned-communities.tsx): the pin buttons' corner
+   treatment on the face's other end, so it never covers the count above it.
+   It is positioned against the face wrapper and raised over the scene and
+   the sheen; the card's own clipping does not reach it, because the face is
+   inside the card's padding. While the pins are edited it steps aside, a
+   belt to the React check. */
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community-invite] {
+  position: absolute;
+  inset-block-end: -0.375rem;
+  inset-inline-end: -0.375rem;
+  z-index: 1;
+}
+html[data-skin-wip] #communities-body[data-editing] [data-home-community-invite] { display: none; }
 /* FROM 1024px A CELL SAYS WHAT IS GOING ON THERE, as the brand look's cards
    do (asked 19 Nov 2026): the icon beside the name and how many members,
    what it says it is, then, under a hairline, this week: the faces of a few who were there with
@@ -32935,6 +32948,15 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     padding: 0 5px;
     font-size: 11px;
   }
+  /* The Invite disc on the icon's bottom corner: the card's own ring colour,
+     and no room taken in its grid. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-invite] {
+    position: absolute;
+    inset-block-end: -5px;
+    inset-inline-end: -5px;
+    z-index: 1;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #communities-body[data-editing] [data-home-community-invite] { display: none; }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > .line-clamp-2 {
     grid-column: 2;
     grid-row: 1;

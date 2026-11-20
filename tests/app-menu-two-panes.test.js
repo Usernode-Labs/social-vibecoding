@@ -85,7 +85,7 @@ test('two panes of ONE sheet, not two sheets', () => {
   // the ordering the wallet row already worked around — and About is where
   // the menu GOES rather than something that opens over it.
   // The invite pane is a third, on the same terms (./invite-pane.tsx).
-  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} unnamed=\{!appName\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} unnamed=\{!appName\} \/>\s*\) : \(/,
+  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} unnamed=\{!appName\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{inviteSlug\} label=\{inviteLabel\} unnamed=\{inviteUnnamed\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
   // The platform's back disc, at a 44pt hit box (#4218).
@@ -101,7 +101,7 @@ test('two panes of ONE sheet, not two sheets', () => {
   assert.doesNotMatch(backRow, /\{appLabel\}/, 'no name beside the back disc');
   // Back is one step back: to About for an invite pane opened from it.
   assert.match(SHEET, /onClick=\{\(\) => AppContext\.goBack\(\)\}/);
-  assert.match(CONTROLLER, /goBack\(\) \{\s*const \{ view, back \} = appContextStore\.get\(\);\s*appContextStore\.set\(\{ view: view === 'invite' && back === 'about' \? 'about' : 'menu', back: 'menu' \}\);/);
+  assert.match(CONTROLLER, /goBack\(\) \{\s*const \{ view, back \} = appContextStore\.get\(\);\s*appContextStore\.set\(\{ view: view === 'invite' && back === 'about' \? 'about' : 'menu', back: 'menu', inviteFor: null \}\);/);
   // What used to be tested here — that Create New and the app strip belonged
   // to the MENU pane rather than to About — is gone with both of them
   // (#2718 review). About was never the reason: a rail of other apps at the
@@ -111,13 +111,26 @@ test('two panes of ONE sheet, not two sheets', () => {
   assert.ok(!SHEET.includes('id="apps-switcher-list"'), 'no app strip');
 });
 
+test('the invite pane can be opened for a community that is not the app in context', () => {
+  // The Communities page's Invite disc opens a community's link from a page
+  // where no project is in context (app-context-controller `openInvite`).
+  // `inviteFor` is the pane's subject while it shows; the header and the
+  // menu keep naming the app in context.
+  assert.match(SHEET, /const invite = view === 'invite' && inviteFor \? inviteFor : null;/);
+  assert.match(SHEET, /const inviteSlug = invite \? invite\.slug : \(slug \|\| null\);/);
+  assert.match(SHEET, /const inviteLabel = invite \? \(invite\.name \|\| invite\.slug\) : appLabel;/);
+  assert.match(CONTROLLER, /appContextStore\.set\(\{ inviteFor: override \}\);/);
+  assert.match(CONTROLLER, /if \(!inviteFor \|\| inviteFor\.slug !== override\.slug\) return;/,
+    'a close or another community during the wait drops the opening');
+});
+
 test('closing resets the pane, by any route', () => {
   // A SUBSCRIPTION rather than a wrapper around close(): the kit's own
   // dismissal — a swipe, a tap on its backdrop — publishes `open: false`
   // without passing through the controller at all, and a sheet that reopens
   // on the pane you left is a sheet that ignores what you asked for.
   assert.match(CONTROLLER, /appContextStore\.subscribe\(\(\) => \{/);
-  assert.match(CONTROLLER, /if \(wasOpen && !open\) appContextStore\.set\(\{ view: 'menu', back: 'menu' \}\);/);
+  assert.match(CONTROLLER, /if \(wasOpen && !open\) appContextStore\.set\(\{ view: 'menu', back: 'menu', inviteFor: null \}\);/);
   assert.doesNotMatch(CONTROLLER, /AppContext\.close = /,
     'close() is not wrapped — that would miss the kit\'s own dismissal');
 });

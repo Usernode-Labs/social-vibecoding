@@ -37,6 +37,8 @@ const WIP_HIDES = [
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
   'html[data-skin-wip] #app-list .app-card-opened',
+  // While the pins are being edited a community's tile shows only its pin and unpin buttons, so the Invite disc steps aside (a belt to the React check, #6896).
+  'html[data-skin-wip] #communities-body[data-editing] [data-home-community-invite]',
 ];
 
 function wipBlock() {
