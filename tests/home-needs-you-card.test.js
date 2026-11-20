@@ -248,7 +248,7 @@ test('Standard (WIP): a project\'s empty Needs you says so as good news, with th
   const beside = read('frontend/src/features/review-flow/project-needs.tsx');
   assert.match(flow, /<ProjectNeedsEmpty slug=\{slug\} project=\{project\} anchorRef=\{anchorRef\}>\s*<p ref=\{anchorRef as never\}[^>]*data-needs-empty="" data-review-flow="">/, 'the plain line is every other look\'s');
   assert.match(flow, /<ProjectWaysIn slug=\{slug\} project=\{project\} \/>/, 'under what waits, too');
-  assert.match(beside, /return useLiveSkin\(\) === 'wip' && !!slug && !!project;/);
+  assert.match(beside, /return isKitHome\(useLiveSkin\(\)\) && !!slug && !!project;/);
   assert.match(beside, /if \(!drawn\) return children;\s*return \(\s*<div ref=\{anchorRef\} className="wip-needs" data-needs-empty="" data-review-flow="">/, 'the same hooks the plain line carries');
   assert.match(beside, /door\('1', 'workshop'[\s\S]{0,400}door\('3', 'discussion'[\s\S]{0,400}door\('2', 'status'/);
   assert.equal(message('communities:reel.caughtUp.title'), 'You\'re all caught up');
