@@ -118,9 +118,12 @@ interface Ending { key: string; tone: EndingTone }
  * went wrong. `person` is the bot stepping back (homeroom-bot.js handOff): a
  * call for a person to make, a change it may revise no further, failures it
  * cannot fix safely; a person. Endings that still wait on somebody are never
- * settled, so they are not here.
+ * settled, so they are not here. Its keys are the activity cards' endings
+ * (services/homeroom-bot-activity.js OUTCOME_LABELS) and `done_elsewhere`;
+ * tests/work-stages-client.test.js holds them to those, and holds that
+ * every ended stage and every reason of the one table (trackEnding) has one.
  */
-const ENDINGS: Record<string, Ending> = {
+export const ENDINGS: Readonly<Record<string, Ending>> = {
   live: { key: 'messages:bot.final.live', tone: 'good' },
   going_live: { key: 'messages:bot.final.goingLive', tone: 'good' },
   done_elsewhere: { key: 'messages:bot.final.doneElsewhere', tone: 'good' },

@@ -164,26 +164,27 @@ test('a why or a reason this build does not know is kept, and its words are draw
 });
 
 // The words a fixture is given (tests/lib/work-words.js) are the server's
-// own, once the server words its standings (services/work-state.js phrasesOf).
-test('the fixtures\' words are the server\'s phrasesOf', (t) => {
+// own (services/work-state.js phrasesOf), for every line of the one table:
+// the hand-kept copy they used to come from had no words for the four line
+// codes added after it (review B5).
+test('the fixtures\' words are the server\'s phrasesOf, for every line of the table', () => {
   const ws = require('../src/services/work-state');
-  if (typeof ws.phrasesOf !== 'function') {
-    t.skip('this server does not word its standings yet');
-    return;
+  const stages = require('../src/services/work-stages');
+  const stored = { place: 2, round: 1, of: 2, failing: 3, minutes: 4, count: 2, by: 'ada', text: 'Why.' };
+  let lines = 0;
+  for (const code of stages.LINE_CODES) {
+    for (const stage of stages.LINE[code].stages) {
+      const full = { stage, why: null, reason: null, line: { code, ...stored } };
+      const words = wordsOf(full);
+      assert.deepEqual(plain(words), plain(ws.phrasesOf(full)), `${code} on ${stage}`);
+      assert.ok(words.line || stages.LINE[code].stageWord, `${code} on ${stage}: words of its own`);
+      lines += 1;
+    }
   }
-  const states = [
-    { stage: 'reading', line: { code: 'waiting' } }, { stage: 'reading', line: { code: 'queued', place: 2 } },
-    { stage: 'building' }, { stage: 'building', line: { code: 'held_builds' } },
-    { stage: 'waiting_for_you', why: 'plan' }, { stage: 'waiting_for_you', why: 'decide', line: { code: 'reason', text: 'Why.' } },
-    { stage: 'stopped', reason: 'build_failed' }, { stage: 'checking', line: { code: 'checks_failing', failing: 2 } },
-    { stage: 'up_for_vote' }, { stage: 'going_live', line: { code: 'github_checks' } }, { stage: 'live' },
-    { stage: 'checking', line: { code: 'approved_checking' } }, { stage: 'going_live', line: { code: 'github_wait' } },
-    { stage: 'up_for_vote', line: { code: 'earlier_yes', count: 2 } },
-  ];
-  for (const state of states) {
-    const full = { why: null, reason: null, line: null, ...state };
-    assert.deepEqual(plain(ws.phrasesOf(full)), plain(wordsOf(full)), JSON.stringify(state));
-  }
+  assert.ok(lines >= stages.LINE_CODES.length);
+  // A hand-back's cause is worded as the server words it, not as a bare why.
+  const handBack = wordsOf({ stage: 'waiting_for_you', why: 'decide', cause: 'close' });
+  assert.deepEqual(plain(handBack.stage), { id: 'core:work.handBack.close' });
 });
 
 // ── Building never says Review plan ──────────────────────────────────────

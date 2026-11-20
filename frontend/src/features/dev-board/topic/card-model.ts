@@ -10,6 +10,7 @@
  */
 
 import { lineWords, stageWords, type Phrase, type Standing, type WorkState } from '../../../lib/work-state';
+import { FAILING_LINES, lookOf, type KnownWhy, type Stage } from '../../../lib/work-stages';
 
 export type FootTone = 'bad' | 'ok' | 'muted' | null;
 
@@ -188,15 +189,13 @@ function storedFoot(foot: ChangeFoot, work: Standing | null, phase: ChangePhase,
 }
 
 /**
- * The second lines of a row whose change's tests fail (services/work-state.js
- * derives them): its own checks, GitHub's, or a takeover's fix that failed
- * while they still fail (withUpdate). A surface tints such a row with the bad
- * tone, as AppView._workPill does. Kept out of lib/work-state.ts, which
- * names no line code (tests/work-state.test.js): the words are the server's.
+ * Pure: whether the row says its change's tests fail: its own checks,
+ * GitHub's, or a takeover's fix that failed while they still fail
+ * (services/work-state.js withUpdate). Which lines say so is the table's
+ * (work-stages.json `failing`, lib/work-stages.ts FAILING_LINES), the list
+ * AppView._workPill tints by too. A surface tints such a row with the bad
+ * tone.
  */
-const FAILING_LINES: ReadonlySet<string> = new Set(['checks_failing', 'github_checks_failing', 'bot_fix_failed']);
-
-/** Pure: whether the row says its change's tests fail. */
 export function testsFailing(state: WorkState | null | undefined): boolean {
   return !!state && !!state.line && FAILING_LINES.has(state.line.code);
 }
@@ -204,15 +203,14 @@ export function testsFailing(state: WorkState | null | undefined): boolean {
 /**
  * Pure: the foot's tone for a stored row that is not up for a vote, in the
  * foot's own tones (`liveFoot`): a stop or failing tests are bad; an
- * approved change on its way (going live) is the ok of Approved; live is ok
- * and closed muted (a row ahead of the page); anything still in hand is
- * plain.
+ * approved change on its way (going live) is the ok of Approved; otherwise
+ * the stage's own tint (lib/work-stages.ts STAGE_LOOK): live is ok and
+ * closed muted (a row ahead of the page); anything still in hand is plain.
  */
 export function storedTone(work: WorkState): FootTone {
   if (work.stage === 'stopped' || testsFailing(work)) return 'bad';
-  if (work.stage === 'going_live' || work.stage === 'live') return 'ok';
-  if (work.stage === 'closed') return 'muted';
-  return null;
+  if (work.stage === 'going_live') return 'ok';
+  return lookOf(work.stage).tone;
 }
 
 function liveFoot(input: ChangeFootInput, key: string, label: string): ChangeFoot {
@@ -283,48 +281,71 @@ export interface RequestFoot {
   busy: boolean;
 }
 
-const BUSY: ReadonlySet<string> = new Set(['reading', 'planning', 'building', 'checking', 'going_live']);
-
 /**
  * Pure: a request's foot, from the standing the server stored and worded
  * (lib/work-state.ts). The line under it is the server's own second line
- * when it sent one, else the plain sentence for that stage.
+ * when it sent one, else the plain sentence for that stage. Its tint and
+ * whether it spins are the stage's look (lib/work-stages.ts STAGE_LOOK).
  */
 export function requestFoot(standing: WorkState, yours: boolean): RequestFoot {
   const stage = standing.stage;
+  const look = lookOf(stage);
   return {
     key: stage,
     headline: stageWords(standing, { yours }),
     sub: lineWords(standing) || stageNote(standing),
-    tone: stage === 'stopped' ? 'bad' : stage === 'live' ? 'ok' : stage === 'closed' ? 'muted' : null,
-    busy: BUSY.has(stage),
+    tone: look.tone,
+    busy: look.busy,
   };
 }
 
 /**
+ * The sentence that says what a stage is waiting for or what happens next,
+ * for the timeline's last step and the foot, when the server sent no second
+ * line of its own: one for every stage of the table (lib/work-stages.ts), so
+ * a new stage is not silently left with none. Each id is written whole so
+ * the language inventory finds it.
+ */
+export const STAGE_NOTES: Readonly<Record<Stage, string>> = Object.freeze({
+  reading: 'project:topic.rail.note.reading',
+  planning: 'project:topic.rail.note.planning',
+  waiting_for_you: 'project:topic.rail.note.waiting',
+  building: 'project:topic.rail.note.building',
+  checking: 'project:topic.rail.note.checking',
+  up_for_vote: 'project:topic.rail.note.vote',
+  going_live: 'project:topic.rail.note.goingLive',
+  live: 'project:topic.rail.note.live',
+  stopped: 'project:topic.rail.note.stopped',
+  closed: 'project:topic.rail.note.closed',
+});
+
+/**
+ * What a row waiting for its requester waits on, where that is more than
+ * "waiting" (`null`: the stage's own note): one entry for every why of the
+ * table.
+ */
+export const WHY_NOTES: Readonly<Record<KnownWhy, string | null>> = Object.freeze({
+  question: 'project:topic.rail.note.question',
+  plan: 'project:topic.rail.note.plan',
+  decide: null,
+  already_works: null,
+  needs_detail: null,
+});
+
+/**
  * Pure: the sentence that says what a stage is waiting for or what happens
- * next, for the timeline's last step and the foot, when the server sent no
- * second line of its own. Each id is written whole so the language inventory
- * finds it.
+ * next (STAGE_NOTES, WHY_NOTES): a change with only its before & after
+ * screenshots left says that.
  */
 export function stageNote(standing: WorkState): Phrase | null {
-  switch (standing.stage) {
-    case 'reading': return { id: 'project:topic.rail.note.reading' };
-    case 'planning': return { id: 'project:topic.rail.note.planning' };
-    case 'waiting_for_you':
-      if (standing.why === 'question') return { id: 'project:topic.rail.note.question' };
-      if (standing.why === 'plan') return { id: 'project:topic.rail.note.plan' };
-      return { id: 'project:topic.rail.note.waiting' };
-    case 'building': return { id: 'project:topic.rail.note.building' };
-    case 'checking':
-      return standing.line?.code === 'shots' ? { id: 'project:topic.rail.note.shots' } : { id: 'project:topic.rail.note.checking' };
-    case 'up_for_vote': return { id: 'project:topic.rail.note.vote' };
-    case 'going_live': return { id: 'project:topic.rail.note.goingLive' };
-    case 'live': return { id: 'project:topic.rail.note.live' };
-    case 'stopped': return { id: 'project:topic.rail.note.stopped' };
-    case 'closed': return { id: 'project:topic.rail.note.closed' };
-    default: return null;
+  const stage = standing.stage;
+  if (!Object.prototype.hasOwnProperty.call(STAGE_NOTES, stage)) return null;
+  if (stage === 'waiting_for_you' && standing.why && Object.prototype.hasOwnProperty.call(WHY_NOTES, standing.why)) {
+    const id = WHY_NOTES[standing.why as KnownWhy];
+    if (id) return { id };
   }
+  if (stage === 'checking' && standing.line?.code === 'shots') return { id: 'project:topic.rail.note.shots' };
+  return { id: STAGE_NOTES[stage] };
 }
 
 /**

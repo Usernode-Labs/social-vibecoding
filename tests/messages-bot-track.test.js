@@ -147,16 +147,17 @@ test('every word the module asks for is in the catalog', () => {
     assert.ok(catalog[key] || catalog[`${key}_one`], `${id} is in the catalog`);
   }
   // 11 Nov 2026: the stage words and second lines are the server's, sent
-  // with the standing (`words`); lib/work-state.ts keeps only the ten plain
-  // stage words, for a payload that has none, all in core.
-  const words = read('frontend/src/lib/work-state.ts');
-  const coreIds = [...words.matchAll(/'(core:work\.[a-zA-Z_.]+)'/g)].map((m) => m[1]);
-  assert.equal(new Set(coreIds).size, 10, 'the ten plain stage words, and no whys, reasons or lines');
-  assert.ok(coreIds.every((id) => id.startsWith('core:work.stage.')));
+  // with the standing (`words`). 19 Nov 2026 (review B5): a payload that has
+  // none says its plain stage word, the one table's (lib/work-stages.ts,
+  // src/services/work-stages.json), which the client keeps no copy of.
+  const { stageWords, STAGES } = loadTsx('frontend/src/lib/work-state.ts');
+  const table = require('../src/services/work-stages');
+  assert.deepEqual([...STAGES], [...table.STAGES]);
   const coreCatalog = JSON.parse(read('frontend/locales/en/core.json'));
-  for (const id of new Set(coreIds)) {
-    const key = id.slice('core:'.length);
-    assert.ok(coreCatalog[key] || coreCatalog[`${key}_one`], `${id} is in the catalog`);
+  for (const stage of STAGES) {
+    const id = stageWords({ stage }).id;
+    assert.equal(id, table.STAGE[stage].phrase, `${stage}: the table's word`);
+    assert.ok(coreCatalog[id.slice('core:'.length)], `${id} is in the catalog`);
   }
   // 5 Nov 2026: the track's own state words and per-state lines went with
   // its old states; none is left in the catalog.

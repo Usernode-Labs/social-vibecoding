@@ -104,7 +104,12 @@ const READ_TAGS: Record<BatchRead, string> = {
   underway: 'messages:botCards.batch.read.underway',
   unread: 'messages:botCards.batch.read.unread',
 };
-const WHY_LINES: Record<string, string> = {
+// One entry for every `why` the server's table can send
+// (services/homeroom-bot-batches.js ROW_WHYS, which
+// tests/work-stages-client.test.js holds this to): `null` where the row's own
+// note says it (a request that already works carries the bot's reason).
+export const WHY_LINES: Readonly<Record<string, string | null>> = {
+  works: null,
   plan: 'messages:botCards.batch.why.plan',
   held: 'messages:botCards.batch.why.held',
   allowance: 'messages:botCards.batch.why.allowance',
@@ -118,6 +123,10 @@ const WHY_LINES: Record<string, string> = {
   going_live: 'messages:botCards.batch.why.goingLive',
   build_queued: 'messages:botCards.batch.why.buildQueued',
 };
+/** Pure: what a row says when the bot left no words, by its `why`, or null. */
+function whyLine(why: string | null | undefined): string | null {
+  return why && Object.prototype.hasOwnProperty.call(WHY_LINES, why) ? WHY_LINES[why] : null;
+}
 // The summary under the title, one counted phrase per read with any.
 const READ_COUNTS: Record<BatchRead, string> = {
   ready: 'messages:botCards.batch.count.ready',
@@ -225,9 +234,9 @@ export function BatchCardView({ data, busy = false, error = null, onBuild, onAns
                 <div className="truncate text-[0.9375rem] font-[650] text-zinc-900 dark:text-zinc-100">
                   {row.title || t('messages:botCards.batch.untitled', { number: String(row.number) })}
                 </div>
-                {row.note || (row.why && WHY_LINES[row.why]) ? (
+                {row.note || whyLine(row.why) ? (
                   <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
-                    {row.note || t(WHY_LINES[row.why!])}
+                    {row.note || t(whyLine(row.why) as string)}
                   </p>
                 ) : null}
               </div>

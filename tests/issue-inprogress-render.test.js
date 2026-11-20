@@ -875,3 +875,63 @@ test('the request chip never prefers a member\'s session over the stored row', (
   assert.ok(brief.tags.some((t) => t.label === message('core:work.whyOthers.question')), JSON.stringify(brief.tags));
   assert.ok(!brief.tags.some((t) => /maya|Being worked on/.test(t.label)), JSON.stringify(brief.tags));
 });
+
+// Review B5 (19 Nov 2026): the chip of a request Homeroom bot is on named
+// the bot's work from its own reading (_botOn), whatever the row said. A
+// request whose plan waits for its OK read "Homeroom bot will build this",
+// spinning, while its row, its foot and the bot tab said "Waiting for the
+// plan to be OK'd". The chip names the bot only in the stage the row says;
+// any other stage is the row's own word. Fed the row the server stores and
+// sends (tests/lib/stored-row.js), as each viewer reads it.
+test('a request waiting for its plan\'s OK: the chip says the row\'s word, not that the bot will build it', () => {
+  const { storedRow } = require('./lib/stored-row');
+  const { message } = require('./lib/platform-i18n');
+  const AppView = makeAppView();
+  const plan = { question: null, plan: { version: 2, sessionId: 9, at: '2026-11-19T10:00:00Z', waitingGo: true }, closeVote: null, draft: null, offers: [], reports: 0 };
+  const row = (viewer) => storedRow({ stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester', asks: plan }, viewer);
+
+  // Anybody but its requester.
+  const theirs = baseIssue({ standing: row({ mine: false }) });
+  const st = AppView._issueWorkState(theirs);
+  assert.equal(st.key, 'bot', 'still the bot\'s: nothing to start beside it');
+  assert.equal(st.label, message('core:work.whyOthers.plan'));
+  assert.notEqual(st.label, message('changes:chips.work.botQueued'));
+  assert.equal(st.spinner, false, 'nothing runs while it waits for an OK');
+  assert.equal(st.tone, 'zinc');
+  assert.equal(st.who, null, 'and it names nobody');
+  assert.match(st.note, /It starts once the plan is OK'd\./, st.note);
+  assert.doesNotMatch(st.note, /as soon as a builder is free/);
+  const chip = workChipHtml(AppView, theirs);
+  // (The markup escapes its apostrophe.)
+  assert.ok(chip.includes(message('core:work.whyOthers.plan').replace(/'/g, '&#x27;')), chip);
+  assert.match(chip, /data-work-state="bot"/);
+  assert.doesNotMatch(chip, /will build this/);
+  // The Workshop's row says it too.
+  const brief = AppView._workshopBrief('issue', theirs, null);
+  assert.ok(brief.tags.some((t) => t.label === message('core:work.whyOthers.plan')), JSON.stringify(brief.tags));
+
+  // Its requester reads their own wording.
+  assert.equal(AppView._issueWorkState(baseIssue({ standing: row() })).label, message('core:work.why.plan'));
+
+  // Every other stage the bot is on: the bot, named in the row's own stage.
+  const named = (state) => AppView._issueWorkState(baseIssue({ standing: storedRow(state, { mine: false }) }));
+  const cases = [
+    [{ stage: 'reading', whoseMove: 'bot' }, 'changes:chips.work.botReading'],
+    [{ stage: 'reading', line: { code: 'queued', asked: true }, whoseMove: 'bot' }, 'changes:chips.work.botQueued'],
+    [{ stage: 'planning', whoseMove: 'bot' }, 'changes:chips.work.botPlanning'],
+    [{ stage: 'building', whoseMove: 'bot' }, 'changes:chips.work.botBuilding'],
+    [{ stage: 'building', line: { code: 'held_builds' }, whoseMove: 'bot' }, 'changes:chips.work.botQueued'],
+    // T2.2: waiting for building credit is Ready to build, never building.
+    [{ stage: 'building', line: { code: 'credit_wait' }, whoseMove: 'bot' }, 'changes:chips.work.botQueued'],
+  ];
+  for (const [state, id] of cases) {
+    const got = named(state);
+    assert.equal(got.key, 'bot', JSON.stringify(state));
+    assert.equal(got.label, message(id), JSON.stringify(state));
+    assert.equal(got.rowWords, undefined, JSON.stringify(state));
+  }
+  // A credit wait is in the bot's queue, as the server reads it.
+  const credit = baseIssue({ standing: storedRow({ stage: 'building', line: { code: 'credit_wait' }, whoseMove: 'bot' }, { mine: false }) });
+  assert.equal(AppView._botOn(credit).what, 'queued');
+  assert.match(AppView._issueWorkState(credit).note, /as soon as a builder is free/);
+});
