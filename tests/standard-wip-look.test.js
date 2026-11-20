@@ -214,7 +214,7 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
       assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|#home-new-project-top/, `"${one}" leaves the admin console alone`);
+      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|^html:not\(\[data-skin\]\)(\.dark)? \.(rf-pair|rf-morph|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
     }
   }
   // Colours are written in the token rules alone, and every token a rule reads is declared there.

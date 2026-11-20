@@ -189,6 +189,27 @@ drops its scripts.
   (`DESIGN_REPLY_TOOL`) serves both kinds. The `offer_request` variant that
   refuses the design's own project stays the design kind's.
 
+### Drafts get the same treatment (#6915)
+
+- **The skill.** A live draft's instructions are its own skill,
+  `src/prompts/artifact-draft.md`, read once and loaded only while a draft is
+  open (`live-draft-bot.js draftSkill`). It is written against the chat's own
+  rules: a question says first what makes it necessary and what its answer
+  changes (the prompt used to say "ask back when what they want is unclear"),
+  and nothing promises anything later. It says what the preview really runs
+  on, its own copy of the app's data. What is the draft's own (its files,
+  what has been saved, the app's notes, the opening note) is still added by
+  code.
+- **One edit function.** A draft's file edit runs `artifact-session.js
+  applyEdits`, as a design and a page do, at the draft's own
+  `DRAFT_LIMITS.editsPerCall` and with its own error sentences.
+- **Honest failures.** A failure on Homeroom's side (the preview, its
+  supervisor, or the platform under it) is said as Homeroom's, spends none of
+  the turn's applies and asks for no code change. An app that stopped after
+  an edit is the app's own failure, fixed or put back in the same turn. A
+  change that needs a full rebuild says so and how long it takes, and a
+  preview that never started leaves the draft's bar saying how to retry.
+
 ## The plan stays a document
 
 **Decided against: a plan as a free page with scripts.** Ten readers take

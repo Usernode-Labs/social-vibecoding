@@ -42,8 +42,9 @@ export const MENU_SKINS = ['wip', 'brand'] as const;
 export type MenuSkin = typeof MENU_SKINS[number];
 
 /**
- * True where Home is drawn with the kit's pieces (the one-column page, the
- * pinned projects card, Recent threads, the challenge posters): Standard
+ * True where Home and the Communities page are drawn with the kit's pieces
+ * (the one-column page, the pinned projects card, Recent threads, the
+ * challenge posters; the shelf of pinned communities and the joined list): Standard
  * (WIP), which drew them first, and the standard look, which took them on 20
  * Nov 2026. The first render's 'standard' is one of them, so the prerendered
  * document and the hydrated one agree.

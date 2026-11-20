@@ -475,8 +475,6 @@ const ADDED_IDS = {
   'communities-search-input': 'The search field at the top of the Communities page, drawn from 768px: filters the Pinned and Joined groups by name. React-owned, and the page\'s own state, unlike Home\'s field.',
   'communities-pinned-section': 'The Pinned group of the Communities page: the account\'s pinned communities (home_community_pins) as tiles that open their hubs, led by the Needs you tile in a look whose Home has no Needs you card. Ships hidden: the pins load after mount.',
   'communities-joined-section': 'The Joined group of the Communities page: the communities the viewer is a member of and has not pinned, then the New community tile. Ships hidden: the list loads after mount.',
-  'communities-discover-section': 'The Discover card at the foot of the Communities page, which leads to Home\'s Communities to join.',
-  'communities-discover-btn': 'Discover communities, the button on that card: opens Home at Communities to join (Home.showCommunitiesToJoin).',
   // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
   'connector-tool-claude': 'The Claude.ai card in Settings > Connectors (features/settings/sections/connectors.tsx): its status word, its setup steps and its connections. The four cards replace one list of setup rows; #connectors-list stays as what holds them.',
   'connector-tool-chatgpt': 'The ChatGPT card, the same shape as #connector-tool-claude.',
