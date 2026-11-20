@@ -2194,6 +2194,38 @@ async function seedStagingBotWaitingRows(pool) {
           }),
         ],
       );
+      // #6920: a thread answer the bot held for OpenRouter's credit, and the
+      // answer it gave in the thread once credit was back. A fresh staging
+      // copy has no model and the bot is off there, so the words are stored
+      // for the before & after shots; nothing here is a signal the bot reads.
+      // Idempotent by their stagingDemo marks.
+      for (const m of [
+        {
+          mark: 'credit-held-ask', author: userId, interval: '2 days',
+          text: '@Homeroom bot is the header blue on the settings page too?', bot: false,
+        },
+        {
+          mark: 'credit-held-line', author: botRow.rows[0].id, interval: '47 hours',
+          text: 'OpenRouter\'s credit ran out. I\'ll answer this here as soon as it\'s back.', bot: true,
+        },
+        {
+          mark: 'credit-held-answer', author: botRow.rows[0].id, interval: '1 day',
+          text: 'Yes. The settings page uses the same header as the rest of the app, so it is blue there too.', bot: true,
+        },
+      ]) {
+        await pool.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+           SELECT $1, $2, $3, 'message', 'issue', 9119, $4, NOW() - ($5)::interval
+            WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                               WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9119
+                                 AND metadata->>'stagingDemo' = $6)`,
+          [
+            appId, m.author, m.text,
+            JSON.stringify({ stagingDemo: m.mark, ...(m.bot ? { homeroomBot: { kind: 'voice' } } : {}) }),
+            m.interval, m.mark,
+          ],
+        );
+      }
       // #6311: the note about Homeroom itself, with the copy offer under it
       // (Put it on Homeroom's board / Keep it here only). The before & after
       // shots need the state on the after copy; nothing here is a signal the
