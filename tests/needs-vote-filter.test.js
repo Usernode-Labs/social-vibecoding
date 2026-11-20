@@ -98,6 +98,47 @@ test('the chips are not drawn when the feed holds only one kind of vote', () => 
 });
 
 
+// ── The take-part rule on every owed-vote query (#6664) ────────────────
+
+test('each owed-vote query asks the project\'s take-part rule, and leaves questions out', () => {
+  const SRC = read('src/routes/workshop-overview.js');
+  const region = (startMarker) => {
+    const start = SRC.indexOf(startMarker);
+    assert.ok(start >= 0, `${startMarker} is in the source`);
+    const end = SRC.indexOf('`;', start);
+    assert.ok(end > start, `${startMarker} is a template literal`);
+    return SRC.slice(start, end + 2);
+  };
+  // The rule is checkAppAccess's 'collab' level, the one that refuses a vote:
+  // an admin, a project that lets everyone take part, or a collaborator. The
+  // `me` join is the viewer's accepted app_collaborators row.
+  const rule = region('const CAN_TAKE_PART_SQL = ');
+  assert.match(rule, /\$3::boolean OR a\.collab_visibility = 'public' OR me\.user_id IS NOT NULL/);
+
+  const counts = region('const COUNTS_SQL = ');
+  const items = region('const ITEMS_SQL = ');
+  const feed = region('const needsFeedSql = ');
+  const owed = region('const OWED_BY_COMMUNITY_SQL = ');
+  for (const [name, sql] of [
+    ['COUNTS_SQL', counts], ['ITEMS_SQL', items],
+    ['needsFeedSql', feed], ['OWED_BY_COMMUNITY_SQL', owed],
+  ]) {
+    assert.match(sql, /\$\{CAN_TAKE_PART_SQL\}/, `${name} reads the take-part rule`);
+  }
+
+  // The bot's questions are the viewer's wherever they are: only the votes
+  // are gated, so the chips' counts never include a vote they cannot cast.
+  const needsExpr = counts.slice(counts.indexOf('SELECT a.slug,'), counts.indexOf('FROM apps a'));
+  assert.equal((needsExpr.match(/CASE WHEN \$\{CAN_TAKE_PART_SQL\}/g) || []).length, 4,
+    'the two vote counts and their two key arrays are gated');
+  assert.ok(needsExpr.includes('COALESCE(oq.n, 0)) AS needs'), 'the question count is not gated');
+  assert.ok(needsExpr.includes("COALESCE(oq.keys, '{}'::text[])) AS owed"), 'nor its keys');
+  assert.match(feed, /o\.kind = 'question' OR \$\{CAN_TAKE_PART_SQL\}/);
+  assert.match(owed, /o\.kind = 'question' OR \$\{CAN_TAKE_PART_SQL\}/);
+  assert.match(items, /it\.kind = 'question'/);
+});
+
+
 // ── The project's own Needs you, and the experimental run ──────────────
 
 
