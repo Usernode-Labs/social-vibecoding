@@ -7596,6 +7596,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pag
 }
 html:not([data-skin]):where([data-motion="reduce"]) .wip-caught-door { transition: none; }
 html:not([data-skin]):where([data-motion="reduce"]) .wip-caught-door:is(:hover, :focus-visible) { transform: none; }
+/* WHAT A CHANGE DOES, BESIDE IT (asked 20 Nov 2026). From 1280px a project's Needs you keeps the card that the arrow in
+   the change's bar opens (its summary, who made it, the way to its page and the three ways to look closer) open at the
+   change's far side, in the same card past a hairline; review-flow.tsx marks the page (`data-rf-beside`) and takes the
+   card out of hiding. Narrower, the arrow opens it over the change as it always did. */
+html:not([data-skin]) { --wip-needs-side: 22rem; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] > .rf-page { width: min(100%, calc(520px + var(--wip-needs-side))); padding-inline-end: var(--wip-needs-side); }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-wrap { inset-block: 0; inset-inline-start: auto; inset-inline-end: 0; width: var(--wip-needs-side); overflow: visible; pointer-events: auto; border-inline-start: 1px solid var(--rf-line); }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc { position: static; max-height: 100%; padding: 1rem; border-radius: 0; background: none; box-shadow: none; transform: none; transition: none; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] :is(.rf-desc-foot, .rf-desc-help) { margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim { display: none; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle { display: none; }
 /* THE BOARD (All items), framed as Home and the hub are: on the page's own
    ground with no sheet behind it, under the place's name as a label of the
    look (both shared with the hub and Needs you, above). The Workshop's door

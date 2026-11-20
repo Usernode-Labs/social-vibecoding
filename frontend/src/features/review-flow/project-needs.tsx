@@ -9,6 +9,7 @@
  * ProjectWaysIn draws nothing.
  */
 
+import { useEffect, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { ChatIcon, CheckIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
@@ -17,6 +18,28 @@ import { isKitHome, useLiveSkin } from '../../lib/skin';
 /** Whether this is a project's page under the look that draws these. */
 function useDrawn(slug?: string, project?: string): boolean {
   return isKitHome(useLiveSkin()) && !!slug && !!project;
+}
+
+/** From this width a project's Needs you shows what a change does beside it (app.css `[data-rf-beside]`). */
+const DESC_BESIDE = '(min-width: 1280px)';
+
+/**
+ * Whether what a change does is shown beside it, not under the arrow in its
+ * bar: on a project's own Needs you under the look that draws it, on a large
+ * screen. Read after mount, so the first render knows no width.
+ */
+export function useDescBeside(slug?: string, project?: string): boolean {
+  const drawn = useDrawn(slug, project);
+  const [large, setLarge] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia(DESC_BESIDE);
+    const read = () => setLarge(mq.matches);
+    read();
+    mq.addEventListener('change', read);
+    return () => mq.removeEventListener('change', read);
+  }, []);
+  return drawn && large;
 }
 
 /**
