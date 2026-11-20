@@ -2733,6 +2733,9 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    toned app. */
 html[data-text-size="large"] { font-size: 112.5%; }
 html[data-text-size="larger"] { font-size: 125%; }
+/* The slider's two steps past the presets (#6510). */
+html[data-text-size="xlarge"] { font-size: 137.5%; }
+html[data-text-size="xxlarge"] { font-size: 150%; }
 
 html:not(.dark)[data-contrast="more"] {
   --text-muted: #3a3a3c;
@@ -5971,11 +5974,13 @@ html[data-skin-wip] {
   --wip-search-w: 24rem;
   --wip-topbar-pad-phone: 1.75rem; /* above the search row on a phone: the header covers its first 8px */
 }
-/* ── Token configs ──────────────────────────────────────────
-   The rule above is the config called Current. Another config is the same
-   list with other values, on html[data-wip-tokens="<name>"] (head.html
-   window.Skin.getTokens; the look picker beside the bell, for admins). Only the
-   values differ: no rule of the look knows which config is on.
+/* ── The token set that draws the look ──────────────────────
+   The rule above is the list every value starts from. The look is drawn
+   with one set of other values over it, on html[data-wip-tokens="brand"],
+   which the head sets whenever the look is on (head.html, WIP_TOKENS).
+   Three more drawings were tried and removed on 20 Nov 2026: the list
+   above on its own, the brand kit's second drawing and Highlighter. Only
+   the values differ: no rule of the look knows which set is on.
 
    BRAND: Homeroom's brand kit (Baked Design Studio, 2026). Cream is the
    page and black the ink; yellow is the filled action and a count, with
@@ -6073,110 +6078,6 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
   --wip-count-line: transparent;
   --lit-ink: #fffeea;
   --lit-tint: rgb(255 254 234 / 0.1);
-  --lit-line: rgb(255 254 234 / 0.18);
-}
-/* BRAND2 ("Homeroom brand kit V2"): the kit again, with more of its voice
-   (confident, playful, simple) than BRAND, and with its colours used small.
-   Cream and white carry the page; yellow and green are marks, never
-   grounds (as blocks behind a whole row they shouted):
-     Cream   the page, and the frame round it.
-     White   every card, with no outline: it lifts off the cream on a soft
-             shadow.
-     Yellow  a highlighter: a stroke through the lower half of each section
-             title's words, and, pale, the mark of where you are in the
-             sidebar. Never a ground behind a row.
-     Green   what a challenge is worth: a small pale ground behind its
-             points, and a thing done.
-     Blue    getting somewhere: a meter's fill, and the disc under a
-             title's chevron.
-   What is pressed is the kit's Cream + Black: the filled action, the Vote
-   pill and the count beside a title.
-   Section titles are headlines, in the kit's serif role (Young Serif stands
-   in for the licensed STK Bureau Serif, as Source Serif does on the kit's
-   own page), sentence case, in the ink. The filled action is Cream + Black.
-   Interface text is Geist. */
-html[data-skin-wip][data-wip-tokens="brand2"] {
-  /* The kit's three colours as the marks icons take turns in: each a pale
-     wash of the colour (a quarter of it, or less, over the card) with the
-     glyph in a deep tone of the same colour. */
-  --wip-mark-1-bg: rgb(255 238 111 / 0.24);
-  --wip-mark-1-ink: #7a6a00;
-  --wip-mark-2-bg: rgb(48 144 225 / 0.09);
-  --wip-mark-2-ink: #1c64a8;
-  --wip-mark-3-bg: rgb(169 207 151 / 0.22);
-  --wip-mark-3-ink: #2f6b1e;
-  --wip-page-bg: #fffeea;
-  --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --wip-label-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
-  --wip-label-size: 1.375rem;
-  --wip-label-case: none;
-  --wip-label-track: -0.01em;
-  --wip-label-weight: 400;
-  --wip-label-ink: #000000;
-  --wip-hub-name-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
-  --wip-hub-name-weight: 400;
-  --wip-card-bg: #ffffff;
-  --wip-card-line: rgb(0 0 0 / 0.07);
-  --wip-card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 14px 28px -18px rgb(0 0 0 / 0.28);
-  --wip-ink: #000000;
-  --wip-ink-soft: rgb(0 0 0 / 0.74);
-  --wip-ink-muted: rgb(0 0 0 / 0.62);
-  --wip-ink-action: #000000;
-  --wip-icon-shadow: 0 1px 0 rgb(0 0 0 / 0.08), 0 8px 16px -8px rgb(0 0 0 / 0.2);
-  --wip-cta-from: #000000;
-  --wip-cta-via: #000000;
-  --wip-cta-to: #000000;
-  --wip-cta-ink: #fffeea;
-  --wip-cta-glow: rgb(0 0 0 / 0.24);
-  --wip-label-mark: #ffee6f;
-  --wip-pill-bg: #000000;
-  --wip-pill-ink: #fffeea;
-  --wip-count-bg: #000000;
-  --wip-count-ink: #fffeea;
-  --wip-meter: #3090e1;
-  --wip-worth-bg: rgb(169 207 151 / 0.5);
-  --wip-worth-ink: #000000;
-  --wip-ok: #2f6b1e; /* the kit's green, deepened to carry words on white */
-  --wip-head-disc: rgb(48 144 225 / 0.16);
-  --lit-ink: #000000;
-  --lit-tint: #fcfab3; /* the kit's pale yellow marks where you are */
-  --lit-line: rgb(0 0 0 / 0.14);
-}
-/* In the dark: cream on black, lifted by an edge and not a shadow, with the
-   same small marks. */
-html[data-skin-wip][data-wip-tokens="brand2"].dark {
-  --wip-mark-1-bg: rgb(255 238 111 / 0.16);
-  --wip-mark-1-ink: #ffee6f;
-  --wip-mark-2-bg: rgb(48 144 225 / 0.2);
-  --wip-mark-2-ink: #8cc4ff;
-  --wip-mark-3-bg: rgb(169 207 151 / 0.18);
-  --wip-mark-3-ink: #a9cf97;
-  --wip-page-bg: #0b0b0c;
-  --wip-label-ink: #fffeea;
-  --wip-card-bg: #171715;
-  --wip-card-line: rgb(255 254 234 / 0.16);
-  --wip-card-shadow: 0 0 transparent;
-  --wip-ink: #fffeea;
-  --wip-ink-soft: rgb(255 254 234 / 0.8);
-  --wip-ink-muted: rgb(255 254 234 / 0.64);
-  --wip-ink-action: #fffeea;
-  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
-  --wip-cta-from: #ffee6f;
-  --wip-cta-via: #ffee6f;
-  --wip-cta-to: #ffee6f;
-  --wip-cta-ink: #000000;
-  --wip-cta-glow: rgb(255 238 111 / 0.18);
-  --wip-label-mark: rgb(255 238 111 / 0.32);
-  --wip-pill-bg: #fffeea;
-  --wip-pill-ink: #000000;
-  --wip-count-bg: #fffeea;
-  --wip-count-ink: #000000;
-  --wip-worth-bg: rgb(169 207 151 / 0.22);
-  --wip-worth-ink: #fffeea;
-  --wip-ok: #a9cf97;
-  --wip-head-disc: rgb(48 144 225 / 0.28);
-  --lit-ink: #fffeea;
-  --lit-tint: rgb(255 238 111 / 0.14);
   --lit-line: rgb(255 254 234 / 0.18);
 }
 /* How many columns a list of the look has, by the room there is: one, two
@@ -6739,11 +6640,6 @@ html[data-skin-wip] #home-join-section [data-guest-card-cover][style]::before {
   background: inherit;
   filter: var(--wip-cover-lift);
 }
-/* The sidebar's community icons are rounded squares, as the icons on Home
-   are, not discs: the tile's own small corner, and the picture inside it
-   takes the same one (it rounded itself into a circle). */
-html[data-skin-wip] .platform-rail-tile,
-html[data-skin-wip] .platform-rail-tile > img { border-radius: var(--wip-radius-small); }
 /* Under a token config, Home's section labels are drawn from the config's
    label tokens (the shell's own label's values unless the config names
    others): the three label lines and Featured's. */
@@ -7913,398 +7809,17 @@ html[data-skin-wip] body > :is(.dev-ws-side) {
 /* A pinned app's tile does not say when it was opened under the look: its
    tiles say less. */
 html[data-skin-wip] #app-list .app-card-opened { display: none; }
-/* THE LEFT MENU AND THE TOP BAR, AS THE MOSAIC LOOK DRAWS THEM (from 768px,
-   where the menu is a sidebar; a phone's bar is untouched).
-   The sidebar is a panel of its own: the look's card, standing a little in
-   from the window's edges at its full height, with round corners and a soft
-   drop. The top bar is clear, on every page (a project's page too, which
-   paints it in the community's colour elsewhere): its words and buttons are
-   the page's ink. The bar's own logo, at its start, falls inside the top of
-   the panel, which leaves room for it, so the panel is headed by the logo
-   as Mosaic's is. The place you are on is a filled row, in the ink with the
-   card's colour for its words; a row under the pointer wears the look's
-   soft ground. */
-html[data-skin-wip] {
-  --wip-nav-bg: #18181b;                 /* the panel: the shell's own dark; a token set names its own below */
-  --wip-nav-ink: rgb(255 255 255 / 0.82);
-  --wip-nav-ink-strong: #ffffff;
-  --wip-nav-mut: rgb(255 255 255 / 0.6);
-  --wip-nav-faint: rgb(255 255 255 / 0.3);
-  --wip-nav-hover: rgb(255 255 255 / 0.1);
-  --wip-nav-line: transparent;
-  --wip-nav-accent: transparent;        /* a bar at the start of the place you are on; a token set names it */
-  --wip-nav-on-bg: var(--accent);        /* the row of the place you are on */
-  --wip-nav-on-ink: #ffffff;
-  --wip-nav-count-bg: #ffffff;           /* a count on a row, and on the lit row */
-  --wip-nav-count-ink: #18181b;
-  --wip-nav-on-count-bg: #ffffff;
-  --wip-nav-on-count-ink: #18181b;
-  --wip-nav-row-h: 2.5rem;
-  --wip-nav-row-radius: 0.75rem;
-  --wip-nav-tab-inset: 0.375rem; /* round a tab on the phone's bar: what keeps the lit pill off the bar's edges */
-  /* Sunrise's own glyphs (the kit's 24px strokes, @/components/ui/kit-icons.ts), as masks the row's ink fills. */
-  --wip-nav-ic-home: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'/%3E%3C/svg%3E");
-  --wip-nav-ic-spark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m11 3 1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.900z'/%3E%3Cpath d='M19 15v4M17 17h4'/%3E%3C/svg%3E");
-  --wip-nav-ic-chat: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.600A8 8 0 1 1 21 12z'/%3E%3C/svg%3E");
-  --wip-nav-ic-users: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='8' r='3.5'/%3E%3Cpath d='M2.5 20a6.5 6.5 0 0 1 13 0M16 4.600a3.5 3.5 0 0 1 0 6.800M18 14.500a6.5 6.5 0 0 1 3.5 5.5'/%3E%3C/svg%3E");
-  --wip-nav-ic-user: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4 21a8 8 0 0 1 16 0'/%3E%3C/svg%3E");
-  --wip-nav-ic-sliders: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0'/%3E%3Ccircle cx='15' cy='6' r='2.2'/%3E%3Ccircle cx='9' cy='12' r='2.2'/%3E%3Ccircle cx='17' cy='18' r='2.2'/%3E%3C/svg%3E");
-  --wip-nav-ic-fold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 6-6 6 6 6'/%3E%3C/svg%3E");
-  --wip-nav-ic-unfold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 6 6 6-6 6'/%3E%3C/svg%3E");
-  --wip-nav-fold: 24px;                  /* the fold arrow pinned to the panel's edge */
-  --wip-nav-fold-top: 14px;
-  --wip-nav-fold-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
-  --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
-  --wip-nav-ic-size: 20px;
-  --wip-nav-ic-size-small: 18px;
-  --wip-nav-tile: 22px;
-  --wip-nav-tile-radius: 6.16px;
-  --wip-nav-count: 20px;
-  --wip-nav-brand-top: 12px;
-  --wip-nav-foot-line: rgb(255 255 255 / 0.14);
-  --wip-nav-brand-tile: 28px;
-  --wip-nav-brand-h: 60px;               /* the brand's band at the panel's top */
-  --wip-nav-brand-logo: url('/brand/homeroom-logotype-black.png'); /* the logotype, as a mask the panel's ink fills */
-  --wip-nav-brand-w: 124px;
-  --wip-nav-w: 244px;                    /* Sunrise's own measures and face */
-  --wip-nav-pad: 10px;
-  --wip-nav-row-pad: 12px;
-  --wip-nav-row-gap: 12px;
-  --wip-nav-size: 15px;
-  --wip-nav-head-size: 12.5px;
-  --wip-nav-font: var(--wip-font);
-}
-html[data-skin-wip].dark {
-  --wip-nav-bg: #111113;
-  --wip-nav-line: rgb(255 255 255 / 0.11);
-}
-/* The brand's sets: the brand's own deep sky (as its look's sidebar, --bl-side), white words,
-   and the place you are on in the sun (V1) or in cream (V2, the calmer one). */
+/* THE LEFT MENU AND THE TOP BAR are the standard look's too since 20 Nov
+   2026: their rules and tokens, the menu's colours among them, are the
+   block after this one ("THE LEFT MENU AND THE TOP BAR"). What is left here
+   is where the brand kit points a token at a value of its own: its typeface,
+   its corners, and its ink for the top bar. */
 html[data-skin-wip][data-wip-tokens="brand"] {
-  --wip-nav-bg: #3c7bd8;
-  --wip-nav-ink: rgb(255 255 255 / 0.88);
-  --wip-nav-ink-strong: #ffffff;
-  --wip-nav-mut: rgb(255 255 255 / 0.72);
-  --wip-nav-faint: rgb(255 255 255 / 0.32);
-  --wip-nav-hover: rgb(255 255 255 / 0.16);
-  --wip-nav-foot-line: rgb(255 255 255 / 0.22);
-  --wip-nav-on-bg: #ffee6f;
-  --wip-nav-on-ink: #121a0e;
-  --wip-nav-count-bg: #ffffff;
-  --wip-nav-count-ink: #121a0e;
-  --wip-nav-on-count-bg: #121a0e;
-  --wip-nav-on-count-ink: #ffffff;
-}
-html[data-skin-wip][data-wip-tokens="brand2"] {
-  --wip-nav-bg: #3c7bd8;
-  --wip-nav-ink: rgb(255 255 255 / 0.88);
-  --wip-nav-ink-strong: #ffffff;
-  --wip-nav-mut: rgb(255 255 255 / 0.72);
-  --wip-nav-faint: rgb(255 255 255 / 0.32);
-  --wip-nav-hover: rgb(255 255 255 / 0.16);
-  --wip-nav-foot-line: rgb(255 255 255 / 0.22);
-  --wip-nav-on-bg: #fffeea;
-  --wip-nav-on-ink: #121a0e;
-  --wip-nav-count-bg: #ffffff;
-  --wip-nav-count-ink: #121a0e;
-  --wip-nav-on-count-bg: #121a0e;
-  --wip-nav-on-count-ink: #ffffff;
-}
-html[data-skin-wip][data-wip-tokens="brand"].dark {
-  --wip-nav-bg: #122a52;
-}
-html[data-skin-wip][data-wip-tokens="brand2"].dark {
-  --wip-nav-bg: #122a52;
-}
-/* Every size: the phone's bottom bar is the same night panel. */
-html[data-skin-wip] #platform-tabs {
-  --text-primary: var(--wip-nav-ink-strong);
-  --text-secondary: var(--wip-nav-ink);
-  --text-muted: var(--wip-nav-ink);
-  --text-faint: var(--wip-nav-faint);
-  --accent: var(--wip-nav-ink-strong);
-  --lit-tint: var(--wip-nav-hover);
-  --lit-ink: var(--wip-nav-ink-strong);
-  --lit-line: transparent;
-  border: 0;
-  background: var(--wip-nav-bg);
-  color: var(--wip-nav-ink);
-  font-family: var(--wip-nav-font);
-}
-html[data-skin-wip] #platform-tabs::before { content: none; }
-html[data-skin-wip] #platform-tabs .platform-tab { border-radius: var(--wip-nav-row-radius); font-weight: 600; }
-html[data-skin-wip] #platform-tabs :is(.platform-tab-glyph, .dev-ws-place-glyph, .platform-rail-sub-glyph, .platform-rail-settings) { color: inherit; }
-html[data-skin-wip] #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community, .dev-ws-place, .platform-rail-sub):not([aria-current="page"]):hover {
-  background: var(--wip-nav-hover);
-  box-shadow: none;
-  color: var(--wip-nav-ink-strong);
-}
-html[data-skin-wip] #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] {
-  background: var(--wip-nav-on-bg);
-  box-shadow: none;
-  color: var(--wip-nav-on-ink);
-  font-weight: 700;
-}
-html[data-skin-wip] #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label, .dev-ws-place-glyph, .dev-ws-place-label, .platform-rail-sub-glyph, .platform-rail-sub-name, .platform-rail-settings-glyph) {
-  color: var(--wip-nav-on-ink);
-}
-html[data-skin-wip] #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
-  background: var(--wip-nav-count-bg);
-  color: var(--wip-nav-count-ink);
-}
-html[data-skin-wip] #platform-tabs [aria-current="page"] :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
-  background: var(--wip-nav-on-count-bg);
-  color: var(--wip-nav-on-count-ink);
-}
-html[data-skin-wip] #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { color: var(--wip-nav-mut); }
-html[data-skin-wip] #platform-tab-home { --wip-nav-ic: var(--wip-nav-ic-home); }
-html[data-skin-wip] #platform-tab-ai { --wip-nav-ic: var(--wip-nav-ic-spark); }
-html[data-skin-wip] #platform-tab-messages { --wip-nav-ic: var(--wip-nav-ic-chat); }
-html[data-skin-wip] #platform-tab-workshop { --wip-nav-ic: var(--wip-nav-ic-users); }
-html[data-skin-wip] #platform-tab-me { --wip-nav-ic: var(--wip-nav-ic-user); }
-html[data-skin-wip] #platform-tabs .platform-rail-settings { --wip-nav-ic: var(--wip-nav-ic-sliders); }
-html[data-skin-wip] #platform-tabs :is(#platform-tab-home, #platform-tab-ai, #platform-tab-messages, #platform-tab-workshop, #platform-tab-me) .platform-tab-glyph,
-html[data-skin-wip] #platform-tabs .platform-rail-settings-glyph {
-  background-color: currentColor;
-  -webkit-mask: var(--wip-nav-ic) center / contain no-repeat;
-  mask: var(--wip-nav-ic) center / contain no-repeat;
-}
-html[data-skin-wip] #platform-tabs :is(#platform-tab-home, #platform-tab-ai, #platform-tab-messages, #platform-tab-workshop, #platform-tab-me) .platform-tab-glyph > *,
-html[data-skin-wip] #platform-tabs .platform-rail-settings-glyph > * { opacity: 0; }
-html[data-skin-wip] #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .platform-tab-badge) { min-width: var(--wip-nav-count); height: var(--wip-nav-count); padding: 0 6px; font-size: 11px; font-weight: 700; }
-/* On a phone's bar the tab you are on is a pill inside the bar, not a block of it (asked 19 Nov 2026): every tab keeps a step clear of the bar's edges and of its neighbours, so the yellow touches none of them. */
-@media (max-width: 767.98px) {
-  html[data-skin-wip] #platform-tabs .platform-tab { margin: var(--wip-nav-tab-inset) calc(var(--wip-nav-tab-inset) / 2); }
-  html[data-skin-wip] #platform-tabs .platform-tab:first-child,
-  html[data-skin-wip] #platform-tabs #platform-tab-home { margin-inline-start: var(--wip-nav-tab-inset); }
-  html[data-skin-wip] #platform-tabs #platform-tab-me { margin-inline-end: var(--wip-nav-tab-inset); }
-}
-@media (min-width: 768px) {
-  html[data-skin-wip] #platform-tabs {
-    top: 0;
-    padding-top: var(--wip-nav-brand-h);
-    z-index: 9; /* over the page, under the top bar (10), whose logo it frames */
-    box-shadow: inset -1px 0 0 var(--wip-nav-line);
-  }
-  html[data-skin-wip] body { --platform-rail-full: var(--wip-nav-w); }
-  html[data-skin-wip] #platform-tabs .platform-tab-glyph { width: var(--wip-nav-ic-size); height: var(--wip-nav-ic-size); }
-  html[data-skin-wip] #platform-tabs .platform-rail-settings-glyph { width: var(--wip-nav-ic-size-small); height: var(--wip-nav-ic-size-small); }
-  html[data-skin-wip] #platform-tabs.platform-tabs { padding-inline: var(--wip-nav-pad); gap: 2px; }
-  html[data-skin-wip] #platform-tabs :is(.platform-tab, .platform-rail-community, .platform-rail-settings) { min-height: var(--wip-nav-row-h); padding-inline-start: var(--wip-nav-row-pad); gap: var(--wip-nav-row-gap); border-radius: var(--wip-nav-row-radius); font-size: var(--wip-nav-size); font-weight: 600; }
-  html[data-skin-wip] #platform-tabs .platform-tab { padding-inline-end: var(--wip-nav-row-pad); }
-  html[data-skin-wip] #platform-tabs :is(.platform-tab-label, .platform-rail-community-name) { font-size: var(--wip-nav-size); }
-  html[data-skin-wip] #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { text-transform: none; letter-spacing: 0; font-size: var(--wip-nav-head-size); font-weight: 600; }
-  /* THE BRAND: Homeroom's logotype at the panel's top, the same on
-     every page. The top bar (fold button, then the page's own title) starts beside the panel. */
-  html[data-skin-wip] #platform-tabs::before {
-    content: "";
-    position: absolute;
-    inset-block-start: var(--wip-nav-brand-top);
-    inset-inline-start: calc(var(--wip-nav-pad) + 8px);
-    width: var(--wip-nav-brand-w);
-    height: var(--wip-nav-brand-tile);
-    background: var(--wip-nav-ink-strong); /* the whole shorthand: the bar's own glass gradient would lie over the ink */
-    z-index: 0;
-    -webkit-mask: var(--wip-nav-brand-logo) left center / contain no-repeat;
-    mask: var(--wip-nav-brand-logo) left center / contain no-repeat;
-  }
-  /* The line over "You", as Sunrise's foot has. */
-  html[data-skin-wip] #platform-tabs::after { background: var(--wip-nav-foot-line); }
-  html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header { padding-inline-start: calc(var(--wip-nav-w) + 1rem); }
-  /* Homeroom's own mark and logotype are the panel's brand already: the top bar does not say them again. */
-  html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
-  /* THE FOLD BUTTON IS AN ARROW: pinned on the panel's edge while it is open, and at the
-     top bar's start, pointing the other way, once it is folded. */
-  html[data-skin-wip] #platform-header #sidebar-toggle {
-    width: var(--wip-nav-fold);
-    height: var(--wip-nav-fold);
-    border: 0;
-    border-radius: var(--wip-radius-pill);
-    background: var(--wip-card-bg);
-    box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-nav-fold-shadow);
-    color: var(--wip-ink);
-  }
-  html[data-skin-wip] #platform-header #sidebar-toggle > svg {
-    width: 14px;
-    height: 14px;
-    background-color: currentColor;
-    -webkit-mask: var(--wip-nav-ic-unfold) center / contain no-repeat;
-    mask: var(--wip-nav-ic-unfold) center / contain no-repeat;
-  }
-  html[data-skin-wip] #platform-header #sidebar-toggle > svg > * { opacity: 0; }
-  html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #sidebar-toggle {
-    position: absolute;
-    inset-block-start: var(--wip-nav-fold-top);
-    inset-inline-start: calc(var(--wip-nav-w) - var(--wip-nav-fold) / 2);
-  }
-  html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #sidebar-toggle > svg {
-    -webkit-mask-image: var(--wip-nav-ic-fold);
-    mask-image: var(--wip-nav-ic-fold);
-  }
-  html[data-skin-wip] #platform-header,
-  html[data-skin-wip][data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
-    --fake-glass-tint: transparent;
-    --brand-ink: var(--wip-ink);
-    --brand-tint: var(--wip-ghost);
-    --brand-line: var(--wip-card-line);
-    background-color: transparent;
-    color: var(--wip-ink);
-  }
-  /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
-  html[data-skin-wip] body #platform-header#platform-header::before { content: none !important; }
-  html[data-skin-wip][data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-card-line); }
-}
-/* ── HIGHLIGHTER, ONE MORE TOKEN SET (19 Nov 2026) ───────────────────────
-   From the yellow marker under headings and on buttons, on the brand's
-   website and in its Figma frames. Neutrals and ONE accent, used in three
-   strengths (a pale wash for tints and the heading's mark, a soft fill for
-   the place you are on, full strength for the main action). Status is a pale
-   fill with a dark word. Every pair of words and ground passes AA in light
-   and in dark. Its dark rule names every token its light rule does, so a
-   light value never shows through in the dark. (Eight sister sets were drawn
-   with it and removed the same day.) */
-/* Highlighter: Website and Figma: the yellow marker under headings and on buttons. */
-html[data-skin-wip][data-wip-tokens="highlighter"] {
-  --wip-mark-1-bg: #fbf6cf;
-  --wip-mark-1-ink: #262b22;
-  --wip-mark-2-bg: #fbf6cf;
-  --wip-mark-2-ink: #262b22;
-  --wip-mark-3-bg: #fbf6cf;
-  --wip-mark-3-ink: #262b22;
-  --wip-page-bg: #fbfaf4;
-  --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --wip-label-font: 'Source Serif 4', Georgia, 'Times New Roman', serif;
-  --wip-label-size: 1.375rem;
-  --wip-label-case: none;
-  --wip-label-track: -0.01em;
-  --wip-label-weight: 600;
-  --wip-label-ink: #262b22;
-  --wip-hub-name-font: 'Source Serif 4', Georgia, 'Times New Roman', serif;
-  --wip-hub-name-weight: 600;
-  --wip-card-bg: #ffffff;
-  --wip-card-line: #e5e4d5;
-  --wip-card-shadow: 0 1px 2px rgb(38 43 34 / 0.05), 0 12px 24px -16px rgb(38 43 34 / 0.2);
-  --wip-ink: #262b22;
-  --wip-ink-soft: color-mix(in srgb, #262B22 82%, transparent);
-  --wip-ink-muted: #666c5c;
-  --wip-ink-action: #262b22;
-  --wip-icon-shadow: 0 1px 0 rgb(38 43 34 / 0.06), 0 8px 16px -8px rgb(38 43 34 / 0.18);
-  --wip-cta-from: #ffee6f;
-  --wip-cta-via: #ffee6f;
-  --wip-cta-to: #ffee6f;
-  --wip-cta-ink: #262b22;
-  --wip-cta-glow: color-mix(in srgb, #FFEE6F 26%, transparent);
-  --wip-label-mark: #fff4ae;
-  --wip-pill-bg: #fff4ae;
-  --wip-pill-ink: #5a4d08;
-  --wip-count-bg: #fbf6cf;
-  --wip-count-ink: #262b22;
-  --wip-meter: #d6c54a;
-  --wip-worth-bg: #e3efdd;
-  --wip-worth-ink: #2c6332;
-  --wip-ok: #2c6332;
-  --wip-head-disc: #fbf6cf;
-  --wip-tag-ok-bg: #e3efdd;
-  --wip-tag-ok-ink: #2c6332;
-  --wip-tag-warn-bg: #fff4ae;
-  --wip-tag-warn-ink: #5a4d08;
-  --wip-tag-bad-bg: #ffe7dd;
-  --wip-tag-bad-ink: #a23a12;
-  --wip-tag-run-bg: #fbf6cf;
-  --wip-tag-run-ink: #262b22;
-  --wip-radius-card: 12px;
-  --wip-radius-inner: 10px;
-  --wip-nav-bg: #ffffff;
-  --wip-nav-ink: color-mix(in srgb, #262B22 88%, transparent);
-  --wip-nav-ink-strong: #262b22;
-  --wip-nav-mut: color-mix(in srgb, #262B22 68%, transparent);
-  --wip-nav-faint: color-mix(in srgb, #262B22 30%, transparent);
-  --wip-nav-hover: color-mix(in srgb, #262B22 8%, transparent);
-  --wip-nav-foot-line: color-mix(in srgb, #262B22 14%, transparent);
-  --wip-nav-line: #e5e4d5;
-  --wip-nav-on-bg: #fff4ae;
-  --wip-nav-on-ink: #262b22;
-  --wip-nav-accent: #d6c54a;
-  --wip-nav-count-bg: #fff4ae;
-  --wip-nav-count-ink: #5a4d08;
-  --wip-nav-on-count-bg: #fff4ae;
-  --wip-nav-on-count-ink: #5a4d08;
-  --lit-ink: #262b22;
-  --lit-tint: #fff4ae;
-  --lit-line: transparent;
-}
-html[data-skin-wip][data-wip-tokens="highlighter"].dark {
-  --wip-mark-1-bg: #2a2a25;
-  --wip-mark-1-ink: #e9e8da;
-  --wip-mark-2-bg: #2a2a25;
-  --wip-mark-2-ink: #e9e8da;
-  --wip-mark-3-bg: #2a2a25;
-  --wip-mark-3-ink: #e9e8da;
-  --wip-page-bg: #161613;
-  --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --wip-label-font: 'Source Serif 4', Georgia, 'Times New Roman', serif;
-  --wip-label-size: 1.375rem;
-  --wip-label-case: none;
-  --wip-label-track: -0.01em;
-  --wip-label-weight: 600;
-  --wip-label-ink: #e9e8da;
-  --wip-hub-name-font: 'Source Serif 4', Georgia, 'Times New Roman', serif;
-  --wip-hub-name-weight: 600;
-  --wip-card-bg: #1f1f1b;
-  --wip-card-line: #30332b;
-  --wip-card-shadow: 0 0 transparent;
-  --wip-ink: #e9e8da;
-  --wip-ink-soft: color-mix(in srgb, #E9E8DA 82%, transparent);
-  --wip-ink-muted: #a8ac9d;
-  --wip-ink-action: #e9e8da;
-  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
-  --wip-cta-from: #f0e06e;
-  --wip-cta-via: #f0e06e;
-  --wip-cta-to: #f0e06e;
-  --wip-cta-ink: #10140e;
-  --wip-cta-glow: color-mix(in srgb, #F0E06E 20%, transparent);
-  --wip-label-mark: #38351a;
-  --wip-pill-bg: #38351a;
-  --wip-pill-ink: #efe08a;
-  --wip-count-bg: #2a2a25;
-  --wip-count-ink: #e9e8da;
-  --wip-meter: #f0e06e;
-  --wip-worth-bg: #253b2a;
-  --wip-worth-ink: #b5d9ae;
-  --wip-ok: #b5d9ae;
-  --wip-head-disc: #2a2a25;
-  --wip-tag-ok-bg: #253b2a;
-  --wip-tag-ok-ink: #b5d9ae;
-  --wip-tag-warn-bg: #38351a;
-  --wip-tag-warn-ink: #efe08a;
-  --wip-tag-bad-bg: #40231a;
-  --wip-tag-bad-ink: #f2b6a2;
-  --wip-tag-run-bg: #2a2a25;
-  --wip-tag-run-ink: #e9e8da;
-  --wip-radius-card: 12px;
-  --wip-radius-inner: 10px;
-  --wip-nav-bg: #161613;
-  --wip-nav-ink: color-mix(in srgb, #E9E8DA 88%, transparent);
-  --wip-nav-ink-strong: #e9e8da;
-  --wip-nav-mut: color-mix(in srgb, #E9E8DA 68%, transparent);
-  --wip-nav-faint: color-mix(in srgb, #E9E8DA 30%, transparent);
-  --wip-nav-hover: color-mix(in srgb, #E9E8DA 8%, transparent);
-  --wip-nav-foot-line: color-mix(in srgb, #E9E8DA 14%, transparent);
-  --wip-nav-line: #30332b;
-  --wip-nav-on-bg: #38351a;
-  --wip-nav-on-ink: #f0e06e;
-  --wip-nav-accent: #f0e06e;
-  --wip-nav-count-bg: #38351a;
-  --wip-nav-count-ink: #efe08a;
-  --wip-nav-on-count-bg: #38351a;
-  --wip-nav-on-count-ink: #efe08a;
-  --lit-ink: #f0e06e;
-  --lit-tint: #38351a;
-  --lit-line: transparent;
-}
-/* The place you are on carries a thin bar of the set's accent at its start. */
-@media (min-width: 768px) {
-  html[data-skin-wip][data-wip-tokens] #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] { box-shadow: inset 3px 0 0 var(--wip-nav-accent); }
+  --wip-nav-font: var(--wip-font);
+  --wip-nav-tile-radius: var(--wip-radius-small);
+  --wip-nav-bar-ink: var(--wip-ink);
+  --wip-nav-bar-tint: var(--wip-ghost);
+  --wip-nav-bar-line: var(--wip-card-line);
 }
 /* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
    is drawn from its own tokens, which are the filled action's unless the
@@ -8819,6 +8334,304 @@ html[data-skin-wip] #communities-screen .communities-discover-text > b {
   color: var(--wip-ink);
 }
 /* END OF STANDARD (WIP). */
+/* ── THE LEFT MENU AND THE TOP BAR (20 Nov 2026: the standard look's too).
+   Drawn for Standard (WIP) first, then given to the standard look, so the
+   rules below are scoped to html:not([data-skin]): the standard look and
+   the brand kit's drawing of it, and no other look.
+   The menu is a filled panel at every size: a sidebar from 768px, headed by
+   Homeroom's logotype, and the phone's bottom bar under it. The place you
+   are on is a filled row; a row under the pointer wears a soft ground; a
+   count is a disc. The top bar has no fill of its own: its words and
+   buttons are the page's ink, on every page (a project's page too, which
+   painted it in the community's colour). The fold button is inside the
+   panel, at the end of the logo's line.
+   EVERY VALUE IS A TOKEN, --wip-nav-*, declared once here in light and in
+   dark. The menu's colours are the brand kit's in both looks; what the
+   top bar wears is the page's own, so the standard look reads the shell's
+   values there and the brand kit names its own. */
+html:not([data-skin]) {
+  /* The colours are Homeroom's brand kit's (asked 20 Nov 2026): its deep sky for the panel, white words, and the place you are on in the sun. */
+  --wip-nav-bg: #3c7bd8;                 /* the panel */
+  --wip-nav-ink: rgb(255 255 255 / 0.88);
+  --wip-nav-ink-strong: #ffffff;
+  --wip-nav-mut: rgb(255 255 255 / 0.72);
+  --wip-nav-faint: rgb(255 255 255 / 0.32);
+  --wip-nav-hover: rgb(255 255 255 / 0.16);
+  --wip-nav-line: transparent;
+  --wip-nav-accent: transparent;        /* a bar at the start of the place you are on */
+  --wip-nav-on-bg: #ffee6f;              /* the row of the place you are on */
+  --wip-nav-on-ink: #121a0e;
+  --wip-nav-count-bg: #ffffff;           /* a count on a row, and on the lit row */
+  --wip-nav-count-ink: #121a0e;
+  --wip-nav-on-count-bg: #121a0e;
+  --wip-nav-on-count-ink: #ffffff;
+  --wip-nav-row-h: 2.5rem;
+  --wip-nav-row-radius: 0.75rem;
+  --wip-nav-bar-h: 56px;         /* the phone's bar, as the shell reserves it (--platform-bar-h) */
+  --wip-nav-tab-inset: 0.375rem; /* round a tab on the phone's bar: what keeps the lit pill off the bar's edges */
+  /* Sunrise's own glyphs (the kit's 24px strokes, @/components/ui/kit-icons.ts), as masks the row's ink fills. */
+  --wip-nav-ic-home: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'/%3E%3C/svg%3E");
+  --wip-nav-ic-spark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m11 3 1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.900z'/%3E%3Cpath d='M19 15v4M17 17h4'/%3E%3C/svg%3E");
+  --wip-nav-ic-chat: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.600A8 8 0 1 1 21 12z'/%3E%3C/svg%3E");
+  --wip-nav-ic-users: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='8' r='3.5'/%3E%3Cpath d='M2.5 20a6.5 6.5 0 0 1 13 0M16 4.600a3.5 3.5 0 0 1 0 6.800M18 14.500a6.5 6.5 0 0 1 3.5 5.5'/%3E%3C/svg%3E");
+  --wip-nav-ic-user: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4 21a8 8 0 0 1 16 0'/%3E%3C/svg%3E");
+  --wip-nav-ic-sliders: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0'/%3E%3Ccircle cx='15' cy='6' r='2.2'/%3E%3Ccircle cx='9' cy='12' r='2.2'/%3E%3Ccircle cx='17' cy='18' r='2.2'/%3E%3C/svg%3E");
+  /* The fold button's glyph is the menu itself: a window with its side panel, and a chevron for which way it goes. */
+  --wip-nav-ic-fold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='15' rx='4.5'/%3E%3Cpath d='M9 4.500v15'/%3E%3Cpath d='m16 9.500-2.500 2.500 2.500 2.500'/%3E%3C/svg%3E");
+  --wip-nav-ic-unfold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='15' rx='4.5'/%3E%3Cpath d='M9 4.500v15'/%3E%3Cpath d='m14 9.500 2.500 2.500-2.500 2.500'/%3E%3C/svg%3E");
+  --wip-nav-fold: 32px;                  /* the fold button: a quiet rounded square inside the panel, at its end */
+  --wip-nav-fold-ic: 20px;
+  --wip-nav-fold-rest: 0.78;             /* the glyph at rest; whole under the pointer or the keyboard's focus */
+  --wip-nav-fold-inset: -4px;            /* the fold button's own air laps the panel's edge, so its glyph sits 2px from it on either side */
+  --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
+  --wip-nav-ic-size: 20px;
+  --wip-nav-ic-size-small: 18px;
+  --wip-nav-tile: 22px;
+  --wip-nav-tile-radius: 6.16px;
+  --wip-nav-count: 20px;
+  --wip-nav-brand-top: 12px;
+  --wip-nav-foot-line: rgb(255 255 255 / 0.22);
+  --wip-nav-brand-tile: 28px;
+  --wip-nav-brand-h: 60px;               /* the brand's band at the panel's top */
+  --wip-nav-brand-logo: url('/brand/homeroom-logotype-black.png'); /* the logotype, as a mask the panel's ink fills */
+  --wip-nav-brand-w: 124px;
+  --wip-nav-w: 244px;                    /* Sunrise's own measures and face */
+  /* Folded, the menu is a strip of icons and logos (asked 20 Nov 2026). */
+  --wip-nav-mini-w: 64px;
+  --wip-nav-mini-pad: 10px;
+  --wip-nav-mini-mark: 32px;             /* Homeroom's mark at the strip's top */
+  --wip-nav-mini-mark-radius: 8px;
+  --wip-nav-mini-rule-gap: 8px;          /* above and under the strip's hairline */
+  --wip-nav-brand-mark: url('/brand/homeroom-mark.png');
+  --wip-nav-pad: 10px;
+  --wip-nav-row-pad: 12px;
+  --wip-nav-row-gap: 12px;
+  --wip-nav-size: 15px;
+  --wip-nav-head-size: 12.5px;
+  --wip-nav-font: inherit;
+  --wip-nav-fold-radius: 10px;
+  /* The top bar's ink: the shell's own values here; the brand kit names its own in its block. */
+  --wip-nav-bar-ink: var(--text-primary);
+  --wip-nav-bar-tint: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --wip-nav-bar-line: var(--app-sheet-line);
+}
+html:not([data-skin]).dark {
+  --wip-nav-bg: #122a52;
+}
+/* The sidebar's community icons are rounded squares, as the icons on Home are. */
+html:not([data-skin]) .platform-rail-tile,
+html:not([data-skin]) .platform-rail-tile > img { border-radius: var(--wip-nav-tile-radius); }
+/* Every size: the phone's bottom bar is the same panel. */
+html:not([data-skin]) #platform-tabs {
+  --text-primary: var(--wip-nav-ink-strong);
+  --text-secondary: var(--wip-nav-ink);
+  --text-muted: var(--wip-nav-ink);
+  --text-faint: var(--wip-nav-faint);
+  --accent: var(--wip-nav-ink-strong);
+  --lit-tint: var(--wip-nav-hover);
+  --lit-ink: var(--wip-nav-ink-strong);
+  --lit-line: transparent;
+  border: 0;
+  background: var(--wip-nav-bg);
+  color: var(--wip-nav-ink);
+  font-family: var(--wip-nav-font);
+}
+html:not([data-skin]) #platform-tabs::before { content: none; }
+html:not([data-skin]) #platform-tabs .platform-tab { border-radius: var(--wip-nav-row-radius); font-weight: 600; }
+html:not([data-skin]) #platform-tabs :is(.platform-tab-glyph, .dev-ws-place-glyph, .platform-rail-sub-glyph, .platform-rail-settings) { color: inherit; }
+html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community, .dev-ws-place, .platform-rail-sub):not([aria-current="page"]):hover {
+  background: var(--wip-nav-hover);
+  box-shadow: none;
+  color: var(--wip-nav-ink-strong);
+}
+html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] {
+  background: var(--wip-nav-on-bg);
+  box-shadow: none;
+  color: var(--wip-nav-on-ink);
+  font-weight: 700;
+}
+html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label, .dev-ws-place-glyph, .dev-ws-place-label, .platform-rail-sub-glyph, .platform-rail-sub-name, .platform-rail-settings-glyph) {
+  color: var(--wip-nav-on-ink);
+}
+html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+  background: var(--wip-nav-count-bg);
+  color: var(--wip-nav-count-ink);
+}
+html:not([data-skin]) #platform-tabs [aria-current="page"] :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+  background: var(--wip-nav-on-count-bg);
+  color: var(--wip-nav-on-count-ink);
+}
+html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { color: var(--wip-nav-mut); }
+html:not([data-skin]) #platform-tab-home { --wip-nav-ic: var(--wip-nav-ic-home); }
+html:not([data-skin]) #platform-tab-ai { --wip-nav-ic: var(--wip-nav-ic-spark); }
+html:not([data-skin]) #platform-tab-messages { --wip-nav-ic: var(--wip-nav-ic-chat); }
+html:not([data-skin]) #platform-tab-workshop { --wip-nav-ic: var(--wip-nav-ic-users); }
+html:not([data-skin]) #platform-tab-me { --wip-nav-ic: var(--wip-nav-ic-user); }
+html:not([data-skin]) #platform-tabs .platform-rail-settings { --wip-nav-ic: var(--wip-nav-ic-sliders); }
+html:not([data-skin]) #platform-tabs :is(#platform-tab-home, #platform-tab-ai, #platform-tab-messages, #platform-tab-workshop, #platform-tab-me) .platform-tab-glyph,
+html:not([data-skin]) #platform-tabs .platform-rail-settings-glyph {
+  background-color: currentColor;
+  -webkit-mask: var(--wip-nav-ic) center / contain no-repeat;
+  mask: var(--wip-nav-ic) center / contain no-repeat;
+}
+html:not([data-skin]) #platform-tabs :is(#platform-tab-home, #platform-tab-ai, #platform-tab-messages, #platform-tab-workshop, #platform-tab-me) .platform-tab-glyph > *,
+html:not([data-skin]) #platform-tabs .platform-rail-settings-glyph > * { opacity: 0; }
+html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .platform-tab-badge) { min-width: var(--wip-nav-count); height: var(--wip-nav-count); padding: 0 6px; font-size: 11px; font-weight: 700; }
+/* On a phone's bar the tab you are on is a pill inside the bar, not a block of it (asked 19 Nov 2026): every tab keeps a step clear of the bar's edges and of its neighbours, so the yellow touches none of them. */
+@media (max-width: 767.98px) {
+  /* The inset comes out of the tab's own height, so the bar stays the shell's 56px: the strip that offers to resume an app stands on that height, and a taller bar covered its foot. */
+  html:not([data-skin]) #platform-tabs .platform-tab { height: calc(var(--wip-nav-bar-h) - 2 * var(--wip-nav-tab-inset)); margin: var(--wip-nav-tab-inset) calc(var(--wip-nav-tab-inset) / 2); }
+  html:not([data-skin]) #platform-tabs .platform-tab:first-child,
+  html:not([data-skin]) #platform-tabs #platform-tab-home { margin-inline-start: var(--wip-nav-tab-inset); }
+  html:not([data-skin]) #platform-tabs #platform-tab-me { margin-inline-end: var(--wip-nav-tab-inset); }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-tabs {
+    top: 0;
+    padding-top: var(--wip-nav-brand-h);
+    z-index: 9; /* over the page, under the top bar (10), whose logo it frames */
+    box-shadow: inset -1px 0 0 var(--wip-nav-line);
+  }
+  html:not([data-skin]) body { --platform-rail-full: var(--wip-nav-w); }
+  html:not([data-skin]) #platform-tabs .platform-tab-glyph { width: var(--wip-nav-ic-size); height: var(--wip-nav-ic-size); }
+  html:not([data-skin]) #platform-tabs .platform-rail-settings-glyph { width: var(--wip-nav-ic-size-small); height: var(--wip-nav-ic-size-small); }
+  html:not([data-skin]) #platform-tabs.platform-tabs { padding-inline: var(--wip-nav-pad); gap: 2px; }
+  html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-community, .platform-rail-settings) { min-height: var(--wip-nav-row-h); padding-inline-start: var(--wip-nav-row-pad); gap: var(--wip-nav-row-gap); border-radius: var(--wip-nav-row-radius); font-size: var(--wip-nav-size); font-weight: 600; }
+  html:not([data-skin]) #platform-tabs .platform-tab { padding-inline-end: var(--wip-nav-row-pad); }
+  html:not([data-skin]) #platform-tabs :is(.platform-tab-label, .platform-rail-community-name) { font-size: var(--wip-nav-size); }
+  html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { text-transform: none; letter-spacing: 0; font-size: var(--wip-nav-head-size); font-weight: 600; }
+  /* THE BRAND: Homeroom's logotype at the panel's top, the same on
+     every page. The top bar (fold button, then the page's own title) starts beside the panel. */
+  html:not([data-skin]) #platform-tabs::before {
+    content: "";
+    position: absolute;
+    inset-block-start: var(--wip-nav-brand-top);
+    inset-inline-start: calc(var(--wip-nav-pad) + 8px);
+    width: var(--wip-nav-brand-w);
+    height: var(--wip-nav-brand-tile);
+    background: var(--wip-nav-ink-strong); /* the whole shorthand: the bar's own glass gradient would lie over the ink */
+    z-index: 0;
+    -webkit-mask: var(--wip-nav-brand-logo) left center / contain no-repeat;
+    mask: var(--wip-nav-brand-logo) left center / contain no-repeat;
+  }
+  /* The line over "You", as Sunrise's foot has. */
+  html:not([data-skin]) #platform-tabs::after { background: var(--wip-nav-foot-line); }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header { padding-inline-start: calc(var(--wip-nav-w) + 1rem); }
+  /* Homeroom's own mark and logotype are the panel's brand already: the top bar does not say them again. */
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
+  /* THE FOLD BUTTON IS PART OF THE PANEL (20 Nov 2026; it was a white disc
+     astride the panel's edge): a quiet rounded square in the menu's own ink,
+     at the end of the logo's line, with a row's soft ground under the
+     pointer. Its glyph is the menu itself, a window with its side panel.
+     Folded, it is beside the strip, at the top bar's start, in the bar's
+     ink, and points the other way. */
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
+    position: absolute;
+    inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);
+    inset-inline-start: calc(var(--wip-nav-w) - var(--wip-nav-fold-inset) - var(--wip-nav-fold));
+    width: var(--wip-nav-fold);
+    height: var(--wip-nav-fold);
+    border: 0;
+    border-radius: var(--wip-nav-fold-radius);
+    background: transparent;
+    box-shadow: none;
+    color: var(--wip-nav-ink);
+  }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle:hover {
+    background: var(--wip-nav-hover);
+    color: var(--wip-nav-ink-strong);
+  }
+  html:not([data-skin]) #platform-header #sidebar-toggle > svg {
+    width: var(--wip-nav-fold-ic);
+    height: var(--wip-nav-fold-ic);
+    background-color: currentColor;
+    -webkit-mask: var(--wip-nav-ic-fold) center / contain no-repeat;
+    mask: var(--wip-nav-ic-fold) center / contain no-repeat;
+    opacity: var(--wip-nav-fold-rest);
+    transition: opacity 120ms ease;
+  }
+  html:not([data-skin]) #platform-header #sidebar-toggle:is(:hover, :focus-visible) > svg { opacity: 1; }
+  html:not([data-skin]) #platform-header #sidebar-toggle > svg > * { opacity: 0; }
+  html:not([data-skin]) #platform-header,
+  html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
+    --fake-glass-tint: transparent;
+    --brand-ink: var(--wip-nav-bar-ink);
+    --brand-tint: var(--wip-nav-bar-tint);
+    --brand-line: var(--wip-nav-bar-line);
+    background-color: transparent;
+    color: var(--wip-nav-bar-ink);
+  }
+  /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
+  html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
+  html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
+}
+/* The place you are on carries a thin bar of the set's accent at its start. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] { box-shadow: inset 3px 0 0 var(--wip-nav-accent); }
+}
+/* FOLDED, THE MENU IS A STRIP OF ICONS AND LOGOS (asked 20 Nov 2026), not
+   gone: the five places' glyphs, each community's logo, You and Settings,
+   under Homeroom's mark. Words, counts, headings and a community's nested
+   places are the open menu's. The fold button, beside the strip, opens it;
+   the page keeps the strip's width clear, as it does the menu's.
+   (frontend/src/features/nav/rail-slide.ts slides nothing away here.) */
+@media (min-width: 768px) {
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) {
+    --platform-rail-full: var(--wip-nav-mini-w);
+    --platform-rail-w: var(--wip-nav-mini-w);
+  }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) { display: flex; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek).platform-tabs { padding-inline: var(--wip-nav-mini-pad); }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x) { display: none; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab, .platform-rail-community, .platform-rail-settings, .platform-side-app) { justify-content: center; padding-inline: 0; gap: 0; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-row, .platform-side-app-row) { display: flex; justify-content: center; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-community, .platform-side-app) { flex: 1; }
+  /* A hairline between the places and the communities' logos, where the open menu has a heading (and one more between the pinned and the recent). */
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-pinned, .platform-rail-communities)::before {
+    content: "";
+    flex: none;
+    height: 1px;
+    margin: var(--wip-nav-mini-rule-gap) 4px;
+    background: var(--wip-nav-foot-line);
+  }
+  /* Settings has a line of its own above You (open, it rides the end of You's row). */
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-rail-settings { align-self: center; margin: 0 0 2px; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) #platform-tab-me { padding-inline-end: 0; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before {
+    inset-inline-start: calc((var(--wip-nav-mini-w) - var(--wip-nav-mini-mark)) / 2);
+    width: var(--wip-nav-mini-mark);
+    height: var(--wip-nav-mini-mark);
+    border-radius: var(--wip-nav-mini-mark-radius);
+    background: var(--wip-nav-brand-mark) center / contain no-repeat;
+    -webkit-mask: none;
+    mask: none;
+  }
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + var(--wip-nav-fold-inset)); }
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
+  /* Folded, the button is on the page's side of the strip: the first thing in the top bar, in the bar's own ink. */
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
+    position: static;
+    color: var(--wip-nav-bar-ink);
+  }
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle:hover {
+    background: var(--wip-nav-bar-tint);
+    color: var(--wip-nav-bar-ink);
+  }
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle > svg {
+    -webkit-mask-image: var(--wip-nav-ic-unfold);
+    mask-image: var(--wip-nav-ic-unfold);
+  }
+  /* The page stands clear of the strip, as it does of the open menu (the shell's own rules stand aside for a folded rail, which was gone). */
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #app-view {
+    padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
+    padding-inline-end: var(--platform-gutter);
+  }
+  html:not([data-skin]) body.rail-pinned:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #app-view {
+    padding-inline-start: var(--platform-rail-w, 0px);
+    padding-inline-end: 0;
+  }
+}
+/* END OF THE LEFT MENU AND THE TOP BAR. */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
 @keyframes wip-hero-drift {
   from { transform: rotate(0deg) scale(1); }

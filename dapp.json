@@ -814,7 +814,7 @@
       "name": "Accessibility settings ship text size and contrast controls (#3969)",
       "path": "/?demo=1#settings/accessibility",
       "expectText": "High contrast",
-      "expectSelector": "#settings-accessibility-section #settings-text-size-track[role=\"radiogroup\"] [data-text-size-option=\"larger\"]"
+      "expectSelector": "#settings-accessibility-section #settings-text-size-track input[type=\"range\"][max=\"4\"]"
     },
     {
       "name": "Guest back arrow returns to the app directory (#1028)",
@@ -3629,6 +3629,12 @@
       "name": "Challenge detail page is reachable by deep link and draws its rail (?shot=challenge-detail)",
       "path": "/?shot=challenge-detail#leaderboard/challenges",
       "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel:has([role=progressbar][aria-valuetext]):has([data-challenge-task])"
+    },
+    {
+      "name": "A challenge counted on a schedule says when progress was last counted and when the next count is due (#6895)",
+      "path": "/#leaderboard/challenges/900501/900730",
+      "expectText": "Progress is counted every",
+      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel [role=progressbar][aria-valuetext] ~ p[data-challenge-scoring]:has(+ [data-challenge-task])"
     },
     {
       "name": "Imported proposal mid-build shows the Preview building pill (#866, #2585)",

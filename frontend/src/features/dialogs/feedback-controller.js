@@ -408,6 +408,9 @@ export function init() {
     // 1 Nov 2026: "Work on it with Homeroom bot", under Done, for the
     // request just filed (the post's `filed`: { appSlug, issueNumber }).
     const sentWork = document.getElementById('feedback-sent-work');
+    // #6897: "Open this request", the posted request's own page, so its
+    // status, votes and replies are one press away.
+    const sentRequest = document.getElementById('feedback-sent-request');
     let sentFiled = null;
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
@@ -435,6 +438,9 @@ export function init() {
       sentFiled = filed && typeof filed.appSlug === 'string' && Number.isSafeInteger(Number(filed.issueNumber))
         && Number(filed.issueNumber) > 0 ? { appSlug: filed.appSlug, issueNumber: Number(filed.issueNumber) } : null;
       sentWork?.classList.toggle('hidden', !sentFiled);
+      // #6897: the request's own page, wherever the post says where it went
+      // (the private request kept only for you has none, and passes no `filed`).
+      sentRequest?.classList.toggle('hidden', !sentFiled);
       if (sentTitle) sentTitle.textContent = building ? botTitle() : title;
       if (sentLine) {
         const minutes = Number(bot?.typicalMinutes) > 0 ? Number(bot.typicalMinutes) : 8;
@@ -497,6 +503,23 @@ export function init() {
         });
       } finally {
         firstWork.disabled = false;
+      }
+    });
+    // #6897: open the request just posted, where its status, votes and replies
+    // are — the same place "Build it now" opens, without asking the bot to
+    // build anything.
+    sentRequest?.addEventListener('click', async () => {
+      const filed = sentFiled;
+      if (!filed || sentRequest.disabled) return;
+      sentRequest.disabled = true;
+      try {
+        const opening = App.navigateToApp(filed.appSlug, 'dev', filed.issueNumber, 'issues');
+        closeFeedback();
+        await opening;
+      } catch (err) {
+        PlatformUI.toast(t('dialogs:feedback.sent.requestFailed'));
+      } finally {
+        sentRequest.disabled = false;
       }
     });
     // B8: Open chat, after a request was filed. 14 Nov 2026: the request's

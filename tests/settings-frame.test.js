@@ -132,7 +132,7 @@ test('the primitives keep their stable names', () => {
   assert.match(src, /cn\('ui-lrow-s mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\] text-zinc-500 dark:text-zinc-400', subtitleClassName\)/);
   const field = read('frontend/@/components/ui/field.tsx');
   assert.match(field, /<h3 className=\{cn\('ui-sechead text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', className\)\}>/);
-  assert.match(field, /<p className=\{cn\('ui-secblurb text-xs text-zinc-500 dark:text-zinc-500 mb-3', blurbClassName\)\}>/);
+  assert.match(field, /<p className=\{cn\('ui-secblurb text-xs text-zinc-500 dark:text-zinc-400 mb-3', blurbClassName\)\}>/);
 });
 
 test('a section\'s parts stack with no rule between them, and a one-part page\'s label is not drawn twice', () => {
@@ -156,7 +156,9 @@ test('a switch row in a static pane is a neutral wrapper, laid out by the styles
 });
 
 test('a choice of one is radio rows in a card: the segments stand as rows, with a mark the standard look never draws', () => {
-  for (const file of ['theme.tsx', 'accessibility.tsx']) {
+  // Text size was the second of these until its slider (#6510): a padded card.
+  assert.match(section('accessibility.tsx'), /<div id="settings-text-size-track" className="ui-card ui-pad flex items-center gap-3">/);
+  for (const file of ['theme.tsx']) {
     const src = section(file);
     assert.match(src, /'theme-seg ui-row ui-row-sm flex-1 basis-0 rounded-md px-1\.5 py-1 transition-colors';/, file);
     assert.match(src, /className="ui-card ui-radios relative flex p-0\.5 rounded-lg /, file);

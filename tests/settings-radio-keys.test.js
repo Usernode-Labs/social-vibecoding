@@ -79,7 +79,6 @@ test('radioGroupKeys: one tab stop, and a key picks through choose and moves foc
 
 for (const [file, exportName, trackId, attr, options] of [
   [THEME, 'ThemeSection', 'drawer-theme-track', 'data-theme-mode', ['light', 'dark', 'system']],
-  [ACCESSIBILITY, 'AccessibilitySection', 'settings-text-size-track', 'data-text-size-option', ['normal', 'large', 'larger']],
 ]) {
   test(`${trackId}: wired to the shared radio-group keys`, () => {
     const src = read(file);

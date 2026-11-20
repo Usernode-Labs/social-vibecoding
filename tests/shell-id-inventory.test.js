@@ -554,6 +554,7 @@ const ADDED_IDS = {
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
   // ── 1 Nov 2026 (threads, one loop: phase B): plan it with the bot ───────
   'feedback-sent-work': 'Work on it with Homeroom bot, the quiet button under Done on the filed-request confirmation: a thread only the person can see, about the request just filed, on the Homeroom bot tab (lib/thread-about.ts); the bot waits for their plan. Ships hidden; the controller shows it when the post says where the request went (`filed`).',
+  'feedback-sent-request': '#6897: Open this request, the quiet button under the other buttons of the filed-request confirmation: opens the request\'s own page, where its status, votes and replies are. Ships hidden; the controller shows it when the post says where the request went (`filed`), so the private request kept only for you, which has no page on the board, never shows it.',
   'feedback-first-work': 'The same Work on it with Homeroom bot on the first-request confirmation, above Done. Ships hidden; shown where the request has a board.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
   'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
@@ -569,7 +570,7 @@ const ADDED_IDS = {
   // Theme (features/settings/sections/accessibility.tsx); nothing in
   // settings.js binds inside it.
   'settings-accessibility-section': '#3969: the Accessibility page root, inside its [data-settings-section="accessibility"] wrapper.',
-  'settings-text-size-track': '#3969: the Normal / Large / Larger segmented control. Reuses the .theme-seg classes app.css keys the recessed track off; deliberately no caret — --theme-caret-index belongs to the theme control.',
+  'settings-text-size-track': '#3969: the text size control. Since #6510 it holds a slider of five stops (a native range input) in place of the Normal / Large / Larger segments.',
   'settings-contact-privacy-section': '#5104: the Privacy page root, inside its [data-settings-section="contact-privacy"] wrapper.',
   'settings-who-can-message': '#5104: the "Who can message or invite me" radio group (People in projects I\'m in, the default, or Anyone).',
   'settings-profile-discoverable': '#5104: the "Let people find my profile" switch, off by default.',

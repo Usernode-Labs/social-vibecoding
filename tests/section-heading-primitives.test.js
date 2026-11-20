@@ -184,7 +184,10 @@ test('each primitive’s class strings live in exactly one file', () => {
   // stop matching the moment the primitive changed.
   const owned = [
     ['text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', FIELD_PATH],
-    ['text-xs text-zinc-500 dark:text-zinc-500 mb-3', FIELD_PATH],
+    // With its hook: since the blurb's dark ink became zinc-400 (AA on the dark
+    // sheet), the utilities alone are a string six other files spell for
+    // paragraphs that are not a section's blurb.
+    ['ui-secblurb text-xs text-zinc-500 dark:text-zinc-400 mb-3', FIELD_PATH],
     ['px-4 pb-2 pt-6 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400', GROUPED_PATH],
   ];
   for (const [literal, owner] of owned) {

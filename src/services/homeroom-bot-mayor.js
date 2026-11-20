@@ -4377,6 +4377,20 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           t.failures.push(`context:about:${codeOf(err)}`);
         }
       }
+      // #6900: a Make it refused from this thread's New project card is kept
+      // on the thread (routes/apps.js rememberMakeRefusal), so this turn is
+      // told Homeroom's own reason and who can change the limit, instead of
+      // reading my_projects and guessing which limit stopped it.
+      if (!deps.threadRequest && deps.threadRootId) {
+        const dmSvc = dmModule(deps);
+        if (typeof dmSvc.makeRefusalNote === 'function') {
+          try {
+            ctx.makeRefusal = await dmSvc.makeRefusalNote(pool, { userId: user.id, rootId: deps.threadRootId });
+          } catch (err) {
+            t.failures.push(`context:make_refusal:${codeOf(err)}`);
+          }
+        }
+      }
       // Step 6 (#6864): the capabilities the thread's state gives this turn
       // (bot-profiles.js capabilitiesInChat), each loaded only here, so an
       // ordinary chat costs what it did. Their prompt sections follow the
@@ -4481,6 +4495,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           }),
         },
         ...(about ? [{ role: 'system', content: about }] : []),
+        // #6900: the newest refused Make it in this thread, in Homeroom's
+        // words, so the answer names the right limit instead of guessing.
+        ...(ctx.makeRefusal?.line ? [{ role: 'system', content: ctx.makeRefusal.line }] : []),
         // Step 6: the capabilities' own sections, only where they apply.
         ...(caps.design ? [{ role: 'system', content: caps.design.prompt }] : []),
         ...(caps.draft ? [{ role: 'system', content: caps.draft.prompt }] : []),
@@ -5757,6 +5774,10 @@ async function noteProjectMade(pool, { userId, rootId, app }) {
         status: 'answered', answer: MAKE_PROJECT, chosen: 'make', madeSlug: app.slug, madeName: app.name || app.slug,
       }, { conversationId: row.conversation_id, userId });
     }
+    // #6900: a project made from the thread clears the refusal it was
+    // refused for: the bot is never told about a limit that no longer
+    // stopped anything.
+    await dmModule({}).clearMakeRefusal(pool, { userId, rootId });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not mark a project card answered', { rootId, err: err.message });
   }
@@ -7858,14 +7879,46 @@ function aboutLines(about, { named = false } = {}) {
   return lines;
 }
 
+/** Pure: when a Make it was refused, as a report says it (UTC), or null. */
+function refusalWhen(at) {
+  const when = new Date(at);
+  if (Number.isNaN(when.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${when.getUTCFullYear()}-${pad(when.getUTCMonth() + 1)}-${pad(when.getUTCDate())} `
+    + `${pad(when.getUTCHours())}:${pad(when.getUTCMinutes())} UTC`;
+}
+
+/**
+ * Pure (#6900): a refused Make it in a report, word for word: Homeroom's
+ * own sentence, so the team sees the real cause rather than the guess it
+ * used to have to make. The planned project's name is the team's private
+ * copy's alone (`named`): the thread it was planned in is private.
+ */
+function refusalLines(refusal, { named = false } = {}) {
+  if (!refusal || typeof refusal !== 'object') return [];
+  const words = String(refusal.error || '').trim();
+  if (!words) return [];
+  const name = String(refusal.name || '').trim();
+  const status = [refusal.status ? `HTTP ${refusal.status}` : null, refusal.reason || refusal.code]
+    .filter(Boolean).join(', ');
+  const when = refusalWhen(refusal.at);
+  return [
+    `**Make it was refused${named && name ? ` on "${clip(name, 80)}"` : ''}**${status ? ` (${status})` : ''}${when ? ` at ${when}` : ''}:`,
+    '',
+    words.split('\n').map((line) => `> ${line}`).join('\n'),
+    '',
+  ];
+}
+
 /**
  * Pure: a report's PUBLIC body under its Source line (the GitHub issue):
  * what it is about, as aboutLines says it, and what happened, in the
  * person's words. Never the chat: they did not write it for anyone to read.
+ * #6900: a Make it refused in the thread is quoted as Homeroom refused it.
  */
-function reportBody({ details, about }) {
+function reportBody({ details, about, refusal = null }) {
   const lines = aboutLines(about);
-  return [...(lines.length ? [lines.join('\n'), ''] : []), details].join('\n').trim();
+  return [...(lines.length ? [lines.join('\n'), ''] : []), ...refusalLines(refusal), details].join('\n').trim();
 }
 
 /**
@@ -7873,11 +7926,12 @@ function reportBody({ details, about }) {
  * feedback_reports.description, staging:private): the project by name, what
  * happened, and the last messages of the chat with the bot.
  */
-function reportReceipt({ details, about, chat }) {
+function reportReceipt({ details, about, chat, refusal = null }) {
   const lines = aboutLines(about, { named: true });
   const quoted = (chat || []).map((m) => `> **${m.who}:** ${m.text}`);
   return [
     ...(lines.length ? [lines.join('\n'), ''] : []),
+    ...refusalLines(refusal, { named: true }),
     details,
     ...(quoted.length ? ['', '**The last messages of their chat with Homeroom bot:**', '', quoted.join('\n>\n')] : []),
   ].join('\n').trim();
@@ -7944,8 +7998,8 @@ async function reportProblem(pool, ctx, args) {
   const file = async () => feedback.filePlatformReport(pool, ctx.config, {
     user,
     title: summary,
-    body: reportBody({ details, about }),
-    description: reportReceipt({ details, about, chat: await recentChat(pool, ctx) }),
+    body: reportBody({ details, about, refusal: ctx.makeRefusal?.refusal || null }),
+    description: reportReceipt({ details, about, refusal: ctx.makeRefusal?.refusal || null, chat: await recentChat(pool, ctx) }),
     source: REPORT_SOURCE,
     via: 'through Homeroom bot',
     conversationId: ctx.conversationId,

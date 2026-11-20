@@ -779,6 +779,54 @@ async function storedSecretKeysFor(pool, apps) {
   return keys;
 }
 
+/**
+ * #6900: a refused Make it from Homeroom bot's New project card is kept on
+ * the private thread the card is in, so the bot's next turn there knows the
+ * real reason instead of guessing from my_projects. The card names its
+ * thread in the body (frontend/src/features/messages/bot-make.tsx makeBody),
+ * and one seam covers every refusal that reaches `res.json`: the allowance
+ * check and the server cap below, and the hourly create limit in front of
+ * this route (middleware/rate-limits.js makeLimiter's handler).
+ *
+ * The refusal the person sees never depends on the record: the original
+ * status and body go out even when the write fails or is slow.
+ */
+function rememberMakeRefusal(pool) {
+  return function remember(req, res, next) {
+    const rootId = Number(req.body?.thread?.rootId);
+    // The design card's Make the project (`design`) keeps its own path, and
+    // a create with no thread is nobody's to remember.
+    if (!req.user || req.body?.design != null || !(rootId > 0)) return next();
+    const original = res.json.bind(res);
+    let sent = false;
+    res.json = (body) => {
+      if (sent) return original(body);
+      sent = true;
+      let refusal = null;
+      try {
+        refusal = require('../services/homeroom-bot-dm').classifyMakeRefusal(res.statusCode, body);
+      } catch (err) {
+        refusal = null;
+      }
+      if (!refusal) return original(body);
+      const name = typeof req.body?.name === 'string' ? req.body.name : null;
+      require('../services/homeroom-bot-dm')
+        .noteMakeRefused(pool, { userId: req.user.id, rootId, name, refusal })
+        .catch((err) => log.warn('apps', 'Could not record a refused Make it', { rootId, err: err.message }))
+        .then(() => {
+          try {
+            original(body);
+          } catch (err) {
+            // The answer already went another way; nothing to do but say so.
+            log.warn('apps', 'Could not send a create refusal', { rootId, err: err.message });
+          }
+        });
+      return res;
+    };
+    next();
+  };
+}
+
 function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
 
@@ -1242,7 +1290,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
+  router.post('/api/apps', drainGuard, rememberMakeRefusal(pool), appCreateLimiter, async (req, res) => {
     const { name, repoUrl } = req.body;
 
     if (!name?.trim()) {

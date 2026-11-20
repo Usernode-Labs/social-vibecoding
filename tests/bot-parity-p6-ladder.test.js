@@ -100,8 +100,9 @@ test('the ladder: as before off Homeroom, a fix to find or file, a wait while it
 test('the request it files says only what the platform\'s own check said, and finds itself again', () => {
   const t1 = { name: 'kudos are counted once', file: 'tests/kudos.test.js', error: 'Expected values to be strictly equal:' };
   assert.equal(flaky.flakeTitle(t1), 'Flaky check: kudos are counted once');
-  const body = flaky.flakeBody(t1);
+  const body = flaky.flakeBody(t1, { synced: true });
   assert.match(body, /The check "kudos are counted once" \(tests\/kudos\.test\.js\) failed on a change of Homeroom bot's that does not touch it/);
+  assert.match(body, /it still failed once that change was brought up to date with main/);
   assert.match(body, /it fails without the change too/);
   assert.match(body, / {4}Expected values to be strictly equal:/);
   assert.match(body, /Do not loosen it, skip it or delete it\./);
@@ -109,6 +110,58 @@ test('the request it files says only what the platform\'s own check said, and fi
   assert.equal(flaky.flakeMarker(t1), flaky.flakeMarker({ name: 'Kudos are counted once ', file: 'tests/KUDOS.test.js' }));
   assert.ok(!body.includes(EM));
   assert.ok(flaky.flakeTitle({ name: 'x'.repeat(400) }).length <= 200);
+});
+
+// Request #6808 said "still failed once that change was brought up to date
+// with main" of a change whose sync had not happened ("the synced commit
+// could not be pushed"): its head lacked a fix merged 86 seconds before, and
+// the sentence made a failure main had already fixed read as a new one.
+test('the request says whether the change was brought up to date with main, and why not when it was not', () => {
+  const t1 = { name: 'kudos are counted once', file: 'tests/kudos.test.js', error: 'Expected values to be strictly equal:' };
+  const STILL = /still failed once that change was brought up to date with main/;
+  const OWN = /it fails without the change too/;
+  const MAYBE = /may already be fixed on main/;
+  // Brought up to date, and red again: this round, or the round before it.
+  for (const sync of [{ synced: true }, { synced: true, syncWhy: 'not_pushed' }, { synced: false, syncWhy: 'already_tried' }]) {
+    const body = flaky.flakeBody(t1, sync);
+    assert.match(body, STILL, JSON.stringify(sync));
+    assert.match(body, OWN);
+    assert.doesNotMatch(body, MAYBE);
+  }
+  // The sync did not happen: said, with its reason, and nothing claimed of main.
+  const unpushed = flaky.flakeBody(t1, { synced: false, syncWhy: 'not_pushed' });
+  assert.doesNotMatch(unpushed, STILL);
+  assert.doesNotMatch(unpushed, OWN);
+  assert.match(unpushed, /That change was not brought up to date with main first \(the synced commit could not be pushed\), so the failure may already be fixed on main\. Check that it still fails on main before changing anything\./);
+  assert.match(flaky.flakeBody(t1, { synced: false, syncWhy: 'conflict' }), /not brought up to date with main first \(main does not merge into it cleanly\)/);
+  // No reason known (the default, and the sweep's): still not claimed.
+  for (const body of [flaky.flakeBody(t1), flaky.flakeBody(t1, { synced: false }), flaky.flakeBody(t1, { syncWhy: null })]) {
+    assert.doesNotMatch(body, STILL);
+    assert.match(body, /That change was not brought up to date with main first, so the failure may already be fixed on main\./);
+  }
+  // Nothing to bring in, or main red on it too: the check's own, said as it is.
+  const level = flaky.flakeBody(t1, { synced: false, syncWhy: 'level' });
+  assert.match(level, /That change was already up to date with main\./);
+  assert.match(level, OWN);
+  assert.doesNotMatch(level, STILL);
+  assert.doesNotMatch(level, MAYBE);
+  const mainFails = flaky.flakeBody(t1, { synced: false, syncWhy: 'main_fails' });
+  assert.match(mainFails, /Main fails the same check\./);
+  assert.match(mainFails, OWN);
+  assert.doesNotMatch(mainFails, STILL);
+  // Whatever it says of the sync, the rest is the same request, found the same way.
+  for (const sync of [{ synced: true }, { syncWhy: 'not_pushed' }, { syncWhy: 'level' }, { syncWhy: 'main_fails' }, {}]) {
+    const body = flaky.flakeBody(t1, sync);
+    assert.match(body, /^The check "kudos are counted once" \(tests\/kudos\.test\.js\) failed on a change of Homeroom bot's that does not touch it/);
+    assert.match(body, /Do not loosen it, skip it or delete it\./);
+    assert.ok(body.endsWith(flaky.flakeMarker(t1)));
+    assert.ok(!body.includes(EM));
+  }
+  // The filing is told what happened: the hand-off's reason and the wait's own record.
+  const src = read('src/services/homeroom-bot-flaky-checks.js');
+  assert.match(src, /flakeBody\(test, sync\)/);
+  assert.match(src, /findOrFile\(pool, \{ board, test, bot, sync, deps \}\)/);
+  assert.match(src, /fixFor\(pool, \{ board, test, bot, sync: \{ synced, syncWhy \}, deps \}\)/);
 });
 
 // ── The card ────────────────────────────────────────────────────────────

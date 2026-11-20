@@ -17,26 +17,28 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
- * The looks of the one frame, in the order the 2026-11-06 screen tour gives
- * them (five of its nine: Brand kit, Workbench, Today and Playground were
- * retired on 12 Nov 2026, and a device that had stored one of them reads as
- * the standard look, here and in the head): every one draws the same frame (title, one sentence, one action,
- * labelled groups of one row) with its own tokens, typeface and a few rules
- * in app.css ("THE FRAME'S LOOKS"). The head's SKINS is 'brand' and these.
+ * The looks of the one frame: every one draws the same frame (title, one
+ * sentence, one action, labelled groups of one row) with its own tokens,
+ * typeface and a few rules in app.css ("THE FRAME'S LOOKS"). Paper is the
+ * last of them, and since 20 Nov 2026 no menu offers it and the head
+ * neither stores nor pins it, so nothing reaches the frame; the list stays
+ * for the screens that still carry a frame drawing, until that is removed.
  */
 export const FRAME_SKINS = ['paper'] as const;
 export type FrameSkin = typeof FRAME_SKINS[number];
 export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
 
 /**
- * Every look the Look menu offers after Standard, in its order: 'wip'
- * ("Standard (WIP)": the standard look, drawn with the changes still being
- * tried on it; the head sets `data-skin-wip` for it and no `data-skin`), 'brand'
- * ("Paper, simplified, with brand styling", which keeps the standard pages)
- * and then the looks of the frame. It is the head's SKINS, and the option
- * values of Settings › Experimental › Look and of the look picker.
+ * Every look the Look menu offers after Standard, in its order (20 Nov
+ * 2026: the menu keeps three looks). 'wip' is "Homeroom brand kit
+ * (WIP)": the standard look, drawn with the changes still being tried on
+ * it and the brand kit's token set; the head sets `data-skin-wip` and
+ * `data-wip-tokens="brand"` for it and no `data-skin`. 'brand' is
+ * "Paper, simplified, with brand styling", which keeps the standard pages.
+ * It is the head's SKINS, and the option values of Settings › Experimental
+ * › Look and of the look picker.
  */
-export const MENU_SKINS = ['wip', 'brand', ...FRAME_SKINS] as const;
+export const MENU_SKINS = ['wip', 'brand'] as const;
 export type MenuSkin = typeof MENU_SKINS[number];
 
 /** True for a look that draws a page in the frame; 'brand' keeps the standard pages. */
@@ -51,67 +53,14 @@ declare global {
       set(skin: Skin): void;
       apply(): void;
       onChange(fn: () => void): void;
-      /** Standard (WIP)'s token config (head.html): 'current', or another set's name. */
-      getTokens?(): string;
-      setTokens?(name: string): void;
     };
   }
 }
 
 const SKINS: readonly Skin[] = ['standard', ...MENU_SKINS];
 
-/**
- * The token configs of Standard (WIP), in the menu's order: the values that
- * draw it. 'current' is the look as it is drawn; the head's TOKEN_SETS is
- * the rest. Offered by the look picker beside the bell, to admins, while
- * that look is on.
- */
-export const WIP_TOKEN_SETS = ['current', 'brand', 'brand2', 'highlighter'] as const;
-export type WipTokens = typeof WIP_TOKEN_SETS[number];
-
-/**
- * The Look menu's entries (19 Nov 2026): every look, with Standard (WIP)
- * once for each of its token sets, side by side with the other looks. The
- * look as it is drawn is 'wip'; another set is written 'wip:<set>'. The
- * device still keeps the two apart (the look, and its token set): an entry
- * is only how the menus name the pair.
- */
-export type LookChoice = Skin | `wip:${Exclude<WipTokens, 'current'>}`;
-export const LOOK_CHOICES: readonly LookChoice[] = (['standard', ...MENU_SKINS] as Skin[]).flatMap((skin): LookChoice[] => (
-  skin === 'wip'
-    ? WIP_TOKEN_SETS.map((set): LookChoice => (set === 'current' ? 'wip' : `wip:${set}`))
-    : [skin]
-));
-
-/** The menu entry a look and its token set make. */
-export function lookChoice(skin: Skin, tokens: WipTokens = 'current'): LookChoice {
-  return skin === 'wip' && tokens !== 'current' ? `wip:${tokens}` : skin;
-}
-
-/** The look and the token set a menu entry names; anything unknown is Standard. */
-export function parseLookChoice(choice: string): { skin: Skin; tokens: WipTokens } {
-  const [skin, set] = String(choice || '').split(':');
-  if (skin === 'wip') {
-    return { skin: 'wip', tokens: (WIP_TOKEN_SETS as readonly string[]).includes(set) ? set as WipTokens : 'current' };
-  }
-  return { skin: (SKINS as readonly string[]).includes(skin) ? skin as Skin : 'standard', tokens: 'current' };
-}
-
-/** The device's token config for Standard (WIP); 'current' when the head module is absent. */
-export function currentWipTokens(): WipTokens {
-  if (typeof window === 'undefined') return 'current';
-  try {
-    const got = window.Skin?.getTokens?.();
-    return (WIP_TOKEN_SETS as readonly string[]).includes(got as string) ? got as WipTokens : 'current';
-  } catch {
-    return 'current';
-  }
-}
-
-/** The token config, followed live as the look is (one listener, shared). */
-export function useLiveWipTokens(): WipTokens {
-  return useSyncExternalStore(subscribeSkin, currentWipTokens, () => 'current');
-}
+/** The Look menu's entries, in its order: Standard, then MENU_SKINS. */
+export const LOOK_CHOICES: readonly Skin[] = SKINS;
 
 /** The device's look right now; 'standard' when the head module is absent. */
 export function currentSkin(): Skin {

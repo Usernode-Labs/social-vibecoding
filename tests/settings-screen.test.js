@@ -2316,6 +2316,50 @@ test('Revoke all keeps going past a refusal and never claims more than it did (#
   assert.deepEqual(offline.status, [['Network error: offline', 'error']]);
 });
 
+// #6512 item 5, the dated part: a device permission says when it was allowed,
+// and a revoked one when it was revoked. When it was last USED is not recorded.
+test('a device permission says when it was allowed or revoked, and a row without a stamp says nothing (#6512)', () => {
+  const LIST = 'frontend/src/features/settings/app-permissions-list.tsx';
+  const ago = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const allowedAt = ago(3);
+  const revokedAt = ago(2);
+  const html = renderComponent(LIST, 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'geolocation', label: 'Location', revoked: false, at: allowedAt },
+        { capability: 'camera', label: 'Camera', revoked: true, at: revokedAt },
+        { capability: 'usb', label: 'USB devices', revoked: false, at: null },
+        { capability: 'midi', label: 'MIDI devices', revoked: false },
+      ],
+    }],
+  });
+  const lines = [...html.matchAll(/<time data-role="permission-at" dateTime="([^"]*)" title="[^"]+" class="mt-0\.5 block text-zinc-500 dark:text-zinc-400">([^<]*)<\/time>/g)]
+    .map((m) => [m[1], m[2]]);
+  assert.deepEqual(lines, [[allowedAt, 'Allowed 3d ago'], [revokedAt, 'Revoked 2d ago']]);
+  // The line sits under the permission's name and above its note.
+  assert.ok(html.indexOf('Revoked 2d ago') < html.indexOf('data-role="capability-note"'));
+  assert.equal(message('settings:appPermissions.allowedAt'), 'Allowed {{when}}');
+  assert.equal(message('settings:appPermissions.revokedAt'), 'Revoked {{when}}');
+
+  // The stamp is the one for the row's state: a revoked row's is when it was
+  // revoked; an active row's is when it was last allowed, which for one that
+  // was revoked and re-enabled is the row's last change, not its first grant.
+  const views = new Function(`return ({ ${sliceMethod(settingsJs, '_permissionAppViews')} });`)();
+  const [app] = views._permissionAppViews([
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'geolocation', label: 'Location', status: 'active', createdAt: 'c1', updatedAt: 'u1', revokedAt: null },
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'camera', label: 'Camera', status: 'revoked', createdAt: 'c2', updatedAt: 'u2', revokedAt: 'r2' },
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'usb', label: 'USB devices', status: 'active', createdAt: 'c3', revokedAt: null },
+    { appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam', capability: 'midi', label: 'MIDI devices', status: 'active', createdAt: null, revokedAt: null },
+  ]);
+  assert.deepEqual(app.items.map((item) => item.at), ['u1', 'r2', 'c3', null]);
+
+  const route = read('src/routes/app-permissions.js');
+  assert.match(route, /SELECT g\.app_id, g\.capability, g\.status, g\.created_at, g\.updated_at, g\.revoked_at,/, 'the list reads the last-changed stamp');
+  assert.match(route, /updatedAt: row\.updated_at \|\| null,/);
+});
+
 // #6512 item 9: a blocked app says when it was blocked.
 test('a blocked app shows when it was blocked, and a row without a stamp shows nothing (#6512)', () => {
   const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
@@ -2582,6 +2626,38 @@ test('App permissions opens with how many apps hold something, and zero says not
   assert.match(read('frontend/src/features/settings/sections/app-permissions.tsx'),
     /<\/SectionHeading>[\s\S]*?<PermissionsSummary \/>\s*<div id="app-permissions-list" className="ui-card space-y-2">/,
     'the line sits at the top of the page, above the first list, whose host keeps its id and classes');
+});
+
+test('An app\'s row draws how much of today\'s cap it has used, and says so near and at the cap (#6512)', () => {
+  const row = (over) => grantRows({ phase: 'ready', grants: [grantView(over)] });
+  const bar = (html) => html.match(/<div data-role="spend-bar"[^>]*>/)?.[0];
+  const fill = (html) => (html.match(/<div data-role="spend-bar"[^>]*><div class="([^"]*)" style="width:(\d+)%"/) || []).slice(1);
+  const note = (html) => (html.match(/<p data-role="cap-note"[^>]*>([^<]*)<\/p>/) || [])[1]?.replace(/&#x27;/g, "'");
+  // Under the cap: the bar in the "you are here" ink, a meter with the words a screen reader hears, and no line.
+  const some = row({ spentCents: 37 });
+  assert.match(bar(some), /role="meter"/);
+  assert.match(bar(some), /aria-valuemin="0" aria-valuemax="100" aria-valuenow="37"/);
+  assert.match(bar(some), /aria-label="Demo App has used 37% of today(?:'|&#x27;)s cap"/);
+  assert.deepEqual(fill(some), ['h-full rounded-full bg-[color:var(--lit-ink)]', '37']);
+  assert.equal(note(some), undefined);
+  // Nothing spent: an empty track, still drawn so the rows line up.
+  assert.deepEqual(fill(row({ spentCents: 0, spent: '0.00' })), ['h-full rounded-full bg-[color:var(--lit-ink)]', '0']);
+  // From 80% the row says it is close, in words; the bar turns to the attention ink.
+  assert.equal(note(row({ spentCents: 79 })), undefined);
+  const near = row({ spentCents: 80, spent: '0.80' });
+  assert.equal(note(near), message('settings:grants.nearCap'));
+  assert.deepEqual(fill(near), ['h-full rounded-full bg-[color:var(--state-attention)]', '80']);
+  // At the cap, and past it (a call that was running when it was reached): full, never wider.
+  const at = row({ spentCents: 100, spent: '1.00' });
+  assert.equal(note(at), message('settings:grants.atCap'));
+  assert.deepEqual(fill(at), ['h-full rounded-full bg-[color:var(--state-attention)]', '100']);
+  assert.deepEqual(fill(row({ spentCents: 131, spent: '1.31' }))[1], '100');
+  assert.match(bar(row({ spentCents: 131, spent: '1.31' })), /aria-valuenow="100"/);
+  // A row with no cap figure, or a revoked one, draws no bar: there is nothing to be a share of.
+  assert.equal(bar(row({ spentCents: 10, capCents: 0 })), undefined);
+  assert.equal(bar(row({ spentCents: 10, revoked: true })), undefined);
+  assert.equal(message('settings:grants.nearCap'), 'Close to today\'s cap.');
+  assert.match(message('settings:grants.atCap'), /^Reached today's cap\./);
 });
 
 test('App AI permissions totals what the apps spent today (#6512)', () => {

@@ -96,6 +96,10 @@ function grantJson(row) {
     label: info ? info.label : row.capability,
     status: row.status,
     createdAt: row.created_at,
+    // #6512: when the row last changed. On an active row that is when it was
+    // last allowed (a re-enable keeps created_at and moves this), which is
+    // the date Settings shows. Only the list reads it.
+    updatedAt: row.updated_at || null,
     revokedAt: row.revoked_at || null,
   };
 }
@@ -106,18 +110,24 @@ function grantJson(row) {
 // screenshot would otherwise show nothing at all. Behind ?demo=1 +
 // USERNODE_ENV=staging only; a strict no-op in production.
 function demoGrants() {
+  // #6512: dated like real rows, so a preview shows the "Allowed 3d ago"
+  // line. Counted back from now, because the line is an age.
+  const ago = (hours) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
   return [
     {
       appId: -911, appName: 'Staging demo app A', appSlug: 'staging-demo-app-a',
-      capability: 'geolocation', label: 'Location', status: 'active', createdAt: null, revokedAt: null,
+      capability: 'geolocation', label: 'Location', status: 'active',
+      createdAt: ago(72), updatedAt: ago(72), revokedAt: null,
     },
     {
       appId: -911, appName: 'Staging demo app A', appSlug: 'staging-demo-app-a',
-      capability: 'camera', label: 'Camera', status: 'active', createdAt: null, revokedAt: null,
+      capability: 'camera', label: 'Camera', status: 'active',
+      createdAt: ago(72), updatedAt: ago(5), revokedAt: null,
     },
     {
       appId: -912, appName: 'Staging demo app B', appSlug: 'staging-demo-app-b',
-      capability: 'microphone', label: 'Microphone', status: 'revoked', createdAt: null, revokedAt: null,
+      capability: 'microphone', label: 'Microphone', status: 'revoked',
+      createdAt: ago(240), updatedAt: ago(48), revokedAt: ago(48),
     },
   ];
 }
@@ -146,7 +156,7 @@ function appPermissionsRoutes(config) {
 
     try {
       const { rows } = await pool.query(
-        `SELECT g.app_id, g.capability, g.status, g.created_at, g.revoked_at,
+        `SELECT g.app_id, g.capability, g.status, g.created_at, g.updated_at, g.revoked_at,
                 a.name AS app_name, a.slug AS app_slug
            FROM app_permission_grants g
            JOIN apps a ON a.id = g.app_id

@@ -319,7 +319,7 @@ declare global {
      *  text size, high contrast and reduce motion (#6510), as data-*
      *  attributes on <html>. */
     Display?: {
-      getTextSize(): 'normal' | 'large' | 'larger';
+      getTextSize(): 'normal' | 'large' | 'larger' | 'xlarge' | 'xxlarge';
       setTextSize(size: string): void;
       getContrast(): boolean;
       setContrast(on: boolean): void;

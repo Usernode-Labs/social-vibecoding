@@ -85,6 +85,68 @@ test('app.css scales the root font for the two presets', () => {
     'Larger is 125%');
 });
 
+// ── The slider's steps (#6510) ───────────────────────────────────────────
+
+// The head's Display module, run alone against a fake page.
+function loadDisplay(stored = {}) {
+  const src = headSrc();
+  const at = src.indexOf('window.Display = (function');
+  const block = src.slice(at, src.indexOf('</script>', at));
+  const attrs = {};
+  const store = { ...stored };
+  const window = {
+    localStorage: {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
+    },
+    addEventListener() {},
+  };
+  const document = {
+    documentElement: {
+      getAttribute: (n) => (n in attrs ? attrs[n] : null),
+      setAttribute: (n, v) => { attrs[n] = String(v); },
+      removeAttribute: (n) => { delete attrs[n]; },
+    },
+  };
+  new Function('window', 'document', block)(window, document);
+  return { Display: window.Display, attrs, store };
+}
+
+test('every stop of the slider is stored, applied and sized by app.css', () => {
+  const css = cssSrc();
+  const percents = { large: '112.5', larger: '125', xlarge: '137.5', xxlarge: '150' };
+  const { Display, attrs, store } = loadDisplay();
+  assert.equal(Display.getTextSize(), 'normal');
+  for (const [size, percent] of Object.entries(percents)) {
+    Display.setTextSize(size);
+    assert.equal(store['homeroom:text-size'], size, `${size} is stored by name`);
+    assert.equal(Display.getTextSize(), size);
+    assert.equal(attrs['data-text-size'], size, `${size} lands on <html>`);
+    assert.match(
+      css,
+      new RegExp(`html\\[data-text-size="${size}"\\]\\s*\\{\\s*font-size:\\s*${percent.replace('.', '\\.')}%`),
+      `${size} is ${percent}%`,
+    );
+  }
+  Display.setTextSize('normal');
+  assert.equal('homeroom:text-size' in store, false, 'Normal removes the key');
+  assert.equal('data-text-size' in attrs, false);
+});
+
+test('a size stored before the slider still applies, and an unknown one reads as Normal', () => {
+  for (const preset of ['large', 'larger']) {
+    const { Display, attrs } = loadDisplay({ 'homeroom:text-size': preset });
+    assert.equal(Display.getTextSize(), preset);
+    assert.equal(attrs['data-text-size'], preset, 'applied before first paint');
+  }
+  const odd = loadDisplay({ 'homeroom:text-size': 'gigantic' });
+  assert.equal(odd.Display.getTextSize(), 'normal');
+  assert.equal('data-text-size' in odd.attrs, false);
+  odd.Display.setTextSize('gigantic');
+  assert.equal('homeroom:text-size' in odd.store, false, 'an unknown size is never stored');
+});
+
 test('app.css carries both contrast modes, scoped per theme', () => {
   const css = cssSrc();
   assert.match(css, /html:not\(\.dark\)\[data-contrast="more"\]\s*\{/,
@@ -136,28 +198,39 @@ test('the pane renders no selection in its initial markup', () => {
     'the switch starts off, which is the default');
 });
 
-test('the size control is a labelled radiogroup reusing the theme segments', () => {
+test('the size control is a labelled slider of five stops (#6510)', () => {
   const src = sectionSrc();
   assert.match(src, /id="settings-text-size-track"/);
-  assert.match(src, /role="radiogroup"/);
-  assert.match(src, /theme-seg/,
-    'the track reuses the .theme-seg classes app.css keys the recessed look off');
-  // The segments are the shipped markup, so render the pane the way the
-  // browser hydrates it and assert the buttons are there.
+  assert.match(src, /TEXT_SIZES = \['normal', 'large', 'larger', 'xlarge', 'xxlarge'\] as const/,
+    'the two presets keep their names and their places');
+  // The size applies on the browser's own change (release, or a key press),
+  // not on every input event of a drag.
+  assert.match(src, /addEventListener\('change', apply\)/);
+  assert.match(src, /removeEventListener\('change', apply\)/);
+  assert.doesNotMatch(src, /onChange=\{[^}]*setTextSize/,
+    'React onChange is the input event: it must not resize the page mid-drag');
+  // The slider is the shipped markup, so render the pane the way the
+  // browser hydrates it.
   const html = renderComponent(
     'frontend/src/features/settings/sections/accessibility.tsx',
     'AccessibilitySection',
   );
-  const track = html.match(/<div id="settings-text-size-track"[^>]*>/);
+  const track = html.match(/<div id="settings-text-size-track"[^>]*>[\s\S]*?<\/div>/);
   assert.ok(track, 'the text size track is missing from the rendered pane');
-  assert.match(track[0], /role="radiogroup"/, 'the track is a radiogroup');
-  for (const size of ['normal', 'large', 'larger']) {
-    const btn = html.match(new RegExp(`<button[^>]*data-text-size-option="${size}"[^>]*>`));
-    assert.ok(btn, `a segment button for ${size} must exist`);
-    assert.match(btn[0], /role="radio"/, `the ${size} segment carries role=radio`);
-    assert.doesNotMatch(btn[0], /theme-seg-active/,
-      `the ${size} segment ships unselected (storage is read in an effect)`);
-  }
+  const input = track[0].match(/<input[^>]*>/);
+  assert.ok(input, 'the track holds the slider');
+  assert.match(input[0], /type="range"/);
+  assert.match(input[0], /min="0"/);
+  assert.match(input[0], /max="4"/);
+  assert.match(input[0], /step="1"/);
+  assert.match(input[0], /value="0"/, 'it ships at Normal (storage is read in an effect)');
+  const name = message('settings:accessibility.textSize.controlName');
+  assert.ok(input[0].includes(`aria-label="${name}"`), 'a screen reader hears its name');
+  assert.ok(input[0].includes('aria-valuetext="100%"'), 'and the size as a percentage');
+  assert.equal(message('settings:accessibility.textSize.percent'), '{{percent}}%');
+  assert.match(track[0], /<span[^>]*aria-hidden="true"[^>]*data-text-size-value=""[^>]*>100%<\/span>/,
+    'the figure beside it is for the eye only: the slider already says it');
+  assert.doesNotMatch(track[0], /role="radio/, 'the three segments are gone');
   assert.ok(html.includes('id="settings-high-contrast"'),
     'the High contrast switch renders');
 });
@@ -188,15 +261,13 @@ test('the pane\'s catalog ids resolve', () => {
     'settings:accessibility.textSize.title',
     'settings:accessibility.textSize.intro',
     'settings:accessibility.textSize.controlName',
-    'settings:accessibility.textSize.normal',
-    'settings:accessibility.textSize.large',
-    'settings:accessibility.textSize.larger',
+    'settings:accessibility.textSize.percent',
+    'settings:accessibility.textSize.sample',
     'settings:accessibility.contrast.label',
     'settings:accessibility.contrast.description',
   ]) {
     assert.ok(message(id), `${id} resolves in the English catalog`);
   }
-  assert.equal(message('settings:accessibility.textSize.larger'), 'Larger');
   assert.equal(message('settings:accessibility.contrast.description'),
     'Darker text and clearer lines, in light and dark.');
 });

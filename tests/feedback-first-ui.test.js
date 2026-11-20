@@ -263,6 +263,43 @@ test('Work on it with Homeroom bot opens a thread about the request just filed, 
   const boardless = harness({ response: { firstFeedback: { ...moment, appSlug: null } } }); await boardless.submit();
   assert.ok(boardless.el('feedback-first-work').classList.contains('hidden'));
 });
+// #6897: the confirmation names where the request went, so one quiet button
+// opens the request's own page, where its status, votes and replies are.
+test('#6897: Open this request opens the posted request\'s page', async () => {
+  const filed = { appSlug: 'usernode-2d5619', issueNumber: 6071 };
+  const h = harness({ response: { filed } }); await h.submit();
+  const open = h.el('feedback-sent-request');
+  assert.equal(open.classList.contains('hidden'), false, 'the post said where it went');
+  open.click(); await settle();
+  assert.deepEqual(h.nav, [['usernode-2d5619', 'dev', 6071, 'issues']]);
+  assert.deepEqual(h.closes, [{ hash: '', navigations: 1 }], 'the dialog closes once the navigation started');
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+  assert.deepEqual(h.fixes, [], 'it does not ask the bot to build anything');
+  // Where Homeroom bot builds it, it shows beside Open chat.
+  const bot = harness({ response: { filed, homeroomBot: { botWillBuild: true, typicalMinutes: 6 } } });
+  await bot.submit();
+  assert.equal(bot.el('feedback-sent-request').classList.contains('hidden'), false);
+  assert.equal(bot.el('feedback-sent-chat').classList.contains('hidden'), false);
+  // A post that does not say where it went, a shot, and the private request
+  // kept only for you (no page on the board) have no such button.
+  const bare = harness({ response: {} }); await bare.submit();
+  assert.ok(bare.el('feedback-sent-request').classList.contains('hidden'));
+  bare.sandbox.App._simulateFeedbackSent();
+  assert.ok(bare.el('feedback-sent-request').classList.contains('hidden'));
+  const priv = harness({ response: {} });
+  priv.el('feedback-private-checkbox').checked = true;
+  await priv.submit();
+  assert.equal(priv.el('feedback-sent').classList.contains('hidden'), false, 'the private confirmation is up');
+  assert.ok(priv.el('feedback-sent-request').classList.contains('hidden'));
+  // The markup: the same quiet button as Open chat, the last of the grey
+  // buttons, above the row of small links.
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  assert.match(src, /<Button id="feedback-sent-request" variant="neutral" ink="neutral" className="hidden min-h-\[44px\]">\{t\('dialogs:feedback\.sent\.request'\)\}<\/Button>/);
+  assert.ok(src.indexOf('id="feedback-sent-chat"') < src.indexOf('id="feedback-sent-request"')
+    && src.indexOf('id="feedback-sent-request"') < src.indexOf('id="feedback-sent-mine"'),
+  'after Open chat, before the links row');
+  assert.equal(message('dialogs:feedback.sent.request'), 'Open this request');
+});
 // Done, then quiet links: See your requests and Edit are one centred row of
 // muted, underlined text links ("See your requests · Edit") with 44px tap
 // targets. Nothing fills them, so Done is the only filled control on the sheet.
