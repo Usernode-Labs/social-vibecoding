@@ -155,6 +155,30 @@ test('a live burst on an open request re-reads its own row and not the board', a
   assert.equal(h.state.devLoads, 0, 'no board load');
 });
 
+// The demo check "At-least-approvals proposal" (9000023) failed on a 404 for
+// /api/sessions/9000023/details: a late-answer correction re-read the open
+// proposal before anything held its row, and the guess "not up for a vote"
+// picked a session's endpoint for a promoted proposal.
+test('a re-read of a proposal page whose row nothing holds yet asks the page, never a guessed endpoint', async () => {
+  const h = makeHarness({ hash: '#app/demo/dev/proposals/9000023' });
+  h.AppView._devTopic = { kind: 'proposal', id: 9000023 };
+  h.AppView._devTopicInPanel = false;
+  h.sandbox.App.currentSubTab = 'topic';
+  const told = [];
+  h.AppView._tellChangePage = (detail) => { told.push(detail); };
+
+  await h.AppView._refreshTopicLive({ kinds: new Set(['other']), ids: new Set([9000023]) });
+  assert.deepEqual(h.fetchLog, [], 'no read: neither /details nor the proposal route is known to own it');
+  assert.deepEqual(told, [9000023], 'the page re-reads its own row, whose status it knows');
+
+  // Once the row is held, the re-read is the proposal's own, as before.
+  h.AppView._topicProposal = { id: 9000023, status: 'promoted' };
+  told.length = 0;
+  await h.AppView._refreshTopicLive({ kinds: new Set(['other']), ids: new Set([9000023]) });
+  assert.ok(h.fetchLog.length && h.fetchLog.every((url) => url.startsWith('/api/apps/demo/proposals/9000023')),
+    'the proposal route, never /details');
+});
+
 test('one live burst asks the thread to resync a path once', () => {
   const h = makeHarness();
   h.AppView._devTopic = { kind: 'issue', id: 7 };

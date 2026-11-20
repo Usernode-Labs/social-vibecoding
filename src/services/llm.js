@@ -47,11 +47,16 @@ async function init(config) {
     return;
   }
   client = openrouterMessages.platformClient(config);
-  log.info('llm', 'Model helpers use the platform OpenRouter key');
+  // Read once now, so isEnabled() is true from the first request where
+  // the key is there, and false where it is not (a staging preview).
+  await openrouterMessages.warmPlatformKey(config);
+  log.info('llm', 'Model helpers use the platform OpenRouter key', { keyFound: !openrouterMessages.platformKeyMissing() });
 }
 
-// Whether the platform can make its own model calls: a client exists (the
-// key can be read) and the last read did not find the key missing. This is
+// Whether the platform can make its own model calls: a client exists and a
+// read found the platform key (init reads it; a minute-old answer stands
+// while it is read again). False before any read finds it, so a staging
+// preview, which has no key, keeps every model feature off. This is
 // what gates the GLM-first features too (feedback titles, checks in plain
 // words, the content review, a first version's plan...), so it must not
 // depend on anything but the platform's OpenRouter key.

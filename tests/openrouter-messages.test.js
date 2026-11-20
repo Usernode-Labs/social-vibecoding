@@ -166,6 +166,45 @@ test('the platform client reads the platform key and says when it is missing', a
   }
 });
 
+// A staging preview has no platform key. The gate used to say "not missing"
+// before any read and again once an answer was a minute old, so
+// llm.isEnabled() was true there and every model feature ran in previews.
+test('the key counts as missing until a read finds it; a found key stands while it is read again', async () => {
+  const secrets = require('../src/services/secrets');
+  const DATA_KEY = 'test-data-encryption-key-0000';
+  const prev = messages._setPlatformKeyForTests(undefined);
+  let stored = null;
+  let reads = 0;
+  const pool = {
+    async query(sql) {
+      if (/FROM users/.test(sql)) { reads += 1; return { rows: [{ id: 7 }] }; }
+      if (/user_ai_credentials/.test(sql)) {
+        return { rows: stored ? [{ status: 'valid', secret_last4: 'abcd', secret_enc: secrets.encrypt(stored, DATA_KEY), revision: 1 }] : [] };
+      }
+      return { rows: [] };
+    },
+  };
+  const config = { dataEncryptionKey: DATA_KEY };
+  try {
+    messages.forgetPlatformKey();
+    assert.equal(messages.platformKeyMissing(), true, 'before any read');
+    await messages.warmPlatformKey(config, { pool });
+    assert.equal(messages.platformKeyMissing(), true, 'a read that found none');
+    assert.equal(reads, 1);
+    await messages.warmPlatformKey(config, { pool });
+    assert.equal(reads, 1, 'a fresh answer is not read again');
+    stored = 'sk-or-platform';
+    messages.forgetPlatformKey();
+    await Promise.all([messages.warmPlatformKey(config, { pool }), messages.warmPlatformKey(config, { pool })]);
+    assert.equal(reads, 2, 'one read at a time');
+    assert.equal(messages.platformKeyMissing(), false, 'a read found it');
+    assert.equal(await messages.platformKey(config, { pool }), 'sk-or-platform');
+  } finally {
+    messages.forgetPlatformKey();
+    messages._setPlatformKeyForTests(prev);
+  }
+});
+
 test('with no data key there is nothing to read the platform key with', async () => {
   const prev = messages._setPlatformKeyForTests(undefined);
   try {

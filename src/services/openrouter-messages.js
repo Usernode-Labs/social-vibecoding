@@ -157,6 +157,7 @@ function upstreamHeaders(reqHeaders, apiKey, origin) {
 // ── The platform's key ────────────────────────────────────────────────
 
 let keyCache = null; // { key, at }
+let keyRead = null; // the read under way (warmPlatformKey)
 let keyOverride; // tests: undefined = read normally
 
 /**
@@ -187,10 +188,35 @@ async function platformKey(config, { pool = null } = {}) {
   return keyCache.key;
 }
 
-/** True while the last read found no platform key (until it is read again). */
+/**
+ * True unless a read found the platform key: before the first read, and
+ * while the last one found none. A minute-old answer stands while it is read
+ * again (warmPlatformKey), so the gate that asks never waits on the database.
+ *
+ * It used to answer "not missing" before any read and again once an answer
+ * was a minute old. On a staging preview, which has no key, llm.isEnabled()
+ * was then true almost all the time, and everything it gates ran there: the
+ * Workshop owed a model pass on every view instead of showing staging's demo
+ * grouping, and the title, plan and early-look jobs tried their calls.
+ */
 function platformKeyMissing() {
   if (keyOverride !== undefined) return !keyOverride;
-  return !!(keyCache && !keyCache.key && Date.now() - keyCache.at < PLATFORM_KEY_TTL_MS);
+  return !(keyCache && keyCache.key);
+}
+
+/**
+ * Reads the platform key when none has been read or the answer is a minute
+ * old; one read at a time. Resolves when it lands (null when nothing was
+ * read). Never throws.
+ */
+function warmPlatformKey(config, { pool = null } = {}) {
+  if (keyOverride !== undefined) return Promise.resolve(null);
+  if (keyRead) return keyRead;
+  if (keyCache && Date.now() - keyCache.at < PLATFORM_KEY_TTL_MS) return Promise.resolve(null);
+  const read = platformKey(config, { pool }).catch(() => null)
+    .finally(() => { if (keyRead === read) keyRead = null; });
+  keyRead = read;
+  return read;
 }
 
 function forgetPlatformKey() {
@@ -283,7 +309,11 @@ async function createMessage({
  * call and `options.timeout` (ms) bounds it.
  */
 function platformClient(config) {
-  return clientWith(config, () => platformKey(config), platformKeyMissing);
+  return clientWith(config, () => platformKey(config), () => {
+    // The answer stands; a stale one is read again behind it.
+    warmPlatformKey(config).catch(() => {});
+    return platformKeyMissing();
+  });
 }
 
 /**
@@ -319,6 +349,7 @@ function _setPlatformKeyForTests(key) {
   const prev = keyOverride;
   keyOverride = key;
   keyCache = null;
+  keyRead = null;
   return prev;
 }
 
@@ -335,6 +366,7 @@ module.exports = {
   upstreamHeaders,
   platformKey,
   platformKeyMissing,
+  warmPlatformKey,
   forgetPlatformKey,
   createMessage,
   platformClient,

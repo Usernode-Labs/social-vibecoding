@@ -11682,6 +11682,15 @@ const AppView = {
       return true;
     }
     const open = AppView._findTopicItem();
+    // A proposal page whose row nothing holds yet (a late-answer correction
+    // or a live burst in the first moments of a cold open) cannot tell which
+    // endpoint owns it: guessing "not up for a vote" read a promoted one's
+    // /api/sessions/:id/details, a 404 and a console error. Its page knows
+    // its row's status, so the re-read is the page's.
+    if (!open && t.kind === 'proposal') {
+      AppView._tellChangePage(id);
+      return true;
+    }
     const review = !!open && ['promoted', 'merging', 'merged'].includes(open.status);
     const voted = !!(live.kinds && live.kinds.has('vote'));
     if (voted && review) AppView._invalidateVoteRoster(id);
