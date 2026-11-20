@@ -251,15 +251,25 @@ const KEY_LIMIT_RE = /key limit exceeded/i;
 
 /**
  * Pure: what a refusal itself says ran out: 'budget' when it names the key's
- * own limit (its words, or the worker's `limitSource`), else null.
+ * own limit (its words, the worker's `limitSource`, or the runtime's own
+ * notice where a turn's answer should be: Claude Code's "Failed to
+ * authenticate. API Error: 403 Key limit exceeded (weekly limit)"), else
+ * null. A turn's answer is read only where it IS that notice (noticeOf),
+ * never for what the model wrote.
  */
-function refusalCause(what) {
-  if (what == null) return null;
+function refusalCause(what, depth = 0) {
+  if (what == null || depth > 3) return null;
   if (typeof what === 'string') return KEY_LIMIT_RE.test(what) ? 'budget' : null;
   if (typeof what !== 'object') return null;
   if (what.limitSource === 'openrouter_key_limit' || what.providerRequest?.limitSource === 'openrouter_key_limit') return 'budget';
   for (const k of ['error', 'agentError', 'body', 'detail', 'message', 'providerError', 'words']) {
     if (typeof what[k] === 'string' && KEY_LIMIT_RE.test(what[k])) return 'budget';
+  }
+  const notice = noticeOf(what.lastResultText);
+  if (notice && KEY_LIMIT_RE.test(notice)) return 'budget';
+  // A routed turn ({ error, result }), a turn's own result.
+  for (const k of ['result', 'routed']) {
+    if (what[k] && typeof what[k] === 'object' && refusalCause(what[k], depth + 1)) return 'budget';
   }
   return null;
 }

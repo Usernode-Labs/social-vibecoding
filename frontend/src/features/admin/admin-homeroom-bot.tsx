@@ -564,10 +564,17 @@ export function spendTile(bot: Bot | null | undefined, credit: Credit | null | u
   if (!bot) return { value: '–' };
   const day = dayName(bot.weeklyResetsAt);
   const theirs = credit && credit.keyReset && credit.keyUsedCents != null ? Math.round(credit.keyUsedCents) : null;
+  const ours = Math.round(bot.weeklySpentCents);
+  // Higher, as it usually is, because the bot's key also pays for before
+  // and after screenshots, Sync with main and the platform's helper calls
+  // (titles, summaries, translation), which Homeroom charges to nobody.
+  const counts = theirs == null || theirs === ours ? null
+    : theirs > ours ? `OpenRouter counts ${tileMoney(theirs)}, which includes screenshots, sync and helpers.`
+      : `OpenRouter counts ${tileMoney(theirs)}.`;
   return {
     value: tileMoney(bot.weeklySpentCents),
     sub: `of ${tileMoney(bot.weeklyLimitCents)}, the weekly budget.${day ? ` It resets on ${day}.` : ''}`,
-    ...(theirs != null && theirs !== Math.round(bot.weeklySpentCents) ? { counts: `OpenRouter counts ${tileMoney(theirs)}.` } : {}),
+    ...(counts ? { counts } : {}),
   };
 }
 

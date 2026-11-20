@@ -177,11 +177,18 @@ test('Homeroom bot\'s weekly budget is texted as a budget: dollars of the week, 
   const detail = { usedCents: 64800, capCents: 80000, resetsAt: '2026-11-23T00:00:00.000Z' };
   const near = { key: 'bot_budget', state: 'near', used: 64800, cap: 80000, percent: 81, detail };
   const used = { key: 'bot_budget', state: 'at', used: 80000, cap: 80000, percent: 100, detail: { ...detail, usedCents: 80000 } };
+  // The bot's key also pays for before and after shots, Sync with main and
+  // apps' AI features (#6914), so the text says they stop too.
   assert.equal(texts.textFor(near, { action: 'crossing' }, { site }),
-    "Homeroom: bot's weekly budget at $648 of $800. It stops building at $800 until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings");
+    "Homeroom: bot budget $648 of $800, then builds, shots, sync and apps' AI stop until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings");
   assert.equal(texts.textFor(used, { action: 'crossing' }, { site }),
-    "Homeroom: bot's weekly budget is used up, $800 of $800. Building stopped until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings");
-  assert.match(texts.textFor(used, { action: 'reminder' }, { site }), /^Homeroom reminder: bot's weekly budget is still used up\. Building stopped until Monday\./);
+    "Homeroom: bot budget used up ($800). Builds, shots, sync and apps' AI stopped until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings");
+  assert.equal(texts.textFor(used, { action: 'reminder' }, { site }),
+    "Homeroom reminder: bot budget used up. Builds, shots, sync and apps' AI stopped until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings");
+  // A budget with enough digits to push that past one SMS keeps the link
+  // whole and says only that building stops.
+  assert.equal(texts.textFor({ ...near, detail: { usedCents: 1234500, capCents: 1500000, resetsAt: detail.resetsAt } }, { action: 'crossing' }, { site }),
+    'Homeroom: bot budget $12345 of $15000. Building stops at $15000 until Monday. Raise it: https://app.onhomeroom.com/#admin/homeroom-bot/settings');
   assert.match(texts.textFor({ key: 'bot_budget', state: 'unknown' }, { action: 'unknown' }, { site }), /couldn't read the bot's weekly budget for an hour/);
   assert.ok(texts.KEYS.includes('bot_budget'), 'the budget is one of the limits texted');
   const big = { usedCents: 1234500, capCents: 1500000, resetsAt: detail.resetsAt };

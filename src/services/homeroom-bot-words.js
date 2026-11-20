@@ -47,6 +47,12 @@ const FIRST_PERSON = Object.freeze([
   // Review B6: its place in line could not be kept (live.buildCreditText).
   [/Homeroom bot is out of building credit right now, and it could not keep this request's place in line\. Once credit is back, reply here and it will build this\./,
     'I\'m out of building credit right now, and I could not keep this request\'s place in line. Once credit is back, reply here and I\'ll build this.'],
+  // The same two when it was the bot's weekly budget that ran out
+  // (bot-pause-words.js buildNote), with the day its week turns.
+  [/Homeroom bot has used up this week's building budget\. It will pick this up again by itself on (\w+), or sooner if an admin raises the budget\./,
+    'I\'ve used up this week\'s building budget. I\'ll pick this up again by myself on $1, or sooner if an admin raises it.'],
+  [/Homeroom bot has used up this week's building budget, and it could not keep this request's place in line\. On (\w+), or once an admin raises the budget, reply here and it will build this\./,
+    'I\'ve used up this week\'s building budget, and I could not keep this request\'s place in line. On $1, or once an admin raises it, reply here and I\'ll build this.'],
   [/Homeroom bot's change for this is live:/, 'My change for this is live:'],
   // T1.10: merged, and its deploy failed (live.deployFailedText).
   [/^Homeroom bot's change for this merged/, 'My change for this merged'],

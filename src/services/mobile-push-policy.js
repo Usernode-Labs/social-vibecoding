@@ -304,14 +304,16 @@ function platformLimitCopy(detail) {
   }
   // Homeroom bot's weekly budget, in cents (services/openrouter-credit.js
   // budget). Its week turns with Homeroom's own and its key's weekly reset.
+  // The bot's key also pays for before and after screenshots, Sync with main
+  // and apps' AI features (openrouter-messages.js), so they stop with it.
   if (limit === 'bot_budget') {
     const money = (cents) => `$${Math.round(Number(cents) / 100).toLocaleString('en-US')}`;
     const day = weekTurnDay(new Date());
     return level === 'full'
       ? { title: 'Homeroom bot\'s weekly budget is used up',
-        body: `The bot stopped building. It starts again on ${day}, or once the budget is raised` }
+        body: `Building, screenshots, sync with main and apps' AI features have stopped. They start again on ${day}, or once the budget is raised` }
       : { title: `Homeroom bot's weekly budget is ${Math.floor((Number(used) / Math.max(1, Number(cap))) * 100)}% used`,
-        body: `${money(used)} of ${money(cap)} used. At ${money(cap)} the bot stops building until ${day}` };
+        body: `${money(used)} of ${money(cap)} used. At ${money(cap)} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until ${day}` };
   }
   // The cluster's own ceilings (services/platform-capacity.js): volumes in
   // MiB, a quota's tightest resource in thousandths of its hard value.

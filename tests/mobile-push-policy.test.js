@@ -490,11 +490,11 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   // budget). The day is the next week boundary, which is always a Monday.
   assert.deepEqual(copy('bot_budget_warn:64800:80000'), {
     title: "Homeroom bot's weekly budget is 81% used",
-    body: '$648 of $800 used. At $800 the bot stops building until Monday',
+    body: "$648 of $800 used. At $800 the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until Monday",
   });
   assert.deepEqual(copy('bot_budget_full:80000:80000'), {
     title: "Homeroom bot's weekly budget is used up",
-    body: 'The bot stopped building. It starts again on Monday, or once the budget is raised',
+    body: "Building, screenshots, sync with main and apps' AI features have stopped. They start again on Monday, or once the budget is raised",
   });
   assert.match(copy('node_pool_warn:9000:10000').body, /^8\.8 of 9\.8 GiB of a node's volume pool is used/);
   // GitHub's hourly budget (services/github-budget.js).
