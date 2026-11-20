@@ -5895,8 +5895,6 @@ html:not([data-skin]) {
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 6px 14px -4px rgb(0 0 0 / 0.2);
   --wip-icon-edge: var(--wip-card-line); /* a hairline round an icon's tile, so a white icon keeps its shape on a white card */
   --wip-icon-tile: var(--bg-primary); /* the tile under an emoji or a letter */
-  --wip-sheen: rgb(255 255 255 / 0.55);
-  --wip-sheen-time: 650ms;
   /* The filled action */
   --wip-cta-h: 2.5rem;
   --wip-cta-from: #5aa9ff;
@@ -6535,35 +6533,13 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
 /* The icon sits a little above the card: one soft shadow, at every width,
    and in the dark a hairline round a tile a step lighter than the card, so
    a dark picture or glyph stays a shape. (No gloss: it read as a grey cap
-   on a dark icon and as nothing on a light one.) */
+   on a dark icon and as nothing on a light one. No sheen either, asked 20
+   Nov 2026: no band of light crosses it when the pointer comes over it.) */
 html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile {
-  position: relative;
   border-color: transparent;
   background-color: var(--wip-icon-tile);
   box-shadow: inset 0 0 0 1px var(--wip-icon-edge), var(--wip-icon-shadow);
 }
-/* A sheen: one band of light crosses the icon when the pointer comes over
-   its tile. Only where a pointer hovers, never while the tiles are being
-   arranged, and not with reduced motion. */
-@media (hover: hover) {
-  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile::after {
-    content: "";
-    position: absolute;
-    inset: -20% auto -20% 0;
-    width: 60%;
-    pointer-events: none;
-    background: linear-gradient(105deg, transparent 0%, var(--wip-sheen) 50%, transparent 100%);
-    transform: translateX(-180%) skewX(-12deg);
-  }
-  html:not([data-skin]) #app-list:not([data-editing]) > .app-card:hover > .relative > .app-icon-tile::after {
-    transform: translateX(280%) skewX(-12deg);
-    transition: transform var(--wip-sheen-time) ease-out;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
-}
-html:not([data-skin]):where([data-motion="reduce"]) #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
 
 /* ── Home's page ────────────────────────────────────────────── */
 /* It takes the page's whole width: no 1024px cap on its column (the search
@@ -7114,6 +7090,10 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-desc { max
    action first, then the quiet ones, and the ⋯ at the far end. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row { grid-column: 1 / -1; order: 9; margin-top: 0.75rem; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions { flex: 1; gap: 0.625rem; }
+/* The hero's buttons are the look's own on every project, from its tokens:
+   the filled action (Home's New project), and plain pills on the card's
+   ground. No sheen crosses the filled one under the pointer (asked 20 Nov
+   2026). */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is(button, a) {
   border-color: var(--wip-hero-glass-line);
   background-color: var(--wip-hero-glass);
@@ -7122,8 +7102,6 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :i
   box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
 }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
-  position: relative;
-  overflow: hidden;
   height: 2.75rem;
   border-color: transparent;
   padding-inline: 1.25rem 1.5rem;
@@ -7134,28 +7112,6 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(bu
   color: var(--wip-cta-ink);
   box-shadow: 0 8px 18px -8px var(--wip-cta-glow);
 }
-/* The hero's buttons are the look's own on every project, from its tokens:
-   the filled action (Home's New project), and plain pills on the card's
-   ground. A sheen crosses the filled one when the pointer comes to it. */
-@media (hover: hover) {
-  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    inset-inline-start: 0;
-    width: 40%;
-    background-image: linear-gradient(100deg, transparent, var(--wip-sheen), transparent);
-    transform: translateX(-140%) skewX(-12deg);
-  }
-  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]):hover::after {
-    transform: translateX(380%) skewX(-12deg);
-    transition: transform 0.7s ease-out;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
-}
-html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
 /* A phone has no room for the hero's sizes. */
 @media (max-width: 639.98px) {
   html:not([data-skin]) { --wip-hub-icon: 3rem; --wip-hub-name: 1.75rem; --wip-hero-pad: 1.25rem; --wip-hero-min: 0; }
@@ -8082,29 +8038,6 @@ html:not([data-skin]) #communities-screen .communities-grid [data-home-community
 @media (max-width: 639.98px) {
   html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > .line-clamp-2 { font-size: var(--wip-title-size-phone); line-height: 1.2; }
 }
-/* Home's sheen: one band of light crosses the icon when the pointer comes
-   over its card. Only where a pointer hovers, never while the cards are
-   being arranged, and not with reduced motion. */
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile { position: relative; }
-@media (hover: hover) {
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after {
-    content: "";
-    position: absolute;
-    inset: -20% auto -20% 0;
-    width: 60%;
-    pointer-events: none;
-    background: linear-gradient(105deg, transparent 0%, var(--wip-sheen) 50%, transparent 100%);
-    transform: translateX(-180%) skewX(-12deg);
-  }
-  html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) .communities-grid [data-home-community]:hover .app-icon-tile::after {
-    transform: translateX(280%) skewX(-12deg);
-    transition: transform var(--wip-sheen-time) ease-out;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
-}
-html:not([data-skin]):where([data-motion="reduce"]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
 /* The votes waiting there: the look's count, ringed in the card's own colour. */
 html:not([data-skin]) #communities-screen .communities-grid [data-home-community-votes] {
   background-color: var(--wip-count-bg);
