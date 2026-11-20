@@ -105,10 +105,13 @@ const ARTIFACT_LIMITS = Object.freeze({
 // with an open live draft (services/live-drafts.js), whose code the turn
 // changes while its preview runs beside the chat. It reads some code,
 // edits, saves (the preview restarts) and replies; a save that stops the
-// app is fixed in the same turn, so it may save a few times.
+// app is fixed in the same turn, so it may save a few times. 20 Nov 2026
+// (live-draft review, A): it may look at its preview twice a turn
+// (look_at_preview, a capture job each), after a save and after its fix.
 const DRAFT_LIMITS = Object.freeze({
   rounds: 18,
   appliesPerTurn: 3,
+  looksPerTurn: 2,
   editsPerCall: 16,
   outputTokens: 16000,
   retryOutputTokens: 32000,
@@ -132,7 +135,7 @@ const DESIGN_TOOLS = Object.freeze([
   'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page',
 ]);
 const DRAFT_TOOLS = Object.freeze([
-  'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes',
+  'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes', 'look_at_preview',
 ]);
 // Artifacts, stage 2: what every kind of artifact is written and changed
 // with (src/services/bot-tools/artifact.js). The chat's own reply and

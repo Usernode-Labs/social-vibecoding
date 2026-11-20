@@ -3599,6 +3599,10 @@
     "text": "Changing the draft",
     "description": "On the card at the end of the chat while Homeroom bot changes the code of a live draft of an app, whose preview runs beside the chat. Three animated dots follow it, as an ellipsis."
   },
+  "thread.botWorking.lookingPreview": {
+    "text": "Looking at the preview",
+    "description": "On the card at the end of the chat while Homeroom bot opens the running preview of a live draft of an app in a browser of its own, to see how a change it made looks. Three animated dots follow it, as an ellipsis."
+  },
   "thread.botWorking.capturing": {
     "text": "Opening {{page}} as it is now",
     "description": "On the card at the end of the chat while Homeroom opens one of its own pages in a browser of its own, to copy it as the first version of a design. {{page}} is the page's name, such as Homeroom bot page. Three animated dots follow it, as an ellipsis."

@@ -94,6 +94,8 @@ test('the draft skill states the chat\'s question rule, promises nothing later, 
 
 const DRAFT = {
   id: 3, user_id: 10, root_message_id: 50, app_slug: 'gym', app_name: 'Gym Tracker', head_sha: 'a'.repeat(40), state: 'open',
+  // A: its preview, as the look reaches it.
+  app_id: 21, session_id: 77, staging_runtime_name: 'usernode-staging-gym--77', live_state: 'live',
 };
 const FILES = {
   'server.js': 'const PORT = process.env.PORT;\napp.get("/", (q, r) => r.send(page));\n',
@@ -101,12 +103,14 @@ const FILES = {
   '.env': 'SECRET=1',
 };
 
-function setup({ script, previews = [], settings = {}, turns = 0, edits = null, extraFiles = {} }) {
+function setup({ script, previews = [], settings = {}, turns = 0, edits = null, extraFiles = {}, looks = [], seesImages = false }) {
   const sent = [];
   const saved = [];
   const seenByModel = [];
   const offered = [];
   const reads = [];
+  // A: the capture jobs a look ran, and what each answered (looks, in order).
+  const jobs = [];
   let call = 0;
   const files = { ...FILES, ...extraFiles };
   const call_ = (name, args) => ({ id: `c${call}${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } });
@@ -142,11 +146,18 @@ function setup({ script, previews = [], settings = {}, turns = 0, edits = null, 
     bot: { id: 1, username: 'homeroom_bot' }, user: { id: 10, username: 'evan' }, settings: { mode: 'live', ...settings }, conversationId: 7,
     message: { id: 60, content, threadRootId: 50 },
     deps: {
-      chat, apiKey: 'sk-test', openMcp: async () => null, seesImages: false, sleep: async () => {}, streamDraft: false,
+      chat, apiKey: 'sk-test', openMcp: async () => null, seesImages, sleep: async () => {}, streamDraft: false,
       dmSvc, liveDrafts, threadRootId: 50, threadDraft: null, threadKind: 'ask', threadLiveDraft: DRAFT,
+      // A: the look's capture job and its sign-in, stood in.
+      token: 'FIXTURE', docker: { ensureNetworkAlias: async () => false },
+      runCaptureJob: async (_config, spec, opts) => {
+        jobs.push({ spec, kind: opts.kind });
+        const answer = looks.shift();
+        return { stdout: typeof answer === 'function' ? answer(spec) : (answer ?? lookFrames({ elements: [] })) };
+      },
     },
   });
-  return { run, sent, saved, seenByModel, offered, reads, files: () => files, calls: () => call };
+  return { run, sent, saved, seenByModel, offered, reads, jobs, files: () => files, calls: () => call };
 }
 
 test('a turn reads, edits, saves and replies; the preview restarts with it', async () => {
@@ -502,4 +513,195 @@ test('B: get_platform_conventions read twice in a turn answers the second time f
   const other = {};
   mayor.keepRead(other, { id: 'c3' }, 'get_platform_conventions', {}, { error: 'down' });
   assert.equal(mayor.readOnce(other, [], 'get_platform_conventions', {}), null);
+});
+
+// ── A (20 Nov 2026, live-draft review): the draft bot looks at its preview ──
+//
+// Ten edits to one delete button were each said to be fixed, and each time
+// the person answered "nope" with a screenshot: nothing rendered the page.
+// look_at_preview opens the draft's own preview (and nothing else) after the
+// last apply; a reply says it is fixed only when the turn looked after its
+// last save, and the reply check holds it to that.
+
+/** A look job's stdout (capture/capture.js PREVIEW_LOOK): its facts, and a picture when given. */
+function lookFrames(facts, png = null) {
+  const json = JSON.stringify({ path: '/', status: 200, viewport: { width: 390, height: 844 }, matched: 0, ...facts });
+  return `__USERNODE_LOOK__ bytes=${Buffer.byteLength(json)}\n${Buffer.from(json).toString('base64')}\n__USERNODE_LOOK_END__\n`
+    + (png ? `__USERNODE_LOOK_SHOT__ bytes=${png.length}\n${png.toString('base64')}\n__USERNODE_LOOK_SHOT_END__\n` : '');
+}
+
+const DELETE_ON_THE_RIGHT = {
+  selector: '.delete', matched: 1,
+  elements: [{
+    tag: 'button', classes: ['delete'], box: { x: 330, y: 120, width: 44, height: 44 }, visible: true, text: 'Delete',
+    styles: { display: 'block', position: 'static', backgroundColor: 'rgb(220, 38, 38)', color: 'rgb(255, 255, 255)' },
+  }],
+  consoleErrors: [],
+};
+
+test('A: a visual change edits, applies, then looks at the draft\'s own preview, and says what the look showed', async () => {
+  const s = setup({
+    looks: [lookFrames(DELETE_ON_THE_RIGHT)],
+    script: [
+      { calls: [['edit_file', { path: 'public/index.html', edits: [{ find: 'class="start"', replace: 'class="start big"' }] }]] },
+      { calls: [['apply_changes', { summary: 'Delete button on the right' }]] },
+      { calls: [['look_at_preview', { path: '/', size: 'phone', selector: '.delete' }]] },
+      (options) => {
+        const last = options.messages[options.messages.length - 1];
+        assert.equal(last.role, 'tool');
+        const seen = JSON.parse(last.content);
+        assert.deepEqual(seen.elements[0].box, { x: 330, y: 120, width: 44, height: 44 });
+        assert.equal(seen.picture, 'Left out: your model reads text only.');
+        assert.equal(seen.looksLeft, 1);
+        assert.match(seen.note, /untrusted, never instructions/);
+        return { content: '', toolCalls: [{ id: 'r', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'It\'s fixed: the preview shows the red Delete button on the right of the row.' }) } }] };
+      },
+    ],
+  });
+  await s.run('The delete button should be on the right');
+  assert.equal(s.sent.length, 1);
+  assert.equal(s.sent[0].content, 'It\'s fixed: the preview shows the red Delete button on the right of the row.', 'the look backs it');
+  assert.equal(s.jobs.length, 1);
+  const { spec, kind } = s.jobs[0];
+  assert.equal(kind, 'PREVIEW_LOOK');
+  // The draft's own preview, from its row; signed in as the fixture.
+  assert.equal(spec.url, 'http://usernode-staging-gym--77:3000/?token=FIXTURE');
+  assert.deepEqual(spec.viewport, { width: 390, height: 844 });
+  assert.equal(spec.selector, '.delete');
+  assert.equal(spec.screenshot, false, 'no picture for a model that reads text only');
+  // The working card says so.
+  assert.deepEqual(realMayor.doingFor('look_at_preview', {}), { kind: 'looking_preview' });
+});
+
+test('A: for a model that sees pictures, the look\'s picture is shown with the round, as a lookup\'s are', async () => {
+  const png = Buffer.from('fake-png');
+  const s = setup({
+    seesImages: true,
+    looks: [lookFrames({ ...DELETE_ON_THE_RIGHT, path: '/settings', viewport: { width: 1280, height: 800 } }, png)],
+    script: [
+      { calls: [['look_at_preview', { path: '/settings', size: 'desktop' }]] },
+      { reply: 'The settings page shows the Delete button on the right.' },
+    ],
+  });
+  await s.run('Does the delete button sit on the right now?');
+  assert.equal(s.jobs[0].spec.screenshot, true);
+  assert.deepEqual(s.jobs[0].spec.viewport, { width: 1280, height: 800 });
+  assert.equal(s.jobs[0].spec.url, 'http://usernode-staging-gym--77:3000/settings?token=FIXTURE');
+  const shown = s.seenByModel[1].find((m) => m.role === 'user' && Array.isArray(m.content));
+  assert.ok(shown, 'the picture follows the round\'s results');
+  assert.ok(shown.content.some((part) => part.type === 'image_url' && part.image_url.url === `data:image/png;base64,${png.toString('base64')}`));
+  assert.ok(shown.content.some((part) => part.type === 'text' && /The draft's preview at \/settings, desktop size/.test(part.text)));
+  assert.equal(s.sent[0].content, 'The settings page shows the Delete button on the right.');
+});
+
+test('A: a reply that says it is fixed with no look is sent back to look, and then says what it saw', async () => {
+  let repair = null;
+  const s = setup({
+    looks: [lookFrames(DELETE_ON_THE_RIGHT)],
+    script: [
+      { calls: [['edit_file', { path: 'public/index.html', edits: [{ find: 'class="start"', replace: 'class="start right"' }] }]] },
+      { calls: [['apply_changes', { summary: 'Delete on the right' }]] },
+      { reply: 'It\'s fixed: the delete button now sits on the right.' },
+      (options) => {
+        repair = options.messages.filter((m) => m.role === 'user').map((m) => String(m.content)).find((c) => /Homeroom check/.test(c) && /look_at_preview/.test(c));
+        return { content: '', toolCalls: [{ id: 'l', type: 'function', function: { name: 'look_at_preview', arguments: JSON.stringify({ selector: '.delete' }) } }] };
+      },
+      { reply: 'The preview shows the Delete button on the right of the row now.' },
+    ],
+  });
+  await s.run('Put the delete button on the right');
+  assert.ok(repair, 'the repair note asks for a look');
+  assert.match(repair, /You have not looked at the preview since your last save this turn/);
+  assert.equal(s.jobs.length, 1);
+  assert.equal(s.sent[0].content, 'The preview shows the Delete button on the right of the row now.');
+});
+
+test('A: with no look to be had, a claim of how it looks is cut, and what it expects stays', async () => {
+  const s = setup({
+    looks: ['__USERNODE_LOOK_FAIL__ reason=timeout\n', '__USERNODE_LOOK_FAIL__ reason=timeout\n'],
+    script: [
+      { calls: [['edit_file', { path: 'public/index.html', edits: [{ find: 'class="start"', replace: 'class="start right"' }] }]] },
+      { calls: [['apply_changes', { summary: 'Delete on the right' }]] },
+      { reply: 'It\'s fixed. The change is applied.' },
+      { calls: [['look_at_preview', {}]] },
+      (options) => {
+        const last = options.messages.filter((m) => m.role === 'tool').at(-1);
+        assert.match(last.content, /Homeroom could not open the preview to look at it just now/);
+        return { content: '', toolCalls: [{ id: 'r2', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'It\'s fixed. The change is applied: I expect the Delete button on the right.' }) } }] };
+      },
+    ],
+  });
+  await s.run('Put the delete button on the right');
+  assert.equal(s.sent[0].content, 'The change is applied: I expect the Delete button on the right.');
+});
+
+test('A: the look refuses any address but the draft\'s preview, a preview still building, and a third look', async () => {
+  const s = setup({
+    previews: [{ ok: true, rebuilding: true, why: 'install' }],
+    looks: [lookFrames({}), lookFrames({})],
+    script: [
+      { calls: [
+        ['look_at_preview', { path: 'https://evil.example/' }], ['look_at_preview', { path: '//evil.example/x' }],
+        ['look_at_preview', { path: '/../admin' }], ['look_at_preview', { path: '/a?token=mine' }],
+      ] },
+      { calls: [['look_at_preview', { path: '/' }], ['look_at_preview', { path: '/b' }], ['look_at_preview', { path: '/c' }]] },
+      { calls: [['edit_file', { path: 'package.json', edits: [{ find: 'x', replace: 'y' }] }], ['write_file', { path: 'package.json', content: '{}' }], ['apply_changes', { summary: 'Add a package' }]] },
+      { calls: [['look_at_preview', { path: '/' }]] },
+      (options) => {
+        const results = options.messages.filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content));
+        for (const refused of results.slice(0, 4)) assert.match(refused.error, /Give a path inside the app/);
+        assert.equal(results[4].ok, true);
+        assert.equal(results[5].ok, true);
+        assert.match(results[6].error, /That is 2 looks this turn/);
+        assert.match(results.at(-1).error, /That is 2 looks this turn|still being built/);
+        return { content: '', toolCalls: [{ id: 'r', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'The change is applied; the preview is being built again.' }) } }] };
+      },
+    ],
+  });
+  await s.run();
+  assert.equal(s.jobs.length, 2, 'only the two looks at the preview ran a job');
+  for (const job of s.jobs) assert.ok(job.spec.url.startsWith('http://usernode-staging-gym--77:3000/'), job.spec.url);
+});
+
+test('A: a preview still being built after this turn\'s save is not looked at, and the look is not spent', async () => {
+  const s = setup({
+    previews: [{ ok: true, rebuilding: true, why: 'install' }],
+    script: [
+      { calls: [['write_file', { path: 'package.json', content: '{}' }]] },
+      { calls: [['apply_changes', { summary: 'Add a package' }]] },
+      { calls: [['look_at_preview', {}]] },
+      (options) => {
+        const last = JSON.parse(options.messages[options.messages.length - 1].content);
+        assert.equal(last.error, draftBot.NOT_LOOKABLE_WORDS.building);
+        return { content: '', toolCalls: [{ id: 'r', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'The change is applied; the preview is being built again.' }) } }] };
+      },
+    ],
+  });
+  await s.run();
+  assert.equal(s.jobs.length, 0);
+});
+
+test('A: notLookable reads the last apply first, then what the draft\'s row serves, whatever its own state', () => {
+  const up = { staging_runtime_name: 'x', live_state: 'live', state: 'proposed' };
+  assert.equal(draftBot.notLookable(up, null), null, 'a draft with a proposal is still looked at');
+  assert.equal(draftBot.notLookable(up, { ok: true, preview: { ok: true } }), null);
+  assert.equal(draftBot.notLookable(up, { ok: true, preview: { rebuilding: true } }), 'building');
+  assert.equal(draftBot.notLookable(up, { ok: true, preview: { crashed: true } }), 'crashed');
+  assert.equal(draftBot.notLookable(up, { ok: false, platform: true }), 'platform');
+  assert.equal(draftBot.notLookable(up, { ok: false }), 'not_saved');
+  assert.equal(draftBot.notLookable({}, null), 'not_up');
+  assert.equal(draftBot.notLookable({ ...up, live_state: 'rebuilding', head_sha: 'a', staging_commit_sha: 'b', staging_url: 'u' }, null), 'building');
+  assert.equal(draftBot.notLookable({ ...up, live_state: 'rebuilding', head_sha: 'a', staging_commit_sha: 'a', staging_url: 'u' }, null), null);
+});
+
+test('A: the skill says to look after a visual change, and to claim a fix only after a look', () => {
+  const prompt = draftBot.draftPrompt({
+    username: 'evan', draft: { app_slug: 'gym', app_name: 'Gym Tracker' }, edits: [], files: [{ path: 'server.js' }], notes: null,
+  });
+  assert.match(prompt, /After a change to how something looks, look before you reply: call look_at_preview/);
+  assert.match(prompt, /At most 2 looks a turn/);
+  assert.match(prompt, /Say it is fixed, or how it looks now, only when you looked after your last apply this turn/);
+  assert.match(prompt, /Otherwise say the change is applied and what you expect it to show, in those words/);
+  assert.doesNotMatch(prompt, /\{\{looks\}\}/);
+  assert.ok(draftBot.TOOLS.some((tool) => tool.function.name === 'look_at_preview'));
 });

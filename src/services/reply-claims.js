@@ -232,6 +232,24 @@ const DRAFT_DONE = new RegExp([
   String.raw`\bthe preview (?:now )?(?:shows|has) (?:it|the change|your change)\b`,
 ].join('|'), 'i');
 
+// 20 Nov 2026 (live-draft review, A): ten replies in thread 58972 said one
+// delete button was fixed, and the person answered "nope" with a screenshot
+// each time. In a draft turn, "it's fixed", "Fixed:", "the button now sits
+// on the right", "it looks right now" say how the preview looks; only a look
+// at it after the turn's last save (live-draft-bot.js look_at_preview, the
+// session's draftLooked) backs them. "It should now sit on the right" and "I
+// expect it to" say what is expected, which a reply with no look says, and
+// "the preview now shows the change" is what a save says (draft_done).
+const DRAFT_LOOKS = new RegExp([
+  String.raw`\b(?:it|that|this|everything|the\s+[^.!?\n]{1,40}?)(?:'s|’s|\s+is|\s+are|\s+has been|\s+have been|\s+was|\s+were)\s+(?:now\s+)?(?:all\s+)?(?:fixed|sorted(?:\s+out)?|resolved)\b`,
+  String.raw`(?:^|[.!?\n]\s*)[*_]*(?:all\s+)?fixed\b`,
+  String.raw`(?<!\b(?:should|will|would|could|might|may|must|to)\s+)(?<!['’]ll\s+)\bnow\s+(?:looks?|shows?|sits?|appears?|lines?\s+up|fits?|displays?|matches|reads?|stays?)\b(?!\s+(?:it|them|the (?:change|changes|edit)|your (?:change|changes|edit))\b)`,
+  String.raw`\b(?:looks?|appears?)\s+(?:right|correct|good|fine|better|great|as (?:you|they) (?:asked|wanted))\s+now\b`,
+].join('|'), 'i');
+// Not a claim about the preview now: the app running again (what the last
+// apply itself said), or an earlier change told of.
+const DRAFT_NOT_LOOKS = /\b(?:runs?|running|starts?|started|restart(?:s|ed)?|boots?|back up|up again|earlier|previous(?:ly)?|last time)\b/i;
+
 // #6151: a filed design (design-bot.js) said not to be built, or to need
 // somebody else to start it: "I can't build it myself", "someone on the
 // project has to start it", "building starts on the project's side".
@@ -531,6 +549,18 @@ const CLAIMS = Object.freeze([
     said: 'says you changed or saved the draft',
   },
   {
+    // A (live-draft review): how the preview looks now, or that it is
+    // fixed, said with no look at it since the turn's last save. The app
+    // running again is what the apply itself said, and is no such claim.
+    kind: 'draft_looks',
+    proof: 'turn',
+    re: DRAFT_LOOKS,
+    applies: (t) => !!t.liveDraft,
+    when: (sentence) => !DRAFT_NOT_LOOKS.test(sentence),
+    turn: (t) => !!t.draftLooked,
+    said: 'says it is fixed or how the preview looks now, without looking at it since your last save',
+  },
+  {
     kind: 'not_built',
     proof: 'turn',
     re: NOT_BUILT,
@@ -639,7 +669,7 @@ function mentions(text, { receipt = null } = {}) {
 // followedUp, steered, pictures, attached, closedThread; and, on
 // a design thread, design, drew, filedDesign, designBuilds; in a plain
 // page's thread (artifacts), page, drew; with a live draft
-// open (step 6), liveDraft, draftSaved; on the voice,
+// open (step 6), liveDraft, draftSaved, draftLooked; on the voice,
 // readChanges.
 
 // ── What a turn's tools returned ──────────────────────────────────────────
@@ -1475,6 +1505,12 @@ function repairNote(problems, { tools = null } = {}) {
       ? ' Nothing was saved to the draft this turn. Make the change with edit_file and save it with apply_changes, then reply; or say plainly that nothing changed.'
       : ' Nothing was saved to the draft, so do not say it was.')
     : '';
+  // A (live-draft review): how the preview looks, said with no look since the last save.
+  const draftLooks = kinds.has('draft_looks')
+    ? (offered('look_at_preview')
+      ? ' You have not looked at the preview since your last save this turn, so you cannot say it is fixed or how it looks now. Look with look_at_preview, then say what it shows; if you cannot look, say the change is applied and what you expect it to show, in those words.'
+      : ' Nothing looked at the preview since the last save: say the change is applied and what you expect it to show, never that it is fixed or how it looks now.')
+    : '';
   // #6159: there is no control on their side; close_thread finishes a private thread.
   const noControl = kinds.has('no_control')
     ? ` There is no such control on their side${offered('close_thread') ? ': to finish this private thread, call close_thread.' : '.'}`
@@ -1493,7 +1529,7 @@ function repairNote(problems, { tools = null } = {}) {
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${draftLooks}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1589,6 +1625,7 @@ module.exports = {
   briefShortOfPlan,
   NO_CONTROL_CLAIM,
   DESIGN_DONE,
+  DRAFT_LOOKS,
   NOT_BUILT,
   UNREAD_DESCRIPTION_RE,
   squashWords,

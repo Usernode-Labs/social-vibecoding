@@ -189,6 +189,12 @@ test('#6358: a design turn draws a whole screen within its budget', () => {
   assert.deepEqual(profiles.turnLimits(['design']), { rounds: 16, outputTokens: 16000, retryOutputTokens: 32000, requestTimeoutMs: 180_000 });
   assert.deepEqual(profiles.turnLimits([]), { rounds: 16, outputTokens: 8000, retryOutputTokens: 16000, requestTimeoutMs: 90_000 });
   assert.deepEqual(profiles.turnLimits(['draft']).rounds, 18);
+  // 20 Nov 2026 (live-draft review, A): a draft turn looks at its preview at
+  // most twice (look_at_preview), counted by its session.
+  assert.equal(profiles.DRAFT_LIMITS.looksPerTurn, 2);
+  assert.ok(profiles.DRAFT_TOOLS.includes('look_at_preview'));
+  assert.equal(require('../src/services/live-draft-bot').MAX_LOOKS, profiles.DRAFT_LIMITS.looksPerTurn);
+  assert.match(read('src/services/live-draft-bot.js'), /const MAX_LOOKS = DRAFT_LIMITS\.looksPerTurn;/);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /maxOutputTokens: room\.outputTokens, retryOutputTokens: room\.retryOutputTokens, timeoutMs: room\.requestTimeoutMs,/);
   assert.match(src, /const room = loaded\(\)\.length \? turnLimits\(loaded\(\)\) : null;/);

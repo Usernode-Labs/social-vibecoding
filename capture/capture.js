@@ -2862,7 +2862,215 @@ async function runDesignRender(spec, deps = {}) {
   }
 }
 
+// ── 20 Nov 2026 (live-draft review, A): a live draft's preview, looked at ──
+//
+// Every visual claim the draft bot made was a guess: ten edits to one delete
+// button were each said to be fixed, and each time the person answered "nope"
+// with a screenshot. PREVIEW_LOOK ({ url, viewport, selector?, screenshot? })
+// opens one page of a live draft's running preview at one size, as a person
+// sees it, and emits what a model that reads text can use: for the elements
+// `selector` matches (the page's main content when there is none), each
+// one's box, its visible text and the computed styles that decide its layout
+// and colour, with the page's console errors; and, when asked, one viewport
+// screenshot. The platform builds `url` from the draft's own row
+// (src/services/preview-look.js); a top-level navigation to any other origin
+// is refused here too, so the page cannot take the look elsewhere. It runs
+// no shots and no checks.
+//
+//   __USERNODE_LOOK__ bytes=<n>
+//   <base64 JSON, one line>
+//   __USERNODE_LOOK_END__
+//   __USERNODE_LOOK_SHOT__ bytes=<n>        (only when asked)
+//   <base64 PNG, one line>
+//   __USERNODE_LOOK_SHOT_END__
+//
+// or __USERNODE_LOOK_FAIL__ reason=<encoded> when there is nothing to give.
+const LOOK_MAX_ELEMENTS = 12;
+const LOOK_MAX_ERRORS = 10;
+const LOOK_MAX_SELECTOR = 300;
+// The styles that decide where a thing sits and what colour it is.
+const LOOK_STYLES = Object.freeze([
+  'display', 'position', 'backgroundColor', 'color', 'borderRadius', 'margin', 'padding', 'overflow',
+]);
+
+function parsePreviewLook(env) {
+  const raw = String((env || {}).PREVIEW_LOOK || '').trim();
+  if (!raw) return null;
+  try {
+    const spec = JSON.parse(raw);
+    if (!spec || typeof spec.url !== 'string' || !/^https?:\/\//i.test(spec.url)) return null;
+    const viewport = spec.viewport || {};
+    const width = Number(viewport.width);
+    const height = Number(viewport.height);
+    return {
+      url: spec.url,
+      viewport: {
+        width: Number.isFinite(width) && width > 0 ? Math.min(Math.round(width), 1920) : 390,
+        height: Number.isFinite(height) && height > 0 ? Math.min(Math.round(height), 1600) : 844,
+      },
+      selector: typeof spec.selector === 'string' ? spec.selector.trim().slice(0, LOOK_MAX_SELECTOR) : '',
+      screenshot: spec.screenshot === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** A URL without its `token` query value, for anything the job reports. */
+function withoutToken(text) {
+  return String(text == null ? '' : text).replace(/([?&]token=)[^&#\s"']+/gi, '$1…');
+}
+
+function emitLook(facts) {
+  const json = JSON.stringify(facts);
+  _sink(`__USERNODE_LOOK__ bytes=${Buffer.byteLength(json, 'utf8')}\n`);
+  _sink(`${Buffer.from(json, 'utf8').toString('base64')}\n`);
+  _sink('__USERNODE_LOOK_END__\n');
+}
+
+function emitLookShot(png) {
+  _sink(`__USERNODE_LOOK_SHOT__ bytes=${png.length}\n`);
+  _sink(`${Buffer.from(png).toString('base64')}\n`);
+  _sink('__USERNODE_LOOK_SHOT_END__\n');
+}
+
+function emitLookFail(reason) {
+  _sink(`__USERNODE_LOOK_FAIL__ reason=${encodeURIComponent(withoutToken(reason || 'failed').slice(0, 200))}\n`);
+}
+
+/**
+ * Runs in the page: the elements `selector` matches, or the page's main
+ * content (the top-level parts of <main>, else of <body>, past any single
+ * wrapper), each with its box, visible text and LOOK_STYLES.
+ */
+function lookInPage(args) {
+  const selector = args && args.selector ? String(args.selector) : '';
+  const max = (args && args.max) || 12;
+  const styleNames = (args && args.styles) || [];
+  const SKIP = { SCRIPT: 1, STYLE: 1, LINK: 1, META: 1, NOSCRIPT: 1, TEMPLATE: 1 };
+  let nodes = [];
+  let badSelector = false;
+  if (selector) {
+    try { nodes = Array.prototype.slice.call(document.querySelectorAll(selector)); } catch (e) { badSelector = true; }
+  } else {
+    let root = document.querySelector('main, [role="main"]') || document.body;
+    const kids = (el) => Array.prototype.filter.call((el && el.children) || [], (c) => !SKIP[c.tagName]);
+    for (let depth = 0; depth < 3 && root && kids(root).length === 1; depth += 1) root = kids(root)[0];
+    nodes = root ? kids(root) : [];
+    if (!nodes.length && root) nodes = [root];
+  }
+  const elements = nodes.slice(0, max).map((el) => {
+    const r = el.getBoundingClientRect();
+    const cs = window.getComputedStyle(el);
+    const styles = {};
+    for (const name of styleNames) styles[name] = cs[name];
+    const classes = typeof el.className === 'string' ? el.className.trim().split(/\s+/).filter(Boolean).slice(0, 6) : [];
+    return {
+      tag: el.tagName.toLowerCase(),
+      ...(el.id ? { id: String(el.id).slice(0, 80) } : {}),
+      ...(classes.length ? { classes } : {}),
+      box: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
+      visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0,
+      text: String(el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+      styles,
+    };
+  });
+  const doc = document.documentElement;
+  return {
+    badSelector,
+    matched: nodes.length,
+    main: !selector,
+    title: String(document.title || '').slice(0, 200),
+    page: { width: doc ? doc.scrollWidth : 0, height: doc ? doc.scrollHeight : 0 },
+    elements,
+  };
+}
+
+/**
+ * Open one page of a draft's preview at one size and emit what it shows.
+ * `deps` is a test seam: launch (a browser factory) and delayMs.
+ */
+async function runPreviewLook(spec, deps = {}) {
+  if (!spec) { emitLookFail('no_preview_look'); return null; }
+  const launch = deps.launch || launchCaptureBrowser;
+  const delayMs = Number.isFinite(deps.delayMs) ? deps.delayMs : 800;
+  let origin;
+  try { origin = new URL(spec.url).origin; } catch { emitLookFail('bad_url'); return null; }
+  let browser = null;
+  try {
+    browser = await launch();
+    const page = await browser.newPage();
+    const errors = [];
+    const pushErr = (kind, message) => {
+      if (errors.length >= LOOK_MAX_ERRORS) return;
+      const msg = withoutToken(message).slice(0, MAX_CONSOLE_MSG_LEN);
+      if (!msg || errors.some((e) => e.message === msg)) return;
+      errors.push({ kind, message: msg });
+    };
+    const sink = makeConsoleErrorSink((kind, message) => pushErr(kind, message));
+    const activity = makeActivityClock();
+    let leftFor = null;
+    page.on('console', (msg) => {
+      activity.bump();
+      try { sink.onConsole(msg); } catch { /* one malformed message */ }
+    });
+    page.on('pageerror', (err) => {
+      activity.bump();
+      pushErr('pageerror', (err && (err.stack || err.message)) || String(err));
+    });
+    for (const event of ['requestfinished', 'requestfailed']) page.on(event, () => activity.bump());
+    // The fence: the page may load what it loads, but it is never taken to
+    // another origin while it is looked at.
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      activity.bump();
+      let away = false;
+      try {
+        const frame = request.frame();
+        const top = !frame || !frame.parentFrame();
+        away = request.isNavigationRequest() && top && new URL(request.url()).origin !== origin;
+      } catch { away = false; }
+      if (away) {
+        leftFor = 'left_preview';
+        request.abort().catch(() => {});
+      } else {
+        request.continue().catch(() => {});
+      }
+    });
+    await page.setViewport({ ...spec.viewport, deviceScaleFactor: 1 });
+    const response = await page.goto(spec.url, { waitUntil: 'load', timeout: 30000 });
+    if (delayMs > 0) await waitForQuiet(activity, { minMs: delayMs, quietMs: 500, maxMs: 6000 });
+    await sink.settle();
+    const at = new URL(page.url());
+    if (leftFor || at.origin !== origin) { emitLookFail('left_preview'); return null; }
+    const facts = await page.evaluate(lookInPage, { selector: spec.selector, max: LOOK_MAX_ELEMENTS, styles: LOOK_STYLES });
+    const shot = spec.screenshot ? await page.screenshot({ type: 'png', fullPage: false }) : null;
+    const out = {
+      path: withoutToken(`${at.pathname}${at.search}${at.hash}`),
+      status: response ? response.status() : 0,
+      viewport: spec.viewport,
+      selector: spec.selector || null,
+      ...facts,
+      consoleErrors: errors,
+    };
+    emitLook(out);
+    if (shot) emitLookShot(shot);
+    return out;
+  } catch (err) {
+    emitLookFail(err?.message || 'look_failed');
+    return null;
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
 async function main() {
+  // A: one page of a live draft's preview, looked at for the draft bot.
+  const previewLook = parsePreviewLook(process.env);
+  if (previewLook) {
+    await runPreviewLook(previewLook);
+    return;
+  }
   // #6681: a design version rendered for the design bot to look at.
   const designRender = parseDesignRender(process.env);
   if (designRender) {
@@ -2973,4 +3181,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN, parsePageCapture, runPageCapture, parseDesignRender, runDesignRender };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN, parsePageCapture, runPageCapture, parseDesignRender, runDesignRender, parsePreviewLook, runPreviewLook, lookInPage, withoutToken, LOOK_STYLES };

@@ -68,6 +68,8 @@ const DOING_WORDS: Record<string, string> = {
   writing: 'messages:thread.botWorking.writing',
   // #6864: a live draft's code, changed in the chat's own turn.
   changing_draft: 'messages:thread.botWorking.changingDraft',
+  // 20 Nov 2026 (live-draft review, A): that draft's preview, looked at.
+  looking_preview: 'messages:thread.botWorking.lookingPreview',
 };
 
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */

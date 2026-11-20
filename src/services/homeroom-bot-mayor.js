@@ -2153,6 +2153,9 @@ function doingFor(name, args = {}, { project = null, version = null, kind = null
     case 'write_file':
     case 'apply_changes':
       return { kind: 'changing_draft' };
+    // 20 Nov 2026 (live-draft review, A): "Looking at the preview".
+    case 'look_at_preview':
+      return { kind: 'looking_preview' };
     // #6354: opening one of Homeroom's own pages to copy it for a design.
     case 'capture_page': {
       const page = typeof args?.page === 'string' ? clip(args.page, 60) : '';
@@ -4576,7 +4579,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       };
       const openDraft = async ({ draft: row, opening = false }) => {
         try {
-          return await draftBot.openSession(pool, config, { user, draft: row, opening, deps });
+          // A: a look's picture only for a model that can see it.
+          return await draftBot.openSession(pool, config, { user, draft: row, opening, imageInput, deps });
         } catch (err) {
           t.failures.push(`context:draft:${codeOf(err)}`);
           log.warn('homeroom-bot-mayor', 'Could not open a thread\'s live draft for this turn', { userId: user.id, err: clip(err?.message, 200) });
@@ -4829,7 +4833,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           const onPlatform = platform && PLATFORM_TOOLS.includes(name) && !caps.design?.owns(name);
           const session = caps.design?.owns(name) ? caps.design : caps.draft?.owns(name) ? caps.draft : null;
           let result;
-          if (session) result = await session.run(name, args, round);
+          // A: a draft's look shows its picture with this round's (picturesMessage).
+          if (session) result = await session.run(name, args, { ...round, pictures });
           else if (onPlatform) {
             // B: a read made once a turn answers again from the first (readOnce).
             result = readOnce(ctx, messages, name, args) || await botTools.run(name, args, {

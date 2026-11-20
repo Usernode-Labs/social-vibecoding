@@ -176,13 +176,14 @@ const LASTING = Object.freeze({
 // are saved only by apply_changes. A thread start_design opens for the screen
 // is said by the design (design-bot.js roomFor, `add`). Artifacts: a page's
 // version is saved with the reply too (artifact-session.js), so its tools
-// leave nothing either.
+// leave nothing either. 20 Nov 2026 (live-draft review, A): a look at a
+// draft's preview (look_at_preview) only reads it.
 const NOTHING = new Set([
   'progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'comment_on_request', 'offer_request',
   'offer_move_request', 'offer_copy_request', 'offer_close_request', 'start_design', 'offer_new_project',
   'offer_options', 'ask_questions', 'show_table', 'show_change', 'start_investigation', 'stop_and_redo',
   'write_screen', 'edit_design', 'compare_versions', 'offer_plan', 'offer_project', 'capture_page',
-  'search_code', 'edit_file', 'write_file',
+  'search_code', 'edit_file', 'write_file', 'look_at_preview',
   'write_artifact', 'edit_artifact', 'show_artifact', 'compare_artifacts',
 ]);
 // A read, by its name (the platform's and the admin's among them).
