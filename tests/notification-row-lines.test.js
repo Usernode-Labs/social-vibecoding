@@ -368,6 +368,24 @@ test('platform limit rows say which cap, how full, and what happens next', async
   assert.ok(odd.subject.length > 0);
 });
 
+test('#6901: a refusal at the app limit says someone was turned away, then the count', async () => {
+  // The first refusal of a run: its own words, whatever the level says.
+  const just = await lines({ kind: 'platform_limit', detail: 'apps_away:1:210:0',
+    appName: null, sourceUsername: null });
+  assert.equal(just.label, 'Someone was turned away');
+  assert.match(just.subject, /^The server is at its app limit \(210 apps\)\. +Raise it in Admin → Limits or remove an app\.$/);
+  assert.equal(just.meta, 'Admin · 4m ago');
+
+  // A later count: how many, and since when, in the reader's own time zone.
+  const count = await lines({ kind: 'platform_limit', detail: 'apps_away:3:210:180',
+    appName: null, sourceUsername: null });
+  assert.equal(count.label, 'People turned away at the app limit');
+  assert.match(count.subject, /^3 people were turned away since \d{1,2}:\d{2}\s?(?:AM|PM)\. +Raise the app limit in Admin → Limits or remove an app\.$/);
+  const one = await lines({ kind: 'platform_limit', detail: 'apps_away:1:210:180',
+    appName: null, sourceUsername: null });
+  assert.match(one.subject, /^1 person was turned away since \d{1,2}:\d{2}/);
+});
+
 test('unexpected events rows say how many, of what, and where to look (#4296)', async () => {
   const hour = await lines({ kind: 'platform_incident', detail: 'hour:build_interrupted:6',
     appName: null, sourceUsername: null });

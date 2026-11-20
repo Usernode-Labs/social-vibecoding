@@ -51,7 +51,7 @@
 // hand-rolled relative age with no floor, so a year-old row read "412d ago";
 // the shared helper prints a real date past a week. Bundled, not imported by
 // Node, in tests/notification-row-lines.test.js — see the note there.
-import { agoStamp } from '../../lib/timestamp';
+import { agoStamp, messageStamp } from '../../lib/timestamp';
 
 // The rows' own words (frontend/locales/en/notifications.json), read when a
 // row is built so they follow the language on screen. Through the global the
@@ -2347,6 +2347,16 @@ function parsePlatformLimitDetail(detail) {
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
 }
 
+// #6901: services/platform-limit-alerts.js refusalToken():
+// "apps_away:<people>:<cap>:<ago>", ago in minutes from the run's start (0
+// means someone was just turned away).
+const PLATFORM_REFUSAL_DETAIL_RE = /^apps_away:(\d{1,5}):(\d{1,7}):(\d{1,4})$/;
+
+function parsePlatformRefusalDetail(detail) {
+  const m = PLATFORM_REFUSAL_DETAIL_RE.exec(String(detail || ''));
+  return m ? { people: Number(m[1]), cap: Number(m[2]), agoMinutes: Number(m[3]) } : null;
+}
+
 // services/platform-incident-alerts.js tokens (#4296): "digest:<total>:<kind>=<n>,..."
 // (the previous UTC day, per kind) or "hour:<kind>:<n>" (one kind past its
 // hourly line).
@@ -3290,6 +3300,27 @@ function rowWords(n) {
   // two kinds above. `detail` is "<limit>_<level>:<used>:<cap>"; a token this
   // build cannot read still says which kind of alert it is.
   if (n.kind === 'platform_limit') {
+    // #6901: somebody was turned away at the app limit, told at once for the
+    // first and then as a count every few hours. ago is minutes back from
+    // the row's own stamp; 0 is the "just now" notice.
+    const refusal = parsePlatformRefusalDetail(n.detail);
+    if (refusal) {
+      const at = new Date(new Date(n.createdAt).getTime() - refusal.agoMinutes * 60000);
+      const since = messageStamp(at, { now: new Date() }).text;
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F6A8}',
+        label: refusal.agoMinutes === 0
+          ? t('notifications:row.limit.appsAway.just.label')
+          : t('notifications:row.limit.appsAway.count.label'),
+        // One message each: the figures, strong, then what follows from them.
+        segments: refusal.agoMinutes === 0
+          ? messageSegments('notifications:row.limit.appsAway.just.body', { count: refusal.cap })
+          : messageSegments('notifications:row.limit.appsAway.count.body', { count: refusal.people, time: since }),
+      };
+    }
     const limit = parsePlatformLimitDetail(n.detail);
     if (!limit) {
       return { ...base, appLine: t('notifications:row.source.admin'), wrap: true, icon: '\u26A0\uFE0F',

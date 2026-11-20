@@ -141,6 +141,11 @@ async function migrate(config) {
   // nearly full, each saying how much is used and what the limit is. Staging
   // runs no sweep against a growing database, so they are seeded.
   await seedStagingStorageNotices(pool);
+  // #6901's shots: while the server is full, Admin → Limits says how many
+  // people were turned away, and the bell has a refusal notice. A fresh
+  // staging copy has no run of refusals at all, and staging notifies nobody,
+  // so both are seeded with obviously fake people.
+  await seedStagingLimitRefusals(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
@@ -2868,6 +2873,53 @@ async function seedStagingFoldedLiveNotifications(pool) {
 // for the same project, so a real bell holds one per project. The one at
 // half full has only the early notice, and the one nearly full has only the
 // warning (a sweep that jumped past both lines sends the highest alone).
+// #6901's shots: the run of refusals Admin → Limits counts, and the bell's
+// refusal notices. Obviously fake people, staging only, idempotent.
+async function seedStagingLimitRefusals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = (await pool.query(
+      `SELECT id FROM users
+        WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'staging-demo-user')
+        ORDER BY id`
+    )).rows;
+    if (!people.length) return;
+    const refusals = people.slice(0, 3);
+    await pool.query(
+      `INSERT INTO platform_limit_alerts
+         (limit_key, level, used, cap, measured_at, refusals_since, refusals_notified_at)
+       VALUES ('apps', 'full', 50, 50, NOW(), NOW() - interval '3 hours', NOW() - interval '3 hours')
+       ON CONFLICT (limit_key) DO UPDATE
+         SET refusals_since = COALESCE(platform_limit_alerts.refusals_since, NOW() - interval '3 hours'),
+             refusals_notified_at = COALESCE(platform_limit_alerts.refusals_notified_at, NOW() - interval '3 hours')`
+    );
+    for (const person of refusals) {
+      await pool.query(
+        `INSERT INTO platform_limit_refusals (limit_key, user_id, day, refused_at)
+         VALUES ('apps', $1, (NOW() AT TIME ZONE 'UTC')::date, NOW() - interval '2 hours')
+         ON CONFLICT DO NOTHING`,
+        [person.id]
+      );
+    }
+    // Full admins only, as the real notice is. The shots' own full-admin
+    // identity is installed after boot, so this reaches whoever is one here;
+    // the Admin → Limits card (any admin) is the reliable side.
+    await pool.query(
+      `INSERT INTO notifications (user_id, source_user_id, kind, detail, created_at)
+       SELECT u.id, NULL, 'platform_limit', $1::varchar(32), NOW() - interval '10 minutes'
+         FROM users u
+        WHERE u.is_admin = TRUE AND u.admin_readonly = FALSE
+          AND NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.user_id = u.id AND n.kind = 'platform_limit' AND n.detail = $1::varchar(32)
+          )`,
+      [`apps_away:${refusals.length}:50:180`]
+    );
+  } catch (err) {
+    log.warn('db', 'Staging limit refusals seed failed', { message: err.message });
+  }
+}
+
 async function seedStagingStorageNotices(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
