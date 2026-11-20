@@ -3,7 +3,6 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { createRequire } = require('node:module');
@@ -153,57 +152,39 @@ test('macOS listener inventory spares ancestors and foreign users and reads actu
 });
 
 
-// Evaluate the expressions from the checked-in workflow, so configuration
-// changes exercise the real resolver and release dependency semantics.
-function workflowExpression(value, context) {
-  if (typeof value !== 'string') return value;
-  return vm.runInNewContext(value.trim().replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context, { timeout: 500 });
-}
-
-test('the required security merge gate rejects every incomplete or unsuccessful dependency result', () => {
-  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
+test('the required security merge gate rejects incomplete or unsuccessful checks', () => {
+  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
   const required = require('../security/required-merge-checks.json');
   const lockfiles = workflow.jobs['security-lockfiles'];
   const images = workflow.jobs['security-images'];
   const gate = workflow.jobs['security-merge-gate'];
+  assert.deepEqual(workflow.on, { pull_request: { branches: ['main'] } });
   assert.deepEqual(required, [gate.name, lockfiles.name,
     ...images.strategy.matrix.include.map(({ component }) => images.name.replace('${{ matrix.component }}', component))]);
-  assert.deepEqual(gate.needs, ['security-lockfiles', 'security-images']);
+  assert.deepEqual(gate.needs, ['security-lockfiles', 'security-images', 'security-regressions', 'preview-schema-compatibility']);
   assert.deepEqual(gate.permissions, {});
-  assert.equal(workflowExpression(gate.if, { github: { event_name: 'pull_request' }, always: () => true }), true);
-  for (const event of ['push', 'schedule', 'workflow_dispatch']) {
-    assert.equal(workflowExpression(gate.if, { github: { event_name: event }, always: () => true }), false);
-  }
-  assert.equal(images.if, "github.event_name == 'pull_request'");
+  assert.equal(gate.if, '${{ always() }}');
   for (const job of [lockfiles, images, gate]) {
     assert.equal(job['continue-on-error'], undefined);
     for (const step of job.steps) assert.equal(step['continue-on-error'], undefined);
   }
   const check = gate.steps[0];
-  assert.deepEqual(check.env, { LOCKFILES_RESULT: '${{ needs.security-lockfiles.result }}', IMAGES_RESULT: '${{ needs.security-images.result }}' });
-  const run = (lockfiles, images) => spawnSync('sh', ['-c', check.run], {
-    encoding: 'utf8', env: { ...process.env, LOCKFILES_RESULT: lockfiles, IMAGES_RESULT: images },
+  assert.deepEqual(check.env, {
+    LOCKFILES_RESULT: '${{ needs.security-lockfiles.result }}',
+    IMAGES_RESULT: '${{ needs.security-images.result }}',
+    REGRESSIONS_RESULT: '${{ needs.security-regressions.result }}',
+    DATABASE_RESULT: '${{ needs.preview-schema-compatibility.result }}',
   });
-  assert.equal(run('success', 'success').status, 0);
-  for (const status of ['', 'pending', 'failure', 'cancelled', 'skipped', 'neutral', 'timed_out']) {
-    for (const [lockfiles, images] of [[status, 'success'], ['success', status]]) {
-      const result = run(lockfiles, images);
-      assert.equal(result.status, 1, `${lockfiles}/${images}`);
-      assert.match(result.stdout, /All security checks must succeed before merging/);
-    }
-  }
-  const audit = lockfiles.steps.find((s) => s.run === 'node scripts/security-audit.js');
-  const releaseScan = workflow.jobs.build.steps.find((s) => s.name === 'Verify runtime and scan the exact image SBOM');
-  const baseline = lockfiles.steps.find((s) => s.name === 'Fetch the baseline commit');
-  const live = lockfiles.steps.find((s) => s.name === 'Read the live release');
-  for (const event of ['pull_request', 'push', 'schedule', 'workflow_dispatch']) {
-    for (const ref of ['refs/heads/main', 'refs/heads/feat/k8s', 'refs/heads/other', 'refs/pull/1/merge']) {
-      const context = { github: { event_name: event, ref } };
-      const protectedRelease = event !== 'pull_request' && ref === 'refs/heads/main';
-      assert.equal(workflowExpression(audit.env.SECURITY_AUDIT_ONLY, context), protectedRelease ? '1' : '0');
-      assert.equal(workflowExpression(baseline.if, context), !protectedRelease);
-      assert.equal(workflowExpression(live.if, context), event !== 'pull_request' && ref !== 'refs/heads/main');
-      assert.equal(workflowExpression(releaseScan.env.SECURITY_AUDIT_ONLY, context), ref === 'refs/heads/main' ? '1' : '0');
+  const success = Object.fromEntries(Object.keys(check.env).map(key => [key, 'success']));
+  const run = (results) => spawnSync('sh', ['-c', check.run], {
+    encoding: 'utf8', env: { ...process.env, ...results },
+  });
+  assert.equal(run(success).status, 0);
+  for (const key of Object.keys(success)) {
+    for (const status of ['', 'pending', 'failure', 'cancelled', 'skipped', 'neutral', 'timed_out']) {
+      const result = run({ ...success, [key]: status });
+      assert.equal(result.status, 1, `${key}: ${status}`);
+      assert.match(result.stdout, /All checks must succeed before merging/);
     }
   }
 });
@@ -235,59 +216,43 @@ test('independent daily audits cover every image and publish data without issue-
   assert.match(download.with.pattern, /github\.run_attempt/, 'a retry cannot consume older clean artifacts');
 });
 
-test('publishing requires candidate gates while full daily audits cannot block unrelated releases', () => {
+test('release requires both the images and live database checks, with the full suite on pull requests', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
-  const release = workflow.jobs.release;
-  const regressions = workflow.jobs['security-regressions'].steps.find((s) => s.run?.includes('tests/build-stop-hook.test.js'));
+  const pr = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
+  const database = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/kubernetes-database-checks.yml'), 'utf8'));
+  assert.deepEqual(Object.keys(workflow.on), ['push', 'workflow_dispatch']);
+  assert.deepEqual(workflow.on.push.branches, ['main']);
+  assert.equal(workflow.jobs.plan.if, "github.ref == 'refs/heads/main'");
+  assert.deepEqual(workflow.jobs.release.needs, ['build', 'preview-schema-compatibility']);
+  assert.equal(workflow.jobs.release.if, undefined, 'GitHub requires all dependencies to succeed');
+  assert.deepEqual(workflow.jobs.build.needs, ['plan']);
+  const gate = workflow.jobs['preview-schema-compatibility'];
+  assert.equal(gate.needs, 'plan');
+  assert.equal(gate.if, "needs.plan.outputs.should_release == 'true'");
+  assert.equal(gate.uses, './.github/workflows/kubernetes-database-checks.yml');
+  assert.equal(gate.with, undefined);
+  assert.equal(pr.jobs['preview-schema-compatibility'].uses, gate.uses);
+  assert.deepEqual(pr.jobs['preview-schema-compatibility'].with, { full_suite: true });
+  assert.equal(database.on.workflow_call.inputs.full_suite.default, false);
+  const steps = database.jobs['preview-schema-compatibility'].steps;
+  const twoServer = steps.find((step) => step.name === 'Verify database identities and tenant copies');
+  assert.equal(twoServer.if, undefined);
+  assert.match(twoServer.run, /tests\/database-role-split-postgres\.test\.js/);
+  assert.match(twoServer.run, /tests\/platform-preview-data-policy-postgres\.test\.js/);
+  assert.equal(steps.find((step) => step.run?.includes('tests/platform-signals-postgres.test.js')).if, 'inputs.full_suite');
+  assert.equal(steps.find((step) => step.run?.includes('tests/private-streams-postgres.test.js')).if, 'inputs.full_suite');
+  const rebuilds = steps.filter((step) => step.run?.includes('npm rebuild bcrypt'));
+  assert.equal(rebuilds.length, 1);
+  const restore = steps.find((step) => step.uses === 'actions/cache/restore@v6');
+  const save = steps.find((step) => step.uses === 'actions/cache/save@v6');
+  assert.ok(steps.indexOf(restore) < steps.indexOf(rebuilds[0]));
+  assert.ok(steps.indexOf(rebuilds[0]) < steps.indexOf(twoServer));
+  assert.match(rebuilds[0].run, /compareSync\('probe', b.hashSync\('probe', 4\)\)/);
+  assert.equal(save.with.key, '${{ steps.bcrypt_binding.outputs.cache-primary-key }}');
+  assert.match(save.if, /steps\.bcrypt_binding\.outputs\.cache-hit != 'true' && github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
+  const regressions = pr.jobs['security-regressions'].steps.find((step) => step.run?.includes('tests/build-stop-hook.test.js'));
   assert.match(regressions.run, /tests\/security-gate-baseline\.test\.js/);
   assert.match(regressions.run, /tests\/security-audit-report\.test\.js/);
-  assert.match(JSON.stringify(workflow.jobs['preview-schema-compatibility'].steps), /tests\/platform-signals-postgres\.test\.js/);
-  assert.deepEqual(release.needs, ['build', ...GATES]);
-  assert.equal(workflow.jobs['scheduled-image-audit'], undefined);
-  assert.match(release.if, /!cancelled\(\)/);
-  const allowed = (event, build, audit, cancelled = false, gates = 'success') => workflowExpression(release.if, {
-    github: { event_name: event }, cancelled: () => cancelled,
-    needs: { build: { result: build }, 'scheduled-image-audit': { result: audit },
-      ...Object.fromEntries(GATES.map((gate) => [gate, { result: typeof gates === 'string' ? gates : gates[gate] }])) },
-  });
-  assert.equal(allowed('schedule', 'success', 'success'), true);
-  for (const status of ['failure', 'cancelled', 'skipped']) {
-    assert.equal(allowed('schedule', 'success', status), true, `independent audit ${status} does not gate publishing`);
-  }
-  for (const event of ['push', 'workflow_dispatch']) {
-    assert.equal(allowed(event, 'success', 'skipped'), true, event);
-    for (const status of ['failure', 'cancelled', 'skipped']) assert.equal(allowed(event, status, 'skipped'), false);
-  }
-  assert.equal(allowed('pull_request', 'skipped', 'skipped'), false);
-  assert.equal(allowed('schedule', 'success', 'success', true), false);
-  // The gates run beside the image builds (28 Oct 2026), so publishing is
-  // where they hold: every one must pass, on every event.
-  for (const gate of GATES) {
-    for (const status of ['failure', 'cancelled', 'skipped']) {
-      for (const event of ['push', 'workflow_dispatch', 'schedule']) {
-        assert.equal(allowed(event, 'success', event === 'schedule' ? 'success' : 'skipped', false, { ...Object.fromEntries(GATES.map((g) => [g, 'success'])), [gate]: status }), false, `${event}: ${gate} ${status}`);
-      }
-    }
-  }
-});
-
-const GATES = ['security-lockfiles', 'security-regressions', 'preview-schema-compatibility'];
-
-test('the gates run beside the image builds: they wait for the plan, skip a run that will not release, and run on every pull request', () => {
-  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
-  assert.deepEqual([].concat(workflow.jobs.build.needs), ['plan'], 'the builds wait for nothing else');
-  for (const gate of GATES) {
-    const job = workflow.jobs[gate];
-    assert.deepEqual([].concat(job.needs), ['plan'], gate);
-    const runs = (event, plan, shouldRelease) => workflowExpression(job.if, {
-      github: { event_name: event }, cancelled: () => false,
-      needs: { plan: { result: plan, outputs: { should_release: shouldRelease } } },
-    });
-    assert.equal(runs('pull_request', 'skipped', undefined), true, `${gate}: a pull request (no plan) still runs it`);
-    assert.equal(runs('push', 'success', 'true'), true, `${gate}: a release runs it`);
-    assert.equal(runs('push', 'success', 'false'), false, `${gate}: a run that will not release skips it`);
-    assert.equal(runs('push', 'failure', undefined), false, `${gate}: no plan, no release, no gate`);
-  }
 });
 
 test('visible-change arrays reject excessive lengths before Zod visits any elements', () => {

@@ -86,10 +86,9 @@ test('npm, direct test preloads and both images generate the ignored input', () 
   assert.equal(pkg.scripts['build:schema'], 'node scripts/build-schema.js');
   assert.match(fs.readFileSync(path.join(root, 'tests/lib/test-net.js'), 'utf8'), /schema-source'\)\.ensureSchema\(\)/);
   for (const docker of ['Dockerfile', 'Dockerfile.kubernetes']) assert.match(fs.readFileSync(path.join(root, docker), 'utf8'), /^RUN node scripts\/build-schema\.js$/m);
-  const workflow = fs.readFileSync(path.join(root, '.github/workflows/build-kubernetes-images.yml'), 'utf8');
-  const previewJob = workflow.slice(workflow.indexOf('  preview-schema-compatibility:'), workflow.indexOf('  security-images:'));
-  const generated = previewJob.indexOf('run: node scripts/build-schema.js');
-  assert.ok(generated >= 0 && generated < previewJob.indexOf('node --test'),
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/kubernetes-database-checks.yml'), 'utf8');
+  const generated = workflow.indexOf('run: node scripts/build-schema.js');
+  assert.ok(generated >= 0 && generated < workflow.indexOf('node --test'),
     'fresh CI checkouts generate SQL before direct node --test invocations');
 });
 

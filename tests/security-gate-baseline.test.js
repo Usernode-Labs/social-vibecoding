@@ -229,44 +229,58 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
 
 test('PR findings block against the exact base; post-merge findings are advisory', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
-  const step = (job, name) => workflow.jobs[job].steps.find((s) => s.name === name);
-  // PRs and other release branches retain a lockfile baseline. Only protected
-  // main can use advisory findings after its required pre-merge scans.
-  const lockfiles = workflow.jobs['security-lockfiles'];
-  const baseline = step('security-lockfiles', 'Fetch the baseline commit');
-  assert.equal(baseline.if, "github.event_name == 'pull_request' || github.ref != 'refs/heads/main'");
-  assert.equal(step('security-lockfiles', 'Read the live release').if, "github.event_name != 'pull_request' && github.ref != 'refs/heads/main'");
+  const pr = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
+  const lockfiles = pr.jobs['security-lockfiles'];
+  const baseline = lockfiles.steps.find((step) => step.name === 'Fetch the baseline commit');
   assert.equal(baseline.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
-  assert.equal(baseline.env.LIVE_SHA, '${{ steps.live.outputs.revision }}');
   assert.match(baseline.run, /git fetch --no-tags --depth=1 origin "\$revision"/);
   const auditStep = lockfiles.steps.find((s) => s.run === 'node scripts/security-audit.js');
   assert.deepEqual(auditStep.env, {
     SECURITY_BASELINE_REVISION: '${{ steps.baseline.outputs.revision }}',
     SECURITY_BASELINE_NAME: '${{ steps.baseline.outputs.name }}',
-    SECURITY_AUDIT_ONLY: "${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && '1' || '0' }}",
   });
   // PR images use the exact PR base, including standalone and starter.
-  const prScan = step('security-images', 'Build and scan the finished image');
+  const prScan = pr.jobs['security-images'].steps.find((step) => step.name === 'Build and scan the finished image');
   assert.equal(prScan.env.SECURITY_BASELINE_REVISION, '${{ github.event.pull_request.base.sha }}');
   assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
   assert.equal(prScan.env.SECURITY_AUDIT_ONLY, undefined, 'PRs retain the blocking scanner default');
-  assert.equal(workflow.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
+  assert.equal(pr.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
-  const releaseScan = step('build', 'Verify runtime and scan the exact image SBOM');
-  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, "${{ github.ref == 'refs/heads/main' && '1' || '0' }}");
+  const releaseScan = workflow.jobs.build.steps.find((step) => step.name === 'Verify runtime and scan the exact image SBOM');
+  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, '1');
   assert.equal(releaseScan.env.LIVE_DIGEST, '${{ steps.live.outputs[matrix.component] }}');
-  assert.match(releaseScan.run, /export BASELINE_IMAGE="ghcr\.io\/\$REGISTRY_OWNER\/social-vibecoding-\$\{\{ matrix\.component \}\}@\$LIVE_DIGEST"/);
+  assert.match(releaseScan.run, /\[ -n "\$LIVE_DIGEST" \] && \[ "\$\{IMAGE##\*@\}" = "\$LIVE_DIGEST" \]/);
   assert.match(releaseScan.run, /sh scripts\/check-published-image\.sh "\$IMAGE" "\$REPORT" "\$\{\{ matrix\.component \}\}"/);
   // Releases retain the immutable released-image comparison.
-  for (const job of ['build']) {
-    const names = workflow.jobs[job].steps.map((s) => s.name || s.uses);
-    assert.ok(names.indexOf('Read the live release') > names.indexOf('azure/setup-helm@v4'), `${job}: helm is set up first`);
-  }
+  const names = workflow.jobs.build.steps.map((s) => s.name || s.uses);
+  assert.ok(names.indexOf('Read the live release') > names.indexOf('azure/setup-helm@v4'));
   // The image check passes the baseline SBOM to the findings, and only when read.
   const check = fs.readFileSync(path.join(ROOT, 'scripts/check-image-security.sh'), 'utf8');
   assert.match(check, /docker buildx imagetools inspect "\$BASELINE_IMAGE" --format '\{\{json \.SBOM\}\}'/);
   assert.match(check, /node scripts\/security-findings\.js --assess "\$out" "\$component" "\$baseline"/);
   assert.match(check, /elif \[ -n "\$\{SECURITY_BASELINE_REVISION:-\}" \]/);
+});
+
+test('only a digest already in the stable chart can skip the release scan', (t) => {
+  const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
+  const scan = workflow.jobs.build.steps.find((step) => step.name === 'Verify runtime and scan the exact image SBOM');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-scan-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'scripts'));
+  fs.writeFileSync(path.join(dir, 'scripts', 'check-published-image.sh'), 'exit 9\n');
+  const digest = 'sha256:' + 'a'.repeat(64);
+  const image = 'ghcr.io/usernode-labs/social-vibecoding-worker@' + digest;
+  const report = path.join(dir, 'report');
+  const run = (live) => spawnSync('bash', ['-ec', scan.run.replace('${{ matrix.component }}', 'worker')], {
+    cwd: dir,
+    env: { ...process.env, LIVE_DIGEST: live, IMAGE: image, REPORT: report },
+  });
+
+  assert.equal(run(digest).status, 0);
+  assert.equal(fs.readFileSync(path.join(report, 'image-reference.txt'), 'utf8').trim(), image);
+  assert.equal(fs.existsSync(path.join(report, 'assessment.json')), false, 'reuse is not a clean scan verdict');
+  assert.equal(run('sha256:' + 'b'.repeat(64)).status, 9);
+  assert.equal(run('').status, 9);
 });
 
 // A fake `docker` that records each call and writes what the scan steps read:

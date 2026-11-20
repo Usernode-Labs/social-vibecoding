@@ -14,30 +14,20 @@ merge API, including its vote override. Keep existing review requirements.
 Strict up-to-date checks are not required: Homeroom already handles integration
 with main, and this policy does not add a resync for every unrelated merge.
 
-The `Security merge gate` job always runs on pull requests, including when a
-dependency fails or is skipped. It succeeds only when the lockfile audit and all
-five image checks succeed. Missing, running, failed or cancelled checks cannot
-satisfy branch protection. When GitHub refuses a merge, Homeroom's existing merge
-queue records the refusal and retries after four minutes; a force vote does not
-bypass GitHub protection. An open proposal predating this job must sync with main
-before it can satisfy the new required check.
+The `Security merge gate` job in `kubernetes-pr-checks.yml` requires the
+lockfile audit, five image checks, security regressions, and PostgreSQL
+compatibility checks. A missing, skipped, failed, or cancelled dependency
+keeps the gate red. When GitHub refuses a merge, Homeroom's merge queue
+records the refusal and retries after four minutes. The check names in
+`security/required-merge-checks.json` are also configured in Settings >
+Branches > main.
 
-Before merging the advisory release policy, require the six existing lockfile
-and image checks. Once this workflow is on main, also require `Security merge
-gate`, completing the checked-in list. Requiring the new job before its workflow
-lands would prevent older PRs, including the separate esbuild repair, from merging.
-Repo settings are separate from source control: verify the check names, GitHub
-Actions source and admin enforcement in Settings > Branches > main. The checked-in
-list is the final contract, not a claim that a workflow configures its own protection.
-
-After merge to protected main, release scans use `SECURITY_AUDIT_ONLY=1`. The legacy
-`feat/k8s` trigger and dispatches on other branches retain the blocking baseline
-comparison; they do not have main's required pre-merge scans. Findings on main are warnings in
-the job log and summary, with full reports retained, and do not stop delivery.
-The independent daily audit below still opens native security requests. Scanner
-execution errors, malformed reports, runtime validation failures and the existing
-non-security release checks still fail: an unavailable assessment is never a
-clean verdict. There is no blanket `continue-on-error` or scanner removal.
+Stable releases re-run the two-server PostgreSQL tests against the release
+revision. A new image digest gets runtime probes, inventory validation, and
+a security scan. Findings are advisory and appear in the job report.
+Execution and validation errors still fail the release. The independent
+daily audit scans digests already in the stable chart and opens native
+security requests.
 
 The scanner emits `assessment.json` beside its full SBOM/image reports:
 `clean`, `existing_findings`, `regression`, `findings` (advisory), or `unavailable`. Failed scans or

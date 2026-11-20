@@ -98,7 +98,8 @@ const behind = (minutes) => [`compare ${OLD} ${MINE} ahead`, `date ${OLD} ${T0}`
 
 test('the step runs only for pushes to main, and its interval is the publish step\'s', () => {
   assert.ok(behindStep && selectStep);
-  assert.equal(behindStep.if, "github.event_name == 'push' && github.ref == 'refs/heads/main'");
+  assert.equal(workflow.jobs.plan.if, "github.ref == 'refs/heads/main'");
+  assert.equal(behindStep.if, "github.event_name == 'push'");
   assert.equal(String(behindStep.env.RELEASE_EVERY_MINUTES), String(publishStep.env.RELEASE_EVERY_MINUTES));
   assert.ok(plan.indexOf(behindStep) < plan.indexOf(selectStep), 'decided before the release work is selected');
 });
@@ -150,11 +151,11 @@ function runSelect(env) {
   try {
     const res = spawnSync('bash', ['-c', selectStep.run], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary, CLAUDE_CODE_VERSION: '1.0.0', ...env },
+      env: { PATH: process.env.PATH, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary, ...env },
     });
     assert.equal(res.status, 0, res.stderr);
     const out = fs.readFileSync(output, 'utf8');
-    return { shouldRelease: /should_release=true/.test(out), matrix: /"component":"platform"/.test(out), summary: fs.readFileSync(summary, 'utf8') };
+    return { shouldRelease: /should_release=true/.test(out), summary: fs.readFileSync(summary, 'utf8') };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -163,14 +164,16 @@ function runSelect(env) {
 test('Select release work: a run that can release builds and publishes; one that cannot, neither', () => {
   const normal = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'false' });
   assert.equal(normal.shouldRelease, true);
-  assert.match(normal.summary, /Normal source release\./);
   const skipped = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'true', BEHIND_REASON: 'No build: main is at x.' });
   assert.equal(skipped.shouldRelease, false);
   assert.match(skipped.summary, /No build: main is at x\./);
-  const dispatched = runSelect({ GITHUB_EVENT_NAME: 'workflow_dispatch' });
+  const dispatched = runSelect({});
   assert.equal(dispatched.shouldRelease, true, 'a run dispatched by hand is never held back');
-  // The build and the release job both follow should_release.
+  const claude = workflow.jobs.plan.steps.find((step) => step.id === 'claude');
+  assert.equal(claude.if, "steps.release.outputs.should_release == 'true'");
+  assert.ok(workflow.jobs.plan.steps.indexOf(claude) > workflow.jobs.plan.steps.indexOf(selectStep));
+  assert.equal(workflow.jobs['preview-schema-compatibility'].if, "needs.plan.outputs.should_release == 'true'");
   assert.equal(workflow.jobs.build.if, "needs.plan.outputs.should_release == 'true'");
   assert.deepEqual([].concat(workflow.jobs.release.needs),
-    ['build', 'security-lockfiles', 'security-regressions', 'preview-schema-compatibility']);
+    ['build', 'preview-schema-compatibility']);
 });

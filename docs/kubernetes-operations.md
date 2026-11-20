@@ -19,29 +19,26 @@ The platform image build receives the exact `GIT_SHA` that the chart supplies
 at runtime. Before packaging a chart, CI runs the immutable platform image's
 shell-release validator with that revision and `NODE_ENV=production`, without
 network access or application startup. Missing or inconsistent generated shell
-artifacts block the release, including scheduled releases that reuse an image.
+artifacts block the release.
 An image built with the default `dev` stamp cannot pass this check; rebuild it
 with the intended commit SHA rather than changing the runtime revision.
 
-The daily dependency check is intentionally cheaper than a source release. It
-looks up the exact worker input key for the current npm version and exits after
-the planning job when that artifact already exists: no image jobs run and no
-new chart is published. When the version changes, it reuses the platform image
-for the exact current `main` revision and the capture image for its tracked
-inputs, builds only the worker, and packages those three immutable digests into
-a new atomic release. Missing platform or capture artifacts fail closed and
-require the normal `main` workflow; the scheduled path never rebuilds them as
-an incidental side effect.
+A push to `main` or a manual dispatch on `main` checks the current Claude
+Code version. A new version changes the worker's reuse key. During quiet
+periods, dispatch the workflow to pick up a release without a source push.
 
-Every stable release restarts the platform, and each restart re-runs the
-checks of every proposal in flight and interrupts the bot's builds. The
-workflow runs one push to `main` at a time, and its "Check branch tip before
-publishing" step decides which runs publish:
+Pull request checks run in `kubernetes-pr-checks.yml`. The required Security
+merge gate covers its security and database jobs. After merge, the release
+workflow runs the two-server role and preview-copy tests against the release
+revision. The single-server workflow and access tests run on pull requests.
+
+Each stable release rolls the platform, so the workflow spaces rollouts
+during bursts of merges. It runs one push to `main` at a time, and
+"Check branch tip before publishing" decides which runs publish:
 
 - **Spacing.** A stable release goes out no sooner than
-  `RELEASE_MIN_GAP_MINUTES` (10) after the previous one. The gap is timed
-  from the end of the run that published the previous release, which is when
-  Argo CD was asked to roll it out.
+  `RELEASE_MIN_GAP_MINUTES` (4) after the previous one. The gap is timed
+  from the end of the run that pushed the previous stable chart.
 - **The tip run waits.** The run for `main`'s tip waits inside that step for
   the rest of the gap, then publishes. A newer merge landing during the wait
   ends it: the waiting run skips, and the newer merge's run, queued behind it,
@@ -55,7 +52,7 @@ On 7 October 2026 the platform rolled out four times in sixteen minutes
 that is what the gap prevents.
 
 If the age of the previous release cannot be read, the run publishes as it
-did before the gap existed. Feature-branch candidates never wait.
+did before the gap existed.
 
 **To release at once, for example an urgent fix,** run the workflow on
 `main` by hand:
@@ -73,19 +70,17 @@ runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
 change the cluster. Review the normal release/GitOps diff before deployment.
 
-Argo notices a published chart by re-reading the registry's tag list on its
-reconcile interval, up to three minutes after the push. When the repository
-secret `ARGOCD_REFRESH_TOKEN` is set, the release job's "Ask Argo CD to pick up
-the release now" step follows a stable `helm push` with
-`GET /api/v1/applications/social-vibecoding-platform?refresh=hard`, so the
-comparison — and the automated sync behind it — starts at once. The token is
-an Argo CD project-role token that can only `get` that one Application; the
-role, the mint procedure and rotation live in the infra repository's
-`docs/22-social-vibecoding-runtime-operations.md`. The step is best effort:
-unset, it skips; a rejected or timed-out call posts a warning on the run and
-the release lands on the periodic reconcile as before. It cannot fail the run,
-because `release-watch` reads the run's conclusion and would otherwise report
-a healthy release as stalled.
+Argo notices a new chart on its periodic reconcile, up to three minutes
+after the push. After a successful chart push, `refresh-kubernetes-release.yml`
+requests a hard refresh to bypass Argo's cached chart lookup. This workflow
+runs outside the release queue and reports refresh failures independently
+of the release result. Periodic reconciliation handles unused or failed
+refresh requests.
+
+The refresh uses `ARGOCD_REFRESH_TOKEN`, an Argo CD project-role token
+that can only get the platform Application. The role, mint procedure, and
+rotation live in the infra repository's
+`docs/22-social-vibecoding-runtime-operations.md`.
 
 A merged platform PR is therefore "merged" on its card before it is running,
 and nothing in that chain reports back to the platform when a link fails. The
