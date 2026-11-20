@@ -705,3 +705,34 @@ test('A: the skill says to look after a visual change, and to claim a fix only a
   assert.doesNotMatch(prompt, /\{\{looks\}\}/);
   assert.ok(draftBot.TOOLS.some((tool) => tool.function.name === 'look_at_preview'));
 });
+
+// ── C (20 Nov 2026, live-draft review): no "Version N" line in a draft reply ──
+//
+// A draft reply in thread 58972 ended "Version 3: ...", copying the line
+// Homeroom adds only under an artifact's version. A draft's change has none.
+
+test('C: withoutVersionLines takes out a line that starts as Homeroom\'s version line, and nothing else', () => {
+  assert.equal(draftBot.withoutVersionLines('The change is applied.\n\nVersion 3: Bigger Start button'), 'The change is applied.');
+  assert.equal(draftBot.withoutVersionLines('**Version 12:** Delete on the right\nThe change is applied.'), 'The change is applied.');
+  assert.equal(draftBot.withoutVersionLines('Done.\n\nLayouts, version 2: darker'), 'Done.');
+  const plain = 'It uses version 2 of the bridge. Version numbers are in package.json.';
+  assert.equal(draftBot.withoutVersionLines(plain), plain, 'a version named in a sentence stays');
+  assert.equal(draftBot.withoutVersionLines(''), '');
+});
+
+test('C: a draft turn\'s reply is sent without a Version line the model wrote, and the skill says not to write one', async () => {
+  const s = setup({
+    script: [
+      { calls: [['edit_file', { path: 'public/index.html', edits: [{ find: 'class="start"', replace: 'class="start big"' }] }]] },
+      { calls: [['apply_changes', { summary: 'Bigger Start button' }]] },
+      { reply: 'The change is applied: I expect a bigger Start button.\n\nVersion 3: Bigger Start button' },
+    ],
+  });
+  await s.run();
+  assert.equal(s.sent[0].content, 'The change is applied: I expect a bigger Start button.');
+  const prompt = draftBot.draftPrompt({ username: 'evan', draft: { app_slug: 'gym' }, edits: [], files: [], notes: null });
+  assert.match(prompt, /Never write a line that starts "Version" and a number: Homeroom adds that line itself, and only under a new version of an artifact/);
+  // Only where the draft is the turn's capability and no artifact version is saved.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/services/homeroom-bot-mayor.js'), 'utf8');
+  assert.match(src, /if \(caps\.draft && !caps\.design\?\.changed\?\.\(\)\) text = require\('\.\/live-draft-bot'\)\.withoutVersionLines\(text\);/);
+});

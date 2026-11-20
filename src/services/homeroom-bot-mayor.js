@@ -4957,6 +4957,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // under the reply, before what it still claims is cut.
   let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText, { replyTool: !!ctx.reply }))), ctx.offer);
   text = clip(text, MAX_REPLY_CHARS);
+  // 20 Nov 2026 (live-draft review, C): Homeroom adds a "Version N" line
+  // only to an artifact's version (caps.design.versionLines); one the model
+  // wrote into a draft turn's reply, with no version saved, goes.
+  if (caps.draft && !caps.design?.changed?.()) text = require('./live-draft-bot').withoutVersionLines(text);
   // P1: nothing more is shown as it is written; the message takes the card's place.
   draft?.close({ clear: !text });
   // What the second pass still says that is shown false is cut, and nothing

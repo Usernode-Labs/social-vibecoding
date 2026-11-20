@@ -418,6 +418,22 @@ const OPENING_NOTE = 'You just opened this live draft for their message, and its
 // What the turn says when its reply came with no words after a change was saved.
 const DONE_TEXT = 'Done. The preview has the change.';
 
+// 20 Nov 2026 (live-draft review, C): a draft reply in thread 58972 ended
+// "Version 3: ...", the line Homeroom adds under an artifact's version
+// (homeroom-bot-mayor.js caps.design.versionLines), copied by the model. A
+// draft's change has no version, so a line of the model's own that starts
+// "Version N:" (or "Name, version N:") is taken out of a draft turn's reply.
+const VERSION_LINE_RE = /^[ \t>*_#-]*(?:[^\n:]{1,60},[ \t]*)?version[ \t]+\d+[ \t]*[*_]*[ \t]*[:.]/i;
+
+/** Pure (C): `text` less every line that starts as Homeroom's version line does. */
+function withoutVersionLines(text) {
+  const words = String(text ?? '');
+  const lines = words.split('\n');
+  const kept = lines.filter((line) => !VERSION_LINE_RE.test(line));
+  if (kept.length === lines.length) return words;
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // 20 Nov 2026 (live-draft review, B): one turn spent all 18 of its rounds
 // reading and changed nothing; the next began the same reads again. Two
 // rounds before its limit, a draft turn that has changed nothing is told so
@@ -818,5 +834,5 @@ module.exports = {
   openSession, OPENING_NOTE, DONE_TEXT, applyEdits, chunkOf, appliedWords, draftPrompt, filePath, TOOLS,
   NO_CODE_TEXT, MAX_HISTORY, MAX_ROUNDS,
   NEAR_LIMIT_NOTE, LAST_ROUND_DRAFT_NOTE, changedRegion, changedFiles, recentFileOf,
-  MAX_LOOKS, notLookable, NOT_LOOKABLE_WORDS, LOOK_FAILED,
+  MAX_LOOKS, notLookable, NOT_LOOKABLE_WORDS, LOOK_FAILED, withoutVersionLines,
 };
