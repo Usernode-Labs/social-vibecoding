@@ -8650,7 +8650,7 @@ html:not([data-skin]) {
   --wip-btn-font: 'Source Serif 4', 'Iowan Old Style', Georgia, serif;
   --wip-btn-weight: 400;
   --wip-btn-track: -0.01em;
-  --wip-btn-size: 15px;
+  --wip-btn-size: 16px;
   --wip-btn-size-small: 13px;
   --wip-btn-radius: 9999px;
   --wip-btn-line: #121a0e;                              /* the outline, and the edge under */
