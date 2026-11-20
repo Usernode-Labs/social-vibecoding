@@ -156,7 +156,9 @@ test('a switch row in a static pane is a neutral wrapper, laid out by the styles
 });
 
 test('a choice of one is radio rows in a card: the segments stand as rows, with a mark the standard look never draws', () => {
-  for (const file of ['theme.tsx', 'accessibility.tsx']) {
+  // Text size was the second of these until its slider (#6510): a padded card.
+  assert.match(section('accessibility.tsx'), /<div id="settings-text-size-track" className="ui-card ui-pad flex items-center gap-3">/);
+  for (const file of ['theme.tsx']) {
     const src = section(file);
     assert.match(src, /'theme-seg ui-row ui-row-sm flex-1 basis-0 rounded-md px-1\.5 py-1 transition-colors';/, file);
     assert.match(src, /className="ui-card ui-radios relative flex p-0\.5 rounded-lg /, file);

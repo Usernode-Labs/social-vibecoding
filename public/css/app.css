@@ -2733,6 +2733,9 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    toned app. */
 html[data-text-size="large"] { font-size: 112.5%; }
 html[data-text-size="larger"] { font-size: 125%; }
+/* The slider's two steps past the presets (#6510). */
+html[data-text-size="xlarge"] { font-size: 137.5%; }
+html[data-text-size="xxlarge"] { font-size: 150%; }
 
 html:not(.dark)[data-contrast="more"] {
   --text-muted: #3a3a3c;
