@@ -89,7 +89,8 @@ import { changeHref } from '../../../lib/change-href';
 import { communityScene } from '../../home/pinned-communities';
 import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import type { ApprovalPayload } from '../../who-decides/model';
-import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, ProjectPreview, type ProjectCover } from '../../guest/project-card';
+import { CardPreview } from '../../guest/card-preview';
+import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, type ProjectCover } from '../../guest/project-card';
 import type { GuestApp } from '../../guest/guest-data';
 
 type Audience = 'open' | 'invited' | 'solo';
@@ -1319,9 +1320,9 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
     );
   }
 
-  // The project's preview (its picture, with the moving loop over it when it has one) stands beside the hero, in its
+  // The project's picture (its moving loop plays over it while it is pointed at) stands beside the hero, in its
   // row, where the look is the kit's and there is one (asked 20 Nov 2026).
-  const previewBeside = wipLook && !platform && !!(data.cover?.preview_url || data.cover?.illustration_url);
+  const previewBeside = wipLook && !platform && !!data.cover?.illustration_url;
   return (
     <>
     <section
@@ -1417,8 +1418,16 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       ) : null}
     </section>
     {previewBeside ? (
+      // The picture at rest; pointing at it plays the project's loop over it, as a featured card on Home does
+      // (../../guest/card-preview.tsx: after a moment's hover, one at a time, never on a phone or under reduced motion).
       <div className="wip-hero-preview" data-ws-hero-preview="">
-        <ProjectPreview app={{ slug, name: displayName, icon_url: iconUrl, icon_emoji: iconEmoji }} cover={data.cover} />
+        {data.cover?.illustration_url ? (
+          <img className={data.cover.illustration_dark_url ? 'wip-hero-preview-pic dark:hidden' : 'wip-hero-preview-pic'} src={data.cover.illustration_url} alt="" draggable={false} />
+        ) : null}
+        {data.cover?.illustration_url && data.cover.illustration_dark_url ? (
+          <img className="wip-hero-preview-pic hidden dark:block" src={data.cover.illustration_dark_url} alt="" draggable={false} />
+        ) : null}
+        {data.cover?.preview_url ? <CardPreview src={data.cover.preview_url} /> : null}
       </div>
     ) : null}
     </>

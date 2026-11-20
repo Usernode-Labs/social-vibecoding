@@ -231,7 +231,9 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   assert.match(card, /<span className="wip-hero-wash" data-scene=\{platform \? 'home' : String\(communityScene\(slug\)\)\} aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
   // The standard look's hub too (20 Nov 2026), and a project's preview beside the hero where there is one.
   assert.match(card, /const wipLook = isKitHome\(useLiveSkin\(\)\);/);
-  assert.match(card, /const previewBeside = wipLook && !platform && !!\(data\.cover\?\.preview_url \|\| data\.cover\?\.illustration_url\);/);
+  assert.match(card, /const previewBeside = wipLook && !platform && !!data\.cover\?\.illustration_url;/);
+  // Pointing at that picture plays the project's loop over it, as a featured card on Home does.
+  assert.match(card, /\{data\.cover\?\.preview_url \? <CardPreview src=\{data\.cover\.preview_url\} \/> : null\}/);
   // Needs you stays in the row with nothing waiting, shaped as its neighbours.
   assert.match(hub, /if \(alone && !claims && !wipLook\) return null;/);
   assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
