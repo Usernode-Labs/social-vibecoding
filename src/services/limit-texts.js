@@ -439,6 +439,32 @@ function sameMark(a, b) {
  * now. Runs on the clock (workflow/clock/services.ts, every five minutes).
  */
 async function sweep(pool, config, deps = {}) {
+  return withSweepLock(pool, () => sweepOnce(pool, config, deps));
+}
+
+/**
+ * One pass at a time across every process: a session advisory try-lock on
+ * its own connection, held for the pass. A pass that cannot take it skips,
+ * so two clocks never both text a crossing before either writes its mark.
+ */
+async function withSweepLock(pool, run) {
+  if (typeof pool.connect !== 'function') return run();
+  const { LIMIT_TEXTS_LOCK } = require('./advisory-locks');
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query('SELECT pg_try_advisory_lock($1, 0) AS acquired', [LIMIT_TEXTS_LOCK]);
+    if (!rows[0] || !rows[0].acquired) return { texts: 0, refused: 0, held: 0, skipped: true };
+    try {
+      return await run();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1, 0)', [LIMIT_TEXTS_LOCK]).catch(() => {});
+    }
+  } finally {
+    client.release();
+  }
+}
+
+async function sweepOnce(pool, config, deps = {}) {
   const out = { texts: 0, refused: 0, held: 0 };
   const now = deps.now ? deps.now() : Date.now();
   const { rows: phones } = await pool.query(

@@ -373,3 +373,31 @@ test('a test text and removing a number', async () => {
   assert.equal(pool.db.phones.length, 0);
   await assert.rejects(texts.removePhone(pool, { id: added.id }), { code: 'not_found' });
 });
+
+test('a second sweep running at the same moment skips instead of texting twice', async () => {
+  const pool = store();
+  const http = brevo();
+  const added = await texts.addPhone(pool, CONFIG, { phoneNumber: GB, label: 'On call' }, deps(http));
+  await texts.verifyPhone(pool, { id: added.id, code: '424242' });
+  http.calls.length = 0;
+  const taken = [];
+  pool.connect = async () => ({
+    async query(sql, params) {
+      if (/pg_try_advisory_lock/.test(sql)) {
+        taken.push(params[0]);
+        return { rows: [{ acquired: taken.length > 1 ? false : true }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  });
+  const { LIMIT_TEXTS_LOCK } = require('../src/services/advisory-locks');
+  const limits = async () => ({ rows: [appsRow(300, 'warn')] });
+  const first = await texts.sweep(pool, CONFIG, deps(http, { limits, now: () => NOON_PARIS }));
+  assert.equal(first.texts, 1);
+  pool.db.marks = [];
+  const second = await texts.sweep(pool, CONFIG, deps(http, { limits, now: () => NOON_PARIS }));
+  assert.equal(second.skipped, true, 'the lock was held elsewhere: this pass does nothing');
+  assert.equal(http.calls.length, 1);
+  assert.deepEqual(taken, [LIMIT_TEXTS_LOCK, LIMIT_TEXTS_LOCK]);
+});

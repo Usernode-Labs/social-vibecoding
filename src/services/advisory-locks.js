@@ -150,9 +150,13 @@ const APP_SLEEP_LOCK = 991027;
 // CLASSIFIER half of a transaction lock on the person, as VOTE_DIGEST_LOCK,
 // so two projects' claims for one person cannot both pass the one-a-week cap.
 const INVITE_NUDGE_LOCK = 991031;
+// The text alerts sweep (services/limit-texts.js): session-scoped and held
+// for one pass, so two processes' clocks cannot both text the same crossing
+// before either has written its mark. A pass that cannot take it skips.
+const LIMIT_TEXTS_LOCK = 991032;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
   CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK,
-  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK, INVITE_NUDGE_LOCK };
+  PREVIEW_SLEEP_LOCK, VOTED_DIGEST_LOCK, APP_SLEEP_LOCK, INVITE_NUDGE_LOCK, LIMIT_TEXTS_LOCK };
