@@ -1343,7 +1343,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           <span className="wip-hero-art" aria-hidden="true">
             <span className="wip-hero-rings" />
             <span className="wip-hero-stage">
-              {platform ? <img className="wip-hero-people" src="/brand/landing-people.webp" alt="" /> : null}
+              {platform ? <img className="wip-hero-people" src="/brand/people.png" alt="" /> : null}
               {!platform && data.cover?.illustration_url ? <img className="wip-hero-art-pic" src={data.cover.illustration_url} alt="" loading="lazy" /> : null}
               <span className="app-icon-tile wip-hero-art-icon" hidden={platform} data-icon={appIconKind({ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null })}>
                 <AppIconContent app={{ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null }} />
