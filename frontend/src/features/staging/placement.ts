@@ -211,6 +211,8 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
     beside,
     liveSpot: beside ? liveSpot() : null,
     expanded: false,
+    // G, J (20 Nov 2026): which change this is, for a live draft's own controls.
+    sessionId: Number(input.sessionId) || null,
   });
   if (target && rect) watch(target, placement);
   if (waitForColumn) settleIntoColumn(mine);

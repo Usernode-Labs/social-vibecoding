@@ -135,6 +135,7 @@ const DRAFT_COLUMNS = `d.id, d.app_id, d.user_id, d.private_thread_id, d.root_me
   cs.branch_name, cs.status AS session_status, cs.staging_url, cs.staging_commit_sha,
   cs.staging_runtime_kind, cs.staging_runtime_name, cs.pr_number, cs.last_activity_at,
   ps.status AS proposal_status, ps.pr_number AS proposal_pr_number, ps.branch_name AS proposal_branch,
+  (SELECT pt.conversation_id FROM private_threads pt WHERE pt.id = d.private_thread_id) AS conversation_id,
   (SELECT COUNT(*)::int FROM live_draft_edits e
      WHERE e.draft_id = d.id AND e.id > COALESCE((SELECT MAX(x.id) FROM live_draft_edits x
        WHERE x.draft_id = d.id AND x.commit_sha = d.proposed_head_sha), 0)) AS pending_edits`;
@@ -298,6 +299,8 @@ function describe(draft) {
     live: liveStateOf(draft),
     sessionId: draft.session_id ? Number(draft.session_id) : null,
     rootId: Number(draft.root_message_id),
+    // J: the chat its thread is in, where a comment pinned on its preview is posted.
+    conversationId: draft.conversation_id ? Number(draft.conversation_id) : null,
     app: { slug: draft.app_slug, name: draft.app_name || draft.app_slug },
     edits: Number(draft.edits) || 0,
     headSha: draft.head_sha || null,

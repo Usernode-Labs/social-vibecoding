@@ -41,6 +41,11 @@ export interface DetailRef {
   changeId?: number;
   /** A request draft's offer (`homeroom_bot_dm_actions.id`, #6248). */
   actionId?: number;
+  /**
+   * 20 Nov 2026 (live-draft review, K): which of the thread's artifacts a
+   * design shows; none means the thread's first, as a card from before says.
+   */
+  artifactId?: number;
 }
 
 /** What the message says about a draft, shown until the saved row is read. */
@@ -184,6 +189,8 @@ interface Shared {
   seen?: Map<string, DetailEntry[]>;
   /** The words each opened thing was shown with, for its row in the picker. */
   labels?: Map<string, { title: string; line: string | null }>;
+  /** 20 Nov 2026 (I): what each thread showed last, for its Artifacts button. */
+  last?: Map<string, DetailEntry>;
 }
 const holder: Shared = ((globalThis as any).__usernodeDetail ||= {
   state: CLOSED,
@@ -497,7 +504,8 @@ function labelMap(): Map<string, { title: string; line: string | null }> {
 /** Pure: which thing an entry shows, whatever its version: one row of a picker. */
 export function detailIdentity(entry: Pick<DetailEntry, 'kind' | 'ref' | 'payload'>): string {
   const ref = entry.ref || {};
-  if (entry.kind === 'design') return `design:${ref.rootId ?? ''}`;
+  // K: one row per artifact; none is the thread's first (the address from before).
+  if (entry.kind === 'design') return `design:${ref.rootId ?? ''}${ref.artifactId ? `:${ref.artifactId}` : ''}`;
   if (entry.kind === 'draft') return `draft:${ref.actionId ?? ''}`;
   if (entry.kind === 'preview') return `preview:${ref.sessionId ?? ''}`;
   if (entry.kind === 'shots') return `shots:${ref.changeId ?? ''}`;
@@ -506,6 +514,7 @@ export function detailIdentity(entry: Pick<DetailEntry, 'kind' | 'ref' | 'payloa
 
 function remember(entry: DetailEntry): void {
   if (!entry.owner) return;
+  (holder.last ||= new Map()).set(entry.owner, entry);
   const list = (seenMap().get(entry.owner) || []).slice();
   const id = detailIdentity(entry);
   const at = list.findIndex((had) => detailIdentity(had) === id);
@@ -531,6 +540,14 @@ export function claimDetail(owner: string | null | undefined): boolean {
   entry.owner = owner;
   remember(entry);
   return true;
+}
+
+/**
+ * 20 Nov 2026 (live-draft review, I): what a thread showed last, whatever
+ * closed it since, so its Artifacts button opens the column on that again.
+ */
+export function lastDetail(owner: string | null | undefined): DetailEntry | null {
+  return owner ? (holder.last?.get(owner) || null) : null;
 }
 
 /** Everything opened beside a thread, in the order it was first opened. */

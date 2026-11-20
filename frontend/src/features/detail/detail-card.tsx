@@ -33,7 +33,7 @@ import {
 } from '../ai/detail';
 import { openPreview } from '../ai/preview';
 import { readDesign } from '../messages/design-card';
-import { openLivePreview, readLiveDraft, type LiveDraft } from '../messages/live-draft-bar';
+import { liveDraftShown, openLivePreview, readLiveDraft, type LiveDraft } from '../messages/live-draft-bar';
 import type { DesignThread } from '../messages/api';
 
 export interface DetailLabel {
@@ -104,22 +104,39 @@ function rootOf(owner: string | null): number | null {
  * design (read once per thread, ../messages/design-card.tsx) and its live
  * preview while one runs. Read when the column opens, and again on a new open.
  */
-function useThreadHas(owner: string | null, seq: number): { design: DesignThread | null; live: LiveDraft | null } {
+function useThreadHas(owner: string | null, seq: number, artifactId: number | null = null): ThreadHas {
   const rootId = rootOf(owner);
   const [design, setDesign] = useState<DesignThread | null>(null);
+  const [shown, setShown] = useState<DesignThread | null>(null);
   const [live, setLive] = useState<LiveDraft | null>(null);
   useEffect(() => {
     let alive = true;
     if (!rootId) {
       setDesign(null);
+      setShown(null);
       setLive(null);
       return () => { alive = false; };
     }
     readDesign(rootId, 0).then((d) => { if (alive) setDesign(d); }, () => { if (alive) setDesign(null); });
-    readLiveDraft(rootId).then((d) => { if (alive) setLive(d && d.state === 'open' && d.sessionId ? d : null); }, () => { if (alive) setLive(null); });
+    // K: the artifact showing, when it is not the first, for its versions.
+    if (artifactId) readDesign(rootId, 0, artifactId).then((d) => { if (alive) setShown(d); }, () => { if (alive) setShown(null); });
+    else setShown(null);
+    // C: a draft up for a vote is still the thread's, still running.
+    readLiveDraft(rootId).then((d) => { if (alive) setLive(d && liveDraftShown(d) ? d : null); }, () => { if (alive) setLive(null); });
     return () => { alive = false; };
-  }, [rootId, seq]);
-  return { design, live };
+  }, [rootId, seq, artifactId]);
+  return { design, shown, live };
+}
+
+interface ThreadHas { design: DesignThread | null; shown: DesignThread | null; live: LiveDraft | null }
+
+/**
+ * Pure (20 Nov 2026, live-draft review I): whether a thread has anything the
+ * Artifacts column can show: an artifact of either kind, or a live draft
+ * still running (open, or up for a vote and still edited: C).
+ */
+export function threadHasArtifacts(design: Pick<DesignThread, 'latest' | 'artifacts'> | null, live: LiveDraft | null): boolean {
+  return !!(design && (design.latest > 0 || design.artifacts?.length)) || liveDraftShown(live);
 }
 
 /**
@@ -146,7 +163,7 @@ export function DetailPicker({ entry, label, className, anchor, children }: {
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => { setMenu(false); }, [entry.seq]);
   useEffect(() => { if (label) noteDetailLabel(entry, label); }, [entry, label]);
-  const has = useThreadHas(entry.owner, entry.seq);
+  const has = useThreadHas(entry.owner, entry.seq, entry.kind === 'design' ? entry.ref.artifactId ?? null : null);
   const rows = useMemo(() => pickRows(entry, has, t), [entry, has, t, label]);
 
   // Under its anchor's start edge, as wide as it up to 420px, kept there as
@@ -331,7 +348,7 @@ const KIND_WORD: Record<DetailKind, string> = {
  */
 function pickRows(
   entry: DetailEntry,
-  has: { design: DesignThread | null; live: LiveDraft | null },
+  has: ThreadHas,
   t: (id: string, values?: Record<string, unknown>) => string,
 ): PickRow[] {
   const owner = entry.owner;
@@ -339,28 +356,43 @@ function pickRows(
   const rows: PickRow[] = [];
   const taken = new Set<string>();
   const seen = seenDetails(owner);
+  // 20 Nov 2026 (live-draft review, K and I): one row per artifact the
+  // thread holds, by its title, the one showing with its versions; a thread
+  // from before holds one, which the address with no artifact names.
   const design = has.design;
   if (design && design.rootId) {
-    const id = `design:${design.rootId}`;
     const conversationId = design.conversationId || entry.ref.conversationId || 0;
-    const showing = now === id;
-    const latest = design.latest || 0;
-    const at = showing ? (entry.version || latest) : null;
-    rows.push({
-      id,
-      kind: 'design',
-      title: design.title || t('messages:detail.kind.design'),
-      line: t('messages:detail.row.design', { count: design.versions.length || latest }),
-      current: showing,
-      open: () => openPreview({ conversationId, rootId: design.rootId, version: null }),
-      versions: design.versions.map((v) => ({
-        version: v.version,
-        note: v.note,
-        current: at === v.version,
-        open: () => openPreview({ conversationId, rootId: design.rootId, version: v.version }),
-      })),
+    const listed = design.artifacts?.length
+      ? design.artifacts
+      : [{ artifactId: 0, title: design.title, kind: design.kind, latest: design.latest, viewport: null }];
+    const firstId = listed[0]?.artifactId || 0;
+    const showingId = entry.kind === 'design' ? (entry.ref.artifactId || firstId) : -1;
+    listed.forEach((a, i) => {
+      const plain = `design:${design.rootId}`;
+      const id = a.artifactId ? `${plain}:${a.artifactId}` : plain;
+      const showing = (a.artifactId || 0) === showingId && (now === id || (i === 0 && now === plain));
+      // Its versions: the thread's first is read already; another, once it shows.
+      const full = i === 0 ? design : (has.shown && has.shown.artifactId === a.artifactId ? has.shown : null);
+      const latest = a.latest || full?.latest || 0;
+      const at = showing ? (entry.version || latest) : null;
+      const artifactId = a.artifactId || null;
+      rows.push({
+        id,
+        kind: 'design',
+        title: a.title || t('messages:detail.kind.design'),
+        line: t('messages:detail.row.design', { count: full?.versions.length || latest }),
+        current: showing,
+        open: () => openPreview({ conversationId, rootId: design.rootId, version: null, artifactId }),
+        versions: showing && full ? full.versions.map((v) => ({
+          version: v.version,
+          note: v.note,
+          current: at === v.version,
+          open: () => openPreview({ conversationId, rootId: design.rootId, version: v.version, artifactId }),
+        })) : undefined,
+      });
+      taken.add(id);
+      if (i === 0) taken.add(plain);
     });
-    taken.add(id);
   }
   const live = has.live;
   if (live && live.sessionId) {
@@ -368,8 +400,9 @@ function pickRows(
     rows.push({
       id,
       kind: 'preview',
-      title: t('messages:detail.kind.preview'),
-      line: live.app?.name || null,
+      // I: the live draft by what it is of.
+      title: live.app?.name ? t('messages:detail.row.livePreview', { app: live.app.name }) : t('messages:detail.kind.preview'),
+      line: null,
       current: now === id,
       open: () => openLivePreview(live),
     });

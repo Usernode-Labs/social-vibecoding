@@ -24,9 +24,19 @@ export function previewLayout({ phone, three }: { phone: boolean; three: boolean
   return layoutOf('bot', { phone, wide: three });
 }
 
-/** Open the preview of the design in thread `rootId` of the chat `conversationId`, at `version` (null: the newest). */
-export function openPreview(at: { conversationId: number; rootId: number; version?: number | null; from?: string | null }): void {
-  openDetail({ kind: 'design', ref: { conversationId: at?.conversationId, rootId: at?.rootId }, version: at?.version ?? null, from: at?.from ?? null });
+/**
+ * Open the preview of the design in thread `rootId` of the chat
+ * `conversationId`, at `version` (null: the newest). `artifactId` (20 Nov
+ * 2026, live-draft review K): which of the thread's artifacts; none is its first.
+ */
+export function openPreview(at: { conversationId: number; rootId: number; version?: number | null; from?: string | null; artifactId?: number | null }): void {
+  const artifactId = Number(at?.artifactId) > 0 ? Number(at.artifactId) : undefined;
+  openDetail({
+    kind: 'design',
+    ref: { conversationId: at?.conversationId, rootId: at?.rootId, ...(artifactId ? { artifactId } : {}) },
+    version: at?.version ?? null,
+    from: at?.from ?? null,
+  });
 }
 
 /**
@@ -48,8 +58,8 @@ export function closePreview(): void {
 }
 
 /** The design preview open now, or null. */
-export function usePreview(): { conversationId: number; rootId: number; version: number | null; seq: number } | null {
+export function usePreview(): { conversationId: number; rootId: number; version: number | null; seq: number; artifactId: number | null } | null {
   const entry = useDetail();
   if (!entry || entry.kind !== 'design' || !entry.ref.conversationId || !entry.ref.rootId) return null;
-  return { conversationId: entry.ref.conversationId, rootId: entry.ref.rootId, version: entry.version, seq: entry.seq };
+  return { conversationId: entry.ref.conversationId, rootId: entry.ref.rootId, version: entry.version, seq: entry.seq, artifactId: entry.ref.artifactId ?? null };
 }

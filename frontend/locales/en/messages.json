@@ -4171,10 +4171,6 @@
     "text": "Use Homeroom bot instead",
     "description": "The second button under the connector steps in a new thread: go back to the thread with Homeroom bot working on it."
   },
-  "design.pane.showPreview": {
-    "text": "Preview",
-    "description": "On a phone, in a design thread's header: switches from the thread to the design's preview."
-  },
   "design.propose.heading": {
     "text": "Request this design",
     "description": "Heading of the card that files the design as a request."
@@ -6143,10 +6139,6 @@
     "text": "The preview couldn't start because of a problem on Homeroom's side, not your app. Close the draft and ask Homeroom bot to open it again in a few minutes.",
     "description": "Status line on a thread's live draft bar when its preview never started, which is always a problem on Homeroom's side. It says how to try again: a draft that failed at opening has no changes to lose, so closing it is safe."
   },
-  "liveDraft.show": {
-    "text": "Show preview",
-    "description": "A button on a thread's live draft bar: opens the draft's running preview beside the chat."
-  },
   "liveDraft.propose": {
     "text": "Propose",
     "description": "A button on a thread's live draft bar: puts the draft's changes up for the project's vote, as the person's own change."
@@ -6159,53 +6151,13 @@
     "text": "Close draft",
     "description": "A button on a thread's live draft bar: puts the draft away without proposing it."
   },
-  "liveDraft.proposed": {
-    "text": "Put up for a vote.",
-    "description": "Line on a thread's live draft bar right after the person proposed the draft."
-  },
-  "liveDraft.openChange": {
-    "text": "Open change #{{number}}",
-    "description": "Link on a thread's live draft bar after it was proposed: opens the change people now vote on. {{number}} is its number."
-  },
   "liveDraft.error": {
     "text": "That didn't work. Try again in a moment.",
     "description": "Line on a thread's live draft bar when opening, proposing or closing the draft failed for a reason the server did not say."
   },
-  "liveDraft.foot.title": {
-    "text": "Live preview",
-    "description": "Headline of the foot on a private thread's opening card while its live preview is open (Show preview, Close draft beside it)."
-  },
-  "liveDraft.foot.none": {
-    "text": "Tell Homeroom bot what to change.",
-    "description": "Under \"Live preview\" on a private thread's opening card, before any change has been made in the preview."
-  },
-  "liveDraft.foot.edits_one": {
-    "text": "{{count}} change so far",
-    "description": "Under \"Live preview\" on a private thread's opening card: how many changes Homeroom bot has made in the preview (one)."
-  },
-  "liveDraft.foot.edits_other": {
-    "text": "{{count}} changes so far",
-    "description": "Under \"Live preview\" on a private thread's opening card: how many changes Homeroom bot has made in the preview (several)."
-  },
-  "liveDraft.foot.starting": {
-    "text": "Starting. The first one takes a minute or two.",
-    "description": "Under \"Live preview\" on a private thread's opening card while the preview starts for the first time."
-  },
-  "liveDraft.foot.rebuilding": {
-    "text": "Building it again for that change. This takes a minute or two.",
-    "description": "Under \"Live preview\" on a private thread's opening card while the preview is rebuilt after a change."
-  },
-  "liveDraft.foot.failed": {
-    "text": "The preview couldn't start",
-    "description": "Headline of the foot on a private thread's opening card when its live preview failed to start."
-  },
   "liveDraft.foot.failedSub": {
     "text": "A problem on Homeroom's side, not your app. Close the draft and ask Homeroom bot to open it again in a few minutes.",
     "description": "Under \"The preview couldn't start\" on a private thread's opening card."
-  },
-  "liveDraft.foot.proposed": {
-    "text": "Put up for a vote",
-    "description": "Headline of the foot on a private thread's opening card once its live preview's changes were proposed; an Open change link sits beside it."
   },
   "newThread.starts.live.label": {
     "text": "I want to change an app live<0>…</0>",
@@ -6214,5 +6166,117 @@
   "newThread.starts.live.text": {
     "text": "I want to change an app live",
     "description": "Written into the message box when the \"I want to change an app live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change an app live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
+  },
+  "artifacts.button": {
+    "text": "Artifacts",
+    "description": "Button in the head of a private thread with Homeroom bot that holds artifacts (pages and screens the bot made) or a live preview of an app: opens and closes the column beside the thread that shows them. On a phone it switches from the thread to that column."
+  },
+  "artifacts.show": {
+    "text": "Show this thread's artifacts",
+    "description": "Accessible name and tooltip of the Artifacts button while the column beside the thread is closed."
+  },
+  "artifacts.hide": {
+    "text": "Hide this thread's artifacts",
+    "description": "Accessible name and tooltip of the Artifacts button while the column beside the thread is open: pressing it closes the column."
+  },
+  "detail.row.livePreview": {
+    "text": "Live preview of {{app}}",
+    "description": "Row in the picker of the column beside a thread: the running live preview of an app that Homeroom bot is changing in this thread. {{app}} is the app's name."
+  },
+  "liveDraft.controls": {
+    "text": "Live draft",
+    "description": "Accessible name of the group of a live draft's controls (its status, Propose or Update proposal, and Close draft) in the header of its running preview."
+  },
+  "liveDraft.head.starting": {
+    "text": "Starting the preview",
+    "description": "Short status in the header of a live draft's preview while its first build runs, which takes a minute or two."
+  },
+  "liveDraft.head.rebuilding": {
+    "text": "Building the preview again",
+    "description": "Short status in the header of a live draft's preview while it is built again because the last change added something the app installs."
+  },
+  "liveDraft.head.failed": {
+    "text": "The preview couldn't start",
+    "description": "Short status in the header of a live draft's preview when it could not start because of a problem on Homeroom's side. Its tooltip says what to do."
+  },
+  "liveDraft.head.none": {
+    "text": "No changes yet",
+    "description": "Short status in the header of a live draft's preview before Homeroom bot has changed anything in it."
+  },
+  "liveDraft.head.edits_one": {
+    "text": "{{count}} change so far",
+    "description": "Short status in the header of a live draft's preview: how many changes Homeroom bot has saved in the draft. Singular form; English writes the count."
+  },
+  "liveDraft.head.edits_other": {
+    "text": "{{count}} changes so far",
+    "description": "Short status in the header of a live draft's preview: how many changes Homeroom bot has saved in the draft. Plural form."
+  },
+  "liveDraft.head.pending_one": {
+    "text": "{{count}} change not in the proposal yet",
+    "description": "Short status in the header of a live draft's preview after it was proposed: changes made in the draft since, which reach the proposal only with Update proposal. Singular form; English writes the count."
+  },
+  "liveDraft.head.pending_other": {
+    "text": "{{count}} changes not in the proposal yet",
+    "description": "Short status in the header of a live draft's preview after it was proposed: changes made in the draft since, which reach the proposal only with Update proposal. Plural form."
+  },
+  "liveDraft.head.inProposal": {
+    "text": "Up for a vote with every change",
+    "description": "Short status in the header of a live draft's preview once it is proposed and the proposal has every change made in the draft."
+  },
+  "liveDraft.update": {
+    "text": "Update proposal",
+    "description": "Button in the header of a live draft's preview after it was proposed: puts the changes made in the draft since into the same proposal."
+  },
+  "liveDraft.updating": {
+    "text": "Updating…",
+    "description": "The Update proposal button's words while it is being updated."
+  },
+  "liveDraft.updateNote": {
+    "text": "Puts the changes made since into the proposal. Its votes are cleared and its checks run again.",
+    "description": "Tooltip of the Update proposal button of a live draft: what updating the proposal does."
+  },
+  "liveDraft.closeConfirm.title": {
+    "text": "Close this draft?",
+    "description": "Title of the confirmation asked before a live draft is closed from its preview's header."
+  },
+  "liveDraft.closeConfirm.open": {
+    "text": "Its live preview stops, and nothing in it is proposed.",
+    "description": "Confirmation before closing a live draft that was never proposed: what closing it does."
+  },
+  "liveDraft.closeConfirm.proposed": {
+    "text": "Its live preview stops. The proposal stays up for a vote, without the changes that are not in it yet.",
+    "description": "Confirmation before closing a live draft that is up for a vote: the proposal stays, and changes made since Propose are left behind."
+  },
+  "previewPin.layer": {
+    "text": "Click in the app to pin a comment",
+    "description": "Accessible name of the layer over a live draft's running app while the person is pinning a comment on it."
+  },
+  "previewPin.hint": {
+    "text": "Click where your comment is about",
+    "description": "Hint shown over a live draft's running app after the person pressed Comment: a click drops a pin there."
+  },
+  "previewPin.looking": {
+    "text": "Looking at what is there…",
+    "description": "Line in a pinned comment's box while the app says what is under the pin."
+  },
+  "previewPin.on": {
+    "text": "On {{what}}",
+    "description": "Line in a pinned comment's box: what is under the pin in the app, as the app described it. {{what}} is its words, or its kind (a button, a heading)."
+  },
+  "previewPin.placeholder": {
+    "text": "What should change here?",
+    "description": "Placeholder of the box for a comment pinned on a live draft's running app, sent to Homeroom bot."
+  },
+  "previewPin.cancel": {
+    "text": "Cancel",
+    "description": "Button in a pinned comment's box: puts the pin away without sending it."
+  },
+  "previewPin.send": {
+    "text": "Send to Homeroom bot",
+    "description": "Button in a pinned comment's box on a live draft's running app: posts the comment, with where it was pinned, in the draft's thread with Homeroom bot."
+  },
+  "previewPin.failed": {
+    "text": "That comment wasn't sent. Try again.",
+    "description": "Error in a pinned comment's box when posting it in the thread failed."
   }
 }

@@ -2,33 +2,40 @@
  * A live app draft, as its private thread with Homeroom bot shows it
  * (services/live-drafts.js). There is no standing button: a draft is opened
  * by asking Homeroom bot (homeroom-bot-mayor.js open_app_preview), or with
- * New chat's "I want to change an app live…" start (./new-thread.tsx). Once a
- * draft of the thread is open, this bar is under the thread's head:
+ * New chat's "I want to change an app live…" start (./new-thread.tsx).
  *
- *   Live preview · 3 changes                 [Show preview] [Propose] [Close draft]
+ * 20 Nov 2026 (live-draft review, G): there is no bar any more. The "Live
+ * preview · Tell Homeroom bot what to change. [Show preview] [Propose] [Close
+ * draft]" strip under the thread's head, and its twin at the foot of the
+ * thread's opening card, are gone. What they held is where the draft is
+ * looked at:
  *
- * The draft is a change of the person's own with a preview of it, which
- * opens beside the chat by itself the moment the draft is opened (the change
- * preview's own placement: features/staging/placement.ts). While it is open,
- * what they say in the thread is answered by the draft bot
- * (services/live-draft-bot.js), which edits the draft; each saved edit
- * restarts the preview in place, and the frame reloads here when the server
- * says so (`live_draft_changed`, which public/js/app.js hands on as the
- * window event LIVE_DRAFT_EVENT).
+ *   - Propose (Update proposal once it is up for a vote) and Close draft are
+ *     in the preview's own header, beside its ×, with one short line saying
+ *     where the draft stands (LiveDraftControls, drawn by
+ *     ../staging/staging-overlay.tsx while the preview shown is this draft's);
+ *   - showing the preview again is the thread head's Artifacts button
+ *     (./index.tsx), whose column lists the draft as "Live preview of <app>"
+ *     (../detail/detail-card.tsx).
  *
- * Propose puts it up for the project's vote, as the person's own change;
- * Close draft puts it away, and the bar goes with it. The first render is
- * nothing: the draft is read in an effect.
+ * What the bar did besides drawing stays, in a part that draws nothing
+ * (LiveDraftWatch, mounted on an open thread of theirs): the draft is read in
+ * an effect, its preview comes up beside the chat the moment the draft is
+ * opened (the change preview's own placement: ../staging/placement.ts), and
+ * the frame reloads when a saved edit restarted it (`live_draft_changed`,
+ * which public/js/app.js hands on as the window event LIVE_DRAFT_EVENT).
+ *
+ * C: a draft survives Propose. It stays the thread's, its preview running;
+ * edits after it are "not in the proposal yet" until Update proposal.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
-import { Button } from '@/components/ui/button';
+import { confirmAction } from '../../lib/confirm';
 import { stagingBridge } from '../staging/staging-bridge.js';
 import { stagingStore } from '../staging/staging-store.js';
-import { ThreadFoot } from '../dev-board/topic/thread-card';
 
 /** The window event public/js/app.js turns a `live_draft_changed` frame into. */
 export const LIVE_DRAFT_EVENT = 'live-draft-changed';
@@ -39,11 +46,23 @@ export interface LiveDraft {
   live: 'starting' | 'live' | 'rebuilding' | 'failed' | 'proposed' | 'closed' | null;
   sessionId: number | null;
   rootId: number;
+  /** J: the chat its thread is in (the server's, from 20 Nov 2026). */
+  conversationId?: number | null;
   app: { slug: string; name: string };
   edits: number;
   headSha: string | null;
   prNumber: number | null;
   error: string | null;
+  /** C: still worked on: open, or up for a vote with its own proposal. */
+  editable?: boolean;
+  /** C: its proposal while it is one, and how many edits are not in it yet. */
+  proposal?: { sessionId: number; prNumber: number | null; open: boolean; pending: number; headSha: string | null } | null;
+}
+
+/** Pure (C): whether a draft is still shown: open, or up for a vote and still edited. */
+export function liveDraftShown(draft: LiveDraft | null | undefined): draft is LiveDraft {
+  if (!draft || !draft.sessionId) return false;
+  return draft.state === 'open' || (draft.state === 'proposed' && draft.editable === true);
 }
 
 /** Pure: the status line's message id and values for a draft. */
@@ -56,21 +75,32 @@ export function draftLine(draft: LiveDraft): { id: string; values?: Record<strin
 }
 
 /**
- * Pure: the same status as the foot of a private thread's opening card
- * says it (20 Nov 2026), a headline and a line under it, as a request's foot
- * does: "Live preview", then where it is.
+ * Pure (G): the one short line the preview's header says about the draft,
+ * and whether it is bad news. A preview that could not start is said here,
+ * where the bar used to say it.
  */
-export function draftFoot(draft: LiveDraft): {
-  headline: { id: string };
-  sub: { id: string; values?: Record<string, unknown> };
-  bad: boolean;
-} {
-  if (draft.live === 'failed') return { headline: { id: 'messages:liveDraft.foot.failed' }, sub: { id: 'messages:liveDraft.foot.failedSub' }, bad: true };
-  const headline = { id: 'messages:liveDraft.foot.title' };
-  if (draft.live === 'starting') return { headline, sub: { id: 'messages:liveDraft.foot.starting' }, bad: false };
-  if (draft.live === 'rebuilding') return { headline, sub: { id: 'messages:liveDraft.foot.rebuilding' }, bad: false };
-  if (!draft.edits) return { headline, sub: { id: 'messages:liveDraft.foot.none' }, bad: false };
-  return { headline, sub: { id: 'messages:liveDraft.foot.edits', values: { count: draft.edits } }, bad: false };
+export function draftHeadLine(draft: LiveDraft): { id: string; values?: Record<string, unknown>; bad: boolean } {
+  if (draft.live === 'failed') return { id: 'messages:liveDraft.head.failed', bad: true };
+  if (draft.live === 'starting') return { id: 'messages:liveDraft.head.starting', bad: false };
+  if (draft.live === 'rebuilding') return { id: 'messages:liveDraft.head.rebuilding', bad: false };
+  const proposal = draft.state === 'proposed' ? draft.proposal : null;
+  if (proposal) {
+    if (proposal.pending > 0) return { id: 'messages:liveDraft.head.pending', values: { count: proposal.pending }, bad: false };
+    return { id: 'messages:liveDraft.head.inProposal', bad: false };
+  }
+  if (!draft.edits) return { id: 'messages:liveDraft.head.none', bad: false };
+  return { id: 'messages:liveDraft.head.edits', values: { count: draft.edits }, bad: false };
+}
+
+/**
+ * Pure (G, C): the header's one action to press: Propose for an open draft
+ * with an edit, Update proposal for one up for a vote with changes not in it
+ * yet, else none.
+ */
+export function draftAction(draft: LiveDraft): 'propose' | 'update' | null {
+  if (draft.state === 'open') return draft.edits > 0 ? 'propose' : null;
+  if (draft.state === 'proposed' && draft.proposal?.open && draft.proposal.pending > 0) return 'update';
+  return null;
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -86,18 +116,55 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-// The session whose preview this bar last opened, so a saved edit reloads
+// ── The drafts this page knows, by the change their preview is ─────────
+//
+// The watcher of each open thread writes its draft here, and the preview's
+// header reads the one whose change it shows (staging-store's sessionId).
+// Kept on the global object, as the detail column's store is (../ai/detail.ts):
+// the shell can be drawn by more than one copy of this module.
+
+interface Known { drafts: Map<number, LiveDraft>; listeners: Set<() => void>; version: number }
+const known: Known = ((globalThis as any).__usernodeLiveDrafts ||= { drafts: new Map(), listeners: new Set(), version: 0 });
+
+function noteDraft(draft: LiveDraft | null, sessionId: number | null = draft?.sessionId ?? null): void {
+  if (!sessionId) return;
+  if (draft && liveDraftShown(draft)) known.drafts.set(sessionId, draft);
+  else known.drafts.delete(sessionId);
+  known.version += 1;
+  known.listeners.forEach((fn) => fn());
+}
+
+/** The live draft whose preview is the change `sessionId`, or null. */
+export function useDraftForSession(sessionId: number | null | undefined): LiveDraft | null {
+  useSyncExternalStore(
+    (fn) => { known.listeners.add(fn); return () => { known.listeners.delete(fn); }; },
+    () => known.version,
+    () => 0,
+  );
+  return sessionId ? known.drafts.get(Number(sessionId)) || null : null;
+}
+
+/** The live draft whose preview is the change `sessionId`, or null (not a hook: ./showing.ts). */
+export function draftForSession(sessionId: number | null | undefined): LiveDraft | null {
+  return sessionId ? known.drafts.get(Number(sessionId)) || null : null;
+}
+
+// The session whose preview this page last opened, so a saved edit reloads
 // that frame and no other.
 let shownSession: number | null = null;
 
-/** A thread's open live draft, or null (the preview picker reads it too, ../detail/detail-card.tsx). */
+/** A thread's live draft (open, or up for a vote and still edited), or null. */
 export async function readLiveDraft(rootId: number): Promise<LiveDraft | null> {
   const out = await call<{ draft: LiveDraft | null }>(`/api/live-drafts?rootId=${encodeURIComponent(String(rootId))}`);
   return out.draft || null;
 }
 
-/** Show a live draft's preview beside its thread (its own bar's Show preview, and the picker's row). */
+/** Show a live draft's preview beside its thread (the Artifacts column's row). */
 export function openLivePreview(draft: LiveDraft) {
+  noteDraft(draft);
+  // Brought up to the draft's newest edit first: a preview that slept wakes on its image.
+  void call<{ draft: LiveDraft }>(`/api/live-drafts/${draft.id}/preview`, { method: 'POST' })
+    .then((out) => { if (out?.draft) noteDraft(out.draft); }, () => {});
   openPreview(draft);
 }
 
@@ -129,166 +196,140 @@ async function reloadPreview(sessionId: number | null, slug: string) {
   if (stagingBridge.frame() === frame && sessionId === shownSession) stagingBridge.setSrc(src);
 }
 
-export function LiveDraftBar({ rootId, foot = false }: {
-  rootId: number;
-  /**
-   * Drawn as the foot of the thread page's opening card (../group-chat/
-   * thread-page.tsx), where a filed thread says Filed, instead of a strip
-   * across the pane (the frame looks' pane keeps the strip).
-   */
-  foot?: boolean;
-}): ReactNode {
-  const t = useMessages('messages');
+/**
+ * A thread's live draft, read in an effect and kept current from the
+ * server's `live_draft_changed` frames: a newly opened draft brings its
+ * preview up, and a saved edit reloads it. Null while there is none.
+ */
+export function useLiveDraft(rootId: number | null | undefined): LiveDraft | null {
   const [draft, setDraft] = useState<LiveDraft | null>(null);
-  const [busy, setBusy] = useState<'propose' | 'close' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [proposed, setProposed] = useState<{ number: number | null; slug: string } | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
   const lastLive = useRef<LiveDraft['live']>(null);
   useEffect(() => { lastLive.current = draft?.live ?? null; }, [draft]);
 
   const load = useCallback(async () => {
+    if (!rootId) return;
     try {
-      const out = await call<{ draft: LiveDraft | null }>(`/api/live-drafts?rootId=${encodeURIComponent(String(rootId))}`);
-      if (alive.current) setDraft(out.draft);
-    } catch { /* no bar: nothing is open that it could show */ }
+      const next = await readLiveDraft(rootId);
+      if (!alive.current) return;
+      setDraft(liveDraftShown(next) ? next : null);
+      noteDraft(next);
+    } catch { /* nothing is open that it could show */ }
   }, [rootId]);
 
   useEffect(() => {
     setDraft(null);
-    setProposed(null);
-    setError(null);
     void load();
   }, [load]);
 
   useEffect(() => {
+    if (!rootId) return undefined;
     const heard = (event: Event) => {
       const detail = (event as CustomEvent).detail || {};
       const next: LiveDraft | null = detail.draft || null;
       if (!next || Number(next.rootId) !== Number(rootId)) return;
+      const shown = liveDraftShown(next);
       // Built again (a new package): the frame shows it once it serves.
-      const rebuilt = next.state === 'open' && lastLive.current === 'rebuilding' && next.live === 'live';
+      const rebuilt = shown && lastLive.current === 'rebuilding' && next.live === 'live';
       lastLive.current = next.live;
-      setDraft(next.state === 'open' ? next : null);
+      setDraft(shown ? next : null);
+      noteDraft(next);
       // Opened just now (by asking Homeroom bot): its preview comes up beside the chat.
-      if (detail.opened && next.state === 'open') openPreview(next);
+      if (detail.opened && shown) openPreview(next);
       else if (detail.reload || rebuilt) void reloadPreview(next.sessionId, next.app.slug);
     };
     window.addEventListener(LIVE_DRAFT_EVENT, heard);
     return () => window.removeEventListener(LIVE_DRAFT_EVENT, heard);
   }, [rootId]);
 
+  return draft;
+}
+
+/** What the bar did besides drawing, for an open thread of theirs: it draws nothing. */
+export function LiveDraftWatch({ rootId, onDraft }: { rootId: number; onDraft?: (draft: LiveDraft | null) => void }): ReactNode {
+  const draft = useLiveDraft(rootId);
+  useEffect(() => { onDraft?.(draft); }, [draft, onDraft]);
+  return null;
+}
+
+/**
+ * G: a live draft's own controls in its preview's header, beside its ×: one
+ * short line saying where the draft stands, Propose (Update proposal once it
+ * is up for a vote with changes not in it yet), and Close draft, which asks
+ * first. Drawn by ../staging/staging-overlay.tsx only while the preview shown
+ * is this draft's.
+ */
+export function LiveDraftControls({ draft }: { draft: LiveDraft | null }): ReactNode {
+  const t = useMessages('messages');
+  const [busy, setBusy] = useState<'propose' | 'update' | 'close' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => { setError(null); }, [draft?.id]);
+  // Not a live draft's preview: nothing.
+  if (!draft) return null;
+
+  const line = draftHeadLine(draft);
+  const action = draftAction(draft);
+  const settle = (next: LiveDraft | null | undefined) => {
+    if (next) noteDraft(next, draft.sessionId);
+  };
   const failed = (err: any) => {
     if (alive.current) setError(err?.said || t('messages:liveDraft.error'));
   };
-
-  const show = async () => {
-    if (!draft) return;
-    setError(null);
-    // Brought up to the draft's newest edit first: a preview that slept wakes on its image.
-    const out = await call<{ draft: LiveDraft }>(`/api/live-drafts/${draft.id}/preview`, { method: 'POST' }).catch(() => null);
-    if (out?.draft && alive.current) setDraft(out.draft);
-    openPreview(out?.draft || draft);
-  };
-
-  const propose = async () => {
-    if (!draft) return;
-    setBusy('propose');
+  const act = async (what: 'propose' | 'update') => {
+    setBusy(what);
     setError(null);
     try {
-      const out = await call<{ draft: LiveDraft }>(`/api/live-drafts/${draft.id}/propose`, { method: 'POST', body: '{}' });
-      if (!alive.current) return;
-      setProposed({ number: out.draft?.prNumber ?? null, slug: draft.app.slug });
-      setDraft(null);
+      const out = await call<{ draft: LiveDraft }>(`/api/live-drafts/${draft.id}/${what}`, { method: 'POST', body: '{}' });
+      settle(out?.draft);
     } catch (err) { failed(err); } finally { if (alive.current) setBusy(null); }
   };
-
   const close = async () => {
-    if (!draft) return;
+    const ok = await confirmAction({
+      title: t('messages:liveDraft.closeConfirm.title'),
+      message: draft.state === 'proposed'
+        ? t('messages:liveDraft.closeConfirm.proposed')
+        : t('messages:liveDraft.closeConfirm.open'),
+      confirmLabel: t('messages:liveDraft.close'),
+      danger: true,
+    });
+    if (!ok) return;
     setBusy('close');
     setError(null);
     try {
       await call(`/api/live-drafts/${draft.id}/close`, { method: 'POST' });
-      if (alive.current) setDraft(null);
+      noteDraft(null, draft.sessionId);
+      // The draft's preview goes with it.
+      if (stagingStore.get().open) (window as any).AppView?.closeStagingOverlay?.();
     } catch (err) { failed(err); } finally { if (alive.current) setBusy(null); }
   };
 
-  if (!draft && !proposed) return null;
-  if (foot) {
-    const said = draft ? draftFoot(draft) : null;
-    const alert = error ? <p className="text-[13px] text-red-700 dark:text-red-400" role="alert" data-live-draft-error="">{error}</p> : null;
-    return (
-      <div data-live-draft={draft ? draft.id : ''} data-live-draft-state={draft ? draft.live || '' : ''} data-live-draft-foot="" role="region" aria-live="polite">
-        {said && draft ? (
-          <ThreadFoot what="live-draft" headline={t(said.headline.id)} sub={t(said.sub.id, said.sub.values)} tone={said.bad ? 'bad' : null} extra={alert}>
-            {/* The foot's quieter actions are a thread foot's own pills, as Filed's Open request is. */}
-            <button type="button" className="gc-vote-btn" data-live-draft-show=""
-              disabled={!draft.sessionId || draft.live === 'failed'} onClick={() => void show()}>
-              {t('messages:liveDraft.show')}
-            </button>
-            {draft.edits ? (
-              // The foot's one action to press, drawn as a request's foot draws its own.
-              <button type="button" className="dev-request-primary" data-live-draft-propose=""
-                disabled={busy === 'propose' || draft.live !== 'live'} onClick={() => void propose()}>
-                {busy === 'propose' ? t('messages:liveDraft.proposing') : t('messages:liveDraft.propose')}
-              </button>
-            ) : null}
-            <button type="button" className="gc-vote-btn" data-live-draft-close=""
-              disabled={busy === 'close'} onClick={() => void close()}>
-              {t('messages:liveDraft.close')}
-            </button>
-          </ThreadFoot>
-        ) : proposed ? (
-          <ThreadFoot what="live-draft-proposed" headline={t('messages:liveDraft.foot.proposed')} extra={alert}>
-            {proposed.number ? (
-              <a className="gc-vote-btn inline-flex items-center" data-live-draft-proposed=""
-                href={`#app/${encodeURIComponent(proposed.slug)}/dev/changes/${proposed.number}`}>
-                {t('messages:liveDraft.openChange', { number: proposed.number })}
-              </a>
-            ) : null}
-          </ThreadFoot>
-        ) : null}
-      </div>
-    );
-  }
-  const line = draft ? draftLine(draft) : null;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 px-4 py-2.5 text-[13px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"
-      data-live-draft={draft ? draft.id : ''} data-live-draft-state={draft ? draft.live || '' : ''} role="region" aria-live="polite">
-      {proposed ? (
-        <span className="min-w-0 flex-1" data-live-draft-proposed="">
-          {t('messages:liveDraft.proposed')}
-          {proposed.number ? (
-            <a className="ms-1 font-semibold text-violet-700 dark:text-violet-300"
-              href={`#app/${encodeURIComponent(proposed.slug)}/dev/changes/${proposed.number}`}>
-              {t('messages:liveDraft.openChange', { number: proposed.number })}
-            </a>
-          ) : null}
-        </span>
+    <span className="staging-draft" data-live-draft={draft.id} data-live-draft-state={draft.live || ''} role="group"
+      aria-label={t('messages:liveDraft.controls')}>
+      <span className="staging-draft-line" data-bad={line.bad ? '' : undefined} data-live-draft-line="" aria-live="polite"
+        title={line.bad ? t('messages:liveDraft.foot.failedSub') : undefined}>
+        {error || t(line.id, line.values)}
+      </span>
+      {action === 'propose' ? (
+        <button type="button" className="staging-draft-act" data-live-draft-propose=""
+          disabled={busy === 'propose' || draft.live !== 'live'} onClick={() => void act('propose')}>
+          {busy === 'propose' ? t('messages:liveDraft.proposing') : t('messages:liveDraft.propose')}
+        </button>
       ) : null}
-      {draft && line ? (
-        <>
-          <span className="min-w-0 flex-1" data-live-draft-line="">{t(line.id, line.values)}</span>
-          <span className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" data-live-draft-show=""
-              disabled={!draft.sessionId || draft.live === 'failed'} onClick={() => void show()}>
-              {t('messages:liveDraft.show')}
-            </Button>
-            {draft.edits ? (
-              <Button type="button" variant="pillAccent" size="sm" ink="solid" data-live-draft-propose=""
-                disabled={busy === 'propose' || draft.live !== 'live'} onClick={() => void propose()}>
-                {busy === 'propose' ? t('messages:liveDraft.proposing') : t('messages:liveDraft.propose')}
-              </Button>
-            ) : null}
-            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" data-live-draft-close=""
-              disabled={busy === 'close'} onClick={() => void close()}>
-              {t('messages:liveDraft.close')}
-            </Button>
-          </span>
-        </>
+      {action === 'update' ? (
+        <button type="button" className="staging-draft-act" data-live-draft-update=""
+          title={t('messages:liveDraft.updateNote')}
+          disabled={busy === 'update'} onClick={() => void act('update')}>
+          {busy === 'update' ? t('messages:liveDraft.updating') : t('messages:liveDraft.update')}
+        </button>
       ) : null}
-      {error ? <p className="w-full text-[13px] text-red-700 dark:text-red-400" role="alert" data-live-draft-error="">{error}</p> : null}
-    </div>
+      <button type="button" className="staging-draft-quiet" data-live-draft-close=""
+        disabled={busy === 'close'} onClick={() => void close()}>
+        {t('messages:liveDraft.close')}
+      </button>
+    </span>
   );
 }
