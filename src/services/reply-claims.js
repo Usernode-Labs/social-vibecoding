@@ -514,7 +514,7 @@ const CLAIMS = Object.freeze([
     proof: 'turn',
     re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
     turn: (t) => !!(t.attached?.length || (!t.place && t.pictures?.made) || t.drew),
-    said: 'says pictures or a design were posted',
+    said: 'says pictures or an artifact were posted',
   },
   {
     kind: 'started',
@@ -664,7 +664,7 @@ const CLAIMS = Object.freeze([
     re: DESIGN_DONE,
     applies: (t) => !!t.design,
     turn: (t) => !!t.drew,
-    said: 'says you changed or drew the design',
+    said: 'says you changed or drew the artifact',
   },
   {
     // Artifacts, stage 2: a thread's plain page (artifact-session.js), said
@@ -718,7 +718,7 @@ const CLAIMS = Object.freeze([
     // filedBuilds). Where a person must decide, saying so is the truth.
     applies: (t) => !!t.design && !!t.filedDesign,
     turn: (t) => !t.designBuilds,
-    said: 'says this filed design will not be built, or that someone else has to start it',
+    said: 'says this filed artifact will not be built, or that someone else has to start it',
   },
   {
     kind: 'unread_description',
@@ -1693,7 +1693,7 @@ function repairNote(problems, { tools = null } = {}) {
     : '';
   // #6151: a filed design Homeroom bot builds.
   const notBuilt = kinds.has('not_built')
-    ? ' This design is filed, and Homeroom bot builds it from its plan. Say so, and where it stands from the FILED line. Never say it cannot be built or that someone else has to start it.'
+    ? ' This artifact is filed, and Homeroom bot builds it from its plan. Say so, and where it stands from the FILED line. Never say it cannot be built or that someone else has to start it.'
     : '';
   // #6263: a description described without reading it.
   const unread = kinds.has('unread_description')

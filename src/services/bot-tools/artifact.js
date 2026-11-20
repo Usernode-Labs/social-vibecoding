@@ -53,11 +53,15 @@ const handled = (name) => async (args, ctx) => {
 
 const DESCRIPTIONS = Object.freeze({
   write: {
-    main: 'Write a page for them and keep it in this thread: one self-contained HTML page, with its own <style> and, when it '
-      + 'needs to do something, its own inline <script>. Use it when what they ask for is better shown as a page than '
-      + 'said in words: a comparison laid out as a table, a calculator, a chart, a checklist they can tick, a one-page '
-      + 'summary. It is shown small under your reply, and they open it beside the chat. Never for a screen of an app or '
-      + 'how one could look: that is start_design. Nothing in the page may load from the network (no external src, '
+    // 20 Nov 2026 (live-draft review, L): the artifact, by what it can be.
+    // Asked for a diagram or a prototype, the bot makes one here, as a page.
+    main: 'Make an artifact for them and keep it in this thread: one self-contained HTML page, with its own <style> and, '
+      + 'when it needs to do something, its own inline <script>. Use it when what they ask for is better shown than '
+      + 'said in words: a diagram drawn in inline SVG (how sign-in works, how the parts of an app fit together), a '
+      + 'clickable prototype with its own script, a comparison laid out as a table, a calculator, a chart, a checklist '
+      + 'they can tick, a one-page summary. Asked for a diagram or a prototype, make it here: never refuse it, and '
+      + 'never draw it as a screen of an app. It is shown small under your reply, and they open it beside the chat. '
+      + 'A screen of a project in its own look is start_design. Nothing in the page may load from the network (no external src, '
       + 'href, @import, fetch or font): it is blocked. It is saved as version 1 when you reply, and you change it '
       + 'afterwards with exact edits, so write it once, whole.',
     // 20 Nov 2026 (live-draft review, K, F): with no `artifact` number it
@@ -83,7 +87,7 @@ const DESCRIPTIONS = Object.freeze({
       + '`find` must be copied exactly from the HTML and occur in it exactly once; `replace` takes its place (empty '
       + 'deletes it). Every call\'s edits together make this turn\'s one version (the result says which), and the '
       + 'reply\'s summary says once what that version changed.',
-    design: 'Change the design: exact find-and-replace edits on the current version\'s HTML, applied in order. '
+    design: 'Change the artifact: exact find-and-replace edits on the current version\'s HTML, applied in order. '
       + 'The way to change or extend this turn\'s screen: write rows and words into the markup, not a script that '
       + 'builds them. Each `find` must be copied exactly from the HTML and occur in it exactly once; `replace` takes '
       + 'its place (empty deletes it). Every call\'s edits together make this turn\'s one version (the result says '

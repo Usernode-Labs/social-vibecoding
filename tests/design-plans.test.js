@@ -38,7 +38,7 @@ test('the design bot offers a plan and a project as cards, its tools last, and n
     username: 'ada', design: { surface: 'app', app: { name: 'Plant pal' }, title: 'List', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
   });
   // #6864: approving it (lgtm, implement, file it) is offer_plan too.
-  assert.match(prompt, /You never post, file or make anything yourself\. When they approve the design \(lgtm, looks good, that's it,\n {2}ship it\) or ask you to build, implement, file or post it, offer it with offer_plan/);
+  assert.match(prompt, /You never post, file or make anything yourself\. When they approve the artifact \(lgtm, looks good, that's it,\n {2}ship it\) or ask you to build, implement, file or post it, offer it with offer_plan/);
   assert.match(prompt, /offer it with offer_plan and project when they name an existing project to put it on, and with offer_project\n {2}only when they want a new project/);
   // Step 6: the chat's own turn sends the card, as the answer or under the
   // version the same turn made.
@@ -180,11 +180,11 @@ test('POST /api/apps takes a design: checked, its brief and plan from it, the ca
   // #6784 records the idea thread in the same transaction, once the first
   // version is written, so the link is kept both ways.
   assert.match(route, /if \(recorded && fromThread\) await homeroomBotDm\.recordIdeaThread\(db, \{ app: appRow, user: req\.user, thread: fromThread \}\);/);
-  // #6784 adds a thread's own early plan beside the design's.
+  // #6784 adds a thread's own early plan beside the artifact's.
   assert.match(route, /earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\) \|\| !!fromDesign \|\| !!fromThread,/);
   const dm = require('../src/services/homeroom-bot-dm');
   const brief = dm.designBrief({ title: 'Watering', versions: [{ version: 1, author: 'bot', note: 'A list' }, { version: 2, author: 'bot', note: 'Bigger' }] }, 1, '');
-  assert.equal(brief, 'Watering\n\nIts first screen is "Watering", designed with Homeroom bot in a private thread (version 1). The first request\'s plan draws it.\n\nHow the design came to be, version by version:\n- A list');
+  assert.equal(brief, 'Watering\n\nIts first screen is "Watering", drawn with Homeroom bot in a private thread (version 1). The first request\'s plan draws it.\n\nHow the artifact came to be, version by version:\n- A list');
   const plan = require('../src/services/first-version-plan').designPlan({ title: 'Watering' }, 2);
   assert.deepEqual(plan.questions, [], 'it asks nothing');
   assert.match(plan.buildNote, /posted as this request's plan\. Build the plan's screens as drawn/);
@@ -319,13 +319,13 @@ test('#6151: the design bot is told where a filed design\'s request stands; an u
   assert.deepEqual(read.map((args) => [args.appId, args.numbers]), [[3, [14]]]);
   assert.deepEqual(filed, { state: 'filed', number: 14, appName: 'Ear Trainer', track: building, live: true });
   const prompt = designBot.designPrompt({ username: 'evan', design: { ...base, state: 'filed', number: 14 }, version: 4, html: '<p>x</p>', filed });
-  assert.match(prompt, /\nFILED: this design is request #14 on Ear Trainer\. Homeroom bot: building \(its next step: checks\)\.\n/);
+  assert.match(prompt, /\nFILED: this artifact is request #14 on Ear Trainer\. Homeroom bot: building \(its next step: checks\)\.\n/);
   assert.match(prompt, /- Asked whether it will be built, or when: say Homeroom bot builds it from the plan and where it stands now\.\n {2}Never say it cannot be built or that someone else has to start it, unless the line above says a person must decide\./);
-  assert.match(prompt, /- You never post, file or make anything yourself\. When they approve the design/, 'its own role is as it was');
+  assert.match(prompt, /- You never post, file or make anything yourself\. When they approve the artifact/, 'its own role is as it was');
   assert.ok(prompt.indexOf('FILED:') < prompt.indexOf('THE CURRENT VERSION'));
   // Posted as the plan on a request, it is that request's.
   const posted = await designBot.filedOf({}, { design: { ...base, state: 'posted', number: 14 }, project, settings: { mode: 'live' }, deps });
-  assert.match(designBot.filedLine(posted), /^FILED: this design is the plan on request #14 on Ear Trainer\./);
+  assert.match(designBot.filedLine(posted), /^FILED: this artifact is the plan on request #14 on Ear Trainer\./);
   // Not filed: no line, and nothing read.
   read.length = 0;
   assert.equal(await designBot.filedOf({}, { design: { ...base, state: 'open', number: null }, project, settings: { mode: 'live' }, deps }), null);
@@ -463,7 +463,7 @@ test('postDesignPlan refuses a plan a script would empty, and posts it when allo
 
 // Artifacts, stage 0: a plan knows which design it came from, as stored
 // fields. The regular expression over the plan's words is gone.
-test('a plan made from a design is posted with the design\'s thread and version, and nothing reads them from its words', async () => {
+test('a plan made from a design is posted with the artifact\'s thread and version, and nothing reads them from its words', async () => {
   const designs = require('../src/services/design-threads');
   const specs = require('../src/services/request-specs');
   const { posted, result } = await postGap('<main><ul><li>One</li><li>Two</li></ul></main>');
@@ -584,7 +584,7 @@ test('#6355: a card\'s sentence names only the request its button posts to', () 
   assert.equal(mayor.cardSentence('', { issueNumber: 6351, fallback: F }), F);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /cardSentence\(text, \{[\s\S]{0,220}plan: \{ appName: name, appSlug: app\.slug, title: design\.title \}/, 'the plan card\'s first line is checked');
-  assert.match(src, /cardSentence\(text, \{ issueNumber: null, fallback: `Want to make \$\{o\.name\} from this design\?` \}\)/);
+  assert.match(src, /cardSentence\(text, \{ issueNumber: null, fallback: `Want to make \$\{o\.name\} from this artifact\?` \}\)/);
   assert.match(src, /Tap the card to post version \$\{v\} on request #\$\{n\} as its plan, publicly, under your name\./);
   assert.match(src, /Tap New request to file a request on \$\{name\} with version \$\{v\} as its plan/);
 });

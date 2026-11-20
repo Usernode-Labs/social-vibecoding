@@ -2,17 +2,17 @@
 
 // Step 6 (docs/plans/bot-one-model.md, request #6864, 19 Nov 2026): one
 // agent per private thread. Every message in a private thread is the chat's
-// turn (homeroom-bot-mayor.js runDmTurn), which loads the thread's design or
+// turn (homeroom-bot-mayor.js runDmTurn), which loads the thread's artifact or
 // its open live draft as a capability (bot-profiles.js CAPABILITIES):
 //
 //   1. A pinned comment, a reply to a version, and every message under an
 //      open draft reach the chat's turn; nothing hands a message to a
 //      designer or a draft bot (homeroom-bot-dm.js answerUserMessage).
-//   2. A design thread's turn has the design tools and section; a draft's
+//   2. A design thread's turn has the artifact tools and section; a draft's
 //      has the draft tools and section, and its reply is checked
 //      (reply-claims.js draft_done); an ordinary thread has neither.
 //   3. "lgtm, implement" in a design thread is offer_plan, whose card files
-//      the design as the plan; offer_request on the design's own project is
+//      the design as the plan; offer_request on the artifact's own project is
 //      sent back to offer_plan.
 //   4. A question and a change in one message: one reply, the answer first,
 //      then "Version N: <summary>" with the version it saved, the summary
@@ -191,7 +191,7 @@ test('a comment pinned on the preview and a reply to a version are answered by t
   assert.deepEqual(await h.send({ id: 72, content: 'Version 2 was better: put the cards back', threadRootId: 500, reply: { id: 610 } }), { turn: 72 });
   assert.deepEqual(await h.send({ id: 73, content: 'what are you working on?', threadRootId: 500 }), { turn: 73 });
   assert.equal(h.turns.length, 3, 'one speaker: no designer answers in its place');
-  for (const args of h.turns) assert.equal(args.deps.threadDesign, DESIGN, 'each turn is told the thread\'s design');
+  for (const args of h.turns) assert.equal(args.deps.threadDesign, DESIGN, 'each turn is told the thread\'s artifact');
   assert.equal(profiles.kindInChat(h.turns[0].deps), 'private');
   assert.deepEqual(profiles.capabilitiesInChat(h.turns[0].deps), ['design']);
   assert.equal(typeof dm.designDirect, 'undefined', 'nothing decides a design\'s own message any more');
@@ -207,7 +207,7 @@ test('every message under an open live draft is the chat\'s turn, told the draft
 
 test('the private profile is one speaker with its capabilities, and no design or draft kind is left', async () => {
   assert.deepEqual(profiles.KINDS, ['private', 'request', 'change', 'channel', 'reply']);
-  // Artifacts, stage 2: a plain page's capability beside the design's and the draft's.
+  // Artifacts, stage 2: a plain page's capability beside the artifact's and the draft's.
   assert.deepEqual(profiles.profileOf('private').capabilities, ['design', 'draft', 'artifact']);
   assert.throws(() => profiles.profileOf('design'), /no thread kind design/);
   assert.throws(() => profiles.profileOf('draft'), /no thread kind draft/);
@@ -219,7 +219,7 @@ test('the private profile is one speaker with its capabilities, and no design or
 
 // ── 2. Capabilities by thread state ──────────────────────────────────────
 
-test('a design thread\'s turn has the design tools and section; an ordinary one has neither', async () => {
+test('a design thread\'s turn has the artifact tools and section; an ordinary one has neither', async () => {
   const design = turn([{ calls: [call('reply', { text: 'They were Asked and Planned.' })] }]);
   await design.run;
   const tools = design.offered[0];
@@ -231,11 +231,11 @@ test('a design thread\'s turn has the design tools and section; an ordinary one 
   assert.ok(!tools.includes('draw_screen'), 'nothing hands drawing over');
   assert.ok(tools.includes('offer_request') && tools.includes('my_work'), 'and every tool a private thread has');
   const prompt = systemText(design.seen);
-  assert.match(prompt, /THIS THREAD'S DESIGN/);
+  assert.match(prompt, /THIS THREAD'S ARTIFACT/);
   assert.match(prompt, /THE CURRENT VERSION \(version 3\), its whole HTML:/);
   assert.match(prompt, /saved as version 4 when you reply/, 'it is told the number it saves');
-  assert.match(prompt, /offer it with offer_plan: its card files the request with this design as\s+its plan/);
-  assert.match(prompt, /offer_request is only for something that is not this design/);
+  assert.match(prompt, /offer it with offer_plan: its card files the request with this artifact as\s+its plan/);
+  assert.match(prompt, /offer_request is only for something that is not this artifact/);
   assert.doesNotMatch(prompt, /draw_screen|the designer answers/);
 
   const plain = turn([{ calls: [call('reply', { text: 'Nothing is under way for you.' })] }], {
@@ -248,7 +248,7 @@ test('a design thread\'s turn has the design tools and section; an ordinary one 
   }
   assert.ok(plainTools.includes('start_design'), 'a design can be started there');
   const plainPrompt = systemText(plain.seen);
-  assert.doesNotMatch(plainPrompt, /THIS THREAD'S DESIGN|THIS THREAD'S LIVE DRAFT|THE CURRENT VERSION/);
+  assert.doesNotMatch(plainPrompt, /THIS THREAD'S ARTIFACT|THIS THREAD'S LIVE DRAFT|THE CURRENT VERSION/);
   assert.ok(plainPrompt.length < prompt.length, 'an ordinary chat carries no design section');
   assert.equal(plain.sent.length, 1);
   assert.equal(plain.sent[0].metadata.kind, 'chat');
@@ -279,7 +279,7 @@ test('start_design loads the design for the rest of the turn, and that turn save
   await h.run;
   assert.ok(!h.offered[0].includes('capture_page'), 'no design tools before it starts one');
   assert.ok(h.offered[1].includes('capture_page') && h.offered[1].includes('edit_artifact'), 'its tools from the next round');
-  assert.ok(h.seen[1].some((m) => m.role === 'system' && /THIS THREAD'S DESIGN/.test(m.content)), 'and its section');
+  assert.ok(h.seen[1].some((m) => m.role === 'system' && /THIS THREAD'S ARTIFACT/.test(m.content)), 'and its section');
   assert.equal(threadsMade.length, 1, 'the thread holds the design now');
   assert.equal(h.sent.length, 1, 'one reply');
   assert.equal(h.sent[0].metadata.kind, 'design_version');
@@ -371,21 +371,21 @@ test('"lgtm, can you implement?" in a design thread is offer_plan, and its card 
   assert.equal(h.versions.length, 0, 'nothing new is saved');
 });
 
-test('offer_request on the design\'s own project is sent back to offer_plan, unless it is something else', async () => {
+test('offer_request on the artifact\'s own project is sent back to offer_plan, unless it is something else', async () => {
   const draftArgs = { project: 'recipebot', title: 'Request page', details: 'Show the earlier steps.', doneWhen: ['It shows them.'] };
   const h = turn([
     { calls: [call('offer_request', draftArgs)] },
     { calls: [call('offer_plan', {})] },
-    { calls: [call('reply', { text: 'Tap New request to file it with this design as its plan.' })] },
+    { calls: [call('reply', { text: 'Tap New request to file it with this artifact as its plan.' })] },
   ], { message: { id: 86, content: 'lgtm, file it', threadRootId: 500 } });
   await h.run;
   const refused = JSON.parse(h.seen[1].find((m) => m.role === 'tool' && m.tool_call_id === 'coffer_request').content);
   assert.equal(refused.ok, false);
-  assert.match(refused.error, /To file this design, offer it with offer_plan/);
+  assert.match(refused.error, /To file this artifact, offer it with offer_plan/);
   assert.match(refused.error, /notTheDesign: true/);
   assert.equal(h.offers.length, 1);
   assert.equal(h.sent[0].card.kind, 'post_design');
-  assert.ok(h.offered[0].includes('offer_request'), 'offer_request stays for what is not this design');
+  assert.ok(h.offered[0].includes('offer_request'), 'offer_request stays for what is not this artifact');
   const offerTool = mayor.TOOLS.find((tool) => tool.function.name === 'offer_request');
   assert.equal('notTheDesign' in offerTool.function.parameters.properties, false, 'an ordinary thread\'s offer_request is unchanged');
 });
@@ -414,7 +414,7 @@ test('a question and a change in one message: answered first, then the version s
   assert.ok(h.doings.some((d) => d?.kind === 'drawing' && d.version === 4), '"Drawing version 4"');
   assert.ok(h.offered[0].includes('reply'));
   const replyTool = mayor.DESIGN_REPLY_TOOL.function.parameters.properties;
-  assert.ok(replyTool.summary, 'the design\'s reply carries the summary');
+  assert.ok(replyTool.summary, 'the artifact\'s reply carries the summary');
   assert.match(replyTool.text.description, /First answer any question in their message/);
 });
 
@@ -596,7 +596,7 @@ test('a question to them says first what was found that makes it necessary', () 
   const prompt = mayor.systemPrompt({ username: 'evan' });
   assert.match(prompt, /When you ask them something, first say in one clause what you found that makes the question necessary/);
   assert.doesNotMatch(prompt, /draw_screen/);
-  assert.match(prompt, /\(start_design\): it gives you the design tools for the rest of this turn/);
+  assert.match(prompt, /\(start_design\): it gives you the artifact tools for the rest of this turn/);
   assert.doesNotMatch(mayor.systemPrompt({ username: 'evan', designing: true }), /\(start_design\)/,
     'a thread that holds a design is told how it draws there instead');
 });

@@ -528,22 +528,22 @@ function designThreadLines(design, { refused = null } = {}) {
       : 'of a project that does not exist yet';
   const version = Number(design.latest) > 0 ? ` Its newest version is version ${Number(design.latest)}.` : '';
   const lines = [
-    `- This thread holds a design, "${clip(design.title, 120)}", ${of}.${version} They talk about it here, and the`,
+    `- This thread holds an artifact, "${clip(design.title, 120)}", ${of}.${version} They talk about it here, and the`,
     '  design is shown beside the thread with Open preview.',
   ];
   if (refused) {
     lines.push(`- It cannot be changed in this turn. If they ask you to change it, say so: "${clip(refused, 200)}"`);
   } else {
     lines.push(
-      '- You draw, change and redraw it yourself, here, with the design tools (THIS THREAD\'S DESIGN below says how),',
+      '- You draw, change and redraw it yourself, here, with the artifact tools (THIS THREAD\'S ARTIFACT below says how),',
       '  and your one reply says the version you saved. When they approve it (lgtm, looks good, that\'s it) or ask you to',
-      '  build, implement, file or post it, offer it with offer_plan: its card files the request with this design as',
-      '  its plan. offer_request is only for something that is not this design: its card cannot carry the design.',
+      '  build, implement, file or post it, offer it with offer_plan: its card files the request with this artifact as',
+      '  its plan. offer_request is only for something that is not this artifact: its card cannot carry the artifact.',
     );
   }
   lines.push(
     '- Anything else they ask, answer here as you would in any other thread, from the same tools, and a request may',
-    '  be offered on any project they can see: this thread is not limited to the design\'s project. Never say',
+    '  be offered on any project they can see: this thread is not limited to the artifact\'s project. Never say',
     '  something cannot be done in this thread, and never tell them to do it themselves somewhere else.',
   );
   // 20 Nov 2026 (live-draft review, K, F): the thread's other artifacts, and
@@ -651,7 +651,7 @@ function otherThreadLines(thread) {
     // Chat, before 14 Nov 2026 (the tool that opened one is retired with Main).
     lines.push(
       '- It is the private thread you opened for a NEW project, which does not exist yet. Help them shape what it is',
-      '  for, then draw its first screen (start_design) and design it with them here; from a design they like, you',
+      '  for, then draw its first screen (start_design) and shape it with them here; from an artifact they like, you',
       '  offer to make the project. Nothing is made, filed or posted until they tap.',
       // #6523: the thread already offers the project, so the flag is not needed here.
       '- A new project is already offered in this thread, so do not call offer_new_project here.',
@@ -881,7 +881,7 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     // (#6864): by this turn itself, in the thread it is in.
     ...(designing ? [] : [
       '- Draw a screen with them when they want to see how something could look, or to change how a screen looks or is',
-      '  laid out (start_design): it gives you the design tools for the rest of this turn, and you draw it yourself from',
+      '  laid out (start_design): it gives you the artifact tools for the rest of this turn, and you draw it yourself from',
       '  their words, the project\'s code and any picture they sent, in this thread, then reply once with the version you',
       '  saved. When they have asked you to draw, render, show or mock up a screen, call start_design in that turn:',
       '  never answer with what you are about to do, and never ask whether to start it. Put in only what they said of',
@@ -1266,7 +1266,7 @@ const TOOLS = [
       // Step 6 (#6864): it hands nothing over. It gives this turn the design
       // tools, and the turn draws the screen and says the version it saved.
       name: 'start_design',
-      description: 'Start drawing a screen with them, as a new artifact in this thread, in the project\'s own look: it gives you the design tools (write_artifact, edit_artifact, capture_page and the rest) and their rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out, and no artifact here already shows that screen: to change one that does, use edit_artifact. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
+      description: 'Start drawing a screen with them, as a new artifact in this thread, in the project\'s own look: it gives you the artifact tools (write_artifact, edit_artifact, capture_page and the rest) and their rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out, and no artifact here already shows that screen: to change one that does, use edit_artifact. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
       parameters: {
         type: 'object',
         properties: {
@@ -1478,8 +1478,8 @@ const DESIGN_OFFER_REQUEST_TOOL = (() => {
           ...base.function.parameters.properties,
           notTheDesign: {
             type: 'boolean',
-            description: 'True when this request is about something other than this thread\'s design, on the design\'s own '
-              + 'project. This design itself is offered with offer_plan.',
+            description: 'True when this request is about something other than this thread\'s artifact, on the artifact\'s own '
+              + 'project. This artifact itself is offered with offer_plan.',
           },
         },
       },
@@ -3429,7 +3429,7 @@ async function startDesign(pool, ctx, args = {}) {
   // page's thread included); only a new screen this turn is drawing already
   // has the tools.
   if (ctx.caps?.design?.fresh && ctx.caps.design.capability === 'design') {
-    return { ok: true, note: 'The design tools are yours already: draw the screen with them, then reply.' };
+    return { ok: true, note: 'The artifact tools are yours already: draw the screen with them, then reply.' };
   }
   // 15 Nov 2026 (#6683): a screen of another project is not drawn into a
   // thread whose design is of its own project.
@@ -3447,8 +3447,8 @@ async function startDesign(pool, ctx, args = {}) {
     if (design?.app?.slug && app.slug !== design.app.slug) {
       return {
         ok: false,
-        error: `This thread's design is of ${design.app.name || design.app.slug}, so a screen of `
-          + `${app.name || app.slug} is not drawn into it. Say this thread's design is of its own project, and offer to `
+        error: `This thread's artifact is of ${design.app.name || design.app.slug}, so a screen of `
+          + `${app.name || app.slug} is not drawn into it. Say this thread's artifact is of its own project, and offer to `
           + 'start that screen in a new thread (New thread on the Homeroom bot page) as a project\'s first screen.',
       };
     }
@@ -3806,7 +3806,7 @@ async function capabilityGate(pool, ctx, name, args, { rounds = 0, limit = MAX_R
   }
   if (name === 'offer_request' && caps.design) {
     if (caps.design.offered) {
-      return { ok: false, error: 'One reply holds one kind of card: this turn already offers the design. Reply now, and offer the request in a new turn.' };
+      return { ok: false, error: 'One reply holds one kind of card: this turn already offers the artifact. Reply now, and offer the request in a new turn.' };
     }
     const own = caps.design.project?.slug || null;
     const asked = typeof args?.project === 'string' && args.project.trim() ? args.project.trim() : null;
@@ -3815,9 +3815,9 @@ async function capabilityGate(pool, ctx, name, args, { rounds = 0, limit = MAX_R
       if (named?.slug === own) {
         return {
           ok: false,
-          error: `This thread's design is a screen of ${caps.design.projectName || own}. To file this design, offer it with `
-            + 'offer_plan: its card files the request with the design as its plan. If this request is about something else, '
-            + 'not this design, call offer_request again with notTheDesign: true.',
+          error: `This thread's artifact is a screen of ${caps.design.projectName || own}. To file this artifact, offer it with `
+            + 'offer_plan: its card files the request with the artifact as its plan. If this request is about something else, '
+            + 'not this artifact, call offer_request again with notTheDesign: true.',
         };
       }
     }
@@ -4765,7 +4765,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         if (got.opened) ctx.replyRoot = got.room.rootId;
         return {
           ok: true, version: opened.version(),
-          note: `The design tools are yours for the rest of this turn, and its rules follow. Draw it now (write_artifact, or capture_page for one of Homeroom's own pages and then edit_artifact), then reply once: it is saved as version ${opened.version()}.`,
+          note: `The artifact tools are yours for the rest of this turn, and its rules follow. Draw it now (write_artifact, or capture_page for one of Homeroom's own pages and then edit_artifact), then reply once: it is saved as version ${opened.version()}.`,
         };
       };
       // open_app_preview: the draft capability, loaded for the rest of this turn.
@@ -4890,7 +4890,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       const versionQuoted = repliedTo && deps.threadDesign
         ? (deps.threadDesign.versions || []).find((v) => Number(v?.messageId) === repliedTo) : null;
       if (versionQuoted) {
-        messages.push({ role: 'system', content: `[Homeroom, not from them: their message replies to version ${Number(versionQuoted.version)} of the design.]` });
+        messages.push({ role: 'system', content: `[Homeroom, not from them: their message replies to version ${Number(versionQuoted.version)} of the artifact.]` });
       }
       const ids = new Set();
       let preambles = 0;
@@ -5943,7 +5943,7 @@ async function checkPlanOffer(pool, { user, design, args = {}, deps = {}, html =
     if (asked) {
       const named = await findApp(pool, asked);
       if (named && Number(named.id) !== Number(app.id)) {
-        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project. To file an ordinary request there, use offer_request.` };
+        return { ok: false, error: `This artifact is a screen of ${app.name || app.slug}, so it posts there. Offer it without project. To file an ordinary request there, use offer_request.` };
       }
     }
   }
@@ -5989,14 +5989,14 @@ async function checkPlanOffer(pool, { user, design, args = {}, deps = {}, html =
 /** Pure-ish (C2.4): whether a design may be offered as a new project, named `name`. */
 function checkProjectOffer({ design, args = {} }) {
   if (design?.app) {
-    return { ok: false, error: `This design is a screen of ${design.app.name || design.app.slug}. To post it there, offer it with offer_plan.` };
+    return { ok: false, error: `This artifact is a screen of ${design.app.name || design.app.slug}. To post it there, offer it with offer_plan.` };
   }
   const name = clip(String(args.name || '').replace(/\s+/g, ' '), MAX_PROJECT_NAME);
   if (name.length < 2) return { ok: false, error: 'Give the project a short name.' };
   return {
     ok: true,
     offer: { kind: 'project', name, version: design?.latest || null },
-    note: `A card with "${MAKE_PROJECT}" goes under your reply. Say in a sentence that it opens a short form, with the name filled in, where they choose who it is for and make it; you build its first version from this design.`,
+    note: `A card with "${MAKE_PROJECT}" goes under your reply. Say in a sentence that it opens a short form, with the name filled in, where they choose who it is for and make it; you build its first version from this artifact.`,
   };
 }
 
@@ -6071,7 +6071,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     return dm.sendDm(pool, {
       bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
       content: [
-        cardSentence(text, { issueNumber: null, fallback: `Want to make ${o.name} from this design?` }),
+        cardSentence(text, { issueNumber: null, fallback: `Want to make ${o.name} from this artifact?` }),
         '',
         `**${o.name}** · a new project, from version ${v} of ${design.title}`,
       ].join('\n'),
@@ -6148,7 +6148,7 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
   };
   const { rows: [thread] } = await pool.query(
     'SELECT root_message_id FROM private_threads WHERE id = $1 AND user_id = $2', [action.private_thread_id, user.id]);
-  if (!thread) return failed('gone', 'I couldn\'t post it: that design is gone. Nothing was posted.');
+  if (!thread) return failed('gone', 'I couldn\'t post it: that artifact is gone. Nothing was posted.');
   let posted;
   try {
     posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {

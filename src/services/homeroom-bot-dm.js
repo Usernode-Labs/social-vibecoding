@@ -6445,7 +6445,7 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, fromD
   // 1 Nov 2026: made from a design (the design bot's Make the project), its
   // screens are drawn already: the first version is built from them.
   const next = fromDesign
-    ? 'Your design is its plan: I\'ll build the first version from it and tell you here when it\'s live.'
+    ? 'Your artifact is its plan: I\'ll build the first version from it and tell you here when it\'s live.'
     : earlyPlan
     ? 'I\'ll draw its screens, build the first version and tell you here when it\'s live.'
     : 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.';
@@ -6506,9 +6506,9 @@ function designBrief(design, version, said = null) {
     .map((v) => `- ${clip(v.note, 200)}`);
   return [
     own || design.title,
-    `Its first screen is "${design.title}", designed with Homeroom bot in a private thread (version ${version}). `
+    `Its first screen is "${design.title}", drawn with Homeroom bot in a private thread (version ${version}). `
       + 'The first request\'s plan draws it.',
-    notes.length ? `How the design came to be, version by version:\n${notes.join('\n')}` : null,
+    notes.length ? `How the artifact came to be, version by version:\n${notes.join('\n')}` : null,
   ].filter(Boolean).join('\n\n').slice(0, MAX_BRIEF_CHARS);
 }
 
@@ -6532,8 +6532,8 @@ async function designForProject(pool, { user, design: ref, brief = null, deps = 
   }
   if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'Not available for this account' };
   const design = await (deps.designThreads || require('./design-threads')).designFor(pool, { userId: user.id, rootId, artifactId });
-  if (!design || !design.latest) return { ok: false, status: 404, error: 'No such design' };
-  if (design.app) return { ok: false, status: 409, error: `This design is a screen of ${design.app.name || design.app.slug}.` };
+  if (!design || !design.latest) return { ok: false, status: 404, error: 'No such artifact' };
+  if (design.app) return { ok: false, status: 409, error: `This artifact is a screen of ${design.app.name || design.app.slug}.` };
   const version = asked || design.latest;
   if (!design.versions.some((v) => v.version === version)) return { ok: false, status: 404, error: 'No such version' };
   const { rows: [made] } = await pool.query(
@@ -6541,7 +6541,7 @@ async function designForProject(pool, { user, design: ref, brief = null, deps = 
       WHERE f.design_thread_id = $1 LIMIT 1`,
     [design.threadId],
   );
-  if (made) return { ok: false, status: 409, error: `This design already made ${made.name || made.slug}.` };
+  if (made) return { ok: false, status: 409, error: `This artifact already made ${made.name || made.slug}.` };
   return { ok: true, design, version, brief: designBrief(design, version, brief) };
 }
 

@@ -341,7 +341,7 @@ async function startDesign(pool, config, {
   const opened = await dm.sendDm(pool, {
     bot,
     userId: user.id,
-    content: `I opened a design thread for ${named}, in a thread only you can see. Tell me what to change there, `
+    content: `I opened a thread for ${named} that only you can see. Tell me what to change there, `
       + 'or pin a comment on the preview, and I\'ll make the next version. Nothing is public until you propose it.',
     // The thread's first message, its row written with it (sendDm `thread`);
     // they captured the screen themselves, so its line is nothing new.
@@ -349,7 +349,7 @@ async function startDesign(pool, config, {
     moment: null,
     metadata: { kind: 'opened_design', appSlug: app.slug, appName: name, designTitle: named },
   });
-  if (!opened?.messageId) return { ok: false, status: 502, error: 'The design thread could not be opened just now.' };
+  if (!opened?.messageId) return { ok: false, status: 502, error: 'The thread could not be opened just now.' };
   const { rows: [row] } = await pool.query(
     `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
      VALUES ($1, $2, $3, $4, 'design', 'open')
@@ -484,10 +484,10 @@ function variantsSentence(variants) {
   if (labels.length < 2) return null;
   const named = labels.map((label) => `"${label}"`).join(' and ');
   if (variants.chosen) {
-    return `This design draws ${labels.length} versions side by side: ${named}. Build "${variants.chosen}", the chosen one; `
+    return `This artifact draws ${labels.length} versions side by side: ${named}. Build "${variants.chosen}", the chosen one; `
       + 'the others are there to compare.';
   }
-  return `This design draws ${labels.length} versions side by side: ${named}. It does not say which one to build yet.`;
+  return `This artifact draws ${labels.length} versions side by side: ${named}. It does not say which one to build yet.`;
 }
 
 /**
@@ -515,8 +515,8 @@ function planHtml({ design, title, notes, before = null, after, version }) {
     '<article data-spec>',
     `<h1>${escapeHtml(title)}</h1>`,
     captured
-      ? `<p>A design for ${escapeHtml(design.title)}, made in a private design thread with Homeroom bot.</p>`
-      : `<p>A design for a new screen, ${escapeHtml(design.title)}, made in a private thread with Homeroom bot.</p>`,
+      ? `<p>An artifact for ${escapeHtml(design.title)}, made in a private thread with Homeroom bot.</p>`
+      : `<p>An artifact for a new screen, ${escapeHtml(design.title)}, made in a private thread with Homeroom bot.</p>`,
     chosenLine,
     '<section data-spec-tab="user">',
     '<figure data-screens>',
@@ -531,12 +531,14 @@ function planHtml({ design, title, notes, before = null, after, version }) {
     '<section data-spec-tab="tech">',
     captured
       ? `<p>Before is the screen as it was captured (version 1); after is version ${Number(version)}, a mockup drawn with the`
-        + ' screen\'s own stylesheets. Build it in the project\'s own code and components. Scripts the design used for'
+        + ' screen\'s own stylesheets. Build it in the project\'s own code and components. Scripts the artifact used for'
         + ' its interactive states are left out of this plan.</p>'
+      // "after is version N of the design": the words migration plan-design-source and
+      // services/plan-design-source.js read a plan's version from (20 Nov 2026, L: kept as they are).
       : `<p>The screen is new: before is what is there today, nothing; after is version ${Number(version)} of the design, a`
         + ` mockup drawn with ${design.surface === 'new' ? 'Homeroom\'s own' : 'the project\'s'} stylesheets. Build it in`
         + ' the project\'s own code and components, as a screen of its own, and keep its words, its layout and what it'
-        + ' shows. Scripts the design used for its interactive states are left out of this plan.</p>',
+        + ' shows. Scripts the artifact used for its interactive states are left out of this plan.</p>',
     chosenLine,
     '</section>',
     '</article>',
@@ -738,7 +740,7 @@ async function postDesignPlan(pool, config, {
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const specs = deps.requestSpecs || require('./request-specs');
   const design = await designFor(pool, { userId: user?.id, rootId, artifactId });
-  if (!design) return { ok: false, status: 404, error: 'No such design' };
+  if (!design) return { ok: false, status: 404, error: 'No such artifact' };
   // A plain page stays in its thread: nothing posts it, whoever asks.
   if (!isDesign(design)) return { ...NOT_A_DESIGN };
   if (!POSTABLE.has(design.state)) {
@@ -755,7 +757,7 @@ async function postDesignPlan(pool, config, {
     );
     app = row || null;
   } else {
-    return { ok: false, status: 404, error: 'This design has no project yet.' };
+    return { ok: false, status: 404, error: 'This artifact has no project yet.' };
   }
   if (!app || !(await mayor.canView(pool, app, user))) return { ok: false, status: 404, error: 'No such project' };
   if (!(await mayor.canFile(pool, app, user))) {
@@ -785,7 +787,7 @@ async function postDesignPlan(pool, config, {
   if (captured && !before) return { ok: false, status: 404, error: 'No such version' };
   const n = issueNumber == null ? null : Number(issueNumber);
   if (n != null && !(Number.isSafeInteger(n) && n > 0 && n <= 2147483647)) return { ok: false, status: 400, error: 'Invalid request number' };
-  const named = clip(title || `Design: ${design.title}`, MAX_TITLE);
+  const named = clip(title || `${design.title}`, MAX_TITLE);
   const said = String(notes || '').trim().slice(0, MAX_PROPOSE_NOTES);
   const plan = planHtml({
     design, title: named, notes: said, before: before ? before.html : null, after: after.html, version: after.version,
@@ -799,7 +801,7 @@ async function postDesignPlan(pool, config, {
   // A plan the plans would refuse is said before anything is filed.
   const checked = specs.prepareSpec(plan);
   if (!checked.ok) {
-    return { ok: false, status: 413, error: 'This design is too big to go into a plan. Make the screen smaller, then post it again.' };
+    return { ok: false, status: 413, error: 'This artifact is too big to go into a plan. Make the screen smaller, then post it again.' };
   }
   const name = app.name || app.slug;
   const repo = require('./repo-ref').ownerRepo(app.repo_url);
@@ -846,15 +848,15 @@ async function postDesignPlan(pool, config, {
   }
   const settings = await (deps.homeroomBot || require('./homeroom-bot')).readSettings(pool);
   const details = [
-    said || `A new design for ${design.title}.`,
+    said || `A new artifact for ${design.title}.`,
     '',
     captured
-      ? `Its plan shows the screen as it was and version ${after.version} of the design side by side.`
-      : `Its plan shows version ${after.version} of the design, a screen that is not there yet.`,
+      ? `Its plan shows the screen as it was and version ${after.version} of the artifact side by side.`
+      : `Its plan shows version ${after.version} of the artifact, a screen that is not there yet.`,
   ].join('\n');
   const filed = await mayor.fileRequest(pool, config, {
     user, app, title: named, details, settings, deps, askedText: details,
-    footer: `Filed from a design thread in ${user.username}'s chat with Homeroom bot.`,
+    footer: `Filed from a thread in ${user.username}'s chat with Homeroom bot.`,
     fileKey: `design-thread:${design.rootId}${which}`,
   });
   const number = Number(filed.issueNumber);
@@ -910,7 +912,7 @@ async function postDesignPlan(pool, config, {
  */
 async function proposeDesign(pool, config, { user, rootId, artifactId = null, version = null, title = null, notes = null, deps = {} }) {
   const design = await designFor(pool, { userId: user?.id, rootId, artifactId });
-  if (!design) return { ok: false, status: 404, error: 'No such design' };
+  if (!design) return { ok: false, status: 404, error: 'No such artifact' };
   if (!isDesign(design)) return { ...NOT_A_DESIGN };
   const issueNumber = await planTargetOf(pool, design);
   return postDesignPlan(pool, config, { user, rootId, artifactId, version, issueNumber, title, notes, deps });

@@ -2522,7 +2522,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // it is a session that draws nothing, so what the turn does with
     // start_design can be pinned against the real database.
     const session = {
-      capability: 'design', prompt: 'THIS THREAD\'S DESIGN\n(the design section)', projectName: 'Note board',
+      capability: 'design', prompt: 'THIS THREAD\'S ARTIFACT\n(the artifact section)', projectName: 'Note board',
       started: true, firstDrawing: true, offered: null, card: null,
       owns: () => false, tools: () => [], offerFor: () => ({ notes: [] }), version: () => 1, changed: () => false,
       shown: () => false, facts: () => ({ design: true, drew: false }), filterClaims: (found) => found,
