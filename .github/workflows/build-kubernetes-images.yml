@@ -188,7 +188,7 @@ jobs:
       - name: Compile bcrypt unless the restored binding works
         id: bcrypt_build
         run: |
-          if node -e "const b = require('bcrypt'); process.exit(b.compareSync('probe', b.hashSync('probe', 4)) ? 0 : 1)" 2>/dev/null; then
+          if node -e "try { const b = require('bcrypt'); process.exit(b.compareSync('probe', b.hashSync('probe', 4)) ? 0 : 1); } catch (err) { console.log('No usable bcrypt binding: ' + (err.code || err.message)); process.exit(1); }"; then
             echo "compiled=false" >> "$GITHUB_OUTPUT"
           else
             npm rebuild bcrypt --build-from-source
