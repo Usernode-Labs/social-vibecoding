@@ -6,8 +6,9 @@ const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 
-const WORKFLOW = '.github/workflows/build-kubernetes-images.yml';
+const BUILD_ACTION = '.github/actions/build-kubernetes-image';
 const RESOLVER = 'scripts/resolve-kubernetes-image.js';
+const CAPTURE_IGNORE = 'capture/Dockerfile.dockerignore';
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const NPM_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -46,20 +47,30 @@ function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function captureTree(revision, cwd, run) {
+  const rules = run('git', ['show', `${revision}:${CAPTURE_IGNORE}`], cwd);
+  const [exclude, ...allow] = rules.split(/\r?\n/).map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'));
+  // Docker uses this file in place of .dockerignore for capture. Restrict it
+  // to literal paths so Git describes exactly what Docker can read.
+  if (exclude !== '**' || !allow.length || allow.some(rule => !/^![\w.-]+(?:\/[\w.-]+)*$/.test(rule)
+      || rule.slice(1).split('/').some(part => part === '.' || part === '..'))) {
+    throw new Error(`${CAPTURE_IGNORE} must exclude ** and allow only literal paths`);
+  }
+  const files = run('git', ['ls-tree', '-rz', revision, '--', 'capture/Dockerfile', CAPTURE_IGNORE,
+    ...allow.map(rule => rule.slice(1))], cwd);
+  return { rules, files };
+}
+
 function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = command } = {}) {
-  // The Git tree includes names, contents, executable modes, Dockerfiles and
-  // .dockerignore. The worker's floating Claude Code dependency is resolved
-  // before this lookup and becomes an exact external input too. Workflow/
-  // resolver changes invalidate the build recipe. Keep reuse tags scoped to
-  // each branch, including branches that ran the older release workflow.
-  const componentInputs = component === 'capture'
-    ? ['capture', 'shots']
-    : [component];
-  const objects = [...componentInputs, WORKFLOW, RESOLVER].map(path =>
-    run('git', ['rev-parse', `${revision}:${path}`], cwd));
-  const inputs = {
-    component, ref, platform: 'linux/amd64', objects,
-  };
+  // The action configures BuildKit, and this script selects the Dockerfile
+  // and fingerprints its context. The release workflow only calls the recipe.
+  const recipe = [BUILD_ACTION, RESOLVER].map(file =>
+    run('git', ['rev-parse', `${revision}:${file}`], cwd));
+  const context = component === 'capture'
+    ? captureTree(revision, cwd, run)
+    : run('git', ['rev-parse', `${revision}:worker`], cwd);
+  const inputs = { component, ref, recipe, context };
   if (component === 'worker') inputs.claudeCodeVersion = claudeCodeVersion;
   return createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
 }
@@ -126,14 +137,15 @@ function resolveImage({
 
 if (require.main === module) {
   try {
-    const result = resolveImage({
-      component: process.env.COMPONENT,
-      owner: process.env.GITHUB_REPOSITORY_OWNER,
-      revision: process.env.GITHUB_SHA,
-      ref: process.env.GITHUB_REF,
-      forceRebuild: process.env.FORCE_REBUILD || 'none',
-      claudeCodeVersion: process.env.CLAUDE_CODE_VERSION,
-    });
+    const { COMPONENT: component, GITHUB_SHA: revision, GITHUB_REPOSITORY_OWNER: owner,
+      GITHUB_REF: ref, FORCE_REBUILD: forceRebuild, CLAUDE_CODE_VERSION: claudeCodeVersion } = process.env;
+    const result = resolveImage({ component, revision, owner, ref, forceRebuild, claudeCodeVersion });
+    if (!result.digest) {
+      result.context = component === 'worker' ? 'worker' : '.';
+      result.dockerfile = {
+        platform: 'Dockerfile.kubernetes', worker: 'worker/Dockerfile', capture: 'capture/Dockerfile',
+      }[component];
+    }
     fs.appendFileSync(process.env.GITHUB_OUTPUT,
       Object.entries(result).map(([key, value]) => `${key}=${value}\n`).join(''));
     console.log(`${process.env.COMPONENT}: ${result.reason}${result.digest ? ` (${result.digest})` : ''}`);

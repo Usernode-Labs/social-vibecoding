@@ -1,0 +1,8 @@
+# The Kubernetes reuse key reads this allowlist. Start with **, then include
+# only literal paths. A directory includes its entire tree.
+**
+!capture
+!shots/hosted-app-fixture.js
+!worker/session-bootstrap.js
+!worker/shots-hosted-origins.js
+!worker/shots-hosted-app-contract.js
