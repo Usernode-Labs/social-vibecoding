@@ -138,26 +138,21 @@ test('exhausted platform credits skip title generation without blocking feedback
   }
 });
 
-test('BYOK title generation uses the user key and records only BYOK spend', async () => {
-  billingImpl = async () => ({ apiKey: 'sk-ant-user', byok: true });
-  let receivedKey = null;
+// The own-key title (people's own Anthropic keys) went in task 2275: the
+// platform's allowance is the only payer, and the route passes no key.
+test('the title is generated without a key and recorded as platform spend', async () => {
+  let receivedKey = 'unset';
   generateImpl = async ({ description, apiKey }) => {
     generateCalls.push(description);
     receivedKey = apiKey;
-    return {
-      title: 'Generated with own key',
-      usage: { input_tokens: 30, output_tokens: 12 },
-      model: 'claude-haiku-4-5',
-    };
+    return { title: 'Generated', usage: { input_tokens: 30, output_tokens: 12 }, model: 'claude-haiku-5-5' };
   };
   const server = await startServer();
   try {
-    const res = await postTitle(server, { description: 'Use my own key for this title' });
+    const res = await postTitle(server, { description: 'Name this for me' });
     assert.equal(res.status, 200);
-    assert.equal((await res.json()).title, 'Generated with own key');
-    assert.equal(receivedKey, 'sk-ant-user');
-    assert.equal(spendCalls.length, 1);
-    assert.deepEqual(spendCalls[0].opts, { byok: true });
+    assert.equal(receivedKey, undefined);
+    assert.deepEqual(spendCalls[0].opts, { byok: false });
   } finally {
     server.close();
   }

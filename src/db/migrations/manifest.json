@@ -480,6 +480,11 @@
       "id": "private-thread-make-refusal",
       "sha256": "e7efcf19f95f64919f2042ed2b2eaa8fcfba4daa0130470bc33ff21d26de0194",
       "schemaSha256": "933757d701ecab7769895883fab51f7a807e716507d20017b766bd71776e8a9a"
+    },
+    {
+      "id": "anthropic-keys-wiped",
+      "sha256": "ca290627de3589255e397fef423664d812fc000cd20a452817992392ae24487b",
+      "schemaSha256": "846dc3c2b12619df467c75f6fb31b67b5b72e1c8efdc5c6f3bd2495792e25ec7"
     }
   ]
 }

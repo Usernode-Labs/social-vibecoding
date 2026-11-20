@@ -293,18 +293,17 @@ function platform(t, { translations = {}, english = ENGLISH, state = null } = {}
     return JSON.parse(fs.readFileSync(writeSource(repo.root, out), 'utf8'));
   };
   const model = fakeModel((item) => SPANISH[item.id]);
-  const batches = [];
+  // The platform's model (llm.js) has direct requests only: OpenRouter has
+  // no Message Batches (task 2275), so a fake with batch methods would test
+  // a path the runner no longer has.
   const llm = {
     isEnabled: () => true,
     translateCatalogDirect: model.translate,
-    async submitCatalogBatch(requests) { batches.push({ requests, status: 'in_progress' }); return { id: `batch_${batches.length}` }; },
-    async catalogBatchStatus(id) { return { status: batches[Number(id.split('_')[1]) - 1].status }; },
-    async catalogBatchAnswers(id) { return model.translate(batches[Number(id.split('_')[1]) - 1].requests); },
   };
   const deps = { llm, source: sourceOf() };
   languageCache.reset();
   return {
-    repo, db, pool, deps, batches, model,
+    repo, db, pool, deps, model,
     deploy: (next) => { repo.put('en/core.json', next); deps.source = sourceOf(); languageCache.reset(); },
     cached: (key) => db.cache.filter((row) => row.key === key),
     run: () => runner.runOnce({ config: {}, pool, deps }),
@@ -358,34 +357,30 @@ test('a committed translation wins over the cache, and the step does not transla
   assert.equal(JSON.parse(live.files.get(live.manifest.es.core.url.split('/').pop()))['button.leave'], 'Abandonar');
 });
 
-test('a whole language goes as a Message Batch; its answers are kept once it ends, and only for English it was asked about', async (t) => {
+test('a whole language goes as direct requests in the pass that finds it (task 2275: no Message Batches)', async (t) => {
   const english = { ...ENGLISH };
   for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) english[`bulk.m${i}`] = says(`Message ${i}`, 'Bulk fixture message.');
   const p = platform(t, { english });
   for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) SPANISH[`core:bulk.m${i}`] = { text: `Mensaje ${i}` };
   t.after(() => { for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) delete SPANISH[`core:bulk.m${i}`]; });
-  const submitted = await p.run();
-  assert.equal(submitted.submitted, 'batch_1');
-  assert.equal(p.db.state.batch.english['core:bulk.m3'], runner.englishOf({ english: 'Message 3' }));
-  assert.deepEqual(await p.run(), { waiting: 'batch_1' });
-  p.batches[0].status = 'ended';
-  // A deploy while it ran: one message reworded, one added before the rest,
-  // so every request after it carries other messages than it did.
-  p.deploy({ 'a.first': says('First', 'Added at the top.'), ...english, 'bulk.m3': says('Message three', 'Bulk fixture message.') });
-  SPANISH['core:a.first'] = { text: 'Primero' };
-  t.after(() => { delete SPANISH['core:a.first']; });
-  const calls = p.model.calls.length;
-  const kept = await p.run();
-  assert.ok(kept.cached > runner.DIRECT_LIMIT, 'the batch\'s answers are kept, matched by message');
+  const pass = await p.run();
+  assert.ok(pass.cached > runner.DIRECT_LIMIT, 'more than the old batch threshold, kept in the same pass');
+  assert.equal(pass.submitted, undefined, 'nothing is submitted to wait on');
   assert.equal(p.db.state.batch, undefined);
-  const askedAgain = p.model.calls.slice(calls + 1).flat().flatMap((request) => request.items.map((item) => item.id)).sort();
-  assert.deepEqual(askedAgain, ['core:a.first', 'core:bulk.m3'], 'what the batch was not asked about is asked on its own');
-  assert.deepEqual(p.cached('bulk.m3').map((row) => row.source), [hash('Message three')], 'never under English it was not asked about');
-  // The batch was asked from the English before the deploy, so the next pass
-  // reads the new English again rather than calling it unchanged; the cache
-  // already has all of it.
-  assert.notEqual(p.db.state.checkedDigest, runner.sourceDigest(p.deps.source));
-  assert.deepEqual(await p.run(), { skipped: 'nothing_missing' });
+  assert.ok(p.model.calls.length > 0);
+  assert.deepEqual(await p.run(), { skipped: 'unchanged' });
+});
+
+test('a Message Batch a pass recorded before the move is let go, and the next pass plans again', async (t) => {
+  const p = platform(t);
+  p.db.state = { batch: { id: 'msgbatch_old', sourceDigest: 'x', english: {}, submittedAt: '2026-11-01T00:00:00Z', messages: 900 } };
+  const looked = await runner.look({ pool: p.pool, deps: p.deps });
+  assert.deepEqual(looked.items.map((item) => item.target), ['batch:msgbatch_old'], 'the look still owes it a pass');
+  assert.deepEqual(await p.run(), { dropped: 'msgbatch_old' });
+  assert.equal(p.db.state.batch, undefined);
+  assert.equal(p.model.calls.length, 0, 'dropping it costs no call');
+  const next = await p.run();
+  assert.ok(next.cached > 0, 'the next pass translates from the English');
 });
 
 test('a pass that could use nothing says why, in the state an admin reads, and caches nothing (#4641)', async (t) => {

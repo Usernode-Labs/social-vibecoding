@@ -1941,7 +1941,10 @@ const resp = await fetch(`${process.env.USERNODE_LLM_PROXY_URL}/v1/messages`, {
 ```
 
 The body/response are standard Anthropic Messages API shapes
-(streaming SSE included). Error codes the app must handle:
+(streaming SSE included). Name a Claude model the way Anthropic does
+(`claude-sonnet-5-5`); the platform serves it through OpenRouter, and a
+model that is not Claude is refused with `400 { code: 'unsupported_model' }`.
+Error codes the app must handle:
 
 - `403 { code: 'grant_required' }` — the user hasn't granted this app
   access (or revoked it). Surface this to the frontend, have it call

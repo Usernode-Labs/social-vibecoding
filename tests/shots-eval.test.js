@@ -132,7 +132,8 @@ test('the proxy sends an eval trial\'s calls on the platform key, gated by the e
   assert.match(branch, /require\('\.\.\/services\/shots-eval'\)\.billFor\(pool, sessionId\)/);
   assert.doesNotMatch(branch, /evalRunner|billsSession|remoteTrialFor/, 'never this process\'s memory');
   assert.match(branch, /shotsEval\.overCap\(0\)[\s\S]*budget_exceeded/, 'an eval at its cap is refused before the call');
-  assert.match(branch, /apiKey: config\.anthropicApiKey/, 'the platform key pays');
+  assert.match(branch, /const evalKey = await openrouterMessages\.platformKey\(config, \{ pool \}\);[\s\S]*apiKey: evalKey/,
+    'the platform\'s OpenRouter key pays (task 2275; a separate Anthropic key before)');
   assert.match(branch, /shouldKill: \(currentCallCents\) => \(shotsEval\.overCap\(currentCallCents\)/, 'a call that would pass the cap is cut off');
   assert.match(branch, /shotsEval\.noteSpend\(result\.costCents\);\s*return;/, 'each priced call is added to the trial, and nothing else');
   assert.doesNotMatch(branch, /noteAgentSpend|userBudgetCache|systemBudgetCache|loadUserApiKey/,

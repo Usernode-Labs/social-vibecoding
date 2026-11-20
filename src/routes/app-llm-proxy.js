@@ -11,23 +11,27 @@ const limits = require('../services/limits');
 // is how one could be fixed and the other left behind.
 const spendCache = require('../services/spend-cache');
 const anthropicStream = require('../services/anthropic-stream');
+const openrouterMessages = require('../services/openrouter-messages');
 const log = require('../services/logger');
 
 // Dapp → platform LLM proxy (issue #34).
 //
 // Lets apps make Claude API calls billed to the signed-in user's
-// existing daily token budget (or their stored Anthropic key), gated
-// by an explicit per-app, per-user grant (app_llm_grants) with a daily
-// cap — so apps never handle raw API keys. Auth (app token + user
-// iframe JWT + active grant) lives in middleware/app-llm-auth.js; the
-// stream-forwarding mechanics are shared with the worker proxy via
-// services/anthropic-stream.js.
+// existing daily token budget (or, under a grant that allows it, their own
+// OpenRouter key), gated by an explicit per-app, per-user grant
+// (app_llm_grants) with a daily cap — so apps never handle raw API keys.
+// The contract is Anthropic's Messages API, Claude models only; since task
+// 2275 the calls go to OpenRouter's Claude Messages endpoint with the model
+// ids mapped (services/openrouter-messages.js), never to api.anthropic.com.
+// Auth (app token + user iframe JWT + active grant) lives in
+// middleware/app-llm-auth.js; the stream-forwarding mechanics are shared
+// with the worker proxy via services/anthropic-stream.js.
 //
 // Per call:
-//   1. Payer resolution — limit-first, same semantics as
-//      limits.resolveBillingPath: platform key while the user+global
-//      budget has headroom; the user's own BYOK key takes over only
-//      when the budget is exhausted AND the grant has allow_byok=true.
+//   1. Payer resolution — limit-first: the platform's OpenRouter key
+//      while the user+global budget has headroom; the user's own
+//      OpenRouter key takes over only when the budget is exhausted AND
+//      the grant has allow_byok=true.
 //   2. Start-of-call gates — (a) user/global budget (platform path
 //      only), (b) per-app cap: today's app_llm_usage total vs the
 //      grant's daily_cap_cents → 429 { code: 'app_cap_exceeded' }.
@@ -58,7 +62,7 @@ const CACHE_TTL_MS = 10_000;
 
 // `${appId}:${userId}` -> { totalAtCheckpointCents, fetchedAt, liveDeltaCents }
 // totalAtCheckpoint counts BOTH buckets (total + byok) — the per-app
-// cap applies regardless of who pays Anthropic.
+// cap applies regardless of whose key pays.
 const appUsageCache = new Map();
 
 // userId -> { totalAtCheckpointCents, fetchedAt, liveDeltaCents } —
@@ -128,21 +132,42 @@ async function refreshUserWeeklySpend(pool, userId) {
   return fresh;
 }
 
-// Limit-first payer decision, scoped by the grant: platform key while
-// the user+global budget has headroom; the user's own key only when
-// the budget is exhausted AND the user opted this app into BYOK
-// spillover (grant.allowByok, off by default). Returns exactly one of
-//   { byok: false }                — bill the platform key
+// The person's own OpenRouter key, or null. "Own" means one they added
+// themselves: the included key every account is given is the platform's
+// money under a per-person limit, not theirs, so it never counts here.
+async function ownOpenRouterKey(pool, userId, dataKey) {
+  try {
+    const credentialStore = require('../services/credential-store');
+    const meta = await credentialStore.readMetadata({
+      pool, userId, provider: 'openrouter', purpose: 'coding_agent',
+    });
+    if (!meta || meta.status !== 'valid') return null;
+    const { MANAGED_SOURCE } = require('../services/openrouter-managed-keys');
+    if (meta.metadata && meta.metadata.source === MANAGED_SOURCE) return null;
+    return await credentialStore.readSecret({
+      pool, userId, provider: 'openrouter', purpose: 'coding_agent', dataKey,
+      expectedRevision: meta.revision,
+    });
+  } catch (err) {
+    log.warn('app-llm-proxy', 'Own OpenRouter key unreadable; treating as none', { userId, err: err.message });
+    return null;
+  }
+}
+
+// Limit-first payer decision, scoped by the grant: the platform's key
+// while the user+global budget has headroom; the user's own OpenRouter
+// key only when the budget is exhausted AND the user opted this app into
+// that spillover (grant.allowByok, off by default). Returns exactly one of
+//   { byok: false }                — bill the platform's key
 //   { byok: true, apiKey: '...' }  — bill the user's own key
 //   { error: '...' }               — exhausted, no usable path
-// Mirrors limits.resolveBillingPath but consults the grant before the
-// key lookup — an app the user didn't opt in never sees their key
-// spend, even when one is on file.
+// The grant is consulted before the key lookup: an app the user didn't
+// opt in never sees their key spend, even when one is on file.
 async function resolveAppPayer(pool, dataKey, userId, grant) {
   const budget = await limits.checkBudget(pool, userId);
   if (!budget.error) return { byok: false };
   if (grant.allowByok) {
-    const apiKey = await limits.loadUserApiKey(pool, userId, dataKey);
+    const apiKey = await ownOpenRouterKey(pool, userId, dataKey);
     if (apiKey) return { byok: true, apiKey };
   }
   return { error: budget.error };
@@ -246,13 +271,13 @@ function appLlmProxyRoutes(config) {
     if (payer.error) {
       return res.status(429).json({ ok: false, code: 'budget_exceeded', message: payer.error });
     }
-    if (!payer.byok && !config.anthropicApiKey) {
+    const apiKey = payer.byok ? payer.apiKey : await openrouterMessages.platformKey(config, { pool });
+    if (!apiKey) {
       return res.status(502).json({ ok: false, code: 'no_platform_key' });
     }
-    const apiKey = payer.byok ? payer.apiKey : config.anthropicApiKey;
 
     // 2. Per-app cap gate (both payment paths — the cap bounds total
-    // spend through this app regardless of who pays Anthropic).
+    // spend through this app regardless of whose key pays).
     if (appSpentBefore >= capCents) {
       log.info('app-llm-proxy', 'Per-app cap gate fired', {
         appId, appSlug, userId, spentCents: appSpentBefore, capCents,
@@ -312,16 +337,17 @@ function appLlmProxyRoutes(config) {
       });
     }
 
-    const upstreamUrl = `${anthropicStream.ANTHROPIC_UPSTREAM}/${upstreamPathRaw}`;
+    const upstreamUrl = openrouterMessages.upstreamUrlFor(config.openrouterApiBase, `/${upstreamPathRaw}`);
 
-    // 3. Forward, with the mid-stream kill watching both budgets.
+    // 3. Forward, with the mid-stream kill watching both budgets. Only the
+    // Messages headers ride along (anthropic-stream.js buildForwardHeaders):
+    // the app's credentials never leave the platform.
     const result = await anthropicStream.forwardCall({
       req,
       res,
       upstreamUrl,
       apiKey,
-      // The app's credentials must never reach Anthropic.
-      stripHeaders: ['x-usernode-app-token', 'x-usernode-user-token', 'cookie', 'authorization'],
+      origin: config.openrouterOrigin,
       logTag: 'app-llm-proxy',
       logCtx: { appId, appSlug, userId, upstreamPath: upstreamPathRaw },
       shouldKill: (currentCallCents, model) => {
@@ -371,7 +397,7 @@ function appLlmProxyRoutes(config) {
     });
 
     // 4. Settlement: both ledgers + the live trackers. Even on kill we
-    // count what was sent — Anthropic charges for partial generations.
+    // count what was sent — the provider charges for partial generations.
     if (result.costCents > 0) {
       await limits.recordSpend(pool, userId, result.costCents, { byok: payer.byok });
       await recordAppSpend(pool, appId, userId, result.costCents, { byok: payer.byok });

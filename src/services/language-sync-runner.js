@@ -20,19 +20,18 @@
 // person correcting a translation still commits it, marked "locked", and a
 // committed entry always wins over the cache.
 //
-// A few messages go one request at a time, the same pass. More go as one
-// Message Batch, half the price: the pass that submits it records it in
-// platform_settings, and a later pass, on any process, keeps its answers
-// once it has ended. The clock looks every ten minutes (look): a catalog it
-// has not translated, or a batch to collect, is a target of its own, one
-// pass at a time, so a batch is never submitted twice for one catalog. A deploy in between can move the English, so a
-// batch's answers are matched to messages by id, and only to a message whose
-// English is the one it was asked about (`batch.english`).
+// Every message goes as a direct request, a few at a time, in the pass that
+// finds it, on the platform's OpenRouter key (task 2275). Large passes went
+// as one Anthropic Message Batch at half the price before; OpenRouter has no
+// batches, so a batch a pass recorded then is let go by the next pass, which
+// plans again from the English. The clock looks every ten minutes (look): a
+// catalog it has not translated is a target of its own, one pass at a time.
 //
 // A pass whose English and committed catalogs are what the last finished pass
 // read does nothing: what failed then is asked again once the English moves.
 //
-// Off with LANGUAGE_SYNC_ENABLED=false, and idle without an Anthropic key.
+// Off with LANGUAGE_SYNC_ENABLED=false, and idle while the platform cannot
+// make model calls (llm.isEnabled()).
 // Spend counts against the system budget (limits.checkSystemBudget).
 
 const crypto = require('node:crypto');
@@ -42,14 +41,14 @@ const log = require('./logger');
 const llm = require('./llm');
 const limits = require('./limits');
 const sync = require('./language-sync');
-const packs = require('../../scripts/language-packs');
 const languageCache = require('./language-cache');
 
-// How often the clock looks: a batch's answers are kept at most this long
-// after it ends, and a new build's English this long after it runs.
+// How often the clock looks: a new build's English is translated at most
+// this long after it runs.
 const LOOK_MS = 10 * 60 * 1000;
-// Up to this many messages are translated directly, in the pass that finds
-// them; more go as a Message Batch.
+// A round whose failures would take more than this many requests to retry
+// one by one (a model refusing everything) is not retried in the pass: those
+// messages stay English and the next pass asks again.
 const DIRECT_LIMIT = 400;
 const STATE_KEY = 'language_sync_state';
 
@@ -96,37 +95,6 @@ function sourceDigest(source) {
   return hash.digest('hex');
 }
 
-/** The English one planned message was asked about, short: a batch's answer is used only for that English. */
-function englishOf(item) {
-  return packs.hash(JSON.stringify([item.english, item.forms || null])).slice(0, 16);
-}
-
-/**
- * The answers to a batch, matched to the messages planned NOW: by message id,
- * whatever request carried it, and only where its English is still what the
- * batch asked about. Resolves the same Map (customId -> { text }) that
- * syncTranslations reads, for the requests prepareSync made now.
- */
-function batchAnswersFor(requests, answers, english = {}) {
-  const byLanguage = new Map();
-  for (const [customId, answer] of answers) {
-    if (!answer || answer.error) continue;
-    const language = String(customId).replace(/-\d+(?:-retry-\d+)?$/, '');
-    const index = byLanguage.get(language) || new Map();
-    for (const [id, entry] of sync.parseAnswer(answer.text)) if (!index.has(id)) index.set(id, entry);
-    byLanguage.set(language, index);
-  }
-  const out = new Map();
-  for (const request of requests) {
-    const index = byLanguage.get(request.language) || new Map();
-    const translations = request.items
-      .filter((item) => english[item.id] === englishOf(item) && index.has(item.id))
-      .map((item) => index.get(item.id));
-    out.set(request.customId, translations.length ? { text: JSON.stringify({ translations }) } : { error: 'no answer' });
-  }
-  return out;
-}
-
 /**
  * What one pass got back, for the state and the log: how many messages it
  * asked for, how many it could use, and the commonest reasons the rest stay
@@ -157,13 +125,13 @@ function logOutcome(outcome, extra = {}) {
   }
 }
 
-/** What the answers cost, in cents, at the batch discount when they came as one. */
-function spendCents(answers, { batch = false } = {}) {
+/** What the answers cost, in cents. */
+function spendCents(answers) {
   let cents = 0;
   for (const answer of answers.values()) {
     if (answer && answer.usage) cents += llm.estimateCostCents(answer.usage, sync.MODEL);
   }
-  return batch ? cents / 2 : cents;
+  return cents;
 }
 
 // ── One pass ───────────────────────────────────────────────────────────
@@ -182,12 +150,10 @@ async function finishPass(pool, { summary, spent, checkedDigest, deps, extra = {
 }
 
 /**
- * The clock's look: nothing, or the one pass owed, as a target (a batch to
- * collect, keyed by the batch; the build's catalogs not yet translated,
- * `catalog`). The catalog is one target whatever its English, so a pass
- * that submitted a batch and stopped before recording it is carried on by
- * the next, even after a deploy changed the English (the clock carries a
- * target's checkpoint on). Reads, never spends.
+ * The clock's look: nothing, or the one pass owed, as a target (an old
+ * batch to let go, keyed by the batch; the build's catalogs not yet
+ * translated, `catalog`). The catalog is one target whatever its English
+ * (the clock carries a target's checkpoint on). Reads, never spends.
  */
 async function look({ pool, deps = {} }) {
   if (!isEnabled()) return { off: true };
@@ -205,10 +171,8 @@ async function look({ pool, deps = {} }) {
 
 /**
  * Translates what the running build's English is missing, beyond what the
- * cache already has, and keeps it in the cache; or submits a batch, or keeps
- * the answers of a batch that has ended. Returns what it did, for the log.
- * `deps.steps` (the clock's target, its work's steps): the batch is
- * submitted once, however often the pass is run again.
+ * cache already has, and keeps it in the cache. Returns what it did, for the
+ * log.
  */
 async function runOnce({ config, pool, deps = {} }) {
   void config;
@@ -220,53 +184,13 @@ async function runOnce({ config, pool, deps = {} }) {
   const digest = sourceDigest(source);
   const state = await readState(pool);
 
-  // A batch an earlier try of this pass submitted (its step kept) but never
-  // recorded, its state write having failed or its work been handed on:
-  // recorded now, and collected by the next pass, rather than paid for
-  // again. Whatever English it was asked from (sourceDigest).
-  const kept = deps.steps && !state.batch && deps.steps.has('batch') ? deps.steps.get('batch') : null;
-  if (kept && kept.id) {
-    await writeState(pool, { lastPass: state.lastPass, batch: kept });
-    log.info('language-sync', 'Translation batch recorded', { batchId: kept.id, sourceDigest: kept.sourceDigest });
-    return { recorded: kept.id };
-  }
-
+  // A Message Batch a pass recorded before task 2275 was Anthropic's, and
+  // nothing can collect it now: it is let go, and the next pass plans again
+  // from the English.
   if (state.batch) {
-    let status;
-    try {
-      status = await model.catalogBatchStatus(state.batch.id);
-    } catch (err) {
-      // A batch Anthropic no longer knows (its results are kept 29 days) is
-      // let go; the next pass plans again.
-      if (err && err.status === 404) {
-        await writeState(pool, { lastPass: state.lastPass });
-        return { dropped: state.batch.id };
-      }
-      throw err;
-    }
-    if (status.status !== 'ended') return { waiting: state.batch.id };
-    const root = await cache.liveRoot(pool, { source });
-    try {
-      const answers = await model.catalogBatchAnswers(state.batch.id);
-      let spent = spendCents(answers, { batch: true });
-      const summary = await sync.syncTranslations({
-        root,
-        maxRetries: DIRECT_LIMIT,
-        translate: async (requests, { round }) => {
-          if (round === 0) return batchAnswersFor(requests, answers, state.batch.english || {});
-          const retried = await model.translateCatalogDirect(requests);
-          spent += spendCents(retried);
-          return retried;
-        },
-      });
-      // What the batch was asked from: when a deploy moved the English since,
-      // the next pass plans again from the new English.
-      return await finishPass(pool, {
-        summary, spent, checkedDigest: state.batch.sourceDigest || null, deps, extra: { batchId: state.batch.id },
-      });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+    await writeState(pool, { lastPass: state.lastPass });
+    log.info('language-sync', 'Translation batch from before the OpenRouter move dropped', { batchId: state.batch.id });
+    return { dropped: state.batch.id };
   }
 
   if (digest === state.checkedDigest) return { skipped: 'unchanged' };
@@ -281,25 +205,14 @@ async function runOnce({ config, pool, deps = {} }) {
     const budget = await limits.checkSystemBudget(pool);
     if (budget.error) return { skipped: 'budget' };
 
-    if (messages > DIRECT_LIMIT) {
-      const english = {};
-      for (const items of prepared.plans.values()) for (const item of items) english[item.id] = englishOf(item);
-      // The step keeps all the state needs to collect it, so a try that
-      // stops before the write below records it from the step (above).
-      const submit = () => model.submitCatalogBatch(prepared.requests).then((b) => ({
-        id: b.id, sourceDigest: digest, english, submittedAt: new Date().toISOString(), messages,
-      }));
-      const batch = deps.steps ? await deps.steps.once('batch', submit) : await submit();
-      await writeState(pool, { lastPass: state.lastPass, batch });
-      log.info('language-sync', 'Translation batch submitted', { batchId: batch.id, messages, requests: prepared.requests.length });
-      return { submitted: batch.id, messages };
-    }
-
     let spent = 0;
     const summary = await sync.syncTranslations({
       root,
+      maxRetries: DIRECT_LIMIT,
       translate: async (requests) => {
-        const answers = await model.translateCatalogDirect(requests);
+        const answers = await model.translateCatalogDirect(requests, {
+          telemetryContext: { component: 'language_sync' },
+        });
         spent += spendCents(answers);
         return answers;
       },
@@ -335,8 +248,6 @@ async function status(pool, { deps = {} } = {}) {
 module.exports = {
   DIRECT_LIMIT,
   STATE_KEY,
-  batchAnswersFor,
-  englishOf,
   LOOK_MS,
   isEnabled,
   look,

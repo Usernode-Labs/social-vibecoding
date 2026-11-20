@@ -7,14 +7,15 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 
 // Limits (#admin/limits): the server's app limit and session limit, whether
 // previews may have projects made in them, GitHub's hourly request budget
-// (read-only), the platform's LLM budget dials, and
-// the Anthropic credit balance the remaining-credit figure is derived from.
+// (read-only) and the platform's LLM budget dials. The Anthropic credit
+// balance card went with the Anthropic key in task 2275; the platform's
+// OpenRouter credit is watched by services/openrouter-credit.js.
 //
 // PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
 // same on PUT /api/admin/app-limit, PUT /api/admin/session-limit,
 // PUT /api/admin/preview-projects,
-// PUT /api/admin/limits and PUT /api/admin/anthropic-credits.
+// and PUT /api/admin/limits.
 //
 // ── Sixth section out of the chassis (#1120 slice 21) ─────────────────
 //
@@ -856,11 +857,6 @@ function LimitsSection() {
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
 
-  const [balance, setBalance] = useState('');
-  const [asOf, setAsOf] = useState('');
-  const [derived, setDerived] = useState('');
-  const [creditsStatus, setCreditsStatus] = useState<Status | null>(null);
-
   const alive = useRef(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -882,38 +878,12 @@ function LimitsSection() {
     setSystem(console_().centsToDollars(data.system_tokens_daily_limit_cents));
   }, []);
 
-  // Echo the derived figure back here, so an admin can confirm the admin key
-  // is actually working. This is the only place it shows.
-  const fillCredits = useCallback((data: any) => {
-    if (data.configured) {
-      setBalance(console_().centsToDollars(data.balanceCents));
-      setAsOf(data.asOf || '');
-    }
-    if (!data.configured) {
-      setDerived('Nothing recorded yet: no remaining-credit figure is being tracked.');
-    } else if (typeof data.remainingCents !== 'number') {
-      setDerived(`Couldn’t reach Anthropic to compute the remaining credit${
-        data.error ? ` (${data.error})` : ''}.`);
-    } else {
-      const src = data.source === 'anthropic'
-        ? 'from Anthropic’s billed cost report'
-        : 'estimated from platform spend records (no ANTHROPIC_ADMIN_KEY configured)';
-      setDerived(`$${console_().centsToDollars(data.remainingCents)} remaining, `
-        + `$${console_().centsToDollars(data.spentCents)} spent since ${data.asOf}, ${src}.`
-        + (data.stale ? ' Showing a cached figure; the last refresh failed.' : ''));
-    }
-  }, []);
-
   useEffect(() => {
     (async () => {
       const { data } = await console_().fetchJson('/api/admin/limits');
       if (alive.current && data && typeof data === 'object') fillLimits(data);
     })();
-    (async () => {
-      const { data } = await console_().fetchJson('/api/admin/anthropic-credits');
-      if (alive.current && data && typeof data === 'object') fillCredits(data);
-    })();
-  }, [fillLimits, fillCredits]);
+  }, [fillLimits]);
 
   const saveLimits = async () => {
     setLimitsStatus(null);
@@ -957,35 +927,6 @@ function LimitsSection() {
       hideTimer.current = setTimeout(() => setLimitsStatus(null), 2000);
     } catch (err: any) {
       if (alive.current) setLimitsStatus({ text: `Save failed: ${err.message}`, tone: 'err' });
-    }
-  };
-
-  const saveCredits = async () => {
-    setCreditsStatus(null);
-    let body: any;
-    try {
-      const cents = console_().parseDollarsToCents('Credit balance', balance.trim());
-      const when = asOf.trim();
-      if (cents === null) throw new Error('Enter the credit balance.');
-      if (!when) throw new Error('Enter the date that balance was correct.');
-      body = { balanceCents: cents, asOf: when };
-    } catch (err: any) {
-      setCreditsStatus({ text: err.message, tone: 'err' });
-      return;
-    }
-    try {
-      const res = await fetch('/api/admin/anthropic-credits', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
-      if (!alive.current) return;
-      fillCredits(data);
-      setCreditsStatus({ text: 'Saved.', tone: 'ok' });
-    } catch (err: any) {
-      if (alive.current) setCreditsStatus({ text: err.message, tone: 'err' });
     }
   };
 
@@ -1061,44 +1002,6 @@ function LimitsSection() {
           ) : null}
         </div>
         <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-green-800 dark:text-green-400" />
-      </div>
-
-      {/* Anthropic credits (#555). Anthropic's API publishes billed spend,
-          never a balance, so the remaining figure is derived: the balance
-          recorded here minus cost_report spend since the as-of date.
-          Re-record both after every top-up. View-only admins see the values,
-          disabled.
-
-          This is the ONLY surface for the figure — the drawer's status pane
-          carried a matching row until it was removed for reading "Not set up"
-          indefinitely. */}
-      <div className={`${AdminUI.card} p-4 mt-4`}>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className={AdminUI.cardTitle}>Anthropic credits</h2>
-        </div>
-        <p className={`${AdminUI.muted} mb-3`}>
-          Anthropic doesn’t publish a remaining-credit figure, only what it has
-          billed. Record the balance and the date it was correct, and the platform
-          subtracts billed spend since then. Re-record both after every top-up.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-          <MoneyField id="admin-credit-balance" label="Credit balance" placeholder="5000.00"
-            value={balance} onChange={setBalance} disabled={dis} />
-          <label className="block">
-            <span className={LABEL} title="The date that balance was correct">As of</span>
-            <input id="admin-credit-as-of" type="date" disabled={dis}
-              className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
-              value={asOf} onChange={(e) => setAsOf(e.target.value)} />
-          </label>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p id="admin-credit-derived" className="text-xs text-zinc-500 dark:text-zinc-400">{derived}</p>
-          {canWrite ? (
-            <button id="admin-save-credits-btn" type="button" className={AdminUI.btn.primary}
-              onClick={saveCredits}>Save</button>
-          ) : null}
-        </div>
-        <StatusLine id="admin-credits-status" status={creditsStatus} okClass="text-emerald-700 dark:text-emerald-400" />
       </div>
     </>
   );

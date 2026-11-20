@@ -32578,15 +32578,15 @@ const AppView = {
       const appName = realAppName || PlatformI18n.t('changes:dialog.llm.fallbackApp');
       const suggested = info.llm?.suggestedCapCents ?? null;
       const prefillCents = suggested ?? info.defaultCapCents ?? 100;
-      // Zero is intentional for an unverified account with no BYOK key;
-      // never coerce it to the historical $25 fallback.
+      // Zero is intentional for an unverified account with no key of its
+      // own; never coerce it to the historical $25 fallback.
       const parsedMax = Number(info.maxCapCents);
       const maxCents = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : 0;
       const noCapacity = maxCents === 0;
       const eligibilityUnavailable = info.entitlement?.entitlementAvailable === false;
       const byokOnly = !noCapacity
         && Number(info.entitlement?.limitCents) === 0
-        && !!info.hasApiKey;
+        && !!info.hasOwnKey;
 
       react.mountLlmConsentModal(root, {
         appName,
@@ -32608,7 +32608,9 @@ const AppView = {
             suggestedNote: suggested != null
               ? PlatformI18n.t('changes:dialog.llm.capSuggested')
               : PlatformI18n.t('changes:dialog.llm.capChangeLater'),
-            byok: info.hasApiKey
+            // The person's own OpenRouter key (task 2275; an Anthropic key
+            // before), never the included one.
+            byok: info.hasOwnKey
               ? {
                 checked: byokOnly,
                 label: byokOnly

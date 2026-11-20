@@ -1,18 +1,21 @@
-// Tests for the worker Anthropic proxy's per-call BYOK switchover (#664)
-// — routes/anthropic-proxy.js. When the daily allowance (user cap OR
-// global cap) is exhausted, calls from a user with a BYOK key on file
-// must forward on THAT key instead of 429ing; keyless users keep the
-// exact gate/kill behaviour they had; sync turns never spill onto a
-// user's key.
+// The worker relay's gates (routes/anthropic-proxy.js): the platform's own
+// Claude Code turns (before & after shots, Sync with main) forward to
+// OpenRouter on the platform's OpenRouter key while the allowance they bill
+// has room, and are refused (start of call) or cut off (mid-stream) when it
+// has none. Sync turns bill the system bucket. This file was the per-call
+// switchover onto a person's own Anthropic key (#664); those keys went in
+// task 2275, so the switchover cases went with them and an exhausted
+// allowance is simply a 429 now.
 //
-// The proxy router is loaded fresh per test (its budget caches are
+// The relay router is loaded fresh per test (its budget caches are
 // module-level) against require.cache stubs: auth injects a fixed
 // workerSession, anthropic-stream's forwardCall is captured instead of
 // hitting the network, and the worker registry and ws are recording
 // fakes. The REAL limits module runs against a mock pool so the cap/spend
-// SQL shapes stay covered.
+// SQL shapes stay covered, and the platform key is the transport's own
+// test override (openrouter-messages.js).
 //
-// Run with: node --test tests/anthropic-proxy-switchover.test.js
+// Run with: node --test tests/anthropic-proxy-gates.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,15 +23,11 @@ const http = require('node:http');
 const express = require('express');
 
 const limits = require('../src/services/limits');
-const secrets = require('../src/services/secrets');
+const openrouterMessages = require('../src/services/openrouter-messages');
 
-// At-rest encryption key (services/secrets.js KDF input) — not a
-// signing key. Same value the old shared JWT_SECRET held; the split was
-// a rename, so existing ciphertext keeps decrypting.
-const DATA_KEY = 'test-jwt-secret';
-const USER_KEY = 'sk-ant-user-key';
-const PLATFORM_KEY = 'sk-ant-platform-key';
-const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
+const DATA_KEY = 'test-data-key';
+const PLATFORM_KEY = 'sk-or-platform-key';
+const OPENROUTER_BASE = 'https://openrouter.test/api/v1';
 const SESSION_ID = 42;
 const USER_ID = 7;
 
@@ -57,24 +56,10 @@ function makePool({
   globalLimit = 20000,
   globalSpent = 0,
   systemSpent = 0,
-  keyEnc = null,
-  // #1088: has this user already been told TODAY? Stands in for a
-  // non-NULL llm_usage.byok_notice_at on today's row — the claim upsert
-  // then updates no row and returns rowCount 0.
-  noticeClaimedToday = false,
-  claimThrows = false,
 } = {}) {
   const calls = [];
-  const notices = [];
-  const claims = [];
-  let claimed = noticeClaimedToday;
   return {
     calls,
-    notices,
-    claims,
-    // Roll the mock DB to the next UTC day: today's row (and its
-    // byok_notice_at stamp) is gone, so the next claim wins again.
-    rollToNextDay() { claimed = false; },
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (/SELECT user_id FROM chat_sessions/.test(sql)) {
@@ -103,27 +88,6 @@ function makePool({
       if (/SELECT cost_cents FROM system_token_usage/.test(sql)) {
         return { rows: [{ cost_cents: systemSpent }] };
       }
-      // The kill-suppression EXISTS probe (AS present) must match BEFORE
-      // the decrypting key lookup — both mention anthropic_key_enc.
-      if (/AS present/.test(sql)) {
-        return { rows: [{ present: !!keyEnc }] };
-      }
-      if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
-        return { rows: keyEnc ? [{ anthropic_key_enc: keyEnc }] : [] };
-      }
-      // #1088: the once-per-user-per-UTC-day notice claim. The real
-      // statement is a conditional upsert returning at most one id.
-      if (/INSERT INTO llm_usage \(user_id, date, byok_notice_at\)/.test(sql)) {
-        claims.push({ userId: params[0], sql });
-        if (claimThrows) throw new Error('claim boom');
-        if (claimed) return { rows: [], rowCount: 0 };
-        claimed = true;
-        return { rows: [{ id: 1 }], rowCount: 1 };
-      }
-      if (/INSERT INTO chat_session_messages/.test(sql)) {
-        notices.push({ sessionId: params[0], text: params[1], metadata: params[2] });
-        return { rows: [] };
-      }
       return { rows: [] };
     },
     issued(re) { return calls.some((c) => re.test(c.sql)); },
@@ -132,7 +96,7 @@ function makePool({
 
 // Load routes/anthropic-proxy.js fresh with stubs, mount it, and return
 // a driver + captured state.
-function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
+function loadProxy(pool, { turnMode = 'build', forwardResult = {}, platformKey = PLATFORM_KEY, path = '/v1/messages' } = {}) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
     auth: require.resolve('../src/middleware/anthropic-proxy-auth'),
@@ -144,11 +108,9 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
 
   const state = {
     forwards: [],       // { apiKey, upstreamUrl, shouldKill }
-    byokSpend: [],      // { sessionId, cents }
-    switchMarks: 0,     // markTurnByokSwitched invocations
-    alreadySwitched: false,
     broadcasts: [],
   };
+  const previousKey = openrouterMessages._setPlatformKeyForTests(platformKey);
 
   const originals = [
     [paths.pool, stubModule(paths.pool, { getPool: () => pool })],
@@ -159,7 +121,6 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
       },
     })],
     [paths.stream, stubModule(paths.stream, {
-      ANTHROPIC_UPSTREAM: 'https://api.anthropic.test',
       forwardCall: async ({ res, apiKey, upstreamUrl, shouldKill }) => {
         state.forwards.push({ apiKey, upstreamUrl, shouldKill: shouldKill || null });
         res.status(200).json({ ok: true });
@@ -169,13 +130,6 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
     [paths.worker, stubModule(paths.worker, {
       getActiveTurnMode: () => turnMode,
       turnModeFor: async () => turnMode,
-      markTurnByokSwitched: () => {
-        state.switchMarks += 1;
-        if (state.alreadySwitched) return false;
-        state.alreadySwitched = true;
-        return true;
-      },
-      noteTurnByokSpend: (sessionId, cents) => state.byokSpend.push({ sessionId, cents }),
       getTurnByokCents: () => 0,
     })],
     [paths.ws, stubModule(paths.ws, {
@@ -187,11 +141,8 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
 
   const app = express();
   app.use(anthropicProxyRoutes({
-    anthropicApiKey: PLATFORM_KEY,
-    // The BYOK ciphertext is keyed off the at-rest data key, which is no
-    // longer any token-signing secret. Same bytes here — the split was an
-    // env-var rename, so GOOD_KEY_ENC below still decrypts.
     dataEncryptionKey: DATA_KEY,
+    openrouterApiBase: OPENROUTER_BASE,
   }));
   const server = http.createServer(app);
 
@@ -200,13 +151,14 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
       if (original) require.cache[id] = original; else delete require.cache[id];
     }
     delete require.cache[paths.proxy];
+    openrouterMessages._setPlatformKeyForTests(previousKey);
     server.close();
   };
 
   const call = async () => {
     if (!server.listening) await new Promise((r) => server.listen(0, r));
     const { port } = server.address();
-    const res = await fetch(`http://127.0.0.1:${port}/api/internal/anthropic/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${port}/api/internal/anthropic${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: 'claude-test', messages: [] }),
@@ -220,53 +172,50 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
 
 test.beforeEach(() => limits.invalidate());
 
-test('allowance headroom → forwards on the platform key, no key lookup', async () => {
-  const pool = makePool({ weeklySpent: 100, keyEnc: GOOD_KEY_ENC });
+test('allowance headroom → forwards to OpenRouter on the platform key', async () => {
+  const pool = makePool({ weeklySpent: 100 });
   const p = loadProxy(pool);
   try {
     const r = await p.call();
     assert.equal(r.status, 200);
     assert.equal(p.state.forwards.length, 1);
     assert.equal(p.state.forwards[0].apiKey, PLATFORM_KEY);
-    assert.equal(pool.issued(/SELECT anthropic_key_enc/), false,
-      'the decrypting key lookup only runs once the allowance is exhausted');
-    assert.equal(p.state.byokSpend.length, 0);
+    assert.equal(p.state.forwards[0].upstreamUrl, `${OPENROUTER_BASE}/messages`);
+    assert.equal(pool.issued(/anthropic_key_enc/), false, 'no stored Anthropic key is read any more');
   } finally {
     p.restore();
   }
 });
 
-test('user cap exhausted + key on file → forwards on the USER key, notice once, spillover tallied', async () => {
-  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
-  const p = loadProxy(pool);
+test('token counts go to OpenRouter\'s count_tokens; any other path is refused before any budget work', async () => {
+  const counted = loadProxy(makePool(), { path: '/v1/messages/count_tokens' });
   try {
-    const r1 = await p.call();
-    assert.equal(r1.status, 200, 'no 429 for key-holders at the cap');
-    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
-    assert.equal(p.state.forwards[0].shouldKill, null, 'BYOK calls carry no budget kill');
-    // The switched call's observed cost lands in the per-turn tally.
-    assert.deepEqual(p.state.byokSpend, [{ sessionId: SESSION_ID, cents: 5 }]);
-    // One-time notice: persisted system row + WS broadcast,
-    // gated behind the day claim (#1088).
-    assert.equal(pool.claims.length, 1, 'the day claim is attempted once per turn');
-    assert.equal(pool.claims[0].userId, USER_ID, 'the claim is scoped to the user');
-    assert.match(pool.claims[0].sql, /CURRENT_DATE/, 'and to the current UTC day');
-    assert.match(pool.claims[0].sql, /byok_notice_at IS NULL/,
-      'the upsert only stamps a row that has not been stamped today');
-    assert.equal(pool.notices.length, 1);
-    assert.match(pool.notices[0].text, /continuing on your Anthropic API key/);
-    assert.equal(pool.notices[0].sessionId, SESSION_ID);
-    assert.equal(p.state.broadcasts.length, 1);
-    assert.equal(p.state.broadcasts[0].event, 'billing_switched');
+    assert.equal((await counted.call()).status, 200);
+    assert.equal(counted.state.forwards[0].upstreamUrl, `${OPENROUTER_BASE}/messages/count_tokens`);
+  } finally {
+    counted.restore();
+  }
+  limits.invalidate();
+  const pool = makePool();
+  const other = loadProxy(pool, { path: '/v1/models' });
+  try {
+    const r = await other.call();
+    assert.equal(r.status, 404);
+    assert.equal(r.body.code, 'unsupported_path');
+    assert.equal(other.state.forwards.length, 0);
+    assert.equal(pool.issued(/llm_usage/), false, 'refused before any ledger is read');
+  } finally {
+    other.restore();
+  }
+});
 
-    // Second switched call in the same turn: forwards again, NO second notice.
-    const r2 = await p.call();
-    assert.equal(r2.status, 200);
-    assert.equal(p.state.forwards[1].apiKey, USER_KEY);
-    assert.equal(pool.notices.length, 1, 'notice fires exactly once per turn');
-    assert.equal(p.state.broadcasts.length, 1);
-    assert.equal(pool.claims.length, 1,
-      'the per-turn flag still short-circuits before the DB claim');
+test('no platform OpenRouter key → 502 no_platform_key, nothing forwarded', async () => {
+  const p = loadProxy(makePool({ weeklySpent: 100 }), { platformKey: null });
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 502);
+    assert.equal(r.body.code, 'no_platform_key');
+    assert.equal(p.state.forwards.length, 0);
   } finally {
     p.restore();
   }
@@ -275,78 +224,7 @@ test('user cap exhausted + key on file → forwards on the USER key, notice once
 // #1088: the regression this issue reported. The per-turn registry flag
 // resets on every dispatch, so before the day claim the notice re-fired
 // on every chat for the rest of the day.
-test('LATER turn, same UTC day → still switches keys, but does NOT re-notify', async () => {
-  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
-  const p = loadProxy(pool);
-  try {
-    await p.call();
-    assert.equal(pool.notices.length, 1, 'first turn of the day tells the user');
-
-    // A new turn: the worker registry's per-turn flag is reset at dispatch.
-    p.state.alreadySwitched = false;
-    const r2 = await p.call();
-
-    assert.equal(r2.status, 200);
-    assert.equal(p.state.forwards[1].apiKey, USER_KEY,
-      'billing is untouched — the user key still pays');
-    assert.deepEqual(p.state.byokSpend.length, 2, 'and the spend is still tallied');
-    assert.equal(pool.claims.length, 2, 'the new turn does attempt the claim');
-    assert.equal(pool.notices.length, 1, 'but no second chat row');
-    assert.equal(p.state.broadcasts.length, 1, 'no second WS broadcast');
-  } finally {
-    p.restore();
-  }
-});
-
-test('next UTC day → the user is told again (the marker expires with the credits)', async () => {
-  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
-  const p = loadProxy(pool);
-  try {
-    await p.call();
-    assert.equal(pool.notices.length, 1);
-
-    pool.rollToNextDay();
-    p.state.alreadySwitched = false;
-    await p.call();
-
-    assert.equal(pool.notices.length, 2,
-      'llm_usage.date rolls over, so the claim is winnable again');
-    assert.equal(p.state.broadcasts.length, 2);
-  } finally {
-    p.restore();
-  }
-});
-
-test('a claim that already belongs to another caller suppresses the notice from the first call', async () => {
-  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC, noticeClaimedToday: true });
-  const p = loadProxy(pool);
-  try {
-    const r = await p.call();
-    assert.equal(r.status, 200);
-    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
-    assert.equal(pool.claims.length, 1);
-    assert.equal(pool.notices.length, 0, 'byok_notice_at was already stamped today');
-    assert.equal(p.state.broadcasts.length, 0);
-  } finally {
-    p.restore();
-  }
-});
-
-test('a failing claim suppresses the notice but never fails the call', async () => {
-  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC, claimThrows: true });
-  const p = loadProxy(pool);
-  try {
-    const r = await p.call();
-    assert.equal(r.status, 200, 'billing bookkeeping never breaks the proxied call');
-    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
-    assert.deepEqual(p.state.byokSpend, [{ sessionId: SESSION_ID, cents: 5 }]);
-    assert.equal(pool.notices.length, 0, 'a failed claim fails quiet — over-notifying is the bug');
-  } finally {
-    p.restore();
-  }
-});
-
-test('user cap exhausted + NO key → the unchanged 429 budget_exceeded', async () => {
+test('user cap exhausted → 429 budget_exceeded, nothing forwarded', async () => {
   const pool = makePool({ weeklySpent: 2500 });
   const p = loadProxy(pool);
   try {
@@ -355,26 +233,12 @@ test('user cap exhausted + NO key → the unchanged 429 budget_exceeded', async 
     assert.equal(r.body.code, 'budget_exceeded');
     assert.equal(r.body.message, 'Weekly limit reached ($25.00). Resets Monday 00:00 UTC.');
     assert.equal(p.state.forwards.length, 0);
-    assert.equal(pool.notices.length, 0);
   } finally {
     p.restore();
   }
 });
 
-test('GLOBAL cap exhausted + key on file → switches to the user key mid-turn', async () => {
-  const pool = makePool({ weeklySpent: 100, globalSpent: 20000, keyEnc: GOOD_KEY_ENC });
-  const p = loadProxy(pool);
-  try {
-    const r = await p.call();
-    assert.equal(r.status, 200);
-    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
-    assert.equal(pool.notices.length, 1);
-  } finally {
-    p.restore();
-  }
-});
-
-test('GLOBAL cap exhausted + NO key → non-regressive: forwards on the platform key', async () => {
+test('GLOBAL cap exhausted → non-regressive: forwards on the platform key', async () => {
   const pool = makePool({ weeklySpent: 100, globalSpent: 20000 });
   const p = loadProxy(pool);
   try {
@@ -386,50 +250,31 @@ test('GLOBAL cap exhausted + NO key → non-regressive: forwards on the platform
   }
 });
 
-test('sync turn + key on file → still 429s on the system budget (never bills the user key)', async () => {
-  const pool = makePool({ systemSpent: 2500, keyEnc: GOOD_KEY_ENC });
+test('sync turn over the system budget → 429', async () => {
+  const pool = makePool({ systemSpent: 2500 });
   const p = loadProxy(pool, { turnMode: 'sync' });
   try {
     const r = await p.call();
     assert.equal(r.status, 429);
     assert.equal(r.body.code, 'budget_exceeded');
     assert.match(r.body.message, /System token budget reached/);
-    assert.equal(pool.issued(/SELECT anthropic_key_enc/), false,
-      'sync turns never even look the user key up');
     assert.equal(p.state.forwards.length, 0);
   } finally {
     p.restore();
   }
 });
 
-test('mid-stream kill suppressed for key-holders on the boundary call, active for keyless', async () => {
-  // Key-holder, allowance nearly gone: the platform-billed call goes out,
-  // and its shouldKill must return null even when the running cost
-  // crosses the cap (the NEXT call's gate does the switch).
-  const keyedPool = makePool({ weeklySpent: 2400, keyEnc: GOOD_KEY_ENC });
-  const keyed = loadProxy(keyedPool);
+test('mid-stream: crossing the cap while the answer streams kills the call', async () => {
+  const pool = makePool({ weeklySpent: 2400 });
+  const p = loadProxy(pool);
   try {
-    await keyed.call();
-    const kill = keyed.state.forwards[0].shouldKill;
-    assert.ok(kill, 'platform-billed calls still receive a shouldKill hook');
-    assert.equal(kill(500, 'claude-test'), null,
-      'over-budget mid-stream must NOT kill when a BYOK fallback exists');
-  } finally {
-    keyed.restore();
-  }
-
-  limits.invalidate();
-
-  // Keyless user at the same spend: the kill fires exactly as today.
-  const keylessPool = makePool({ weeklySpent: 2400 });
-  const keyless = loadProxy(keylessPool);
-  try {
-    await keyless.call();
-    const kill = keyless.state.forwards[0].shouldKill;
+    await p.call();
+    const kill = p.state.forwards[0].shouldKill;
+    assert.ok(kill, 'platform-billed calls carry the hook');
     assert.equal(kill(500, 'claude-test'), 'over_budget');
     assert.equal(kill(1, 'claude-test'), null, 'under-cap streaming is untouched');
   } finally {
-    keyless.restore();
+    p.restore();
   }
 });
 
@@ -437,11 +282,11 @@ test('mid-stream kill suppressed for key-holders on the boundary call, active fo
 //
 // #1788 added the weekly ceiling beside a daily one; #2571 switched the
 // daily one off, so every case above is already a weekly-only account.
-// These cover the axis at a different figure: it refuses, it spills onto a
-// BYOK key with its own copy, it kills mid-stream, and it stays entirely
-// out of the way of sync turns — which still bill the daily system bucket.
+// These cover the axis at a different figure: it refuses, it kills
+// mid-stream, and it stays entirely out of the way of sync turns, which
+// still bill the daily system bucket.
 
-test('weekly cap exhausted + NO key → 429 naming the WEEK, not the day', async () => {
+test('weekly cap exhausted → 429 naming the WEEK, not the day', async () => {
   // Nothing spent today; only the week-to-date sum refuses this call.
   const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500 });
   const p = loadProxy(pool);
@@ -483,26 +328,6 @@ test('no weekly cap → the weekly ledger is never queried at all', async () => 
   }
 });
 
-test('weekly cap exhausted + key on file → spills onto the user key with the WEEKLY notice', async () => {
-  const pool = makePool({
-    userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500, keyEnc: GOOD_KEY_ENC,
-  });
-  const p = loadProxy(pool);
-  try {
-    const r = await p.call();
-    assert.equal(r.status, 200, 'a key-holder is never 429d by a cap they can spill past');
-    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
-    assert.equal(p.state.forwards[0].shouldKill, null);
-    assert.equal(pool.notices.length, 1);
-    assert.match(pool.notices[0].text, /free weekly AI credits ran out/);
-    assert.match(pool.notices[0].text, /Credits reset Monday 00:00 UTC\./,
-      'telling a weekly-capped user to wait for midnight would be wrong');
-    assert.doesNotMatch(pool.notices[0].text, /reset at midnight/);
-  } finally {
-    p.restore();
-  }
-});
-
 // Fails closed: an account an admin has switched both caps off for has no
 // allowance to draw down, so it is refused rather than handed the
 // platform key.
@@ -536,7 +361,7 @@ test('sync turns bill the system bucket and never consult a weekly cap', async (
   }
 });
 
-test('mid-stream: a weekly crossing kills a keyless call, same as a daily one', async () => {
+test('mid-stream: a weekly crossing kills the call, same as a daily one', async () => {
   // $1 of weekly room left, and plenty of daily room — so only the weekly
   // bucket can cross while the response streams.
   const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17400 });

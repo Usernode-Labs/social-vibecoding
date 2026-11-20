@@ -161,12 +161,13 @@ test('tier lookup failures refuse platform spend instead of falling back to lega
   assert.equal(pool.calls.some((sql) => /llm_usage/.test(sql)), false);
 });
 
-test('BYOK remains available when the platform tier is zero', async () => {
+test('a zero platform tier is refused even with an old stored key (task 2275 removed own Anthropic keys)', async () => {
   const dataKey = 'test-data-encryption-key';
   const encrypted = secrets.encrypt('sk-ant-user-key', dataKey);
   const pool = poolFor({ key: encrypted });
   const billing = await limits.resolveBillingPath(pool, dataKey, 7);
-  assert.deepEqual(billing, { apiKey: 'sk-ant-user-key', byok: true });
+  assert.equal(billing.reason, 'verification_required');
+  assert.equal(billing.apiKey, undefined);
 });
 
 test('legacy remains the default and preserves the existing platform allowance', async () => {

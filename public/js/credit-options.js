@@ -120,10 +120,9 @@
   //   low       — at or past lowBalancePct of the cap; warn proactively
   //   exhausted — the personal allowance or the shared one is spent
   //
-  // `level` describes the ALLOWANCE, not whether the user can keep going:
-  // a BYOK key bypasses the cap entirely (#119), so `hasByokKey` stays a
-  // separate field and the surface decides whether "exhausted" is even
-  // worth mentioning.
+  // `level` describes the ALLOWANCE. People's own Anthropic keys, which
+  // once bypassed the cap (#119), went in task 2275, so an exhausted
+  // allowance is exhausted.
   function creditState(snapshot) {
     var s = snapshot || null;
     var limitCents = s ? Number(s.limitCents) : NaN;
@@ -131,7 +130,7 @@
     if (!s || !Number.isFinite(limitCents) || !Number.isFinite(spentCents) || limitCents < 0) {
       return {
         level: 'unknown', limitCents: 0, spentCents: 0, remainingCents: 0,
-        byokCents: 0, pctUsed: 0, hasByokKey: !!(s && s.hasByokKey),
+        byokCents: 0, pctUsed: 0,
         globalOut: false, resetsAt: (s && s.resetsAt) || null,
         lowPct: (s && Number(s.lowBalancePct)) || LOW_PCT,
         capWindow: (s && s.capWindow) || 'daily',
@@ -170,7 +169,6 @@
       remainingCents: remainingCents,
       byokCents: byokCents,
       pctUsed: pctUsed,
-      hasByokKey: !!s.hasByokKey,
       globalOut: globalOut,
       resetsAt: s.resetsAt || null,
       // #1788 gave the allowance two windows and reported whichever was

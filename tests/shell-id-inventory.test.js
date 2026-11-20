@@ -58,6 +58,19 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Task 2275: people's own Anthropic keys are gone ────────────────
+  // Every model call goes to OpenRouter on the platform's key, and a person
+  // brings their own OpenRouter key (the OpenRouter part beside it) instead.
+  // Settings › AI usage & models lost its "Anthropic API key" part, and with
+  // it these ids; #settings/api-key opens that page (settings.js
+  // PART_ALIASES). The spend card (#settings-spend, #settings-spend-byok)
+  // stays on the Usage part.
+  'settings-key-display': 'The saved Anthropic key\'s row ("Key sk-ant-…1234") in Settings › Anthropic API key, removed with that part (task 2275).',
+  'settings-key-last4': 'The last four characters of the saved Anthropic key, inside #settings-key-display; gone with it (task 2275).',
+  'settings-api-key': 'The field a person pasted their Anthropic key into, removed with the part (task 2275). Their own OpenRouter key goes in the OpenRouter part.',
+  'settings-save': 'Save beside the Anthropic key field, removed with the part (task 2275).',
+  'settings-remove': 'Remove beside the Anthropic key field, removed with the part (task 2275).',
+  'settings-status': 'The Anthropic key part\'s status line (verifying, saved, removed), removed with the part (task 2275).',
   // ── The native-offline proposal (18 Nov 2026) ──────────────────────
   // The full-width amber strip is gone: the header says it now, in
   // #connection-status (features/header/connection-status.tsx), as native
@@ -292,7 +305,7 @@ const RETIRED_IDS = {
   'drawer-avatar': 'The viewer\'s picture on that row. No surface carries one now: the chip names the APP you are in, and Home\'s copy went with its account row.',
   'drawer-profile-glyph': 'Its fallback glyph, retired with the picture.',
   'drawer-row-settings': 'Settings is #switcher-row-settings, a row of the chip\'s menu (#1443) — it has its own page, and the menu lists everything that does.',
-  'drawer-byok-dot': 'The BYOK dot on that row — #switcher-byok-dot. settings.js publishes the flag through the visibility store rather than writing the class by id, because the row renders inside a React-owned subtree.',
+  'drawer-byok-dot': 'The BYOK dot on that row. It became a #switcher-byok-dot flag settings.js published through the visibility store; that flag went with people\'s own Anthropic keys (task 2275).',
   'drawer-row-admin': 'Admin & moderation is #switcher-row-admin, same isAdmin gate, published rather than class-written for the same reason.',
   'drawer-node-dot': 'Its status dot — #account-node-dot. It also stops PRERENDERING: the row renders inside the Profile screen\'s account group, which draws from profile data, where the drawer shipped on every page.',
   'drawer-node-status': 'Its status text — #account-node-status, same note.',

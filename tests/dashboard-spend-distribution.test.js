@@ -106,11 +106,13 @@ test('route: bucket boundaries match the spec ($5/$10/$15/$20 in cents)', () => 
   assert.match(sql, /total_cost_cents >= 2000/, '$20+ threshold = 2000 cents');
 });
 
-test('route: the $20+ tier splits on the BYOK "usable key" predicate', () => {
+test('route: the $20+ tier splits on the "kept going on an own key" predicate', () => {
   const src = read('src/routes/dashboard.js');
-  // Capability OR same-day own-key spend (the chosen, snapshot-corrected signal).
-  assert.match(src, /u\.anthropic_key_enc IS NOT NULL OR lu\.byok_cost_cents > 0/,
-    'BYOK predicate must be key-configured OR own-key spend that day');
+  // Same-day own-key spend. The stored-key snapshot it was OR'd with went
+  // with people's own Anthropic keys (task 2275).
+  assert.match(src, /const byok = '\(lu\.byok_cost_cents > 0\)';/,
+    'the own-key predicate is own-key spend that day');
+  assert.doesNotMatch(src, /anthropic_key_enc/, 'no stored Anthropic key is read');
   const start = src.indexOf("analytics/spend-distribution'");
   const sql = src.slice(start, src.indexOf('return router;', start));
   assert.match(sql, /total_cost_cents >= 2000 AND NOT \$\{byok\}/, 'b5 = $20+ capped (no usable key)');

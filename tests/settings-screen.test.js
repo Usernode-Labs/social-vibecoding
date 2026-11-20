@@ -259,8 +259,10 @@ test('the registry groups pages under six headings, Account first and Advanced l
   assert.ok(!settingsJs.includes('settings:nav.group.aiBuilding'), 'the old AI & building group is gone');
   // Where each AI-and-building row went.
   const byGroup = (key) => sections.find((s) => s.key === key).group;
-  assert.deepEqual(['usage', 'openrouter', 'api-key'].map(byGroup),
-    Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
+  assert.deepEqual(['usage', 'openrouter'].map(byGroup),
+    Array(2).fill('settings:nav.group.aiModels'), 'the allowance and OpenRouter are AI models & usage');
+  assert.equal(sections.find((s) => s.key === 'api-key'), undefined,
+    'the Anthropic key part is gone (task 2275); its address is an alias');
   assert.deepEqual(['connectors', 'cli'].map(byGroup),
     Array(2).fill('settings:nav.group.integrations'), 'connectors and CLI are Integrations & automation');
   assert.deepEqual(['experimental'].map(byGroup),
@@ -280,7 +282,7 @@ test('the registry groups pages under six headings, Account first and Advanced l
   for (const key of [
     'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
     'password', 'delete-account', 'wallet', 'openrouter',
-    'api-key', 'connectors', 'app-ai', 'app-permissions', 'cli',
+    'connectors', 'app-ai', 'app-permissions', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
   ]) assert.ok(byKey[key], `${key} is still a registered part`);
 
@@ -290,7 +292,7 @@ test('the registry groups pages under six headings, Account first and Advanced l
     Array(5).fill('account'), 'Account holds who you are and how you sign in');
   assert.equal(registryPages().find((p) => p.key === 'account').parts.at(-1).key, 'delete-account',
     'and Delete account closes it');
-  assert.deepEqual(['usage', 'openrouter', 'api-key'].map(pageOf), Array(3).fill('ai'));
+  assert.deepEqual(['usage', 'openrouter'].map(pageOf), Array(2).fill('ai'));
   assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'));
   // #4311: "Where changes get built" is gone; nothing acted on its value.
   assert.equal(byKey['build-venue'], undefined, 'the build-venue part is retired');
@@ -388,7 +390,9 @@ test('a part address resolves to its page, scrolled to the part', () => {
   assert.deepEqual(S._resolve('connectors'), { page: 'connectors', anchor: null },
     'connectors leads its page, so its address is the page');
   assert.deepEqual(S._resolve('build-venue'), { page: null, anchor: null }, 'a retired part (#4311)');
-  assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
+  // Task 2275: the Anthropic key part is gone, and its address opens the
+  // page it was on (PART_ALIASES), not the first page.
+  assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: null });
   assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
   // #5285: the developer tools' page, and the parts' own addresses.
   assert.deepEqual(S._resolve('developer'), { page: 'developer', anchor: null });
@@ -517,8 +521,7 @@ test('the Language section is offered to everyone, whatever is saved', () => {
 
 test('every pre-existing settings control id survived the move', () => {
   const ids = [
-    'settings-api-key', 'settings-save', 'settings-remove', 'settings-status',
-    'settings-key-display', 'settings-spend',
+    'settings-spend',
     'cp-current', 'cp-new', 'cp-confirm', 'cp-save', 'cp-wallet-save',
     'llm-grants-list', 'llm-grants-status',
     'cli-tokens-list', 'cli-tokens-more', 'cli-tokens-status',
@@ -2682,7 +2685,7 @@ test('App AI permissions totals what the apps spent today (#6512)', () => {
   assert.match(message('settings:grants.spentToday'), /today$/);
   assert.match(message('settings:grants.totalToday'), /today$/);
   // The number comes from the same two fields the row's own figure adds up.
-  const grantViewOf = new Function(`return ({ state: { hasApiKey: false }, ${sliceMethod(settingsJs, '_grantView')} });`)();
+  const grantViewOf = new Function(`return ({ state: {}, ${sliceMethod(settingsJs, '_grantView')} });`)();
   const view = grantViewOf._grantView({ appId: 5, status: 'active', dailyCapCents: 100, spentTodayCents: 30, byokSpentTodayCents: 7 });
   assert.equal(view.spentCents, 37);
   assert.equal(view.spent, '0.37');

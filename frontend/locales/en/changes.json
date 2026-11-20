@@ -7936,12 +7936,12 @@
     "description": "Stands where the app's name is shown on its own in the dialog that asks whether an app may use AI on the person's account, when the name is not known. Shown alone, as a label; the dialog's sentences have unnamed wordings of their own."
   },
   "dialog.llm.introOwnKey": {
-    "text": "This lets {{app}} use your own Anthropic API key, without exposing the key to the app.",
-    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. {{app}} is the app's name; Anthropic is a company's name."
+    "text": "This lets {{app}} use your own OpenRouter key, without exposing the key to the app.",
+    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own OpenRouter key. {{app}} is the app's name. OpenRouter is a company name."
   },
   "dialog.llm.introOwnKeyUnnamed": {
-    "text": "This lets This app use your own Anthropic API key, without exposing the key to the app.",
-    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. Anthropic is a company's name. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+    "text": "This lets this app use your own OpenRouter key, without exposing the key to the app.",
+    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own OpenRouter key and the app has no name. OpenRouter is a company name."
   },
   "dialog.llm.introBudget": {
     "text": "This lets {{app}} spend from your weekly AI budget (the same one Homeroom bot uses when it builds for you) up to the daily cap below.",

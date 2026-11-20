@@ -624,16 +624,13 @@ function feedbackRoutes(config) {
     try {
       const billing = await resolveTitleBilling(req.user?.id);
       if (billing.error) return res.json({ title: null, note: billing.error });
-      if (!billing.apiKey && !llm.isEnabled()) {
+      if (!llm.isEnabled()) {
         return res.json({ title: null, note: 'unavailable' });
       }
-      const gen = await llm.generateIssueTitle({
-        description,
-        apiKey: billing.apiKey || undefined,
-      });
+      const gen = await llm.generateIssueTitle({ description });
       if (gen.usage && req.user?.id) {
         const costCents = llm.estimateCostCents(gen.usage, gen.model);
-        await limits.recordSpend(pool, req.user.id, costCents, { byok: billing.byok });
+        await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
       }
       // Defensive clip to the Title field's maxlength; Haiku's 5-10-word
       // titles never approach it.
@@ -914,13 +911,12 @@ function feedbackRoutes(config) {
           if (billing.error) throw new Error(`title billing unavailable: ${billing.error}`);
           const gen = await llm.generateIssueTitle({
             description: description.slice(0, TITLE_SOURCE_MAX),
-            apiKey: billing.apiKey || undefined,
           });
           title = gen.title;
           titleFallback = false;
           if (gen.usage && req.user?.id) {
             const costCents = llm.estimateCostCents(gen.usage, gen.model);
-            await limits.recordSpend(pool, req.user.id, costCents, { byok: billing.byok });
+            await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
           }
         } catch (err) {
           log.warn('feedback', 'Title generation failed; filing with fallback title', { message: err.message });

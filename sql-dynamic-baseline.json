@@ -157,13 +157,6 @@
       "preview": "`SELECT ${limits.TODAY_USER_SPEND_SQL} AS total_cost_cents`"
     },
     {
-      "source": "src/routes/anthropic-proxy.js",
-      "kind": "structural-template",
-      "fingerprint": "96659719fc9831d52285",
-      "count": 1,
-      "preview": "`SELECT ${limits.TODAY_GLOBAL_SPEND_SQL} AS total`"
-    },
-    {
       "source": "src/routes/app-llm-proxy.js",
       "kind": "structural-template",
       "fingerprint": "1c787716552bf5b4f404",

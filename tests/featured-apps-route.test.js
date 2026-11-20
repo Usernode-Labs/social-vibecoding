@@ -28,7 +28,6 @@ function stub(id, exports) {
 const ids = {
   logger: require.resolve('../src/services/logger'),
   limits: require.resolve('../src/services/limits'),
-  anthropicCredits: require.resolve('../src/services/anthropic-credits'),
   dbExport: require.resolve('../src/services/db-export'),
   events: require.resolve('../src/services/events'),
   appRollover: require.resolve('../src/services/app-rollover'),
@@ -51,7 +50,6 @@ stub(ids.limits, {
   getSystemTokensLimitCents: async () => 0,
   invalidate: () => {},
 });
-stub(ids.anthropicCredits, {});
 stub(ids.dbExport, {});
 stub(ids.events, { record: () => {} });
 stub(ids.appRollover, {});
