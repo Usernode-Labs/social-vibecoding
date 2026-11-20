@@ -141,6 +141,8 @@ async function migrate(config) {
   // nearly full, each saying how much is used and what the limit is. Staging
   // runs no sweep against a growing database, so they are seeded.
   await seedStagingStorageNotices(pool);
+  // 20 Nov 2026 (live-draft review): a thread with a live draft up for a vote, for G and J's shots.
+  await seedStagingLiveDraftThread(pool);
   // #6901's shots: while the server is full, Admin → Limits says how many
   // people were turned away, and the bell has a refusal notice. A fresh
   // staging copy has no run of refusals at all, and staging notifies nobody,
@@ -3041,6 +3043,103 @@ async function seedStagingLimitRefusals(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging limit refusals seed failed', { message: err.message });
+  }
+}
+
+// 20 Nov 2026 (live-draft review, C, G, I, J): the before & after shots
+// show a private thread whose live draft is up for a vote and has one change
+// not in the proposal yet: no bar under its head, its Artifacts button, and
+// its preview's header with Update proposal, Close draft and where it
+// stands. A fresh staging copy has no draft (one is opened by asking
+// Homeroom bot, which staging has no model for), so its rows are stored:
+// the shots' member fixture (usernode-capture) on the fake project
+// seedStagingStorageNotices made theirs, the bot's lines as words, the
+// draft's change and its proposal as paused and promoted fixture changes
+// with no preview and no pull request. Nothing here is a signal the code
+// reads to decide anything. Idempotent through the root message's key and
+// the draft's own row; strictly a no-op outside staging.
+async function seedStagingLiveDraftThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')",
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    const app = (await pool.query("SELECT id, slug, name FROM apps WHERE slug = 'staging-demo-recipe-box' LIMIT 1")).rows[0];
+    if (!member || !bot || !app || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const conversationId = (await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    )).rows[0]?.conversation_id;
+    if (!conversationId) return;
+    const key = 'staging-demo-live-draft-thread';
+    let rootId = (await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, bot.id, key],
+    )).rows[0]?.id;
+    if (!rootId) {
+      rootId = (await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5, NOW() - INTERVAL '40 minutes') RETURNING id`,
+        [conversationId, bot.id, `New thread, about ${app.name}.`,
+          JSON.stringify({ homeroomBot: { kind: 'opened_thread', appSlug: app.slug, appName: app.name } }), key],
+      )).rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: can you make the recipe rows look more like a phone app''s list?', $4, NOW() - INTERVAL '39 minutes'),
+                ($1, $3, 'Staging demo: done in the app''s preview: each recipe is one white row with its cooking time in grey under its name, and a chevron at the end.', $4, NOW() - INTERVAL '37 minutes'),
+                ($1, $2, 'Staging demo: nice. Now the rows should line up with the search box above them.', $4, NOW() - INTERVAL '6 minutes'),
+                ($1, $3, 'Staging demo: done in the app''s preview: the rows now share the search box''s left and right edges. That change is saved on the draft and is not in the proposal yet: Update proposal in the preview''s header puts it there, which clears its votes.', $4, NOW() - INTERVAL '5 minutes')`,
+        [conversationId, member.id, bot.id, rootId],
+      );
+    }
+    const thread = (await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, title, title_source,
+                                    created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'ask', 'open', 'Staging demo: recipe rows like a phone app', 'person',
+               NOW() - INTERVAL '40 minutes', NOW() - INTERVAL '5 minutes')
+       ON CONFLICT (root_message_id) DO UPDATE SET updated_at = private_threads.updated_at
+       RETURNING id`,
+      [member.id, conversationId, rootId, app.id],
+    )).rows[0];
+    const had = await pool.query('SELECT id FROM live_drafts WHERE root_message_id = $1 AND user_id = $2', [rootId, member.id]);
+    if (had.rows.length) {
+      // Kept open on every boot: a seeded draft is never idle or over.
+      await pool.query("UPDATE live_drafts SET updated_at = NOW(), live_state = 'live' WHERE id = $1", [had.rows[0].id]);
+      return;
+    }
+    const sha = (c) => c.repeat(40);
+    const change = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title, branch_name, last_activity_at)
+       VALUES ($1, $2, 'paused', FALSE, '{}', $3, 'staging-fixture/live-draft', NOW()) RETURNING id`,
+      [app.id, member.id, `Live draft of ${app.name}`],
+    )).rows[0];
+    const proposal = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title, branch_name,
+                                  promoted_at, last_activity_at)
+       VALUES ($1, $2, 'promoted', FALSE, '{}', 'Staging demo: recipe rows like a phone app', 'staging-fixture/live-draft-proposal',
+               NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes') RETURNING id`,
+      [app.id, member.id],
+    )).rows[0];
+    const draft = (await pool.query(
+      `INSERT INTO live_drafts (app_id, user_id, private_thread_id, root_message_id, session_id, state, base_sha, head_sha,
+                                edits, live_state, proposal_session_id, proposed_head_sha, proposed_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'proposed', $6, $7, 2, 'live', $8, $9, NOW() - INTERVAL '30 minutes',
+               NOW() - INTERVAL '40 minutes', NOW())
+       RETURNING id`,
+      [app.id, member.id, thread.id, rootId, change.id, sha('a'), sha('c'), proposal.id, sha('b')],
+    )).rows[0];
+    await pool.query(
+      `INSERT INTO live_draft_edits (draft_id, commit_sha, summary, paths, created_at)
+       VALUES ($1, $2, 'Staging demo: recipe rows as one list with grey cooking times', ARRAY['public/index.html'], NOW() - INTERVAL '37 minutes'),
+              ($1, $3, 'Staging demo: rows line up with the search box', ARRAY['public/index.html'], NOW() - INTERVAL '5 minutes')`,
+      [draft.id, sha('b'), sha('c')],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging live draft thread seeding failed', { message: err.message });
   }
 }
 
@@ -17147,6 +17246,8 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
+  // 20 Nov 2026 (live-draft review): its own suite runs it (tests/live-draft-seed-postgres.test.js).
+  seedStagingLiveDraftThread,
   migrateAppDbsToPerRole,
   markChangesWithoutWorkState,
   seedStagingTranslations,
