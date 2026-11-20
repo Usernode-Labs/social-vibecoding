@@ -475,6 +475,11 @@
       "id": "homeroom-bot-run-who-acts",
       "sha256": "eeb7e1c51a7f0ebc6b68d46ad4a3e1f8daa5d6ea4bb32a055bd779185288d000",
       "schemaSha256": "b1ba5d805ef1af6d088ca4a6c89cd6b69ca2169c7a0612f90ede5f664a8c6e22"
+    },
+    {
+      "id": "shots-copy-content-types",
+      "sha256": "db77afe6c58fcc0ba0da17decf55361c43c7865f88f108424fa35dd4d766deea",
+      "schemaSha256": "2b1565c0ed243a867fa32a2ce3cac1545eb812e16c0cb5131c9301250a7bf4e0"
     }
   ]
 }

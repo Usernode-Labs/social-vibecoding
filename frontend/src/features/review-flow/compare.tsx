@@ -357,12 +357,13 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     : null);
 
   // #6825: a still takes the smallest copy sharp for the width it is drawn
-  // at (`srcset` and `sizes`), over its blurred preview, so the card fills in
-  // sooner and nothing moves when the sharp one lands. A placed (zoomed)
-  // still is the whole screen transformed, so its width is the scaled one
-  // and its preview stretches to the same box. Only a close-up keeps the
-  // one url.
-  const shotOf = (which: 'before' | 'after'): { url: string; srcSet?: string; placeholder?: string | null } | null => (
+  // at (`srcset` and `sizes`), over its thumbnail and its blurred preview
+  // (lib/shot-img.ts shotPreview), so the card fills in sooner, goes blur,
+  // soft, sharp, and nothing moves when the sharp one lands. A placed
+  // (zoomed) still is the whole screen transformed, so its width is the
+  // scaled one and its layers stretch to the same box. Only a close-up keeps
+  // the one url.
+  const shotOf = (which: 'before' | 'after'): { url: string; srcSet?: string; placeholder?: string | null; thumb?: string | null } | null => (
     screen ? screen[which] : pair ? { url: pair[which] ?? '' } : null);
   // `watched` is false for the magnifier's copy, which only lives while held.
   const img = (which: 'before' | 'after', alt: 'before' | 'after', watched = true) => {

@@ -1077,10 +1077,13 @@ test('a picture, which sends no scope header, says so too while it arrives', asy
   const body = chunkedBody();
   const h = harness.worker({ timers: manualTimers(),
     fetcher: async () => new Response(body.stream, { headers: { 'Content-Type': 'image/png' } }) });
-  const res = await h.get(null, SHOT);
+  const res = await h.get(null, SHOT, { cache: 'default' });
   const sent = h.requests.at(-1);
   assert.equal(sent.headers.get(harness.SCOPE_HEADER), null, 'sent as an image is, with no scope');
-  assert.equal(sent.cache, 'no-store', 'the no-scope path, which stores nothing');
+  // A shot may come from the browser's own HTTP cache (20 Nov): it is
+  // private, immutable and varies by cookie (routes/shots.js), so it goes
+  // out as the <img> sent it.
+  assert.equal(sent.cache, 'default', 'a shot keeps the browser\'s HTTP cache');
   const reader = res.body.getReader();
   body.push('fake-png');
   assert.equal(new TextDecoder().decode((await reader.read()).value), 'fake-png');
@@ -1090,6 +1093,29 @@ test('a picture, which sends no scope header, says so too while it arrives', asy
   await h.drain();
   assert.equal((await (await h.caches.open(API_CACHE)).keys()).length, 0, 'and nothing was stored');
   assert.deepEqual(posted(h), []);
+});
+
+// 20 Nov: only a shot's own address keeps the browser's HTTP cache. Any
+// other read with no scope still bypasses it, and none of them goes into
+// the worker's own cache. A shot's file never changes at its address and is
+// served after its access check with `Vary: Cookie, Authorization`, so a
+// stored copy is reused only for the same session's cookies: after a
+// sign-out, or another account on the same device, it is asked for again.
+test('a shot keeps the browser\'s HTTP cache; another read with no scope does not', async () => {
+  const h = harness.worker({ timers: manualTimers(),
+    fetcher: async () => new Response('fake-png', { headers: { 'Content-Type': 'image/png' } }) });
+  const shotsBase = `/api/apps/fake/proposals/1/shots/${'f'.repeat(32)}`;
+  for (const url of [shotsBase, `${shotsBase}?size=thumb`, `${shotsBase}?size=screen`, `${shotsBase}?density=device`]) {
+    await h.get(null, url, { cache: 'default' });
+    assert.equal(h.requests.at(-1).cache, 'default', url);
+  }
+  for (const url of ['/api/apps/fake/messages', '/api/apps/fake/proposals/1/shots', `/api/apps/fake/proposals/1/shots/${'f'.repeat(31)}`,
+    `/api/apps/fake/proposals/1/shots/${'f'.repeat(32)}/extra`, '/api/apps/fake/proposals/x/shots/' + 'f'.repeat(32)]) {
+    await h.get(null, url, { cache: 'default' });
+    assert.equal(h.requests.at(-1).cache, 'no-store', url);
+  }
+  await h.drain();
+  assert.equal((await (await h.caches.open(API_CACHE)).keys()).length, 0, 'the worker stores none of them');
 });
 
 test('a body the network already decoded is not labelled as encoded', async () => {

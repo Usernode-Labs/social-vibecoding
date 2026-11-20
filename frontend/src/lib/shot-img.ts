@@ -2,12 +2,15 @@
  * #6825: the smaller copies of a before/after still, and the blurred
  * preview a slot draws until one arrives.
  *
- * The server makes a thumbnail (600 px on its long side) and a screen-size
- * copy (1200 px wide) when a still is saved, and lists them as `sizes` in the
- * shots view (services/shots-view.js); the original PNG is still `url`, and
- * zoom and the full view keep it. A slot takes the smallest copy that is
- * sharp for it through `srcset`, and fills with `placeholder` (a 20 px wide
- * WebP, inside the shots view) while the copy loads.
+ * The server makes a thumbnail (a WebP, 600 px on its long side) and a
+ * screen-size copy (a progressive JPEG, at most 1200 px wide) when a still
+ * is saved, and lists them as `sizes` in the shots view
+ * (services/shots-view.js); the original PNG is still `url`, and the full
+ * view keeps it. A slot takes the smallest copy that is sharp for it through
+ * `srcset`. Until it arrives the slot draws two layers behind it: the
+ * thumbnail, over `placeholder` (a 20 px wide WebP, inside the shots view).
+ * So a picture goes blur, then soft, then sharp, the JPEG sharpening as it
+ * arrives, instead of blur and then all at once.
  */
 
 /** One smaller copy of a still, at its own address. */
@@ -20,6 +23,8 @@ export type ShotImage = {
   height?: number | null;
   sizes?: ShotSize[];
   placeholder?: string | null;
+  /** The thumbnail's address, where the copies themselves were not passed on (a review screen's side). */
+  thumb?: string | null;
 };
 
 /** Only this proposal's own shots route, with the copy's own query. */
@@ -32,25 +37,37 @@ export function shotUrlOk(url: unknown): url is string {
 }
 
 /**
- * `"thumb 277w, screen 750w, /shots/<id> 1170w"`, smallest first: the browser
- * takes the smallest copy sharp for the slot and the screen. Undefined when
- * the still has no smaller copy (a run from before them), so the slot loads
- * its one url, exactly as it always did.
+ * `"thumb 277w, screen 1170w"`, smallest first: the browser takes the
+ * smallest copy sharp for the slot and the screen. The original is listed
+ * last only when no copy is as wide as it: a screen copy as wide as the PNG
+ * is the same picture in a fraction of the bytes, so the PNG stays `src`
+ * (the fallback) and is never picked. Undefined when the still has no
+ * smaller copy (a run from before them), so the slot loads its one url,
+ * exactly as it always did.
  */
 export function shotSrcSet(image: ShotImage | null | undefined): string | undefined {
   const sizes = (image?.sizes || []).filter((copy) => copy && shotUrlOk(copy.url) && copy.width > 0);
   if (!sizes.length || !image || !shotUrlOk(image.url)) return undefined;
   const own = Number(image.width) > 0 ? Number(image.width) : null;
   const parts = sizes.map((copy) => `${copy.url} ${Math.round(copy.width)}w`);
-  if (own) parts.push(`${image.url} ${own}w`);
+  if (own && !sizes.some((copy) => copy.width >= own)) parts.push(`${image.url} ${own}w`);
   return parts.join(', ');
 }
 
+/** The thumbnail copy's address, or null: from `thumb`, else from `sizes`. */
+function thumbCopy(image: ShotImage | null | undefined): string | null {
+  if (shotUrlOk(image?.thumb) && /\?size=thumb$/.test(image!.thumb!)) return image!.thumb!;
+  const copy = (image?.sizes || []).find((one) => one && one.size === 'thumb' && shotUrlOk(one.url));
+  return copy ? copy.url : null;
+}
+
 /**
- * The background a slot draws until the still decodes, or undefined.
+ * The background a slot draws until the still decodes, or undefined: the
+ * thumbnail over the 20 px preview, so the slot goes blur, then soft, then
+ * sharp. Either layer alone where the still has only that one.
  *
  * `stretch` fills the whole box instead of covering it: a placed (zoomed)
- * still is the whole screen transformed, so its preview has to line up with
+ * still is the whole screen transformed, so its layers have to line up with
  * that same box, exactly.
  */
 export function shotPreview(
@@ -59,13 +76,14 @@ export function shotPreview(
 ): { backgroundImage: string; backgroundSize: string; backgroundPosition: string } | undefined {
   const value = typeof image?.placeholder === 'string' && image.placeholder.length <= 1400
     && PLACEHOLDER.test(image.placeholder) ? image.placeholder : null;
-  return value
-    ? {
-        backgroundImage: `url("${value}")`,
-        backgroundSize: stretch ? '100% 100%' : 'cover',
-        backgroundPosition: stretch ? '0 0' : 'center',
-      }
-    : undefined;
+  const layers = [thumbCopy(image), value].filter((one): one is string => !!one);
+  if (!layers.length) return undefined;
+  const each = (one: string) => layers.map(() => one).join(', ');
+  return {
+    backgroundImage: layers.map((one) => `url("${one}")`).join(', '),
+    backgroundSize: each(stretch ? '100% 100%' : 'cover'),
+    backgroundPosition: each(stretch ? '0 0' : 'center'),
+  };
 }
 
 /** How many times a slot asks again for a still that ended with no picture. */
@@ -148,6 +166,5 @@ export function watchShot(
 
 /** The thumbnail's own address, for a slot that must never load more than that. */
 export function shotThumb(image: ShotImage | null | undefined): string | null {
-  const thumb = (image?.sizes || []).find((copy) => copy && copy.size === 'thumb' && shotUrlOk(copy.url));
-  return thumb ? thumb.url : (shotUrlOk(image?.url) ? image!.url : null);
+  return thumbCopy(image) || (shotUrlOk(image?.url) ? image!.url : null);
 }

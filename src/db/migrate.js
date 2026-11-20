@@ -10772,7 +10772,7 @@ async function seedSizedCopies(pool, file) {
   for (const name of ['thumb', 'screen']) {
     const copy = copies[name];
     if (!copy) continue;
-    await withStagingMedia(pool, copy.data, 'image/webp', (tx, m) => Promise.resolve(m));
+    await withStagingMedia(pool, copy.data, copy.contentType || 'image/webp', (tx, m) => Promise.resolve(m));
     keys[name] = copy;
   }
   if (!keys.thumb && !keys.screen && !copies.placeholder) return;
@@ -10780,14 +10780,14 @@ async function seedSizedCopies(pool, file) {
     `UPDATE shot_artifacts
         SET thumb_object_key = $2, thumb_width = $3, thumb_height = $4, thumb_bytes = $5, thumb_sha256 = $6,
             screen_object_key = $7, screen_width = $8, screen_height = $9, screen_bytes = $10, screen_sha256 = $11,
-            placeholder = $12
+            placeholder = $12, thumb_content_type = $13, screen_content_type = $14
       WHERE id = $1`,
     [file.id,
       keys.thumb ? media.objectKey(keys.thumb.data) : null, keys.thumb?.width ?? null, keys.thumb?.height ?? null,
       keys.thumb?.bytes ?? null, keys.thumb?.sha256 ?? null,
       keys.screen ? media.objectKey(keys.screen.data) : null, keys.screen?.width ?? null, keys.screen?.height ?? null,
       keys.screen?.bytes ?? null, keys.screen?.sha256 ?? null,
-      copies.placeholder]
+      copies.placeholder, keys.thumb?.contentType ?? null, keys.screen?.contentType ?? null]
   );
 }
 
