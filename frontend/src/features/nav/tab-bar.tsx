@@ -93,6 +93,7 @@ import { RailCommunities, useRailCommunities } from './rail-communities';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
+import { followDisplaySize } from './rail-auto';
 import { schedulePress, type PendingPress } from './tab-press';
 
 /**
@@ -918,6 +919,8 @@ export function PlatformTabs() {
   // window narrowed to a phone gets its bar back without this store having to
   // watch the viewport.
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
+  // On a medium display the menu starts as its strip (./rail-auto.ts).
+  useEffect(() => followDisplaySize(), []);
   const { enter, leave } = useRailPeek(peek);
   // A RUNNING APP, as this store tells it: the app view with no tab lit. Its
   // Workshop and its threads light Workshop or Messages (App._syncPlatformTabs),

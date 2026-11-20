@@ -46,9 +46,12 @@ export function clearPeekTimer(): void {
 /** The pointer is on something that shows the rail: show it now. */
 export function enterPeek(): void {
   clearPeekTimer();
-  // Standard (WIP): a folded sidebar stays folded until its arrow is pressed
-  // (asked 19 Nov 2026). Pointing at the edge or at the arrow peeks nothing.
-  if (typeof document !== 'undefined' && document.documentElement?.hasAttribute('data-skin-wip')) return;
+  // The standard look and the brand kit's drawing of it (no data-skin on
+  // <html>): a folded sidebar stays folded until its arrow is pressed (asked
+  // 19 Nov 2026 for Standard (WIP), the standard look's too since 20 Nov
+  // 2026). Pointing at the edge or at the arrow peeks nothing. A look that
+  // sets data-skin keeps the peek.
+  if (typeof document !== 'undefined' && !document.documentElement?.hasAttribute('data-skin')) return;
   const { peek, peekOut } = navStore.get();
   if (!peek || peekOut) navStore.set({ peek: true, peekOut: false });
 }
