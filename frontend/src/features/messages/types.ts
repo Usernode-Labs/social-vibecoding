@@ -212,7 +212,7 @@ export interface HomeroomBotMeta {
    * project card carries its `brief` instead of a design, and may have no
    * name yet.
    */
-  makeProject?: { name: string; rootId: number; version: number | null; brief?: string };
+  makeProject?: { name: string; rootId: number; version: number | null; brief?: string; artifactId?: number };
   madeSlug?: string;
   madeName?: string;
   /**

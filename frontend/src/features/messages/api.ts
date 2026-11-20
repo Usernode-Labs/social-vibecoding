@@ -299,6 +299,8 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
     ? {
       name: makeName, rootId: makeRoot, version: strictId(pick(makeRow, 'version')),
       ...(makeBrief ? { brief: makeBrief } : {}),
+      // K (20 Nov 2026): one of the thread's artifacts after its first; none is the first.
+      ...(strictId(pick(makeRow, 'artifactId')) ? { artifactId: strictId(pick(makeRow, 'artifactId'))! } : {}),
     } : null;
   return {
     homeroomBot: {

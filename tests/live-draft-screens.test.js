@@ -137,3 +137,15 @@ test('H: a narrow head keeps its title; the Artifacts word gives way to its glyp
   assert.match(CSS, /@container bot-thread-head \(max-width: 460px\) \{/);
   assert.match(CSS, /\.messages-thread-action\.messages-thread-preview \.messages-thread-artifacts-word \{\n    position: absolute;/);
 });
+
+test('K: an artifact after a thread\'s first is named in the address, the request page\'s door and Make it', () => {
+  const { botDetailAt } = loadTsx('frontend/src/features/ai/door.ts');
+  assert.deepEqual(botDetailAt('#homeroom-bot/thread/9/design/2'), { kind: 'design', version: 2 }, 'the first, as before');
+  assert.deepEqual(botDetailAt('#homeroom-bot/thread/9/design/2?artifact=3'), { kind: 'design', version: 2, artifactId: 3 });
+  assert.deepEqual(botDetailAt('#homeroom-bot/thread/9/design?artifact=1'), { kind: 'design', version: null }, 'artifact 1 is the first');
+  assert.match(read('frontend/src/features/dev-board/topic/request-head.tsx'),
+    /\$\{r\.fromThread\.artifactId && r\.fromThread\.artifactId > 1 \? `\?artifact=\$\{r\.fromThread\.artifactId\}` : ''\}/);
+  const { makeBody } = loadTsx('frontend/src/features/messages/bot-make.tsx');
+  assert.deepEqual(makeBody({ name: 'Layouts', rootId: 9, version: 2, artifactId: 2 }, 'Layouts', 'solo').design, { rootId: 9, version: 2, artifactId: 2 });
+  assert.deepEqual(makeBody({ name: 'Layouts', rootId: 9, version: 2 }, 'Layouts', 'solo').design, { rootId: 9, version: 2 });
+});

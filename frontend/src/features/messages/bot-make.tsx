@@ -42,6 +42,8 @@ export interface MakeProject {
   version: number | null;
   /** #6783: what the project will do, for a card the bot wrote in a private thread (no design). */
   brief?: string | null;
+  /** K (20 Nov 2026): which of the thread's artifacts it is made from, after its first. */
+  artifactId?: number;
 }
 
 /** Pure: what Make it posts to /api/apps for `project`. */
@@ -64,7 +66,12 @@ export function makeBody(project: MakeProject, name: string, audience: CreateAud
     audience,
     brief: named,
     from: 'design',
-    design: { rootId: project.rootId, ...(project.version ? { version: project.version } : {}) },
+    // K (20 Nov 2026): the artifact the card offers, when it is not the thread's first.
+    design: {
+      rootId: project.rootId,
+      ...(project.version ? { version: project.version } : {}),
+      ...(project.artifactId ? { artifactId: project.artifactId } : {}),
+    },
     ...(timeZone ? { timeZone } : {}),
   };
 }
