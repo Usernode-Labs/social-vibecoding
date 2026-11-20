@@ -5792,30 +5792,19 @@ html:not([data-skin]) {
   --wip-thumb: 6rem;          /* a change's picture in a list: a thumbnail at its side */
   --wip-hero-pad: 1.25rem;
   --wip-hero-min: 0;        /* a poster's height, whatever it says */
-  --wip-hero-art: 4.5rem;       /* the icon at its side */
   /* The hero wears the community's colour softly: its HUE, at a lightness
      and strength the look chooses, so a navy or a charcoal project gets as
      airy a card as an orange one. A pale ground, three drifting washes of
      the hue and its two neighbours, and the action in the hue itself. */
   --wip-hero-tint: var(--community-tint, #3b5bdb);
   --wip-hero-bg: color-mix(in srgb, hsl(from var(--wip-hero-tint) h 60% 60%) 5%, var(--wip-card-bg));
-  --wip-hero-wash-a: hsl(from var(--wip-hero-tint) h 70% 80% / 0.38);
-  --wip-hero-wash-b: hsl(from var(--wip-hero-tint) calc(h + 40) 70% 84% / 0.3);
-  --wip-hero-wash-c: hsl(from var(--wip-hero-tint) calc(h - 30) 70% 86% / 0.28);
   --wip-hero-line: var(--wip-card-line);
   --wip-hero-ink: var(--wip-ink);
   --wip-hero-ink-soft: var(--wip-ink-soft);
   --wip-hero-ink-muted: var(--wip-ink-muted);
   --wip-hero-glass: var(--wip-card-bg);    /* a quiet control on the card */
   --wip-hero-glass-line: var(--wip-card-line);
-  --wip-hero-ring: hsl(from var(--wip-hero-tint) h 40% 50% / 0.1);
-  --wip-hero-dot: hsl(from var(--wip-hero-tint) h 30% 40% / 0.1);
   --wip-hero-shadow: var(--wip-card-shadow);
-  --wip-hero-art-shadow: 0 18px 34px -18px rgb(0 0 0 / 0.3), 0 0 0 1px var(--wip-card-line);
-  --wip-hero-dots-mask: linear-gradient(90deg, transparent 30%, #000000 75%);   /* the dots thin out toward the words */
-  --wip-hero-rings-mask: radial-gradient(closest-side, #000000 30%, transparent); /* the rings fade as they spread */
-  --wip-hero-drift: 28s;        /* one slow turn of the washes */
-  --wip-hero-float: 7s;         /* the picture's rise and fall */
   /* A section's label under a token config: its face, size, case, spacing,
      weight and ink. These are the shell's own label's values, so a config
      that does not name them draws the label as it is. */
@@ -6037,6 +6026,23 @@ html:not([data-skin]) {
   --wip-count-ink: #000000;
   --wip-count-line: rgb(0 0 0 / 0.2);
   --wip-meter: #3090e1;
+  /* A project's hero wears one of the six backgrounds, strongest at its far
+     side and fading into the card toward the words; fainter on a phone. The
+     same picture as this community's pinned card on the Communities page.
+     Homeroom's own hero is the brand's page: a cream ground, black words and
+     the people illustration. A vote count on the hub's Needs you door is
+     black on cream here. */
+  --wip-hero-scene-img: var(--wip-scene-1);
+  --wip-hero-scene-alpha: 0.9;
+  --wip-hero-scene-mask: linear-gradient(to left, #000000 0, #000000 30%, transparent 78%);
+  --wip-hero-scene-mask-rtl: linear-gradient(to right, #000000 0, #000000 30%, transparent 78%);
+  --wip-hero-home-bg: #fffeea;
+  --wip-hero-home-card-bg: #ffffff;
+  --wip-hero-home-ink: #000000;
+  --wip-hero-home-ink-soft: rgb(0 0 0 / 0.72);
+  --wip-hero-home-ink-muted: rgb(0 0 0 / 0.6);
+  --wip-vote-pill-bg: #000000;
+  --wip-vote-pill-ink: #fffeea;
   /* The shell's own marks on a page of this config: where you are, in the
      kit's ink on a wash of it, not the standard blue. */
 }
@@ -6078,6 +6084,15 @@ html:not([data-skin]).dark {
   --wip-fold-edge: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-fold-edge-down: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-count-line: transparent;
+  /* The vote count on the hub's Needs you door, in the dark: the kit's yellow
+     with black on it. */
+  --wip-vote-pill-bg: #ffee6f;
+  --wip-vote-pill-ink: #000000;
+}
+/* A phone has less room for the hero's picture: it is fainter there, so the
+   words keep the card. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) { --wip-hero-scene-alpha: 0.45; }
 }
 html[data-skin-wip][data-wip-tokens="brand"].dark {
   --lit-ink: #fffeea;
@@ -6741,7 +6756,8 @@ html:not([data-skin]) #home-communities-section { display: none; }
    project sits across from Home's search. The hero and the Invite card keep
    their markup and are still two sections; the look joins them where they
    are neighbours. */
-html[data-skin-wip] body #dev-workshop:has(> .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) {
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="status"]),
+html[data-skin-wip] body #dev-workshop:has(> .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
   max-width: none;
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
@@ -6750,20 +6766,22 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbod
 /* The hub sits on the page itself, as Home does: the project page's own
    sheet (a tinted, shadowed panel with round top corners behind everything)
    is cleared while the hub is the place on show, so its cards are the only
-   cards. */
-html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) {
+   cards, and the Standard wallpaper shows behind them. */
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]),
+html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
   border-radius: 0;
   border-color: transparent;
-  background-color: var(--wip-page-bg);
+  background-color: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
 }
-/* The hub has no Topics card under the look: a topic's channel is reached by its own address. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-topics] { display: none; }
+html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]) {
+  background-color: var(--wip-page-bg);
+}
 /* A section's label, outside its card: Home's label, from the same tokens. */
-html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > h2,
-html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > :first-child h2 {
+html:not([data-skin])[data-wip-tokens] #dev-workshop .dev-ws-hub-section > h2,
+html:not([data-skin])[data-wip-tokens] #dev-workshop .dev-ws-hub-section > :first-child h2 {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
   font-weight: var(--wip-label-weight);
@@ -6777,24 +6795,19 @@ html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > :first-
   text-decoration-skip-ink: none;
 }
 /* A section's card is the look's card. */
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-strip {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-strip {
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
-/* The head: one card. */
+/* The head: one card. In the dark its ground is lifted off the page and the
+   cards, so the hero stands apart from both. */
 html:not([data-skin]).dark {
-  --wip-hero-bg: color-mix(in srgb, hsl(from var(--wip-hero-tint) h 60% 50%) 6%, var(--wip-card-bg));
-  --wip-hero-wash-a: hsl(from var(--wip-hero-tint) h 70% 45% / 0.22);
-  --wip-hero-wash-b: hsl(from var(--wip-hero-tint) calc(h + 40) 70% 42% / 0.18);
-  --wip-hero-wash-c: hsl(from var(--wip-hero-tint) calc(h - 30) 70% 40% / 0.16);
-  --wip-hero-ring: rgb(255 255 255 / 0.07);
-  --wip-hero-dot: rgb(255 255 255 / 0.08);
-  --wip-hero-art-shadow: 0 18px 34px -18px rgb(0 0 0 / 0.7), 0 0 0 1px var(--wip-card-line);
+  --wip-hero-bg: color-mix(in srgb, hsl(from var(--wip-hero-tint) h 60% 60%) 14%, color-mix(in srgb, #fffeea 6%, var(--wip-card-bg)));
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
   position: relative;
   isolation: isolate;
   align-content: center;
@@ -6806,116 +6819,75 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbod
   box-shadow: inset 0 0 0 1px var(--wip-hero-line), var(--wip-hero-shadow);
   color: var(--wip-hero-ink);
 }
-/* THE HERO'S SCENERY, all in one layer behind its words, for show only. It
-   is clipped to the card on its own, so the card itself clips nothing (its
-   ⋯ menu hangs out of it). Three soft washes of the hue drift slowly round
-   each other; a field of dots thins out toward the words; rings spread from
-   where the picture is; and the picture floats: the project's own
-   illustration, tilted, with its icon in front, or the icon alone. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > :is(.wip-hero-art, .wip-hero-wash) { grid-column: auto; grid-row: auto; }
-.wip-hero-art {
+/* THE HERO'S BACKGROUND, one layer behind its words, for show only. It is
+   one of the brand kit's six backgrounds, the same one as this community's
+   pinned card on the Communities page (the six rules below use the same
+   mapping as that card's ::before), strongest at the far side and fading
+   into the card toward the words, so the words stay easy to read. Fainter on
+   a phone. It is clipped to the card on its own, so the card itself clips
+   nothing (its ⋯ menu hangs out of it). */
+html:not([data-skin]) [data-ws-hero-scene="1"] { --wip-hero-scene-img: var(--wip-scene-4); }
+html:not([data-skin]) [data-ws-hero-scene="2"] { --wip-hero-scene-img: var(--wip-scene-5); }
+html:not([data-skin]) [data-ws-hero-scene="3"] { --wip-hero-scene-img: var(--wip-scene-6); }
+html:not([data-skin]) [data-ws-hero-scene="4"] { --wip-hero-scene-img: var(--wip-scene-1); }
+html:not([data-skin]) [data-ws-hero-scene="5"] { --wip-hero-scene-img: var(--wip-scene-2); }
+html:not([data-skin]) [data-ws-hero-scene="6"] { --wip-hero-scene-img: var(--wip-scene-3); }
+.wip-hero-scene {
   position: absolute;
   z-index: -1;
   inset: 0;
-  overflow: hidden;
   border-radius: inherit;
   pointer-events: none;
-  background-image: radial-gradient(var(--wip-hero-dot) 1px, transparent 1.5px);
-  background-size: 20px 20px;
-  -webkit-mask-image: var(--wip-hero-dots-mask);
-  mask-image: var(--wip-hero-dots-mask);
+  background: var(--wip-hero-scene-img, var(--wip-scene-1)) center / cover no-repeat;
+  opacity: var(--wip-hero-scene-alpha);
+  -webkit-mask-image: var(--wip-hero-scene-mask);
+  mask-image: var(--wip-hero-scene-mask);
 }
-.wip-hero-wash {
-  position: absolute;
-  z-index: -2;
-  inset: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  pointer-events: none;
+html:not([data-skin])[dir="rtl"] .wip-hero-scene {
+  -webkit-mask-image: var(--wip-hero-scene-mask-rtl);
+  mask-image: var(--wip-hero-scene-mask-rtl);
 }
-.wip-hero-wash::before {
+/* HOMEROOM'S OWN HERO IS THE BRAND'S PAGE: a cream ground, the people
+   illustration at the right, and a yellow, blue and green rule along the
+   bottom. Its words are black on that cream in either theme. */
+html:not([data-skin]) [data-ws-hero-scene="home"] {
+  /* The hero's own rule paints the ground and the edge; here it is told
+     which. */
+  --wip-hero-bg: var(--wip-hero-home-bg);
+  /* Its controls sit on the cream, not on the dark look's card. */
+  --wip-card-bg: var(--wip-hero-home-card-bg);
+  --wip-hero-ink: var(--wip-hero-home-ink);
+  --wip-hero-ink-soft: var(--wip-hero-home-ink-soft);
+  --wip-hero-ink-muted: var(--wip-hero-home-ink-muted);
+  --wip-ink: var(--wip-hero-home-ink);
+  --wip-ink-soft: var(--wip-hero-home-ink-soft);
+  --wip-ink-muted: var(--wip-hero-home-ink-muted);
+  --wip-ink-action: var(--wip-hero-home-ink);
+}
+html:not([data-skin]) [data-ws-hero-scene="home"] > .wip-hero-scene {
+  background-image: url('/brand/people.png');
+  background-position: right bottom;
+  background-size: auto 92%;
+  background-repeat: no-repeat;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+html:not([data-skin])[dir="rtl"] [data-ws-hero-scene="home"] > .wip-hero-scene { background-position: left bottom; }
+html:not([data-skin]) [data-ws-hero-scene="home"]::after {
   content: "";
   position: absolute;
-  inset: -40%;
-  background-image:
-    radial-gradient(closest-side, var(--wip-hero-wash-a), transparent) ,
-    radial-gradient(closest-side, var(--wip-hero-wash-b), transparent),
-    radial-gradient(closest-side, var(--wip-hero-wash-c), transparent);
-  background-size: 52% 62%, 46% 58%, 44% 54%;
-  background-position: 8% 20%, 96% 30%, 62% 96%;
-  background-repeat: no-repeat;
-  filter: blur(40px);
-  animation: wip-hero-drift var(--wip-hero-drift) ease-in-out infinite alternate;
+  inset-inline: 0;
+  inset-block-end: 0;
+  height: 6px;
+  border-radius: 0 0 var(--wip-card-radius) var(--wip-card-radius);
+  background-image: linear-gradient(to right, var(--wip-emblem-1) 0 33.3%, var(--wip-emblem-2) 0 66.6%, var(--wip-emblem-3) 0);
+  pointer-events: none;
 }
-.wip-hero-rings {
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline-end: 14%;
-  width: 44rem;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  translate: 50% -50%;
-  background-image: repeating-radial-gradient(circle, transparent 0 3rem, var(--wip-hero-ring) 3rem calc(3rem + 1px));
-  -webkit-mask-image: var(--wip-hero-rings-mask);
-  mask-image: var(--wip-hero-rings-mask);
-}
-.wip-hero-stage {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-end: 0;
-  width: min(30%, 20rem);
-  display: none;
-  place-items: center;
-  animation: wip-hero-float var(--wip-hero-float) ease-in-out infinite alternate;
-}
-.wip-hero-art-pic {
-  position: absolute;
-  inset-inline-end: 14%;
-  width: 44%;
-  aspect-ratio: 16 / 10;
-  object-fit: cover;
-  border-radius: var(--wip-radius-card);
-  box-shadow: var(--wip-hero-art-shadow);
-  transform: rotate(-5deg) translateY(-4%);
-  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.wip-hero-art-icon {
-  position: relative;
-  width: var(--wip-hero-art);
-  height: var(--wip-hero-art);
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-  border-radius: calc(var(--wip-hero-art) * 0.24);
-  font-size: calc(var(--wip-hero-art) / 2);
-  box-shadow: var(--wip-hero-art-shadow);
-  transform: rotate(8deg);
-  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.wip-hero-art-icon > img { width: 100%; height: 100%; object-fit: cover; }
-.wip-hero-art-pic + .wip-hero-art-icon { --wip-hero-art: 3.25rem; align-self: end; justify-self: start; margin: 0 0 0.75rem 22%; }
-/* The pointer on the card straightens the picture a little, as if picked up. */
-html[data-skin-wip] .dev-ws-hero-summary:hover .wip-hero-art-pic { transform: rotate(-2deg) translateY(-7%) scale(1.03); }
-html[data-skin-wip] .dev-ws-hero-summary:hover .wip-hero-art-icon { transform: rotate(3deg) scale(1.05); }
-@media (min-width: 900px) {
-  .wip-hero-stage { display: grid; }
-  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: min(30%, 20rem); }
-}
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) .wip-hero-wash::before { animation: none; }
-  html:not([data-skin]) .wip-hero-stage { animation: none; }
-  html:not([data-skin]) .wip-hero-art-pic { transition: none; }
-  html:not([data-skin]) .wip-hero-art-icon { transition: none; }
-}
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-wash::before { animation: none; }
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-stage { animation: none; }
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-art-pic { transition: none; }
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-art-icon { transition: none; }
 /* WHO IT IS FOR AND WHO IS IN IT, under the name, as two things: the kind
    of community with its own mark (a lit dot on one anybody may join, the
    lock or the person otherwise), then a few members' faces and how many
    there are. No tag round them. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { margin-top: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { margin-top: 0.25rem; }
 .wip-hub-meta { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.875rem; }
 .wip-hub-meta-kind {
   display: inline-flex;
@@ -6957,15 +6929,15 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { mar
 }
 .wip-hub-meta-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
 /* "Make it public", beside the main action: the same height, a plain pill. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { height: 2.75rem; padding-inline: 1.125rem; font-size: 0.9375rem; font-weight: 600; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { height: 2.75rem; padding-inline: 1.125rem; font-size: 0.9375rem; font-weight: 600; }
 /* THE QUESTION "Make it public" asks hangs under its button, which is at
    the hero's start here: so it opens from the button's own start edge and
    runs toward the page (hung from its end, as on the standard hub where the
    button is at the far side, it ran off the page's edge and was cut). It is
    the look's card, and its two answers are the look's: the filled action,
    and a plain "Not now". */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-join-anchor { margin-inline-start: 0; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-join-anchor { margin-inline-start: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop {
   inset-inline: 0 auto;
   width: min(20rem, var(--platform-float-w));
   border: 0;
@@ -6974,14 +6946,14 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
   transform-origin: 2rem 0;
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop::before {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop::before {
   inset-inline: 1.75rem auto;
   border-color: var(--wip-card-line);
   background-color: var(--wip-card-bg);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-ask-q { color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-sub { color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-answer-btn {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-ask-q { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-sub { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-answer-btn {
   height: 2.75rem;
   border-radius: var(--wip-radius-pill);
   background-color: transparent;
@@ -6989,7 +6961,7 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev
   color: var(--wip-cta-ink);
   box-shadow: 0 8px 18px -8px var(--wip-cta-glow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-later {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-later {
   align-self: center;
   background-color: transparent;
   color: var(--wip-ink-muted);
@@ -7056,7 +7028,7 @@ html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-h
 }
 /* With nothing on the hero's last line but the ⋯ (which is in the corner,
    out of the line), the line takes no room: no empty band under the words. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
   height: 0;
   min-height: 0;
   margin-block: calc(-1 * 0.5rem) 0; /* and gives back the row gap above it */
@@ -7065,13 +7037,13 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:h
    ground, with its edge and the kit's soft shadow, so it is seen over the
    hero's picture; its edge darkens under the pointer or while its menu is
    open. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-plus {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-plus {
   position: absolute;
   inset-block-start: 0.5rem;
   inset-inline-end: 0.5rem;
   margin: 0;
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn {
   width: 2.25rem;
   height: 2.25rem;
   min-width: 0;
@@ -7082,19 +7054,19 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev
   color: var(--wip-ink);
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-icon-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn:is(:hover, :focus-visible, [aria-expanded="true"]) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn:is(:hover, :focus-visible, [aria-expanded="true"]) {
   box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-icon-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
   width: var(--wip-hub-icon);
   height: var(--wip-hub-icon);
   border-radius: var(--wip-icon-radius);
   font-size: calc(var(--wip-hub-icon) / 2);
   box-shadow: var(--wip-icon-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-name {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-name {
   font-family: var(--wip-hub-name-font);
   font-size: var(--wip-hub-name);
   font-weight: var(--wip-hub-name-weight);
@@ -7102,21 +7074,21 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-name {
   letter-spacing: -0.035em;
   color: var(--wip-hero-ink);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-id-sub, .dev-ws-hero-audience, .dev-ws-hero-lineage, .dev-ws-hero-active-names, .dev-ws-hero-member) { font-size: 0.875rem; color: var(--wip-hero-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-active-n, .dev-ws-hero-lineage-link, .dev-ws-hero-line) { color: var(--wip-hero-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-desc { max-width: 40rem; font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink-soft); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-id-sub, .dev-ws-hero-audience, .dev-ws-hero-lineage, .dev-ws-hero-active-names, .dev-ws-hero-member) { font-size: 0.875rem; color: var(--wip-hero-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-active-n, .dev-ws-hero-lineage-link, .dev-ws-hero-line) { color: var(--wip-hero-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-desc { max-width: 40rem; font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink-soft); }
 /* What you can do is the hero's last line, under its words: the main
    action first, then the quiet ones, and the ⋯ at the far end. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row { grid-column: 1 / -1; order: 9; margin-top: 0.75rem; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions { flex: 1; gap: 0.625rem; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is(button, a) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row { grid-column: 1 / -1; order: 9; margin-top: 0.75rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions { flex: 1; gap: 0.625rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is(button, a) {
   border-color: var(--wip-hero-glass-line);
   background-color: var(--wip-hero-glass);
   background-image: none;
   color: var(--wip-hero-ink);
   box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
   position: relative;
   overflow: hidden;
   height: 2.75rem;
@@ -7133,7 +7105,7 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(butt
    the filled action (Home's New project), and plain pills on the card's
    ground. A sheen crosses the filled one when the pointer comes to it. */
 @media (hover: hover) {
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after {
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after {
     content: "";
     position: absolute;
     inset-block: 0;
@@ -7142,18 +7114,43 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(butt
     background-image: linear-gradient(100deg, transparent, var(--wip-sheen), transparent);
     transform: translateX(-140%) skewX(-12deg);
   }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]):hover::after {
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]):hover::after {
     transform: translateX(380%) skewX(-12deg);
     transition: transform 0.7s ease-out;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
 /* A phone has no room for the hero's sizes. */
 @media (max-width: 639.98px) {
   html:not([data-skin]) { --wip-hub-icon: 3rem; --wip-hub-name: 1.75rem; --wip-hero-pad: 1.25rem; --wip-hero-min: 0; }
+}
+/* THE PROJECT'S PICTURE, beside the hero from 1024px: its own card in the
+   hub's first row, the hero taking the first two columns and the picture the
+   third. On a narrower page it is not drawn (the hero keeps the whole
+   width). It plays the project's moving preview where it has one, and draws
+   its icon where it has neither picture nor preview. */
+html:not([data-skin]) .dev-ws-hero-pic { display: none; }
+@media (min-width: 1024px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-pic {
+    display: block;
+    align-self: stretch;
+    order: 0;
+    grid-column: 3;
+    min-width: 0;
+    padding: var(--wip-card-pad);
+    border-radius: var(--wip-card-radius);
+    background-color: var(--wip-card-bg);
+    box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero:has(+ .dev-ws-hero-pic) { grid-column: 1 / 3; }
+  html:not([data-skin]) .dev-ws-hero-pic > [data-project-preview] {
+    height: 100%;
+    aspect-ratio: auto;
+    border-radius: var(--wip-radius-inner);
+  }
 }
 /* THE HUB'S ORDER, AND ITS PARTS AS CARDS OF THEIR OWN. The hub answers
    three things in turn: what this is and how to use it (the head, with its
@@ -7166,17 +7163,17 @@ html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-sum
    (`display: contents`), so they can be placed apart, each on the look's
    card. Everything else the page may draw between (a first version, an
    update, Share it) keeps its place under the head. */
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you],
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou { display: contents; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { order: 1; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { order: 0; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > :first-child { order: 2; margin-bottom: calc(0.5rem - var(--wip-row-gap)); /* a label sits on its card, not a row away */ }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]) { order: 3; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you],
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou { display: contents; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { order: 1; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { order: 0; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { order: 2; margin-bottom: calc(0.5rem - var(--wip-row-gap)); /* a label sits on its card, not a row away */ }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]) { order: 3; }
 /* Its label heads the vote line alone here, so with no vote line (a project nobody else is in) there is no label. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
   border-top: 0;
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
@@ -7191,16 +7188,16 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
    The same padding, the same height, the same sizes as a row on Home. A
    card that opens a place answers the pointer: its edge darkens and it
    lifts a little. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { display: flex; align-items: center; min-height: 4.5rem; margin: 0; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.wip-hub-door, .dev-ws-foryou-row),
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] > .dev-ws-foryou-row {
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { display: flex; align-items: center; min-height: 4.5rem; margin: 0; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.wip-hub-door, .dev-ws-foryou-row),
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] > .dev-ws-foryou-row {
   gap: var(--wip-tile-gap);
   width: 100%;
   padding: 0.875rem 1rem;
   text-align: start;
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { padding: 0; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { padding: 0; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
   flex: none;
   width: 2.5rem;
   height: 2.5rem;
@@ -7209,56 +7206,65 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou :is(.wi
   color: var(--wip-mark-1-ink);
 }
 /* Each door its own mark: what waits on you, the Workshop, the discussion. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
 .wip-hub-door-title { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); line-height: 1.3; color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
 .wip-hub-door-sub { font-size: var(--wip-link-size); line-height: 1.4; color: var(--wip-ink-muted); }
 .wip-hub-door-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
 .wip-hub-door-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wip-hub-door-sub .dev-ws-link { font: inherit; font-weight: 650; color: var(--wip-ink-action); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { color: var(--wip-ink-muted); transition: transform 0.18s ease; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row,
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: box-shadow 0.18s ease, transform 0.18s ease; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover,
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: translateX(2px); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { color: var(--wip-ink-muted); transition: transform 0.18s ease; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row,
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: box-shadow 0.18s ease, transform 0.18s ease; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover,
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: translateX(2px); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
 }
 
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
 /* On a phone the vote line may take two lines, so its link is not cut off. */
 @media (max-width: 767.98px) {
-  html[data-skin-wip] #dev-workshop .wip-hub-door-sub { white-space: normal; }
+  html:not([data-skin]) #dev-workshop .wip-hub-door-sub { white-space: normal; }
 }
 /* Stacked (a phone), the three are one group: a card's gap between them, not
    the room the page leaves between its sections. */
 @media (max-width: 767.98px) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
 }
 @media (min-width: 768px) {
-  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     column-gap: var(--wip-card-gap);
     align-content: start;
     align-items: start;
   }
-  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
+}
+/* THE VOTE COUNT on the hub's Needs you door stays readable. The hub sets
+   --accent to the look's action ink (black on cream in the light, cream on
+   black in the dark), so the row's pill, which paints the accent with white
+   on it, was white on cream in the dark. It is black on cream in the light
+   and the kit's yellow on black in the dark. */
+html:not([data-skin]) #dev-workshop [data-ws-hub-needs] .dev-ws-foryou-pill:not(.dev-ws-foryou-pill-light) {
+  background-color: var(--wip-vote-pill-bg);
+  color: var(--wip-vote-pill-ink);
 }
 /* RECENTLY LIVE, as a list and not a wall of pictures. Each change is a row
    of Home's own kind: a small picture at its side (a thumbnail, not a
@@ -7266,15 +7272,15 @@ html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for
    768px, on the same column gap and inner padding as every list of the
    look; one under another on a phone. The "N more live this month" door is
    the card's quiet foot. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent { padding: 0.5rem; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent { padding: 0.5rem; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0.25rem var(--wip-col-gap);
   padding: 0;
   overflow: visible;
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card {
   display: grid;
   grid-template-columns: var(--wip-thumb) minmax(0, 1fr);
   grid-template-rows: auto 1fr;
@@ -7285,15 +7291,15 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card {
   border-radius: var(--wip-radius-inner);
   transition: background-color 0.15s ease;
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--wip-ghost); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--wip-ghost); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic {
   grid-row: 1 / -1;
   align-self: center;
   border-radius: var(--wip-radius-small);
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { width: 1.75rem; height: 1.75rem; border-radius: var(--wip-radius-small); font-size: 0.875rem; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-title {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { width: 1.75rem; height: 1.75rem; border-radius: var(--wip-radius-small); font-size: 0.875rem; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-title {
   align-self: end;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -7302,9 +7308,9 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-title {
   line-height: 1.3;
   color: var(--wip-ink);
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--wip-ink-action); font-weight: 600; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--wip-ink-action); font-weight: 600; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
   min-height: 2.75rem;
   margin: 0.5rem -0.5rem -0.5rem;
   width: auto;
@@ -7313,15 +7319,15 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
   box-shadow: inset 0 1px 0 var(--wip-card-line);
   color: var(--wip-ink);
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-n { min-width: 0; height: 1.5rem; padding: 0 0.5rem; border-radius: var(--wip-radius-pill); background-color: var(--wip-count-bg); color: var(--wip-count-ink); font-size: 0.75rem; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-words { font-size: var(--wip-link-size); font-weight: 600; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-n { min-width: 0; height: 1.5rem; padding: 0 0.5rem; border-radius: var(--wip-radius-pill); background-color: var(--wip-count-bg); color: var(--wip-count-ink); font-size: 0.75rem; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-words { font-size: var(--wip-link-size); font-weight: 600; }
 @media (min-width: 768px) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
 /* THE ⋯'S MENU, drawn as the hub's own cards are. It is the look's card
    (its corners, ground and edge, one soft drop), and each row in it is a
    door of the same shape as For you's: a small tile in the look's mark
@@ -7330,7 +7336,7 @@ html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-rec
    pointer or the keyboard puts the look's soft ground under a row and
    nudges it; the row the menu marks (Build it now) wears that soft ground
    at rest. It opens with a short rise. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
   width: 19rem;
   padding: 0.5rem;
   border: 0;
@@ -7339,9 +7345,9 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
   font-family: var(--wip-font);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: wip-menu-rise 0.16s ease-out; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) * { border-top-width: 0; border-bottom-width: 0; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: wip-menu-rise 0.16s ease-out; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) * { border-top-width: 0; border-bottom-width: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) {
   align-items: center;
   box-shadow: none; /* not the hero's own buttons' edge: these are rows */
   color: var(--wip-ink);
@@ -7353,9 +7359,9 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(b
   background-color: transparent;
   transition: background-color 0.12s ease, transform 0.12s ease;
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { background-color: var(--wip-ghost); transform: translateX(2px); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a).bg-violet-50 { background-color: var(--wip-ghost); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:first-child {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { background-color: var(--wip-ghost); transform: translateX(2px); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a).bg-violet-50 { background-color: var(--wip-ghost); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:first-child {
   box-sizing: content-box;
   width: 1rem;
   height: 1rem;
@@ -7366,19 +7372,19 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(b
   color: var(--wip-mark-1-ink);
 }
 /* The rows take the three marks in turn. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n + 2) > svg:first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n) > svg:first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:not(:first-child) { color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:first-child { font-size: var(--wip-link-size); font-weight: 650; line-height: 1.3; color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:last-child:not(:first-child) { font-size: 0.75rem; line-height: 1.35; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n + 2) > svg:first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n) > svg:first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:not(:first-child) { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:first-child { font-size: var(--wip-link-size); font-weight: 650; line-height: 1.3; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:last-child:not(:first-child) { font-size: 0.75rem; line-height: 1.35; color: var(--wip-ink-muted); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
 /* A PROJECT'S NEEDS YOU is laid out as its hub is (review-flow.tsx): the
    page's whole width on the page's own ground, its name a label of the
    look, what waits as rows of Home's kind in the look's card, in the look's
@@ -7400,7 +7406,8 @@ html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws:is([data-ws-tab="stat
 }
 html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs) { display: flex; flex-direction: column; gap: 0.5rem; max-width: none; margin: 0; padding: 0; }
 /* The place's own name bar spans the page too (on the hub as well), so the name starts where the cards do. */
-html[data-skin-wip] #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"]) > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-placebar,
+html[data-skin-wip] #dev-workshop .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"]) > .dev-ws-placebar { max-width: none; margin-inline: 0; }
 html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
   display: grid;
@@ -8876,11 +8883,6 @@ html:not([data-skin]) .wip-head-more > .wip-fold-pill { margin-inline-start: aut
 html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; }
 html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none; transform: none; }
 /* END OF HOME. */
-/* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
-@keyframes wip-hero-drift {
-  from { transform: rotate(0deg) scale(1); }
-  to { transform: rotate(14deg) scale(1.12); }
-}
 @keyframes wip-menu-rise {
   from { opacity: 0; transform: translateY(-4px) scale(0.98); }
   to { opacity: 1; transform: none; }
@@ -8890,10 +8892,6 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
 }
 @keyframes wip-board-link-head {
   to { opacity: 0.75; }
-}
-@keyframes wip-hero-float {
-  from { transform: translateY(-5px); }
-  to { transform: translateY(7px); }
 }
 
 
@@ -20926,26 +20924,10 @@ a.dev-ws-hero-pending {
 .dark .dev-ws-invite-hero-btn { background: #fafafa; color: #18181b; }
 .dark .dev-ws-invite-hero-btn:hover { background: #e4e4e7; }
 .dev-ws-invite-hero-count { margin: 0; font-size: 13px; line-height: 18px; text-align: center; color: var(--text-muted); }
-/* THE HUB IN TWO COLUMNS (request 6654). On a wide window the hub was one
-   760px column with a wide empty margin either side. Its page is 1080px
-   there, and two pairs sit side by side in equal halves: the hero with the
-   Invite card, and For you with Topics. Everything else keeps the full
-   width, in the order it is written. Each pair is side by side only when
-   both are there and adjacent, so a hub without topics, or without the
-   Invite card, is one column as before. Not under a look (`data-skin`),
-   whose kit has a column of its own. */
-@media (min-width: 1100px) {
-  html:not([data-skin]) #dev-workshop:has(> .dev-ws[data-ws-tab="status"]) { max-width: 1080px; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
-    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    column-gap: 16px; align-content: start; align-items: start;
-  }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { grid-column: 1 / -1; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero:has(+ .dev-ws-invite-hero),
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
-}
+/* The hub is one page-wide column of cards under the kit's hub (Standard and
+   Standard (WIP)), with the project's picture beside the hero from 1024px
+   (the hub block's own rules): the two-column pairing with the Invite card
+   and Topics is gone with those cards. */
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense;

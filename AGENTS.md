@@ -374,14 +374,14 @@ is no replay plan to write and nothing to verify locally.
   for and who was active this week, the actions, For you: votes owed, your
   work and the chat's last line, then Recently live; no charts),
   **Needs you** and **Workshop**, a line, then **Channels** (**#general**)
-  under its heading; a topic's channel is reached from the Hub's Topics card
-  and its own address. Place keys are
+  under its heading; a topic's channel is reached from the Workshop and its
+  own address. Place keys are
   `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
   Above Hub, the list's first row is **App**, the project's own app
   (Homeroom's community has none: the platform is its app). On a phone the
   Hub's rows are the way to the places (For you's Needs you, Workshop and
-  #general, then a Topics card, `hub-cards.tsx`): no drawer lists them beside
+  #general): no drawer lists them beside
   the page since 3 Nov 2026. The header's left button goes back to Home from
   the Hub, and up to the Hub from any other place
   (`features/nav-drawer/header-drawer.tsx`); where that header is off, a

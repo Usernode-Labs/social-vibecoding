@@ -74,7 +74,7 @@ import { changeHref } from '../../../lib/change-href';
 import { BuildLine, type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
 import { useTourRunning } from '../../first-session/tour-running';
 import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from '../../first-session/drawn-look';
-import { useLiveSkin } from '../../../lib/skin';
+import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import { firstLookSrc } from '../../first-session/first-look';
 import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-eta';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
@@ -496,14 +496,15 @@ export function NothingToVote({ unclaimed, onOpen, alone = false }: {
   alone?: boolean;
 }): ReactNode {
   const t = useMessages('project');
-  // Standard (WIP): the line is a card of For you's row, shaped as its two
-  // neighbours are (a tile, "Needs you", then this sentence under it).
-  const wipLook = useLiveSkin() === 'wip';
+  // The kit's hub (Standard and Standard (WIP)): the line is a card of For
+  // you's row, shaped as its two neighbours are (a tile, "Needs you", then
+  // this sentence under it).
+  const kitHub = isKitHome(useLiveSkin());
   const claims = Math.max(0, Number(unclaimed) || 0);
   // Under that look the card is always there, so the row keeps its three
   // cards: with nothing waiting it says so.
-  if (alone && !claims && !wipLook) return null;
-  if (wipLook) {
+  if (alone && !claims && !kitHub) return null;
+  if (kitHub) {
     return (
       <div className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">
         <IconTile size="xs"><BallotIcon aria-hidden="true" /></IconTile>

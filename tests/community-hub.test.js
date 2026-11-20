@@ -256,12 +256,14 @@ test('For you\'s Needs you opens the queue and counts the votes owed', () => {
   const outsider = card([row('a', 'Dark mode', 'ada')], false);
   assert.match(outsider, /<p class="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these\.<\/p>/);
   assert.doesNotMatch(needs, /data-ws-hub-needs-none/, 'the door says nothing about an empty queue: it is not drawn then');
-  // #3408: no vote owed, no door. One quiet line says so.
+  // #3408: no vote owed, no vote row. The door is still there, shaped as its
+  // neighbours are, and its line says so (the kit's hub, Standard's too).
   const { NothingToVote, owesVote } = loadTsx(HUB);
   assert.equal(owesVote([]), false);
   const none = renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} }));
-  assert.equal(none, '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
-  assert.match(card([]), /<div class="dev-ws-strip dev-ws-foryou"><p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on\.<\/p><\/div>/);
+  assert.match(none, /^<div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""><div class="[^"]*"><svg[\s\S]*?<\/svg><\/div><span class="wip-hub-door-text"><span class="wip-hub-door-title">Needs you<\/span><span class="wip-hub-door-sub">Nothing more to vote on\.<\/span><\/span><\/div>$/,
+    'the door is there with nothing waiting, and says so');
+  assert.match(card([]), /<div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">/);
 
   // Members & activity is the hero's since #3268, and the fortnight How
   // it's going's: pinned in tests/community-hub-details.test.js.

@@ -124,7 +124,13 @@ test('Share it: a ✕ that closes it, and one line about the invite that is out'
     const presses = [];
     const card = loadTsx(CARD, {
       cache: false,
-      stubs: { './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => presses.push([slug, which])] } },
+      stubs: {
+        './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => presses.push([slug, which])] },
+        // The card is the non-kit looks' (the kit's hub folds Invite and Make
+        // it public into its hero): rendered as "Paper, simplified, with
+        // brand styling" draws it.
+        '../../../lib/skin': { isKitHome: () => false, useLiveSkin: () => 'brand' },
+      },
     });
     for (const slug of Object.keys(records)) await card.reloadCommunity(slug);
     const draw = (slug) => renderToHtml(createElement(card.ShareItCard, { slug, name: 'Garden' }));
@@ -161,7 +167,12 @@ test('the Invite card: its ✕ closes it, and the hero row\'s small Invite is th
   let closed = false;
   const card = loadTsx(CARD, {
     cache: false,
-    stubs: { './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => { closed = true; }] } },
+    stubs: {
+      './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => { closed = true; }] },
+      // The Invite card belongs to the non-kit looks; the kit's hub holds
+      // Invite in its hero (community-card.tsx HeroIdentity).
+      '../../../lib/skin': { isKitHome: () => false, useLiveSkin: () => 'brand' },
+    },
   });
   const drawCard = () => renderToHtml(createElement(card.InviteHeroCard, { slug: 'garden-invite', data: record }));
   assert.match(drawCard(), /^<section class="dev-ws-invite-hero" data-ws-invite-hero="" aria-label="[^"]*"><button type="button" class="dev-ws-card-close un-touch-target" data-ws-card-close="invite" aria-label="Close this card" title="Close this card"><svg[^>]*>/,

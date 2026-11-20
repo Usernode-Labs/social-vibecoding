@@ -99,11 +99,11 @@ import { communityScopeStore, describe as describeCommunity, openSwitcher } from
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, HubCardClose, InviteHeroCard, ShareItCard, approvalStep, canLeave,
+  ApprovalLine, CommunityCard, HeroPicture, HubCardClose, InviteHeroCard, ShareItCard, approvalStep, canLeave,
   communityPending, leaveCommunity, openInviteLinks, reloadCommunity, ruleHasWait, useCommunity,
 } from './community-card';
 import {
-  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
+  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, UpdateCard, hubAlone, owesVote,
 } from './hub-cards';
 import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
@@ -128,7 +128,7 @@ import { weekName, weekRange } from './week-pages';
 import { liveSinceLine } from './hub-cards';
 import { offerJoin } from '../../../lib/join-required';
 import { watchBoardLinks } from './board-links';
-import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { isFrameSkin, isKitHome, useLiveSkin } from '../../../lib/skin';
 import { deskLine, deskWords, useDesk } from '../../ai/desk';
 import { projectTabAddress } from '../../ai/filter-address';
 import { changeHref } from '../../../lib/change-href';
@@ -3123,6 +3123,9 @@ export function DevWorkshop(): ReactNode {
   // AppView is not there to ask.
   // Standard (WIP) folds Invite into the hero's row (no Invite card), and its Workshop door opens the board (below).
   const wipLook = useLiveSkin() === 'wip';
+  // The kit's hub (Standard and Standard (WIP)): one hero card with Invite in
+  // it, and the project's picture in a card beside it.
+  const kitHub = isKitHome(useLiveSkin());
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -3558,8 +3561,7 @@ export function DevWorkshop(): ReactNode {
   const placesInColumn = useMediaFlag(PLACES_COLUMN_QUERY);
   useEffect(() => { setTrayOpen(false); }, [tab, v.slug, placesInColumn]);
   useEffect(() => { if (trayOpen) setTrayShown(true); }, [trayOpen]);
-  // On a phone the Hub's rows lead to the places (../../nav-drawer/nav-drawer.tsx,
-  // ./hub-cards.tsx TopicsCard), and the tray is the wide window's.
+  // On a phone the Hub's rows lead to the places, and the tray is the wide window's.
   const { on: drawerOn } = useStoreState(drawerStore);
   useEdgeSwipe(!placesInColumn && !drawerOn && !trayOpen && !!v.slug && !v.loading, () => {
     trayNav.current = false;
@@ -4119,8 +4121,8 @@ export function DevWorkshop(): ReactNode {
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
           // Invite is the card after this hero (InviteHeroCard), except
-          // under Standard (WIP), where it stays the row's own button.
-          inviteCard={!wipLook}
+          // under the kit's hub, where it stays the hero's own.
+          inviteCard={!kitHub}
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -4186,9 +4188,24 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
+      {/* THE PROJECT'S PICTURE, BESIDE THE HERO (the kit's hub, from
+          1024px): its own card in the hub's first row, the picture its group
+          voted in, or its moving preview, or its icon. Never on Homeroom's
+          own hub, whose hero is the brand's page. See ./community-card.tsx
+          HeroPicture. */}
+      {slug && kitHub && !actions.selfHosted && community?.is_member ? (
+        <HeroPicture
+          slug={slug}
+          name={app.name || community.name || slug}
+          iconUrl={own ? app.iconUrl : null}
+          iconEmoji={own ? app.iconEmoji : null}
+          data={community}
+        />
+      ) : null}
       {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
-          under it on a phone. See ./community-card.tsx InviteHeroCard. */}
-      {slug && !wipLook ? <InviteHeroCard slug={slug} data={community} /> : null}
+          under it on a phone. Not under the kit's hub, whose hero holds it.
+          See ./community-card.tsx InviteHeroCard. */}
+      {slug && !kitHub ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
@@ -4258,12 +4275,6 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
-      {/* TOPICS, at every width (request 6654): each live topic's channel has
-          a row here. It was the phone's alone (3 Nov 2026), a wide window
-          listing them in its sidebar only; now a wide window draws For you
-          and Topics side by side (app.css, "THE HUB IN TWO COLUMNS"). See
-          ./hub-cards.tsx TopicsCard. */}
-      {slug ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its
           last update went down. Nothing on a project nobody has made a

@@ -25,16 +25,16 @@ const WIP_HIDES = [
   'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
   'html:not([data-skin]) #app-list .app-card-people',
-  // A project's hub has no Topics card under the look (asked 18 Nov 2026).
-  'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
   'html[data-skin-wip][data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
   // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.
   'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
-  'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  'html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
   // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
   'html:not([data-skin]) #app-list .app-card-opened',
+  // The project's picture is its own card beside the hero from 1024px, and not drawn under it.
+  'html:not([data-skin]) .dev-ws-hero-pic',
 ];
 
 /**
@@ -254,6 +254,25 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(tokens[0].body, /--wip-btn-font: 'Source Serif 4',/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
+});
+
+test('a project\'s hero wears the same brand background as its pinned card, and its vote count reads in either theme', () => {
+  const css = read('public', 'css', 'app.css');
+  // One picker (pinned-communities.tsx communityScene) chooses the picture:
+  // the hero and the Communities page's pinned card map the six the same way.
+  for (const n of [1, 2, 3, 4, 5, 6]) {
+    const card = css.match(new RegExp(`\\[data-home-community-scene="${n}"\\]::before \\{ background-image: var\\((--wip-scene-[0-9]+)\\); \\}`));
+    const hero = css.match(new RegExp(`\\[data-ws-hero-scene="${n}"\\] \\{ --wip-hero-scene-img: var\\((--wip-scene-[0-9]+)\\); \\}`));
+    assert.ok(card && hero, `scene ${n} is drawn on both the hero and the pinned card`);
+    assert.equal(hero[1], card[1], `scene ${n} is the same picture on the hero as on the card`);
+  }
+  // Homeroom's own hero is the brand's page, not one of the six.
+  assert.match(css, /\[data-ws-hero-scene="home"\] \{\s*[\s\S]*?--wip-hero-bg: var\(--wip-hero-home-bg\);/);
+  assert.match(css, /\[data-ws-hero-scene="home"\] > \.wip-hero-scene \{[^}]*background-image: url\('\/brand\/people\.png'\);/);
+  // The Needs you count is black on cream in the light and the kit's yellow on black in the dark.
+  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \[data-ws-hub-needs\] \.dev-ws-foryou-pill:not\(\.dev-ws-foryou-pill-light\) \{\s*background-color: var\(--wip-vote-pill-bg\);\s*color: var\(--wip-vote-pill-ink\);/, 'the vote count reads the kit\'s own pair');
+  assert.match(css, /--wip-vote-pill-bg: #000000;\s*\n\s*--wip-vote-pill-ink: #fffeea;/, 'light: black with cream text');
+  assert.match(css, /--wip-vote-pill-bg: #ffee6f;\s*\n\s*--wip-vote-pill-ink: #000000;/, 'dark: yellow with black text');
 });
 
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {

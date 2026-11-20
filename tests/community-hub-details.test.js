@@ -102,23 +102,28 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
     await reloadCommunity('garden-solo');
     const menu = createElement('span', { className: 'dev-ws-plus' }, createElement('button', { id: 'dev-plus-btn' }));
     const hero = renderToHtml(createElement(CommunityCard, { slug: 'garden-head', name: 'Garden', iconEmoji: '🌱', menu }));
-    assert.match(hero, /^<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="open">/);
-    assert.match(hero, /<div class="dev-ws-hero-id" data-ws-community-id=""><span class="app-icon-tile dev-ws-hero-tile" data-icon="emoji" aria-hidden="true"><span[^>]*>🌱<\/span><\/span><span class="dev-ws-hero-id-text"><h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience="">Public community<\/span> · 266 members<\/span><\/span><\/div>/,
+    assert.match(hero, /^<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="open" data-ws-hero-scene="(home|[1-6])"><span class="wip-hero-scene" aria-hidden="true"><\/span>/,
+      'the one hero card, on one of the kit\'s backgrounds');
+    assert.match(hero, /<div class="dev-ws-hero-id" data-ws-community-id=""><span class="app-icon-tile dev-ws-hero-tile" data-icon="emoji" aria-hidden="true"><span[^>]*>🌱<\/span><\/span><span class="dev-ws-hero-id-text"><h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="wip-hub-meta"><span class="wip-hub-meta-kind" data-audience="open">[\s\S]*?<span class="dev-ws-hero-audience" data-ws-community-audience="">Public community<\/span><\/span><span class="wip-hub-meta-people">[\s\S]*?266 members<\/span>/,
       'the tile and the name over who it is for and how many are in it');
     const at = (needle) => hero.indexOf(needle);
     const order = ['data-ws-community-id=""', 'data-ws-community-description=""', 'data-ws-active-people="40"', 'class="dev-ws-hero-row"'].map(at);
     assert.ok(order.every((n) => n > 0), JSON.stringify(order));
     assert.deepEqual([...order].sort((a, b) => a - b), order, 'what it is, what it is for, who is around, then what you can do');
-    assert.match(hero, /<div class="dev-ws-hero-actions"><button[^>]*data-ws-community-invite=""[^>]*>Invite<\/button><span class="dev-ws-plus"><button id="dev-plus-btn"><\/button><\/span><\/div>/,
-      'Invite, then the ⋯, last');
+    const meta = hero.slice(hero.indexOf('class="wip-hub-meta"'), hero.indexOf('class="dev-ws-hero-desc"'));
+    assert.match(meta, /data-ws-community-invite=""[\s\S]*?Invite<\/button>/, 'Invite ends the line about who is here');
+    assert.match(hero, /<div class="dev-ws-hero-actions"><span class="dev-ws-plus"><button id="dev-plus-btn"><\/button><\/span><\/div>/,
+      'the ⋯ is the row\'s own, alone, in the card\'s corner');
     assert.doesNotMatch(hero, /data-ws-members-trend|shipped this month/, 'no chart and nothing about what shipped');
     // Just you: the label alone under the name, and nobody else to name.
-    // #4896: to its one member it is "Just you so far", and Invite is in
-    // the row of what they can do (it was the Share it card's alone).
+    // #4896: to its one member it is "Just you so far", and Invite is the
+    // line's own (it was the Share it card's alone).
     const solo = renderToHtml(createElement(CommunityCard, { slug: 'garden-solo', name: 'Garden', menu }));
-    assert.match(solo, /<h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience="">Just you so far<\/span><\/span>/);
-    assert.match(solo, /<div class="dev-ws-hero-actions"><button[^>]*data-ws-community-invite=""[^>]*>Invite<\/button><span class="dev-ws-plus"><button id="dev-plus-btn"><\/button><\/span><\/div>/,
-      'Invite, then the ⋯');
+    assert.match(solo, /<h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="wip-hub-meta"><span class="wip-hub-meta-kind" data-audience="solo">[\s\S]*?<span class="dev-ws-hero-audience" data-ws-community-audience="">Just you so far<\/span><\/span>/);
+    assert.doesNotMatch(solo, /wip-hub-meta-people/, 'nobody else to name');
+    assert.match(solo, /data-ws-community-invite=""[\s\S]*?Invite<\/button>/, 'Invite is the line\'s own');
+    assert.match(solo, /<div class="dev-ws-hero-actions"><span class="dev-ws-plus"><button id="dev-plus-btn"><\/button><\/span><\/div>/,
+      'the row is the ⋯ alone');
     assert.doesNotMatch(solo, /data-ws-active-people/, 'no faces: nobody else to name');
     // Somebody outside it (an admin's look) is still deciding: the project
     // card (the hand-off of 11 Nov 2026), its people card reading the
@@ -225,10 +230,10 @@ test('one hub from the first day: a new project leads with its tile and name, an
     const menu = createElement('span', { className: 'dev-ws-plus' }, createElement('button', { id: 'dev-plus-btn' }));
     const draw = (slug) => renderToHtml(createElement(CommunityCard, { slug, name: 'Garden', iconEmoji: '🌱', menu, canOpenApp: true }));
     const fresh = draw('garden-new');
-    assert.match(fresh, /^<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="solo">/,
+    assert.match(fresh, /^<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="solo" data-ws-hero-scene="[1-6]">/,
       'the hub\'s head, as on every project');
-    assert.match(fresh, /<div class="dev-ws-hero-id" data-ws-community-id=""><span class="app-icon-tile dev-ws-hero-tile" data-icon="emoji" aria-hidden="true">[\s\S]*?<h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience="">Just you so far<\/span><\/span><\/span><\/div><p class="dev-ws-hero-desc" data-ws-community-description="">Seeds, swaps and Sunday digs\.<\/p><div class="dev-ws-hero-row"><div class="dev-ws-hero-actions"><button[^>]*data-ws-community-open-app=""[\s\S]*?<\/button><button[^>]*data-ws-community-invite=""[^>]*>Invite<\/button><span class="dev-ws-plus">/,
-      'its tile and name over "Just you so far", its description, then Open app, Invite and the ⋯');
+    assert.match(fresh, /<div class="dev-ws-hero-id" data-ws-community-id=""><span class="app-icon-tile dev-ws-hero-tile" data-icon="emoji" aria-hidden="true">[\s\S]*?<h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="wip-hub-meta"><span class="wip-hub-meta-kind" data-audience="solo">[\s\S]*?<span class="dev-ws-hero-audience" data-ws-community-audience="">Just you so far<\/span><\/span>[\s\S]*?data-ws-community-invite=""[\s\S]*?Invite<\/button><\/span><\/span><\/span><\/div><p class="dev-ws-hero-desc" data-ws-community-description="">Seeds, swaps and Sunday digs\.<\/p><div class="dev-ws-hero-row"><div class="dev-ws-hero-actions"><button[^>]*data-ws-community-open-app=""[\s\S]*?<\/button><span class="dev-ws-plus">/,
+      'its tile and name over "Just you so far" and Invite, its description, then Open app and the ⋯');
     assert.doesNotMatch(fresh, /data-ws-active-people|dev-ws-hero-week|data-ws-seats/, 'nobody else to name, and no first week\'s row');
     // A link out does not make it a private community: somebody joining does.
     const link = draw('garden-new-link');
@@ -236,7 +241,7 @@ test('one hub from the first day: a new project leads with its tile and name, an
     assert.doesNotMatch(link, /Private community|data-ws-seats|dev-ws-hero-seat/);
     // A group in its first week reads as any group does: who is around too.
     const group = draw('garden-new-group');
-    assert.match(group, /data-ws-community-audience="">Private community<\/span> · 3 members<\/span>/);
+    assert.match(group, /data-ws-community-audience="">Private community<\/span><\/span><span class="wip-hub-meta-people">[\s\S]*?3 members<\/span>/);
     assert.match(group, /data-ws-active-people="3"/, 'who is around, with other people in it');
     // Nobody else in it yet: nobody else to name, whatever its audience.
     assert.doesNotMatch(draw('garden-new-alone'), /data-ws-active-people/);
@@ -296,14 +301,15 @@ test('For you: Needs you counts the votes you owe, not the requests nobody has c
   assert.equal(owesVote(claims), false, 'requests alone owe no vote');
   assert.equal(owesVote([...claims, row('v1', 'Dark mode', 'vote')]), true);
   const claimsOnly = renderToHtml(createElement(NothingToVote, { unclaimed: 2, onOpen: () => {} }));
-  assert.match(claimsOnly, /^<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button type="button" class="dev-ws-link un-touch-target" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/p>$/);
-  assert.doesNotMatch(claimsOnly, /dev-ws-foryou-pill|Needs you/, 'no row, no count');
+  assert.match(claimsOnly, /^<div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">[\s\S]*<span class="wip-hub-door-sub">Nothing more to vote on · <button type="button" class="dev-ws-link un-touch-target" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/span><\/span><\/div>$/,
+    'the door keeps its line, and the requests are the way to them');
+  assert.doesNotMatch(claimsOnly, /dev-ws-foryou-pill|data-ws-hub-needs-votes/, 'no row, no count');
   const one = renderToHtml(createElement(NothingToVote, { unclaimed: 1, onOpen: () => {} }));
   assert.match(one, />1 request nobody has picked up</);
   assert.match(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} })), />Nothing more to vote on\.</);
   // In the card, that line is the Needs you place's own, counted from
   // `unclaimed` and opening the Workshop, where the requests are.
-  assert.match(card([], { unclaimed: 2 }), /<div class="dev-ws-strip dev-ws-foryou"><p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button[^>]*data-ws-hub-needs-requests="">2 requests nobody has picked up</);
+  assert.match(card([], { unclaimed: 2 }), /<div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">[\s\S]*<button[^>]*data-ws-hub-needs-requests="">2 requests nobody has picked up</);
   assert.doesNotMatch(card(claims), /requests? nobody has picked up/, 'queue rows are not requests any more');
 });
 

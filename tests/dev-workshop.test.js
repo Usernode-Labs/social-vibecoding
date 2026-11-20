@@ -3910,9 +3910,11 @@ test('the ⋯ is the hub hero’s: once, at the end of its actions, and no page 
     assert.ok(!workshopHtml(AppView, tab).includes('id="dev-plus-btn"'), `${tab}: no ⋯ of its own`);
   }
   const html = await heroWithMenu({ onLeave: () => {}, appName: 'Garden' });
+  // The kit's hub holds Invite in the line about who is here, and the ⋯ ends
+  // the actions (the standard look draws the same hub).
   assert.match(html,
-    /<div class="dev-ws-hero-row"><div class="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[^>]*>Invite<\/button><div class="dev-ws-plus ?"><button id="dev-plus-btn"/,
-    'Invite, then the ⋯, ending the actions');
+    /data-ws-community-invite=""[\s\S]*?>Invite<\/button>[\s\S]*?<div class="dev-ws-hero-row"><div class="dev-ws-hero-actions">[\s\S]*?<div class="dev-ws-plus ?"><button id="dev-plus-btn"/,
+    'Invite ends the line about who is here, then the ⋯ ends the actions');
   assert.equal(html.split('id="dev-plus-btn"').length - 1, 1, 'one ⋯');
   // The menu comes with it, leading with the ask, then Settings & rules.
   assert.match(html, /id="dev-plus-menu"[\s\S]*?data-plus="issue"[\s\S]*?>Suggest an improvement<[\s\S]*?data-plus-group="settings"/);

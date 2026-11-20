@@ -214,26 +214,27 @@ test('a title\'s plain words have their own span, and a project\'s name is one s
   assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html:not\(\[data-skin\]\) #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
 });
 
-test('Standard (WIP): a project\'s hub folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
+test('The kit\'s hub (Standard and Standard (WIP)) folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  // No Invite card and no Share it card under the look: both actions are the hero's.
-  assert.match(ws, /const wipLook = useLiveSkin\(\) === 'wip';/);
-  assert.match(ws, /inviteCard=\{!wipLook\}/);
-  assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
-  assert.match(card, /\{wipLook \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
+  // No Invite card and no Share it card under the kit's hub: both actions are the hero's.
+  assert.match(ws, /const kitHub = isKitHome\(useLiveSkin\(\)\);/);
+  assert.match(ws, /inviteCard=\{!kitHub\}/);
+  assert.match(card, /if \(kitHub\) return null;/, 'Share it is not drawn under the look');
+  assert.match(card, /\{kitHub \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
   assert.match(card, /function WipHeroPublic\([^)]*\): ReactNode \{\s*if \(data\.audience !== 'solo' \|\| !data\.can_manage \|\| data\.audience_change\) return null;\s*return <MakePublic /, 'Make it public is offered to exactly whom Share it offers it');
   // Invite ends the line about who is here, for a member, and opens the same pane.
   assert.match(card, /\{member \? \(\s*<button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title=\{t\('project:communityCard\.invite\.title'\)\} onClick=\{openInviteLinks\}>/);
-  assert.match(card, /\{wipLook \? null : \(\s*<>\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(/, 'one Invite on the page');
-  // The hero's scenery is for show.
-  assert.match(card, /<span className="wip-hero-wash" aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
+  assert.match(card, /\{kitHub \? null : \(\s*<>\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(/, 'one Invite on the page');
+  // The hero wears one of the brand kit's six backgrounds (for show), and
+  // Homeroom's own hero is the brand's page.
+  assert.match(card, /\{kitHub \? <span className="wip-hero-scene" aria-hidden="true" \/> : null\}/);
+  assert.match(card, /data-ws-hero-scene=\{kitHub \? \(canOpenApp === false \? 'home' : String\(communityScene\(slug\)\)\) : undefined\}/);
   // Needs you stays in the row with nothing waiting, shaped as its neighbours.
-  assert.match(hub, /if \(alone && !claims && !wipLook\) return null;/);
+  assert.match(hub, /if \(alone && !claims && !kitHub\) return null;/);
   assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin-wip\] #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
   assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/, 'For you is three across from 768px');
 });
 

@@ -19,8 +19,9 @@
 //     stands, in the build line the made screen and the App tab draw
 //     ("Building it", #4053: never "Step 4 of 7: Build it", which read as an
 //     instruction), and opens the bot's chat when the bot waits on its maker;
-//   - "Nothing more to vote on." is a zero nobody else could change, so a
-//     project nobody else is in leaves it out;
+//   - "Nothing more to vote on." is a door of For you's row under the kit's
+//     hub (Standard and Standard (WIP)), and a zero the other looks leave
+//     out on a project nobody else is in;
 //   - an empty Your work says how to change something there, or leaves the
 //     hub while the first version or the start-here banner already says
 //     what is next;
@@ -195,14 +196,26 @@ test('nothing being built, or no record yet: no card', () => {
   assert.equal(hub.FIRST_VERSION_POLL_MS, 15000);
 });
 
-test('"Nothing more to vote on." is a zero on a project nobody else is in', () => {
+test('"Nothing more to vote on." is the kit hub\'s door, and a zero on the other looks', () => {
   const { NothingToVote, hubAlone } = hub;
-  assert.equal(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {}, alone: true })), '');
+  // The kit's hub (Standard and Standard (WIP)) keeps three doors, so Needs
+  // you is there with nothing waiting, and says so.
+  const door = renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {}, alone: true }));
+  assert.match(door, /^<div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">[\s\S]*<span class="wip-hub-door-title">Needs you<\/span><span class="wip-hub-door-sub">Nothing more to vote on\.<\/span><\/span><\/div>$/,
+    'a project nobody else is in: the door says so');
   const one = renderToHtml(createElement(NothingToVote, { unclaimed: 1, onOpen: () => {}, alone: true }));
-  assert.match(one, /^<p class="dev-ws-week-note" data-ws-hub-needs-none=""><button[^>]*data-ws-hub-needs-requests="">1 request nobody has picked up<\/button><\/p>$/,
+  assert.match(one, /data-ws-hub-needs-requests="">1 request nobody has picked up<\/button>/, 'a request still waiting is still the way to it');
+  // The looks that keep the standard cards (brand, paper) draw the plain
+  // line, and there a zero says nothing.
+  const plain = loadTsx(HUB, {
+    cache: false,
+    stubs: { '../../../lib/skin': { isKitHome: () => false, useLiveSkin: () => 'brand' } },
+  }).NothingToVote;
+  assert.equal(renderToHtml(createElement(plain, { unclaimed: 0, onOpen: () => {}, alone: true })), '');
+  assert.match(renderToHtml(createElement(plain, { unclaimed: 1, onOpen: () => {}, alone: true })),
+    /^<p class="dev-ws-week-note" data-ws-hub-needs-none=""><button[^>]*data-ws-hub-needs-requests="">1 request nobody has picked up<\/button><\/p>$/,
     'a request still waiting is still the way to it');
-  // A project with people in it: as it was (#3408).
-  assert.equal(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} })),
+  assert.equal(renderToHtml(createElement(plain, { unclaimed: 0, onOpen: () => {} })),
     '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
   assert.equal(hubAlone(community()), true, 'Just you');
   assert.equal(hubAlone(community({ audience: 'open', audience_label: 'Public community', member_count: 1 })), true,
@@ -228,11 +241,11 @@ test('For you on a project nobody else is in: the Workshop and the Discussion fr
   }));
   const html = card();
   // (React hoists the bot's mark ahead of the card as a preload hint.)
-  assert.match(html, /^(?:<link rel="preload"[^>]*\/>)?<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><button [^>]*data-ws-workshop-row="">/,
-    'no Needs you line: nothing needs you, and nobody else could put a vote up; the Workshop leads');
+  assert.match(html, /^(?:<link rel="preload"[^>]*\/>)?<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">/,
+    'Needs you is a door of the row, saying nothing more is waiting: nobody else could put a vote up');
   assert.match(html, /data-ws-channel="preview" data-ws-channel-open=""[\s\S]*<span data-ws-channel-empty="">No messages yet\.<\/span>/,
     'and the Discussion, a door to the room, saying so');
-  assert.doesNotMatch(html, /data-ws-hub-needs|Nothing more to vote on|data-ws-mine-empty="(bot|menu)"|tell Homeroom bot|Say hi/);
+  assert.doesNotMatch(html, /data-ws-hub-needs-votes|data-ws-mine-empty="(bot|menu)"|tell Homeroom bot|Say hi/);
   // A vote waiting on you: Needs you leads.
   const vote = { t: 'card', key: 'v1', kind: 'vote', card: { title: { text: 'Dark mode' } } };
   assert.match(card({ queue: [vote] }), /<div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="1">/);

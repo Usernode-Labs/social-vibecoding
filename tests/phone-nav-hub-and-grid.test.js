@@ -9,10 +9,10 @@
 // where it switches community. These pin the two halves of that:
 //
 //   - the Hub's rows: For you's Workshop row, always there for a signed-in
-//     viewer and named for the place it opens, and a Topics card, a row a
-//     live topic, each opening its channel (frontend/src/features/dev-board/
-//     workshop/hub-cards.tsx TopicsCard, drawn by ./workshop.tsx on a phone
-//     only);
+//     viewer and named for the place it opens (frontend/src/features/
+//     dev-board/workshop/hub-cards.tsx). The Topics card stays exported for
+//     the screens that still draw it, but the hub draws none (20 Nov 2026:
+//     a topic's channel is reached from its own address);
 //   - All communities as a grid on a phone (frontend/src/features/workshop/
 //     index.tsx CommunityTile), whose tile is a door to the Hub.
 //
@@ -44,19 +44,16 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   assert.equal(message('project:hub.topics.title'), 'Topics');
 
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  // At every width: a wide window draws it beside For you, in two columns.
-  assert.match(ws, /\{slug \? <TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/> : null\}/,
-    'at every width, not the phone alone');
-  const css = read('public/css/app.css');
-  assert.match(css, /@media \(min-width: 1100px\) \{\s*html:not\(\[data-skin\]\) #dev-workshop:has\(> \.dev-ws\[data-ws-tab="status"\]\) \{ max-width: 1080px; \}/, 'a wider page on a wide window');
-  assert.match(css, /> \[data-ws-hub-for-you\] \+ \[data-ws-hub-topics\] \{ grid-column: 2; \}/, 'Topics beside For you');
-  assert.match(css, /> \.dev-ws-hero \+ \.dev-ws-invite-hero,/, 'the Invite card beside the hero');
+  // The hub draws no Topics card any more (20 Nov 2026): a topic's channel
+  // is reached from its own address and from the Workshop. The component
+  // stays exported for the screens that still draw it.
+  assert.doesNotMatch(ws, /<TopicsCard\b/);
   // The Invite card: a member's, where other people are in, opening the invite pane.
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   assert.match(card, /export function showsInviteHero\(data: CommunityPayload \| null \| undefined\): boolean \{\s*if \(!data \|\| !data\.is_member \|\| data\.audience === 'solo'\) return false;\s*return \(Number\(data\.member_count\) \|\| 0\) > 1;/);
   assert.match(card, /className="dev-ws-invite-hero-btn"\s+data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}/);
-  // Not under Standard (WIP), where Invite stays the hero row's own button.
-  assert.match(ws, /\{slug && !wipLook \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
+  // Not under the kit's hub (Standard and Standard (WIP)), whose hero holds Invite.
+  assert.match(ws, /\{slug && !kitHub \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
   assert.equal(message('project:hub.invite.button'), 'Invite people');
   // Request 6687: the card's ✕ closes it (hub-dismissed.ts), and the hero
   // row's small Invite is then the way in.

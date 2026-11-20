@@ -86,9 +86,10 @@ import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type Invi
 import { hubShot, hubShotPayload } from './hub-shot';
 import { useHubDismissed } from './hub-dismissed';
 import { changeHref } from '../../../lib/change-href';
-import { useLiveSkin } from '../../../lib/skin';
+import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import type { ApprovalPayload } from '../../who-decides/model';
-import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, type ProjectCover } from '../../guest/project-card';
+import { communityScene } from '../../home/pinned-communities';
+import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, ProjectPreview, type ProjectCover } from '../../guest/project-card';
 import type { GuestApp } from '../../guest/guest-data';
 
 type Audience = 'open' | 'invited' | 'solo';
@@ -708,9 +709,10 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
   const solo = data.audience === 'solo';
   const count = Number(data.member_count) || 0;
   const t = useMessages('project');
-  // Standard (WIP): who it is for and who is in it are two things on the
-  // line, each with its own mark, in place of one run of words.
-  const wipLook = useLiveSkin() === 'wip';
+  // The kit's hub (Standard, and Standard (WIP)): who it is for and who is in
+  // it are two things on the line, each with its own mark, in place of one
+  // run of words.
+  const kitHub = isKitHome(useLiveSkin());
   return (
     <div className="dev-ws-hero-id" data-ws-community-id="">
       <span className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
@@ -719,7 +721,7 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
       <span className="dev-ws-hero-id-text">
         <h1 className="dev-ws-hero-name" data-ws-community-name="">{name}</h1>
         <span className="dev-ws-hero-id-sub" data-ws-members-cell="members">
-          {wipLook ? (
+          {kitHub ? (
             // One line that ends in its own next step: what kind of
             // community, who is in it, and the open seat that invites the
             // next person (the hero's Invite, for a member).
@@ -1014,8 +1016,10 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
 }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
-  // Standard (WIP) draws the hero as a poster, with the project's picture at its side.
-  const wipLook = useLiveSkin() === 'wip';
+  // The kit's hub (Standard and Standard (WIP)) draws the hero as a card on
+  // one of the brand kit's backgrounds, with the project's picture beside it
+  // (HeroPicture, drawn by the page).
+  const kitHub = isKitHome(useLiveSkin());
   // The invite link this page was opened from, if it was (#3700).
   const offer = useInviteOffer(slug);
   // The Invite card's ✕ (InviteHeroCard): once closed, the row's small
@@ -1325,28 +1329,18 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       className="dev-ws-hero dev-ws-hero-summary"
       data-ws-community=""
       data-audience={data.audience}
+      // The kit's hub: the hero wears one of the brand kit's six backgrounds,
+      // the same one as this community's pinned card on the Communities page
+      // (app.css maps it). Homeroom's own hero is the brand's page.
+      data-ws-hero-scene={kitHub ? (canOpenApp === false ? 'home' : String(communityScene(slug))) : undefined}
       // Lifted while the popup is open: the popup hangs below the hero, over
       // the card after it.
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {inviteHead}
-      {/* Standard (WIP): the hero is a poster. At its side, for show only, the
-          project's own picture (the one its group voted in for its card)
-          when it has one, and its icon again, large, in front of it. */}
-      {wipLook ? (
-        <>
-          <span className="wip-hero-wash" aria-hidden="true" />
-          <span className="wip-hero-art" aria-hidden="true">
-            <span className="wip-hero-rings" />
-            <span className="wip-hero-stage">
-              {data.cover?.illustration_url ? <img className="wip-hero-art-pic" src={data.cover.illustration_url} alt="" loading="lazy" /> : null}
-              <span className="app-icon-tile wip-hero-art-icon" data-icon={appIconKind({ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null })}>
-                <AppIconContent app={{ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null }} />
-              </span>
-            </span>
-          </span>
-        </>
-      ) : null}
+      {/* The kit's hub: the hero wears the brand kit's background for this
+          community, fading into the card toward its words (app.css). */}
+      {kitHub ? <span className="wip-hero-scene" aria-hidden="true" /> : null}
       {/* WHAT IT IS AND WHO IT IS FOR: the tile and the name, the page's one
           large heading, over "Public community · 266 members", or "Just you
           so far" to the one person in a project that is just theirs. */}
@@ -1371,10 +1365,10 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
         {appButton}
-        {/* Standard (WIP): "Make it public" beside Open app (WipHeroPublic). */}
-        {wipLook ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
-        {/* Standard (WIP) has Invite on the line about who is here (HeroIdentity). */}
-        {wipLook ? null : (
+        {/* The kit's hub: "Make it public" beside Open app (WipHeroPublic). */}
+        {kitHub ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
+        {/* The kit's hub has Invite on the line about who is here (HeroIdentity). */}
+        {kitHub ? null : (
           <>
         {member && !(inviteCard && showsInviteHero(data) && !inviteClosed) ? (
           <Button
@@ -1406,6 +1400,30 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
         </a>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * THE PROJECT'S PICTURE, BESIDE THE HERO (the kit's hub, from 1024px): its
+ * own card in the hub's first row, holding the picture its group voted in,
+ * its moving preview where it has one, and its icon when it has neither
+ * (ProjectPreview falls back to the icon). For show only, so a screen reader
+ * skips it. Drawn only for a member of a project (the summary hero's own
+ * branch), and never on Homeroom's own hub (the page leaves it out).
+ */
+export function HeroPicture({ slug, name, iconUrl = null, iconEmoji = null, data }: {
+  slug: string;
+  name: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+  data: CommunityPayload | null | undefined;
+}): ReactNode {
+  if (!data) return null;
+  const app: GuestApp = { slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
+  return (
+    <aside className="dev-ws-hero-pic" data-ws-hero-pic="" aria-hidden="true">
+      <ProjectPreview app={app} cover={data.cover} />
+    </aside>
   );
 }
 
@@ -1566,11 +1584,11 @@ export function HubCardClose({ onClose, card }: { onClose: () => void; card: str
 export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
-  // Standard (WIP) has both of its actions in the hero (CommunityCard).
-  const wipLook = useLiveSkin() === 'wip';
+  // The kit's hub has both of its actions in the hero (CommunityCard).
+  const kitHub = isKitHome(useLiveSkin());
   const [closed, close] = useHubDismissed(slug, 'share');
   if (!data || data.audience !== 'solo' || closed) return null;
-  if (wipLook) return null;
+  if (kitHub) return null;
   const canInvite = !!data.is_member;
   const canOpenUp = !!data.can_manage && !data.audience_change;
   if (!canInvite && !canOpenUp) return null;
