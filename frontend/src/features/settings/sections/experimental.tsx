@@ -33,9 +33,9 @@ import { InterfaceModeControl } from '../interface-mode-control';
  *
  * Look (default Standard, kept on the DEVICE by the head's window.Skin,
  * src/head.html) offers the looks (lib/skin.ts MENU_SKINS), three with
- * Standard since 20 Nov 2026. `wip`, "Homeroom brand kit V2 (WIP)", is the
+ * Standard since 20 Nov 2026. `wip`, "Homeroom brand kit (WIP)", is the
  * standard look with the changes still being tried on it, drawn with the
- * brand kit's second token set (data-skin-wip on <html>). `brand` keeps the
+ * brand kit's token set (data-skin-wip on <html>). `brand` keeps the
  * standard pages and redraws them in the website's colours and typefaces
  * (data-skin="brand"). Both are drawn in light and dark. The menu is an
  * admin's preview while the looks are drawn screen by screen:
@@ -66,7 +66,7 @@ export function ExperimentalSection() {
           <Label className="mb-1" htmlFor="settings-look">{t('settings:experimental.look.label')}</Label>
           <Select id="settings-look" variant="plain">
             <option value="">{t('settings:experimental.look.standard')}</option>
-            <option value="wip">{t('settings:experimental.wipTokens.brand2')}</option>
+            <option value="wip">{t('settings:experimental.wipTokens.brand')}</option>
             <option value="brand">{t('settings:experimental.look.brand')}</option>
           </Select>
           <p className="ui-hint text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">

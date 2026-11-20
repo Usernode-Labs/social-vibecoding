@@ -5973,34 +5973,19 @@ html[data-skin-wip] {
 }
 /* ── The token set that draws the look ──────────────────────
    The rule above is the list every value starts from. The look is drawn
-   with one set of other values over it, on html[data-wip-tokens="brand2"],
+   with one set of other values over it, on html[data-wip-tokens="brand"],
    which the head sets whenever the look is on (head.html, WIP_TOKENS).
    Three more drawings were tried and removed on 20 Nov 2026: the list
-   above on its own, the brand kit's first drawing and Highlighter. Only
+   above on its own, the brand kit's second drawing and Highlighter. Only
    the values differ: no rule of the look knows which set is on.
 
-   BRAND2 ("Homeroom brand kit V2"): Homeroom's brand kit (Baked Design
-   Studio, 2026), with more of its voice (confident, playful, simple) than
-   its first drawing had, and with its colours used small.
-   Cream and white carry the page; yellow and green are marks, never
-   grounds (as blocks behind a whole row they shouted):
-     Cream   the page, and the frame round it.
-     White   every card, with no outline: it lifts off the cream on a soft
-             shadow.
-     Yellow  a highlighter: a stroke through the lower half of each section
-             title's words, and, pale, the mark of where you are in the
-             sidebar. Never a ground behind a row.
-     Green   what a challenge is worth: a small pale ground behind its
-             points, and a thing done.
-     Blue    getting somewhere: a meter's fill, and the disc under a
-             title's chevron.
-   What is pressed is the kit's Cream + Black: the filled action, the Vote
-   pill and the count beside a title.
-   Section titles are headlines, in the kit's serif role (Young Serif stands
-   in for the licensed STK Bureau Serif, as Source Serif does on the kit's
-   own page), sentence case, in the ink. The filled action is Cream + Black.
-   Interface text is Geist. */
-html[data-skin-wip][data-wip-tokens="brand2"] {
+   BRAND: Homeroom's brand kit (Baked Design Studio, 2026). Cream is the
+   page and black the ink; yellow is the filled action and a count, with
+   black on it; blue marks what asks for the viewer, also under black (the
+   kit's own contrast table: black on blue 6.2:1, white would fail). Type is
+   Geist, the kit's typeface for interface text; its serif is for headlines,
+   and Home has none. */
+html[data-skin-wip][data-wip-tokens="brand"] {
   /* The kit's three colours as the marks icons take turns in: each a pale
      wash of the colour (a quarter of it, or less, over the card) with the
      glyph in a deep tone of the same colour. */
@@ -6012,76 +5997,84 @@ html[data-skin-wip][data-wip-tokens="brand2"] {
   --wip-mark-3-ink: #2f6b1e;
   --wip-page-bg: #fffeea;
   --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --wip-label-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
-  --wip-label-size: 1.375rem;
-  --wip-label-case: none;
-  --wip-label-track: -0.01em;
-  --wip-label-weight: 400;
-  --wip-label-ink: #000000;
-  --wip-hub-name-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
-  --wip-hub-name-weight: 400;
   --wip-card-bg: #ffffff;
-  --wip-card-line: rgb(0 0 0 / 0.07);
-  --wip-card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 14px 28px -18px rgb(0 0 0 / 0.28);
+  --wip-card-line: rgb(0 0 0 / 0.1);
   --wip-ink: #000000;
-  --wip-ink-soft: rgb(0 0 0 / 0.74);
-  --wip-ink-muted: rgb(0 0 0 / 0.62);
+  --wip-ink-soft: rgb(0 0 0 / 0.72);
+  --wip-ink-muted: rgb(0 0 0 / 0.6);
   --wip-ink-action: #000000;
-  --wip-icon-shadow: 0 1px 0 rgb(0 0 0 / 0.08), 0 8px 16px -8px rgb(0 0 0 / 0.2);
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 6px 14px -6px rgb(0 0 0 / 0.16);
+  /* The filled action is the kit's Cream + Black: yellow on a cream page
+     would be the quietest thing on it. */
   --wip-cta-from: #000000;
   --wip-cta-via: #000000;
   --wip-cta-to: #000000;
   --wip-cta-ink: #fffeea;
-  --wip-cta-glow: rgb(0 0 0 / 0.24);
-  --wip-label-mark: #ffee6f;
-  --wip-pill-bg: #000000;
-  --wip-pill-ink: #fffeea;
-  --wip-count-bg: #000000;
-  --wip-count-ink: #fffeea;
+  --wip-cta-glow: rgb(0 0 0 / 0.22);
+  /* The page's top action is the brand look's sun pill (asked 19 Nov 2026): yellow, an ink outline and a hard edge under it that a press takes up. */
+  /* Communities stands on the kit's green, pale (asked 19 Nov 2026): the page is told apart from Home's cream at a glance. */
+  --wip-page-bg-communities: #eef5e9;
+  --wip-top-cta-bg: #ffee6f;
+  --wip-top-cta-ink: #121a0e;
+  --wip-top-cta-weight: 700;
+  --wip-top-cta-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
+  --wip-top-cta-edge-down: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
+  --wip-top-cta-lift: none;
+  --wip-top-cta-press: translateY(2px);
+  /* The fold button is the brand look's outlined pill, the sun pill's quiet sibling: white, an ink outline and a hard edge under it; yellow under the pointer. */
+  --wip-fold-bg: #ffffff;
+  --wip-fold-bg-on: #ffee6f;
+  --wip-fold-ink: #121a0e;
+  --wip-fold-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
+  --wip-fold-edge-down: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
+  --wip-fold-press: translateY(2px);
+  --wip-pill-bg: #3090e1;
+  --wip-pill-ink: #000000;
+  --wip-count-bg: #ffee6f;
+  --wip-count-ink: #000000;
+  --wip-count-line: rgb(0 0 0 / 0.2);
   --wip-meter: #3090e1;
-  --wip-worth-bg: rgb(169 207 151 / 0.5);
-  --wip-worth-ink: #000000;
-  --wip-ok: #2f6b1e; /* the kit's green, deepened to carry words on white */
-  --wip-head-disc: rgb(48 144 225 / 0.16);
+  /* The shell's own marks on a page of this config: where you are, in the
+     kit's ink on a wash of it, not the standard blue. */
   --lit-ink: #000000;
-  --lit-tint: #fcfab3; /* the kit's pale yellow marks where you are */
+  --lit-tint: rgb(0 0 0 / 0.07);
   --lit-line: rgb(0 0 0 / 0.14);
 }
-/* In the dark: cream on black, lifted by an edge and not a shadow, with the
-   same small marks. */
-html[data-skin-wip][data-wip-tokens="brand2"].dark {
+/* In the dark it is the kit's other pairing, cream on black. */
+html[data-skin-wip][data-wip-tokens="brand"].dark {
   --wip-mark-1-bg: rgb(255 238 111 / 0.16);
   --wip-mark-1-ink: #ffee6f;
   --wip-mark-2-bg: rgb(48 144 225 / 0.2);
   --wip-mark-2-ink: #8cc4ff;
   --wip-mark-3-bg: rgb(169 207 151 / 0.18);
   --wip-mark-3-ink: #a9cf97;
-  --wip-page-bg: #0b0b0c;
-  --wip-label-ink: #fffeea;
+  --wip-page-bg: #0b0b0c; /* the shell's own dark ground, so the page and its frame are one black */
   --wip-card-bg: #171715;
-  --wip-card-line: rgb(255 254 234 / 0.16);
-  --wip-card-shadow: 0 0 transparent;
+  --wip-card-line: rgb(255 254 234 / 0.14);
   --wip-ink: #fffeea;
-  --wip-ink-soft: rgb(255 254 234 / 0.8);
-  --wip-ink-muted: rgb(255 254 234 / 0.64);
+  --wip-ink-soft: rgb(255 254 234 / 0.78);
+  --wip-ink-muted: rgb(255 254 234 / 0.62);
   --wip-ink-action: #fffeea;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
+  /* On black the filled action is the kit's Black + Yellow. */
   --wip-cta-from: #ffee6f;
   --wip-cta-via: #ffee6f;
   --wip-cta-to: #ffee6f;
   --wip-cta-ink: #000000;
   --wip-cta-glow: rgb(255 238 111 / 0.18);
-  --wip-label-mark: rgb(255 238 111 / 0.32);
-  --wip-pill-bg: #fffeea;
-  --wip-pill-ink: #000000;
-  --wip-count-bg: #fffeea;
-  --wip-count-ink: #000000;
-  --wip-worth-bg: rgb(169 207 151 / 0.22);
-  --wip-worth-ink: #fffeea;
-  --wip-ok: #a9cf97;
-  --wip-head-disc: rgb(48 144 225 / 0.28);
+  /* In the dark the sun pill is a shade deeper and has no edge, as the brand look's is. */
+  --wip-page-bg-communities: #0c120b; /* the same green, a breath of it on black */
+  --wip-top-cta-bg: #f3d920;
+  --wip-top-cta-edge: 0 0 0 transparent;
+  --wip-top-cta-edge-down: 0 0 0 transparent;
+  --wip-fold-bg: #171715;
+  --wip-fold-bg-on: #2a2a25; /* a step lighter under the pointer: cream words would not read on the yellow */
+  --wip-fold-ink: #fffeea;
+  --wip-fold-edge: inset 0 0 0 1px rgb(255 254 234 / 0.4);
+  --wip-fold-edge-down: inset 0 0 0 1px rgb(255 254 234 / 0.4);
+  --wip-count-line: transparent;
   --lit-ink: #fffeea;
-  --lit-tint: rgb(255 238 111 / 0.14);
+  --lit-tint: rgb(255 254 234 / 0.1);
   --lit-line: rgb(255 254 234 / 0.18);
 }
 /* How many columns a list of the look has, by the room there is: one, two
@@ -7876,8 +7869,8 @@ html[data-skin-wip].dark {
   --wip-nav-line: rgb(255 255 255 / 0.11);
 }
 /* The brand's sets: the brand's own deep sky (as its look's sidebar, --bl-side), white words,
-   and the place you are on in cream. */
-html[data-skin-wip][data-wip-tokens="brand2"] {
+   and the place you are on in the sun. */
+html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-nav-bg: #3c7bd8;
   --wip-nav-ink: rgb(255 255 255 / 0.88);
   --wip-nav-ink-strong: #ffffff;
@@ -7885,14 +7878,14 @@ html[data-skin-wip][data-wip-tokens="brand2"] {
   --wip-nav-faint: rgb(255 255 255 / 0.32);
   --wip-nav-hover: rgb(255 255 255 / 0.16);
   --wip-nav-foot-line: rgb(255 255 255 / 0.22);
-  --wip-nav-on-bg: #fffeea;
+  --wip-nav-on-bg: #ffee6f;
   --wip-nav-on-ink: #121a0e;
   --wip-nav-count-bg: #ffffff;
   --wip-nav-count-ink: #121a0e;
   --wip-nav-on-count-bg: #121a0e;
   --wip-nav-on-count-ink: #ffffff;
 }
-html[data-skin-wip][data-wip-tokens="brand2"].dark {
+html[data-skin-wip][data-wip-tokens="brand"].dark {
   --wip-nav-bg: #122a52;
 }
 /* Every size: the phone's bottom bar is the same night panel. */

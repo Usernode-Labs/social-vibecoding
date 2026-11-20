@@ -91,16 +91,16 @@ test('wip sets its own attribute and its one token set, never data-skin', () => 
   assert.equal(Skin.get(), 'wip');
   assert.equal(attrs.has('data-skin'), false);
   assert.equal(attrs.get('data-skin-wip'), '');
-  assert.equal(attrs.get('data-wip-tokens'), 'brand2');
+  assert.equal(attrs.get('data-wip-tokens'), 'brand');
   Skin.set('brand');
   assert.equal(attrs.get('data-skin'), 'brand');
   assert.equal(attrs.has('data-skin-wip'), false);
   assert.equal(attrs.has('data-wip-tokens'), false, 'the token set is that look\'s alone');
   // A set a device had stored, or one named in the address, draws nothing else.
   const old = runSkin({ stored: 'wip', search: '?tokens=highlighter' });
-  old.store.set('homeroom:wip-tokens', 'brand');
+  old.store.set('homeroom:wip-tokens', 'brand2');
   old.Skin.apply();
-  assert.equal(old.attrs.get('data-wip-tokens'), 'brand2');
+  assert.equal(old.attrs.get('data-wip-tokens'), 'brand');
   assert.equal(typeof old.Skin.getTokens, 'undefined', 'there is no set to choose');
   assert.equal(typeof old.Skin.setTokens, 'undefined');
 });
@@ -242,9 +242,9 @@ test('the head and the hook list the same two looks, and neither is the frame\'s
 // non-admin"). New look's own switch stood above it until 13 Nov 2026;
 // its look, redrawn, is the menu's first option now.
 
-const LOOK_NAMES = { wip: 'Homeroom brand kit V2 (WIP)', brand: 'Paper, simplified, with brand styling' };
+const LOOK_NAMES = { wip: 'Homeroom brand kit (WIP)', brand: 'Paper, simplified, with brand styling' };
 // 'wip' is named by the token set that draws it, the one kept of its four.
-const LOOK_IDS = { wip: 'experimental.wipTokens.brand2', brand: 'experimental.look.brand' };
+const LOOK_IDS = { wip: 'experimental.wipTokens.brand', brand: 'experimental.look.brand' };
 const MENU_LOOKS = ['wip', 'brand'];
 
 test('Settings › Experimental offers the three looks in one menu, shipped hidden, and no New look switch', () => {
@@ -256,7 +256,7 @@ test('Settings › Experimental offers the three looks in one menu, shipped hidd
   assert.match(section[2], /<label[^>]*for="settings-look"[^>]*>Look<\/label>/);
   const options = [...section[2].matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
   assert.deepEqual(options, [['', 'Standard'], ...MENU_LOOKS.map((id) => [id, LOOK_NAMES[id]])],
-    'three looks: Standard, the brand kit\'s second drawing, and Paper simplified, each by its name');
+    'three looks: Standard, the brand kit, and Paper simplified, each by its name');
   assert.doesNotMatch(html, /new-look-enabled/, 'the New look switch is gone: its look is the menu\'s');
   assert.doesNotMatch(experimentalSrc(), /settings:experimental\.newLook\./, 'and so are its words');
   assert.doesNotMatch(html, /settings-local-agents-section/, 'the Local coding agent list it sat above is retired');
@@ -356,7 +356,7 @@ test('the Look menu\'s words are English source with descriptions', () => {
     assert.ok(en[key].description.length > 20, `${key} says where it appears`);
   }
   for (const id of MENU_LOOKS) assert.equal(en[LOOK_IDS[id]].text, LOOK_NAMES[id]);
-  for (const gone of ['experimental.look.wip', 'experimental.look.paper', 'experimental.wipTokens.brand', 'experimental.wipTokens.highlighter']) {
+  for (const gone of ['experimental.look.wip', 'experimental.look.paper', 'experimental.wipTokens.brand2', 'experimental.wipTokens.highlighter']) {
     assert.equal(en[gone], undefined, `${gone} went with its menu entry`);
   }
   assert.equal(en['experimental.glassLook.label'], undefined, 'the one-look switch\'s words are gone');

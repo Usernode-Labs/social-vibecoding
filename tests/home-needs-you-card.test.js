@@ -200,14 +200,10 @@ test('a challenge is its picture, then its words beside it, in a row that pages 
   assert.match(css, /@media \(min-width: 768px\) \{\s*html\[data-skin="brand"\][^{]*#home-needs-card \.wip-row \{\s*padding: 0\.5rem 0;\s*\}\s*\}/);
 });
 
-test('the brand kit V2 tokens use yellow and green as marks, never as a row\'s ground, and a project\'s name is one size', () => {
+test('a title\'s plain words have their own span, and a project\'s name is one size', () => {
   const css = read('public/css/app.css');
-  const at = css.indexOf('html[data-skin-wip][data-wip-tokens="brand2"] {');
-  const v2 = css.slice(at, css.indexOf('}', at));
-  assert.match(v2, /--wip-label-mark: #ffee6f;/, 'yellow is the stroke under a title');
-  assert.match(v2, /--wip-worth-bg: rgb\(169 207 151 \/ 0\.5\);/, 'green is the tag behind a challenge\'s points');
-  assert.match(v2, /--wip-pill-bg: #000000;\s*--wip-pill-ink: #fffeea;/, 'what is pressed is cream on black');
-  assert.doesNotMatch(v2, /--wip-(ask|goal)-bg/, 'no block of colour behind Needs you or Challenges');
+  // The brand kit's second drawing (V2), whose tokens this test also held, was removed on 20 Nov 2026.
+  assert.ok(!css.includes('[data-wip-tokens="brand2"]'));
   // The stroke is on a title's words alone: the kit gives plain words their own span.
   assert.match(read('frontend/src/features/home/wip-kit.tsx'), /typeof children === 'string' \? <span className="wip-head-words">\{children\}<\/span> : children/);
   // A plain pill in a card that asks reads the card's own ink (Advisory was pale on yellow in the dark).
@@ -298,7 +294,7 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   const css = read('public/css/app.css');
   // The sidebar and the phone's bar are one panel, drawn from the menu's tokens at every width.
   assert.match(css, /html\[data-skin-wip\] #platform-tabs \{[^}]*background: var\(--wip-nav-bg\);[^}]*font-family: var\(--wip-nav-font\);/);
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand2"\] \{\s*--wip-nav-bg: #3c7bd8;/, 'the brand kit wears the brand\'s own sky');
+  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{\s*--wip-nav-bg: #3c7bd8;/, 'the brand kit wears the brand\'s own sky');
   assert.match(css, /\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);\s*box-shadow: none;\s*color: var\(--wip-nav-on-ink\);/);
   // The brand is the logotype at the panel's top, and the top bar starts beside the panel.
   assert.match(css, /html\[data-skin-wip\] #platform-tabs::before \{[^}]*mask: var\(--wip-nav-brand-logo\) left center \/ contain no-repeat;/);
@@ -317,27 +313,27 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   assert.doesNotMatch(css, /#home-needs-card \.wip-item-kind/);
 });
 
-test('Standard (WIP): one token set draws it, the brand kit\'s second drawing, and the others are gone', () => {
+test('Standard (WIP): one token set draws it, the brand kit, and the others are gone', () => {
   const css = read('public/css/app.css');
-  // The sets drawn and removed: eight on 19 Nov 2026, then the brand kit's first drawing and Highlighter on 20 Nov 2026.
-  for (const gone of ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill', 'brand', 'highlighter']) {
+  // The sets drawn and removed: eight on 19 Nov 2026, then the brand kit's second drawing and Highlighter on 20 Nov 2026.
+  for (const gone of ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill', 'brand2', 'highlighter']) {
     assert.ok(!css.includes(`[data-wip-tokens="${gone}"]`), `${gone} has no rule`);
     assert.ok(!read('frontend/locales/en/settings.json').includes(`"experimental.wipTokens.${gone}"`), `${gone} has no name`);
   }
   // Every named set left in the stylesheet is the one the head draws the look with.
-  assert.deepEqual([...new Set([...css.matchAll(/\[data-wip-tokens="([a-z0-9]+)"\]/g)].map((m) => m[1]))], ['brand2']);
+  assert.deepEqual([...new Set([...css.matchAll(/\[data-wip-tokens="([a-z0-9]+)"\]/g)].map((m) => m[1]))], ['brand']);
   const head = read('frontend/src/head.html');
-  assert.match(head, /const WIP_TOKENS = 'brand2';/);
+  assert.match(head, /const WIP_TOKENS = 'brand';/);
   assert.match(head, /if \(skin === 'wip'\) root\.setAttribute\('data-wip-tokens', WIP_TOKENS\);\s*else root\.removeAttribute\('data-wip-tokens'\);/,
     'on whenever the look is, so a rule that asks for a token set always applies under it');
   assert.doesNotMatch(head, /TOKEN_SETS|homeroom:wip-tokens'\)|getTokens|setTokens/, 'nothing is stored or pinned for it');
   // It has a light rule and a dark rule.
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand2"\] \{[^}]*--wip-page-bg:/);
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand2"\]\.dark \{[^}]*--wip-page-bg:/);
+  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
+  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\]\.dark \{[^}]*--lit-ink: #fffeea;/);
   // The menus name the look by it: one entry, no 'wip:<set>' entries, no second menu.
   const picker = read('frontend/src/features/frame/look-picker.tsx');
-  assert.ok(picker.includes("wip: 'settings:experimental.wipTokens.brand2',"));
-  assert.equal(message('settings:experimental.wipTokens.brand2'), 'Homeroom brand kit V2 (WIP)');
+  assert.ok(picker.includes("wip: 'settings:experimental.wipTokens.brand',"));
+  assert.equal(message('settings:experimental.wipTokens.brand'), 'Homeroom brand kit (WIP)');
   assert.doesNotMatch(picker, /data-look-tokens/, 'no second menu for token sets');
   const skinMod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
   assert.deepEqual([...skinMod.LOOK_CHOICES], ['standard', 'wip', 'brand']);

@@ -32,7 +32,7 @@ import { LOOK_CHOICES, useLiveSkin, type Skin } from '../../lib/skin';
 // is named by the token set that draws it, the one kept of its four.
 const NAME_OF: Record<string, string> = {
   standard: 'settings:experimental.look.standard',
-  wip: 'settings:experimental.wipTokens.brand2',
+  wip: 'settings:experimental.wipTokens.brand',
   brand: 'settings:experimental.look.brand',
 };
 

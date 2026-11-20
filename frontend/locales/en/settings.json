@@ -1219,9 +1219,9 @@
     "text": "Paper, simplified, with brand styling",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way a look named Paper did (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is a proper name here."
   },
-  "experimental.wipTokens.brand2": {
-    "text": "Homeroom brand kit V2 (WIP)",
-    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): Homeroom's usual visual style with the changes still being tried on it, drawn with a second drawing from Homeroom's brand guidelines (serif section titles, black and cream). V2 means version two. Homeroom is the product name. (WIP) means work in progress. Translate it as a short name, not a sentence."
+  "experimental.wipTokens.brand": {
+    "text": "Homeroom brand kit (WIP)",
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): Homeroom's usual visual style with the changes still being tried on it, drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress. Translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
     "text": "Try another look for Homeroom, in light and dark. One draws every page in the website's colours. The other is the usual look with changes still being tried on it, in the brand kit's colours and typefaces. Admins see this menu, and the same one beside the bell, while the looks are drawn. Kept for this browser.",

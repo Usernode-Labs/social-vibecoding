@@ -30,10 +30,10 @@ export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
 
 /**
  * Every look the Look menu offers after Standard, in its order (20 Nov
- * 2026: the menu keeps three looks). 'wip' is "Homeroom brand kit V2
+ * 2026: the menu keeps three looks). 'wip' is "Homeroom brand kit
  * (WIP)": the standard look, drawn with the changes still being tried on
- * it and the brand kit's second token set; the head sets `data-skin-wip`
- * and `data-wip-tokens="brand2"` for it and no `data-skin`. 'brand' is
+ * it and the brand kit's token set; the head sets `data-skin-wip` and
+ * `data-wip-tokens="brand"` for it and no `data-skin`. 'brand' is
  * "Paper, simplified, with brand styling", which keeps the standard pages.
  * It is the head's SKINS, and the option values of Settings › Experimental
  * › Look and of the look picker.
