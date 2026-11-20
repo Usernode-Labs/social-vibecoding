@@ -1721,63 +1721,63 @@
   },
   "bot.make.title": {
     "text": "Make the project",
-    "description": "Heading of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card. \"Make\" is a verb."
+    "description": "Heading of the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card. \"Make\" is a verb."
   },
   "bot.make.close": {
     "text": "Close",
-    "description": "Accessible name of the X button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: closes it without making anything."
+    "description": "Accessible name of the X button of the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: closes it without making anything."
   },
   "bot.make.nameLabel": {
     "text": "Name",
-    "description": "Label of the project's name field in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card; it starts with the name the bot suggested."
+    "description": "Label of the project's name field in the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card; it starts with the name the bot suggested."
   },
   "bot.make.audienceLabel": {
     "text": "Who it is for",
-    "description": "Label over the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card."
+    "description": "Label over the three choices of who the new project is for, in the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card."
   },
   "bot.make.audience.solo": {
     "text": "Just you",
-    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: only the person."
+    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: only the person."
   },
   "bot.make.audience.invited": {
     "text": "Private community",
-    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: the person and the people they invite."
+    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: the person and the people they invite."
   },
   "bot.make.audience.open": {
     "text": "Public community",
-    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: anyone on Homeroom."
+    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: anyone on Homeroom."
   },
   "bot.make.audienceHint.solo": {
     "text": "Only you can see it and change it.",
-    "description": "The line under \"Just you\" in the sheet that makes a new project from a design."
+    "description": "The line under \"Just you\" in the sheet that makes a new project from an artifact."
   },
   "bot.make.audienceHint.invited": {
     "text": "You and the people you invite.",
-    "description": "The line under \"Private community\" in the sheet that makes a new project from a design."
+    "description": "The line under \"Private community\" in the sheet that makes a new project from an artifact."
   },
   "bot.make.audienceHint.open": {
     "text": "Anyone on Homeroom can see it and join.",
-    "description": "The line under \"Public community\" in the sheet that makes a new project from a design."
+    "description": "The line under \"Public community\" in the sheet that makes a new project from an artifact."
   },
   "bot.make.note": {
-    "text": "Homeroom bot builds its first version from this design and tells you here when it's live.",
-    "description": "The line above the button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: what happens after it is made."
+    "text": "Homeroom bot builds its first version from this artifact and tells you here when it's live.",
+    "description": "The line above the button of the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: what happens after it is made."
   },
   "bot.make.submit": {
     "text": "Make it",
-    "description": "The button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: makes the project. \"Make\" is a verb."
+    "description": "The button of the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: makes the project. \"Make\" is a verb."
   },
   "bot.make.making": {
     "text": "Making it…",
-    "description": "The button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card while the project is being made."
+    "description": "The button of the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card while the project is being made."
   },
   "bot.make.error": {
     "text": "The project could not be made just now. Try again in a minute.",
-    "description": "Shown in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card when making the project failed for a reason that was not said."
+    "description": "Shown in the sheet that makes a new project from an artifact Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card when making the project failed for a reason that was not said."
   },
   "bot.make.open": {
     "text": "Open {{project}}",
-    "description": "Link under Homeroom bot's card once the person made a new project from a design: opens the project they made, by its name."
+    "description": "Link under Homeroom bot's card once the person made a new project from an artifact: opens the project they made, by its name."
   },
   "bot.make.briefLabel": {
     "text": "What it will do",
@@ -3589,11 +3589,11 @@
   },
   "thread.botWorking.drawing": {
     "text": "Drawing the screen",
-    "description": "On the card at the end of the chat while Homeroom bot draws a design of a screen. Three animated dots follow it, as an ellipsis."
+    "description": "On the card at the end of the chat while Homeroom bot draws an artifact of a screen. Three animated dots follow it, as an ellipsis."
   },
   "thread.botWorking.drawingVersion": {
     "text": "Drawing version {{version}}",
-    "description": "On the card at the end of the chat while Homeroom bot draws or changes a design of a screen. {{version}} is the number of the version it is making, such as 4. Three animated dots follow it, as an ellipsis."
+    "description": "On the card at the end of the chat while Homeroom bot draws or changes an artifact of a screen. {{version}} is the number of the version it is making, such as 4. Three animated dots follow it, as an ellipsis."
   },
   "thread.botWorking.changingDraft": {
     "text": "Changing the draft",
@@ -3605,15 +3605,15 @@
   },
   "thread.botWorking.capturing": {
     "text": "Opening {{page}} as it is now",
-    "description": "On the card at the end of the chat while Homeroom opens one of its own pages in a browser of its own, to copy it as the first version of a design. {{page}} is the page's name, such as Homeroom bot page. Three animated dots follow it, as an ellipsis."
+    "description": "On the card at the end of the chat while Homeroom opens one of its own pages in a browser of its own, to copy it as the first version of an artifact. {{page}} is the page's name, such as Homeroom bot page. Three animated dots follow it, as an ellipsis."
   },
   "thread.botWorking.capturingUnnamed": {
     "text": "Opening the page as it is now",
-    "description": "On the card at the end of the chat while Homeroom opens one of its own pages to copy it as the first version of a design, when the page's name is not known. Three animated dots follow it, as an ellipsis."
+    "description": "On the card at the end of the chat while Homeroom opens one of its own pages to copy it as the first version of an artifact, when the page's name is not known. Three animated dots follow it, as an ellipsis."
   },
   "thread.botWorking.designing": {
-    "text": "Changing the design",
-    "description": "On the card at the end of the chat while Homeroom bot changes a design it drew. Three animated dots follow it, as an ellipsis."
+    "text": "Changing the artifact",
+    "description": "On the card at the end of the chat while Homeroom bot changes an artifact it drew. Three animated dots follow it, as an ellipsis."
   },
   "thread.botWorking.drafting": {
     "text": "Drafting the request",
@@ -3788,28 +3788,28 @@
     "description": "Title at the top of the side pane showing a thread of replies under one message. A noun."
   },
   "design.pane.label": {
-    "text": "Design preview",
-    "description": "Accessible name of the pane beside a design thread that draws the design's current version."
+    "text": "Artifact preview",
+    "description": "Accessible name of the pane beside a artifact thread that draws the artifact's current version."
   },
   "design.pane.loading": {
-    "text": "Drawing the design…",
-    "description": "Shown in the design pane while the design or one of its versions is loading."
+    "text": "Drawing the artifact…",
+    "description": "Shown in the artifact pane while the artifact or one of its versions is loading."
   },
   "design.pane.failed": {
-    "text": "The design couldn't be drawn just now.",
-    "description": "Shown in the design pane when the design or a version of it could not be read."
+    "text": "The artifact couldn't be drawn just now.",
+    "description": "Shown in the artifact pane when the artifact or a version of it could not be read."
   },
   "design.pane.labelPage": {
     "text": "Page preview",
-    "description": "Accessible name of the pane beside a private thread with Homeroom bot that shows a page the bot wrote there (a self-contained page such as a table or a checklist, not a screen design)."
+    "description": "Accessible name of the pane beside a private thread with Homeroom bot that shows a page the bot wrote there (a self-contained page such as a table or a checklist, not a screen)."
   },
   "design.pane.labelOpening": {
     "text": "Preview",
-    "description": "Accessible name of the preview beside a private thread with Homeroom bot before it is known what it shows (a screen design or a page the bot wrote), and of the column that holds it."
+    "description": "Accessible name of the preview beside a private thread with Homeroom bot before it is known what it shows (a screen or a page the bot wrote), and of the column that holds it."
   },
   "design.pane.opening": {
     "text": "Opening the preview…",
-    "description": "Shown in the preview beside a private thread with Homeroom bot, and on the small picture in the thread, while what it shows is loading and before it is known whether it is a screen design or a page."
+    "description": "Shown in the preview beside a private thread with Homeroom bot, and on the small picture in the thread, while what it shows is loading and before it is known whether it is a screen or a page."
   },
   "design.pane.failedPage": {
     "text": "The page couldn't be opened just now.",
@@ -3817,27 +3817,27 @@
   },
   "design.pane.openFailed": {
     "text": "The preview couldn't be opened just now.",
-    "description": "Shown in the preview beside a private thread with Homeroom bot when nothing could be read, before it is known whether it shows a screen design or a page."
+    "description": "Shown in the preview beside a private thread with Homeroom bot when nothing could be read, before it is known whether it shows a screen or a page."
   },
   "design.pane.pickVersion": {
     "text": "Version shown",
-    "description": "Screen-reader label of the picker that chooses which version of the design the preview draws."
+    "description": "Screen-reader label of the picker that chooses which version of the artifact the preview draws."
   },
   "design.pane.versionOption": {
     "text": "Version {{version}}",
-    "description": "One choice in the design pane's version picker, for a version with no note."
+    "description": "One choice in the artifact pane's version picker, for a version with no note."
   },
   "design.pane.versionNote": {
     "text": "Version {{version}}: {{note}}",
-    "description": "One choice in the design pane's version picker: the version number, then what the bot said it changed."
+    "description": "One choice in the artifact pane's version picker: the version number, then what the bot said it changed."
   },
   "design.pane.ofTotal": {
     "text": "of {{total}}",
-    "description": "After the version picker in the design pane: how many versions there are, as in \"Version 3 of 5\"."
+    "description": "After the version picker in the artifact pane: how many versions there are, as in \"Version 3 of 5\"."
   },
   "design.pane.comment": {
     "text": "Comment",
-    "description": "Button in the design pane that turns on pinning a comment on the preview."
+    "description": "Button in the artifact pane that turns on pinning a comment on the preview."
   },
   "design.pane.commentDone": {
     "text": "Done",
@@ -3845,7 +3845,7 @@
   },
   "design.pane.commentHint": {
     "text": "Click the preview where you want a change, then say what.",
-    "description": "Hint under the design pane's header while pinning a comment is on."
+    "description": "Hint under the artifact pane's header while pinning a comment is on."
   },
   "design.pane.pinOn": {
     "text": "On {{what}}",
@@ -3853,11 +3853,11 @@
   },
   "design.pane.pinPlaceholder": {
     "text": "What should change here?",
-    "description": "Placeholder of the box for a comment pinned on the design."
+    "description": "Placeholder of the box for a comment pinned on the artifact."
   },
   "design.pane.pinSend": {
     "text": "Send",
-    "description": "Sends the pinned comment to Homeroom bot in the design thread."
+    "description": "Sends the pinned comment to Homeroom bot in the artifact thread."
   },
   "design.pane.pinCancel": {
     "text": "Cancel",
@@ -3865,15 +3865,15 @@
   },
   "design.pane.propose": {
     "text": "Request it",
-    "description": "Button in the design pane that opens the card for filing the design as a public request."
+    "description": "Button in the artifact pane that opens the card for filing the artifact as a public request."
   },
   "design.pane.proposed": {
     "text": "Filed as request #{{number}}",
-    "description": "Link in the design pane once the design was filed: opens the request it became."
+    "description": "Link in the artifact pane once the artifact was filed: opens the request it became."
   },
   "design.pane.frameTitle": {
-    "text": "Version {{version}} of the design",
-    "description": "Accessible title of the frame that draws one version of the design."
+    "text": "Version {{version}} of the artifact",
+    "description": "Accessible title of the frame that draws one version of the artifact."
   },
   "design.pane.frameTitlePage": {
     "text": "Version {{version}} of the page",
@@ -3881,15 +3881,15 @@
   },
   "design.pane.showChat": {
     "text": "Chat",
-    "description": "On a phone: switches from the design's preview to its thread."
+    "description": "On a phone: switches from the artifact's preview to its thread."
   },
   "design.pane.back": {
     "text": "Back to the thread",
-    "description": "On a phone, the arrow at the top left of a design's preview, which covers the screen: goes back to the private thread the design is in. Its accessible name and tooltip."
+    "description": "On a phone, the arrow at the top left of an artifact's preview, which covers the screen: goes back to the private thread the artifact is in. Its accessible name and tooltip."
   },
   "design.pane.close": {
     "text": "Close the preview",
-    "description": "The × at the right of a design's preview, the column beside a private thread on the Homeroom bot tab: closes the preview. Its accessible name and tooltip."
+    "description": "The × at the right of an artifact's preview, the column beside a private thread on the Homeroom bot tab: closes the preview. Its accessible name and tooltip."
   },
   "draft.pane.label": {
     "text": "Request draft",
@@ -3913,19 +3913,19 @@
   },
   "design.card.open": {
     "text": "Open preview",
-    "description": "Button under the small picture of a design's version, in a private thread with Homeroom bot: opens the design's preview beside the thread, at that version."
+    "description": "Button under the small picture of an artifact's version, in a private thread with Homeroom bot: opens the artifact's preview beside the thread, at that version."
   },
   "design.card.openVersion": {
     "text": "Open version {{version}} in the preview",
-    "description": "Accessible name of the small picture of a design's version in a private thread with Homeroom bot, which opens the preview as the Open preview button does. {{version}} is the version's number."
+    "description": "Accessible name of the small picture of an artifact's version in a private thread with Homeroom bot, which opens the preview as the Open preview button does. {{version}} is the version's number."
   },
   "design.card.label": {
     "text": "{{title}} · version {{version}}",
-    "description": "The line beside Open preview under the small picture of a design's version in a private thread: the screen's name and the version's number."
+    "description": "The line beside Open preview under the small picture of an artifact's version in a private thread: the screen's name and the version's number."
   },
   "design.card.frameTitle": {
-    "text": "Version {{version}} of the design, small",
-    "description": "Title of the frame that draws a design's version small in a private thread with Homeroom bot (read by assistive technology). {{version}} is the version's number."
+    "text": "Version {{version}} of the artifact, small",
+    "description": "Title of the frame that draws an artifact's version small in a private thread with Homeroom bot (read by assistive technology). {{version}} is the version's number."
   },
   "design.card.frameTitlePage": {
     "text": "Version {{version}} of the page, small",
@@ -3933,7 +3933,7 @@
   },
   "design.card.failed": {
     "text": "This version couldn't be drawn just now.",
-    "description": "In place of the small picture of a design's version in a private thread, when it could not be read."
+    "description": "In place of the small picture of an artifact's version in a private thread, when it could not be read."
   },
   "newThread.start": {
     "text": "New chat",
@@ -4176,16 +4176,16 @@
     "description": "The second button under the connector steps in a new thread: go back to the thread with Homeroom bot working on it."
   },
   "design.propose.heading": {
-    "text": "Request this design",
-    "description": "Heading of the card that files the design as a request."
+    "text": "Request this artifact",
+    "description": "Heading of the card that files the artifact as a request."
   },
   "design.propose.warning": {
     "text": "This files a public request on {{project}} under your name. Its plan shows the first version and version {{version}} side by side, and anyone who can see the project can see them. Check they show nothing private, such as names, messages or numbers. This thread stays private.",
     "description": "Warning in the Request it card, before anything is filed: what becomes public."
   },
   "design.propose.defaultTitle": {
-    "text": "Design: {{title}}",
-    "description": "The request's title the Request it card starts with: the screen's name after \"Design:\"."
+    "text": "{{title}}",
+    "description": "The request's title the Request it card starts with: the artifact's own name ({{title}}), which the person can change."
   },
   "design.propose.titleLabel": {
     "text": "Title",
@@ -4208,28 +4208,28 @@
     "description": "Shown in the Request it card when filing failed for a reason that was not said."
   },
   "design.propose.headingOn": {
-    "text": "Post this design as a plan",
-    "description": "Heading of the design pane's Request it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
+    "text": "Post this artifact as a plan",
+    "description": "Heading of the artifact pane's Request it card when the artifact's thread is about a request (a filed issue): it posts the artifact on that request as the person's plan."
   },
   "design.propose.warningOn": {
     "text": "This posts version {{version}} as your plan on request #{{number}} on {{project}}, under your name, where anyone who can see the project can see it. Check it shows nothing private, such as names, messages or numbers. This thread stays private.",
-    "description": "Warning in the design pane's Request it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
+    "description": "Warning in the artifact pane's Request it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
   },
   "design.propose.sendOn": {
     "text": "Post it as a plan",
-    "description": "Submit button of the design pane's Request it card when the thread is about a request: posts the design on it as the person's plan."
+    "description": "Submit button of the artifact pane's Request it card when the thread is about a request: posts the artifact on it as the person's plan."
   },
   "design.pane.postedOn": {
     "text": "Posted as a plan on request #{{number}}",
-    "description": "Link in the design pane once the design was posted as a plan on a request (a filed issue): opens that request. The design can be posted again as the plan's next version."
+    "description": "Link in the artifact pane once the artifact was posted as a plan on a request (a filed issue): opens that request. The artifact can be posted again as the plan's next version."
   },
   "detail.back": {
     "text": "Back to the thread",
-    "description": "Back arrow on the head card of what a private thread shows on a phone (a design, a live preview, a plan): returns to the thread."
+    "description": "Back arrow on the head card of what a private thread shows on a phone (an artifact, a live preview, a plan): returns to the thread."
   },
   "detail.close": {
     "text": "Close",
-    "description": "Close button (×) on the head card of what a private thread shows beside it: a design, a request draft, a plan, a change's before and after."
+    "description": "Close button (×) on the head card of what a private thread shows beside it: an artifact, a request draft, a plan, a change's before and after."
   },
   "detail.picker.label": {
     "text": "{{title}}: show something else from this thread",
@@ -4237,11 +4237,11 @@
   },
   "detail.picker.section": {
     "text": "In this thread",
-    "description": "Heading of the list the head card's title opens: everything the private thread can show beside it (its design and versions, its live preview, plans and before-and-afters it opened)."
+    "description": "Heading of the list the head card's title opens: everything the private thread can show beside it (its artifacts and versions, its live preview, plans and before-and-afters it opened)."
   },
   "detail.kind.design": {
-    "text": "Design",
-    "description": "Name of a design (screens Homeroom bot drew) in the list of what a private thread can show beside it, and its head card's title until the design's own title loads."
+    "text": "Artifact",
+    "description": "Name of an artifact (screens Homeroom bot drew) in the list of what a private thread can show beside it, and its head card's title until the artifact's own title loads."
   },
   "detail.kind.preview": {
     "text": "Live preview",
@@ -4260,20 +4260,20 @@
     "description": "Name of a change's before-and-after screenshots in the list of what a thread can show beside it, and their head card's title."
   },
   "detail.line.design": {
-    "text": "Design · Version {{version}} of {{total}}",
-    "description": "Small line over a design's title on the head card beside a private thread: which version of the design shows."
+    "text": "Artifact · Version {{version}} of {{total}}",
+    "description": "Small line over an artifact's title on the head card beside a private thread: which version of the artifact shows."
   },
   "detail.row.design_one": {
-    "text": "Design · {{count}} version",
-    "description": "Under a design's title in the list of what a private thread can show beside it: how many versions it has (one)."
+    "text": "Artifact · {{count}} version",
+    "description": "Under an artifact's title in the list of what a private thread can show beside it: how many versions it has (one)."
   },
   "detail.row.design_other": {
-    "text": "Design · {{count}} versions",
-    "description": "Under a design's title in the list of what a private thread can show beside it: how many versions it has (several)."
+    "text": "Artifact · {{count}} versions",
+    "description": "Under an artifact's title in the list of what a private thread can show beside it: how many versions it has (several)."
   },
   "detail.row.version": {
     "text": "Version {{version}}",
-    "description": "A version of a design in the list of what a private thread can show beside it, before the version's own note."
+    "description": "A version of an artifact in the list of what a private thread can show beside it, before the version's own note."
   },
   "botCards.gallery.groupLabel": {
     "text": "Pictures Homeroom bot made",
@@ -4356,12 +4356,12 @@
     "description": "The use button once tapped, grey with a check: the person asked the bot to use picture {{letter}} in the app."
   },
   "botCards.gallery.design": {
-    "text": "Add {{letter}} to the design",
-    "description": "Button under the bot's picture grid in a design thread: adds picture {{letter}} to the design, for its next version."
+    "text": "Add {{letter}} to the artifact",
+    "description": "Button under the bot's picture grid in a artifact thread: adds picture {{letter}} to the artifact, for its next version."
   },
   "botCards.gallery.designed": {
-    "text": "Added {{letter}} to the design",
-    "description": "The add-to-design button once tapped, grey with a check: picture {{letter}} was added to the design thread's pictures."
+    "text": "Added {{letter}} to the artifact",
+    "description": "The add-to-artifact button once tapped, grey with a check: picture {{letter}} was added to the artifact thread's pictures."
   },
   "botCards.gallery.more": {
     "text": "More like {{letter}}",
@@ -4376,8 +4376,8 @@
     "description": "Words sent to Homeroom bot as the person's own message when they tap Use it in the app under pictures made for no project yet. {{url}} is the picture's link."
   },
   "botCards.gallery.designWords": {
-    "text": "Add picture {{letter}} to the design.",
-    "description": "Words sent to Homeroom bot as the person's own message in a design thread when they tap Add to the design under its pictures."
+    "text": "Add picture {{letter}} to the artifact.",
+    "description": "Words sent to Homeroom bot as the person's own message in a artifact thread when they tap Add to the artifact under its pictures."
   },
   "botCards.gallery.moreWords": {
     "text": "More like picture {{letter}}, please.",
@@ -4393,35 +4393,35 @@
   },
   "botCards.compare.heading": {
     "text": "Side by side",
-    "description": "Small label over the card that shows versions of a design side by side, under Homeroom bot's reply in a design thread."
+    "description": "Small label over the card that shows versions of an artifact side by side, under Homeroom bot's reply in a artifact thread."
   },
   "botCards.compare.groupLabel": {
     "text": "Versions side by side",
-    "description": "Accessible name of the row of small previews in the card that compares versions of a design."
+    "description": "Accessible name of the row of small previews in the card that compares versions of an artifact."
   },
   "botCards.compare.sizeGroup": {
     "text": "Preview size",
-    "description": "Accessible name of the Phone and Desktop switch on the card that compares versions of a design."
+    "description": "Accessible name of the Phone and Desktop switch on the card that compares versions of an artifact."
   },
   "botCards.compare.phone": {
     "text": "Phone",
-    "description": "Switch on the card that compares versions of a design: draws each version at a phone's width."
+    "description": "Switch on the card that compares versions of an artifact: draws each version at a phone's width."
   },
   "botCards.compare.desktop": {
     "text": "Desktop",
-    "description": "Switch on the card that compares versions of a design: draws each version at a desktop's width."
+    "description": "Switch on the card that compares versions of an artifact: draws each version at a desktop's width."
   },
   "botCards.compare.now": {
     "text": "Now",
-    "description": "Label of the screen as it is today, beside its new versions, on the card that compares versions of a design."
+    "description": "Label of the screen as it is today, beside its new versions, on the card that compares versions of an artifact."
   },
   "botCards.compare.version": {
     "text": "Version {{version}}",
-    "description": "Label of one version on the card that compares versions of a design, when the bot gave it no name of its own."
+    "description": "Label of one version on the card that compares versions of an artifact, when the bot gave it no name of its own."
   },
   "botCards.compare.frameTitle": {
     "text": "{{label}}, small",
-    "description": "Title of the small preview of one version on the card that compares versions of a design. {{label}} is the version's name."
+    "description": "Title of the small preview of one version on the card that compares versions of an artifact. {{label}} is the version's name."
   },
   "botCards.comparison.frameTitle": {
     "text": "Comparison: {{title}}",
@@ -4433,39 +4433,39 @@
   },
   "botCards.compare.open": {
     "text": "Open {{label}} beside the chat",
-    "description": "Accessible name of a small preview on the card that compares versions of a design: opens that version in the design preview."
+    "description": "Accessible name of a small preview on the card that compares versions of an artifact: opens that version in the artifact preview."
   },
   "botCards.compare.pick": {
     "text": "Pick",
-    "description": "Button under one version on the card that compares versions of a design: picks it, and tells Homeroom bot."
+    "description": "Button under one version on the card that compares versions of an artifact: picks it, and tells Homeroom bot."
   },
   "botCards.compare.pickLabel": {
     "text": "Pick {{label}}",
-    "description": "Accessible name of the Pick button under one version on the card that compares versions of a design."
+    "description": "Accessible name of the Pick button under one version on the card that compares versions of an artifact."
   },
   "botCards.compare.picked": {
     "text": "Picked",
-    "description": "The Pick button once tapped, grey with a check, under the version picked on the card that compares versions of a design."
+    "description": "The Pick button once tapped, grey with a check, under the version picked on the card that compares versions of an artifact."
   },
   "botCards.compare.pickedLabel": {
     "text": "{{label}} picked",
-    "description": "Accessible name of the Picked button under the version picked on the card that compares versions of a design."
+    "description": "Accessible name of the Picked button under the version picked on the card that compares versions of an artifact."
   },
   "botCards.compare.pickWords": {
     "text": "Pick version {{version}}",
-    "description": "Words sent to Homeroom bot as the person's own message when they pick a version on the card that compares versions of a design."
+    "description": "Words sent to Homeroom bot as the person's own message when they pick a version on the card that compares versions of an artifact."
   },
   "botCards.compare.keepNowWords": {
     "text": "Keep it as it is now",
-    "description": "Words sent to Homeroom bot as the person's own message when they pick the screen as it is today on the card that compares versions of a design."
+    "description": "Words sent to Homeroom bot as the person's own message when they pick the screen as it is today on the card that compares versions of an artifact."
   },
   "botCards.compare.propose": {
     "text": "Request version {{version}}",
-    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Request it card for that version."
+    "description": "Button on the card that compares versions of an artifact, once a version was picked: opens the artifact's Request it card for that version."
   },
   "botCards.compare.failed": {
     "text": "That didn't work just now. Try again in a minute.",
-    "description": "Shown on the card that compares versions of a design when picking a version failed and the server said nothing more."
+    "description": "Shown on the card that compares versions of an artifact when picking a version failed and the server said nothing more."
   },
   "replies.close": {
     "text": "Close thread",
@@ -4773,27 +4773,27 @@
   },
   "bot.track.filed.builds": {
     "text": "Homeroom bot reads it next and builds it from version {{version}}. Its progress shows here and on the request.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the bot has the new request in its queue. {{version}} is the number of the design's version the request's plan holds, which the bot builds from. \"Here\" is the person's chat with Homeroom bot."
+    "description": "In a private artifact thread, after Homeroom bot's line saying it filed the person's artifact as a request: what happens next, when the bot has the new request in its queue. {{version}} is the number of the artifact's version the request's plan holds, which the bot builds from. \"Here\" is the person's chat with Homeroom bot."
   },
   "bot.track.filed.held.builds": {
     "text": "Homeroom bot builds it when one of its builds is done: it is building as much on this project as it may at once. Its progress shows here and on the request.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits for its turn because the bot is already building as many changes on the project at once as it may. \"Here\" is the person's chat with Homeroom bot."
+    "description": "In a private artifact thread, after Homeroom bot's line saying it filed the person's artifact as a request: what happens next, when the new request waits for its turn because the bot is already building as many changes on the project at once as it may. \"Here\" is the person's chat with Homeroom bot."
   },
   "bot.track.filed.held.slots": {
     "text": "Homeroom bot builds it when one of its changes is voted in or closed: it is at its limit of changes up for a vote here. Its progress shows here and on the request.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because as many of the bot's changes on the project as may wait for a vote at once are waiting. \"Here\" is the person's chat with Homeroom bot."
+    "description": "In a private artifact thread, after Homeroom bot's line saying it filed the person's artifact as a request: what happens next, when the new request waits because as many of the bot's changes on the project as may wait for a vote at once are waiting. \"Here\" is the person's chat with Homeroom bot."
   },
   "bot.track.filed.held.bot_wide": {
     "text": "Homeroom bot builds it when a slot frees: it is at its limit across projects. Its progress shows here and on the request.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because Homeroom bot has as much work waiting as it may have across all projects. \"Here\" is the person's chat with Homeroom bot."
+    "description": "In a private artifact thread, after Homeroom bot's line saying it filed the person's artifact as a request: what happens next, when the new request waits because Homeroom bot has as much work waiting as it may have across all projects. \"Here\" is the person's chat with Homeroom bot."
   },
   "bot.track.filed.held.allowance": {
     "text": "Homeroom bot builds it once the week resets: this week's building time is used up. Its progress shows here and on the request.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because the building time for this week is used up. \"Here\" is the person's chat with Homeroom bot."
+    "description": "In a private artifact thread, after Homeroom bot's line saying it filed the person's artifact as a request: what happens next, when the new request waits because the building time for this week is used up. \"Here\" is the person's chat with Homeroom bot."
   },
   "bot.track.filed.person": {
     "text": "This needs a person, not Homeroom bot: the people on the project decide who builds it.",
-    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when Homeroom bot does not build requests on that project, or a person has to decide about it first."
+    "description": "In a private artifact thread, after Homeroom bot's line saying it filed the person's artifact as a request: what happens next, when Homeroom bot does not build requests on that project, or a person has to decide about it first."
   },
   "privateThread.done": {
     "text": "This thread is done.",

@@ -378,13 +378,15 @@ test('a version said in a thread is drawn small, with Open preview; nothing is r
   assert.match(src, /<ArtifactFrame\s+mode="run"\s+viewer="author"/, 'the one frame, running for its author, as the pane\'s is');
   assert.doesNotMatch(src, /<iframe|sandbox=/, 'no frame of its own');
   assert.match(src, /<ArtifactFrame[\s\S]{0,200}?\n\s+inert\n/, 'a picture, not something to use: out of the tab order, hidden from readers, no pointer');
-  assert.match(src, /const open = \(\) => openPreview\(\{ conversationId, rootId, version \}\);/);
+  // 20 Nov 2026 (live-draft review, I and K): on its own artifact.
+  assert.match(src, /const open = \(\) => openPreview\(\{ conversationId, rootId, version, artifactId \}\);/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /const designVersion = inThread && message\.threadRootId && !message\.deleted \? designVersionOf\(message\) : null;/);
   assert.match(row, /<DesignVersionCard conversationId=\{conversationId\} rootId=\{message\.threadRootId\} version=\{designVersion\}/);
-  // And the thread's head opens it at the newest, while it is not open.
+  // And the thread's head opens the column (20 Nov 2026, I: its Artifacts
+  // button, which also closes it: tests/live-draft-screens.test.js).
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /\{alone && preview\?\.rootId !== rootId && isDesignThread\(root, replies\) \? \(/);
+  assert.match(index, /<ArtifactsButton conversationId=\{conversationId\} rootId=\{rootId\}\s+hasArtifact=\{isDesignThread\(root, replies\)\}/);
 });
 
 test('a thread about a request is named by it, in its head and in the list', () => {

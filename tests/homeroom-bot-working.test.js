@@ -947,7 +947,7 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   const capturing = renderToHtml(createElement(card.BotWorkingCard, { typist: { ...bot, doing: { kind: 'capturing', page: 'Homeroom bot page' } } }));
   assert.match(capturing, /data-bot-working="capturing"/);
   assert.match(capturing, />Opening Homeroom bot page as it is now</);
-  assert.equal(card.botDoingLine(t, { kind: 'designing' }), 'Changing the design');
+  assert.equal(card.botDoingLine(t, { kind: 'designing' }), 'Changing the artifact');
   assert.equal(card.botDoingLine(t, { kind: 'drafting' }), 'Drafting the request');
   assert.equal(card.botDoingLine(t, { kind: 'something_new' }), 'Thinking', 'a kind this screen does not know yet');
 
