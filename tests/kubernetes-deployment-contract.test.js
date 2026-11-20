@@ -330,7 +330,7 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
     'every wait is followed by a fresh read of the branch tip');
   assert.match(release, /^    permissions:\n(?:      #.*\n)*      actions: read$/m,
     'the release age is read from this workflow\'s own runs');
-  for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
+  for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Promote OCI release tag', 'Record atomic release']) {
     assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
   }
 });
