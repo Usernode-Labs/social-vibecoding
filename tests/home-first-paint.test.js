@@ -291,13 +291,17 @@ test('before the first paint each section holds a skeleton, and Challenges holds
     'the heading keeps its box, and no word that would change when the view lands');
   assert.equal((challenges.match(/h-\[104px\] rounded-3xl/g) || []).length, 3, 'three card skeletons');
   assert.match(challenges, /animate-pulse/, 'what the app\'s launch cover waits to see gone');
+  assert.match(challenges, /<p role="status" data-loading-caption=""[^>]*><span[^>]*>Loading challenges<\/span><\/p>/,
+    'the grey cards say what they are waiting for, visibly and to a screen reader (#6894)');
+  assert.doesNotMatch(challenges, /animate-pulse[^>]*data-loading-caption|data-loading-caption[^>]*animate-pulse/,
+    'the caption never pulses: the launch cover waits for that class to be gone');
 
   // Discover's section went with Home's Discover lane (One Home, #6361).
   assert.equal(mod.DiscoverSectionView, undefined);
 
   const after = renderToHtml(createElement(mod.ChallengesSectionView, { painted: true, discover: null, challenges: null }));
   assert.match(after, /class="hidden px-3 pb-3"/, 'painted with nothing: hidden, as before');
-  assert.doesNotMatch(after, /animate-pulse|home-section-pending/);
+  assert.doesNotMatch(after, /animate-pulse|home-section-pending|data-loading-caption/);
 });
 
 // ── 3. The tab bar's own last state ────────────────────────────────────
