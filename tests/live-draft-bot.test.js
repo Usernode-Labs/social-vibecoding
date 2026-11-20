@@ -40,6 +40,49 @@ test('appliedWords says what the preview did, never more', () => {
   assert.deepEqual([crashed.preview, crashed.log], ['crashed', 'TypeError: x']);
   assert.equal(draftBot.appliedWords({ ok: true, preview: { ok: true, rebuilding: true, why: 'install' } }).preview, 'rebuilding');
   assert.equal(draftBot.appliedWords({ ok: false, error: 'nope' }).saved, false);
+  // Homeroom's own failure is said as its, whether the change was kept or not.
+  const kept = draftBot.appliedWords({ ok: true, preview: { ok: false, platform: true, error: 'x' } });
+  assert.deepEqual([kept.saved, kept.preview], [true, 'platform']);
+  assert.match(kept.note, /Homeroom had a problem on its side/);
+  assert.match(kept.note, /Saved in the draft/);
+  const lost = draftBot.appliedWords({ ok: false, platform: true, error: 'x' });
+  assert.deepEqual([lost.saved, lost.preview], [false, 'platform']);
+  assert.match(lost.note, /Not saved/);
+  assert.doesNotMatch(lost.note, /fix the cause/);
+  // The app's own build step failing is the app's, and says so.
+  assert.match(draftBot.appliedWords({ ok: true, preview: { ok: false, crashed: true, why: 'build', log: 'x' } }).note,
+    /fix the cause or its build/);
+});
+
+test('the draft prompt is the skill, written against the chat\'s question rule', () => {
+  const prompt = draftBot.draftPrompt({
+    username: 'evan', draft: { app_slug: 'gym', app_name: 'Gym Tracker' }, edits: [], files: [{ path: 'server.js' }], notes: null,
+  });
+  assert.match(prompt, /Never ask a bare question/);
+  assert.match(prompt, /what you found in the code that makes the question necessary and what its answer changes/);
+  assert.match(prompt, /its own copy of the app's data/);
+  assert.doesNotMatch(prompt, /Ask back/);
+  assert.doesNotMatch(prompt, /sample data/i);
+  // Every sentence asking a question says what makes it necessary; nothing
+  // contradicts the chat's rule with a bare "ask back".
+  for (const line of prompt.split('\n')) {
+    if (/question|ask them|ask back/i.test(line) && /answer changes|makes the question necessary|needs no change|bare question/i.test(line) === false) {
+      assert.fail(`a question with no reason in the prompt: ${line}`);
+    }
+  }
+});
+
+test('the draft skill states the chat\'s question rule, promises nothing later, and has no em dash', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const text = fs.readFileSync(path.join(__dirname, '..', 'src', 'prompts', 'artifact-draft.md'), 'utf8');
+  for (const line of text.split('\n')) {
+    assert.doesNotMatch(line, /ask back|bare question.*allowed|will (look|follow|fix) .*later/i);
+  }
+  assert.match(text, /what you found in the code that makes the question necessary and what its answer changes/);
+  assert.match(text, /Never ask a bare question/);
+  assert.doesNotMatch(text, /sample data/i);
+  assert.doesNotMatch(text, /—/);
 });
 
 // ── A whole turn ───────────────────────────────────────────────────────
@@ -203,7 +246,7 @@ test('switched off, or asked too much this hour, it says so and does nothing, as
 });
 
 test('a draft whose code cannot be read is said in the turn\'s prompt, and its tools are not offered', async () => {
-  const s = setup({ script: [{ reply: 'I couldn\'t read this draft\'s code just now. Try again in a minute.' }] });
+  const s = setup({ script: [{ reply: draftBot.NO_CODE_TEXT }] });
   const dmSvc = { ...require('../src/services/homeroom-bot-dm'), async sendDm(_pool, msg) { s.sent.push(msg); return { messageId: 99 }; } };
   await realMayor.runDmTurn({ async query() { return { rows: [] }; } }, {}, {
     bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings: { mode: 'live' }, conversationId: 7,
