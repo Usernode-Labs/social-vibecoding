@@ -154,6 +154,9 @@ async function migrate(config) {
   // #6354's shots: a design that started from a copy of the Homeroom bot
   // page, an obviously fake one, with the bot's change as version 2.
   await seedStagingCapturedPageThread(pool);
+  // K's shots (20 Nov 2026): one thread holding two artifacts, each with its
+  // own versions, so the artifacts column has a picker to show.
+  await seedStagingArtifactsThread(pool);
   await seedStagingBotPlanWaiting(pool);
   // #6860's shots: a plan whose build is over says what became of it, which
   // a fresh staging copy has no run to show: one built into a change up for
@@ -10032,6 +10035,114 @@ async function seedStagingCapturedPageThread(pool) {
   }
 }
 
+// 20 Nov 2026 (live-draft review, K): a thread holds several artifacts, and
+// the thread's artifacts column picks between them. A clean staging copy has
+// no bot turn to run (there is no model), so this stores what two turns
+// leave in the capture member's chat: one thread holding two pages, the
+// first at version 2 and the second at version 1, each version said by the
+// bot's line as a turn says it. Written through the store
+// (services/artifacts.js). Obviously fake, idempotent by the thread's first
+// message (its key) and its holding two artifacts already, and a strict
+// no-op outside staging.
+const STAGING_ARTIFACTS_KEY = 'staging-artifacts-thread';
+const STAGING_ARTIFACT_TITLES = Object.freeze(['Staging demo: style directions', 'Staging demo: list layouts']);
+
+/** Pure: a small, obviously fake page for the two-artifact fixture. */
+function stagingArtifactPage(title, rows, accent) {
+  const items = rows.map((row) => `<li style="padding:12px 14px;border-radius:12px;background:#fff;`
+    + `box-shadow:inset 0 0 0 1px #e4e4e7;margin-top:8px;font-size:15px">${row}</li>`).join('');
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+    + `<body style="margin:0;font-family:system-ui,sans-serif;background:#faf8f5;color:#18181b">`
+    + `<main style="padding:24px 16px"><h1 style="font-size:20px;margin:0;color:${accent}">${title}</h1>`
+    + '<p style="font-size:13px;color:#71717a;margin:6px 0 0">Staging demo page: obviously fake.</p>'
+    + `<ul style="list-style:none;margin:12px 0 0;padding:0">${items}</ul></main></body></html>`;
+}
+
+async function seedStagingArtifactsThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const member = (await pool.query(
+      'SELECT id FROM users WHERE username = \'usernode-capture\' AND is_synthetic = FALSE LIMIT 1'
+    )).rows[0];
+    if (!member) return;
+    // The bot's account, in the posture botAccount() reads.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    const bot = (await pool.query(
+      'SELECT id FROM users WHERE username = \'homeroom_bot\' AND is_synthetic = TRUE LIMIT 1'
+    )).rows[0];
+    if (!bot || Number(bot.id) === Number(member.id)) return;
+    const dm = require('../services/homeroom-bot-dm');
+    const store = require('../services/artifacts');
+    const user = { id: Number(member.id) };
+    // The thread's first message, its row written with it (sendDm `thread`),
+    // as a thread the bot opens for a page starts (design-threads.js
+    // openDrawThread). The same key finds the same message on a later boot.
+    const opened = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: 'Staging demo: I\'m writing two artifacts in this thread, a page of style directions and a page of list '
+        + 'layouts. Only you can see it.',
+      thread: { kind: 'ask', appId: null },
+      moment: null,
+      idempotencyKey: STAGING_ARTIFACTS_KEY,
+      metadata: { kind: 'opened_thread', changeKind: 'any', designTitle: STAGING_ARTIFACT_TITLES[0] },
+    });
+    if (!opened?.messageId) return;
+    const room = { rootId: Number(opened.messageId), conversationId: Number(opened.conversationId), app: null };
+    const held = await store.artifactFor(pool, { userId: member.id, rootId: room.rootId });
+    if ((held?.artifacts || []).length >= 2) return;
+    // Each version as a turn keeps it: the store's version, then the bot's
+    // line that says it ("Title, version N: ..." once the thread holds two),
+    // and that line's id on the version.
+    const say = async (artifact, html, note, line) => {
+      const made = await store.addVersion(pool, { threadId: artifact.threadId, artifactId: artifact.artifactId, html, author: 'bot', note });
+      if (!made) return;
+      const sent = await dm.sendDm(pool, {
+        bot,
+        userId: member.id,
+        content: line,
+        threadRootId: room.rootId,
+        moment: null,
+        idempotencyKey: `${STAGING_ARTIFACTS_KEY}-a${artifact.artifactId}-v${made.version}`,
+        metadata: { kind: 'design_version', designVersion: made.version, artifactId: artifact.artifactId, designTitle: artifact.title },
+      }).catch(() => null);
+      await store.noteVersionMessage(pool, {
+        threadId: artifact.threadId, artifactId: artifact.artifactId, version: made.version, messageId: sent?.messageId,
+      });
+    };
+    let first = held;
+    if (!first) {
+      const made = await store.addArtifact(pool, {
+        user, thread: room, kind: 'page', title: STAGING_ARTIFACT_TITLES[0], viewport: 'phone', surface: 'new',
+      });
+      first = made.ok ? made.artifact : null;
+    }
+    if (!first) return;
+    if (!first.latest) {
+      const rows = ['Calm: warm greys, one blue accent', 'Bold: dark ground, bright type', 'Soft: rounded cards, pastel tints'];
+      await say(first, stagingArtifactPage('Style directions', rows, '#0a6ee0'), 'Staging demo: three style directions',
+        'Version 1: Staging demo: three style directions.');
+      await say(first, stagingArtifactPage('Style directions', rows, '#18181b'), 'Staging demo: a darker title',
+        'Version 2: Staging demo: a darker title.');
+    }
+    const second = await store.addArtifact(pool, {
+      user, thread: room, kind: 'page', title: STAGING_ARTIFACT_TITLES[1], viewport: 'phone', surface: 'new',
+    });
+    if (!second.ok) return;
+    await say(second.artifact,
+      stagingArtifactPage('List layouts', ['Plain rows with a chevron', 'Inset grouped cards', 'Rows with a leading icon'], '#0a6ee0'),
+      'three ways to lay out a list',
+      require('../services/design-threads').versionLine(1, 'three ways to lay out a list', { title: STAGING_ARTIFACT_TITLES[1] }));
+    log.info('db', 'Staging two-artifact thread seeded', { rootId: room.rootId });
+  } catch (err) {
+    log.warn('db', 'Staging two-artifact thread seeding failed', { message: err.message });
+  }
+}
+
 // Fixtures for the home screen's "Your apps" section + search bar
 // (homepage restructure). The section is the union of membership
 // (app_collaborators status='member') and manual favorites
@@ -17276,6 +17387,8 @@ module.exports = {
   seedStagingFoldedLiveNotifications,
   seedStagingDesignThread,
   seedStagingCapturedPageThread,
+  // K (20 Nov 2026): one thread holding two artifacts, the picker's shots.
+  seedStagingArtifactsThread,
   // The private thread about a change that is live, which History lists.
   seedStagingLiveChangePrivateThread,
   seedStagingOlderFirstVersionThread,

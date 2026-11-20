@@ -545,6 +545,11 @@
       "id": "live-drafts-after-propose",
       "sha256": "1feeb0e079e107eb1ee1bfc2b0df5b945cece026f2bfffb131f9cf3a7df7e8e9",
       "schemaSha256": "0dd3a3616ac7f90070ef69bfd633f468d659c2ec6e53399f1f16598cb819895b"
+    },
+    {
+      "id": "thread-artifacts",
+      "sha256": "41395b252dbf5b93394ecb9e03da2d8f25e6b5727ad1ab1e235c9fca64cb43d8",
+      "schemaSha256": "349c880de302dead31771ef6eb25c7460b09cd724f366fbe007a2c75263e9d92"
     }
   ]
 }

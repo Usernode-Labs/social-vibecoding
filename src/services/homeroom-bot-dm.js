@@ -6516,17 +6516,22 @@ function designBrief(design, version, said = null) {
  * The design POST /api/apps is asked to make a project from ({ rootId,
  * version? }): one of the person's own private threads with a design and no
  * project yet, that made none before. Resolves { ok, design, version, brief }
- * or a refusal { ok: false, status, error }.
+ * or a refusal { ok: false, status, error }. 20 Nov 2026 (live-draft
+ * review, K): `artifactId` names which of the thread's artifacts (none: its
+ * first), and the make card carries it (homeroom-bot-mayor.js
+ * sendDesignOffer, metadata.makeProject.artifactId).
  */
 async function designForProject(pool, { user, design: ref, brief = null, deps = {} }) {
   if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return { ok: false, status: 400, error: 'design must be { rootId, version }' };
   const rootId = Number(ref.rootId);
   const asked = ref.version == null ? null : Number(ref.version);
-  if (!Number.isSafeInteger(rootId) || rootId <= 0 || (asked != null && !(Number.isSafeInteger(asked) && asked > 0))) {
+  const artifactId = ref.artifactId == null ? null : Number(ref.artifactId);
+  if (!Number.isSafeInteger(rootId) || rootId <= 0 || (asked != null && !(Number.isSafeInteger(asked) && asked > 0))
+    || (artifactId != null && !(Number.isSafeInteger(artifactId) && artifactId > 0))) {
     return { ok: false, status: 400, error: 'design must be { rootId, version }' };
   }
   if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'Not available for this account' };
-  const design = await (deps.designThreads || require('./design-threads')).designFor(pool, { userId: user.id, rootId });
+  const design = await (deps.designThreads || require('./design-threads')).designFor(pool, { userId: user.id, rootId, artifactId });
   if (!design || !design.latest) return { ok: false, status: 404, error: 'No such design' };
   if (design.app) return { ok: false, status: 409, error: `This design is a screen of ${design.app.name || design.app.slug}.` };
   const version = asked || design.latest;
@@ -6544,21 +6549,24 @@ async function designForProject(pool, { user, design: ref, brief = null, deps = 
 // its plan is ready, and the design's thread is the new project's.
 async function recordDesignFirstVersion(db, { app, design, botBuilds }) {
   const plan = botBuilds ? require('./first-version-plan').designPlan(design.design, design.version) : null;
+  // K (20 Nov 2026): which artifact of the thread, null for its first.
+  const artifactId = Number(design.design.artifactId) > 1 ? Number(design.design.artifactId) : null;
   await db.query(
     `UPDATE homeroom_bot_first_versions
         SET design_thread_id = $2, design_version = $3,
             early_plan = COALESCE($4::jsonb, early_plan),
             early_plan_status = CASE WHEN $4::jsonb IS NULL THEN early_plan_status ELSE 'ready' END,
-            early_plan_at = CASE WHEN $4::jsonb IS NULL THEN early_plan_at ELSE NOW() END
+            early_plan_at = CASE WHEN $4::jsonb IS NULL THEN early_plan_at ELSE NOW() END,
+            design_artifact_id = $5
       WHERE app_id = $1`,
-    [app.id, design.design.threadId, design.version, plan ? JSON.stringify(plan) : null],
+    [app.id, design.design.threadId, design.version, plan ? JSON.stringify(plan) : null, artifactId],
   );
   await db.query(
     `UPDATE private_threads SET app_id = $2, state = 'filed', updated_at = NOW() WHERE id = $1`,
     [design.design.threadId, app.id],
   );
   // Drawn for no project, it is a screen of this one now.
-  await db.query(`UPDATE design_threads SET surface = 'app' WHERE private_thread_id = $1 AND surface <> 'app'`, [design.design.threadId]);
+  await require('./artifacts').markSurface(db, { threadId: design.design.threadId, artifactId, surface: 'app' });
 }
 
 /**
@@ -6578,6 +6586,8 @@ async function postFirstDesignPlan(pool, config, { row, issueNumber, deps = {} }
     const posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
       user: { id: Number(u.id), username: u.username, isAdmin: !!u.is_admin },
       rootId: Number(thread.root_message_id), version: Number(row.design_version) || null, issueNumber,
+      // K (20 Nov 2026): the artifact of the thread it was made from.
+      artifactId: Number(row.design_artifact_id) || null,
       // #6353: a first version's plan posts even when a script builds its
       // rows: the gap is logged rather than refusing a project's own plan.
       allowEmptier: true, deps,
@@ -6668,6 +6678,8 @@ async function threadForProject(pool, { user, thread: ref, brief = null, deps = 
   const bot = await botAccount(pool);
   const root = await threads.ownRoot(pool, { user, bot, rootId });
   if (!root) return { ok: false, status: 404, error: 'No such thread' };
+  // K (20 Nov 2026): a thread's first artifact is design_threads' row, and a
+  // later one is only ever made beside it, so this is "holds any artifact".
   const { rows: [row] = [] } = await pool.query(
     `SELECT p.id, p.kind, p.state, p.title,
             EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id) AS design
@@ -6914,7 +6926,7 @@ const CLAIM_SQL = `UPDATE homeroom_bot_first_versions f SET status = 'filing', a
 async function fileFirstRequest(pool, config, appId, { steps, last = false, deps = {} } = {}) {
   if (isStaging() && !deps.allowStaging) return { skipped: 'staging' };
   const { rows: [row] } = await pool.query(
-    `SELECT f.app_id, f.user_id, f.brief, f.bot_builds, f.status, f.design_thread_id, f.design_version,
+    `SELECT f.app_id, f.user_id, f.brief, f.bot_builds, f.status, f.design_thread_id, f.design_version, f.design_artifact_id,
             a.slug, a.name, a.repo_url
        FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
       WHERE f.app_id = $1`,

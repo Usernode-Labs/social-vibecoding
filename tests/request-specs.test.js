@@ -214,9 +214,9 @@ test('the first post opens a paused, branchless record linked to the request, an
   assert.match(stored.params[2], /^<article data-spec-styles="kit" data-spec>/,
     'another app\'s screens draw with the native kit, as the scout\'s do');
   const version = pool.calls.find((c) => /INSERT INTO chat_session_specs/.test(c.sql));
-  assert.match(version.sql, /shared_to_group_at, design_thread_id, design_version\)[\s\S]*NOW\(\)/, 'shared with the group on the way in');
+  assert.match(version.sql, /shared_to_group_at, design_thread_id, design_version,\s*design_artifact_id\)[\s\S]*NOW\(\)/, 'shared with the group on the way in');
   // Artifacts, stage 0: a plan a person wrote names no design.
-  assert.deepEqual(version.params.slice(-2), [null, null]);
+  assert.deepEqual(version.params.slice(-3), [null, null, null]);
   // The transaction ends the record's writes; after it, a plan on the
   // request is what Homeroom bot waits for while its requester works on it
   // in a private thread, so the wait lifts (private-threads.js liftHold).

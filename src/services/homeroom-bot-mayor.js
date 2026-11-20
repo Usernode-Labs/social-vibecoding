@@ -535,6 +535,10 @@ function designThreadLines(design, { refused = null } = {}) {
     '  be offered on any project they can see: this thread is not limited to the design\'s project. Never say',
     '  something cannot be done in this thread, and never tell them to do it themselves somewhere else.',
   );
+  // 20 Nov 2026 (live-draft review, K, F): the thread's other artifacts, and
+  // when a new subject is a new artifact (artifact-session.js).
+  const session = require('./artifact-session');
+  lines.push(...session.artifactListLines(design), ...session.NEW_SUBJECT_LINES);
   return lines;
 }
 
@@ -1241,7 +1245,7 @@ const TOOLS = [
       // Step 6 (#6864): it hands nothing over. It gives this turn the design
       // tools, and the turn draws the screen and says the version it saved.
       name: 'start_design',
-      description: 'Start drawing a screen with them, as a design in this thread: it gives you the design tools (write_artifact, edit_artifact, capture_page and the rest) and the design\'s rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
+      description: 'Start drawing a screen with them, as a new artifact in this thread, in the project\'s own look: it gives you the design tools (write_artifact, edit_artifact, capture_page and the rest) and their rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out, and no artifact here already shows that screen: to change one that does, use edit_artifact. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
       parameters: {
         type: 'object',
         properties: {
@@ -1388,9 +1392,13 @@ const REPLY_TOOL = TOOLS.find((tool) => tool.function.name === 'reply');
 // once for the version this turn saved, which the version line says after
 // "Version N:" (design-threads.js versionLine): never joined from the edits'
 // own notes, never cut mid-word.
-// Artifacts: the chat's tools that start a thread's artifact, offered only
-// while none is loaded in the turn.
+// Artifacts: the chat's tools that start a thread's artifact. K (20 Nov
+// 2026): offered beside an open one too, except while the turn makes a new
+// one already or the thread holds all it may (answer(): toolsFor).
 const STARTS_ARTIFACT = new Set(['start_design', 'write_artifact']);
+// K (20 Nov 2026): the artifact tools whose `artifact` number opens another
+// of the thread's artifacts first (answer(): artifactMove).
+const ARTIFACT_MOVES = new Set(['write_artifact', 'edit_artifact', 'show_artifact']);
 const DESIGN_REPLY_TOOL = Object.freeze({
   type: 'function',
   function: {
@@ -3362,8 +3370,8 @@ async function resolveCards(pool, user, cards) {
  * over: once its checks pass, this turn loads the design capability
  * (ctx.loadDesign, answer(): design-bot.js openSession) for `project` when it
  * names one they may see, in the thread the turn is in, and draws the screen
- * itself in its next rounds. A thread that holds a design has its tools
- * already, so start_design is not offered there.
+ * itself in its next rounds. 20 Nov 2026 (K): in a thread that holds
+ * artifacts already, the screen is a new artifact beside them.
  */
 async function startDesign(pool, ctx, args = {}) {
   // A project's first-version thread is where its plan, its progress and its
@@ -3376,10 +3384,13 @@ async function startDesign(pool, ctx, args = {}) {
         + '(New thread) and ask for the screen there: you will draw it in that thread.',
     };
   }
-  // Artifacts, stage 2: a thread holds one artifact, and a page's thread is
-  // not where a screen is drawn.
-  if (require('./artifact-session').holdsPage(ctx)) return { ok: false, error: require('./artifact-session').NO_SCREEN_TEXT };
-  if (ctx.caps?.design) return { ok: true, note: 'The design tools are yours already: draw or change the screen with them, then reply.' };
+  // 20 Nov 2026 (live-draft review, K): a thread holds several artifacts of
+  // either kind, so start_design draws a NEW one beside what it holds (a
+  // page's thread included); only a new screen this turn is drawing already
+  // has the tools.
+  if (ctx.caps?.design?.fresh && ctx.caps.design.capability === 'design') {
+    return { ok: true, note: 'The design tools are yours already: draw the screen with them, then reply.' };
+  }
   // 15 Nov 2026 (#6683): a screen of another project is not drawn into a
   // thread whose design is of its own project.
   const design = ctx.deps?.threadDesign || null;
@@ -4661,18 +4672,56 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         if (opened.refused) caps.draftRefused = opened.refused;
         else caps.draft = opened;
       }
+      // 20 Nov 2026 (live-draft review, K): a thread holds several artifacts,
+      // and this turn works on one at a time: the one its message is about
+      // (design-threads.js threadOf), another the model names by number, or
+      // a new one (`artifactId` null), the thread's next. Opening another
+      // closes the one that was open, which must be unchanged: a turn saves
+      // one version, with its one reply. The opened one's section (its whole
+      // HTML) follows this round's results, and the turn grows to its kind's
+      // limits.
+      const sessions = deps.artifactSession || require('./artifact-session');
+      ctx.switchArtifact = async ({ room = null, artifactId = null, kind = 'page', app = null, brief = null } = {}) => {
+        if (caps.design?.changed()) return { ok: false, error: sessions.ONE_A_TURN_TEXT };
+        const where = room || caps.design?.room || (deps.threadRootId && !deps.threadRequest
+          ? await designThreads.draftingThread(pool, { userId: user.id, botId: bot.id, rootId: deps.threadRootId }).catch(() => null)
+          : null);
+        if (!where?.rootId) return { ok: false, error: sessions.NO_THREAD_TEXT };
+        const held = await designThreads.designFor(pool, { userId: user.id, rootId: where.rootId, artifactId }).catch(() => null);
+        if (artifactId != null && !held) {
+          return { ok: false, error: `This thread holds no artifact ${artifactId}. Name one of its artifacts by number, or none for a new one.` };
+        }
+        if (artifactId == null && held) {
+          if (!['open', 'posted', 'filed'].includes(held.state)) {
+            return { ok: false, error: `${kind === 'design' ? designBot.CLOSED_TEXT : sessions.CLOSED_TEXT} Say so.` };
+          }
+          if ((held.artifacts || []).length >= (deps.artifacts || require('./artifacts')).MAX_ARTIFACTS_PER_THREAD) {
+            return { ok: false, error: `${sessions.FULL_THREAD_TEXT} Say so.` };
+          }
+        }
+        const opened = await openDesign({
+          design: artifactId == null ? null : held, room: where, app, brief, started: artifactId == null, openedAt: turnRounds.rounds,
+          kind: artifactId == null ? kind : held.artifactKind,
+        });
+        if (opened.refused) return { ok: false, error: `${opened.refused} Say so.` };
+        const before = caps.design;
+        caps.design = opened;
+        caps.designRefused = null;
+        if (before) { try { await before.close?.(); } catch {} }
+        sections.push(opened.prompt);
+        grow(opened.capability || 'design', turnRounds.rounds);
+        return { ok: true, opened };
+      };
       // start_design: the design capability, loaded for the rest of this turn
       // in the thread it is in (design-bot.js roomFor), which needs no hand-off.
+      // K: always a new screen, the thread's next artifact.
       ctx.loadDesign = async ({ app = null, title = null, brief = null }) => {
         const got = await designBot.roomFor(pool, { bot, user, message, app, title, deps });
         if (!got) return { ok: false, error: designBot.NO_THREAD_TEXT };
-        const design = await designThreads.designFor(pool, { userId: user.id, rootId: got.room.rootId }).catch(() => null);
-        const opened = await openDesign({ design, room: got.room, app, brief, started: true, openedAt: turnRounds.rounds });
-        if (opened.refused) return { ok: false, error: `${opened.refused} Say so.` };
-        caps.design = opened;
+        const made = await ctx.switchArtifact({ room: got.room, artifactId: null, kind: 'design', app, brief });
+        if (!made.ok) return made;
+        const opened = made.opened;
         if (got.opened) ctx.replyRoot = got.room.rootId;
-        sections.push(opened.prompt);
-        grow('design', turnRounds.rounds);
         return {
           ok: true, version: opened.version(),
           note: `The design tools are yours for the rest of this turn, and its rules follow. Draw it now (write_artifact, or capture_page for one of Homeroom's own pages and then edit_artifact), then reply once: it is saved as version ${opened.version()}.`,
@@ -4691,18 +4740,14 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         return { ok: true };
       };
       // write_artifact: the artifact capability, loaded for the rest of this
-      // turn in the thread it is in, for the plain kind (a page).
-      ctx.loadArtifact = async ({ kind = 'page', title = null }) => {
+      // turn in the thread it is in, for the plain kind (a page). K: a new
+      // one, the thread's next, or the one `artifactId` names.
+      ctx.loadArtifact = async ({ kind = 'page', title = null, artifactId = null }) => {
         const got = await designBot.roomFor(pool, { bot, user, message, title, kind, deps });
-        if (!got) return { ok: false, error: (deps.artifactSession || require('./artifact-session')).NO_THREAD_TEXT };
-        const held = await designThreads.designFor(pool, { userId: user.id, rootId: got.room.rootId }).catch(() => null);
-        if (held) return { ok: false, error: 'This thread holds a design or a page already. Say so.' };
-        const opened = await openDesign({ design: null, room: got.room, started: true, openedAt: turnRounds.rounds, kind });
-        if (opened.refused) return { ok: false, error: `${opened.refused} Say so.` };
-        caps.design = opened;
+        if (!got) return { ok: false, error: sessions.NO_THREAD_TEXT };
+        const made = await ctx.switchArtifact({ room: got.room, artifactId, kind });
+        if (!made.ok) return made;
         if (got.opened) ctx.replyRoot = got.room.rootId;
-        sections.push(opened.prompt);
-        grow(opened.capability, turnRounds.rounds);
         return { ok: true };
       };
       if (caps.design) grow(caps.design.capability || 'design', 0);
@@ -4740,11 +4785,16 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // This round's tools: the chat's own, with a capability's in place of
       // any it runs itself (a design's reads of its own project's code), and
       // the design's reply, which carries the version's summary.
+      // K (20 Nov 2026): a thread holds several artifacts, so start_design is
+      // offered beside an open one; not while this turn makes a new one
+      // already (one a turn), nor in a thread that holds all it may.
+      const full = () => (deps.threadDesign?.artifacts?.length || 0)
+        >= (deps.artifacts || require('./artifacts')).MAX_ARTIFACTS_PER_THREAD;
       const toolsFor = (rounds) => {
         const own = (name) => !!(caps.design?.owns(name) || caps.draft?.owns(name));
         const base = baseTools
-          // A thread holds one artifact: with one loaded, nothing starts another.
-          .filter((tl) => !own(tl.function.name) && !(caps.design && STARTS_ARTIFACT.has(tl.function.name)))
+          .filter((tl) => !own(tl.function.name)
+            && !(caps.design && STARTS_ARTIFACT.has(tl.function.name) && (caps.design.fresh || full())))
           .map((tl) => {
             if (!caps.design) return tl;
             if (tl.function.name === 'reply') return DESIGN_REPLY_TOOL;
@@ -4753,6 +4803,27 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             return tl;
           });
         return [...base, ...(caps.design ? caps.design.tools(rounds) : []), ...(caps.draft ? caps.draft.tools() : [])];
+      };
+      // K (20 Nov 2026): what a call to an artifact tool opens before it runs
+      // (ctx.switchArtifact). write_artifact with no number, while an
+      // artifact the thread holds is open, writes a NEW one of the open one's
+      // kind (F: a new subject is a new artifact); a number that is not the
+      // open one's opens that one. Resolves an error result, or null to run
+      // the call on the artifact now open (`switchedTo` says which it opened).
+      let switchedTo = null;
+      const artifactMove = async (name, args) => {
+        switchedTo = null;
+        if (!ARTIFACT_MOVES.has(name) || !caps.design) return null;
+        const named = sessions.artifactNumber(args?.artifact);
+        const open = caps.design.artifactId ?? null;
+        if (named != null ? named === open : name !== 'write_artifact' || open == null) return null;
+        const kind = caps.design.capability === 'design' ? 'design' : 'page';
+        const made = await ctx.switchArtifact({ artifactId: named, kind, app: caps.design.project || null });
+        if (!made.ok) return { ok: false, error: made.error };
+        switchedTo = named;
+        // A design has no show_artifact: opening it is the answer.
+        if (!caps.design.owns(name)) return { ok: true, note: `Artifact ${named} is open now, and its section follows.` };
+        return null;
       };
       // The tools this place offers, the only ones a repair note may name
       // (#6583). The check reads the bot's server notes in this conversation
@@ -4892,14 +4963,23 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         },
         call: async (call, name, args, round = {}) => {
           toolsUsed.push(name.slice(0, 40));
+          // K (20 Nov 2026): a call that names another artifact, or writes a
+          // new one, opens it first (artifactMove), so the working card below
+          // names the version of the one it works on.
+          const moved = await artifactMove(name, args);
           // 1 Nov 2026: the working card's words, as the call starts.
           sayDoing(pool, ctx, name, args);
-          const onPlatform = platform && PLATFORM_TOOLS.includes(name) && !caps.design?.owns(name);
-          const session = caps.design?.owns(name) ? caps.design : caps.draft?.owns(name) ? caps.draft : null;
+          const onPlatform = !moved && platform && PLATFORM_TOOLS.includes(name) && !caps.design?.owns(name);
+          const session = moved ? null : caps.design?.owns(name) ? caps.design : caps.draft?.owns(name) ? caps.draft : null;
           let result;
-          // A: a draft's look shows its picture with this round's (picturesMessage).
-          if (session) result = await session.run(name, args, { ...round, pictures });
-          else if (onPlatform) {
+          if (moved) result = moved;
+          else if (session) {
+            // A: a draft's look shows its picture with this round's (picturesMessage).
+            result = await session.run(name, args, { ...round, pictures });
+            if (switchedTo != null && result?.ok === false && name === 'edit_artifact') {
+              result = { ...result, error: `${result.error} Artifact ${switchedTo} is open now, and its whole HTML follows: copy each find from it.` };
+            }
+          } else if (onPlatform) {
             // B: a read made once a turn answers again from the first (readOnce).
             result = readOnce(ctx, messages, name, args) || await botTools.run(name, args, {
               pool, user: ctx.user, scope: 'main', deps,
@@ -5171,12 +5251,14 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     const sent = await sayHere(words, {
       metadata: {
         kind: 'design_version', appSlug: saved.held.app?.slug || null, appName: saved.held.app?.name || null,
+        // K (20 Nov 2026): which of the thread's artifacts the version is of.
+        artifactId: Number(saved.held.artifactId) || 1,
         designVersion: saved.made.version, designTitle: saved.held.title,
         ...(toolCard ? { card: toolCard } : {}), ...(looked ? { looked } : {}),
       },
     });
     await (deps.designThreads || require('./design-threads')).noteVersionMessage(pool, {
-      threadId: saved.held.threadId, version: saved.made.version, messageId: sent?.messageId,
+      threadId: saved.held.threadId, artifactId: Number(saved.held.artifactId) || 1, version: saved.made.version, messageId: sent?.messageId,
     });
     if (caps.design.offered) {
       await sendDesignOffer(pool, {
@@ -5903,6 +5985,9 @@ async function sendProjectOffer(pool, { bot, user, message, key, brief, deps = {
 async function sendDesignOffer(pool, { bot, user, conversationId, message, design, offer: o, text = '', key, version = null, deps = {} }) {
   const dm = dmModule(deps);
   const v = Number(version) || Number(o.version) || design.latest;
+  // K (20 Nov 2026): a later artifact of the thread is named on the card
+  // (none is the first), so its tap makes or posts that one.
+  const later = Number(design.artifactId) > 1 ? Number(design.artifactId) : null;
   if (o.kind === 'project') {
     return dm.sendDm(pool, {
       bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
@@ -5913,7 +5998,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       ].join('\n'),
       metadata: {
         kind: 'make_offer', question: `Make ${o.name}?`,
-        makeProject: { name: o.name, rootId: Number(design.rootId), version: v },
+        makeProject: { name: o.name, rootId: Number(design.rootId), version: v, ...(later ? { artifactId: later } : {}) },
         actions: [{ id: 'make', label: MAKE_PROJECT, style: 'primary', type: 'make' }],
         status: 'open', mirrors: false,
       },
@@ -5951,6 +6036,7 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     card: {
       kind: 'post_design', appId: app.id, title: clip(design.title, MAX_TITLE_CHARS) || 'Design',
       sourceIssueNumber: n, privateThreadId: design.threadId, designVersion: v,
+      ...(later ? { args: { artifactId: later } } : {}),
     },
     content: [
       cardSentence(text, {
@@ -5988,6 +6074,8 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
   try {
     posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
       user, rootId: Number(thread.root_message_id), version: Number(action.design_version) || null,
+      // K (20 Nov 2026): the artifact the card offered (none: the first).
+      artifactId: Number(action.args?.artifactId) > 1 ? Number(action.args.artifactId) : null,
       issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null,
       appId: Number(action.app_id) || null, allowEmptier: true, deps,
       // 18 Nov 2026: a tap's card says it in place (settleOnCard).

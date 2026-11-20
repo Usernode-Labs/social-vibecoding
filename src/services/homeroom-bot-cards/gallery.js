@@ -53,7 +53,8 @@ async function decide(pool, config, { user, card, action, value, deps = {} }) {
   }
   if (action === 'design') {
     if (!card.designRootId) return { ok: false, status: 400, error: 'These pictures are not in a design thread.' };
-    const out = await p.addToDesign(pool, { user, rootId: card.designRootId, image, deps });
+    // K (20 Nov 2026): on the artifact the gallery was made for (none: the first).
+    const out = await p.addToDesign(pool, { user, rootId: card.designRootId, artifactId: card.designArtifactId ?? null, image, deps });
     if (!out.ok) return out;
     const designed = Array.isArray(card.designed) ? card.designed.filter((id) => id !== image.id) : [];
     return { ok: true, patch: { designed: [...designed, image.id].slice(-8) } };

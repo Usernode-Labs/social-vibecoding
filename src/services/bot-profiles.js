@@ -259,6 +259,10 @@ function capabilityOf(name) {
  * `threadDesign` (the artifact it holds: a design, or a plain page, by its
  * `artifactKind`) and `threadLiveDraft` (a live draft open in it). A turn
  * may load one as it runs (start_design, write_artifact, open_app_preview).
+ * 20 Nov 2026 (live-draft review, K): a thread holds several artifacts, of
+ * either kind; `threadDesign` is the one the message is about
+ * (design-threads.js threadOf), so the turn starts with that one's
+ * capability and limits, and moves to another's when it opens it.
  */
 function capabilitiesInChat({ threadDesign = null, threadLiveDraft = null } = {}) {
   const held = threadDesign ? [threadDesign.artifactKind === 'page' ? 'artifact' : 'design'] : [];

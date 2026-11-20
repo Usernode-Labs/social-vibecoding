@@ -1083,7 +1083,9 @@ function personLine(message) {
   const el = pin.element || {};
   const what = [el.tag ? `<${el.tag}>` : '', el.text ? `"${el.text}"` : ''].filter(Boolean).join(' ');
   const at = `${Math.round(Number(pin.x) * 100)}% across, ${Math.round(Number(pin.y) * 100)}% down`;
-  return `[Pinned on version ${Number(pin.version)} at ${at}${what ? `, on ${what}` : ''}]\n${text}`;
+  // K (20 Nov 2026): a pin on a later artifact of the thread names it.
+  const of = Number(pin.artifactId) > 1 ? ` of artifact ${Number(pin.artifactId)}` : '';
+  return `[Pinned on version ${Number(pin.version)}${of} at ${at}${what ? `, on ${what}` : ''}]\n${text}`;
 }
 
 /** The thread's newest messages, oldest first, up to `upToId`. */
@@ -1413,7 +1415,7 @@ async function openSession(pool, config, {
   // plan's next version); one put away is not.
   if (design && !['open', 'posted', 'filed'].includes(design.state)) return { refused: CLOSED_TEXT, why: 'closed' };
   const current = design?.latest
-    ? await threads.versionOf(pool, { userId: user.id, rootId: design.rootId }).catch(() => null)
+    ? await threads.versionOf(pool, { userId: user.id, rootId: design.rootId, artifactId: design.artifactId ?? null }).catch(() => null)
     : null;
   if (design?.latest && !current) return { refused: UNREAD_TEXT, why: 'unread' };
   if (current && current.html.length > MAX_DESIGN_CHARS) return { refused: TOO_BIG_TEXT, why: 'too_big' };
@@ -1468,7 +1470,7 @@ async function openSession(pool, config, {
   }
   // P8: the pictures they added to this design (a gallery's Add to the design).
   const added = design?.threadId
-    ? await (deps.botPictures || require('./bot-pictures')).designPictures(pool, design.threadId).catch(() => [])
+    ? await (deps.botPictures || require('./bot-pictures')).designPictures(pool, design.threadId, design.artifactId ?? null).catch(() => [])
     : [];
   // #6257: with nothing to go on yet, this first drawing may ask what the
   // screen is for instead of drawing a made-up one.
@@ -1525,7 +1527,7 @@ async function openSession(pool, config, {
     let comparePng = null;
     const before = (design?.versions || []).find((v) => v.author === 'capture');
     if (before) {
-      const now = await threads.versionOf(pool, { userId: user.id, rootId: design.rootId, version: before.version })
+      const now = await threads.versionOf(pool, { userId: user.id, rootId: design.rootId, artifactId: design.artifactId ?? null, version: before.version })
         .catch(() => null);
       compareHtml = now?.html || null;
     } else {
@@ -1561,6 +1563,11 @@ async function openSession(pool, config, {
     // Artifacts: the kind of artifact this session works on (artifact-session.js open).
     kind: 'design',
     design, room, project, surface, firstDrawing, mayAsk, openedAt, started,
+    // 20 Nov 2026 (live-draft review, K): which of the thread's artifacts
+    // this session changes (1 for the first), or null while it draws a new
+    // one (`fresh`), which save() makes the thread's next.
+    artifactId: design ? Number(design.artifactId) || 1 : null,
+    fresh: !design,
     prompt,
     projectName: project?.name || project?.slug || null,
     get offered() { return offered; },
@@ -1710,7 +1717,11 @@ async function openSession(pool, config, {
             ...args, for: args.for || 'design', ...(named ? { project: named } : {}),
           });
           if (result?.ok && pictureCtx.card) {
-            card = { ...pictureCtx.card, designRootId: room.rootId };
+            card = {
+              ...pictureCtx.card, designRootId: room.rootId,
+              // K (20 Nov 2026): the artifact its Add to the design goes on.
+              ...(Number(design?.artifactId) > 1 ? { designArtifactId: Number(design.artifactId) } : {}),
+            };
             return {
               ...result,
               addresses: card.images.map((im) => ({ label: im.label, src: im.url, width: im.width, height: im.height })),
@@ -1832,14 +1843,18 @@ async function openSession(pool, config, {
       // #6354: a captured page is Homeroom's own, whatever project the thread
       // was in: its app row, surface 'platform' and the route it copied.
       const capturedApp = captured ? await mayor.findApp(pool, config.selfAppSlug).catch(() => null) : null;
+      // K (20 Nov 2026): a design this session drew from nothing is a new
+      // artifact, the thread's next; one it drew again whole is the same one.
       const held = drawn || !design
         ? await threads.ensureDesign(pool, config, {
           user, thread: room, app: captured ? capturedApp : (project?.id ? project : null),
           title: drawn?.title || design?.title, size: drawn?.size,
           ...(captured ? { surface: 'platform', route: captured.route } : {}),
+          ...(design ? { artifactId: Number(design.artifactId) || 1 } : { fresh: true }),
         })
         : design;
       if (!held) return { ok: false, text: FULL_TEXT };
+      const artifactId = Number(held.artifactId) || 1;
       // One line for the version, written once (#6864); a first drawing with
       // none is named by its screen.
       const note = String(summary || '').replace(/\s+/g, ' ').trim() || (drawn && !design ? drawn.title : null) || null;
@@ -1847,14 +1862,14 @@ async function openSession(pool, config, {
       let captioned = null;
       if (captured) {
         captioned = await threads.addVersion(pool, {
-          threadId: held.threadId, html: captured.html, author: 'capture', note: 'As it is now',
+          threadId: held.threadId, artifactId, html: captured.html, author: 'capture', note: 'As it is now',
         });
         if (!captioned) return { ok: false, text: FULL_TEXT };
         made = html !== captured.html
-          ? await threads.addVersion(pool, { threadId: held.threadId, html, author: 'bot', note })
+          ? await threads.addVersion(pool, { threadId: held.threadId, artifactId, html, author: 'bot', note })
           : captioned;
       } else {
-        made = await threads.addVersion(pool, { threadId: held.threadId, html, author: 'bot', note });
+        made = await threads.addVersion(pool, { threadId: held.threadId, artifactId, html, author: 'bot', note });
       }
       if (!made) return { ok: false, text: FULL_TEXT };
       // A capture with no edit is version 1 alone; with one, version 1 is
@@ -1862,13 +1877,18 @@ async function openSession(pool, config, {
       return { ok: true, held, made, captioned, onlyCapture: !!captured && made === captioned, note };
     },
 
-    /** The version lines the reply carries, by what save() kept: "Version N: <summary>." */
+    /**
+     * The version lines the reply carries, by what save() kept: "Version N:
+     * <summary>." K (20 Nov 2026): named by the design's title when the
+     * thread holds more than one artifact ("Home, version 2: ...").
+     */
     versionLines(saved) {
       if (!saved?.ok) return [];
-      if (saved.onlyCapture) return [threads.versionLine(saved.made.version, 'As it is now')];
+      const named = (saved.held?.artifacts || []).length > 1 ? { title: saved.held.title } : {};
+      if (saved.onlyCapture) return [threads.versionLine(saved.made.version, 'As it is now', named)];
       return [
-        ...(saved.captioned ? [threads.versionLine(saved.captioned.version, 'As it is now')] : []),
-        threads.versionLine(saved.made.version, saved.note),
+        ...(saved.captioned ? [threads.versionLine(saved.captioned.version, 'As it is now', named)] : []),
+        threads.versionLine(saved.made.version, saved.note, named),
       ];
     },
 

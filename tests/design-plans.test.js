@@ -507,8 +507,9 @@ test('a plan made from a design is posted with the design\'s thread and version,
   }).catch(() => null);
   const insert = queries.find((q) => /INSERT INTO chat_session_specs/.test(q.sql));
   assert.ok(insert, 'the plan\'s version was written');
-  assert.match(insert.sql, /design_thread_id, design_version\)/);
-  assert.deepEqual(insert.params.slice(-2), [41, 3]);
+  // K (20 Nov 2026): and which artifact of its thread (none: the first).
+  assert.match(insert.sql, /design_thread_id, design_version,\s*design_artifact_id\)/);
+  assert.deepEqual(insert.params.slice(-3), [41, 3, null]);
   const plan = await specs.personPlanOf(pool, { appId: 5, issueNumber: 18 });
   assert.deepEqual(plan.design, { threadId: 41, version: 3 });
 });
