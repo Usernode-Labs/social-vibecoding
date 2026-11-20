@@ -219,7 +219,7 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   // No Invite card and no Share it card under the look: both actions are the hero's.
-  assert.match(ws, /const wipLook = useLiveSkin\(\) === 'wip';/);
+  assert.match(ws, /const wipLook = isKitHome\(useLiveSkin\(\)\);/);
   assert.match(ws, /inviteCard=\{!kitHub\}/);
   assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
   assert.match(card, /\{wipLook \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
@@ -292,7 +292,7 @@ test('Standard (WIP): the board ties a request to the changes made for it, and o
   assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
   // Advanced mode is on <html> for the look's one detail kept for it.
   assert.match(read('frontend/src/head.html'), /root\.setAttribute\('data-interface-mode', basic \? 'basic' : 'advanced'\);/);
-  assert.match(read('public/css/app.css'), /html\[data-skin-wip\]\[data-interface-mode="basic"\] #dev-kanban \[data-attr-field="category"\] \{ display: none; \}/);
+  assert.match(read('public/css/app.css'), /html:not\(\[data-skin\]\)\[data-interface-mode="basic"\] #dev-kanban \[data-attr-field="category"\] \{ display: none; \}/);
 });
 
 test('Standard (WIP): the menu is the token set\'s own panel, and a pinned project says who is in it', () => {

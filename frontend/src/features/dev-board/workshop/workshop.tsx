@@ -3122,7 +3122,7 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   // Standard (WIP) folds Invite into the hero's row (no Invite card), and its Workshop door opens the board (below).
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   // The hub is the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome); the board is not yet.
   const kitHub = isKitHome(useLiveSkin());
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');

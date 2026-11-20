@@ -38,8 +38,23 @@
 const { loadTsx, renderToHtml, createElement } = require('./render-tsx');
 
 let api = null;
+let legacy = false;
+/**
+ * Draw as every look but the kit's does (call before the first render). Since
+ * 20 Nov 2026 the standard look's board is the kit's (lib/skin.ts isKitHome):
+ * a suite that holds the older drawing, which the brand look still has, asks
+ * for it here.
+ */
+function legacyLook() {
+  if (api) throw new Error('legacyLook() must be called before the first render');
+  legacy = true;
+}
 function mod() {
-  if (!api) api = loadTsx('tests/fixtures/dev-card-api.ts');
+  if (!api) {
+    api = loadTsx('tests/fixtures/dev-card-api.ts', legacy
+      ? { cache: false, stubs: { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } }
+      : {});
+  }
   return api;
 }
 
@@ -254,6 +269,7 @@ function hasAction(model, fn, ...args) {
 const budgets = () => ({ BADGE_MAX: mod().BADGE_MAX });
 
 module.exports = {
+  legacyLook,
   // The minimal card a topic head needs, for tests that care about the
   // sheet BELOW the card rather than the card itself.
   BLANK_CARD,
