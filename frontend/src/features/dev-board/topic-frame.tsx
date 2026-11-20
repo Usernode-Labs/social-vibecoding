@@ -62,22 +62,23 @@
 
 import { useMessages } from '../../lib/i18n/react';
 import { DetailSlot } from '../detail/detail-slot';
-import { skeletonListHtml } from './card/skeleton';
+import { threadSkeletonHtml } from './card/skeleton';
 
 /**
  * The thread host's initial content, as a constant string.
  *
  * `openTopic` mounts this frame, THEN awaits `_loadDevData()`, and only paints
  * the topic card once that resolves — so on a cold deep link (or a slow link)
- * the page was a back bar over nothing at all for the whole fetch. One
- * card-shaped placeholder stands in for the topic card that is coming.
+ * the page was a back bar over nothing at all for the whole fetch. The page
+ * in outline stands in for it (20 Nov 2026: one card-shaped bar did, and the
+ * page jumped when it arrived).
  *
  * Module-level for prop IDENTITY, the same reason board-frame.tsx's is: React
  * 19 assigns `innerHTML` unconditionally when the prop object differs, so an
  * inline literal would rewrite this host on every re-render of the frame —
  * including ones that happen after `GroupChat.mountThread` has filled it.
  */
-const THREAD_INITIAL = { __html: skeletonListHtml(1) };
+const THREAD_INITIAL = { __html: threadSkeletonHtml() };
 
 export function DevTopicSubView() {
   const t = useMessages('project');

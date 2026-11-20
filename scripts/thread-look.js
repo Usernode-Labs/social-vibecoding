@@ -20,7 +20,8 @@
  *     html:not([data-skin])<state> :where(#dev-topic-thread) <rest>
  *     (:where adds no weight, so the rules keep the order they win in).
  *   - a rule on <html> itself (the look's tokens) lands on #dev-topic-thread,
- *     so the tokens are the page's own and reach nothing outside it.
+ *     so the tokens are the page's own and reach nothing outside it; the
+ *     look's page ground is dropped there, so the wallpaper stays.
  *   - a rule that already names the thread keeps its selector.
  *   - a rule for <body>, for a direct child of <html>, or for another screen
  *     is left out: it could not match inside the thread.
@@ -112,7 +113,12 @@ function generate(css) {
     const at = r.at.join(' { ');
     if (at !== open) { if (open) lines.push('}'.repeat(open.split(' { ').length)); if (at) lines.push(`${at} {`); open = at; }
     const pad = open ? '  ' : '';
-    lines.push(`${pad}${twins.join(`,\n${pad}`)} { ${tokenise(r.body.replace(/\s+/g, ' '), seen)} }`);
+    // A rule on <html> itself lands on the page's root: its tokens and its typeface are carried, the look's own page
+    // ground is not (asked 20 Nov 2026): the standard look keeps its wallpaper behind the page's cards.
+    const onRoot = twins.every((t) => t.endsWith(' #dev-topic-thread'));
+    const body = onRoot ? r.body.split(';').filter((d) => !/^\s*background(-color|-image)?\s*:/.test(d)).join(';') : r.body;
+    if (!body.trim()) continue;
+    lines.push(`${pad}${twins.join(`,\n${pad}`)} { ${tokenise(body.replace(/\s+/g, ' '), seen)} }`);
   }
   if (open) lines.push('}'.repeat(open.split(' { ').length));
   lines.push(END);
