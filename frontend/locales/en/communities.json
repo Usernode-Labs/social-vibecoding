@@ -115,6 +115,22 @@
     "text": "Edit your pinned communities",
     "description": "Accessible name of the Edit button beside a heading on the Communities page: lets the person unpin pinned communities and pin joined ones. \"Edit\" is a verb."
   },
+  "page.invite": {
+    "text": "Invite people",
+    "description": "Action beside Edit at the top of the Communities page: opens the list of communities the person is in, so they can pick one to invite someone to. \"Invite\" is a verb."
+  },
+  "page.inviteLabel": {
+    "text": "Invite people to one of your communities",
+    "description": "Accessible name of the Invite people action at the top of the Communities page, which opens a list of the communities the person is in."
+  },
+  "page.inviteTo": {
+    "text": "Invite people to…",
+    "description": "Title of the list the Invite people action opens on the Communities page. Under it is one row per community the person is in, so it reads \"Invite people to [a community]\"."
+  },
+  "page.inviteListLabel": {
+    "text": "Choose a community to invite someone to",
+    "description": "Accessible name of the list of communities on the Communities page that the Invite people action opens. Each row opens that community's invite sheet."
+  },
   "page.empty": {
     "text": "You are not in a community yet. Join one from Home, or start your own.",
     "description": "Line on the Communities page for a person who has pinned no community and joined none. Home is the name of the Home screen, where the communities to join are listed."
