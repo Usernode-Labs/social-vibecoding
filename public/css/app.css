@@ -7636,6 +7636,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-back, .
    so the vote sits right under the picture. Beside the change, what it does is said once: the short claim over the
    picture gives way to the full text at its side, which scrolls in its own room, in the look's reading ink, so the way
    to the change's page and the three doors under it are always in view. */
+/* The change's title is read whole: it wraps onto as many lines as it needs, where the bar cut it with an ellipsis (asked 20 Nov 2026). */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-bar-title { white-space: normal; text-wrap: pretty; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-why-off { height: 0; margin: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-sheet-inner { padding-top: 0.75rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row { display: none; }
