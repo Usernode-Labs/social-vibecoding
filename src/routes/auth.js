@@ -36,6 +36,7 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { signUpMetadata } = require('../services/sign-up-from');
 const { validatePassword } = require('../services/password-policy');
+const passwordCheck = require('../services/password-check');
 const usernames = require('../services/usernames');
 const contactPrivacy = require('../services/contact-privacy');
 const contactPreferences = require('../services/contact-preferences');
@@ -336,6 +337,24 @@ function authRoutes(config) {
           user = candidate.row;
           matchedBy = candidate.matchedBy;
           break;
+        }
+      }
+      // #6717: a phone keyboard adds a space after the password. When no
+      // candidate takes it as typed, it is tried once more without its
+      // leading and trailing white space (services/password-check.js). The
+      // typed value goes to every candidate first, so an account whose
+      // password really ends in a space still wins. One request either way,
+      // so the limiters count one attempt; a refusal costs at most one more
+      // compare per candidate.
+      const trimmedPassword = user ? null : passwordCheck.withoutOuterSpace(password);
+      if (trimmedPassword) {
+        for (const candidate of candidates) {
+          if (candidate.row.is_synthetic) continue;
+          if (await bcrypt.compare(trimmedPassword, candidate.row.password)) {
+            user = candidate.row;
+            matchedBy = candidate.matchedBy;
+            break;
+          }
         }
       }
 
@@ -2247,7 +2266,7 @@ function authRoutes(config) {
       }
 
       const user = rows[0];
-      const valid = await bcrypt.compare(password, user.password);
+      const valid = await passwordCheck.matches(password, user.password);
       if (!valid) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
