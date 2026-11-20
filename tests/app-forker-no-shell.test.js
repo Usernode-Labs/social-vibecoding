@@ -161,7 +161,7 @@ test('copyRepoTree: one git process per step, in the fork tree, pushed to the gi
 
     assert.ok(calls.every((c) => c.command !== 'bash' && c.command !== 'sh'), 'no shell was spawned');
     const git = calls.filter((c) => c.command === 'git' || c.command === 'git-host');
-    const step = (c) => (c.command === 'git-host' ? c.args[2] : c.args.find((a) => !a.startsWith('-') && !a.includes('=')));
+    const step = (c) => (c.command === 'git-host' ? c.args[c.args[0] === '-C' ? 2 : 0] : c.args.find((a) => !a.startsWith('-') && !a.includes('=')));
     assert.deepEqual(git.map(step),
       ['clone', 'rev-parse', 'init', 'add', 'commit', 'push', 'rev-parse'], 'the steps, in order');
     const [clone, sourceRev, init, add, commit, push, revParse] = git;
@@ -177,6 +177,8 @@ test('copyRepoTree: one git process per step, in the fork tree, pushed to the gi
       assert.equal(s.options.cwd, tempDir, `${s.args[0]} runs in the fork tree`);
     }
     assert.equal(clone.options.cwd, undefined, 'the clone runs from wherever, into the tree');
+    assert.equal(clone.options.auth, true);
+    assert.equal(clone.options.readUrl, 'https://git.homeroom.test/apps/source-app.git');
 
     // The push: from the fork tree to the copy's repository on the git
     // host, answered by its service account (git-host.git, auth: true).

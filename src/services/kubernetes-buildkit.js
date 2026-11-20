@@ -393,7 +393,12 @@ const BUILD_SCRIPT = [
   'say "fetching source $GIT_SHA"',
   'cd /workspace/repo',
   'git init -q',
-  'git -c protocol.version=2 fetch -q --depth 1 "$REPO_URL" "$GIT_SHA"',
+  'if [ -n "${PROJECT_SOURCE_TOKEN:-}" ]; then',
+  '  PROJECT_SOURCE_HEADER="Authorization: Bearer $PROJECT_SOURCE_TOKEN" git --config-env="http.$REPO_URL.extraHeader=PROJECT_SOURCE_HEADER" -c http.followRedirects=false -c protocol.version=2 fetch -q --depth 1 "$REPO_URL" "$GIT_SHA"',
+  '  unset PROJECT_SOURCE_TOKEN',
+  'else',
+  '  git -c protocol.version=2 fetch -q --depth 1 "$REPO_URL" "$GIT_SHA"',
+  'fi',
   'git read-tree FETCH_HEAD',
   'git checkout-index -a -f --prefix=/workspace/src/',
   'cd /workspace',
@@ -619,6 +624,7 @@ function jobManifest(cfg, runtime, {
   const rootless = cfg.buildkitMode !== 'privileged';
   const env = [
     { name: 'REPO_URL', valueFrom: { secretKeyRef: { name: inputSecretName, key: 'REPO_URL' } } },
+    { name: 'PROJECT_SOURCE_TOKEN', valueFrom: { secretKeyRef: { name: inputSecretName, key: 'PROJECT_SOURCE_TOKEN', optional: true } } },
     { name: 'GIT_SHA', value: revision },
     { name: 'DOCKERFILE', value: dockerfile },
     { name: 'IMAGE_TAG', value: tag },
@@ -958,7 +964,8 @@ async function createBuild(config, {
   const starterExport = Boolean(starter && starterTree);
   const inputSecretName = runtime.withSuffix(name, 'input');
   await require('./kubernetes').waitForBatchPool(config);
-  const cloneUrl = await runtime.getCloneUrl(repo.owner, repo.name);
+  const privateRead = require('./project-source').workloadRead(repo.owner, repo.name, { expiresIn: 7200 });
+  const cloneUrl = privateRead?.url || await runtime.getCloneUrl(repo.owner, repo.name);
   const body = jobManifest(cfg, runtime, {
     app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName, settledSteps,
     starterCacheRef: starter ? starter.ref : null, starterExport,
@@ -968,7 +975,10 @@ async function createBuild(config, {
   const secretBody = {
     apiVersion: 'v1', kind: 'Secret',
     metadata: { name: inputSecretName, namespace, labels: body.metadata.labels },
-    type: 'Opaque', stringData: { REPO_URL: String(cloneUrl) },
+    type: 'Opaque', stringData: {
+      REPO_URL: String(cloneUrl),
+      ...(privateRead ? { PROJECT_SOURCE_TOKEN: privateRead.token } : {}),
+    },
   };
   const room = quotaRoom(cfg, runtime, clients);
   const refused = (err, what) => {

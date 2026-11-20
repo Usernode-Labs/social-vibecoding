@@ -160,7 +160,7 @@ async function stripGitEntries(dir) {
   }
 }
 
-async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDir, follow = true }) {
+async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDir, follow = true, privateRepo = false }) {
   // The copy is made where new repositories are: Homeroom's git host
   // (botUsername is its organisation, services/github.js getBotUsername),
   // pushed as its service account. Without a git host, botUsername is a
@@ -174,10 +174,11 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   const srcOwner = parsed ? parsed.owner : botUsername;
   const srcRepo = parsed ? parsed.repo : sourceApp.slug;
   const cloneUrl = await github.getCloneUrl(srcOwner, srcRepo);
+  const checkoutGit = require('./project-source').checkoutGit(sourceApp.repo_url, cloneUrl);
 
   await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
   try {
-    await docker.execFileAsync('git', [
+    await checkoutGit([
       'clone', '--depth', '1',
       '--recurse-submodules', '--shallow-submodules',
       cloneUrl, tempDir,
@@ -220,6 +221,7 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   // refusing; the force-push below overwrites its content.
   const repo = await github.createRepo(botUsername, forkSlug, {
     description: `${forkName}: forked on Homeroom`,
+    ...(privateRepo ? { private: true } : {}),
     adoptExisting: true,
   });
   const repoUrl = repo.html_url;

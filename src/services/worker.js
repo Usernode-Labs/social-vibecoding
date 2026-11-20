@@ -138,7 +138,8 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // v14 installs the OpenRouter request adapter so output limits reach the wire.
 // v15 refreshes warm workers so the Codex model catalog compacts a thread at
 // 200k tokens instead of 90% of a long model window.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v15';
+// v16 permits authenticated Git reads of private Forgejo projects.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v16';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -3042,14 +3043,8 @@ async function _bootstrapWarmContainer(sessionId, {
 }) {
   let containerName = workerContainerName(sessionId);
 
-  // Public-only invariant: the worker carries no GitHub credentials in
-  // its env — it relies on the unauthenticated git protocol for clones
-  // and fetches. Refuse to spawn against a repo that has gone private
-  // since import. Imports checked it too while they ran (importing from
-  // GitHub is paused now), but a user could flip the repo to private on
-  // GitHub after import; this catches that case before we waste a
-  // container slot. Imports that pre-date the public-only enforcement are
-  // caught here as well.
+  // GitHub imports still use anonymous clones. A managed Forgejo repo
+  // can bootstrap through Homeroom's read-only source relay.
   const privacy = await _checkRepoPublicWithRetry(repoOwner, repoName);
   if (!privacy.ok && privacy.code === 'rate_limited') {
     // GitHub refused the check because Homeroom's hourly budget is used up.
@@ -3082,24 +3077,24 @@ async function _bootstrapWarmContainer(sessionId, {
       `Cannot bootstrap worker for ${repoOwner}/${repoName}: ${privacy.message}`
     );
   }
-  if (privacy.private) {
+  const privateRead = require('./project-source').workloadRead(repoOwner, repoName, {
+    expiresIn: 900,
+  });
+  if (privacy.private && !privateRead) {
+    if (require('./repo-ref').hostOfOwner(repoOwner) === 'git_host') {
+      throw new Error('This Forgejo repository needs private source delivery enabled before Homeroom can work on it.');
+    }
     throw new Error(
       `Cannot bootstrap worker for ${repoOwner}/${repoName}: repo is private. Homeroom requires public repositories. Make it public on GitHub or delete this app and re-import.`
     );
   }
 
-  // Plain HTTPS clone URL with no embedded token. Public repos clone
-  // anonymously; the credential helper in worker-run.sh is skipped when
-  // PAT is unset, so the worker container ends up with no auth wired
-  // into git at all.
-  const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
+  const cloneUrl = privateRead?.canonical || await github.getCloneUrl(repoOwner, repoName);
+  const sourceEnv = privateRead ? { PROJECT_SOURCE_TOKEN: privateRead.token } : {};
 
-  // Commit 1 (plan 3.4): the warm container's bootstrap environment MUST
-  // contain no provider keys and no worker capability tokens. The long-
-  // lived container is now created with ONLY operational configuration;
-  // every credential/capability is injected on the individual per-turn
-  // `docker exec` instead. worker-run.sh in warm mode only clones,
-  // checks out, initializes files, and sleeps.
+  // Bootstrap receives operational configuration and, for selected Forgejo
+  // repos, a short-lived read grant. Provider and worker API credentials are
+  // injected only for individual turns.
   const ccVolume = ccVolumeName(sessionId);
   if (!usesKubernetesWorkers()) await docker.ensureVolume(ccVolume);
 
@@ -3115,6 +3110,7 @@ async function _bootstrapWarmContainer(sessionId, {
     MODE: 'warm',
     // CLONE_URL has no token in it now; safe to pass inline.
     CLONE_URL: cloneUrl,
+    ...(privateRead ? { PROJECT_SOURCE_URL: privateRead.url, PROJECT_SOURCE_CANONICAL: privateRead.canonical } : {}),
     // Used by the worker's declaration and request CLIs to identify the calling
     // session and reach the platform's internal API.
     SESSION_ID: String(sessionId),
@@ -3139,7 +3135,7 @@ async function _bootstrapWarmContainer(sessionId, {
     for (let attempt = 1; attempt <= BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
       try {
         const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-          sessionId, env: safeEnv, onProgress, temporary, memory,
+          sessionId, env: { ...safeEnv, ...sourceEnv }, onProgress, temporary, memory,
           ...(avoidNodes.length ? { avoidNodes: avoidNodes.slice() } : {}),
           timeoutMs: attempt === 1 ? WARM_READY_TIMEOUT_MS : Math.round(WARM_READY_TIMEOUT_MS / 2),
           retryAttempt: attempt === 1 ? null : attempt,
@@ -3210,13 +3206,14 @@ async function _bootstrapWarmContainer(sessionId, {
     '--memory', memory,
     '--cpus', WORKER_CPUS,
     '--security-opt', 'no-new-privileges:true',
-    // Warm-runtime migration marker. No secrets are injected at bootstrap,
-    // and ensureWorker evicts any container whose label differs from the
+    // Warm-runtime migration marker.
+    // ensureWorker evicts any container whose label differs from the
     // current host/runner contract (including old images with obsolete token
     // requirements or retry behavior).
     '--label', `usernode.proxy=${WORKER_BOOTSTRAP_ENV_VERSION}`,
     '-v', `${ccVolume}:/home/node/.claude`,
     ...safeEnvArgs,
+    ...Object.keys(sourceEnv).flatMap(key => ['-e', key]),
     WORKER_IMAGE,
   ];
 
@@ -3235,6 +3232,7 @@ async function _bootstrapWarmContainer(sessionId, {
     try {
       await docker.execFileAsync('docker', args, {
         timeout: 30000,
+        ...(privateRead ? { env: { ...process.env, ...sourceEnv } } : {}),
       });
       log.info('worker', 'Warm worker spawned', { containerName, ccVolume, attempt });
 
@@ -3972,6 +3970,7 @@ async function execInWorker(sessionId, {
   // short-lived JWT that's useless against any provider.
   // #2779: minted after the prompt files are written (a failure there has
   // nothing to revoke), and revoked on every exit from here on.
+  const turnSource = await require('./project-source').workerTurnRead(_getPoolSafe(), sessionId);
   const homeroomGrant = await mintHomeroomReadGrant(sessionId, mode);
   let secretEnv;
   try {
@@ -3992,6 +3991,7 @@ async function execInWorker(sessionId, {
       shotsInvitedMemberListedToken: shotsAuthTokens?.invited_member_listed ?? null,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
+    if (turnSource) secretEnv.PROJECT_SOURCE_TOKEN = turnSource.token;
   } catch (err) {
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
     throw err;
@@ -4004,6 +4004,7 @@ async function execInWorker(sessionId, {
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
+    ...(turnSource ? { PROJECT_SOURCE_URL: turnSource.url, PROJECT_SOURCE_CANONICAL: turnSource.canonical } : {}),
     ...(mode === 'shots' ? {
       SHOTS_RUN_ID: shotsRunId,
       SHOTS_BASE_ORIGIN: new URL(shotsOrigins.base).origin,
@@ -6186,7 +6187,7 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
     const parsed = require('./repo-ref').ownerRepo(target.repo_url);
     const before = { ...target };
     const privacy = await require('./github').checkRepoPublic(parsed.owner, parsed.repo);
-    if (!privacy.ok || privacy.private) throw Object.assign(new Error(privacy.message || 'Homeroom supports public repositories only.'), {
+    if (!privacy.ok || (privacy.private && !hosted)) throw Object.assign(new Error(privacy.message || 'Homeroom supports public repositories only.'), {
       code: privacy.code || 'private_repo', permanent: privacy.private === true,
     });
     // The privacy read may wait on a provider. Recheck the actual target and

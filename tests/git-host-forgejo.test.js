@@ -93,3 +93,147 @@ test('git-host against Forgejo: create, push, swap, fetch by sha, delete, privat
     { env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/bin/false' }, stdio: 'pipe' }));
   assert.equal(await gitHost.readRef(name, 'main'), amended);
 });
+
+test('a private project supports scoped Git and pinned source downloads through a read-only web process', {
+  skip: skip || !(process.env.FORGEJO_TEST_READ_USER && process.env.FORGEJO_TEST_READ_TOKEN),
+  timeout: 120_000,
+}, async (t) => {
+  const gitHost = require('../src/services/git-host');
+  const hostedGit = require('../src/services/hosted-git');
+  const source = require('../src/services/project-source');
+  const express = require('express');
+  const { once } = require('node:events');
+  const { promisify } = require('node:util');
+  const exec = promisify(require('node:child_process').execFile);
+  const app = express().use(require('../src/routes/project-source').internalProjectSourceRoutes({}));
+  const server = app.listen(0, '127.0.0.1');
+  t.after(() => server.closeAllConnections());
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await once(server, 'listening');
+
+  const name = `private-${crypto.randomBytes(4).toString('hex')}`;
+  const made = await hostedGit.createRepo(gitHost.settings().org, name, { private: true });
+  assert.equal(made.private, true);
+  const first = await gitHost.readRef(name);
+  const direct = gitHost.cloneUrl(name);
+  const noPrompt = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/bin/false' };
+  await assert.rejects(exec('git', ['-c', 'credential.helper=', 'ls-remote', direct], { env: noPrompt }));
+  const privateReader = process.env.FORGEJO_TEST_READ_USER;
+  await gitHost.api('PUT', `/repos/${gitHost.settings().org}/${name}/collaborators/${privateReader}`, { permission: 'read' });
+
+  const env = {
+    PROCESS_ROLE: 'web', GIT_HOST_READ_USER: privateReader, GIT_HOST_READ_TOKEN: process.env.FORGEJO_TEST_READ_TOKEN,
+    GIT_HOST_TOKEN: '', GIT_HOST_PRIVATE_PROJECTS: name, WORKER_JWT_SECRET: 'test-project-source-signing-key',
+    PLATFORM_INTERNAL_URL: `http://127.0.0.1:${server.address().port}`,
+  };
+  const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  t.after(() => {
+    for (const [key, old] of Object.entries(previous)) {
+      if (old == null) delete process.env[key];
+      else process.env[key] = old;
+    }
+  });
+
+  const { url, token: grant } = source.workloadRead(gitHost.settings().org, name);
+  const refs = `${url}/info/refs?service=git-upload-pack`;
+  const auth = { Authorization: `Bearer ${grant}` };
+  assert.equal((await fetch(refs)).status, 404);
+  assert.equal((await fetch(refs.replace(name, 'another-repository'), { headers: auth })).status, 404);
+  assert.equal((await fetch(refs.replace('git-upload-pack', 'git-receive-pack'), { headers: auth })).status, 404);
+  const expired = source.issueGrant(name, 'git', {}, -1);
+  assert.equal((await fetch(refs, { headers: { Authorization: `Bearer ${expired}` } })).status, 404);
+
+  const clone = path.join(root, name);
+  await exec('git', [
+    `--config-env=http.${url}.extraHeader=PROJECT_SOURCE_HEADER`,
+    '-c', 'http.followRedirects=false', 'clone', '--quiet', url, clone,
+  ], { env: { ...noPrompt, PROJECT_SOURCE_HEADER: `Authorization: Bearer ${grant}` } });
+  assert.equal((await exec('git', ['-C', clone, 'rev-parse', 'HEAD'])).stdout.trim(), first);
+  assert.equal((await exec('git', ['-C', clone, 'remote', 'get-url', 'origin'])).stdout.trim(), url);
+
+  const workerClone = path.join(root, `${name}-worker`);
+  await exec('sh', [
+    '-c', '. ./worker/session-branch.sh; usernode_source_git clone --quiet "$PROJECT_SOURCE_CANONICAL" "$1"',
+    'private-project-worker', workerClone,
+  ], {
+    cwd: path.join(__dirname, '..'),
+    env: { ...noPrompt, PROJECT_SOURCE_URL: url, PROJECT_SOURCE_CANONICAL: direct, PROJECT_SOURCE_TOKEN: grant },
+  });
+  assert.equal((await exec('git', ['-C', workerClone, 'rev-parse', 'HEAD'])).stdout.trim(), first);
+  assert.equal((await exec('git', ['-C', workerClone, 'remote', 'get-url', 'origin'])).stdout.trim(), direct);
+
+  const webClone = path.join(root, `${name}-web`);
+  await source.checkoutGit(made.html_url, direct)(['clone', '--quiet', direct, webClone]);
+  assert.equal((await exec('git', ['-C', webClone, 'rev-parse', 'HEAD'])).stdout.trim(), first);
+
+  const archive = source.buildArchiveUrl(made.html_url, first, 60);
+  assert.equal((await fetch(archive.replace(first, 'b'.repeat(40)))).status, 404);
+  const download = await fetch(archive);
+  assert.equal(download.status, 200);
+  assert.equal(download.headers.get('cache-control'), 'private, no-store');
+  const tar = path.join(root, `${name}.tar.gz`);
+  fs.writeFileSync(tar, Buffer.from(await download.arrayBuffer()));
+  const entries = (await exec('tar', ['-tzf', tar])).stdout;
+  assert.match(entries, /README\.md/);
+  assert.doesNotMatch(entries, /\/\.git(?:\/|\n)/);
+
+  const bundleFile = path.join(root, `${name}.bundle`);
+  await source.bundle(name, first, Object.assign(fs.createWriteStream(bundleFile), { set() {}, attachment() {} }));
+  assert.equal((await exec('git', ['bundle', 'list-heads', bundleFile, 'refs/heads/source'])).stdout.trim(),
+    `${first} refs/heads/source`);
+});
+
+test('Forgejo visibility backfills private projects and retries an approved publication', {
+  skip: skip || !process.env.TEST_DATABASE_URL,
+  timeout: 120_000,
+}, async (t) => {
+  const { Pool } = require('pg');
+  const gitHost = require('../src/services/git-host');
+  const visibility = require('../src/services/project-repo-visibility');
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
+  t.after(() => pool.end());
+  const name = `backfill-${crypto.randomBytes(4).toString('hex')}`;
+  const repo = await gitHost.createRepo(name);
+  const previous = process.env.GIT_HOST_PRIVATE_PROJECTS;
+  const previousWrite = process.env.GIT_HOST_PRIVATE_PROJECTS_WRITE;
+  process.env.GIT_HOST_PRIVATE_PROJECTS = name;
+  process.env.GIT_HOST_PRIVATE_PROJECTS_WRITE = 'true';
+  t.after(() => {
+    if (previous === undefined) delete process.env.GIT_HOST_PRIVATE_PROJECTS;
+    else process.env.GIT_HOST_PRIVATE_PROJECTS = previous;
+    if (previousWrite === undefined) delete process.env.GIT_HOST_PRIVATE_PROJECTS_WRITE;
+    else process.env.GIT_HOST_PRIVATE_PROJECTS_WRITE = previousWrite;
+  });
+
+  await pool.query(`CREATE TEMP TABLE apps (
+    id INTEGER PRIMARY KEY, slug TEXT, status TEXT, repo_url TEXT, self_hosted BOOLEAN DEFAULT FALSE,
+    collab_visibility TEXT, view_visibility TEXT, manifest_snapshot JSONB
+  )`);
+  await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/migrations/forgejo-publication-pending.sql'), 'utf8'));
+  await pool.query(
+    `INSERT INTO apps (id, slug, status, repo_url, collab_visibility, view_visibility)
+       VALUES (1, $1, 'running', $2, 'private', 'private')`,
+    [name, repo.url],
+  );
+  const repoPrivacy = async () => (await gitHost.api('GET', `/repos/${repo.owner}/${name}`)).data.private;
+  assert.equal(await repoPrivacy(), false);
+  assert.deepEqual(await visibility.sweep(pool), { checked: 1, failed: 0 });
+  assert.equal(await repoPrivacy(), true);
+
+  const current = async () => (await pool.query('SELECT * FROM apps WHERE id = 1')).rows[0];
+  await visibility.record(pool, await current(), { collab: 'public', view: 'public' });
+  assert.equal((await current()).repo_publication_pending, true);
+  assert.equal(await repoPrivacy(), true);
+  const unavailable = t.mock.method(gitHost, 'setPrivate', async () => { throw new Error('Forgejo unavailable'); });
+  assert.deepEqual(await visibility.sweep(pool), { checked: 0, failed: 1 });
+  assert.equal((await current()).repo_publication_pending, true);
+  unavailable.mock.restore();
+  assert.deepEqual(await visibility.sweep(pool), { checked: 1, failed: 0 });
+  assert.equal((await current()).repo_publication_pending, false);
+  assert.equal(await repoPrivacy(), false);
+
+  await visibility.record(pool, await current(), { collab: 'private', view: 'private' });
+  assert.equal((await current()).view_visibility, 'private');
+  assert.equal(await repoPrivacy(), true);
+});

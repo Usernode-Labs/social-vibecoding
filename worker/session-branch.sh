@@ -125,6 +125,19 @@ usernode_reseal_upstream() {
   done
 }
 
+# The platform grants only Git reads of this project's source. The URL itself
+# in origin stays canonical, while each bootstrap or turn gets an expiring header.
+usernode_source_git() {
+  if [ -n "${PROJECT_SOURCE_TOKEN:-}" ]; then
+    PROJECT_SOURCE_HEADER="Authorization: Bearer $PROJECT_SOURCE_TOKEN" \
+      command git --config-env="http.$PROJECT_SOURCE_URL.extraHeader=PROJECT_SOURCE_HEADER" \
+        -c "url.$PROJECT_SOURCE_URL.insteadOf=$PROJECT_SOURCE_CANONICAL" \
+        -c http.followRedirects=false "$@"
+  else
+    command git "$@"
+  fi
+}
+
 # The sealed checkout, into the (empty) current directory. $1 is the clone
 # URL. Fails when the session branch does not contain the pinned base: a
 # trial whose branch is not where the platform cut it must not run.
@@ -136,7 +149,7 @@ usernode_clone_sealed() {
   if [ "${#base}" -ne 40 ]; then echo "the pinned base is not a full commit id: $base"; return 1; fi
   git init --quiet . 2>&1 || return 1
   git remote add origin "$1" 2>&1 || return 1
-  git fetch --quiet --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>&1 || return 1
+  usernode_source_git fetch --quiet --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>&1 || return 1
   if ! git merge-base --is-ancestor "$base" "refs/remotes/origin/$BRANCH" 2>/dev/null; then
     echo "the session branch $BRANCH does not contain the pinned base $base"
     return 1
@@ -182,9 +195,9 @@ usernode_fetch_session_refs() {
   fi
   usernode_limit_remote_refs >/dev/null 2>&1 || true
   main_rc=0
-  git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' 2>&1 || main_rc=1
+  usernode_source_git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' 2>&1 || main_rc=1
   if [ -n "${BRANCH:-}" ]; then
-    git fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" >/dev/null 2>&1 || true
+    usernode_source_git fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" >/dev/null 2>&1 || true
   fi
   return "$main_rc"
 }

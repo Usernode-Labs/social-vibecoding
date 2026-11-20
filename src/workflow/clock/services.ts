@@ -385,6 +385,11 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/repo-privacy-audit').audit(pool, { shouldStop: stopped(ctx) }),
   },
   {
+    name: 'project-repo-visibility', everyMs: 5 * MIN, leaseMs: 5 * MIN,
+    newestOnly: true,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/project-repo-visibility').sweep(pool, { shouldStop: stopped(ctx) }),
+  },
+  {
     // #5634: the compliance report's scan, every
     // COMPLIANCE_SCAN_INTERVAL_DAYS (a week by default), and an admin's
     // Scan now: each check's result kept as one more scan, one GitHub read
