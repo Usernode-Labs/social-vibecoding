@@ -719,9 +719,10 @@ const Home = {
     // search row at every width, so its grid draws no tile. The brand look
     // ('brand') has the same button from 768px, where the search row is on
     // screen; a phone, whose search row waits to be pulled into view, keeps
-    // the tile. Every other look, Standard among them, ends Pinned apps with
-    // the tile.
-    if (skin === 'wip') return true;
+    // the tile. The standard look has the button at every width too since 20
+    // Nov 2026 (it takes Standard (WIP)'s top row), so its grid draws no tile
+    // either.
+    if (skin === 'wip' || skin === 'standard') return true;
     if (skin !== 'brand') return false;
     try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },

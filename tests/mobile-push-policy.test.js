@@ -467,6 +467,12 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   });
   assert.equal(copy('sessions_full:75:75').title, 'Session limit reached');
   assert.match(copy('sessions_full:75:75').body, /raised in Admin → Limits/);
+  // The shared database's connections (platform-limit-alerts.js).
+  assert.deepEqual(copy('connections_warn:80:97'), {
+    title: 'Database connections running low',
+    body: "80 of 97 database connections are open. At 97, apps can't open new ones",
+  });
+  assert.equal(copy('connections_full:97:97').title, 'Database connections used up');
   // GitHub's hourly budget (services/github-budget.js).
   assert.deepEqual(copy('github_warn:4000:5000'), {
     title: 'GitHub requests running low',

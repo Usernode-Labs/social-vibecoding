@@ -47,6 +47,7 @@ const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const { featuredAppsAdminRoutes } = require('./admin-featured-apps');
+const { adminPlatformLimitsRoutes } = require('./admin-platform-limits');
 const { emailTemplateAdminRoutes } = require('./admin-email-templates');
 const { emailImageAdminRoutes } = require('./email-images');
 const appStorageCap = require('../services/app-storage-cap');
@@ -2186,6 +2187,13 @@ function adminRoutes(config) {
   // adminMiddleware above, and also behind a full admin's connector doors
   // (routes/featured-admin.js).
   router.use(featuredAppsAdminRoutes(pool));
+
+  // ── Platform limits area ───────────────────────────────────
+  //
+  // What the full admins' limits area at the top of Notifications reads,
+  // and its Check again (routes/admin-platform-limits.js), behind the
+  // router-level adminMiddleware above; both need a full admin.
+  router.use(adminPlatformLimitsRoutes(pool, config));
 
   // ── Email templates ────────────────────────────────────────
   //

@@ -64,7 +64,7 @@ const CHALLENGES = { key: 'next', title: 'Challenges', mode: 'next', heading: 'N
 
 test('HomeScreen mounts the kit page only after mount, for a signed-in viewer under a frame look', () => {
   const src = read('frontend', 'src', 'features', 'home', 'index.tsx');
-  assert.match(src, /import \{ isFrameSkin, useSkin \} from '\.\.\/\.\.\/lib\/skin'/);
+  assert.match(src, /import \{ isFrameSkin, useSkin, isKitHome \} from '\.\.\/\.\.\/lib\/skin'/);
   assert.match(src, /const skin = useSkin\(\)/);
   assert.match(src, /useEffect\(\(\) => whenPlatformViewer\(\(\) => setViewer\(true\)\), \[\]\)/,
     'only for a viewer the member APIs answer: the landing and the waiting room keep the standard body');

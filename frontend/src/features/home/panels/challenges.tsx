@@ -68,7 +68,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useMessages } from '../../../lib/i18n/react';
-import { useLiveSkin } from '../../../lib/skin';
+import { useLiveSkin, isKitHome } from '../../../lib/skin';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
 import type { ChallengeRowView, ChallengesView } from '../panels-store';
 import { WipCard } from '../wip-kit';
@@ -176,7 +176,7 @@ function WipChallengePosters({ view }: { view: ChallengesView }) {
 }
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
-  const wip = useLiveSkin() === 'wip';
+  const wip = isKitHome(useLiveSkin());
   if (view.note) {
     return (
       <PanelShell panelKey={view.key} plate="none" stamps={{ rows: 0 }}>

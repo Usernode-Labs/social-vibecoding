@@ -347,6 +347,15 @@ test('platform limit rows say which cap, how full, and what happens next', async
   assert.equal(sessionsFull.label, 'Session limit reached');
   assert.match(sessionsFull.subject, /until the session limit is raised in Admin → Limits/);
 
+  // The shared database's connections, the limits area's fourth row.
+  const connections = await lines({ kind: 'platform_limit', detail: 'connections_warn:80:97',
+    appName: null, sourceUsername: null });
+  assert.equal(connections.label, 'Database connections running low');
+  assert.match(connections.subject, /^80 of 97 database connections open\. +At the limit, apps can't open new ones\./);
+  const connectionsFull = await lines({ kind: 'platform_limit', detail: 'connections_full:97:97',
+    appName: null, sourceUsername: null });
+  assert.equal(connectionsFull.label, 'Database connections used up');
+
   // GitHub's hourly budget, the bot token's and the App's.
   const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
     appName: null, sourceUsername: null });

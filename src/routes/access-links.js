@@ -100,12 +100,15 @@ function accessLinkRoutes(config) {
       if (preview.live && !inAlready) accessLinks.setAccessCookie(req, res, code);
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
+      // An invite link is not a page a search engine should list.
+      res.setHeader('X-Robots-Tag', require('../services/search-robots').NOINDEX);
       applyShellDocumentHeaders(res, INDEX_PATH);
       res.type('html').send(withPreviewTags(html, previewTags(preview.live)));
     } catch (err) {
       log.error('access-links', 'Serving an admin invite link page failed', { err: err.message });
       if (!res.headersSent) {
         res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
+        res.setHeader('X-Robots-Tag', require('../services/search-robots').NOINDEX);
         return res.sendFile(INDEX_PATH);
       }
     }

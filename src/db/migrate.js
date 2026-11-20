@@ -250,6 +250,9 @@ async function migrate(config) {
   // while its own required checks finish, so the change page has the Merging
   // card to show. A fresh copy never meets it: GitHub has to refuse a merge.
   await seedStagingGithubChecksHold(pool);
+  // The admin limits area's shots: the bot's credit under its warning line,
+  // so a full admin's Notifications sheet has a row to show.
+  await seedStagingPlatformLimit(pool);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
   await seedStagingGroupedFollowOns(pool, config);
@@ -13878,6 +13881,40 @@ async function seedStagingRestartEligibleMerge(pool, config) {
 // request), idempotent, and strictly a no-op outside staging. Its session id
 // is apart from every other fixture's and in a range no real session can
 // reach.
+// The admin limits area's shots (services/platform-limits-view.js,
+// frontend/src/features/notifications/platform-limits.tsx): a fresh staging
+// copy carries production's credit state, which is usually well above the
+// warning line, so the area would have nothing to show. This writes a sample
+// state under it: $184 left, about two days at the week's spend, read just
+// now. Staging only; the preview's own credit sweep replaces it on its next
+// read (and with no OpenRouter key in the preview, keeps the figure and says
+// it could not check, which the area also shows). Warnings are never sent
+// from staging (openrouter-credit.js isStaging), so no admin is told.
+async function seedStagingPlatformLimit(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const state = {
+    balanceCents: 18400,
+    accountCents: 18400,
+    keyCents: null,
+    dailyCents: 9200,
+    at: new Date().toISOString(),
+    armed: { low: false, urgent: false },
+    outage: null,
+    stagingFixture: 'platform limits area',
+  };
+  try {
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ('homeroom_bot_credit_state', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(state)],
+    );
+    log.info('db', 'Staging platform-limit fixture seeded', { balanceCents: state.balanceCents });
+  } catch (err) {
+    log.warn('db', 'Staging platform-limit fixture failed', { err: err.message });
+  }
+}
+
 async function seedStagingGithubChecksHold(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   const SESSION_ID = 999_999_991;
@@ -17008,6 +17045,7 @@ module.exports = {
   seedStagingBotFixesPlatform,
   // #6563: the approved change GitHub is holding, the Merging card's shot.
   seedStagingGithubChecksHold,
+  seedStagingPlatformLimit,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.

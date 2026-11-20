@@ -1406,7 +1406,8 @@ test('dapp.json checks the canonical routes and every legacy alias', () => {
   const entryPoint = tests.find(
     (t) => typeof t.expectSelector === 'string'
       && t.expectSelector.includes('#home-challenges-section')
-      && t.expectSelector.includes('home-panel-see-all')
+      // The standard look's Home is the kit's since 20 Nov 2026: the link is the heading's own.
+      && t.expectSelector.includes('a.wip-head-more[href="#leaderboard/challenges"]')
   );
   assert.ok(entryPoint, 'a check asserts the Challenges area\'s leaderboard link renders');
   assert.ok(!tests.some((t) => typeof t.expectSelector === 'string'

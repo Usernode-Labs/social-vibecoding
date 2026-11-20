@@ -155,7 +155,7 @@ function minutesSince(value, now) {
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 // #6901: "apps_away:<people>:<cap>:<ago>", platform-limit-alerts.js
 // refusalToken. ago is the minutes from the run's start to the notice; 0 is
 // "someone was just turned away".
@@ -278,6 +278,13 @@ function platformLimitCopy(detail) {
         body: `All ${cap} of this hour's GitHub App requests are used. It resets within the hour` }
       : { title: 'GitHub App requests running low',
         body: `${used} of ${cap} GitHub App requests used this hour` };
+  }
+  if (limit === 'connections') {
+    return level === 'full'
+      ? { title: 'Database connections used up',
+        body: `${used} of ${cap} database connections are open. Apps can't open new ones, so their pages fail until some close or the limit is raised` }
+      : { title: 'Database connections running low',
+        body: `${used} of ${cap} database connections are open. At ${cap}, apps can't open new ones` };
   }
   if (limit === 'apps') {
     return level === 'full'

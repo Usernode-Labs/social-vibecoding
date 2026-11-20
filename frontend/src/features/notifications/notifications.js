@@ -2340,7 +2340,7 @@ function conversationNotificationHref(n) {
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parsePlatformLimitDetail(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
@@ -3369,6 +3369,19 @@ function rowWords(n) {
       };
     }
     const figures = { used: limit.used, count: limit.cap };
+    // The shared database's connections (services/platform-limit-alerts.js):
+    // the admin limits area at the top of the sheet has the figures too.
+    if (limit.limit === 'connections') {
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+        label: full ? t('notifications:row.limit.connections.full.label') : t('notifications:row.limit.connections.warn.label'),
+        segments: full ? messageSegments('notifications:row.limit.connections.full.body', figures)
+          : messageSegments('notifications:row.limit.connections.warn.body', figures),
+      };
+    }
     return {
       ...base,
       appLine: t('notifications:row.source.admin'),
