@@ -31510,6 +31510,14 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   }
 }
 
+/* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's
+   whole width from the page's own gutter, not a column of its own in the middle of the window. The thread's card
+   takes the room there is and "How it got here" keeps its width beside it. A side panel, and the page while the
+   reader beside it is open, keep their own width. While it loads the sheet behind is clear too, so the outline's
+   cards stand on the page as the loaded ones do. */
+html:not([data-skin]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request,
+html:not([data-skin]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) { max-width: none; margin-inline: 0; padding-inline: var(--wip-gutter); }
+html:not([data-skin]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(#gc-thread-head:empty) .dev-request-sheet { background: none; border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 /* ═══════════════════════════════════════════════════════════════════════
    THE THREAD'S CARD (dev-board/topic/thread-card.tsx). Beside "How it got
    here", a request's and a change's page draw the thread as one card: a
@@ -31886,10 +31894,14 @@ html[data-skin]:where(:not([data-skin="brand"])) #notifications-sheet .notificat
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 .dev-request #gc-thread-bar:empty {
-  min-height: 4.75rem;
-  background-image: linear-gradient(var(--thread-skel), var(--thread-skel)), linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)), linear-gradient(var(--thread-skel), var(--thread-skel));
-  background-size: 2.75rem 2.75rem, 28% 0.625rem, 52% 0.75rem;
-  background-position: 1rem 1rem, 4.5rem 1.25rem, 4.5rem 2.5rem;
+  min-height: 5rem;
+  background-image:
+    radial-gradient(circle closest-side, var(--thread-skel) 96%, transparent),
+    linear-gradient(var(--thread-skel), var(--thread-skel)),
+    linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)), linear-gradient(var(--thread-skel), var(--thread-skel)),
+    radial-gradient(circle closest-side, var(--thread-skel-soft) 96%, transparent);
+  background-size: 2rem 2rem, 2.75rem 2.75rem, 26% 0.625rem, 46% 0.875rem, 2rem 2rem;
+  background-position: 0.875rem 1.5rem, 3.75rem 1.125rem, 7.5rem 1.375rem, 7.5rem 2.75rem, calc(100% - 0.875rem) 1.5rem;
 }
 .dev-request #gc-thread-head:empty {
   min-height: 30rem;
@@ -31899,6 +31911,39 @@ html[data-skin]:where(:not([data-skin="brand"])) #notifications-sheet .notificat
     linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)), linear-gradient(var(--thread-skel), var(--thread-skel)), linear-gradient(var(--thread-skel), var(--thread-skel));
   background-size: 92% 0.75rem, 88% 0.75rem, 60% 0.625rem, calc(100% - 2rem) 17rem, 34% 0.75rem, 6rem 2.25rem, 6rem 2.25rem;
   background-position: 1rem 1.25rem, 1rem 2.5rem, 1rem 3.75rem, 1rem 5.5rem, 1rem 24.75rem, calc(100% - 7.5rem) 26.5rem, calc(100% - 1rem) 26.5rem;
+}
+/* TWO COLUMNS ON A WIDE WINDOW (asked 20 Nov 2026), as the page is once it has loaded: from 1180px "How it got here"
+   stands beside the card, so while the page loads the head and the card keep to their own column and the outline of
+   that list stands in the second one (the empty head draws it: the list's own host is not laid out until it has
+   something in it). 332px and 20px are the page's own column and gap (`--thread-rail-w`, `--thread-rail-gap`). */
+@media (min-width: 1180px) {
+  html:not(.in-side-panel) #dev-topic-thread:not(.dev-ws-side-page) .dev-request :is(#gc-thread-bar, #gc-thread-head):empty { margin-inline-end: calc(1rem + 332px + 20px); }
+  /* The second column stands from the page's top line, beside the head, as "How it got here" does once it is drawn:
+     its heading, then five steps, each a disc, a name and a line under it. */
+  /* The reply box ends where the card does, as it will once the list beside it is drawn. */
+  html:not(.in-side-panel) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(#gc-thread-head:empty) .dev-request-sheet > :is(.messages-composer, .messages-jump, .messages-status-line) { margin-inline-end: calc(332px + 20px); }
+  html:not(.in-side-panel) #dev-topic-thread:not(.dev-ws-side-page) .dev-request #gc-thread-bar:empty { position: relative; }
+  html:not(.in-side-panel) #dev-topic-thread:not(.dev-ws-side-page) .dev-request #gc-thread-bar:empty::after {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: calc(100% + 20px);
+    width: 332px;
+    height: 20.25rem;
+    border-radius: 20px;
+    background-color: var(--bl-card, var(--thread-skel-card));
+    background-repeat: no-repeat;
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+    background-image:
+      linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)),
+      radial-gradient(circle closest-side, var(--thread-skel) 96%, transparent), linear-gradient(var(--thread-skel), var(--thread-skel)), linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)),
+      radial-gradient(circle closest-side, var(--thread-skel) 96%, transparent), linear-gradient(var(--thread-skel), var(--thread-skel)), linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)),
+      radial-gradient(circle closest-side, var(--thread-skel) 96%, transparent), linear-gradient(var(--thread-skel), var(--thread-skel)), linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)),
+      radial-gradient(circle closest-side, var(--thread-skel) 96%, transparent), linear-gradient(var(--thread-skel), var(--thread-skel)), linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft)),
+      radial-gradient(circle closest-side, var(--thread-skel) 96%, transparent), linear-gradient(var(--thread-skel), var(--thread-skel)), linear-gradient(var(--thread-skel-soft), var(--thread-skel-soft));
+    background-size: 38% 0.75rem, 1.75rem 1.75rem, 34% 0.8125rem, 52% 0.625rem, 1.75rem 1.75rem, 34% 0.8125rem, 52% 0.625rem, 1.75rem 1.75rem, 34% 0.8125rem, 52% 0.625rem, 1.75rem 1.75rem, 34% 0.8125rem, 52% 0.625rem, 1.75rem 1.75rem, 34% 0.8125rem, 52% 0.625rem;
+    background-position: 1rem 1.125rem, 1rem 3.25rem, 3.5rem 3.3125rem, 3.5rem 4.5rem, 1rem 6.5rem, 3.5rem 6.5625rem, 3.5rem 7.75rem, 1rem 9.75rem, 3.5rem 9.8125rem, 3.5rem 11.0rem, 1rem 13.0rem, 3.5rem 13.0625rem, 3.5rem 14.25rem, 1rem 16.25rem, 3.5rem 16.3125rem, 3.5rem 17.5rem;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .dev-request :is(#gc-thread-bar, #gc-thread-head):empty { animation: none; }
