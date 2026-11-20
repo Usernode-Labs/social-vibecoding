@@ -27,9 +27,9 @@ import {
   faultMs, pickLive, pickLiveBuilds, requestKey,
 } from '../rules/bot-loop.ts';
 import type { Slot } from '../rules/bot-loop.ts';
-import { NO_FACTS, readCreditDms, readFacts } from './facts.ts';
-import type { CreditDm, Facts } from './facts.ts';
-import { DM } from '../rules/bot-replies.ts';
+import { NO_FACTS, readCreditDms, readCreditLooks, readCreditVoices, readFacts } from './facts.ts';
+import type { CreditDm, CreditLook, CreditVoice, Facts } from './facts.ts';
+import { DM, VOICE } from '../rules/bot-replies.ts';
 
 export const MACHINE = BOT_LANE;
 export const KEY = LANE_KEY;
@@ -96,10 +96,19 @@ const before = (iso: string | null | undefined, ctx: TransitionContext) => !!iso
 // that finds the stored outage gone lifts it, with no event needed.
 export const CREDIT_RECHECK_MS = 2 * 60 * 1000;
 
-// Each DM that kept a message whose answer ended on credit hears it is back.
-const tellDms = (dms: CreditDm[] | undefined): MessageRequest[] => (dms || []).map((dm) => ({
-  to: { machine: DM, key: dm.key }, event: { type: 'CreditBack', payload: { userId: dm.userId } }, appId: null,
-}));
+// Each DM, place and look that kept something for credit hears it is back.
+const tellOwed = (f: Facts | undefined): MessageRequest[] => [
+  ...(f?.creditDms || []).map((dm: CreditDm) => ({
+    to: { machine: DM, key: dm.key }, event: { type: 'CreditBack', payload: { userId: dm.userId } }, appId: null,
+  })),
+  ...(f?.creditVoices || []).map((v: CreditVoice) => ({
+    to: { machine: VOICE, key: v.key },
+    event: { type: 'CreditBack', payload: { appId: v.appId, place: v.place } as Json }, appId: v.appId,
+  })),
+  ...(f?.creditLooks || []).map((l: CreditLook) => ({
+    to: { machine: 'bot-look', key: l.key }, event: { type: 'CreditBack', payload: {} }, appId: null,
+  })),
+];
 
 // Grant what may start now, and set the clock for what comes next.
 function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
@@ -117,7 +126,7 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
     if (f.credit && !d.credit) d = { ...d, credit: { since: f.credit.since, words: f.credit.words } };
     else if (!f.credit && d.credit) {
       d = { ...d, credit: null };
-      messages.push(...tellDms(f.creditDms));
+      messages.push(...tellOwed(f));
     }
   }
   // The refresh: the full one due, or a project asked for whose burst has
@@ -215,7 +224,7 @@ function creditBack(s: LState, _e: Event<any>, f: Facts, ctx: TransitionContext)
   const d = live(s, ctx);
   if (f.credit) return decide(d, f, ctx);
   const out = decide({ ...d, credit: null }, f, ctx);
-  const told = tellDms(f.creditDms);
+  const told = tellOwed(f);
   return told.length ? { ...out, messages: [...(out.messages || []), ...told] } : out;
 }
 
@@ -265,13 +274,19 @@ export function botLane(deps: Deps = { staging: false }) {
     // What web appends: a new request or a chat line asking the lane to look again.
     web: ['RefreshAsked'],
     decode: (r) => ({ name: r.state as Name, data: r.data as Data }),
-    // The pass a pause lifts on also reads the DMs to tell (readCreditDms):
-    // CreditBack, or any pass that finds the stored outage gone while the
-    // lane still holds its copy.
+    // The pass a pause lifts on also reads what kept something for credit
+    // (readCreditDms, readCreditVoices, readCreditLooks): CreditBack, or any
+    // pass that finds the stored outage gone while the lane still holds its copy.
     facts: async (tx, s, e) => {
       const f = await readFacts(tx, deps);
       const held = s.name !== NONE && !!(s as Live).data?.credit;
-      return e?.type === 'CreditBack' || (held && !f.credit) ? { ...f, creditDms: await readCreditDms(tx) } : f;
+      if (e?.type === 'CreditBack' || (held && !f.credit)) {
+        const [creditDms, creditVoices, creditLooks] = await Promise.all([
+          readCreditDms(tx), readCreditVoices(tx), readCreditLooks(tx),
+        ]);
+        return { ...f, creditDms, creditVoices, creditLooks };
+      }
+      return f;
     },
     authorize: {
       Look: () => ok(), Released: () => ok(), RefreshAsked: () => ok(), CreditBack: () => ok(),

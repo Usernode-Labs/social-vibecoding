@@ -181,8 +181,8 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
   // it runs when the test says so, keyed as the machine keys it.
   const base = (model) => ({ ws, notifications, chat: model.chat, apiKey: 'test-key', noPlatform: true });
   let turns = 0;
-  const turn = (place, model, { through = 0, key = `t${++turns}`, deps = {} } = {}) =>
-    voice.runTurn(pool, {}, { appId: app.id, place, through, turnKey: key, deps: { ...base(model), ...deps } });
+  const turn = (place, model, { through = 0, key = `t${++turns}`, resume = null, deps = {} } = {}) =>
+    voice.runTurn(pool, {}, { appId: app.id, place, through, turnKey: key, resume, deps: { ...base(model), ...deps } });
 
   await t.test('asked to change its own change, it queues the ask and says so where it was asked', async () => {
     sent.length = 0;
@@ -374,8 +374,9 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
   // Review A1 (19 Nov 2026): the voice calls services/openrouter.js, which
   // said `billing` for a 402, so its credit line could not be reached and it
   // said "Ask me again in a minute" during an outage. Through the real
-  // client, answered as OpenRouter answered that day.
-  await t.test('A1: OpenRouter\'s real 402 through the real client is said as the credit line and recorded as one outage', async () => {
+  // client, answered as OpenRouter answered that day. #6920: it is held, and
+  // answered once credit is back.
+  await t.test('A1: OpenRouter\'s real 402 through the real client holds the answer, and it is answered once credit is back', async () => {
     sent.length = 0;
     const credit = require('../src/services/openrouter-credit');
     const openrouter = require('../src/services/openrouter');
@@ -402,13 +403,15 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     try {
       const id = await say(evan, 'Is the header blue on the settings page too?', place);
       const out = await turn(place, refused, { through: id - 1, key: 'credit-1', deps: { credit: quiet } });
-      assert.equal(out.outcome, 'fallback');
+      assert.equal(out.outcome, 'held');
+      assert.deepEqual(out.speakerIds, [evan.id]);
+      assert.deepEqual(out.held, { ids: [id], speakers: [evan.id] });
       assert.equal(requests.length, 1, 'one request met the 402; it is not asked again');
       assert.equal(sent.length, 1);
-      assert.match(sent[0].content, /^I'm out of building credit right now, so I couldn't answer this\./);
+      assert.equal(sent[0].content, voice.HELD_TEXT);
       assert.doesNotMatch(sent[0].content, /Ask me again in a minute/);
       const { rows: [record] } = await pool.query('SELECT outcome, error FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1');
-      assert.deepEqual({ outcome: record.outcome, error: record.error }, { outcome: 'fallback', error: 'credit_out' });
+      assert.deepEqual({ outcome: record.outcome, error: record.error }, { outcome: 'held', error: 'credit_out' });
       const { rows: [stored] } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [credit.KEY_STATE]);
       assert.ok(JSON.parse(stored.value).outage?.since, 'the outage is in the one stored state');
       assert.equal((await credit.creditState(pool)).out, true);
@@ -417,9 +420,22 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
       sent.length = 0;
       const next = await say(evan, 'And on the profile page?', place);
       const again = await turn(place, refused, { through: next - 1, key: 'credit-2', deps: { credit: quiet } });
-      assert.equal(again.outcome, 'fallback');
+      assert.equal(again.outcome, 'held');
       assert.equal(requests.length, 1, 'the model is not called to meet the 402 again');
-      assert.match(sent[0].content, /^I'm out of building credit right now/);
+      assert.equal(sent[0].content, voice.HELD_TEXT);
+      // #6920: credit is back, and the machine resumes the first ask. The
+      // turn answers it without moving the place's `through`.
+      await pool.query('DELETE FROM platform_settings WHERE key = $1', [credit.KEY_STATE]);
+      credit.forgetState(pool);
+      sent.length = 0;
+      const resumed = await turn(place, scripted([
+        { tool: 'reply', args: withButtons({ text: 'Yes: the settings page header is blue too.' }) },
+      ]), { through: 0, key: 'credit-resume', resume: { ids: [id] } });
+      assert.equal(resumed.outcome, 'replied');
+      assert.equal(resumed.throughId, null, 'a resumed turn does not move the place');
+      assert.equal(sent.length, 1);
+      assert.match(sent[0].content, /settings page header is blue too/);
+      assert.equal(requests.length, 1, 'the resumed turn asked the model once, with credit back');
     } finally {
       // The rest of this suite runs with credit.
       await pool.query('DELETE FROM platform_settings WHERE key = $1', [credit.KEY_STATE]);
