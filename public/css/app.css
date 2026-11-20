@@ -6741,8 +6741,8 @@ html:not([data-skin]) #home-communities-section { display: none; }
    project sits across from Home's search. The hero and the Invite card keep
    their markup and are still two sections; the look joins them where they
    are neighbours. */
-html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="status"]),
-html[data-skin-wip] body #dev-workshop:has(> .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])),
+html[data-skin-wip] body #dev-workshop:has(> .dev-ws[data-ws-tab="all"]) {
   max-width: none;
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
@@ -6752,8 +6752,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabb
    sheet (a tinted, shadowed panel with round top corners behind everything)
    is cleared while the hub is the place on show, so its cards are the only
    cards. */
-html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]),
-html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])),
+html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) {
   border-radius: 0;
   border-color: transparent;
   background-color: var(--wip-page-bg);
@@ -6762,7 +6762,7 @@ html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #
   box-shadow: none;
 }
 /* The standard look keeps its wallpaper behind the hub's cards, as on Home: the page's own ground is Standard (WIP)'s alone. */
-html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]) { background-color: transparent; }
+html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) { background-color: transparent; }
 /* The hub has no Topics card under the look: a topic's channel is reached by its own address. */
 html:not([data-skin]) #dev-workshop [data-ws-hub-topics] { display: none; }
 /* A section's label, outside its card: Home's label, from the same tokens. */
@@ -7478,11 +7478,12 @@ html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws:is([data-ws-tab="stat
   text-underline-offset: -0.16em;
   text-decoration-skip-ink: none;
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs) { display: flex; flex-direction: column; gap: 0.5rem; max-width: none; margin: 0; padding: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs) { display: flex; flex-direction: column; gap: 0.5rem; max-width: none; margin: 0; padding: 0; }
 /* The place's own name bar spans the page too (on the hub as well), so the name starts where the cards do. */
-html[data-skin-wip] #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"]) > .dev-ws-placebar { max-width: none; margin-inline: 0; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
+html:not([data-skin]) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) > .dev-ws-placebar,
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
   display: grid;
   grid-template-columns: repeat(var(--wip-cols, 1), minmax(0, 1fr));
   gap: 0.25rem var(--wip-col-gap);
@@ -7492,17 +7493,17 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] {
   gap: var(--wip-tile-gap);
   padding: 0.5rem var(--wip-cell-pad);
   border: 0;
   border-radius: var(--wip-radius-inner);
   box-shadow: none;
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row]:hover { background-color: var(--wip-ghost); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .workshop-reel-tile { border-radius: var(--wip-item-icon-radius); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :first-child { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :last-child:not(:first-child) { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row]:hover { background-color: var(--wip-ghost); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .workshop-reel-tile { border-radius: var(--wip-item-icon-radius); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :first-child { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :last-child:not(:first-child) { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 .wip-ways { margin-top: var(--wip-row-gap); display: flex; flex-direction: column; gap: 0.5rem; }
 .wip-ways-label {
   margin: 0;
@@ -7636,7 +7637,8 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips :
    reach the title. Under 900px it is the full-width line above the page it
    always was. */
 @media (min-width: 900px) {
-  html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) > #dev-code-pause-notice {
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) > #dev-code-pause-notice,
+  html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) > #dev-code-pause-notice {
     position: relative;
     z-index: 2;
     height: 0;
@@ -7646,7 +7648,8 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips :
     overflow: visible;
     pointer-events: none;
   }
-  html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) > #dev-code-pause-notice > [data-code-pause] {
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) > #dev-code-pause-notice > [data-code-pause],
+  html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) > #dev-code-pause-notice > [data-code-pause] {
     flex: none;
     max-width: 62%;
     margin-top: 0.9375rem;

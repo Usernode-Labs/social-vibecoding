@@ -12,11 +12,11 @@
 import type { ReactNode, RefObject } from 'react';
 import { ChatIcon, CheckIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
-import { useLiveSkin } from '../../lib/skin';
+import { isKitHome, useLiveSkin } from '../../lib/skin';
 
 /** Whether this is a project's page under the look that draws these. */
 function useDrawn(slug?: string, project?: string): boolean {
-  return useLiveSkin() === 'wip' && !!slug && !!project;
+  return isKitHome(useLiveSkin()) && !!slug && !!project;
 }
 
 /**
