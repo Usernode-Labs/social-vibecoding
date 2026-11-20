@@ -1229,6 +1229,11 @@ app.get('*', (req, res) => {
     // Client-side-routing fallback: serve the SPA shell. Same revalidation
     // policy as the static handler so a redeployed index.html (which pulls
     // in fresh /js/*.js) is never pinned in a WebView cache.
+    // Every address that reaches here is a signed-in screen or a private or
+    // unknown project (a public project is answered before this), so it
+    // asks search engines not to list it. `/` never reaches here.
+    const robots = require('./src/services/search-robots').shellRobots({ path: req.path });
+    if (robots) res.setHeader('X-Robots-Tag', robots);
     res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
     // The document carries the build id too — it is the reference the
     // worker compares every cached asset against on this load.
