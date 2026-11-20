@@ -166,6 +166,10 @@ type DetailView = {
   // #3253/#3248: under the points, what the scoring rule counts (a proposal
   // once it is put to the vote; nothing past a counted measure's target).
   countNote?: string | null;
+  // #6895: under the rail, when the challenge's scheduled count last ran,
+  // how often it runs and when the next one is due (or that it is due now).
+  // Null on a challenge counted on the spot, so no line is drawn.
+  scoringNote?: string | null;
   // The template's illustration slug and an upload's tone, for the artwork
   // well (see DetailPage).
   illustration: string | null;
@@ -602,12 +606,14 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 // rule counts, then a line on what points are for whenever points show, the
 // artwork well, the clean rail, the organiser's task line, the action, then
 // "What counts". The Semi design (2026-10-16) left out the category eyebrow,
-// the deadline and the time of the next count, the description, Scoring and
-// the participants list (with the profile overlay it opened); the task line it
-// left out too is back (#6592), because it is what tells people how to start
-// and finish. The card's title says what the challenge is and "What counts"
-// says how it is counted. The board's "Next: …" hint under the action is
-// deliberately absent (owner decision).
+// the deadline, the description, Scoring and the participants list (with the
+// profile overlay it opened); the task line it left out too is back (#6592),
+// because it is what tells people how to start and finish. The scheduled
+// count's times are back too, in plain words under the rail (#6895): a
+// challenge counted on a schedule says how often, when it last counted and
+// when the next count is due, or that it is due now. The card's title says
+// what the challenge is and "What counts" says how it is counted. The board's
+// "Next: …" hint under the action is deliberately absent (owner decision).
 export function DetailPage({ view }: { view: DetailView }): ReactNode {
   const t = useMessages('leaderboard');
   return (
@@ -631,6 +637,11 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
+      {/* #6895: a challenge counted on a schedule says under its rail how
+          often it is counted, when it last was and when the next is due (or
+          that it is due now), so a rail that has not moved yet is explained.
+          The same small grey note the points line uses; no action, no box. */}
+      {view.scoringNote ? <p className={NOTE} data-challenge-scoring>{view.scoringNote}</p> : null}
       {/* #6592: the organiser's one-line task — what to do to start and
           finish — right under the rail. It is their own words, so no heading
           and no label: the same plain prose the notes below it use. */}

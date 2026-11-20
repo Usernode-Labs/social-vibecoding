@@ -309,7 +309,10 @@ test('the tab is left alone where the rail is not beside the app', () => {
 test('the pinned frame rule lives only inside the desktop breakpoint', () => {
   const at = css.indexOf('body.rail-pinned:has(');
   assert.ok(at > 0, 'app.css has the pinned #app-view rule');
-  assert.equal(css.match(/body\.rail-pinned/g).length, 1, 'one rule, not scattered overrides');
+  // One rule, and its twin for a menu folded to a strip (the standard look and the brand kit's
+  // drawing of it, 20 Nov 2026), where the shell's own rule stands aside for a folded rail.
+  assert.equal(css.match(/body\.rail-pinned/g).length, 2, 'one rule and the strip\'s twin, not scattered overrides');
+  assert.match(css, /html:not\(\[data-skin\]\) body\.rail-pinned:has\(> #platform-tabs\.platform-tabs-folded:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #app-view \{\s*padding-inline-start: var\(--platform-rail-w, 0px\);\s*padding-inline-end: 0;/);
   const open = css.lastIndexOf('@media (min-width: 768px) {', at);
   assert.ok(open > 0, 'inside a min-width: 768px block');
   // No closing brace at column 0 between the media query and the rule: the

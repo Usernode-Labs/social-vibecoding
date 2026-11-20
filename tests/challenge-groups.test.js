@@ -149,8 +149,12 @@ test('a card in a later group opens its own challenge', () => {
 });
 
 // ─── No time on the tab ─────────────────────────────────────────────────
+//
+// #6895 brought back one time line, and only on a challenge's own page: when
+// its scheduled count last ran and when the next is due. Cards, the grid and
+// the rest of the page still tell no time.
 
-test('nothing on the tab tells the time: no clocks, toggles, deadlines or next counts', () => {
+test('no clocks, toggles or deadlines on the tab; a page only the scheduled count', () => {
   const { pane, store } = loadPane({
     challenges: [
       ch(1, 'WEEKLY', { effective: { schedule_end: new Date(Date.now() + 3 * 86400000).toISOString() },
@@ -171,8 +175,13 @@ test('nothing on the tab tells the time: no clocks, toggles, deadlines or next c
   }
   const page = pageOf(pane, pane._challenges[0]);
   for (const key of ['eyebrow', 'deadline', 'ends', 'cadence']) assert.ok(!(key in page), `the page has no ${key}`);
-  assert.doesNotMatch(JSON.stringify(gridOf(store)) + JSON.stringify(page), /left|next count|ends |Season 2/,
-    'no time and no season in any word the tab draws');
+  assert.doesNotMatch(JSON.stringify(gridOf(store)), /left|next count|ends |Season 2/,
+    'no time and no season in any word the grid draws');
+  const { scoringNote, ...rest } = page;
+  assert.doesNotMatch(JSON.stringify(rest), /left|next count|ends |Season 2/,
+    'the page tells no time but the scheduled count’s');
+  assert.match(scoringNote, /^Progress is counted every 30 minutes\. Last counted just now, next count in about 30 minutes\.$/,
+    'the page’s one time line is the scheduled count’s (#6895)');
 });
 
 test('a weekly challenge’s counted rail says this week; a yes-or-no one keeps its words', () => {

@@ -1799,7 +1799,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // By category / By stage switch's check, the two of the category cards
   // (the themes deep link, the demo theme) went with them, and the head's
   // second check joined workshop.grouping-ear. 702 leaves 178 slots.
-  checkCap.assertPinned(DAPP.tests.length, 702);
+  // 702 → 703: +1 (request 6895) a challenge counted on a schedule says
+  // when progress was last counted and when the next count is due, on the
+  // challenge's own detail panel — a state no other check opens. 703 leaves
+  // 177 slots.
+  checkCap.assertPinned(DAPP.tests.length, 703);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

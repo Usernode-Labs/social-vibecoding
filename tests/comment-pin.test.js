@@ -362,6 +362,25 @@ test('the first picture animates out of the live page instead of a bare grey gro
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-label-in,\s*\.comment-bar-in \{ animation: none; \}\s*\}/);
 });
 
+test('a slow first picture never leaves a screen that shows nothing and takes no press (#5834)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The bar waits for the first picture only so long: an app that does not
+  // answer holds the picture for seconds, and the bar hidden for all of it
+  // left nothing to see and no way out on a phone.
+  assert.match(src, /const BAR_WAIT_MS = 600;/);
+  assert.match(src, /if \(!shotIntro\) return undefined;\s*const timer = setTimeout\(\(\) => setIntroSlow\(true\), BAR_WAIT_MS\);\s*return \(\) => clearTimeout\(timer\);/);
+  assert.match(src, /const barWaits = shotIntro && !introSlow;/);
+  assert.doesNotMatch(src, /shotIntro \? 'pointer-events-none opacity-0'/, 'never hidden for the whole wait');
+  // It says what is happening, on a phone too, where the words otherwise stay off.
+  assert.match(src, /const hint = shotIntro \? t\('devchat:commentPin\.hint\.taking'\) : draft/);
+  assert.match(src, /\$\{shotIntro \? 'inline ps-1\.5 sm:ps-0' : 'hidden sm:inline'\} min-w-0 truncate[^`]*`\}>\{hint\}/);
+  // Done works from then on, and leaving before the picture is immediate.
+  assert.match(src, /onClick=\{requestExit\}/);
+  assert.match(src, /if \(!inset \|\| shotIntro \|\| !viewShot\?\.url \|\| reducedMotion\(\)\) \{ finish\(\); return; \}/);
+  // A picture still drawing when the mode has gone lets go of its own URL.
+  assert.match(src, /viewShotKeys\.current \+= 1;\s*if \(viewShotUrl\.current\) URL\.revokeObjectURL\(viewShotUrl\.current\);/);
+});
+
 test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2026)', () => {
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
   const css = read('public/css/app.css');
@@ -371,7 +390,7 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   // Nothing of the mode is drawn over the live page before the first picture:
   // the state starts as drawing, and the bar and the first-use note wait.
   assert.match(src, /useState<ViewShot \| null>\(\{ url: '', view: 0, state: 'drawing' \}\)/);
-  assert.match(src, /shotIntro \? 'pointer-events-none opacity-0' : 'comment-bar-in',/);
+  assert.match(src, /barWaits \? 'pointer-events-none opacity-0' : 'comment-bar-in',/);
   assert.match(src, /\{intro && !confirm && !shotIntro \? \(/);
   assert.match(css, /\.comment-bar-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
   // The picture is decoded before it goes up, or its first frame is a white box.
@@ -499,13 +518,15 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
   assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
   assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate ps-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
     'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
+  // The same holds while the first picture draws and the bar says so (#5834).
+  assert.match(src, /const barWords = shotLabel \|\| shotIntro;/);
   // On a phone the label takes the place of the mode's chat glyph, so the
   // bar still fits a 390px screen.
-  assert.match(bar, /\$\{shotLabel \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
+  assert.match(bar, /\$\{barWords \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
   // And the Form / Comment switch drops its two glyphs on a phone while the
   // word shows, so "Screenshot" is whole at 390px rather than "Screen…".
-  assert.match(bar, /<DescriptionIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>/);
-  assert.match(bar, /<ChatIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>\s*\{t\('devchat:commentPin\.bar\.comment'\)\}/);
+  assert.match(bar, /<DescriptionIcon className=\{`\$\{barWords \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>/);
+  assert.match(bar, /<ChatIcon className=\{`\$\{barWords \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>\s*\{t\('devchat:commentPin\.bar\.comment'\)\}/);
 });
 
 test('the picture leaves the suggest flow\'s own overlays out, so the form never shows in it', () => {
