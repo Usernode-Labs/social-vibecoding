@@ -289,7 +289,8 @@ export function CommunitiesScreen() {
                   pin={c}
                   votes={state.owed[c.slug] || 0}
                   editing={false}
-                  community={wip}
+                  /* Joined rows wear the app's own icon (asked 20 Nov 2026); the drawn emblem is the pinned cards'. */
+                  community={false}
                   detail={cards ? activity.bySlug[c.slug] : undefined}
                   onPin={editing ? () => { void setHomePin({ ...c, member: true } as HomePin, true, say(c.name)); } : undefined}
                 />
