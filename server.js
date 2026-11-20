@@ -24,6 +24,10 @@ const shellRelease = loadShellRelease(path.join(__dirname, 'public'));
 if (shellRelease && shellRelease.revision !== 'dev') process.env.GIT_SHA = shellRelease.revision;
 const { load: loadConfig, runsClusterMaintenance } = require('./src/config');
 const platformPreviewPolicy = require('./src/services/platform-preview-data-policy');
+// The platform's own search-engine rules: the front page's canonical Link
+// header (below, ahead of express.static) and the noindex a shell answer
+// carries (the catch-all at the bottom). Loaded once here, not per request.
+const searchRobots = require('./src/services/search-robots');
 const { migrate } = require('./src/db/migrate');
 const {
   shellAssetCacheControl,
@@ -1163,7 +1167,7 @@ app.get('/shell/release.json', (_req, res, next) => {
 // Host a request arrived with: a forged Host must not be able to name
 // another site as this page's canonical. No configured address, no header.
 app.use((req, res, next) => {
-  const link = require('./src/services/search-robots').shellCanonicalLink({
+  const link = searchRobots.shellCanonicalLink({
     method: req.method,
     path: req.path,
     origin: require('./src/services/app-identity-env').platformOrigin(),
@@ -1232,7 +1236,7 @@ app.get('*', (req, res) => {
     // Every address that reaches here is a signed-in screen or a private or
     // unknown project (a public project is answered before this), so it
     // asks search engines not to list it. `/` never reaches here.
-    const robots = require('./src/services/search-robots').shellRobots({ path: req.path });
+    const robots = searchRobots.shellRobots({ path: req.path });
     if (robots) res.setHeader('X-Robots-Tag', robots);
     res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
     // The document carries the build id too — it is the reference the
