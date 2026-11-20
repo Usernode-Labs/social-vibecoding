@@ -381,3 +381,39 @@ test('E: the repair asks for a search where there is one, else for "from what I 
   assert.equal(claims.cut('I researched it. Most iOS apps use an inset grouped list for settings.', problems, {}),
     'Most iOS apps use an inset grouped list for settings.');
 });
+
+// ── 20 Nov 2026 (live-draft review, A): how a draft's preview looks ────────
+
+test('A: in a draft turn, "it is fixed" or how the preview looks now needs a look after the last save', () => {
+  const found = (text, turn) => claims.check(claims.mentions(text), { turn }).map((p) => p.kind);
+  const saved = { liveDraft: true, draftSaved: true };
+  for (const said of [
+    'It\'s fixed.', 'The delete button is fixed now.', 'Fixed: the delete button now sits on the right.', 'That is sorted.',
+    'The delete button now sits on the right of each row.', 'It looks right now.', 'The header now shows the date.', 'All fixed!',
+  ]) {
+    assert.deepEqual(found(said, saved), ['draft_looks'], said);
+    assert.deepEqual(found(said, { ...saved, draftLooked: true }), [], `${said} (looked)`);
+  }
+  // What it expects, the app running again (what the apply said), and an
+  // earlier change are no such claim.
+  for (const said of [
+    'The change is applied: I expect the delete button to sit at the right of each row.', 'It should now sit on the right.',
+    'It\'ll now show the date.', 'Fixed: the app is running again.', 'The bug was fixed in an earlier save.',
+  ]) {
+    assert.deepEqual(found(said, saved), [], said);
+  }
+  assert.deepEqual(found('It\'s fixed.', {}), [], 'only a draft turn');
+});
+
+test('A: the repair note asks for a look where the turn has one, and the cut keeps what it expects', () => {
+  const problem = [{ kind: 'draft_looks', said: 'says it is fixed or how the preview looks now, without looking at it since your last save' }];
+  const withLook = claims.repairNote(problem, { tools: new Set(['reply', 'apply_changes', 'look_at_preview']) });
+  assert.match(withLook, /Look with look_at_preview, then say what it shows; if you cannot look, say the change is applied and what you expect it to show, in those words\./);
+  const without = claims.repairNote(problem, { tools: new Set(['reply']) });
+  assert.doesNotMatch(without, /look_at_preview/);
+  assert.match(without, /say the change is applied and what you expect it to show, never that it is fixed/);
+  for (const note of [withLook, without]) assert.doesNotMatch(note, /—/);
+  const text = 'It\'s fixed: the delete button now sits on the right. I expect it to stay there on a phone too.';
+  const ctx = { liveDraft: true, draftSaved: true };
+  assert.equal(claims.cut(text, claims.check(claims.mentions(text), { turn: ctx }), ctx), 'I expect it to stay there on a phone too.');
+});

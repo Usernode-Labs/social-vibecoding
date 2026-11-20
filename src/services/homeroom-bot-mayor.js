@@ -2186,6 +2186,9 @@ function doingFor(name, args = {}, { project = null, version = null, kind = null
     case 'write_file':
     case 'apply_changes':
       return { kind: 'changing_draft' };
+    // 20 Nov 2026 (live-draft review, A): "Looking at the preview".
+    case 'look_at_preview':
+      return { kind: 'looking_preview' };
     // #6354: opening one of Homeroom's own pages to copy it for a design.
     case 'capture_page': {
       const page = typeof args?.page === 'string' ? clip(args.page, 60) : '';
@@ -3933,6 +3936,33 @@ async function platformCall(platform, name, args, pictures = null) {
   }
 }
 
+// 20 Nov 2026 (live-draft review, B): a draft turn called
+// get_platform_conventions four to six times, each answer the same. Within
+// one turn a second call with the same arguments answers from the first: a
+// pointer to it while it is still among the turn's messages, else the answer
+// kept from it (compactRounds may have folded it away).
+const READ_ONCE = new Set(['get_platform_conventions']);
+const READ_ONCE_NOTE = 'You read exactly this earlier in this turn, and its answer is above, unchanged: use it.';
+const readOnceKey = (name, args) => `${name}:${JSON.stringify(args && typeof args === 'object' ? args : {})}`;
+
+/** The earlier answer this turn to the same READ_ONCE read, or null. */
+function readOnce(ctx, messages, name, args) {
+  if (!READ_ONCE.has(name)) return null;
+  const earlier = ctx?.readOnce?.get(readOnceKey(name, args));
+  if (!earlier) return null;
+  return (messages || []).some((m) => m?.role === 'tool' && m.tool_call_id === earlier.id)
+    ? { ok: true, same: true, note: READ_ONCE_NOTE }
+    : earlier.result;
+}
+
+/** Keep a READ_ONCE read's answer for the rest of the turn. */
+function keepRead(ctx, call, name, args, result) {
+  if (!ctx || !READ_ONCE.has(name) || !result || result.error || result.same) return;
+  ctx.readOnce ||= new Map();
+  const key = readOnceKey(name, args);
+  if (!ctx.readOnce.has(key)) ctx.readOnce.set(key, { id: call?.id || null, result });
+}
+
 function parseArgs(raw) {
   if (raw && typeof raw === 'object') return raw;
   try { return JSON.parse(String(raw || '{}')) || {}; } catch { return {}; }
@@ -4611,7 +4641,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       };
       const openDraft = async ({ draft: row, opening = false }) => {
         try {
-          return await draftBot.openSession(pool, config, { user, draft: row, opening, deps });
+          // A: a look's picture only for a model that can see it.
+          return await draftBot.openSession(pool, config, { user, draft: row, opening, imageInput, deps });
         } catch (err) {
           t.failures.push(`context:draft:${codeOf(err)}`);
           log.warn('homeroom-bot-mayor', 'Could not open a thread\'s live draft for this turn', { userId: user.id, err: clip(err?.message, 200) });
@@ -4806,6 +4837,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           // the look at its version) and its forced first drawing.
           const designing = caps.design ? caps.design.offerFor({ rounds, last }) : { notes: [] };
           for (const said of designing.notes) messages.push({ role: 'user', content: said });
+          // 20 Nov 2026 (live-draft review, B): a draft turn near its limit
+          // with nothing changed is told so (live-draft-bot.js offerFor).
+          const drafting = typeof caps.draft?.offerFor === 'function' ? caps.draft.offerFor({ rounds, limit, last }) : null;
+          for (const said of drafting?.notes || []) messages.push({ role: 'user', content: said });
           return {
             note,
             tools: ending,
@@ -4862,12 +4897,15 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           const onPlatform = platform && PLATFORM_TOOLS.includes(name) && !caps.design?.owns(name);
           const session = caps.design?.owns(name) ? caps.design : caps.draft?.owns(name) ? caps.draft : null;
           let result;
-          if (session) result = await session.run(name, args, round);
+          // A: a draft's look shows its picture with this round's (picturesMessage).
+          if (session) result = await session.run(name, args, { ...round, pictures });
           else if (onPlatform) {
-            result = await botTools.run(name, args, {
+            // B: a read made once a turn answers again from the first (readOnce).
+            result = readOnce(ctx, messages, name, args) || await botTools.run(name, args, {
               pool, user: ctx.user, scope: 'main', deps,
               platformCall: (tool, given) => platformCall(platform, tool, given, pictures),
             });
+            keepRead(ctx, call, name, args, result);
           } else {
             // Step 6: what a loaded capability asks of the chat's own tools
             // first: a draft's unsaved changes saved before its reply, a
@@ -4983,6 +5021,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // under the reply, before what it still claims is cut.
   let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText, { replyTool: !!ctx.reply }))), ctx.offer);
   text = clip(text, MAX_REPLY_CHARS);
+  // 20 Nov 2026 (live-draft review, C): Homeroom adds a "Version N" line
+  // only to an artifact's version (caps.design.versionLines); one the model
+  // wrote into a draft turn's reply, with no version saved, goes.
+  if (caps.draft && !caps.design?.changed?.()) text = require('./live-draft-bot').withoutVersionLines(text);
   // P1: nothing more is shown as it is written; the message takes the card's place.
   draft?.close({ clear: !text });
   // What the second pass still says that is shown false is cut, and nothing
@@ -8354,6 +8396,8 @@ module.exports = {
   picturesMessage,
   withoutPictures,
   modelSeesImages,
+  readOnce,
+  keepRead,
   resolveCards,
   runTool,
   runDmTurn,

@@ -1283,10 +1283,11 @@ const typingSends = new Map();
 // Step 6 (#6864): 'drawing' names the design version it is saved as
 // ("Drawing version 4"), and 'changing_draft' is a live draft's code being
 // changed in the chat's own turn. 20 Nov 2026 (live-draft review, E):
-// 'searching' is a web search (bot-web-search.js).
+// 'searching' is a web search (bot-web-search.js); (A) 'looking_preview' is
+// a live draft's preview, opened to look at a change.
 const DOING_KINDS = Object.freeze([
   'progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking', 'changing_draft',
-  'searching',
+  'searching', 'looking_preview',
 ]);
 const MAX_DOING_PROJECT = 60;
 

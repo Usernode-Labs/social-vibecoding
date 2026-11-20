@@ -767,13 +767,15 @@ test('each tool says what the bot is doing, in kinds the screen words', () => {
   assert.deepEqual(mayor.doingFor('read_file', { path: 'a.js' }, { project: 'Gym Tracker' }), { kind: 'code', project: 'Gym Tracker' });
   assert.deepEqual(mayor.doingFor('edit_file', {}), { kind: 'changing_draft' });
   assert.deepEqual(mayor.doingFor('apply_changes', {}), { kind: 'changing_draft' });
+  // 20 Nov 2026 (live-draft review, A): its preview, looked at.
+  assert.deepEqual(mayor.doingFor('look_at_preview', { path: '/' }), { kind: 'looking_preview' });
   assert.deepEqual(mayor.doingFor('offer_request', {}), { kind: 'drafting' });
   // 20 Nov 2026 (live-draft review, E): a web search.
   assert.deepEqual(mayor.doingFor('web_search', { query: 'ios list layout' }), { kind: 'searching' });
   assert.equal(mayor.doingFor('comment_on_request', {}), null, 'thinking');
   assert.equal(mayor.doingFor('reply', {}), undefined, 'the end changes nothing');
   for (const what of [{ kind: 'progress' }, { kind: 'request', number: 1 }, { kind: 'code' }, { kind: 'drawing' }, { kind: 'designing' },
-    { kind: 'drafting' }, { kind: 'changing_draft' }, { kind: 'searching' }]) {
+    { kind: 'drafting' }, { kind: 'changing_draft' }, { kind: 'searching' }, { kind: 'looking_preview' }]) {
     assert.ok(realDm.DOING_KINDS.includes(what.kind), what.kind);
   }
   assert.deepEqual(realDm.typingDoing({ kind: 'drawing', version: 4 }), { kind: 'drawing', version: 4 });
@@ -941,6 +943,7 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   assert.equal(card.botDoingLine(t, { kind: 'changing_draft' }), 'Changing the draft');
   // 20 Nov 2026 (live-draft review, E): one web search.
   assert.equal(card.botDoingLine(t, { kind: 'searching' }), 'Searching the web');
+  assert.equal(card.botDoingLine(t, { kind: 'looking_preview' }), 'Looking at the preview');
   // #6354: Homeroom opening one of its own pages to copy for a design.
   assert.equal(card.botDoingLine(t, { kind: 'capturing', page: 'Homeroom bot page' }), 'Opening Homeroom bot page as it is now');
   assert.equal(card.botDoingLine(t, { kind: 'capturing' }), 'Opening the page as it is now');
@@ -976,7 +979,7 @@ test('the card ends the transcript where the answer lands, in Main Chat and in a
   // An island's first render is the empty transcript: the card waits for the store.
   const card = read('frontend/src/features/messages/bot-working.tsx');
   assert.doesNotMatch(card, /useEffect|fetch\(/);
-  for (const key of ['thinking', 'progress', 'request', 'code', 'codeUnnamed', 'drawing', 'drawingVersion', 'designing', 'drafting', 'changingDraft']) {
+  for (const key of ['thinking', 'progress', 'request', 'code', 'codeUnnamed', 'drawing', 'drawingVersion', 'designing', 'drafting', 'changingDraft', 'lookingPreview']) {
     assert.doesNotMatch(catalog(`messages:thread.botWorking.${key}`, { number: 1, project: 'P' }), /—|…/, key);
   }
 });
