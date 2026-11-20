@@ -8372,7 +8372,6 @@ html:not([data-skin]) {
   --wip-nav-ic-unfold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='3.5'/%3E%3Cpath d='M9 4v16'/%3E%3Cpath d='m14 9.500 2.500 2.500-2.500 2.500'/%3E%3C/svg%3E");
   --wip-nav-fold: 28px;                  /* the fold button: a quiet rounded square inside the panel, at its end */
   --wip-nav-fold-ic: 18px;
-  --wip-nav-fold-gap: 8px;               /* under the mark, when the menu is a strip */
   --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
   --wip-nav-ic-size: 20px;
   --wip-nav-ic-size-small: 18px;
@@ -8512,7 +8511,8 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
      astride the panel's edge): a quiet rounded square in the menu's own ink,
      at the end of the logo's line, with a row's soft ground under the
      pointer. Its glyph is the menu itself, a window with its side panel.
-     Folded, it sits under the mark and points the other way. */
+     Folded, it is beside the strip, at the top bar's start, in the bar's
+     ink, and points the other way. */
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
     position: absolute;
     inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);
@@ -8548,8 +8548,6 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
   /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
-  /* No fill, so no shape to cut: the bar's rounded foot is a clip, which also cut off the fold button where it sits under the mark. (The id three times: the rules that clip the bar name two ids and two classes.) */
-  html:not([data-skin]) #platform-header#platform-header#platform-header { clip-path: none; }
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
 }
 /* The place you are on carries a thin bar of the set's accent at its start. */
@@ -8559,7 +8557,7 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
 /* FOLDED, THE MENU IS A STRIP OF ICONS AND LOGOS (asked 20 Nov 2026), not
    gone: the five places' glyphs, each community's logo, You and Settings,
    under Homeroom's mark. Words, counts, headings and a community's nested
-   places are the open menu's. The fold button, under the mark, opens it;
+   places are the open menu's. The fold button, beside the strip, opens it;
    the page keeps the strip's width clear, as it does the menu's.
    (frontend/src/features/nav/rail-slide.ts slides nothing away here.) */
 @media (min-width: 768px) {
@@ -8585,18 +8583,21 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     -webkit-mask: none;
     mask: none;
   }
-  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + 1rem); }
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + var(--wip-nav-mini-pad)); }
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg) { display: none; }
+  /* Folded, the button is on the page's side of the strip: the first thing in the top bar, in the bar's own ink. */
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
-    inset-block-start: calc(var(--wip-nav-brand-top) + var(--wip-nav-mini-mark) + var(--wip-nav-fold-gap));
-    inset-inline-start: calc((var(--wip-nav-mini-w) - var(--wip-nav-fold)) / 2);
+    position: static;
+    color: var(--wip-nav-bar-ink);
+  }
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle:hover {
+    background: var(--wip-nav-bar-tint);
+    color: var(--wip-nav-bar-ink);
   }
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle > svg {
     -webkit-mask-image: var(--wip-nav-ic-unfold);
     mask-image: var(--wip-nav-ic-unfold);
   }
-  /* The strip's rows start under the mark and the button. */
-  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek).platform-tabs { padding-top: calc(var(--wip-nav-brand-top) + var(--wip-nav-mini-mark) + var(--wip-nav-fold) + 2 * var(--wip-nav-fold-gap)); }
   /* The page stands clear of the strip, as it does of the open menu (the shell's own rules stand aside for a folded rail, which was gone). */
   html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #app-view {
     padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
