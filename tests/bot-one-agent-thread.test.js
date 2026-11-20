@@ -227,7 +227,7 @@ test('a design thread\'s turn has the design tools and section; an ordinary one 
     assert.ok(tools.includes(name), `${name} in a design thread`);
   }
   assert.ok(!tools.includes('write_screen') && !tools.includes('edit_design'), 'stage 3: the generic names are offered; the old ones only still run');
-  assert.ok(!tools.includes('start_design'), 'the design is there already');
+  assert.ok(tools.includes('start_design'), 'K (20 Nov 2026): a new screen is a new artifact beside this one');
   assert.ok(!tools.includes('draw_screen'), 'nothing hands drawing over');
   assert.ok(tools.includes('offer_request') && tools.includes('my_work'), 'and every tool a private thread has');
   const prompt = systemText(design.seen);
@@ -410,7 +410,7 @@ test('a question and a change in one message: answered first, then the version s
     [h.sent[0].metadata.kind, h.sent[0].metadata.designVersion, h.sent[0].metadata.appSlug, h.sent[0].metadata.designTitle],
     ['design_version', 4, 'recipebot', 'Request page'],
   );
-  assert.deepEqual(h.notes, [{ threadId: 7, version: 4, messageId: 901 }], 'the version knows its message');
+  assert.deepEqual(h.notes, [{ threadId: 7, artifactId: 1, version: 4, messageId: 901 }], 'the version knows its message, and its artifact (K)');
   assert.ok(h.doings.some((d) => d?.kind === 'drawing' && d.version === 4), '"Drawing version 4"');
   assert.ok(h.offered[0].includes('reply'));
   const replyTool = mayor.DESIGN_REPLY_TOOL.function.parameters.properties;

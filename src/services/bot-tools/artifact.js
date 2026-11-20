@@ -30,6 +30,22 @@
 const registry = require('./registry');
 const { ARTIFACT_LIMITS, DESIGN_LIMITS } = require('../bot-profiles');
 
+// 20 Nov 2026 (live-draft review, K): a thread holds several artifacts,
+// numbered in the order they were made. A call names one by its number; the
+// turn opens it first (homeroom-bot-mayor.js artifactMove).
+const ARTIFACT_PARAM = Object.freeze({
+  write: Object.freeze({
+    type: 'integer',
+    minimum: 1,
+    description: 'The number of the artifact in this thread to write again whole. Leave it out for a new artifact.',
+  }),
+  open: Object.freeze({
+    type: 'integer',
+    minimum: 1,
+    description: 'The number of the artifact in this thread, when it is not the one open. Leave it out for the open one.',
+  }),
+});
+
 const handled = (name) => async (args, ctx) => {
   if (!ctx?.artifact || typeof ctx.artifact.handle !== 'function') return { ok: false, error: `${name} is not offered here.` };
   return ctx.artifact.handle(name, args);
@@ -44,16 +60,22 @@ const DESCRIPTIONS = Object.freeze({
       + 'how one could look: that is start_design. Nothing in the page may load from the network (no external src, '
       + 'href, @import, fetch or font): it is blocked. It is saved as version 1 when you reply, and you change it '
       + 'afterwards with exact edits, so write it once, whole.',
-    artifact: 'Write the whole page again: one self-contained HTML page, with its own <style> and inline <script>. Only when '
-      + 'they ask for a different page altogether, or there is none yet: to change the page that is here, use '
-      + 'edit_artifact. One write_artifact a turn. It is saved as this turn\'s version when you reply.',
+    // 20 Nov 2026 (live-draft review, K): with no `artifact` number it
+    // writes a NEW artifact, the thread's next; with one, a whole new
+    // version of that one.
+    artifact: 'Write a whole page: one self-contained HTML page, with its own <style> and inline <script>. With no artifact '
+      + 'number it is a NEW artifact in this thread: for a different subject, or when they ask for a new one, or when '
+      + 'there is none yet. With an artifact\'s number it writes that one again whole, as its next version. To change '
+      + 'what a page shows, use edit_artifact instead. One write_artifact a turn. It is saved when you reply.',
     design: 'Draw a whole screen: self-contained HTML for one screen (its markup, and a <style> block of its own for '
       + 'anything the project\'s stylesheets do not cover), at the size it is for. Homeroom puts the project\'s own '
       + 'stylesheets in, so use their classes and never copy CSS from them. A plan shows the screen without its '
       + 'scripts, so write every row, label and state it must show into the markup; use a script only for an '
       + 'interactive state the plan does not need. One write_artifact a turn: grow it with edit_artifact. It is saved as '
       + 'this turn\'s version when you reply (the result says which version). When you draw versions side by side, give '
-      + 'each column data-variant="its label", and put data-chosen on the one they picked.',
+      + 'each column data-variant="its label", and put data-chosen on the one they picked. To draw a screen this '
+      + 'thread already holds again whole, give its artifact number; with no number, when one is open, it is a NEW '
+      + 'artifact (a different screen).',
   },
   edit: {
     artifact: 'Change the page: exact find-and-replace edits on the current version\'s HTML, applied in order. Each '
@@ -93,6 +115,8 @@ registry.define({
             description: design ? 'The whole screen: a full HTML document, or the body\'s markup.'
               : 'The whole page: a full HTML document, or the body\'s markup.',
           },
+          // K: only where an artifact is open; the chat's own turn has none.
+          ...(scope === 'main' ? {} : { artifact: ARTIFACT_PARAM.write }),
         },
         // A screen is drawn for a size; a page is desktop unless they say.
         required: design ? ['title', 'size', 'html'] : ['title', 'html'],
@@ -122,6 +146,7 @@ registry.define({
             additionalProperties: false,
           },
         },
+        artifact: ARTIFACT_PARAM.open,
       },
       required: ['edits'],
       additionalProperties: false,
@@ -138,7 +163,10 @@ registry.define({
       + 'version of it, and you are not changing it this turn. Leave version out for the newest.',
     parameters: {
       type: 'object',
-      properties: { version: { type: 'integer', description: 'The version to show, by this thread\'s numbers.' } },
+      properties: {
+        version: { type: 'integer', description: 'The version to show, by its artifact\'s numbers.' },
+        artifact: ARTIFACT_PARAM.open,
+      },
       additionalProperties: false,
     },
   }),

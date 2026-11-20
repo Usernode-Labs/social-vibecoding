@@ -197,8 +197,12 @@ test('start_design uses the design\'s title and refuses another project\'s scree
   const plain = await mayor.startDesign(pool, { user: { id: 9 }, deps: {}, loadDesign }, { what: 'a map screen' });
   assert.equal(plain.ok, false);
   assert.match(plain.error, /name the screen/);
-  // Loaded already: nothing is opened twice.
-  assert.match((await mayor.startDesign(pool, { ...ctx, caps: { design: {} } }, { what: 'x' })).note, /yours already/);
+  // A new screen this turn draws already: nothing is opened twice.
+  assert.match((await mayor.startDesign(pool, { ...ctx, caps: { design: { fresh: true, capability: 'design' } } }, { what: 'x' })).note, /yours already/);
+  // K (20 Nov 2026): with an artifact the thread holds open, it is a new screen beside it.
+  asked.length = 0;
+  assert.equal((await mayor.startDesign(pool, { ...ctx, caps: { design: { fresh: false, capability: 'design', artifactId: 1 } } }, { what: 'x' })).ok, true);
+  assert.equal(asked.length, 1, 'the turn opens a new one');
   // A first version's thread draws no screen.
   assert.match((await mayor.startDesign(pool, { user: { id: 9 }, deps: { threadKind: 'first_version' } }, { what: 'x', title: 'X' })).error,
     /No screen is drawn in a first version's thread/);

@@ -540,6 +540,11 @@
       "id": "forgejo-publication-pending",
       "sha256": "58a15ded98e86480e61e7ca62d853d2ab37f50a5fa0fe7f7d595cd6569cd1bdd",
       "schemaSha256": "a2d6c3dee8f21341611effab62e85497b54aecd7166c261b623e241d207d3ae5"
+    },
+    {
+      "id": "thread-artifacts",
+      "sha256": "41395b252dbf5b93394ecb9e03da2d8f25e6b5727ad1ab1e235c9fca64cb43d8",
+      "schemaSha256": "e092441de9f977c42ae09a6ed9bf6ea304a1b67b06802916becdc149643e95b3"
     }
   ]
 }
