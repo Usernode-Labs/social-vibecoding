@@ -2071,6 +2071,158 @@
     "text": "(opens in a new tab)",
     "description": "Hidden text for screen readers after a button of the platform limits area (top of the notifications sheet, full admins only) that opens another site in a new tab."
   },
+  "limits.unknown.stale": {
+    "text": "Not read since {{time}}.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when a cluster figure has not been read for a while. {{time}} is the time of day of the last read."
+  },
+  "limits.action.cluster": {
+    "text": "See the cluster",
+    "description": "Button on a row of the platform limits area (top of the notifications sheet, full admins only) about the cluster (the database disk, a namespace quota, a node's volume pool): opens Admin, Health and status."
+  },
+  "limits.dbDisk.title": {
+    "text": "Database disk: {{used}} of {{cap}} GiB",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is how much of the shared database's disk is used and {{cap}} its size, both in GiB."
+  },
+  "limits.dbDisk.titleUnknown": {
+    "text": "Database disk",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the database disk could not be read."
+  },
+  "limits.dbDisk.near": {
+    "text": "When it fills, Postgres stops writing and every app's saves fail.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the database disk figure, when it is past 80%."
+  },
+  "limits.dbDisk.at": {
+    "text": "Postgres has no room to write, so saves are failing. The volume needs to grow.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the shared database's disk is full."
+  },
+  "limits.nodePool.title": {
+    "text": "Node volume pool: {{used}} of {{cap}} GiB",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is how much of the fullest node's local volume pool is taken and {{cap}} its size, both in GiB."
+  },
+  "limits.nodePool.titleUnknown": {
+    "text": "Node volume pools",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the nodes' local volume pools could not be read."
+  },
+  "limits.nodePool.node": {
+    "text": "On {{node}}.",
+    "description": "Start of the row text in the platform limits area (top of the notifications sheet, full admins only) for a node's volume pool. {{node}} is the server's name in the cluster."
+  },
+  "limits.nodePool.near": {
+    "text": "When it fills, new worker and preview volumes fail to mount.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the node's name, when its volume pool is past 80%."
+  },
+  "limits.nodePool.at": {
+    "text": "New worker and preview volumes are failing to mount.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the node's name, when its volume pool is full."
+  },
+  "limits.quota.figure": {
+    "text": "{{resource}}: {{used}} of {{hard}}.",
+    "description": "Start of the row text in the platform limits area (top of the notifications sheet, full admins only) for a cluster quota: its tightest resource. {{resource}} is that resource's name (such as \"CPU requested\"), {{used}} and {{hard}} how much is used and the quota's ceiling."
+  },
+  "limits.quota.resource.pods": {
+    "text": "Pods",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many pods (running containers) the namespace may hold."
+  },
+  "limits.quota.resource.cpu": {
+    "text": "CPU requested",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): CPU cores reserved by the namespace's pods."
+  },
+  "limits.quota.resource.cpu_limits": {
+    "text": "CPU limits",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): the CPU cores the namespace's pods may burst to, added up."
+  },
+  "limits.quota.resource.memory": {
+    "text": "Memory requested",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): memory reserved by the namespace's pods."
+  },
+  "limits.quota.resource.memory_limits": {
+    "text": "Memory limits",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): the memory the namespace's pods may use at most, added up."
+  },
+  "limits.quota.resource.scratch": {
+    "text": "Scratch disk requested",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): temporary disk reserved by the namespace's pods."
+  },
+  "limits.quota.resource.scratch_limits": {
+    "text": "Scratch disk limits",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): the temporary disk the namespace's pods may use at most, added up."
+  },
+  "limits.quota.resource.storage": {
+    "text": "Volume storage",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): disk requested by the namespace's volumes."
+  },
+  "limits.quota.resource.volumes": {
+    "text": "Volumes",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many volume claims the namespace may hold."
+  },
+  "limits.quota.resource.services": {
+    "text": "Services",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes Services the namespace may hold."
+  },
+  "limits.quota.resource.secrets": {
+    "text": "Secrets",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes Secrets the namespace may hold."
+  },
+  "limits.quota.resource.config_maps": {
+    "text": "ConfigMaps",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes ConfigMaps the namespace may hold."
+  },
+  "limits.quota.resource.jobs": {
+    "text": "Jobs",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes Jobs the namespace may hold."
+  },
+  "limits.quota.resource.builds": {
+    "text": "Builds",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many image builds the namespace may hold."
+  },
+  "limits.quota.apps.title": {
+    "text": "Apps quota: {{percent}}% used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) for the cluster quota of the namespace apps and previews run in. {{percent}} is how full its tightest resource is."
+  },
+  "limits.quota.apps.titleUnknown": {
+    "text": "Apps quota",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the cluster quota of the namespace apps and previews run in could not be read."
+  },
+  "limits.quota.apps.near": {
+    "text": "When it fills, apps and previews can't start.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace apps and previews run in is past 80%."
+  },
+  "limits.quota.apps.at": {
+    "text": "Apps and previews can't start until some stop or the quota is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace apps and previews run in is used up."
+  },
+  "limits.quota.workers.title": {
+    "text": "Workers quota: {{percent}}% used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) for the cluster quota of the namespace coding sessions and checks run in. {{percent}} is how full its tightest resource is."
+  },
+  "limits.quota.workers.titleUnknown": {
+    "text": "Workers quota",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the cluster quota of the namespace coding sessions and checks run in could not be read."
+  },
+  "limits.quota.workers.near": {
+    "text": "When it fills, new coding sessions and checks wait.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace coding sessions and checks run in is past 80%."
+  },
+  "limits.quota.workers.at": {
+    "text": "New coding sessions and checks are waiting for room.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace coding sessions and checks run in is used up."
+  },
+  "limits.quota.builds.title": {
+    "text": "Builds quota: {{percent}}% used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) for the cluster quota of the namespace image builds run in. {{percent}} is how full its tightest resource is."
+  },
+  "limits.quota.builds.titleUnknown": {
+    "text": "Builds quota",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the cluster quota of the namespace image builds run in could not be read."
+  },
+  "limits.quota.builds.near": {
+    "text": "When it fills, new image builds fail.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace image builds run in is past 80%."
+  },
+  "limits.quota.builds.at": {
+    "text": "New image builds are failing until old ones are cleared or the quota is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace image builds run in is used up."
+  },
   "row.limit.connections.full.label": {
     "text": "Database connections used up",
     "description": "First line of a notification to an administrator: the shared database has no connections left for apps."
@@ -2094,5 +2246,85 @@
   "row.limit.connections.warn.body_other": {
     "text": "<0>{{used}} of {{count}} database connections open.</0> At the limit, apps can't open new ones.",
     "description": "Second line of the \"Database connections running low\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.dbDisk.warn.label": {
+    "text": "Database disk filling up",
+    "description": "First line of a notification to an administrator: the shared database's disk is past 80% full."
+  },
+  "row.limit.dbDisk.warn.body": {
+    "text": "<0>{{used}} of {{cap}} GiB used.</0> When it fills, Postgres stops writing.",
+    "description": "Second line of the \"Database disk filling up\" notification to an administrator. {{used}} and {{cap}} are GiB used and the disk's size."
+  },
+  "row.limit.dbDisk.full.label": {
+    "text": "Database disk full",
+    "description": "First line of a notification to an administrator: the shared database's disk is full."
+  },
+  "row.limit.dbDisk.full.body": {
+    "text": "<0>{{used}} of {{cap}} GiB used.</0> Postgres stops writing, so saves fail until the volume grows.",
+    "description": "Second line of the \"Database disk full\" notification to an administrator. {{used}} and {{cap}} are GiB used and the disk's size."
+  },
+  "row.limit.nodePool.warn.label": {
+    "text": "Node volume pool filling up",
+    "description": "First line of a notification to an administrator: a server's local volume pool is past 80% full."
+  },
+  "row.limit.nodePool.warn.body": {
+    "text": "<0>{{used}} of {{cap}} GiB taken.</0> When it fills, new volumes fail to mount.",
+    "description": "Second line of the \"Node volume pool filling up\" notification to an administrator. {{used}} and {{cap}} are GiB taken and the pool's size."
+  },
+  "row.limit.nodePool.full.label": {
+    "text": "Node volume pool full",
+    "description": "First line of a notification to an administrator: a server's local volume pool is full."
+  },
+  "row.limit.nodePool.full.body": {
+    "text": "<0>{{used}} of {{cap}} GiB taken.</0> New worker and preview volumes fail to mount.",
+    "description": "Second line of the \"Node volume pool full\" notification to an administrator. {{used}} and {{cap}} are GiB taken and the pool's size."
+  },
+  "row.limit.quota.apps.warn.label": {
+    "text": "Apps quota running low",
+    "description": "First line of a notification to an administrator: the cluster quota for apps and previews is past 80% used."
+  },
+  "row.limit.quota.apps.warn.body": {
+    "text": "<0>{{percent}}% used.</0> When it fills, apps and previews can't start.",
+    "description": "Second line of the \"Apps quota running low\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.apps.full.label": {
+    "text": "Apps quota used up",
+    "description": "First line of a notification to an administrator: the cluster quota for apps and previews is used up."
+  },
+  "row.limit.quota.apps.full.body": {
+    "text": "<0>{{percent}}% used.</0> Apps and previews can't start until the quota is raised.",
+    "description": "Second line of the \"Apps quota used up\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.workers.warn.label": {
+    "text": "Workers quota running low",
+    "description": "First line of a notification to an administrator: the cluster quota for coding sessions and checks is past 80% used."
+  },
+  "row.limit.quota.workers.warn.body": {
+    "text": "<0>{{percent}}% used.</0> When it fills, new coding sessions and checks wait.",
+    "description": "Second line of the \"Workers quota running low\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.workers.full.label": {
+    "text": "Workers quota used up",
+    "description": "First line of a notification to an administrator: the cluster quota for coding sessions and checks is used up."
+  },
+  "row.limit.quota.workers.full.body": {
+    "text": "<0>{{percent}}% used.</0> New coding sessions and checks wait until the quota is raised.",
+    "description": "Second line of the \"Workers quota used up\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.builds.warn.label": {
+    "text": "Builds quota running low",
+    "description": "First line of a notification to an administrator: the cluster quota for image builds is past 80% used."
+  },
+  "row.limit.quota.builds.warn.body": {
+    "text": "<0>{{percent}}% used.</0> When it fills, new image builds fail.",
+    "description": "Second line of the \"Builds quota running low\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.builds.full.label": {
+    "text": "Builds quota used up",
+    "description": "First line of a notification to an administrator: the cluster quota for image builds is used up."
+  },
+  "row.limit.quota.builds.full.body": {
+    "text": "<0>{{percent}}% used.</0> New image builds fail until the quota is raised.",
+    "description": "Second line of the \"Builds quota used up\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
   }
 }

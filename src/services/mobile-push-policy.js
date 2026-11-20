@@ -155,7 +155,18 @@ function minutesSince(value, now) {
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+// Whole MiB as GiB, one decimal under ten (the capacity limits' figures).
+function gib(mib) {
+  const n = Number(mib) / 1024;
+  return n < 10 ? String(Math.round(n * 10) / 10) : String(Math.round(n));
+}
+// A namespace quota's name and what stops when it is used up.
+const QUOTA_ROLES = Object.freeze({
+  quota_apps: { name: 'apps', full: 'apps and previews cannot start until some stop or the quota is raised', warn: 'apps and previews cannot start' },
+  quota_workers: { name: 'workers', full: 'new coding sessions and checks wait until some finish or the quota is raised', warn: 'new coding sessions and checks wait' },
+  quota_builds: { name: 'builds', full: 'new image builds fail until old ones are cleared or the quota is raised', warn: 'new image builds fail' },
+});
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 // #6901: "apps_away:<people>:<cap>:<ago>", platform-limit-alerts.js
 // refusalToken. ago is the minutes from the run's start to the notice; 0 is
 // "someone was just turned away".
@@ -278,6 +289,32 @@ function platformLimitCopy(detail) {
         body: `All ${cap} of this hour's GitHub App requests are used. It resets within the hour` }
       : { title: 'GitHub App requests running low',
         body: `${used} of ${cap} GitHub App requests used this hour` };
+  }
+  // The cluster's own ceilings (services/platform-capacity.js): volumes in
+  // MiB, a quota's tightest resource in thousandths of its hard value.
+  if (limit === 'db_disk') {
+    const figures = `${gib(used)} of ${gib(cap)} GiB`;
+    return level === 'full'
+      ? { title: 'Database disk full',
+        body: `${figures} of the database's disk is used. Postgres stops writing, so saves fail until the volume is grown` }
+      : { title: 'Database disk filling up',
+        body: `${figures} of the database's disk is used. When it fills, Postgres stops writing` };
+  }
+  if (limit === 'node_pool') {
+    const figures = `${gib(used)} of ${gib(cap)} GiB`;
+    return level === 'full'
+      ? { title: 'Node volume pool full',
+        body: `A node's volume pool is full (${figures}). New worker and preview volumes fail to mount` }
+      : { title: 'Node volume pool filling up',
+        body: `${figures} of a node's volume pool is used. When it fills, new volumes fail to mount` };
+  }
+  if (QUOTA_ROLES[limit]) {
+    const role = QUOTA_ROLES[limit];
+    return level === 'full'
+      ? { title: `Cluster quota used up (${role.name})`,
+        body: `The ${role.name} namespace's quota is used up: ${role.full}` }
+      : { title: `Cluster quota running low (${role.name})`,
+        body: `${Math.floor(Number(used) / 10)}% of the ${role.name} namespace's quota is used. When it fills, ${role.warn}` };
   }
   if (limit === 'connections') {
     return level === 'full'

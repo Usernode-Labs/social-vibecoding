@@ -2340,12 +2340,44 @@ function conversationNotificationHref(n) {
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parsePlatformLimitDetail(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
 }
+
+// The capacity limits' volumes are whole MiB (services/platform-capacity.js):
+// said as GiB, one decimal under ten.
+function limitGib(mib) {
+  const n = Number(mib) / 1024;
+  return n < 10 ? String(Math.round(n * 10) / 10) : String(Math.round(n));
+}
+
+// The capacity limits' messages, by limit key and level: the label, and the
+// body (volumes take { used, cap } in GiB, quotas { percent }).
+const CAPACITY_LIMIT_MESSAGES = {
+  db_disk: {
+    warn: ['notifications:row.limit.dbDisk.warn.label', 'notifications:row.limit.dbDisk.warn.body'],
+    full: ['notifications:row.limit.dbDisk.full.label', 'notifications:row.limit.dbDisk.full.body'],
+  },
+  node_pool: {
+    warn: ['notifications:row.limit.nodePool.warn.label', 'notifications:row.limit.nodePool.warn.body'],
+    full: ['notifications:row.limit.nodePool.full.label', 'notifications:row.limit.nodePool.full.body'],
+  },
+  quota_apps: {
+    warn: ['notifications:row.limit.quota.apps.warn.label', 'notifications:row.limit.quota.apps.warn.body'],
+    full: ['notifications:row.limit.quota.apps.full.label', 'notifications:row.limit.quota.apps.full.body'],
+  },
+  quota_workers: {
+    warn: ['notifications:row.limit.quota.workers.warn.label', 'notifications:row.limit.quota.workers.warn.body'],
+    full: ['notifications:row.limit.quota.workers.full.label', 'notifications:row.limit.quota.workers.full.body'],
+  },
+  quota_builds: {
+    warn: ['notifications:row.limit.quota.builds.warn.label', 'notifications:row.limit.quota.builds.warn.body'],
+    full: ['notifications:row.limit.quota.builds.full.label', 'notifications:row.limit.quota.builds.full.body'],
+  },
+};
 
 // #6901: services/platform-limit-alerts.js refusalToken():
 // "apps_away:<people>:<cap>:<ago>", ago in minutes from the run's start (0
@@ -3366,6 +3398,24 @@ function rowWords(n) {
         segments: app ? messageSegments('notifications:row.limit.githubApp.body', figures)
           : (full ? messageSegments('notifications:row.limit.github.full.body', figures)
             : messageSegments('notifications:row.limit.github.warn.body', figures)),
+      };
+    }
+    // The cluster's own ceilings (services/platform-capacity.js): the
+    // database's disk and a node's volume pool in GiB, a namespace's quota
+    // as a percentage of its tightest resource.
+    const capacity = CAPACITY_LIMIT_MESSAGES[limit.limit];
+    if (capacity) {
+      const [labelId, bodyId] = capacity[full ? 'full' : 'warn'];
+      const values = limit.limit.startsWith('quota_')
+        ? { percent: Math.floor(limit.used / 10) }
+        : { used: limitGib(limit.used), cap: limitGib(limit.cap) };
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+        label: t(labelId),
+        segments: messageSegments(bodyId, values),
       };
     }
     const figures = { used: limit.used, count: limit.cap };
