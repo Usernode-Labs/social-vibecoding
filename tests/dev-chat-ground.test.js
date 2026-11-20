@@ -276,4 +276,16 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
   assert.match(ruleIn('html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,\nhtml:not([data-skin]) .gc-bubble:not(.gc-bubble-self)'),
     /background-color: var\(--wip-bubble-bg\);/);
   assert.doesNotMatch(block, /messages-message-self \.messages-bubble|\.gc-bubble-self \{/);
+
+  // NOTHING WHITE ON THE WHITE CARD WITHOUT AN EDGE. What was drawn white on
+  // the off-white sheet (the reply boxes, the discs, Settings' white cards)
+  // takes the kit card's hairline; a row under the pointer or open takes the
+  // kit's soft row ground, not the white veil it wore. And a phone's
+  // Messages list stands on the card, as the conversation over it does.
+  const messages = ruleIn('html:not([data-skin]) :is(.messages-layout, .dev-ws-discussion, .side-panel-head, #ai-screen .ai-askbar)');
+  assert.match(messages, /--messages-selected: var\(--wip-item-hover\);/);
+  assert.match(messages, /--messages-disc-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
+  assert.match(ruleIn('html:not([data-skin]) .gc-composer-card,\nhtml:not([data-skin]) #settings-root .ui-card.bg-white'),
+    /box-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
+  assert.match(ruleIn('html:not([data-skin]) .messages-layout.messages-drawer'), /background-color: var\(--wip-card-bg\);/);
 });
