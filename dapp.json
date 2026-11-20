@@ -137,6 +137,12 @@
       "description": "The 'Sign-in token read after the bridge' check on app proposals: flags a script the change adds above the bridge tag that reads the token from the address (the app then opens signed out in Homeroom). Reads already on main are never flagged. off: no row. advisory (default): a flag shows but does not stop the merge. blocking: a flag fails the checks. Fails open."
     },
     {
+      "key": "OUTSIDE_SCRIPT_CHECK_MODE",
+      "group": "Platform",
+      "default": "blocking",
+      "description": "The 'No script from another site' check on app proposals: fails a change that adds a <script> loaded from another site, naming the file and line. A tag already in an app never fails; relative paths, the hosted /usernode-*/v1/ files included, pass. off: no row. advisory: a flag shows but does not stop the merge. blocking (default): a flag fails the checks. Fails open."
+    },
+    {
       "key": "SMALL_CHANGE_TAG_MODE",
       "group": "Platform",
       "default": "on",

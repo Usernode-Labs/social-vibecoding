@@ -339,6 +339,39 @@ function platformLimitCopy(detail) {
 
 // Kind-specific {title, body}, or null when the kind's essential context is
 // missing (e.g. a mention without a sender) — null means the generic copy.
+// The kinds of personal detail a change keeps, by their id, in the order a
+// sentence lists them (an id is one plain literal:
+// tests/mobile-push-language.test.js).
+const RELEASE_HOLD_PEOPLE_WHAT = Object.freeze({
+  email: 'push:releaseHold.people.what.email',
+  phone: 'push:releaseHold.people.what.phone',
+  birth: 'push:releaseHold.people.what.birth',
+  address: 'push:releaseHold.people.what.address',
+  name: 'push:releaseHold.people.what.name',
+});
+
+// The push for a notice that keeps data about people or adds a private key
+// ("Stylist: Now keeps people's email addresses"), or null for any other
+// notice. The first of RULES' order names it, as on the bell.
+function releaseHoldToldCopy(detail, label, withApp, t) {
+  const [rulesPart, tagsPart] = String(detail || '').replace(/^notice:/, '').split('|');
+  const rules = String(rulesPart || '').split(',');
+  const body = label ? t('push:releaseHold.notice.body.named', { title: label }) : t('push:releaseHold.notice.body.plain');
+  if (rules.includes('people')) {
+    const kinds = new Set(String(tagsPart || '').split(',').filter((tag) => tag.startsWith('people:'))
+      .map((tag) => tag.slice('people:'.length)));
+    const what = Object.keys(RELEASE_HOLD_PEOPLE_WHAT).filter((k) => kinds.has(k))
+      .map((k) => t(RELEASE_HOLD_PEOPLE_WHAT[k])).filter(Boolean)
+      .reduce((first, second) => (first ? t('push:releaseHold.people.pair', { first, second }) : second), '');
+    return {
+      title: withApp(what ? t('push:releaseHold.people.title', { what }) : t('push:releaseHold.people.titleAny')),
+      body,
+    };
+  }
+  if (rules.includes('secret')) return { title: withApp(t('push:releaseHold.secret.title')), body };
+  return null;
+}
+
 function buildCopy(kind, context, now, t) {
   const app = cleanText(context.appName);
   const conversation = cleanText(context.conversationTitle);
@@ -860,9 +893,11 @@ function buildCopy(kind, context, now, t) {
     // (services/release-holds.js). The change's own name says which.
     case 'release_hold':
       // A detail that starts "notice:" is a change the rules could not read
-      // in full: it is not held, and the push says so.
+      // in full, or (20 Nov 2026) one that keeps data about people or adds a
+      // private key ("notice:people|people:email"): it is not held, and the
+      // push says so.
       if (/^notice:/.test(String(detail || ''))) {
-        return {
+        return releaseHoldToldCopy(detail, label, withApp, t) || {
           title: withApp(t('push:releaseHold.notice.title')),
           body: label ? t('push:releaseHold.notice.body.named', { title: label }) : t('push:releaseHold.notice.body.plain'),
         };

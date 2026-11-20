@@ -811,6 +811,54 @@
     "text": "A change was too large to check in full",
     "description": "Second line of the \"Not read in full\" notification when the change has no name to show."
   },
+  "row.releaseHold.peopleLabel": {
+    "text": "{{app}} now keeps people's {{what}}",
+    "description": "First line of a notification sent to platform administrators: a proposed change to a project starts keeping a kind of personal detail about the people who use it. The change is not held and nothing is asked of the reader. {{app}} is the project's name; {{what}} is what it keeps, such as \"email addresses\" or \"email addresses and phone numbers\". The change's name is on the line below."
+  },
+  "row.releaseHold.peopleLabelUnnamed": {
+    "text": "A project now keeps people's {{what}}",
+    "description": "The same first line when the project's name is not known. {{what}} is what it keeps, such as \"email addresses\"."
+  },
+  "row.releaseHold.peopleLabelAny": {
+    "text": "{{app}} now keeps data about people",
+    "description": "The same first line when the notification does not say what kind of detail, such as one sent before it did. {{app}} is the project's name."
+  },
+  "row.releaseHold.peopleLabelAnyUnnamed": {
+    "text": "A project now keeps data about people",
+    "description": "The same first line when neither the project nor the kind of detail is known."
+  },
+  "row.releaseHold.people.email": {
+    "text": "email addresses",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their email addresses."
+  },
+  "row.releaseHold.people.phone": {
+    "text": "phone numbers",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their phone numbers."
+  },
+  "row.releaseHold.people.birth": {
+    "text": "dates of birth",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their dates of birth."
+  },
+  "row.releaseHold.people.address": {
+    "text": "home addresses",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their home or postal addresses."
+  },
+  "row.releaseHold.people.name": {
+    "text": "full names",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their first, last or full names."
+  },
+  "row.releaseHold.secretLabel": {
+    "text": "{{app}} now uses a private key for an outside service",
+    "description": "First line of a notification sent to platform administrators: a proposed change to a project declares a private key, such as an API key, for a service outside Homeroom. The change is not held and nothing is asked of the reader. {{app}} is the project's name. The change's name is on the line below."
+  },
+  "row.releaseHold.secretLabelUnnamed": {
+    "text": "A project now uses a private key for an outside service",
+    "description": "The same first line when the project's name is not known."
+  },
+  "row.releaseHold.toldBody": {
+    "text": "It is not held, and you can look at it",
+    "description": "Second line of that notification when the change has no name to show: the change goes live on its votes and checks, and the reader may open it."
+  },
   "row.limit.unknown.body": {
     "text": "the server is nearing one of its limits",
     "description": "Second line of the \"Platform limit\" notification to an administrator, when its details cannot be read. Lower case, as a note under the heading."

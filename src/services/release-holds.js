@@ -16,6 +16,14 @@
 // its admins. And a project's first version, which goes live without a vote
 // for the person who just described it (evaluate() says why).
 //
+// 20 Nov 2026: of what used to hold, only `wallet` and `content` still do.
+// `people` (it starts keeping data about people) and `secret` (it adds a
+// private key for an outside service) tell the full admins instead, naming
+// the project and what it now keeps or uses, once for each version, the way
+// `unread` always has. `script` (a <script> from another site) trips no more:
+// the data rules forbid it outright, so it is a failing check
+// (services/outside-script-check.js) rather than something a vote can allow.
+//
 // One rule tells without holding: `unread`, a change too large to read whole
 // or whose diff could not be loaded. It used to hold, and nearly every time
 // the reason was a rebuilt bundle committed beside a few lines of source, so
@@ -115,14 +123,21 @@ const RULES = Object.freeze([
     words: 'It lets the app send tokens',
     read: (c) => c.files.some((f) => !TEST_FILE.test(f.path) && f.added.some((l) => /\bsendTransaction\s*\(/.test(l))),
   }),
+  // Tells, and holds nothing (20 Nov 2026). The notice says what it keeps
+  // ("Stylist now keeps people's email addresses"), from the `people:<kind>`
+  // tags evaluate() stores beside the rule.
   Object.freeze({
     key: 'people',
     words: 'It starts keeping data about people',
+    holds: false,
     read: (c) => c.files.some((f) => !TEST_FILE.test(f.path) && newTableColumns(f.added).some(isPersonColumn)),
   }),
+  // Tells, and holds nothing (20 Nov 2026): "Stylist now uses a private key
+  // for an outside service". The key's value is the project's own to set.
   Object.freeze({
     key: 'secret',
     words: 'It adds a private key for an outside service',
+    holds: false,
     read: (c) => c.files.some((f) => isManifest(f.path) && f.added.some((l) => /"private"\s*:\s*true/.test(l))),
   }),
   Object.freeze({
@@ -130,11 +145,16 @@ const RULES = Object.freeze([
     words: 'It asks for a device capability such as location',
     read: (c) => c.files.some((f) => isManifest(f.path) && f.added.some((l) => CAPABILITY.test(l))),
   }),
+  // Retired 20 Nov 2026: a <script> from another site fails the checks now
+  // (services/outside-script-check.js), since the data rules forbid it and no
+  // vote can allow it. The entry reads nothing and holds nothing; it stays so
+  // a hold opened for one before then still says why until its change's
+  // checks run again, which ends the hold and runs that check.
   Object.freeze({
     key: 'script',
     words: 'It loads a script from another site',
-    read: (c) => c.files.some((f) => !TEST_FILE.test(f.path)
-      && f.added.some((l) => /<script\b[^>]*\bsrc\s*=\s*["']?(https?:)?\/\//i.test(l))),
+    holds: false,
+    read: () => false,
   }),
   Object.freeze({
     key: 'content',
@@ -189,9 +209,71 @@ function cleanRules(list) {
   return RULE_KEYS.filter((k) => seen.has(k));
 }
 
+// ── What a rule that tells saw ──────────────────────────────────────────
+//
+// A hold row's `rules` carries, beside a rule, `<rule>:<value>` tags that say
+// what that rule saw, so a notice can name it without a column of its own:
+// `people:email` for each kind of personal detail the change's new tables
+// keep. cleanRules drops the tags, so every gate, card and list reads the
+// rules as before.
+function tagsOf(list) {
+  return (Array.isArray(list) ? list : []).map(String).filter((r) => /^[a-z]+:[a-z-]+$/.test(r));
+}
+function valuesOf(list, rule) {
+  return tagsOf(list).filter((r) => r.startsWith(`${rule}:`)).map((r) => r.slice(rule.length + 1));
+}
+
+// The kinds of personal detail a person column holds, in the order a
+// sentence lists them. A column the rule reads always has one.
+const PEOPLE_KINDS = Object.freeze(['email', 'phone', 'birth', 'address', 'name']);
+function personKind(name) {
+  const n = String(name || '').toLowerCase();
+  const words = n.split('_');
+  if (words.some((w) => /^e?mail$/.test(w))) return 'email';
+  if (words.some((w) => /^(phone|mobile)$/.test(w))) return 'phone';
+  if (/(^|_)date_of_birth(_|$)/.test(n) || words.some((w) => /^(birth(day|date)?|dob)$/.test(w))) return 'birth';
+  if (/(^|_)(postal_code|zip_code)(_|$)/.test(n) || words.some((w) => /^(address|street|postcode|zip)$/.test(w))) return 'address';
+  if (/(^|_)(full|first|last|real|legal)_name(_|$)/.test(n)) return 'name';
+  return null;
+}
+
+/** Pure: the kinds of personal detail a diff's new tables keep, in PEOPLE_KINDS order. */
+function peopleKept(diff) {
+  const found = new Set();
+  for (const f of addedByFile(diff)) {
+    if (TEST_FILE.test(f.path)) continue;
+    for (const column of newTableColumns(f.added)) {
+      if (isPersonColumn(column)) found.add(personKind(column));
+    }
+  }
+  return PEOPLE_KINDS.filter((k) => found.has(k));
+}
+
+// "email addresses", "email addresses and phone numbers": the kinds in
+// English, for the mail's reasons (the bell and the push word their own).
+const PEOPLE_WORDS = Object.freeze({
+  email: 'email addresses', phone: 'phone numbers', birth: 'dates of birth', address: 'home addresses', name: 'full names',
+});
+function englishList(words) {
+  if (words.length < 2) return words[0] || '';
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
 /** The rules in plain English, for the server's own sentences and the mail. */
 function ruleWords(list) {
   return cleanRules(list).map((k) => RULE_BY_KEY.get(k).words);
+}
+
+// The mail's reasons: ruleWords, with a rule that tells saying what the
+// change now does, where its tags say ("It now keeps people's email
+// addresses", "It now uses a private key for an outside service").
+function reasonWords(list) {
+  const kept = valuesOf(list, 'people').map((k) => PEOPLE_WORDS[k]).filter(Boolean);
+  return cleanRules(list).map((k) => {
+    if (k === 'people' && kept.length) return `It now keeps people's ${englishList(kept)}`;
+    if (k === 'secret') return 'It now uses a private key for an outside service';
+    return RULE_BY_KEY.get(k).words;
+  });
 }
 
 // ── What the merge path reads ───────────────────────────────────────────
@@ -316,6 +398,9 @@ async function evaluate({
         failed = true;
       }
       rules = tripped({ diff, contentFlagged, unread });
+      // What a rule that tells saw, as tags its notice names (cleanRules
+      // drops them everywhere else).
+      if (rules.includes('people')) rules = rules.concat(peopleKept(diff).map((kind) => `people:${kind}`));
       // A failed read is not remembered: the next run asks again.
       if (!failed) {
         evaluated.set(key, rules);
@@ -341,7 +426,7 @@ async function apply(pool, { sessionId, appId, commitHash, rules }) {
       `UPDATE release_holds SET status = 'fixed', decided_at = NOW()
         WHERE session_id = $1 AND status = 'waiting'`, [sessionId]);
     if (rowCount) log.info('release-holds', 'A new version trips no rule that holds, so the hold ended', { sessionId });
-    if (!rules.length) {
+    if (!cleanRules(rules).length) {
       await endNotice(pool, sessionId);
       return { state: rowCount ? 'fixed' : 'clear', rules: [] };
     }
@@ -358,7 +443,7 @@ async function apply(pool, { sessionId, appId, commitHash, rules }) {
                                         THEN NULL ELSE release_holds.notified_at END
        RETURNING id, (xmax = 0) AS opened`, [appId, sessionId, head, rules]);
     if (notice?.opened) log.info('release-holds', 'Admins will be told about a change, which is not held', { sessionId, rules });
-    return { state: 'notice', rules, id: notice ? Number(notice.id) : null, opened: !!notice?.opened };
+    return { state: 'notice', rules: cleanRules(rules), id: notice ? Number(notice.id) : null, opened: !!notice?.opened };
   }
   // Held now: the hold's own tell says everything, so a notice nobody has
   // been sent yet is not sent after it.
@@ -370,7 +455,7 @@ async function apply(pool, { sessionId, appId, commitHash, rules }) {
      DO UPDATE SET head_sha = EXCLUDED.head_sha, rules = EXCLUDED.rules
      RETURNING id, (xmax = 0) AS opened`, [appId, sessionId, head, rules]);
   if (row?.opened) log.info('release-holds', 'Change held for an admin', { sessionId, rules });
-  return { state: 'held', rules, id: row ? Number(row.id) : null, opened: !!row?.opened };
+  return { state: 'held', rules: cleanRules(rules), id: row ? Number(row.id) : null, opened: !!row?.opened };
 }
 
 // A 'notice' row stands only while the change's newest version is one the
@@ -410,6 +495,11 @@ async function notifyIfDue({ config = null, pool, sessionId, deps = {} } = {}) {
     // A row that only tells says so in the bell row's detail and the mail's
     // `held`, which is what the words of both are chosen by.
     const held = hold.status !== 'notice';
+    // What the rules saw rides the detail after a `|`, so the bell row and
+    // the push can name it ("notice:people|people:email"). A handful of short
+    // tags at most: the column holds 1200 characters.
+    const tags = tagsOf(hold.rules);
+    const detail = `${held ? '' : NOTICE_DETAIL}${rules.join(',')}${tags.length ? `|${tags.join(',')}` : ''}`;
 
     // Full admins, never the author: their own yes would not count.
     const { rows: created } = await pool.query(
@@ -420,12 +510,12 @@ async function notifyIfDue({ config = null, pool, sessionId, deps = {} } = {}) {
           AND admin.anonymised_at IS NULL
           AND admin.id IS DISTINCT FROM $2
        RETURNING id, user_id`,
-      [hold.session_id, hold.author_id, hold.app_id, `${held ? '' : NOTICE_DETAIL}${rules.join(',')}`]);
+      [hold.session_id, hold.author_id, hold.app_id, detail]);
     const notifications = deps.notifications || require('./notifications');
     await Promise.all(created.map((row) => notifications.hydrateAndPush(pool, row)))
       .catch((err) => log.warn('release-holds', 'Pushing the hold to the bell failed', { sessionId, err: err.message }));
 
-    await mailAdmins({ config, pool, hold, rules, held, adminIds: created.map((r) => r.user_id), deps });
+    await mailAdmins({ config, pool, hold, rules: hold.rules, held, adminIds: created.map((r) => r.user_id), deps });
     log.info('release-holds', held ? 'Admins asked to approve a held change' : 'Admins told about a change that is not held',
       { sessionId, admins: created.length });
     return { notified: created.length };
@@ -451,8 +541,10 @@ async function mailAdmins({ config, pool, hold, rules, held = true, adminIds, de
     appName: hold.app_name || '',
     title: hold.title,
     author: author?.username || '',
-    reasons: ruleWords(rules),
+    reasons: reasonWords(rules),
     held,
+    // Whether it was read in full, for the mail's not-held paragraph.
+    unread: cleanRules(rules).includes('unread'),
     url: changeUrl(hold.app_slug, hold.session_id),
   };
   await Promise.all(admins.map((admin) => Promise.resolve()
@@ -637,7 +729,7 @@ function _resetCache() { evaluated.clear(); }
 
 module.exports = {
   KIND, CLOSE_REASON, NOTICE_DETAIL, RULES, RULE_KEYS,
-  addedByFile, tripped, cleanRules, ruleWords, holds,
+  addedByFile, tripped, cleanRules, ruleWords, reasonWords, holds, tagsOf, valuesOf, peopleKept, personKind,
   heldSql, approvedSql, gateFor, forSessions,
   evaluate, apply, notifyIfDue, sweep, onVote, listForAdmin, changeUrl,
   _resetCache,
