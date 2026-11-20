@@ -7599,27 +7599,20 @@ html:not([data-skin]):where([data-motion="reduce"]) .wip-caught-door:is(:hover, 
 /* The project's notice (changes to its code are paused) is not shown on Needs you (asked 20 Nov 2026): the page is for
    voting, which the pause does not stop; the hub and the board still say it. */
 html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice { display: none; }
-/* THE END OF A RUN (asked 20 Nov 2026) is a card of the look, as "You're all caught up" is: the little pile of changes,
-   the two lines, then its one action as a button of its own width (it ran the page's whole width) and the way back as
-   a plain link under it. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone { align-self: center; width: min(100%, 32rem); min-height: 0; margin-block: 1.5rem 0; padding: 2.5rem 1.5rem 2rem; border-radius: var(--wip-card-radius); background: var(--wip-card-bg); box-shadow: 0 0 0 1px var(--wip-card-line); }
+/* THE END OF A RUN (asked 20 Nov 2026) is a page of its own: one card of the look as wide and as tall as the page has
+   room for, a picture of the brand's (the people) in place of the little pile, the two lines, its one action as a
+   button of its own width and the way back as a link, then the ways on into the project along its foot. */
+html:not([data-skin]) { --wip-needs-end-room: calc(100dvh - 12.5rem); --wip-needs-end-art: 13rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run.rf-feed-done { max-width: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone { width: 100%; min-height: var(--wip-needs-end-room); margin: 0; padding: 2.5rem 1.5rem 1.5rem; justify-content: flex-start; border-radius: var(--wip-card-radius); background: var(--wip-card-bg); box-shadow: 0 0 0 1px var(--wip-card-line); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-stack, .rf-end-mark) { display: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-art { display: block; width: auto; max-width: 100%; height: var(--wip-needs-end-art); margin-block: auto 1.25rem; object-fit: contain; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-title { color: var(--wip-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-line { color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-btn { align-self: center; min-width: 14rem; padding-inline: 1.5rem; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-back { margin-top: 0.875rem; color: var(--wip-ink); font-size: var(--wip-link-size); text-decoration: underline; text-underline-offset: 3px; }
-/* Second drawing (proposal, 20 Nov 2026): from 768px the end is one wide strip, as wide as the vote card it follows, so
-   the page does not shrink to a small box: the pile at its start, the two lines beside it, the action and the way back
-   at its far end. A phone keeps the stacked card. */
-@media (min-width: 768px) {
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 1.5rem; align-items: center; width: min(100%, calc(var(--wip-needs-main) + var(--wip-needs-side))); padding: 1.5rem 2rem; text-align: start; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-stack, .rf-end-mark) { grid-column: 1; grid-row: 1 / span 2; margin: 0; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-title { grid-column: 2; grid-row: 1; align-self: end; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-line { grid-column: 2; grid-row: 1 / span 2; margin: 0; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-line.rf-end-line-tight { grid-row: 2; align-self: start; margin-top: 0.125rem; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-btn { grid-column: 3; grid-row: 1 / span 2; min-width: 12rem; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-btn.rf-end-btn-go { grid-row: 1; align-self: end; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .rf-end-back { grid-column: 3; grid-row: 2; align-self: start; justify-self: center; height: auto; margin-top: 0.625rem; }
-}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone .rf-end-back { height: auto; margin-top: 0.875rem; color: var(--wip-ink); font-size: var(--wip-link-size); text-decoration: underline; text-underline-offset: 3px; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > .wip-ways { align-self: stretch; margin-top: auto; padding-top: 2rem; text-align: start; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-btn, .rf-end-back):last-child { margin-bottom: auto; }
 /* WHAT A CHANGE DOES, BESIDE IT (asked 20 Nov 2026). From 1280px a project's Needs you keeps the card that the arrow in
    the change's bar opens (its summary, who made it, the way to its page and the three ways to look closer) open at the
    change's far side, in the same card past a hairline; review-flow.tsx marks the page (`data-rf-beside`) and takes the
@@ -27725,6 +27718,7 @@ body {
 .rf-capped { margin: -12px 0 0; font-size: 12px; color: var(--rf-muted); text-align: center; }
 /* Everything had your vote: the end alone, centred where the list was. */
 .rf-end-alone { min-height: 56vh; justify-content: center; padding: 0 24px 48px; }
+.rf-end-art { display: none; }
 /* The end when some changes were skipped: not done, so no check. The
    skipped changes wait as a small fanned stack (each on its own ground),
    with one way to look at them again and a quiet way back. */

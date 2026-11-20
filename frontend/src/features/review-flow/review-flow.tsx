@@ -979,6 +979,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
         {filter !== 'all' ? <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} /> : null}
         {waiting.length ? (
           <div className="rf-end rf-end-alone" data-rf-end="" data-rf-end-waiting={waiting.length}>
+            {/* A picture of the brand's, for a look that draws the end as a page of its own (app.css `.rf-end-art`); hidden elsewhere. */}
+            <img className="rf-end-art" src="/brand/people.png" alt="" aria-hidden="true" />
             <span className="rf-end-stack" aria-hidden="true">
               {waiting.slice(0, 3).map((it, i, all) => (
                 <span key={it.key} className="rf-end-tile" data-n={all.length > 1 ? i - (all.length - 1) / 2 : 0} style={{ background: it.ground }}><i /></span>
@@ -988,14 +990,19 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
             <p className="rf-end-line rf-end-line-tight">{t('communities:review.end.waiting', { count: waiting.length })}</p>
             <button type="button" className="rf-end-btn rf-end-btn-go" onClick={again} data-rf-again="">{t('communities:review.end.again', { count: waiting.length })}</button>
             <button type="button" className="rf-end-back" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
+            {/* The ways on into the project, on its own Needs you under the look that draws them (./project-needs.tsx). */}
+            <ProjectWaysIn slug={slug} project={project} />
           </div>
         ) : (
           <div className="rf-end rf-end-alone" data-rf-end="">
+            {/* A picture of the brand's, for a look that draws the end as a page of its own (app.css `.rf-end-art`); hidden elsewhere. */}
+            <img className="rf-end-art" src="/brand/people.png" alt="" aria-hidden="true" />
             <span className="rf-end-mark" aria-hidden="true">
 <CheckIcon width={24} height={24} strokeWidth="2.2" />
             </span>
             <p className="rf-end-line">{t('communities:review.end.line')}</p>
             <button type="button" className="rf-end-btn" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
+            <ProjectWaysIn slug={slug} project={project} />
           </div>
         )}
         {capped ? <p className="rf-capped" data-needs-capped="">{t('communities:reel.capped', { count: run.length })}</p> : null}
