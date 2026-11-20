@@ -19368,15 +19368,19 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    by an inline gutter: below that width the gutter is 0 and their own 12px
    or 16px stands, so a narrower column is drawn exactly as it was. The Duo's
    rule below still takes the end side to its column. */
-#ai-screen .ai-main-pane .messages-layout[data-bot-threads] :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] :is(.chat-transcript, .chat-status, .chat-composer-bar):not(.dev-request *) {
   padding-inline: max(0px, calc((100% - 720px) / 2));
 }
-#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-status {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-status:not(.dev-request *) {
   padding-inline: max(16px, calc((100% - 720px) / 2));
 }
-#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-composer-bar {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-composer-bar:not(.dev-request *) {
   padding-inline: max(12px, calc((100% - 720px) / 2));
 }
+/* A private thread drawn on a public thread's page (20 Nov 2026, "A PRIVATE
+   THREAD IS A PUBLIC THREAD'S PAGE" below) is not held to that measure: it
+   fills the column as a request's page does in the same column, and its
+   cards keep the page's own 12px. */
 /* AND THE CHAT UNDER THE HEAD STOPS AT THE DUO'S COLUMN TOO (overnight
    audit B25, 2 November 2026). Run under it (1 Nov), the chat put its Send
    button, the "Live ›" row's chevron and the New divider's label inside the
@@ -19386,185 +19390,55 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    beside it: the chat's own sheet carries on under the column as padding,
    and only what is drawn in it stops, its head keeping its own clearance
    above. */
-html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-bot-threads] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-bot-threads] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar):not(.dev-request *) {
   padding-inline-end: var(--ai-edge, 0px);
 }
-/* A PRIVATE THREAD WITH THE BOT IS ONE COMPACT SHEET (19 Nov 2026, #6863).
-   The thread alone in the Homeroom bot tab's column — the DM-style thread,
-   a request's or a design's — was the chat's own shape: a small head, the
-   bot's answers as narrow centred rows and the viewer's as bubbles, and a
-   floating pill for the reply box. It is now drawn as a public thread is
-   (a request's page): three cards on the column's ground — a head with the
-   other member's round picture, the thread's name and the lock line as a
-   pill; the replies, every one the flat named row a channel draws, in their
-   own card; and the reply box, in the public thread's bar, as the card at
-   the foot. The cards are the public thread's own (`--thread-card`, its
-   edge and radius, "THE CARDS" below), at most 446px wide and centred in
-   whatever the column is drawn at, so the whole sheet is one screenful and
-   the reply box stays visible. Only the standard and brand looks draw a
-   public thread this way; a frame look keeps its own thread, so nothing
-   here applies under one. Messages, a project's channel threads and a
-   community's thread pane are untouched: only the bot tab's column marks
-   its pane `data-bot-sheet`.
+/* A PRIVATE THREAD IS A PUBLIC THREAD'S PAGE (20 Nov 2026). A thread alone
+   in the bot tab's column, under the standard and brand looks, is drawn on
+   the page a request's thread is drawn on (group-chat/thread-page.tsx), as
+   a request's page is drawn in the same column: the head card every thread
+   leads with, floating over the page and tightening as it scrolls; the
+   opening message as the first card, its foot saying where the thread went;
+   the replies as the second; the reply box at the foot, as wide as the
+   cards. One set of rules draws both: "ONE THREAD, ONE HEADER" and the
+   blocks after it name `:is(#dev-topic-thread, #ai-screen)`, and the panel's
+   rules ("THE PAGE ITSELF REACHES THE COLUMN'S EDGES", "IN A PANEL TOO")
+   name `#ai-screen .dev-private-thread` beside the panels they already name.
 
-   The 720px gutter `[data-bot-threads]` above gives the transcript, the
-   status line and the composer bar is replaced here by this sheet's own
-   width, by specificity rather than by editing that rule (tests/ai-screen
-   pins it). The scroller keeps the phone's keyboard, stick-to-bottom, the
-   unread line and earlier-page loading: it is the same element, restyled. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] {
-  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
-  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
-  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
-  --thread-card-r: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  box-sizing: border-box;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > :is(.messages-thread-header, .messages-thread-scroll, .chat-status, .messages-composer, [data-private-thread], [data-live-draft]) {
-  width: 100%;
-  max-width: 446px;
-  margin-inline: auto;
-  box-sizing: border-box;
-}
-/* THE HEAD CARD, as a public thread's head (19 Nov 2026, "THE THREAD'S HEAD
-   IS A CARD"): the round face, the small line that says the thread is
-   theirs alone, over the thread's name in two lines; then Preview, ⋯ (the
-   head's one disc) and, after a thin line, ✕ as a plain icon, level with
-   the face's middle. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header {
-  flex: 0 0 auto;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 12px 14px 16px;
-  padding-inline-end: calc(12px + var(--ai-edge, 0px));
-  border-radius: var(--thread-card-r);
-  background: var(--thread-card);
-  box-shadow: var(--thread-card-edge);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-avatar] {
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-avatar] > * { width: 48px; height: 48px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > .min-w-0.flex-1 {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 2px;
-}
-/* The lock line is the small line over the name: "Only you can see this
-   thread", where a public thread's head says its project and number. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-private-thread-sub] {
-  order: -1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 500;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-title] {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  white-space: normal;
-  font-size: 20px;
-  line-height: 26px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header .messages-thread-action {
-  width: 36px;
-  height: 36px;
-  color: var(--text-secondary);
+   It was a sheet of its own until now (#6863, 19 Nov 2026): three cards
+   held to 446px in the middle of the column, the replies scrolling inside
+   the middle one and cut flat at its top edge, and a copy of the public
+   head (#6877) whose rules drifted the same afternoon: Preview was forced
+   into the 36px round button, its ring through the word. What is left here
+   is only what a private thread has and a request's page does not. */
+/* The pane is the column's own, with no sheet or ground of its own: the bot
+   page's shows through, as it does behind a request's page in the column
+   (`.side-panel[data-thread-pill]`). */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-thread-page-host] {
   background: transparent;
-  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header .messages-thread-action:hover { background: var(--messages-surface-2); }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header .messages-thread-action svg { width: 18px; height: 18px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header :is([data-private-thread-menu] > .messages-thread-action, .messages-thread-preview) { box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is(.messages-thread-action, [data-private-thread-menu]) { margin-top: 6px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is([data-private-thread-menu], .messages-thread-preview) + [data-reply-close] {
-  position: relative;
-  margin-inline-start: 10px;
-  overflow: visible;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is([data-private-thread-menu], .messages-thread-preview) + [data-reply-close]::before {
-  content: "";
-  position: absolute;
-  top: 8px;
-  inset-inline-start: -10px;
-  width: 1px;
-  height: 20px;
-  background: var(--app-sheet-line);
-}
-/* A phone's drawer: the same head, a size down, after its back arrow. */
-@media (max-width: 767px) {
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-avatar] > * { width: 40px; height: 40px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-title] { font-size: 18px; line-height: 24px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is(.messages-thread-action, [data-private-thread-menu]) { margin-top: 2px; }
-}
-/* THE DISCUSSION CARD: the replies scroll inside it, drawn as a public
-   thread's rows — face, name and time on the left whoever said it, the
-   words beneath, pictures as thumbnails. It takes the room between the two
-   other cards and never grows the sheet past the screen. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding-inline: 0;
-  padding-block: 6px 8px;
-  border-radius: var(--thread-card-r);
-  background: var(--thread-card);
-  box-shadow: var(--thread-card-edge);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message {
-  padding: 8px 16px;
-  gap: 12px;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message-self .messages-message-head {
-  justify-content: flex-start;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message-image {
-  max-width: min(240px, 100%);
-}
-/* THE REPLY CARD: the public thread's bar and box, at the sheet's foot, always
-   visible — the replies above scroll, this does not. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer {
-  flex: 0 0 auto;
-  padding-inline: 0;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card,
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card:focus-within {
-  border-radius: var(--thread-card-r);
-  background: var(--thread-card);
-  box-shadow: var(--thread-card-edge);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card:focus-within {
-  box-shadow: var(--thread-card-edge), 0 0 0 2px var(--accent);
-}
-/* "Jump to latest" floats over the foot: it hangs between the discussion
-   card and the status line, where the sheet's gaps would otherwise count it
-   as a row of its own. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > [data-transcript-overlay] {
-  margin-block: -6px;
-}
-/* A phone's drawer draws the same sheet, full width less its 12px margins. */
-@media (max-width: 767px) {
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] {
-    gap: 10px;
-    padding: 8px 12px 12px;
-  }
-}
+/* The head's tile is the other member's round face. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread:has(.dev-thread-card) .dev-request-bar .dev-thread-bar-tile.dev-thread-bar-face { border-radius: 999px; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread .dev-thread-bar-tile.dev-thread-bar-face > * { width: 100%; height: 100%; border-radius: inherit; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread .dev-thread-bar-lock { display: inline-block; width: 12px; height: 12px; margin-inline-end: 4px; vertical-align: -1px; }
+/* The opening card holds the message itself: its words and pictures, as a
+   request's card holds the request's, with neither face nor name (its
+   author row gives way, as the card's does: `.dev-thread-card
+   .messages-message-head`). */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] .messages-message { padding: 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] .messages-message > :first-child:not(.min-w-0) { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] .messages-message-image { max-width: min(240px, 100%); }
+/* The replies card's rows are a public thread's: face, name and time on the
+   left whoever said it, the words beneath, pictures as thumbnails. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message { padding: 8px 16px; gap: 12px; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message-self .messages-message-head { justify-content: flex-start; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message-image { max-width: min(240px, 100%); }
+/* Beside iPhone Duo's column of system chrome (`--ai-edge`) the page stops
+   short of it, as the chat it replaced did (B25 below): its ground is the
+   column's, so nothing is left there but that ground. */
+html[data-side-strip]:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-reply-pane > .dev-private-thread { padding-inline-end: var(--ai-edge, 0px); }
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge
@@ -19631,12 +19505,16 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) #dev-topic-thread {
   padding-top: 0;
 }
-:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request {
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request,
+#ai-screen .dev-private-thread {
+  /* The page's gutter, which its head, its cards and its reply box keep. */
+  --thread-gutter: 12px;
   max-width: none;
   margin-inline: 0;
   padding-inline: 0;
 }
-:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request-sheet {
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request-sheet,
+#ai-screen .dev-private-thread > .dev-request-sheet {
   background: transparent;
   border: 0;
   border-start-start-radius: 0;
@@ -19645,8 +19523,9 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll) {
-  padding-inline: 12px;
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll),
+#ai-screen .dev-private-thread > .dev-request-sheet > :is(.dev-request-bar, .dev-request-scroll) {
+  padding-inline: var(--thread-gutter);
 }
 /* THE COLUMN HAS MAIN CHAT'S SURFACE, #6432. The 30 Oct rules above took the
    page's own sheets away so it would lie flat in the column, but nothing
@@ -30543,9 +30422,10 @@ html:is(:not([data-skin]), [data-skin="brand"]) .dev-request[data-thread-head-ti
 /* In a panel the head starts on the column's own top line, level with the
    first card of the list beside it (Homeroom bot's own head card, the
    Workshop's list). */
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body) .dev-request:has(.dev-thread-card) { --pill-top: 0px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body) .dev-request:has(.dev-thread-card),
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread:has(.dev-thread-card) { --pill-top: 0px; }
 html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-sheet { position: relative; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar {
   display: block !important;
   position: absolute;
   top: 0;
@@ -30569,7 +30449,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
    (`data-thread-head-tight`, thread-head-fit.ts), and the cards go up
    behind it. A private thread with the bot draws the same head (the
    "PRIVATE THREAD" block's head card). */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
   pointer-events: auto;
   display: flex;
   align-items: flex-start;
@@ -30584,25 +30464,25 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
 /* The small line, then the title: one grid, so the nodes keep their order
    (the project and topic after the title, which the checks select on) and
    the kicker and its status pill are cells of the line, not a row. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text {
   display: grid;
   grid-template-columns: minmax(0, max-content) max-content max-content minmax(0, 1fr);
   align-items: center;
   row-gap: 4px;
   padding-top: 2px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > div:has(> .messages-thread-kicker) { display: contents; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-sub { grid-row: 1; grid-column: 1; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text .messages-thread-kicker { grid-row: 1; grid-column: 2; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text :is([data-change-status], [data-request-status]) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > div:has(> .messages-thread-kicker) { display: contents; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-sub { grid-row: 1; grid-column: 1; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text .messages-thread-kicker { grid-row: 1; grid-column: 2; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is([data-change-status], [data-request-status]) {
   display: inline-flex;
   grid-row: 1;
   grid-column: 3;
   margin-inline-start: 8px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name { grid-row: 2; grid-column: 1 / -1; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { grid-row: 2; grid-column: 1 / -1; }
 /* The small line's words: the project and the topic, then the number. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text :is(.messages-thread-kicker, .messages-thread-sub) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is(.messages-thread-kicker, .messages-thread-sub) {
   display: block;
   position: static;
   width: auto;
@@ -30620,13 +30500,13 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text:has(> .messages-thread-sub) .messages-thread-kicker::before {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> .messages-thread-sub) .messages-thread-kicker::before {
   content: "·";
   margin-inline: 6px;
 }
 /* The title. A request's is the node itself; a change's is the run inside
    its Details button, with the author's pencil beside it. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name {
   min-width: 0;
   margin: 0;
   font-size: 20px;
@@ -30637,19 +30517,19 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   white-space: normal;
   text-overflow: clip;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name:not(.dev-request-bar-title) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name:not(.dev-request-bar-title) {
   display: flex;
   align-items: flex-start;
   gap: 6px;
   overflow: visible;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .messages-thread-name-link {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .messages-thread-name-link {
   display: block;
   min-width: 0;
   max-width: 100%;
@@ -30657,10 +30537,10 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   white-space: normal;
   text-align: start;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { flex: none; margin-top: 3px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { flex: none; margin-top: 3px; }
 /* ⋯ is the head's one disc, level with the tile's middle; in a panel ↗
    and × follow it as plain icons, after a thin line. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action {
   flex: none;
   width: 36px;
   height: 36px;
@@ -30670,13 +30550,27 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   background: transparent;
   box-shadow: none;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action[data-card-menu] { box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits) { margin-top: 6px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar :is(.messages-thread-action[data-card-menu], [data-private-thread-menu] > .messages-thread-action, .messages-thread-action.dev-thread-head-text) { box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+/* A word in the head (a design thread's Preview) is a pill sized to it,
+   ringed as ⋯ is: the round button's 36px would put its ring through the
+   word (20 Nov 2026). */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action.dev-thread-head-text {
+  width: auto;
+  padding-inline: 14px;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > [data-private-thread-menu] { flex: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 6px; }
 .dev-thread-exits { display: none; align-items: center; gap: 2px; flex: none; }
 .dev-thread-exit svg { width: 18px; height: 18px; }
-:is(.dev-ws-side, html.in-side-panel.side-panel-beside-ai) .dev-thread-exits { display: inline-flex; }
-.messages-thread-header > [data-card-menu] + .dev-thread-exits::before {
+:is(.dev-ws-side, html.in-side-panel.side-panel-beside-ai) .dev-thread-exits,
+#ai-screen .dev-private-thread .dev-thread-exits { display: inline-flex; }
+.messages-thread-header > :is([data-card-menu], [data-private-thread-menu]) + .dev-thread-exits::before {
   content: "";
   width: 1px;
   height: 20px;
@@ -30685,30 +30579,30 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
 }
 /* SCROLLED, the head tightens: a smaller tile, the title on one line over
    the small line, and a shadow under it now that the cards go up behind. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
   align-items: center;
   padding: 10px 12px 10px 14px;
   box-shadow: var(--thread-card-edge, inset 0 0 0 1px var(--app-sheet-line)), 0 10px 24px -14px rgba(17, 24, 39, 0.22);
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-thread-bar-tile { width: 36px; height: 36px; border-radius: 11px; font-size: 16px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text { row-gap: 0; padding-top: 0; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-thread-bar-tile { width: 36px; height: 36px; border-radius: 11px; font-size: 16px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text { row-gap: 0; padding-top: 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name {
   grid-row: 1;
   font-size: 15px;
   line-height: 20px;
   font-weight: 650;
   letter-spacing: 0;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text :is(.messages-thread-sub, .messages-thread-kicker, [data-change-status], [data-request-status]) { grid-row: 2; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) { -webkit-line-clamp: 1; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { margin-top: 1px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits) { margin-top: 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is(.messages-thread-sub, .messages-thread-kicker, [data-change-status], [data-request-status]) { grid-row: 2; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) { -webkit-line-clamp: 1; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { margin-top: 1px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 0; }
 /* A phone's head: the same card, a size down. */
 @media (max-width: 767px) {
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-thread-bar-tile { width: 40px; height: 40px; border-radius: 12px; font-size: 18px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name { font-size: 18px; line-height: 24px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits) { margin-top: 2px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-thread-bar-tile { width: 40px; height: 40px; border-radius: 12px; font-size: 18px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { font-size: 18px; line-height: 24px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 2px; }
   html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) { --head-mid: 32px; }
 }
 /* THE HEAD EASES (20 Nov 2026). It changed size in one frame: the card
@@ -30718,17 +30612,17 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[d
    now ease between the two sizes over 180ms, as the vote's row does when it
    folds in; the words come up into their new place (thread-head-fit.ts),
    since two layouts have nothing in between to ease through. */
-#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-thread-bar-tile { transition: width 180ms ease, height 180ms ease, border-radius 180ms ease, font-size 180ms ease; }
-#dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits) { transition: margin-top 180ms ease; }
+:is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-thread-bar-tile { transition: width 180ms ease, height 180ms ease, border-radius 180ms ease, font-size 180ms ease; }
+:is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { transition: margin-top 180ms ease; }
 .dev-request:has(.dev-thread-card) > .dev-request-back { transition: top 180ms ease; }
 @media (prefers-reduced-motion: reduce) {
-  #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-thread-bar-tile,
-  #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits),
+  :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-thread-bar-tile,
+  :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]),
   .dev-request:has(.dev-thread-card) > .dev-request-back { transition: none; }
 }
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-thread-bar-tile,
-:where(html[data-motion="reduce"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits),
+:where(html[data-motion="reduce"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-thread-bar-tile,
+:where(html[data-motion="reduce"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]),
 :where(html[data-motion="reduce"]) .dev-request:has(.dev-thread-card) > .dev-request-back { transition: none; }
 /* The card under the head starts at the request's own words: the head says
    its title. The title is drawn only while it is being edited, since the
@@ -30740,13 +30634,13 @@ html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-car
 
 /* The scroller starts under the pill, and everything in it that stays put
    (the timeline beside the card on a wide page) stays put under it too. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-scroll {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-scroll {
   padding-top: var(--pill-under) !important;
   scroll-padding-top: var(--pill-under);
 }
 /* The scroller's scroll-padding already holds the timeline under the pill
    (a sticky box is placed inside it), so its own `top: 0` stays. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
 
 /* THE VOTE FOLDS INTO THE HEADER (18 Nov 2026, thread-card.tsx `FootFloat`).
    While a change waits on the reader's vote and its foot has gone up behind
@@ -30760,13 +30654,13 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
    its shadow while the row is there, so no shadow falls across the card;
    the row's shadow is the card's. 19 Nov 2026: at the cards' 20px corners,
    the head's own, where they were the capsule's round ends. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
   position: relative;
   z-index: 1;
   /* The head's corners, as a length they can ease from. */
   border-radius: 20px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar:has(> .dev-thread-float) .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar:has(> .dev-thread-float) .messages-thread-header {
   border-end-start-radius: 0;
   border-end-end-radius: 0;
   box-shadow: inset 0 0 0 1px var(--app-sheet-line);
@@ -30848,7 +30742,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-car
 }
 html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-back .dev-topic-back-icon { width: 18px; height: 18px; margin: 0; }
 html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-backs > .dev-topic-back ~ .dev-topic-back { display: none; }
-html:is(:not([data-skin]), [data-skin="brand"]):not(.side-panel-beside-ai) #dev-topic-thread .dev-request:has(.dev-thread-card):has(> .dev-request-back:not(:empty)) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]):not(.side-panel-beside-ai) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):has(> .dev-request-back:not(:empty)) .dev-request-bar .messages-thread-header {
   padding-inline-start: 56px;
 }
 
@@ -30985,9 +30879,11 @@ body:has(.dev-ws-side) :is(#dev-main-pause-notice, #dev-release-stall-notice, #d
    it, and the strip above stopped 12px short of their edges: a card going
    under it was cut flat on the box's top line, its corners sticking out
    past the box on both sides. The cards here run the scroller's full
-   width, so the bar does too, as it already does in the frame's looks. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-sheet > .messages-composer { padding-inline: 0; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-scroll {
+   width, so the bar does too, as it already does in the frame's looks.
+   In a panel the page keeps a 12px gutter (`--thread-gutter`, "THE PAGE
+   ITSELF REACHES THE COLUMN'S EDGES"), and the bar keeps the same. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-sheet > .messages-composer { padding-inline: var(--thread-gutter, 0px); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll) {
   --pill-cut: calc(var(--pill-top) + 24px);
   /* Where the card column starts, from the scroller's left edge: the
      timeline's column is at its end, which is the left in a right-to-left
@@ -31003,9 +30899,11 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   mask-repeat: no-repeat;
 }
 /* The scroller runs on under the card while nothing stands between the
-   two (nobody typing, no reply, attachment or error over it); the card is
-   opaque in both looks, so what runs under it is hidden. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-sheet:has(> .chat-status:empty + .messages-composer > .messages-composer-card):not(:has(> .messages-composer > :is(#gc-thread-reply-preview:not(.hidden), .dc-attach-error:not(.hidden), .dc-attach-strip:not(:empty)))) > #gc-thread-scroll {
+   two (nobody typing; nothing shown before the card in its bar: a reply, an
+   attachment or an error over a public thread's box, a private thread's
+   saved drafts or its ask to be told); the card is opaque in both looks, so
+   what runs under it is hidden. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-sheet:has(> .chat-status:empty + .messages-composer > .messages-composer-card):not(:has(> .messages-composer > :not(.hidden, :empty) ~ .messages-composer-card)) > :is(#gc-thread-scroll, .dev-request-scroll) {
   --composer-tuck: 22px;
   margin-bottom: calc(-1 * var(--composer-tuck));
 }
@@ -31018,8 +30916,8 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
    line of the newest reply stayed under the box however far you scrolled.
    An empty last item is counted by every engine. In the grid it takes a
    row of its own under both columns. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-scroll { padding-bottom: 0 !important; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-scroll::after {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll) { padding-bottom: 0 !important; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll)::after {
   content: "";
   display: block;
   grid-column: 1 / -1;
@@ -31187,22 +31085,27 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
    inside it. They are the same three cards there, on the panel's own
    ground (a look names it: `--thread-ground-look`). `#dev-topic-thread`
    is in the scope so the replies' card outranks the thread's own rules. */
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)),
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread {
   --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
   --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
   --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
   --thread-card-r: 20px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: var(--thread-ground-look, transparent); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet,
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread > .dev-request-sheet { background: var(--thread-ground-look, transparent); }
 html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail),
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread :is([data-thread-page-post], [data-thread-page-replies]) {
   min-width: 0;
   border-radius: var(--thread-card-r);
   background: var(--thread-card);
   box-shadow: var(--thread-card-edge);
 }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { padding: 8px 0 0; }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { margin-top: 14px; padding: 6px 4px 8px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head,
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] { padding: 8px 0 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages,
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] { margin-top: 14px; padding: 6px 4px 8px; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail { margin-top: 14px; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll { padding-top: 12px; padding-bottom: 12px; }

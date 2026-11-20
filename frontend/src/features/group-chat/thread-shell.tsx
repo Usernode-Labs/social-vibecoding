@@ -71,6 +71,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { armOnMove, readSplitWidth, splitKey, startSplitDrag, writeSplitWidth, type SplitDrag } from '../../lib/split-drag';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
+import { ThreadPage } from './thread-page';
 
 const SAFE_BAR = 'platform-safe-bar';
 
@@ -253,38 +254,41 @@ function RequestShell(props: ThreadShellProps) {
       el.removeEventListener('touchmove', stop);
     };
   }, [decision]);
-  const cls = change ? 'dev-request dev-change platform-kb-column'
-    : decision ? 'dev-request dev-decision platform-kb-column'
-      : 'dev-request platform-kb-column';
+  // 20 Nov 2026: the page every thread is drawn on, public or private
+  // (./thread-page.tsx). Here its hosts carry the group chat's ids.
   return (
-    <div className={cls}>
-      <div id="gc-thread-back" className="dev-request-back" />
-      <section ref={sheet} className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : decision ? t('project:topic.decision.sheetLabel') : t('project:topic.request.sheetLabel')}>
-        <div id="gc-thread-bar" className="dev-request-bar" />
-        <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain chat-transcript">
-          <div id="gc-thread-head" />
-          {/* "How it got here", the thread's big events (dev-board/topic/
-              thread-rail.tsx portals into it): between the root post and the
-              replies, where a narrow page reads it; app.css stands it beside
-              them on a wide one. A decision's page has none. */}
-          {decision ? null : <div id="gc-thread-rail" className="dev-request-rail" />}
-          <div id="gc-thread-messages" />
-        </div>
-        {/* Floating over the transcript's foot, with nothing behind it
-            (1 Nov 2026). #4553 docked it in a strip of its own so it never
-            covered the cards' buttons, but the strip cut the transcript off
-            above it and read as a solid box; it is up only while the reader
-            is up the page. */}
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
-        <StatusLine scope="thread" />
-        <Composer {...props} />
-        {/* 18 Nov 2026: the line between the card and "How it got here",
-            a handle on a wide page (RailDivider above). Absolutely placed,
-            so being the sheet's last child changes nothing on screen, and
-            Jump to latest still hangs right after the scroller. */}
-        {decision ? null : <RailDivider sheet={sheet} />}
-      </section>
-    </div>
+    <ThreadPage
+      kind={change ? 'change' : decision ? 'decision' : 'request'}
+      label={change ? t('project:topic.change.sheetLabel') : decision ? t('project:topic.decision.sheetLabel') : t('project:topic.request.sheetLabel')}
+      hosts
+      sheet={sheet}
+      scroller={scroll}
+      foot={(
+        <>
+          {/* Floating over the transcript's foot, with nothing behind it
+              (1 Nov 2026). #4553 docked it in a strip of its own so it never
+              covered the cards' buttons, but the strip cut the transcript off
+              above it and read as a solid box; it is up only while the reader
+              is up the page. */}
+          <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+          <StatusLine scope="thread" />
+          <Composer {...props} />
+          {/* 18 Nov 2026: the line between the card and "How it got here",
+              a handle on a wide page (RailDivider above). Absolutely placed,
+              so being the sheet's last child changes nothing on screen, and
+              Jump to latest still hangs right after the scroller. */}
+          {decision ? null : <RailDivider sheet={sheet} />}
+        </>
+      )}
+    >
+      <div id="gc-thread-head" />
+      {/* "How it got here", the thread's big events (dev-board/topic/
+          thread-rail.tsx portals into it): between the root post and the
+          replies, where a narrow page reads it; app.css stands it beside
+          them on a wide one. A decision's page has none. */}
+      {decision ? null : <div id="gc-thread-rail" className="dev-request-rail" />}
+      <div id="gc-thread-messages" />
+    </ThreadPage>
   );
 }
 

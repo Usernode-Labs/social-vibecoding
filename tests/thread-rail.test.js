@@ -296,7 +296,8 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   for (const line of cards.split('\n').filter((l) => /^html/.test(l))) {
     const reader = 'html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet';
-    assert.ok(line.startsWith(scope) || line.startsWith(panel) || line.startsWith(reader) || line.startsWith('html.in-side-panel.side-panel-beside-ai .dev-thread-kicker'),
+    assert.ok(line.startsWith(scope) || line.startsWith(panel) || line.startsWith(reader) || line.startsWith('html.in-side-panel.side-panel-beside-ai .dev-thread-kicker')
+      || line.startsWith('html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread'),
       `scoped as the wide layout is, or to a side panel: ${line.slice(0, 80)}`);
   }
   assert.match(cards, /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
