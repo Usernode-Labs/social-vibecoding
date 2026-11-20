@@ -248,14 +248,35 @@ function flakeMarker(test) {
 }
 
 /**
+ * Pure: what the request says of main, from what happened to the change
+ * before it was filed. `synced` is the wait's own record that it was brought
+ * up to date with main and its checks failed again; `syncWhy` is why
+ * fixed-check-sync.js did not bring it up to date in this hand-off
+ * ('already_tried' is that same record, from its side). Only then is "it
+ * still failed once brought up to date" true. Request #6808 said it of a
+ * change whose synced commit could not be pushed: its head lacked a fix
+ * merged 86 seconds before, and the failure read as a new one. A sync that
+ * did not happen is said, with its reason, and that main may have the fix.
+ */
+function syncSentence({ synced = false, syncWhy = null } = {}) {
+  const own = 'So the failure is the check\'s own, not the change\'s: it fails without the change too.';
+  if (synced || syncWhy === 'already_tried') return `, and it still failed once that change was brought up to date with main. ${own}`;
+  if (syncWhy === 'level') return `. That change was already up to date with main. ${own}`;
+  if (syncWhy === 'main_fails') return `. Main fails the same check. ${own}`;
+  const reason = syncWhy ? ` (${require('./fixed-check-sync').declinedWords(syncWhy)})` : '';
+  return `. That change was not brought up to date with main first${reason}, so the failure may already be fixed on main. Check that it still fails on main before changing anything.`;
+}
+
+/**
  * Pure: the request's body. Homeroom's board is public, so it says only what
  * the platform's own checks said about its own test: the test, where it is,
- * its error line, and that it fails without the change.
+ * its error line, and whether it failed again on today's main (`sync`,
+ * syncSentence above).
  */
-function flakeBody(test) {
+function flakeBody(test, sync = {}) {
   const where = test.file ? ` (${test.file})` : '';
   return [
-    `The check "${test.name}"${where} failed on a change of Homeroom bot's that does not touch it, and it still failed once that change was brought up to date with main. So the failure is the check's own, not the change's: it fails without the change too.`,
+    `The check "${test.name}"${where} failed on a change of Homeroom bot's that does not touch it${syncSentence(sync || {})}`,
     '',
     ...(test.error ? ['What it reported:', '', `    ${test.error}`, ''] : []),
     'Please make this check reliable: find why it fails here (timing, order, shared state, a fixture) and fix the check or the code it tests. Do not loosen it, skip it or delete it.',
@@ -638,8 +659,12 @@ async function toPerson(pool, { change, wait, why, runId = null, failingCount = 
   return text;
 }
 
-/** Find the open request on `board` that names `test`, or file one as the bot. Resolves { number, filed }. */
-async function findOrFile(pool, { board, test, bot, deps = {} }) {
+/**
+ * Find the open request on `board` that names `test`, or file one as the bot,
+ * whose body says what happened to the change's sync with main (`sync`).
+ * Resolves { number, filed }.
+ */
+async function findOrFile(pool, { board, test, bot, sync = {}, deps = {} }) {
   const marker = flakeMarker(test);
   const { rows: [ours] } = await pool.query(
     `SELECT number FROM requests WHERE app_id = $1 AND state = 'open' AND strpos(body, $2) > 0 ORDER BY number DESC LIMIT 1`,
@@ -660,7 +685,7 @@ async function findOrFile(pool, { board, test, bot, deps = {} }) {
   const repo = require('./repo-ref').ownerRepo(board.repo_url);
   if (!repo || !github.isEnabled()) throw new Error('board_unavailable');
   const title = flakeTitle(test);
-  const body = flakeBody(test);
+  const body = flakeBody(test, sync);
   const created = await github.createIssue(repo.owner, repo.repo, { title, body, createdBy: bot?.id || null });
   const number = Number(created?.number);
   if (!Number.isInteger(number) || number <= 0) throw new Error('invalid issue number');
@@ -705,12 +730,12 @@ async function startBuilding(pool, flake, { deps = {} } = {}) {
 }
 
 /** One open fix for `test` on `board`: the one there is, else a new one (found or filed). */
-async function fixFor(pool, { board, test, bot, deps = {} }) {
+async function fixFor(pool, { board, test, bot, sync = {}, deps = {} }) {
   const key = testKey(test);
   const { rows: [open] } = await pool.query(
     'SELECT * FROM homeroom_bot_flake_fixes WHERE test_key = $1 AND ended_at IS NULL', [key]);
   if (open) return { flake: open, fresh: false };
-  const { number, filed } = await findOrFile(pool, { board, test, bot, deps });
+  const { number, filed } = await findOrFile(pool, { board, test, bot, sync, deps });
   const { rows: [made] } = await pool.query(
     `INSERT INTO homeroom_bot_flake_fixes (test_key, test_name, test_file, app_id, issue_number, filed)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -746,7 +771,7 @@ async function findAndStartFixes(pool, {
   const fixes = [];
   for (const test of tests) {
     // eslint-disable-next-line no-await-in-loop
-    const got = await fixFor(pool, { board, test, bot, deps });
+    const got = await fixFor(pool, { board, test, bot, sync: { synced, syncWhy }, deps });
     if (got.flake) fixes.push({ ...got, test });
   }
   const saved = await saveWait(pool, {
