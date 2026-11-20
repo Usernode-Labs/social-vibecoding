@@ -37,8 +37,9 @@ access tests run on pull requests.
 
 Worker and capture image reuse is keyed to the shared build action, the
 resolver that supplies the context, and each image's tracked inputs. Changes
-to the release scheduler leave those keys alone. For capture, the resolver
-stages the files it keys, including the worker helpers copied by its Dockerfile.
+to the release scheduler leave those keys alone. Capture's Dockerfile-specific
+ignore file lists the inputs for both Docker and the reuse key, including the
+worker helpers copied into the image.
 For worker, the key includes the exact resolved Claude Code version. Switching
 to these keys causes one build per component to populate them. Use
 `force_rebuild` to refresh mutable upstream layers.

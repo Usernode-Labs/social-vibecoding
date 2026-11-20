@@ -4,7 +4,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { resolveImage, prepareCaptureContext, isTransientRegistryError } = require('../scripts/resolve-kubernetes-image');
+const { resolveImage, isTransientRegistryError } = require('../scripts/resolve-kubernetes-image');
 
 const digest = `sha256:${'a'.repeat(64)}`;
 const manifest = { digest, manifests: [{
@@ -26,6 +26,7 @@ function repository(t) {
     'capture/capture.js', 'shots/hosted-app-fixture.js', 'src/services/visible-changes.js',
     '.github/workflows/build-kubernetes-images.yml', '.github/actions/build-kubernetes-image/action.yml',
     'scripts/resolve-kubernetes-image.js', 'frontend/ui.js']) write(file, `original ${file}\n`);
+  write('capture/Dockerfile.dockerignore', fs.readFileSync(path.join(__dirname, '../capture/Dockerfile.dockerignore')));
   // Real Git trees, without commits or user Git signing hooks/configuration.
   const revision = () => { git('add', '.'); return git('write-tree'); };
   return { cwd, git, write, revision };
@@ -149,11 +150,11 @@ test('build action and context assembler changes invalidate both keys', t => {
   }
 });
 
-test('capture keys change with root Docker ignore rules and every shared source it copies', t => {
+test('capture keys change with its Docker ignore rules and every shared source it copies', t => {
   const repo = repository(t);
   const capture = () => resolve(repo, { component: 'capture' }).reuse_tag;
   let previous = capture();
-  for (const file of ['.dockerignore', 'capture/Dockerfile.dockerignore', 'capture/Dockerfile',
+  for (const file of ['capture/Dockerfile',
     'worker/session-bootstrap.js', 'worker/shots-hosted-origins.js', 'worker/shots-hosted-app-contract.js']) {
     repo.write(file, `changed ${file}\n`);
     const next = capture();
@@ -163,26 +164,29 @@ test('capture keys change with root Docker ignore rules and every shared source 
   fs.chmodSync(path.join(repo.cwd, 'worker/session-bootstrap.js'), 0o755);
   assert.notEqual(capture(), previous, 'shared file modes also affect the image');
   previous = capture();
+  repo.write('.dockerignore', 'root rules that apply to other Dockerfiles\n');
   repo.write('worker/worker-run.sh', 'worker-only runtime change\n');
   repo.write('shots/some-unrelated-tool.js', 'shots-only runtime change\n');
   assert.equal(capture(), previous);
 });
 
-test('capture builds receive only the fingerprinted files from the exact Git revision', t => {
+test('adding a capture context path enables it and makes its changes affect reuse', t => {
   const repo = repository(t);
-  fs.chmodSync(path.join(repo.cwd, 'worker/session-bootstrap.js'), 0o755);
-  const revision = repo.revision();
-  repo.write('worker/session-bootstrap.js', 'worktree changed after checkout\n');
-  repo.write('capture/untracked.txt', 'untracked build input\n');
-  const context = prepareCaptureContext(revision, repo.cwd, repo.cwd);
-  const file = path.join(context, 'worker/session-bootstrap.js');
-  assert.equal(fs.readFileSync(file, 'utf8'), 'original worker/session-bootstrap.js\n');
-  assert.equal(fs.statSync(file).mode & 0o777, 0o755);
-  assert.ok(fs.existsSync(path.join(context, '.dockerignore')));
-  assert.ok(fs.existsSync(path.join(context, 'shots/hosted-app-fixture.js')));
-  for (const absent of ['frontend', 'worker/worker-run.sh', 'capture/untracked.txt']) {
-    assert.equal(fs.existsSync(path.join(context, absent)), false, absent);
-  }
+  const capture = () => resolve(repo, { component: 'capture' }).reuse_tag;
+  const file = 'capture/Dockerfile.dockerignore';
+  const rules = fs.readFileSync(path.join(repo.cwd, file), 'utf8');
+  repo.write('worker/new-capture-helper.js', 'new helper\n');
+  const before = capture();
+  repo.write(file, `${rules}!worker/new-capture-helper.js\n`);
+  const included = capture();
+  assert.notEqual(included, before);
+  repo.write('worker/new-capture-helper.js', 'revised helper\n');
+  assert.notEqual(capture(), included);
+
+  repo.write(file, '**\n!worker/*.js\n');
+  assert.throws(capture, /allow only literal paths/, 'an unkeyed glob cannot broaden the context');
+  repo.write(file, '!capture\n');
+  assert.throws(capture, /must exclude \*\*/, 'the context is closed by default');
 });
 
 test('a published input key can only reuse the build it names', t => {
