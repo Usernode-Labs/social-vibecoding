@@ -224,6 +224,180 @@ async function importedAt(pool, appId) {
   return rows[0]?.created_at || null;
 }
 
+// ── A refused Make it (#6900) ────────────────────────────────────────────
+//
+// On 18 Nov a new member's Make it was refused because the whole server was
+// at its app limit. The bot could not see the refusal, read my_projects,
+// found none of hers and guessed "a Homeroom limit on how many apps one
+// person can make" — a different limit, with a different fix. The refusal is
+// now kept on the private thread the card is in (private_threads
+// .last_make_refusal, routes/apps.js rememberMakeRefusal), and the bot's
+// next turn there is told it in Homeroom's own words.
+
+// A refusal older than this is history: the bot is not told it again.
+const MAKE_REFUSAL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// Long enough for Homeroom's whole sentence, short of an essay.
+const MAX_MAKE_REFUSAL_ERROR = 300;
+const MAX_MAKE_REFUSAL_NAME = 80;
+const MAX_MAKE_REFUSAL_RECORD_MS = 2000;
+
+/**
+ * Pure: a create reply as the refusal worth remembering, or null. The
+ * allowance check and the server cap answer through `res.json`; so does the
+ * hourly create limit, which runs before the route (middleware/rate-limits.js
+ * makeLimiter's handler). A validation 400 says nothing about a limit, so it
+ * is not recorded.
+ */
+function classifyMakeRefusal(status, body) {
+  const code = Number(status);
+  const payload = body && typeof body === 'object' ? body : null;
+  if (!payload) return null;
+  const error = clip(payload.error, MAX_MAKE_REFUSAL_ERROR) || null;
+  if (code === 403 && payload.code === 'app_allowance_exhausted') {
+    const reason = ['no_slots', 'slots', 'server'].includes(payload.reason) ? payload.reason : null;
+    return { status: code, code: 'app_allowance_exhausted', reason, error };
+  }
+  if (code === 429) {
+    const retry = Number(payload.retryAfterSeconds);
+    const hourly = Number.isFinite(retry) && retry >= 0;
+    return {
+      status: code,
+      code: null,
+      reason: hourly ? 'hourly' : 'server_cap',
+      error,
+      ...(hourly ? { retryAfterSeconds: Math.round(retry) } : {}),
+    };
+  }
+  return null;
+}
+
+/** Pure: how long ago, in words ("2 minutes ago", "just now"). */
+function makeRefusalAge(ms) {
+  const minutes = Math.max(0, Math.floor(Number(ms) / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/** Pure: who can change the limit that refused it, told to the bot. */
+function makeRefusalFix(refusal) {
+  const reason = refusal?.reason;
+  if (reason === 'no_slots') {
+    return 'Their account has no app slots. A Homeroom admin can give it some.';
+  }
+  if (reason === 'slots') {
+    return 'They have used all their app slots. They can ask for more from the app allowance panel '
+      + '(a Homeroom admin grants it), or remove one of their projects.';
+  }
+  if (reason === 'hourly') {
+    const seconds = Number(refusal?.retryAfterSeconds);
+    const wait = Number.isFinite(seconds) && seconds > 0
+      ? `about ${Math.max(1, Math.ceil(seconds / 60))} minute${Math.ceil(seconds / 60) === 1 ? '' : 's'}`
+      : 'a little while';
+    return `It is five projects an hour per person. Nobody needs to change anything: they can try again in ${wait}.`;
+  }
+  return 'This is the server-wide limit for everyone, not their account: only a Homeroom admin can remove an app '
+    + 'or raise the limit.';
+}
+
+/**
+ * Pure: the one system message a turn is told about the newest refused Make
+ * it in its thread, or null.
+ */
+function makeRefusalLine(refusal, ms) {
+  const words = String(refusal?.error || '').trim();
+  if (!words) return null;
+  const name = String(refusal?.name || '').trim();
+  return `[Homeroom, not from them: Make it on ${name ? `"${clip(name, MAX_MAKE_REFUSAL_NAME)}"` : 'the New project card'} `
+    + `in this thread was refused ${makeRefusalAge(ms)}. Homeroom's words: "${words}" `
+    + `${makeRefusalFix(refusal)} Tell them this plainly; do not guess the cause from my_projects.]`;
+}
+
+/**
+ * The newest refused Make it in this person's private thread, or null: the
+ * stored refusal and the system message a turn reads (makeRefusalLine).
+ * Older than a week, or cleared by a project made from the thread, is null.
+ */
+async function makeRefusalNote(pool, { userId, rootId, now = new Date() }) {
+  const id = Number(rootId);
+  const uid = Number(userId);
+  if (!(id > 0) || !(uid > 0)) return null;
+  const { rows } = await pool.query(
+    'SELECT last_make_refusal FROM private_threads WHERE root_message_id = $1 AND user_id = $2',
+    [id, uid],
+  );
+  const refusal = rows[0]?.last_make_refusal;
+  if (!refusal || typeof refusal !== 'object') return null;
+  const at = Date.parse(refusal.at);
+  if (!Number.isFinite(at)) return null;
+  const age = now.getTime() - at;
+  if (age > MAKE_REFUSAL_MAX_AGE_MS) return null;
+  const line = makeRefusalLine(refusal, Math.max(0, age));
+  return line ? { refusal, line } : null;
+}
+
+/**
+ * Record a refused Make it on the private thread it was made from. Only the
+ * newest is kept (each overwrite). Never throws, and never waits longer than
+ * a moment: what the person is told does not depend on it.
+ */
+async function noteMakeRefused(pool, { userId, rootId, name = null, refusal, now = new Date() }) {
+  const id = Number(rootId);
+  const uid = Number(userId);
+  if (!(id > 0) || !(uid > 0) || !refusal) return false;
+  const record = {
+    status: Number(refusal.status) || null,
+    code: refusal.code || null,
+    reason: refusal.reason || null,
+    error: clip(refusal.error, MAX_MAKE_REFUSAL_ERROR) || null,
+    name: name ? (clip(String(name).replace(/\s+/g, ' '), MAX_MAKE_REFUSAL_NAME) || null) : null,
+    retryAfterSeconds: Number.isFinite(Number(refusal.retryAfterSeconds)) ? Number(refusal.retryAfterSeconds) : null,
+    at: now.toISOString(),
+  };
+  try {
+    // A slow database never holds the refusal open: the person's answer goes
+    // out whether or not the row is written in time.
+    let timer = null;
+    const write = pool.query(
+      `UPDATE private_threads SET last_make_refusal = $3::jsonb
+        WHERE root_message_id = $1 AND user_id = $2`,
+      [id, uid, JSON.stringify(record)],
+    ).then(({ rowCount }) => rowCount > 0);
+    // A rejection nobody awaits (the race moved on) must not end the process.
+    write.catch(() => {});
+    const result = await Promise.race([
+      write.catch((err) => {
+        log.warn('homeroom-bot-dm', 'Could not record a refused Make it', { rootId: id, err: err.message });
+        return false;
+      }),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), MAX_MAKE_REFUSAL_RECORD_MS);
+        if (timer.unref) timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    return result;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not record a refused Make it', { rootId: id, err: err.message });
+    return false;
+  }
+}
+
+/** Clear the thread's refused Make it: a project was made from it. */
+async function clearMakeRefusal(pool, { userId, rootId }) {
+  const id = Number(rootId);
+  const uid = Number(userId);
+  if (!(id > 0) || !(uid > 0)) return false;
+  const { rowCount } = await pool.query(
+    'UPDATE private_threads SET last_make_refusal = NULL WHERE root_message_id = $1 AND user_id = $2',
+    [id, uid],
+  );
+  return rowCount > 0;
+}
+
 // ── Sending ──────────────────────────────────────────────────────────────
 
 // Cards under one bot message (Messages allows six; three is plenty).
@@ -7391,6 +7565,11 @@ module.exports = {
   PROJECT_ORIGINS,
   noteProjectMade,
   importedAt,
+  // #6900: a refused Make it, kept on the thread it was made from.
+  classifyMakeRefusal,
+  noteMakeRefused,
+  makeRefusalNote,
+  clearMakeRefusal,
   sendDm,
   TYPING_RENEW_MS,
   TYPING_MAX_MS,
