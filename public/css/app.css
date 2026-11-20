@@ -8988,6 +8988,17 @@ html:not([data-skin]) .rf-switch,
 html:not([data-skin]) .rf-switch[data-view="before"] { border: 1px solid var(--wip-btn-2-line); background: var(--wip-btn-2-bg); color: var(--wip-btn-2-ink); box-shadow: var(--wip-btn-edge-small); }
 html:not([data-skin]) .rf-switch .rf-knob,
 html:not([data-skin]) .rf-switch[data-view="before"] .rf-knob { background: var(--wip-btn-1-bg); color: var(--wip-btn-1-ink); box-shadow: inset 0 0 0 1px var(--wip-btn-1-line); }
+/* A finger's size (20 Nov 2026): the switch is 44px tall and 80 wide, where it was 40 by 72, with its knob and its two
+   marks moved to suit. */
+html:not([data-skin]) .rf-switch { width: 80px; height: 44px; margin-inline-start: -40px; }
+html:not([data-skin]) .rf-switch::before { width: 96px; height: 52px; }
+html:not([data-skin]) .rf-switch .rf-switch-mark { top: 14px; }
+html:not([data-skin]) .rf-switch .rf-switch-mark-before { inset-inline-start: 14px; }
+html:not([data-skin]) .rf-switch .rf-switch-mark-after { inset-inline-start: 50px; }
+html:not([data-skin]) .rf-switch .rf-knob { top: 3px; inset-inline-start: 39px; width: 36px; height: 36px; border-radius: 18px; }
+html:not([data-skin]) .rf-switch[data-view="before"] .rf-knob { inset-inline-start: 3px; }
+html:not([data-skin]) .rf-switch.rf-switch-pressed .rf-knob { inset-inline-start: 27px; width: 48px; }
+html:not([data-skin]) .rf-switch.rf-switch-pressed[data-view="before"] .rf-knob { inset-inline-start: 3px; }
 /* END OF BUTTONS. */
 /* ── HOME, A PIECE AT A TIME (20 Nov 2026): the standard look takes Standard
    (WIP)'s Home in steps. The look's tokens are both looks' now (the token
