@@ -50,8 +50,8 @@ function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = 
   // The Git tree includes names, contents, executable modes, Dockerfiles and
   // .dockerignore. The worker's floating Claude Code dependency is resolved
   // before this lookup and becomes an exact external input too. Workflow/
-  // resolver changes invalidate the build recipe. Keep candidate branches
-  // separate from main, even for identical inputs.
+  // resolver changes invalidate the build recipe. Keep reuse tags scoped to
+  // each branch, including branches that ran the older release workflow.
   const componentInputs = component === 'capture'
     ? ['capture', 'shots']
     : [component];
@@ -99,16 +99,12 @@ function inspectImage(tag, {
 
 function resolveImage({
   component, owner, revision, ref, forceRebuild = 'none', claudeCodeVersion,
-  reuseCurrentPlatform = false,
 }, dependencies = {}) {
   if (!['platform', 'worker', 'capture'].includes(component)) throw new Error('Invalid component');
   if (!/^[a-f0-9]{40}$/.test(revision || '')) throw new Error('Invalid source revision');
   if (!/^[a-z0-9][a-z0-9-]*$/i.test(owner || '')) throw new Error('Invalid registry owner');
   if (!ref?.startsWith('refs/heads/')) throw new Error('Image releases require a branch ref');
   if (!['none', 'worker', 'capture', 'all'].includes(forceRebuild)) throw new Error('Invalid force_rebuild selection');
-  if (reuseCurrentPlatform && component !== 'platform') {
-    throw new Error('Only the platform image can reuse the current source release');
-  }
   if (component === 'worker' && !NPM_VERSION.test(claudeCodeVersion || '')) {
     throw new Error('Worker image releases require an exact CLAUDE_CODE_VERSION');
   }
@@ -117,18 +113,7 @@ function resolveImage({
   const refresh = forceRebuild === 'all' || forceRebuild === component;
   const result = { image, reuse_tag: '', digest: '', refresh: String(refresh), reason: 'platform-build' };
   // Platform source identity and generated assets remain tied to this release.
-  if (component === 'platform') {
-    if (!reuseCurrentPlatform) return result;
-    if (refresh) throw new Error('A scheduled dependency refresh cannot force-rebuild the platform');
-    const reuseTag = `${image}:sha-${revision}`;
-    const digest = inspectImage(reuseTag, dependencies);
-    if (!digest) {
-      throw new Error(`Current platform image is missing: ${reuseTag}. Run the normal main workflow first.`);
-    }
-    return {
-      ...result, reuse_tag: reuseTag, digest, refresh: 'false', reason: 'current-source-release',
-    };
-  }
+  if (component === 'platform') return result;
 
   result.reuse_tag = `${image}:inputs-${inputKey({
     component, revision, ref, claudeCodeVersion,
@@ -148,7 +133,6 @@ if (require.main === module) {
       ref: process.env.GITHUB_REF,
       forceRebuild: process.env.FORCE_REBUILD || 'none',
       claudeCodeVersion: process.env.CLAUDE_CODE_VERSION,
-      reuseCurrentPlatform: process.env.REUSE_CURRENT_PLATFORM === 'true',
     });
     fs.appendFileSync(process.env.GITHUB_OUTPUT,
       Object.entries(result).map(([key, value]) => `${key}=${value}\n`).join(''));

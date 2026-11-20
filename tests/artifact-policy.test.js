@@ -15,6 +15,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
 
@@ -115,4 +117,27 @@ test('as a response header the policy carries its sandbox, and the routes share 
   // (tests/chat-attachments-route.test.js and
   // tests/conversation-attachments-route.test.js read the header it sends).
   assert.equal(server.ATTACHMENT_VIEW_CSP, 'sandbox allow-scripts');
+});
+
+test('the last two surfaces take their sandbox and policy from the one file: the email viewer helper, the comparison static', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  // An email picture: its thumbnail static, its opened viewer measured by the
+  // per-frame helper. Neither names a sandbox of its own.
+  const gallery = read('frontend/src/features/messages/bot-cards/gallery.tsx');
+  assert.doesNotMatch(gallery, /allow-same-origin|allow-scripts|<iframe|\bsrcDoc=/);
+  assert.match(gallery, /<ArtifactFrame\b[\s\S]*?mode="static"/);
+  assert.match(gallery, /mode="helper"/);
+  // A comparison the bot laid out: drawn in the thread, static.
+  const comparison = read('frontend/src/features/messages/bot-cards/thread-comparison.tsx');
+  assert.doesNotMatch(comparison, /allow-same-origin|allow-scripts|<iframe|\bsrcDoc=|sandbox=/);
+  assert.match(comparison, /<ArtifactFrame\b[\s\S]*?mode="static"/);
+  // Their sandboxes and policies are the shared text, whole: the helper runs
+  // one script by its nonce and the static frame none at all.
+  assert.equal(client.sandboxFor('helper'), server.sandboxFor('helper'));
+  assert.equal(client.sandboxFor('static'), server.sandboxFor('static'));
+  assert.equal(client.sandboxFor('helper'), 'allow-scripts');
+  assert.equal(client.sandboxFor('static'), '');
+  assert.deepEqual(directivesOf(server.cspFor('helper', { nonce: 'f00d' })).get('script-src'), ["'nonce-f00d'"]);
+  assert.deepEqual(directivesOf(server.cspFor('static')).get('script-src'), ["'none'"]);
+  for (const mode of ['helper', 'static']) assert.doesNotMatch(server.cspFor(mode, { nonce: 'f00d' }), /allow-same-origin/);
 });

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dApps</title>
+  <script>
+    // Redirect stub (fold-auth-pages-into-SPA): login is now the SPA's
+    // #login screen (#signup for the email-code / account-creation
+    // sub-view). This file only exists so old bookmarks, share links,
+    // and service-worker-cached copies keep working. Mappings:
+    //   /login.html                    → /#login
+    //   /login.html?signup=1           → /#signup
+    //   /login.html?return_to=…        → /?return_to=…#login (CLI authorize)
+    //   /login.html#app/<slug>/full    → /#app/<slug>/full (deep link —
+    //     the SPA offers login first and preserves the destination)
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var deepLink = location.hash && location.hash !== '#' ? location.hash : '';
+      var route = params.has('signup') ? '#signup' : '#login';
+      params.delete('signup');
+      var search = params.toString() ? '?' + params.toString() : '';
+      location.replace('/' + search + (deepLink || route));
+    })();
+  </script>
+</head>
+<body>
+  <noscript><a href="/#login">Continue to sign in</a></noscript>
+</body>
+</html>

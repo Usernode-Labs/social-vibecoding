@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dApps</title>
+  <script>
+    // Redirect stub (fold-auth-pages-into-SPA): the activation-code
+    // register form is now the SPA's #register screen. This file only
+    // exists so old bookmarks and shared invite links keep working.
+    //   /register.html               → /#register
+    //   /register.html?code=<code>   → /#register/<code>
+    //   /register.html#app/<slug>/…  → /#app/<slug>/… (deep link — the
+    //     SPA offers login first and preserves the destination)
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var deepLink = location.hash && location.hash !== '#' ? location.hash : '';
+      var code = params.get('code');
+      var route = code ? '#register/' + encodeURIComponent(code) : '#register';
+      location.replace('/' + (deepLink || route));
+    })();
+  </script>
+</head>
+<body>
+  <noscript><a href="/#register">Continue to registration</a></noscript>
+</body>
+</html>

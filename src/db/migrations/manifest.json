@@ -527,9 +527,14 @@
       "schemaSha256": "8590e5c622a457d888ae51f0b12ab9ceaffdc4e753727dfeb467f6af1eb8be11"
     },
     {
+      "id": "private-threads-filed-project",
+      "sha256": "f1beaa839fb8433a7cbf1d045a94ebceaa395f74271608c9d502be8c1fb7da89",
+      "schemaSha256": "4570ec732adce89b0fea8b8265fd45545276597d7d46b57812604e565fbaaef6"
+    },
+    {
       "id": "anthropic-keys-wiped",
       "sha256": "ca290627de3589255e397fef423664d812fc000cd20a452817992392ae24487b",
-      "schemaSha256": "5bee6aba5fb448cd3766d5963e6d651e7030586ca3513ac2998cd843b6c8eea2"
+      "schemaSha256": "2cf78f0ec656a4af607172e889ba3290b4ddea8fadaaba13743587aa6f396142"
     }
   ]
 }

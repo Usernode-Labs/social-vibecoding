@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Node status</title>
+  <script>
+    // Redirect stub (#860): the full node / explorer / chain-service viewer
+    // is now the SPA's #admin/node section. This file only exists so old
+    // bookmarks, chat links, and service-worker-cached copies keep working.
+    //
+    // Node & chain is one of the console's two PUBLIC sections, so a
+    // signed-in non-admin who follows this link still gets it. The
+    // anonymous surface is the JSON snapshot /api/node-status/full, which
+    // is unchanged and still open to anyone.
+    location.replace('/' + (location.search || '') + '#admin/node');
+  </script>
+</head>
+<body>
+  <noscript><a href="/#admin/node">Continue to node status</a></noscript>
+</body>
+</html>

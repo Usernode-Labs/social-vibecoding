@@ -155,9 +155,15 @@ test('it is drawn on every private thread in the bot\'s chat, by the server\'s w
   assert.doesNotMatch(gate, /!privateRootMessage\.sender\.bot/, '1 Nov 2026: not only the viewer\'s own message');
   assert.match(screen, /const privateMine = !!privateRoot && isOwnPrivateThread\(privateWhere, privateRootMessage, meId\);/);
   // #6159: the note carries the thread, for Reopen on a done one.
-  const note = screen.indexOf('<PrivateThreadNote where={privateWhere} rootId={privateRoot}');
+  // 20 Nov 2026: the replies, the doors last, are one part both drawings
+  // use; the pane's note heads them, and a thread's page says where the
+  // thread went in its opening card's foot instead.
+  const parts = screen.indexOf('const repliesPart = (');
   const doors = screen.indexOf('<PrivateThreadDoors');
-  assert.ok(note > 0 && doors > note, 'the note heads the thread, the doors close it');
+  const note = screen.indexOf('<PrivateThreadNote where={privateWhere} rootId={privateRoot}');
+  const foot = screen.indexOf('<PrivateThreadFoot where={privateWhere} rootId={privateRoot}');
+  assert.ok(parts > 0 && doors > parts && note > doors && foot > doors, 'the doors close the replies; the note and the foot head them');
+  assert.ok(screen.indexOf('{rootRow}\n', note) > note && screen.indexOf('{repliesPart}', note) > note, 'the pane draws its note, then the thread');
   assert.match(screen.slice(doors - 80, doors), /\{privateRoot && privateMine && root \? \(\s*$/);
   assert.match(screen.slice(doors, doors + 400), /text=\{privateThreadWords\(root, replies, meId\)\}/);
   // #6781: the name the bot suggested, from its newest reply that carries one.
@@ -165,7 +171,7 @@ test('it is drawn on every private thread in the bot\'s chat, by the server\'s w
   assert.match(screen.slice(doors, doors + 400), /botReplied=\{replies\.some\(\(message\) => message\.sender\.bot\)\}/);
   // #6523: the foot follows what Homeroom bot last said, not the thread's kind.
   assert.match(screen.slice(doors, doors + 400), /invited=\{newProjectInvited\(root, replies\)\}/);
-  assert.match(screen, /PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName,/);
+  assert.match(screen, /PrivateThreadDoors, PrivateThreadFoot, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName,/);
   assert.match(screen.slice(doors, doors + 400), /working=\{!!threadWorking\}/, 'the thread\'s working state holds the foot back');
   assert.doesNotMatch(screen, /<PrivateThreadBar\b/, 'no bar of doors over the thread any more');
 });
@@ -502,4 +508,36 @@ test('#6784: a thread made into a project says so, with a link, and offers no Ne
   assert.match(renderComponent(BAR, 'PrivateThreadNote', { where: { ...where, made: false, number: 4 } }), /data-private-thread="filed"/);
   const { doorsFor } = loadTsx(BAR);
   assert.deepEqual(doorsFor(where, true, true), [], 'New project is gone once it was made');
+});
+
+// 20 Nov 2026: a private thread drawn on a public thread's page says where it
+// went in its opening card's foot, as a request's card says where it stands;
+// and a thread filed on a project it was not set to keeps that project.
+test('the opening card\'s foot says where the thread went, and never "on ." without a project', () => {
+  const filed = { state: 'filed', kind: 'draft_request', number: 21, app: { slug: 'audit-garden', name: 'Audit Garden' }, href: '#app/audit-garden/dev/issues/21', mine: true };
+  const html = renderComponent(BAR, 'PrivateThreadFoot', { where: filed, rootId: 7 });
+  assert.match(html, /data-thread-foot="private-filed"/, 'the public card\'s own foot');
+  assert.ok(html.includes(message('messages:privateThread.foot.filed')));
+  assert.ok(html.includes(message('messages:privateThread.foot.filedOn', { number: 21, project: 'Audit Garden' })));
+  assert.match(html, /href="#app\/audit-garden\/dev\/issues\/21" data-private-thread-open=""/);
+  assert.ok(html.includes(message('messages:privateThread.openRequest', { number: 21 })));
+  // No project known: the number alone, and no way to a page it cannot name.
+  const lost = renderComponent(BAR, 'PrivateThreadFoot', { where: { ...filed, app: null, href: null }, rootId: 7 });
+  assert.ok(lost.includes(message('messages:privateThread.foot.filedAs', { number: 21 })));
+  assert.doesNotMatch(lost, /data-private-thread-open/);
+  assert.doesNotMatch(lost, / on \./);
+  // An open thread has no foot: its head already says only they can see it.
+  assert.equal(renderComponent(BAR, 'PrivateThreadFoot', { where: { ...filed, state: 'open' }, rootId: 7 }), '');
+  // The note over a thread elsewhere says the number alone too.
+  const note = renderComponent(BAR, 'PrivateThreadNote', { where: { ...filed, app: null, href: null } });
+  assert.ok(note.includes(message('messages:privateThread.filedNoProject', { number: 21 })));
+  assert.doesNotMatch(note, / on \./);
+  // The server keeps the project a draft's card filed or posted it on, and
+  // fills it in for the threads that lost it.
+  const mayor = read('src/services/homeroom-bot-mayor.js');
+  assert.match(mayor, /app_id = COALESCE\(p\.app_id, \$5\), updated_at = NOW\(\)/);
+  assert.equal((mayor.match(/await notePrivateDraft\(pool, \{ userId: user\.id, messageId: action\.message_id, state: '(filed|posted)', ref: [^}]+, appId: app\.id \}\);/g) || []).length, 3,
+    'every filing and posting passes the project');
+  const backfill = read('src/db/migrations/private-threads-filed-project.sql');
+  assert.match(backfill, /UPDATE private_threads p\s+SET app_id = c\.app_id\s+FROM bot_cards c\s+JOIN conversation_messages m ON m\.id = c\.message_id\s+WHERE p\.app_id IS NULL/);
 });

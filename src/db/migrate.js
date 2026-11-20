@@ -2296,6 +2296,45 @@ async function seedStagingBotWaitingRows(pool) {
           ],
         );
       }
+      // 20 Nov 2026 (#6914): a request's page whose Homeroom bot reply carries
+      // a comparison, so the shots can show it drawn under the reply with
+      // nothing running. Obviously fake and inert (no script, no address);
+      // idempotent by its stagingDemo mark; a no-op outside staging.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '10 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'thread-comparison')`,
+        [
+          appId, botRow.rows[0].id,
+          'Staging demo: here they are side by side. Today\'s filter row on the left, the request\'s on the right.',
+          JSON.stringify({
+            stagingDemo: 'thread-comparison',
+            homeroomBot: {
+              kind: 'voice',
+              comparison: {
+                title: 'Before and after',
+                html: '<!doctype html><html><head><style>'
+                  + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+                  + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+                  + 'h3{margin:0 0 8px;font-size:14px}'
+                  + '.chips{display:flex;gap:6px;flex-wrap:wrap}'
+                  + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+                  + '.chip.new{background:#dbe8ff}'
+                  + 'p{margin:8px 0 0;color:#71717a;font-size:12px}'
+                  + '</style></head><body><div class="cols">'
+                  + '<div><h3>Today</h3><div class="chips"><span class="chip">Open</span><span class="chip">Mine</span>'
+                  + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+                  + '<div><h3>With this change</h3><div class="chips"><span class="chip new">Open</span>'
+                  + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+                  + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+                  + '</div></body></html>',
+              },
+            },
+          }),
+        ],
+      );
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
@@ -2515,6 +2554,28 @@ async function seedStagingChangePictures(pool) {
         caption: `${picture.subject} · ${picture.sha.slice(0, 7)}`,
       })),
     };
+    // 20 Nov 2026: the comparison a thread reply carries is drawn under it,
+    // static, with nothing running (homeroom-bot-voice.js say). A fresh
+    // staging copy has no model to lay one out, so this obviously fake one is
+    // stored with the reply. It is inert markup: no script, no address.
+    const comparison = {
+      title: 'Staging demo: the filter row, today and with this change',
+      html: '<!doctype html><html><head><style>'
+        + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+        + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+        + 'h3{margin:0 0 8px;font-size:14px}'
+        + '.row{display:flex;gap:6px;margin:0 0 8px;flex-wrap:wrap}'
+        + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+        + '.chip.new{background:#dbe8ff}'
+        + 'p{margin:0;color:#71717a;font-size:12px}'
+        + '</style></head><body><div class="cols">'
+        + '<div><h3>Today</h3><div class="row"><span class="chip">Open</span><span class="chip">Mine</span>'
+        + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+        + '<div><h3>With this change</h3><div class="row"><span class="chip new">Open</span>'
+        + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+        + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+        + '</div></body></html>',
+    };
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
        SELECT $1, $2, 'Here is what this change looks like, drawn from bbbbbbb, its newest version: the admit email as it is today and with this change.',
@@ -2523,7 +2584,7 @@ async function seedStagingChangePictures(pool) {
                            WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $3
                              AND metadata->>'stagingDemo' = 'change-pictures')`,
       [app.id, bot.id, Number(change.id), JSON.stringify({
-        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery },
+        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery, comparison },
       })],
     );
   } catch (err) {

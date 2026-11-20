@@ -263,3 +263,48 @@ test('a first look\'s drawn screen is drawn in the one frame, static, from its r
   // Its route answers under the same policy, as a header.
   assert.equal(require('../src/services/first-version-screens').DRAWN_CSP, policy.cspFor('static', { header: true }));
 });
+
+// 20 Nov 2026: the last two surfaces onto the one frame.
+
+test('a comparison the bot laid out is drawn under its reply, static: nothing in it runs', () => {
+  const { ThreadComparison } = loadTsx('frontend/src/features/messages/bot-cards/thread-comparison.tsx');
+  const page = '<html><head><style>.row{padding:8px}</style></head><body onload="go()"><h3>Before and after</h3>'
+    + '<p onclick="go()">Today</p><a href="javascript:go()">Open</a><script>function go(){fetch("https://evil.test")}<\/script></body></html>';
+  const html = renderToHtml(createElement(ThreadComparison, { comparison: { title: 'Before and after', html: page } }));
+  const frame = frameOf(html);
+  assert.equal(frame.attr('sandbox'), '', 'scripts off: the same for everyone who reads the thread');
+  assert.equal(frame.attr('data-artifact-frame'), 'static');
+  const doc = frame.attr('srcDoc');
+  assert.ok(doc.includes(`content="${policy.cspFor('static')}"`), 'its policy is the one file\'s, naming no origin');
+  assert.doesNotMatch(doc, /<script|onload=|onclick=|javascript:|https:\/\/evil\.test/i, 'nothing of the comparison\'s own runs or loads');
+  assert.match(doc, /<h3>Before and after<\/h3>/, 'the comparison itself is still drawn');
+  // The card: its title over it, and the note under it.
+  assert.match(html, /data-bot-comparison=""/);
+  assert.match(html, /Before and after<\/span>/);
+  assert.ok(html.includes(message('messages:botCards.comparison.note')));
+  assert.equal(message('messages:botCards.comparison.note'), 'Laid out by Homeroom bot. Nothing in it runs.');
+  assert.equal(message('messages:botCards.comparison.frameTitle', { title: 'Before and after' }), 'Comparison: Before and after');
+  assert.match(html, /<iframe[^>]*class="block h-\[420px\] w-full[^"]*"/, 'a fixed box that scrolls inside');
+});
+
+test('an opened email is measured by the frame\'s helper, with no same-origin and no script of the email\'s', () => {
+  const { EmailViewerPanel } = loadTsx('frontend/src/features/messages/bot-cards/gallery.tsx');
+  const body = {
+    kind: 'email', side: 'after', subject: 'Your invite is waiting', preheader: '',
+    html: '<html><head><style>p{color:#111}</style></head><body><p>Hello</p><script>steal()</script></body></html>', text: 'Hello',
+  };
+  const html = renderToHtml(createElement(EmailViewerPanel, { body, caption: 'An email', onClose() {} }));
+  const frame = frameOf(html);
+  assert.equal(frame.attr('sandbox'), policy.sandboxFor('helper'));
+  assert.equal(frame.attr('sandbox'), 'allow-scripts', 'Homeroom\'s helper alone may run');
+  assert.equal(frame.attr('data-artifact-frame'), 'helper');
+  const doc = frame.attr('srcDoc');
+  assert.match(doc, /script-src 'nonce-[0-9a-f]{32}'/, 'one script, by a nonce made new for this frame');
+  assert.equal((doc.match(/<script\b/g) || []).length, 1, 'the helper, and nothing of the email\'s');
+  assert.doesNotMatch(doc, /steal\(\)|<script>steal/, 'the email\'s own script is gone');
+  assert.match(doc, /<p>Hello<\/p>/, 'the email itself is still drawn');
+  assert.doesNotMatch(html, /allow-same-origin/, 'no frame here is same-origin with Homeroom');
+  assert.match(html, /role="dialog"/);
+  assert.match(html, /data-bot-email-size="phone"/, 'the Phone / Desktop switch is kept');
+  assert.match(html, /data-bot-email-size="desktop"/);
+});

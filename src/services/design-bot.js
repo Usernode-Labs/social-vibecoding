@@ -936,10 +936,12 @@ function sheetWords(surface, sheets = null) {
 const SKILL_PATH = require('node:path').join(__dirname, '..', 'prompts', 'artifact-design.md');
 let skillRead = null;
 
-/** The design kind's skill, by section: { rules, 'first screen', "a page of Homeroom's own" }. */
-function designSkill() {
-  if (skillRead) return skillRead;
-  const text = require('node:fs').readFileSync(SKILL_PATH, 'utf8').replace(/^<!--[\s\S]*?-->\n/, '');
+/**
+ * A skill file's sections, by the `## name` heading above each, its opening
+ * HTML comment left out. The heading is not part of its section.
+ */
+function skillSections(file) {
+  const text = require('node:fs').readFileSync(file, 'utf8').replace(/^<!--[\s\S]*?-->\n/, '');
   const sections = {};
   let name = null;
   for (const line of text.split('\n')) {
@@ -951,7 +953,13 @@ function designSkill() {
       sections[name].push(line);
     }
   }
-  skillRead = Object.freeze(Object.fromEntries(Object.entries(sections).map(([key, rows]) => [key, rows.join('\n').replace(/\n+$/, '')])));
+  return Object.freeze(Object.fromEntries(Object.entries(sections).map(([key, rows]) => [key, rows.join('\n').replace(/\n+$/, '')])));
+}
+
+/** The design kind's skill, by section: { rules, 'first screen', "a page of Homeroom's own" }. */
+function designSkill() {
+  if (skillRead) return skillRead;
+  skillRead = skillSections(SKILL_PATH);
   return skillRead;
 }
 
@@ -1888,6 +1896,8 @@ module.exports = {
   SHEET_ATTR,
   designPrompt,
   designSkill,
+  skillSections,
+  fillSkill,
   OLD_NAMES,
   personLine,
   applyEdits,

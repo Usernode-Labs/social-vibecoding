@@ -261,6 +261,24 @@ test('one way to edit every kind: exact pairs, each found once', () => {
   assert.match(session.applyEdits('<p>a</p>', []).error, /at least one edit/);
   assert.match(session.applyEdits('<p>a</p>', new Array(17).fill({ find: 'a', replace: 'b' })).error, /At most 16 edits/);
   assert.equal(require('../src/services/design-bot').applyEdits('abc', [{ find: 'b', replace: 'x' }]).html, 'axc', 'a design\'s edits are the same');
+  // A caller brings its own limits and sentences: a live draft's are not a
+  // design's, and the defaults above stay as they were.
+  const words = {
+    none: () => 'No edits here.',
+    tooMany: (max) => `Only ${max} at a time.`,
+    noFind: (i) => `Edit ${i} has nothing to find.`,
+    noReplace: (i) => `Edit ${i} has no replace.`,
+    missing: (i) => `Edit ${i}: not there.`,
+    twice: (i) => `Edit ${i}: twice.`,
+  };
+  assert.deepEqual(session.applyEdits('a b', [{ find: 'b', replace: 'B' }], { max: 4, words }), { html: 'a B' });
+  assert.equal(session.applyEdits('a', [], { words }).error, 'No edits here.');
+  assert.equal(session.applyEdits('a', new Array(5).fill({ find: 'a', replace: 'a' }), { max: 4, words }).error, 'Only 4 at a time.');
+  assert.equal(session.applyEdits('a', [{ find: '', replace: 'b' }], { words }).error, 'Edit 1 has nothing to find.');
+  assert.equal(session.applyEdits('a', [{ find: 'a' }], { words }).error, 'Edit 1 has no replace.');
+  assert.equal(session.applyEdits('a', [{ find: 'z', replace: 'b' }], { words }).error, 'Edit 1: not there.');
+  assert.equal(session.applyEdits('a a', [{ find: 'a', replace: 'b' }], { words }).error, 'Edit 1: twice.');
+  assert.match(session.applyEdits('a', [{ find: 'a', replace: 'b' }], { maxFind: 0 }).error, /too long/);
   // A page that would load from an address is told so: its frame names no origin.
   assert.match(session.loadsNote('<script src="https://cdn.example/x.js"></script>'), /loads from another address/);
   assert.match(session.loadsNote('<style>@import url(//fonts.example/a.css);</style>'), /loads from another address/);

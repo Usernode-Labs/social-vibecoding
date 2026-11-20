@@ -71,21 +71,31 @@ function clip(value, max) {
 /**
  * Pure: `html` with each edit applied in order, or { error } naming the first
  * that does not apply (its find missing, or found more than once). The one
- * way every kind of artifact is changed (edit_artifact, and a design's
- * edit_design before it).
+ * way every kind of artifact is changed (edit_artifact, a design's
+ * edit_design before it, and a live draft's file edits).
+ *
+ * `words` is an optional set of sentence functions for a caller whose own
+ * limits and wording differ (`none`, `tooMany(max)`, `noFind(i)`,
+ * `noReplace(i)`, `tooLong(i)`, `missing(i)`, `twice(i)`). With no
+ * `noFind`/`noReplace`, one sentence covers a find or a replace that is
+ * missing.
  */
-function applyEdits(html, edits, { max = MAX_EDITS } = {}) {
-  if (!Array.isArray(edits) || !edits.length) return { error: 'Give at least one edit.' };
-  if (edits.length > max) return { error: `At most ${max} edits in one call.` };
+function applyEdits(html, edits, { max = MAX_EDITS, maxFind = MAX_FIND_CHARS, maxReplace = MAX_REPLACE_CHARS, words = null } = {}) {
+  const say = words || {};
+  const word = (key, fallback, ...args) => (typeof say[key] === 'function' ? say[key](...args) : fallback);
+  if (!Array.isArray(edits) || !edits.length) return { error: word('none', 'Give at least one edit.') };
+  if (edits.length > max) return { error: word('tooMany', `At most ${max} edits in one call.`, max) };
   let out = String(html);
   for (let i = 0; i < edits.length; i += 1) {
+    const n = i + 1;
     const find = typeof edits[i]?.find === 'string' ? edits[i].find : '';
     const replace = typeof edits[i]?.replace === 'string' ? edits[i].replace : null;
-    if (!find || replace == null) return { error: `Edit ${i + 1} needs both find and replace.` };
-    if (find.length > MAX_FIND_CHARS || replace.length > MAX_REPLACE_CHARS) return { error: `Edit ${i + 1} is too long.` };
+    if (!find) return { error: word('noFind', `Edit ${n} needs both find and replace.`, n) };
+    if (replace == null) return { error: word('noReplace', `Edit ${n} needs both find and replace.`, n) };
+    if (find.length > maxFind || replace.length > maxReplace) return { error: word('tooLong', `Edit ${n} is too long.`, n) };
     const at = out.indexOf(find);
-    if (at < 0) return { error: `Edit ${i + 1}: its find is not in the HTML. Copy it exactly from the current version.` };
-    if (out.indexOf(find, at + 1) >= 0) return { error: `Edit ${i + 1}: its find occurs more than once. Make it longer.` };
+    if (at < 0) return { error: word('missing', `Edit ${n}: its find is not in the HTML. Copy it exactly from the current version.`, n) };
+    if (out.indexOf(find, at + 1) >= 0) return { error: word('twice', `Edit ${n}: its find occurs more than once. Make it longer.`, n) };
     out = out.slice(0, at) + replace + out.slice(at + find.length);
   }
   return { html: out };

@@ -557,6 +557,15 @@ told only that its edits make "the next version", called version 4 "version
   working card says "Drawing version 4" and "Changing the draft".
 - **Asking says why.** The chat's prompt tells it to say, in one clause,
   what it found that makes a question necessary before asking it.
+- **A draft is a capability with a skill.** Its instructions are
+  `src/prompts/artifact-draft.md`, read only while its draft is open
+  (`live-draft-bot.js draftSkill`), as a design's are. It is written against
+  the chat's own rules: a question says what makes it necessary and what its
+  answer changes, and nothing is promised for later. Its file edits run the
+  same `artifact-session.js applyEdits` a design and a page do, and its
+  failures are sorted by `bot-turn-failure.js`: a failure on Homeroom's side
+  is said as Homeroom's and spends none of the turn's applies, while an app
+  that stopped after an edit is the app's own and is fixed or put back.
 
 ### What it costs
 

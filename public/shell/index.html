@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- shell-build stamp: fb4358559b11385420cb3f2393af149a63dec133a889b6c6c747b989265250f0 -->
+  <meta name="platform-build" content="dev">
+  <!-- GENERATED FILE — DO NOT EDIT.
+       Built from frontend/ by `npm run build:shell`; the markup lives in
+       frontend/src/Shell.tsx and this <head> in frontend/src/head.html.
+       Hand edits here are overwritten by the next build. -->
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- THE BROWSER'S OWN CANVAS, BEFORE ANY STYLE IS PARSED. The critical
+       <style> below sets `color-scheme` from the RESOLVED theme, but it
+       cannot apply until it has been parsed, and the canvas the engine paints
+       between "there is a document" and "there is a style" answers to this
+       meta instead. Without it a load on a dark device starts on the browser's
+       default WHITE canvas (and, in a webview, the native window behind it),
+       then flips to the dark ground once the style lands. That is the white
+       frame #6130 reports on every page load.
+
+       The bare two-value form delegates to the OS on purpose, for these first
+       bytes only. The class-keyed `color-scheme` rules below override it the
+       moment they apply, so a viewer who picked Light on a dark device still
+       gets light scrollbars and controls on the #f4f2e4 page. Do not fold
+       them into one: a meta cannot see the class, and the rules must stay
+       class-keyed (tests/native-appearance.test.js pins that). -->
+  <meta name="color-scheme" content="light dark">
+  <!-- THE PAGE OWNS THE STATUS-BAR STRIP, on an installed iOS web app (#1929).
+
+       Without this, a home-screen install gets iOS's OPAQUE status bar: the
+       system draws that strip itself, tints it from `theme-color`, and starts
+       the web view BELOW it. Two consequences, and the second is the bug:
+
+       - `env(safe-area-inset-top)` is 0, because the page never reaches the
+         unsafe area. Every reservation built for it — `--platform-safe-top`
+         below, the kit's `.un-safe-top-extend` on the header — quietly
+         resolves to nothing on the one platform they were written for.
+       - No page pixel can reach that strip, so a dialog's scrim cannot dim
+         it. Measured on an iPhone 17 Pro: opening a dialog drops the page
+         from luminance 241 to 145 while the strip holds 241, a 115-unit
+         cliff at exactly 62pt — the inset — that never moves in any frame of
+         the fade. That is what "the system header and the background fade at
+         different rates" is: the strip is not fading at all.
+
+       `black-translucent` hands those pixels to the page. `env(...)` then
+       reports the real 62px, the reservations that already exist start doing
+       their job, and the existing `inset: 0` scrim covers the strip for free
+       — one surface, one fade, nothing left to keep in step. Verified on a
+       real standalone install before writing this: same two rows read 130.8
+       and 130.8 with the scrim up, no edge anywhere in the top 400px.
+
+       iOS composites the clock, wifi and battery ON TOP of whatever the page
+       paints, so they survive the dim — measured at 24.4:1 against a dimmed
+       ground, where WCAG asks 4.5:1. The Dynamic Island is a hardware cutout
+       and stays black regardless.
+
+       `theme-color` above still matters and is NOT redundant: it paints
+       Android's address bar and the window ground a standalone install shows
+       before the document does. It simply stops owning the iOS strip. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- THE PLATFORM'S NAME, not "dApps". This is the title the SERVICE WORKER
+       serves: public/index.html is precached, so a cached load shows it in the
+       tab, the task switcher and the native AppBar until the SPA routes and
+       calls App.setHeaderTitle('Homeroom'). "dApps" is the name this
+       shell had before the platform had one, and every other surface —
+       manifest.webmanifest, the header on home, the landing page — says
+       Homeroom. A cached document that names the product something
+       nothing else calls it is the discontinuity, not just the delay. Renaming
+       this title REQUIRES a SW_VERSION bump in public/sw.js, or existing
+       installs keep serving the precached document with the old name. -->
+  <title>Homeroom</title>
+  <!-- What a search engine shows under the title. The shell document is
+       served for every path, so this line is the home page's description
+       only: a public project's page has it removed and its own inserted
+       (src/services/project-preview.js). -->
+  <meta name="description" content="Homeroom is where people make apps together: suggest a change, vote on it, and see it go live.">
+  <!-- The browser-chrome colour, and the ground the shell paints on before
+       any stylesheet has loaded. Both live UP HERE, ahead of the theme
+       module, because that module rewrites the metas from the resolved theme
+       and the critical style has to beat the compiled Tailwind sheet (the LAST
+       stylesheet in this head, by a contract documented on its own link).
+
+       A MEDIA-KEYED PAIR, and only a STARTING POINT. The browser uses the one
+       whose `prefers-color-scheme` side matches the DEVICE, so a dark-OS load
+       gets a dark address bar and a dark window ground from the very first
+       byte, before the theme module parses. Theme.apply() below then
+       overwrites BOTH metas with the resolved ground in the same
+       head-blocking pass that adds `.dark`, so the viewer's own Light/Dark
+       choice wins and an explicit Light pick on a dark OS leaves no stale
+       dark value in either. -->
+  <meta name="theme-color" content="#f4f2e4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d1b" media="(prefers-color-scheme: dark)">
+  <style>
+    /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
+       utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
+       frontend/scripts/build-shell.mjs), and the stylesheet that defines it
+       is the last resource in this head. Everything before it paints against
+       the browser's default canvas — WHITE — so every load flashed white
+       before settling on #eaeaea, and a dark-mode load flashed white before
+       going near-black. The service worker makes that MORE visible rather
+       than less: a shell served from cache paints immediately, so the gap
+       between "there is a document" and "there is a stylesheet" is where the
+       whole first impression happens.
+       Set on <html> so it also fills the rubber-band area and any strip the
+       body's own box does not cover. Duplicating the two values is the point:
+       this rule has to be true with no stylesheet at all.
+
+       `color-scheme` rides along because a background alone does not settle
+       what the USER AGENT paints. It is what tells the engine which of its
+       own two palettes to use, and it reaches three surfaces no declaration
+       of ours can: the canvas underneath the document (the strip a WebView
+       shows between navigation start and the first painted frame — the white
+       flash the Homeroom Flutter shell shows on cold launch), the scrollbars,
+       and the default rendering of form controls, which without it stay
+       light-on-light inside a near-black shell.
+
+       CLASS-KEYED, NOT `light dark`. The bare two-value form delegates the
+       choice to the OS, and the shell's Light/Dark override is a class on
+       <html> that no OS preference can see — so a viewer who picks Light on
+       a dark phone would get dark scrollbars and dark <select> menus on a
+       #eaeaea page. Keyed off `.dark` it tracks the resolved theme instead,
+       and Theme.apply() below adds that class in the same head-blocking pass
+       that fixes the background. */
+    html { background-color: #f4f2e4; color-scheme: light; }
+    html.dark { background-color: #0b0d1b; color-scheme: dark; }
+    /* Held while this device's language loads (the script after the theme
+       block). The ground above still paints, so the wait reads as the page
+       loading, not as a blank screen. */
+    html.language-pending body { visibility: hidden; }
+    /* The first-session hold (the script after the theme block): the page
+       ground above, and nothing else, until the shell draws its first
+       signed-in screen. Inline for the same reason as the ground. */
+    html.first-session-boot body { visibility: hidden; }
+    /* The spinner of "Signing you in…" (features/auth/landing.tsx SigningIn)
+       on that ground, for a link spent as the page opens (the hold script).
+       Where SigningIn draws its own: a centred column of the 32px logotype,
+       32px, the 24px spinner, 12px and a 20px line, so its top is 4px under
+       the middle. On <html>, which the hold does not hide. */
+    html.release-signing-in::after {
+      content: ''; position: fixed; z-index: 2147483647; box-sizing: border-box;
+      left: calc(50% - 12px); top: calc(50% + 4px); width: 24px; height: 24px;
+      border-radius: 50%; border: 2.5px solid rgba(113, 113, 122, 0.25); border-top-color: #71717a;
+      animation: release-signing-in-spin 0.8s linear infinite;
+    }
+    html.dark.release-signing-in::after { border-color: rgba(161, 161, 170, 0.25); border-top-color: #a1a1aa; }
+    @keyframes release-signing-in-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { html.release-signing-in::after { animation: none; } }
+    html.release-signing-in:where([data-motion="reduce"])::after { animation: none; }
+    /* The wordmark on the held ground (review of #5323's build). While the
+       holds above keep the body hidden, only the ground paints — a flat
+       background with nothing on it, which is what a signed-out load shows
+       for its first moments. The Homeroom wordmark, centred on that ground,
+       says what is loading. Drawn on <html> like the spinner above, so it
+       needs no markup and no stylesheet of ours, and only while a hold is
+       held: it goes the moment the shell's first screen draws. Its bottom
+       edge sits 8px above the middle, 12px over the spinner's top, the
+       landing's own SigningIn column (its 32px logotype, 12px, the spinner).
+       The ink is the landing's wordmark ink: near-black, white in dark
+       mode — never the header's --brand-ink.
+
+       It is the REAL logotype, not the word typed in a system italic font
+       (review of this build: a plain italic "Homeroom" in a system font read
+       as a flash of unstyled text next to the drawn mark a moment later).
+       The drawing is `homeroom-logotype-black.png` used as a MASK over a
+       solid ink colour, which is what lets one black raster take the white
+       ink in dark mode; the file already ships (the mail frame draws it) and
+       is precached like the header mark. 140 × 37 is the size the mail
+       draws it at, the file being 2×. */
+    html.first-session-boot::before,
+    html.language-pending::before {
+      content: ''; position: fixed; z-index: 2147483647;
+      left: calc(50% - 70px); bottom: calc(50% + 8px); width: 140px; height: 37px;
+      background-color: #09090b; pointer-events: none;
+      -webkit-mask: url('/brand/homeroom-logotype-black.png') center / contain no-repeat;
+      mask: url('/brand/homeroom-logotype-black.png') center / contain no-repeat;
+    }
+    html.dark.first-session-boot::before,
+    html.dark.language-pending::before { background-color: #ffffff; }
+  </style>
+  <script>
+    // Theme module — Light / Dark / System mode selector.
+    // Storage contract:
+    //   'light'  → light mode
+    //   'dark'   → dark mode
+    //   key absent → system (follows OS preference)
+    // System removes the key; Light and Dark store the value explicitly.
+    //
+    // INLINE AND HEAD-BLOCKING ON PURPOSE (#1079 chunk B). This was
+    // public/js/theme.js — an external tag here, preceded by a duplicate
+    // three-line "no-flash guard" that re-implemented get()+apply() so the
+    // stored mode landed on <html> before first paint. Both are this one
+    // block now: the module ends by calling apply(), so it IS the no-flash
+    // guard, and there is no longer a second copy of the storage contract to
+    // drift from the first.
+    //
+    // It could not move into the React bundle with the rest of chunk B's
+    // modules. That bundle is a deferred module: it runs after the document
+    // is parsed, which is several frames too late to decide whether the page
+    // is dark — the user would watch a light shell repaint dark on every
+    // load. `window.Theme` also has to exist before app.js's init reads
+    // Theme.get(), and the drawer's theme segments in
+    // features/header/header-menu.tsx call Theme.set().
+    window.Theme = (function () {
+      const KEY = 'theme';
+      const _listeners = [];
+
+      // Screenshot-state deep link `?shot=dark` / `?shot=light`: pins the
+      // mode for THIS LOAD only, nothing stored. The capture runner and the
+      // dapp.json checks reach the page by URL with a fresh profile and no
+      // way to press the drawer's theme segment, so without this every
+      // screenshot of a dark-mode change shows the light shell. Read here
+      // rather than in apply() so the drawer's segments agree with the page.
+      // `?theme=dark` / `?theme=light` pins the same way, for a route whose
+      // `shot` names another state (#1945's `?shot=app-tone-light&theme=dark`
+      // is a light app under the DARK shell: the state is the pair).
+      let shot = null;
+      let themeParam = null;
+      try {
+        const params = new URLSearchParams(window.location.search);
+        shot = params.get('shot');
+        themeParam = params.get('theme');
+      } catch {}
+      const PINNED = (shot === 'dark' || shot === 'light') ? shot
+        : (themeParam === 'dark' || themeParam === 'light') ? themeParam : null;
+
+      function get() {
+        if (PINNED) return PINNED;
+        try {
+          const val = window.localStorage.getItem(KEY);
+          if (val === 'light' || val === 'dark') return val;
+          return 'system';
+        } catch {
+          return 'system';
+        }
+      }
+
+      // The two page grounds: THE WALLPAPER'S CREAM, and that cream
+      // inverted — the homescreen design's page and its dark derivation,
+      // which app.css paints (with its washes and star, re-tuned for dark)
+      // on the launcher, the app view and their peer screens; messages and
+      // the admin console keep the body's zinc-100 / zinc-950 on top of it.
+      // The critical <style> above and the theme-color meta both need these
+      // BEFORE any stylesheet has loaded, which is the whole point.
+      // public/manifest.webmanifest carries the light one too, for the
+      // standalone install's splash.
+      const GROUND = { light: '#f4f2e4', dark: '#0b0d1b' };
+
+      function apply() {
+        const mode = get();
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const wantDark = mode === 'dark' || (mode === 'system' && prefersDark);
+        if (wantDark) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+        // THE BROWSER CHROME IS PART OF THE PAGE'S BACKGROUND, and it was
+        // pinned to the dark ground for everybody. `theme-color` paints the
+        // address bar on Android, the status-bar strip and the rubber-band
+        // area on iOS, and the window ground a standalone install shows
+        // before the document paints — so a light-mode viewer got a black
+        // band above a #eaeaea page on every load and every overscroll.
+        // Written from the RESOLVED theme, to EVERY meta: the media-keyed
+        // pair above only covers the bytes before this script runs, and from
+        // here on both carry the resolved ground so whichever one the device
+        // matches shows the viewer's choice. The shell's own Light/Dark
+        // override is a class on <html> that no media query can see, so a
+        // viewer who picks Light on a dark OS must not be left with the dark
+        // half of the pair. This runs before first paint on load and again on
+        // every set() / OS change, so the chrome tracks the page it frames.
+        document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+          m.setAttribute('content', wantDark ? GROUND.dark : GROUND.light);
+        });
+      }
+
+      function set(mode) {
+        try {
+          if (mode === 'light' || mode === 'dark') {
+            window.localStorage.setItem(KEY, mode);
+          } else {
+            window.localStorage.removeItem(KEY);
+          }
+        } catch {}
+        apply();
+        _listeners.forEach(function (fn) { try { fn(mode); } catch {} });
+      }
+
+      function onChange(fn) {
+        _listeners.push(fn);
+      }
+
+      // Re-apply when OS preference changes (only meaningful in system mode).
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+        if (get() === 'system') {
+          apply();
+          _listeners.forEach(function (fn) { try { fn('system'); } catch {} });
+        }
+      });
+
+      // Sync across tabs when another tab writes localStorage.theme.
+      window.addEventListener('storage', function (e) {
+        if (e.key === KEY) {
+          apply();
+          _listeners.forEach(function (fn) { try { fn(get()); } catch {} });
+        }
+      });
+
+      // Apply before first paint. This is the no-flash guard.
+      apply();
+
+      return { get, set, apply, onChange };
+    }());
+  </script>
+  <script>
+    // Display module — text size and high contrast (#3969), and reduced
+    // motion (#6510).
+    // Storage contract (the same head-blocking pattern as window.Theme
+    // above: a deferred React bundle is several frames too late to size the
+    // page, so the stored choice lands on <html> before first paint):
+    //   'homeroom:text-size'  → 'large' | 'larger' | 'xlarge' | 'xxlarge'
+    //                         → key removed for Normal (the default)
+    //                           ('large' and 'larger' are the two presets
+    //                           of #3969; the slider of #6510 added the
+    //                           two steps past them)
+    //   'homeroom:contrast'   → 'more'
+    //                         → key removed for off (the default)
+    //   'homeroom:motion'     → 'reduce'
+    //                         → key removed for off (the default: follow
+    //                           the device's own reduced-motion setting)
+    // Every storage access sits in try/catch: unreadable storage means the
+    // defaults, and an unknown stored value reads as a default too.
+    window.Display = (function () {
+      const SIZE_KEY = 'homeroom:text-size';
+      const CONTRAST_KEY = 'homeroom:contrast';
+      const MOTION_KEY = 'homeroom:motion';
+      const _listeners = [];
+      // The Reduce motion pick made on this page, held in memory as well, so
+      // it applies even when the browser refuses to store it (or to forget
+      // it); null until a pick, and again when another tab writes the key.
+      let _motionChosen = null;
+      // Every stored size, smallest first; app.css has one rule for each.
+      const SIZES = ['large', 'larger', 'xlarge', 'xxlarge'];
+
+      function getTextSize() {
+        try {
+          const val = window.localStorage.getItem(SIZE_KEY);
+          if (SIZES.indexOf(val) !== -1) return val;
+          return 'normal';
+        } catch {
+          return 'normal';
+        }
+      }
+
+      function getContrast() {
+        try {
+          return window.localStorage.getItem(CONTRAST_KEY) === 'more';
+        } catch {
+          return false;
+        }
+      }
+
+      // The Reduce motion setting alone: true only when it was turned on
+      // here. Off means the device decides, so this is not the question to
+      // ask before animating; reducedMotion() below is.
+      function getMotion() {
+        if (_motionChosen !== null) return _motionChosen;
+        try {
+          return window.localStorage.getItem(MOTION_KEY) === 'reduce';
+        } catch {
+          return false;
+        }
+      }
+
+      // THE question every animation asks: the setting, or the device's own
+      // prefers-reduced-motion. Modules ask frontend/src/lib/reduced-motion.ts,
+      // which reads the same two things (the attribute apply() writes, and
+      // the media query); classic scripts ask this.
+      function reducedMotion() {
+        if (document.documentElement.getAttribute('data-motion') === 'reduce') return true;
+        try {
+          return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        } catch {
+          return false;
+        }
+      }
+
+      // Sets or removes data-text-size / data-contrast / data-motion on <html>.
+      // data-motion="reduce" is what app.css's twins of its
+      // prefers-reduced-motion rules, and Tailwind's motion-reduce: and
+      // motion-safe: variants, key off. The
+      // attributes live OUTSIDE React's body tree, exactly like `.dark`, so
+      // hydrating the shell never disagrees with them.
+      function apply() {
+        const root = document.documentElement;
+        const size = getTextSize();
+        if (size === 'normal') {
+          root.removeAttribute('data-text-size');
+        } else {
+          root.setAttribute('data-text-size', size);
+        }
+        if (getContrast()) {
+          root.setAttribute('data-contrast', 'more');
+        } else {
+          root.removeAttribute('data-contrast');
+        }
+        if (getMotion()) {
+          root.setAttribute('data-motion', 'reduce');
+        } else {
+          root.removeAttribute('data-motion');
+        }
+      }
+
+      function setTextSize(size) {
+        try {
+          if (SIZES.indexOf(size) !== -1) {
+            window.localStorage.setItem(SIZE_KEY, size);
+          } else {
+            window.localStorage.removeItem(SIZE_KEY);
+          }
+        } catch { /* unwritable storage: the choice applies for this load only */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
+      function setContrast(on) {
+        try {
+          if (on) {
+            window.localStorage.setItem(CONTRAST_KEY, 'more');
+          } else {
+            window.localStorage.removeItem(CONTRAST_KEY);
+          }
+        } catch { /* unwritable storage: the choice applies for this load only */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
+      function setMotion(reduce) {
+        _motionChosen = !!reduce;
+        try {
+          if (reduce) {
+            window.localStorage.setItem(MOTION_KEY, 'reduce');
+          } else {
+            window.localStorage.removeItem(MOTION_KEY);
+          }
+        } catch { /* unwritable storage: the choice applies for this load only */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
+      function onChange(fn) {
+        _listeners.push(fn);
+      }
+
+      // Other tabs in the same browser follow (the settings pane re-reads
+      // through the same listener).
+      window.addEventListener('storage', function (e) {
+        if (e.key === SIZE_KEY || e.key === CONTRAST_KEY || e.key === MOTION_KEY) {
+          if (e.key === MOTION_KEY) _motionChosen = null;
+          apply();
+          _listeners.forEach(function (fn) { try { fn(); } catch {} });
+        }
+      });
+
+      // Apply before first paint. This is the no-flash guard: the stored
+      // size is on <html> before app.css, whose rules read it, is applied.
+      apply();
+
+      return {
+        getTextSize, setTextSize, getContrast, setContrast,
+        getMotion, setMotion, reducedMotion, apply, onChange,
+      };
+    }());
+  </script>
+  <script>
+    // Skin module — the looks, experiments all (Settings › Experimental,
+    // off by default). The same head-blocking pattern as window.Display:
+    // the stored choice lands on <html> before app.css, whose rules read
+    // it, is applied, so a look never flashes in after first paint.
+    //   'homeroom:skin'  → 'brand'  "Paper, simplified, with brand
+    //                      styling": the standard pages in the website's
+    //                      colours and typefaces. The id is the old New
+    //                      look's, whose switch is gone.
+    //                    → 'wip'    "Homeroom brand kit (WIP)": the
+    //                      standard look with the changes still being
+    //                      tried on it, drawn with the brand kit's
+    //                      token set
+    //                      Both are drawn in light and dark, and are
+    //                      the Look menu's, an admin's preview.
+    //                    → anything else, a retired look's id among them
+    //                      ('brandkit', 'workbench', 'today', 'playground',
+    //                      gone 12 Nov 2026; 'glass', 'pastel', 'mosaic',
+    //                      'sunrise', gone 19 Nov 2026; 'paper', the one
+    //                      frame's last look, gone 20 Nov 2026), reads as
+    //                      the standard look
+    //                    → key removed for the standard look (the default)
+    // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
+    // every rule of a look to html[data-skin="<look>"]. Every storage access
+    // sits in try/catch: unreadable storage means the standard look. A pick
+    // is held in memory for the page's life as well (`chosen`), so it always
+    // applies even when the browser refuses to store it; reading storage is
+    // only what restores a pick after a reload.
+    // `?skin=<look>|standard` pins a look for THIS LOAD only, nothing
+    // stored: the capture runner reaches the page by URL with a fresh
+    // profile, the same way `?theme=` pins the mode above. A pick takes the
+    // parameter out of the address, so a reload keeps what was picked.
+    window.Skin = (function () {
+      const SKIN_KEY = 'homeroom:skin';
+      // The two looks the Look menu offers after Standard (20 Nov 2026: it
+      // keeps three). The same list is MENU_SKINS in src/lib/skin.ts.
+      // 'brand' keeps the standard pages. 'wip' is the standard look itself,
+      // where a change to it is tried before it is the standard's. It sets no
+      // data-skin (no rule of a look applies), only data-skin-wip for a rule
+      // of its own, and data-wip-tokens for the token set that draws it.
+      const SKINS = ['wip', 'brand'];
+      const _listeners = [];
+
+      let pinned = null;
+      // The pick made on this page, held even when storage refuses it.
+      let chosen = null;
+      try {
+        const want = new URLSearchParams(window.location.search).get('skin');
+        if (want === 'standard' || SKINS.includes(want)) pinned = want;
+      } catch {}
+
+      // The set of --wip-* values that draws 'wip'. It had a choice of four
+      // (as drawn, the brand kit, its second version, Highlighter); since 20
+      // Nov 2026 the brand kit is the one drawing of that look, so
+      // nothing is stored or pinned for it ('homeroom:wip-tokens' and
+      // `?tokens=` are read no more).
+      const WIP_TOKENS = 'brand';
+
+      function get() {
+        if (pinned) return pinned;
+        if (chosen) return chosen;
+        try {
+          const val = window.localStorage.getItem(SKIN_KEY);
+          return SKINS.includes(val) ? val : 'standard';
+        } catch {
+          return 'standard';
+        }
+      }
+
+      // Sets or removes data-skin on <html>. Like data-text-size, the
+      // attribute lives OUTSIDE React's body tree, so hydrating the shell
+      // never disagrees with it.
+      function apply() {
+        const root = document.documentElement;
+        const skin = get();
+        if (skin === 'wip') root.setAttribute('data-skin-wip', '');
+        else root.removeAttribute('data-skin-wip');
+        // Settings > Experimental > Advanced mode, on <html> for the looks
+        // that keep a detail for it (the same device key the switch writes,
+        // features/settings/interface-mode.ts). Advanced unless Basic is saved.
+        let basic = false;
+        try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
+        root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
+        if (skin === 'wip') root.setAttribute('data-wip-tokens', WIP_TOKENS);
+        else root.removeAttribute('data-wip-tokens');
+        if (skin !== 'standard' && skin !== 'wip') {
+          root.setAttribute('data-skin', skin);
+        } else {
+          root.removeAttribute('data-skin');
+        }
+      }
+
+      function set(skin) {
+        pinned = null;
+        // Held for the page's life whether or not the browser stores it.
+        chosen = SKINS.includes(skin) ? skin : 'standard';
+        try {
+          if (SKINS.includes(skin)) {
+            window.localStorage.setItem(SKIN_KEY, skin);
+          } else {
+            window.localStorage.removeItem(SKIN_KEY);
+          }
+        } catch { /* unwritable storage: the pick still holds in memory */ }
+        // A pick replaces a look named in the address, so a reload keeps it.
+        try {
+          const url = new URL(window.location.href);
+          if (url.searchParams.has('skin')) {
+            url.searchParams.delete('skin');
+            window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+          }
+        } catch { /* no address to rewrite */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
+      function onChange(fn) {
+        _listeners.push(fn);
+      }
+
+      // Other tabs in the same browser follow (the settings pane re-reads
+      // through the same listener). The in-memory pick is dropped first, so
+      // a choice made in another tab still wins here.
+      window.addEventListener('storage', function (e) {
+        if (e.key === SKIN_KEY) {
+          chosen = null;
+          apply();
+          _listeners.forEach(function (fn) { try { fn(); } catch {} });
+        }
+      });
+
+      // Apply before first paint: the no-flash guard.
+      apply();
+
+      return { get, set, apply, onChange };
+    }());
+  </script>
+  <script>
+    // Language first paint (frontend/locales/README.md). The document is
+    // prerendered in English, and another language is applied after
+    // hydration, once its pack has loaded. When this device last showed
+    // Homeroom in another language, hold the page until then rather than
+    // flash the English: lib/i18n/core.ts writes the key on every switch and
+    // lifts the hold the moment a language is on screen. The hold lifts
+    // itself after three seconds whatever happens, so a slow or failed pack
+    // costs a moment of English, never the page.
+    (function () {
+      try {
+        // The languages written right to left, by primary subtag. A literal
+        // copy of RTL_LANGUAGES in lib/i18n/direction.ts: this runs before
+        // that module loads, and tests/language-direction.test.js pins the
+        // two lists to each other. Arabic must not paint left to right.
+        var RTL = ['ar', 'he', 'fa', 'ur', 'ps', 'dv', 'ckb', 'yi', 'sd', 'ug'];
+        var shown = localStorage.getItem('homeroom:language:shown');
+        if (!shown) return;
+        var root = document.documentElement;
+        var primary = String(shown).toLowerCase().split(/[-_]/)[0];
+        root.lang = shown;
+        root.dir = RTL.indexOf(primary) === -1 ? 'ltr' : 'rtl';
+        if (shown === 'en') return;
+        root.classList.add('language-pending');
+        setTimeout(function () { root.classList.remove('language-pending'); }, 3000);
+      } catch (e) { /* storage blocked: nothing remembered, nothing held */ }
+    }());
+  </script>
+  <script>
+    // No Home before a first screen that is not Home: the signed-out
+    // landing, the "You're in" mail's link, and "What do you want to make?"
+    // across a reload.
+    //
+    // The prerendered markup is Home, and it paints before any script has
+    // run. Three documents are about to show something else, so they hold
+    // the body hidden from before that first paint, and the page ground
+    // shows:
+    //
+    //   - A browser with no saved session (App.SESSION_SNAPSHOT_KEY in
+    //     public/js/app.js, written on sign-in and cleared on sign-out):
+    //     nobody is signed in here, never or not since signing out, so the
+    //     first screen is the landing. Evan, 10 Oct 2026: refreshing the
+    //     signed-out welcome page showed Home's skeleton first. A browser
+    //     that was signed in keeps the skeleton, since Home is what comes.
+    //
+    //   - A waitlist "You're in" link (`?signup=1` / `?login=1`, the shapes
+    //     sendWaitlistReleaseMail writes). It opens signed out, on the
+    //     landing with the sign-in sheet over it (AuthScreens.enter). Evan,
+    //     10 Oct 2026: arriving from the phone app, Home showed first.
+    //   - The story's sign-in sheet sets the first session's make flag
+    //     (features/first-session, MAKE_FLAG) before it finishes a new
+    //     account's sign-in, and that sign-in can reload the page onto the
+    //     live build (App._moveToLiveShell, from AuthScreens.finishLogin).
+    //   - A saved session that still owes "What do you want to make?" (a
+    //     reload on it, or the tab reopened): the shell draws it from the
+    //     snapshot as it starts (CommunitiesFirstRun._showFromSnapshot).
+    //     Onboarding run three, 12 Oct 2026: a reload of that screen
+    //     painted Home's skeleton for a frame before it.
+    //
+    // The shell lifts the hold once it has drawn its first screen:
+    // App._liftFirstSessionBoot in public/js/app.js, called once enterAuthed
+    // has drawn it, and when the shell boots signed out or into the waiting
+    // room. The timer is the floor under all of that: whatever happens, the
+    // page shows within 8 seconds.
+    (function () {
+      var hold = false;
+      try { hold = sessionStorage.getItem('usernode:first-session:make') === '1'; } catch (_) {}
+      try {
+        if (!hold) {
+          var saved = localStorage.getItem('usernode.session.v1');
+          if (!saved) hold = true;
+          else {
+            // Still owes "What do you want to make?" (the join step's
+            // firstSessionNow, features/auth/communities-first-run.js): the
+            // reload draws it from this snapshot, so Home is not shown first.
+            var owed = (JSON.parse(saved) || {}).user || {};
+            hold = owed.needsCommunitiesChoice === true && owed.storyFirstSession === true
+              && owed.needsUsernameChoice !== true && owed.hasPlatformAccess !== false;
+          }
+        }
+      } catch (_) {}
+      try {
+        if (!hold && !location.hash) {
+          var query = new URLSearchParams(location.search);
+          hold = query.has('signup') || query.has('login');
+        }
+      } catch (_) {}
+      if (!hold) return;
+      var root = document.documentElement;
+      root.classList.add('first-session-boot');
+      // SIGNING IN FROM THE FIRST PAINT (onboarding run two, 12 Oct 2026,
+      // iPhone 17 Safari): a "You're in" mail's link held a blank ground for
+      // about 220ms before the landing drew "Signing you in…". A link the
+      // landing spends as the page opens (auth-screens.js `enter`, landing
+      // `straightLink`: signup, its token and its one-time sign-in) shows the
+      // spinner of that screen, where that screen draws it, from the first
+      // paint; the screen's own words and logotype join it there.
+      try {
+        if (!location.hash) {
+          var link = new URLSearchParams(location.search);
+          if (link.has('signup') && /^[A-Za-z0-9_-]{8,128}$/.test(link.get('t') || '')
+              && /^[A-Za-z0-9_-]{43}$/.test(link.get('key') || '')) root.classList.add('release-signing-in');
+        }
+      } catch (_) {}
+      setTimeout(function () {
+        root.classList.remove('first-session-boot');
+        root.classList.remove('release-signing-in');
+      }, 8000);
+    })();
+  </script>
+  <script>
+    // The first paint's boxes at the height this device last drew them (#10,
+    // 19 Oct 2026). The prerendered Home is skeletons and the desktop sidebar
+    // has no community rows yet, and the real page used to land at other
+    // heights and push everything under it down (a layout shift of 0.0585 on
+    // every cold desktop load). Once they have drawn, their heights are kept
+    // per window size and text size (frontend/src/lib/first-paint-reserve.ts,
+    // which computes the same key); here they go onto <html> before the first
+    // paint, and app.css holds each box at its height for as long as it is
+    // still a skeleton. Display-only, and only on a device that was signed in
+    // (the session snapshot), where Home is what comes. Outside React's body
+    // tree, like `.dark`.
+    (function () {
+      try {
+        if (!localStorage.getItem('usernode.session.v1')) return;
+        var kept = JSON.parse(localStorage.getItem('usernode.first-paint.v1') || 'null');
+        var root = document.documentElement;
+        var key = window.innerWidth + 'x' + window.innerHeight + '|'
+          + (root.getAttribute('data-text-size') || 'normal');
+        var r = kept && kept.sizes && kept.sizes[key];
+        if (!r) return;
+        var boxes = {
+          homeApps: '--reserve-home-apps',
+          homeDiscover: '--reserve-home-discover',
+          homeChallenges: '--reserve-home-challenges',
+          railCommunities: '--reserve-rail-communities'
+        };
+        var any = false;
+        for (var box in boxes) {
+          var px = Number(r[box]);
+          if (r[box] != null && isFinite(px) && px >= 0 && px < 4000) {
+            root.style.setProperty(boxes[box], px + 'px');
+            any = true;
+          }
+        }
+        if (any) root.classList.add('first-paint-reserved');
+      } catch (_) { /* nothing kept: the skeletons keep their own shape */ }
+    })();
+  </script>
+  <script>
+    // ── The boot record: what went wrong, for an inspector to read ───────
+    //
+    // When the boot fails, it fails INVISIBLY: every island is left as the
+    // empty markup the prerender shipped, and the screen the router reveals
+    // has nothing in it. This block captures every error from as early in
+    // the document as a script can run, so a reader with an inspector
+    // attached, or a tester with a console, can ask what happened. It is
+    // inline and classic, with no imports, no framework and no stylesheet,
+    // because the things it records are precisely the bundle, the framework
+    // and the stylesheet failing.
+    //
+    // It PAINTS NOTHING. An earlier version judged the page by its pixels
+    // and painted a "did not finish loading" panel over anything it took for
+    // blank. On real devices it accused pages that were fine, and a
+    // diagnostic that lies is worse than none, so the judgement and the
+    // panel are gone. Everything here is passive:
+    //
+    //   window.__unBoot.errors    thrown errors, rejected promises, scripts
+    //                             and stylesheets that failed to load, and
+    //                             boot steps that threw (frontend/src/lib/
+    //                             boot-guard.ts pushes into the same list)
+    //   window.__unBoot.steps     boot steps that completed, with when
+    //   window.__unBoot.snapshot()  the document's state as one string, for
+    //                             pasting out of a console
+    //
+    // Nothing in it prints a token: query values are never read, only their
+    // keys, and the fragment is cut at its first segment.
+    (function () {
+      'use strict';
+      var W = (window.__unBoot = window.__unBoot || { errors: [], steps: [] });
+      if (!Array.isArray(W.errors)) W.errors = [];
+      if (!Array.isArray(W.steps)) W.steps = [];
+      function push(step, message, stack) {
+        try {
+          W.errors.push({ step: step, message: String(message || ''), stack: stack || '' });
+        } catch (e) { /* a full or frozen array is not worth a throw */ }
+      }
+      window.addEventListener('error', function (e) {
+        push('error', (e && e.message) || 'script error', e && e.error && e.error.stack);
+      });
+      // A script or stylesheet that FAILED TO LOAD fires `error` on its own
+      // element and it does not bubble, so the listener above never hears
+      // it. Capture phase does. A thrown error has `window` as its target
+      // and is already recorded above.
+      window.addEventListener('error', function (e) {
+        var t = e && e.target;
+        if (!t || t === window || !t.tagName) return;
+        var url = '';
+        try { url = String(t.src || t.href || '').split('?')[0].split('#')[0]; } catch (x) { url = ''; }
+        push('resource', String(t.tagName).toLowerCase() + ' failed to load: ' + (url || '(no url)'));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e && e.reason;
+        push('unhandledrejection', (r && r.message) || String(r), r && r.stack);
+      });
+
+      function nameOf(el) {
+        if (!el) return 'null';
+        var t = (el.tagName || '?').toLowerCase();
+        if (el.id) return t + '#' + el.id;
+        var c = el.classList && el.classList.length ? el.classList[0] : '';
+        return c ? t + '.' + c : t;
+      }
+      function safeRoute() {
+        var keys = [];
+        try {
+          new URLSearchParams(window.location.search).forEach(function (v, k) { keys.push(k); });
+        } catch (e) { /* no URL API */ }
+        var hash = window.location.hash || '';
+        var m = /^(#[^/]*)(\/.*)?$/.exec(hash);
+        if (m) hash = m[1] + (m[2] ? '/...' : '');
+        return window.location.pathname + (keys.length ? '?' + keys.join(',') : '') + hash;
+      }
+      function samplePoints() {
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        if (!(w > 0 && h > 0)) return [];
+        return [
+          [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
+          [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
+        ];
+      }
+      // Every line is its own try/catch and answers "?" on failure: a
+      // diagnostic that throws is the joke of the file.
+      W.snapshot = function () {
+        var lines = [];
+        function add(label, fn) {
+          var value = '?';
+          try { value = fn(); } catch (e) { value = '?'; }
+          lines.push(label + ': ' + value);
+        }
+        add('at', function () { return Math.round(window.performance.now()) + 'ms'; });
+        add('document', function () {
+          return document.readyState + ', ' + document.visibilityState + ', '
+            + (window.navigator.onLine ? 'online' : 'offline') + ', '
+            + window.innerWidth + 'x' + window.innerHeight;
+        });
+        add('route', safeRoute);
+        add('on top', function () {
+          var pts = samplePoints();
+          var out = [];
+          for (var i = 0; i < pts.length; i++) {
+            out.push(nameOf(document.elementFromPoint(pts[i][0], pts[i][1])));
+          }
+          return out.join(' ') || 'no viewport';
+        });
+        add('screens shown', function () {
+          var els = document.querySelectorAll('[id$="-screen"], #app-view');
+          var out = [];
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el.hidden || (el.classList && el.classList.contains('hidden'))) continue;
+            var text = '';
+            try { text = (el.innerText || '').trim(); } catch (e) { text = ''; }
+            out.push(el.id + '(text=' + text.length + ')');
+          }
+          return out.length ? out.join(' ') : 'none';
+        });
+        add('globals', function () {
+          var names = ['App', 'AuthScreens', 'Home', 'Offline', 'NativeChrome', 'UsernodeReact'];
+          var have = [];
+          var miss = [];
+          for (var i = 0; i < names.length; i++) (window[names[i]] ? have : miss).push(names[i]);
+          var mount = window.UsernodeReact && window.UsernodeReact.mount;
+          (mount && mount.ensure ? have : miss).push('UsernodeReact.mount');
+          return 'present ' + (have.join(',') || '-') + '; missing ' + (miss.join(',') || '-');
+        });
+        add('react', function () {
+          var keys = Object.keys(document.body || {});
+          for (var i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf('__reactContainer') === 0) return 'adopted the document';
+          }
+          return 'has NOT adopted the document';
+        });
+        add('boot steps', function () {
+          var s = W.steps || [];
+          if (!s.length) return 'none completed';
+          var out = [];
+          for (var i = 0; i < s.length; i++) out.push(s[i].step + '@' + s[i].at + 'ms');
+          return out.join(' ');
+        });
+        add('errors', function () {
+          var errs = W.errors || [];
+          if (!errs.length) return 'none recorded';
+          var out = [];
+          for (var i = 0; i < errs.length && i < 8; i++) out.push('[' + errs[i].step + '] ' + errs[i].message);
+          return out.join(' | ');
+        });
+        add('session', function () {
+          var A = window.App;
+          if (!A) return 'no App';
+          return (A.user ? 'user held' : 'no user')
+            + (A.user && A.user.hasPlatformAccess === false ? ' (no platform access)' : '')
+            + ', fromSnapshot=' + !!A._sessionFromSnapshot
+            + ', authedBooted=' + !!A._authedBooted
+            + ', authScreen=' + ((window.AuthScreens && window.AuthScreens._current) || 'none');
+        });
+        add('interiors asked for', function () {
+          var m = window.__usernodeMounted && window.__usernodeMounted.mounted;
+          var ks = m ? Object.keys(m) : [];
+          return ks.length ? ks.join(',') : 'none';
+        });
+        add('visibility published', function () {
+          var v = window.__usernodeVisibility && window.__usernodeVisibility.visible;
+          var out = [];
+          if (v) for (var k in v) if (v[k]) out.push(k);
+          return out.length ? out.join(',') : 'none';
+        });
+        add('storage', function () {
+          try { void window.localStorage.length; return 'readable'; } catch (e) { return 'throws'; }
+        });
+        add('worker', function () {
+          var sw = window.navigator.serviceWorker;
+          return sw && sw.controller ? 'controlling this page' : 'not controlling this page';
+        });
+        add('html class', function () {
+          return (document.documentElement.className || '').slice(0, 100) || '-';
+        });
+        return lines.join('\n');
+      };
+    }());
+  </script>
+  <script src="/usernode-bridge.js"></script>
+  <script>
+    // THIS DOCUMENT IS THE PLATFORM, and the bridge above needs telling.
+    //
+    // Its __USERNODE_PLATFORM_LINK__ block draws the Homeroom mark in the
+    // corner of a top-frame page served from an app's own subdomain — a
+    // shared link, where nothing else says the page is a Homeroom app. The
+    // shell loads that same bridge, in the top frame, from the platform's
+    // apex, and the two are indistinguishable by hostname shape alone:
+    // `<slug>.<domain>` and the platform's own `<domain>` are both a label
+    // in front of a registrable domain, and only the platform knows which
+    // of the two it is serving. So the shell says so outright rather than
+    // leaving the bridge to guess, and the guess it used to make instead
+    // is why the mark never appeared on a shared link at all.
+    //
+    // Read at DOMContentLoaded, which is strictly after this head-blocking
+    // script has run.
+    window.__usernodePlatformShell = true;
+
+    // Mark the document when running as the top frame of the Homeroom
+    // Flutter WebView. This used to hide the header title as well — the
+    // shell shows the screen name in its own AppBar — but on a device
+    // that read as a screen with no title, so the in-page one is drawn
+    // there now too (see css/app.css). The class still gates the
+    // safe-area and native-performance rules, so it is applied the same
+    // way: on <html>, before app.js runs, so nothing flashes — the
+    // bridge sets
+    // `window.usernode.isNative` synchronously at load time based on
+    // the presence of the injected `Homeroom` JS channel.
+    // `?un-native-webview=1` forces the same class from a plain URL. The
+    // real signal is the injected JS channel, which a headless browser can
+    // never have — so without this override the native-only presentation
+    // (see the "Native iOS performance baseline" block in css/app.css) is
+    // unreachable by proposal checks and invisible to before/after
+    // screenshots. Mirrors the kit's own `?un-platform=ios` skin override,
+    // and is deliberately NOT staging-gated: a pure presentation flag with
+    // no writes, so the "before" shot works the moment this ships.
+    // Classify native first: WebViews also report browser display mode,
+    // but their header must retain the status-bar inset.
+    var forcedNative = false;
+    try {
+      forcedNative = new URLSearchParams(window.location.search)
+        .get('un-native-webview') === '1';
+    } catch (e) { /* no URL API / opaque origin — fall through */ }
+    if (forcedNative || (window.usernode && window.usernode.isNative)) {
+      document.documentElement.classList.add('in-native-webview');
+    }
+
+    // THE SIDE PANEL BESIDE A RUNNING APP (frontend/src/features/side-panel/).
+    // On a desktop window the pages about a running app open in a panel beside
+    // it, and that panel is this same platform loaded again in a frame at
+    // `/?panel=1#<route>`. `in-side-panel` on <html> is what hides every piece
+    // of chrome (public/css/app.css) and what tells the scripts that write
+    // state the parent window owns to stand down (lib/side-panel-mode.ts, and
+    // App.embeddedPanel in public/js/app.js). Decided HERE, before the first
+    // paint, so the header and the tab bar never flash inside the panel.
+    //
+    // Honoured ONLY when this document really is framed by the platform: a
+    // a child of another window on this origin. The parent platform may itself
+    // be inside Preview, with a cross-origin window above it. The embedded
+    // runtime talks to that immediate parent, so use the same boundary here.
+    // Reading a cross-origin parent's location throws, which is the answer "no".
+    // A `?panel=1` address opened in a tab of its own, or framed by any other
+    // site, is the ordinary platform.
+    var inSidePanel = false;
+    try {
+      inSidePanel = new URLSearchParams(window.location.search).get('panel') === '1'
+        && window.parent !== window
+        && window.parent.location.origin === window.location.origin;
+    } catch (e) { inSidePanel = false; }
+    if (inSidePanel) document.documentElement.classList.add('in-side-panel');
+
+    // BROWSER-CHROME GUARD (#2509). Chrome on Android reports a nonzero
+    // env(safe-area-inset-top) even in a NORMAL browser tab, where the
+    // status bar belongs to the browser chrome and the page never owns
+    // those pixels. The shell's black-translucent install handling
+    // reserves that strip anyway (see the "page owns the status-bar
+    // strip" block above and --platform-safe-top in app.css), so a
+    // browser-tab load drew one status bar's worth of blank page above
+    // the header controls — the "excessive top margin" of #2509.
+    //
+    // Standalone display modes (installed PWA, fullscreen, minimal-ui)
+    // and the native WebView are the surfaces where the page really does
+    // reach the notch, and there the reservation stays. Everywhere else
+    // we tag <html> so app.css can zero the token for this load. Runs
+    // pre-paint in the same head-blocking pass as the theme module, so
+    // the reservation never lands and then retracts (no flash).
+    var isBrowserChrome = false;
+    try {
+      isBrowserChrome = !window.matchMedia(
+        '(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui)'
+      ).matches;
+    } catch (e) { /* no matchMedia / opaque origin — leave the class off */ }
+    if (isBrowserChrome
+        && !document.documentElement.classList.contains('in-native-webview')) {
+      document.documentElement.classList.add('web-browser-chrome');
+    }
+  </script>
+  <!-- Third-party browser libs, vendored into public/vendor/ by
+       `npm run vendor:assets` (was cdn.jsdelivr.net). Version-stamped
+       filenames ARE the pin; sha384 provenance lives in
+       public/vendor/README.md, since same-origin tags can't use SRI. Same
+       order as before: QR first, then marked + DOMPurify, which power
+       PlatformMarkdown.render (lib/platform-markdown.js) — if either
+       fails to load, it still falls back to a raw <pre> view. -->
+  <script src="/vendor/qrcode-1.0.0.min.js"></script>
+  <script src="/vendor/marked-15.0.12.min.js"></script>
+  <script src="/vendor/purify-3.4.17.min.js"></script>
+  <!-- usernode-native kit: the platform dogfoods its own hosted kit
+       (same-origin absolute path — the canonical copy this server
+       serves to every app). Loaded before app.css so the platform's
+       --un-* overrides there win the cascade. -->
+  <link rel="stylesheet" href="/usernode-native/v1/native.css">
+  <script src="/usernode-native/v1/native.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+  <!-- Tailwind, COMPILED and served by this app (was cdn.tailwindcss.com's
+       in-browser JIT plus an inline `tailwind.config` here). The config moved
+       verbatim to tailwind.config.js at the repo root. Dockerfile runs
+       `npm run build:css` in a disposable builder stage for every image and
+       copies only the generated stylesheet into the production runtime. The
+       output is ignored locally and never committed.
+
+       POSITION MATTERS — KEEP THIS LINK LAST, after native.css and app.css.
+       The Play CDN did NOT inject its <style> up where its <script> tag sat:
+       it compiled asynchronously (it awaits PostCSS) and then ran
+       `document.head.append(...)`, so the generated stylesheet always landed
+       at the END of <head>, i.e. after both of those links. Utilities
+       therefore won every equal-specificity conflict against them, and
+       app.css was written against exactly that cascade. Linking the compiled
+       file first inverted it and silently broke every such collision —
+       `.attr-chip { font: inherit; background: none }` in app.css, for one,
+       started beating `text-[0.65rem] font-medium bg-zinc-500/10` and blew up
+       the "Set priority" / "Set category" / "Unassigned" chips on the dev
+       screen (#938 fallout). tests/tailwind-build.test.js asserts this
+       ordering so it cannot regress again. -->
+  <link rel="stylesheet" href="/css/tailwind.css">
+  <script>
+    // Cascade self-check. The source-order contract above is asserted at build
+    // time by tests/tailwind-build.test.js, but that only sees THIS file — it
+    // cannot see a stale service-worker precache, a proxy that reorders, or a
+    // deploy that ships a half-built stylesheet. So verify the outcome in the
+    // browser: probe the exact trio that regressed (an app.css `.attr-chip`
+    // shorthand vs. the utilities it collides with) and report if a utility
+    // lost. The only cost on a healthy load is one detached span.
+    //
+    // console.error is the point, not a side effect: the dev console forwards
+    // it, and the platform's proposal checks fail any route that logs one — so
+    // a reordered stylesheet blocks the merge instead of shipping a screen of
+    // 16px unstyled chips.
+    // Runs on DOMContentLoaded, not inline: a probe appended while <body> is
+    // still unparsed has no layout box, and getComputedStyle returns empty
+    // strings for it.
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        var probe = document.createElement('span');
+        probe.className = 'attr-chip text-[0.65rem] font-medium bg-zinc-500/10';
+        probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none';
+        document.body.appendChild(probe);
+        // Read everything BEFORE detaching — getComputedStyle is live, and a
+        // removed element resolves back to empty strings.
+        var s = getComputedStyle(probe);
+        var fontSize = s.fontSize;
+        var size = parseFloat(fontSize);
+        var weight = s.fontWeight;
+        var bg = s.backgroundColor;
+        probe.remove();
+        var tinted = bg && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(bg);
+        if (!(size > 0 && size < 12) || weight !== '500' || !tinted) {
+          console.error(
+            '[tailwind] compiled utilities are losing the cascade to app.css — '
+            + '/css/tailwind.css must be the LAST stylesheet in <head>. Probe got '
+            + 'font-size:' + fontSize + ' font-weight:' + weight
+            + ' background:' + bg + ' (expected ~10.4px / 500 / a tint).');
+        }
+      } catch (e) { /* never let a self-check break the shell */ }
+    });
+  </script>
+  <!-- PWA (#487): installable shell + read-only offline mode. The service
+       worker is registered by src/lib/service-worker.ts, from the React
+       bundle loaded at the end of this head (#1078 retired the
+       /js/offline.js module that used to do it).
+       The `theme-color` metas this block used to carry are at the TOP of
+       this head now, because the theme module rewrites them — see the note
+       there.
+       The manifest's own `background_color` is the install splash's and is
+       necessarily static (a manifest is fetched with no theme to read), so it
+       states the light ground, which is what the majority of loads settle
+       on.
+       The icons are the Homeroom mark in brand cream on black, all generated by
+       scripts/generate-pwa-icons.js, which says what each file is framed
+       for. The touch icon is its own opaque 180px file, not a manifest icon:
+       iOS reads this link BEFORE the manifest and paints any transparent
+       pixel black, so the old pre-rounded 192 grew black corners there. -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/icons/v3/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <!-- React shell entry. A deferred module on purpose: it hydrates AFTER the
+       legacy /js/** scripts at the end of <body> have defined their globals and
+       BEFORE DOMContentLoaded runs their init()s. frontend/src/main.tsx explains
+       why that ordering — and the flushSync around hydration — is load-bearing. -->
+  <script type="module" src="/shell/assets/shell.js"></script>
+</head>
+<body class="bg-zinc-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh"><link rel="preload" as="image" href="/brand/homeroom-mark.png"/><link rel="preload" as="image" href="/icons/v3/icon-192.png"/><a href="#platform-tabs" class="sr-only focus:not-sr-only focus:fixed focus:start-3 focus:top-2 focus:z-[100] focus:rounded-full focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:shadow-lg focus:bg-white focus:text-violet-700 focus:ring-2 focus:ring-violet-500 dark:focus:bg-zinc-900 dark:focus:text-violet-300">Skip to navigation</a><header id="platform-header" class="un-safe-top-extend relative z-10 flex items-center gap-4 px-4 pt-2 pb-4 shrink-0 bg-zinc-200 dark:bg-zinc-900 rounded-b-2xl -mb-2"><div class="h-7 shrink-0 flex items-center gap-1.5 min-w-0 platform-header-left"><button id="sidebar-toggle" type="button" class="platform-sidebar-toggle shrink-0 w-7 h-7 items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]" aria-pressed="true" aria-controls="platform-tabs" aria-label="Hide sidebar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zM9 4v16"></path></svg></button><a id="back-btn" class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] un-touch-target hidden" aria-label="Home"><svg id="back-icon-arrow" class="hidden w-5 h-5 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg><svg class="back-icon-android w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg><svg id="back-icon-home" class="hidden w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"></path></svg><svg id="back-icon-close" class="hidden w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></a></div><h1 id="header-title" class="flex-1 min-w-0 text-base font-semibold pointer-events-none truncate
+               text-start"><span class="inline-flex items-center gap-2 max-w-full align-middle"><span class="min-w-0 flex items-baseline gap-1.5"><span id="header-title-name" class="min-w-0 truncate"><svg class="h-5 w-[77.5px]" fill="currentColor" viewBox="0 0 1236.9 319.2" aria-hidden="true"><path d="M351.115 147.634C316.801 152.422 289.669 183.544 291.265 226.636C292.063 235.414 292.861 237.01 293.659 240.202C254.557 255.364 263.335 217.858 268.921 199.504L321.589 15.9635C322.387 11.9735 319.195 9.57951 316.801 10.3775L268.123 27.9335C262.537 30.3275 258.547 35.1155 256.951 40.7015L231.415 146.038C216.253 150.826 202.687 152.422 181.939 153.22L208.273 49.4795C209.071 45.4895 205.879 43.0955 203.485 44.6915L156.403 63.8435C151.615 66.2375 147.625 71.0255 146.827 76.6115L127.675 155.614C108.523 156.412 86.9769 158.806 70.2189 163.594C40.6929 172.372 7.97491 193.12 8.77291 219.454C9.57091 233.818 19.1469 244.99 31.1169 252.97C33.5109 255.364 37.5009 252.97 36.7029 249.778C35.1069 234.616 62.2389 204.292 118.897 193.918L93.3609 300.85C92.5629 304.042 95.7549 306.436 98.1489 305.638L142.039 288.082C146.827 285.688 150.019 282.496 150.817 276.91L171.565 189.13C186.727 189.13 202.687 187.534 222.637 184.342C217.051 205.09 211.465 229.03 212.263 241.798C215.455 291.274 264.931 289.678 301.639 252.172C310.417 263.344 326.377 269.728 346.327 268.93C383.833 266.536 408.571 241.798 412.561 199.504C417.349 165.19 388.621 142.846 351.115 147.634ZM371.863 205.09C367.873 227.434 356.701 240.202 342.337 240.202C331.165 239.404 327.175 230.626 328.771 213.868C331.165 194.716 343.135 175.564 358.297 175.564C368.671 175.564 375.055 184.342 371.863 205.09Z"></path><path d="M564.188 146.834C550.622 146.834 533.864 154.814 522.692 167.582C520.298 154.016 509.126 146.834 497.954 147.632C486.782 148.43 469.226 155.612 458.054 171.572L462.842 150.824C463.388 148.1 461.022 148.43 459.65 148.43L433.316 149.228C430.124 150.026 426.932 151.622 426.134 155.612L398.204 262.544V264.14C398.204 266.534 399.002 267.332 402.194 266.534L434.114 264.14C436.508 264.14 439.7 261.746 440.498 258.554L450.074 218.654C454.862 197.906 469.226 180.35 479.6 180.35C485.186 180.35 487.58 188.33 485.984 196.31L468.428 262.544C467.63 264.938 469.226 267.332 471.62 266.534L505.136 264.14C507.53 264.14 509.924 262.544 510.722 260.15L521.894 214.664C527.48 193.118 541.844 180.35 548.228 180.35C554.612 180.35 556.208 185.936 554.612 196.31L538.652 262.544C537.854 264.938 539.45 267.332 541.844 266.534L572.168 264.14C575.36 264.14 578.552 261.746 579.35 258.554L592.916 195.512C597.704 165.188 588.128 148.43 564.188 146.834Z"></path><path d="M663.136 145.242C629.62 146.838 594.508 170.778 588.124 217.86C584.932 252.174 607.276 272.922 647.176 268.134C663.934 267.336 680.887 259.6 688.672 252.972L691.401 249.863C692.651 248.439 693.155 246.509 692.76 244.656L692.662 244.194L688.672 232.224L688.145 230.739C687.758 229.647 686.454 229.202 685.48 229.83C682.887 231.1 667.924 241.8 647.176 241.8C633.61 241.002 626.428 234.618 627.226 220.254C662.338 219.456 703.834 208.284 705.43 179.556C706.228 160.404 688.672 144.444 663.136 145.242ZM631.216 200.304C634.408 183.546 647.176 170.778 659.146 170.778C666.328 170.778 669.52 174.768 667.924 181.95C665.53 193.92 644.782 200.304 631.216 200.304Z"></path><path d="M791.609 182.742L801.983 184.338L811.559 150.822C808.367 145.236 776.447 141.246 757.295 165.186L761.285 150.822C761.887 148.101 759.887 147.601 758.093 147.63L728.567 149.226C725.375 150.024 721.385 151.62 720.587 155.61L690.263 261.744C689.465 264.138 690.887 265.734 692.657 265.734L726.971 263.34L729.774 262.958C731.388 262.738 732.757 261.663 733.355 260.148C742.133 227.43 744.527 181.146 791.609 182.742Z"></path><path d="M860.244 146.83C818.748 151.618 789.222 190.72 790.02 226.63C790.818 256.954 812.364 270.52 841.89 268.924C882.588 268.126 908.124 244.984 916.104 205.084C923.286 161.992 895.356 142.042 860.244 146.83ZM873.012 217.852C867.426 232.216 857.052 241.792 845.082 239.398C834.708 237.004 827.526 223.438 836.304 198.7C840.294 185.932 851.466 173.962 861.042 173.962C877.002 173.164 881.79 191.518 873.012 217.852Z"></path><path d="M976.755 146.028C943.239 151.614 914.511 181.14 912.915 222.636C912.915 253.758 934.461 271.314 969.573 268.122C1003.09 265.728 1032.61 242.586 1036.6 199.494C1042.19 160.392 1013.46 139.644 976.755 146.028ZM994.311 213.06C990.321 227.424 979.149 242.586 963.987 239.394C954.411 237 949.623 224.232 956.007 201.09C961.593 184.332 971.169 173.958 983.139 173.958C996.705 174.756 1000.69 189.12 994.311 213.06Z"></path><path d="M1195.4 144.44C1181.04 143.642 1162.69 148.43 1152.31 166.784H1151.51C1147.52 150.824 1134.76 145.238 1123.58 146.036C1111.61 146.834 1095.65 153.218 1085.28 170.774L1091.66 150.824L1092.16 149.52C1092.51 148.61 1091.84 147.632 1090.87 147.632L1057.35 149.228H1055.53C1053.92 149.228 1052.45 150.161 1051.76 151.622L1022.24 263.342C1021.44 265.736 1022.24 266.534 1024.63 266.534L1064.53 264.14C1065.32 264.117 1065.97 263.536 1066.09 262.759L1066.13 262.544L1078.1 213.866C1082.89 198.704 1095.65 180.35 1107.62 180.35C1113.21 180.35 1115.6 188.33 1114.01 196.31L1098.85 263.342C1098.85 265.736 1098.85 266.534 1101.24 266.534L1137.95 264.14L1138.27 264.134C1139.23 264.113 1140.07 263.47 1140.34 262.544L1150.72 215.462C1156.3 194.714 1169.07 179.552 1178.65 179.552C1185.83 180.35 1186.63 186.734 1184.23 197.906L1169.07 263.342C1168.27 265.736 1169.87 266.534 1171.46 266.534L1209.77 264.938L1224.93 196.31C1232.11 160.4 1222.54 146.036 1195.4 144.44Z"></path><path d="M376.69 50.1955C377.666 50.5451 377.879 50.6644 378.751 51.2309C379.56 52.6431 380.144 59.6809 380.651 61.8518C384.314 77.6152 386.094 84.7939 401.832 91.1538C405.632 92.6901 409.733 93.3397 413.112 95.5859C413.68 96.5188 413.5 97.0692 413.363 98.1341C413.181 98.4076 412.964 98.7294 412.717 99.1C403.498 101.849 389.977 102.267 382.784 109.796C379.186 113.565 374.333 124.66 372.542 129.752C371.546 132.575 371.035 134.922 368.451 136.279L366.752 135.487C365.002 133.492 364.476 124.573 363.926 121.379C363.413 118.448 362.754 115.545 361.953 112.679C361.604 111.407 360.536 107.746 359.758 106.704C355.701 101.291 348.249 97.4114 342.035 95.1282C338.92 93.984 335.926 93.2163 333.063 91.6978C331.911 91.086 331.902 90.6855 331.668 89.6918C331.938 88.8377 331.974 88.4387 332.803 87.9778C334.547 87.0114 337.416 86.787 339.376 86.4416C346.772 85.1384 354.228 83.6495 360.427 79.1072C368.818 72.9623 372.148 52.8035 376.69 50.1955Z"></path></svg></span></span></span></h1><div class="ms-auto shrink-0 flex items-center gap-2.5"><a id="notifications-btn" href="#notifications" class="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]" aria-label="Notifications" aria-haspopup="dialog"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg><span id="notifications-badge" data-session-done="0" class="hidden absolute -top-1 -end-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center" aria-label="Unread notifications"></span></a><button id="platform-mark-btn" type="button" class="shrink-0 inline-flex items-center gap-0.5 h-7 pe-0.5 un-touch-target
+                 text-[color:var(--brand-ink)]" aria-haspopup="dialog" aria-expanded="false" aria-label="Homeroom menu"><span class="relative shrink-0 inline-flex"><img src="/brand/homeroom-mark.png" alt="" aria-hidden="true" draggable="false" width="26" height="26" class="platform-mark-tile w-[26px] h-[26px] rounded-[7px] shrink-0"/><span id="feedback-queue-dot" class="hidden absolute -bottom-0.5 -start-0.5 w-2 h-2 rounded-full bg-amber-400"></span><span id="improve-working-dot" class="hidden absolute -top-1.5 -end-1.5 flex items-center justify-center w-[15px] h-[15px] rounded-full bg-zinc-200 text-violet-600 dark:bg-zinc-900 dark:text-violet-400" aria-hidden="true"><svg class="w-3 h-3 animate-spin motion-reduce:animate-none" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="40 57"></circle></svg></span></span><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg></button></div></header><div id="connection-status" role="status" aria-live="polite" data-status="online" class="connection-status hidden pointer-events-none fixed left-1/2 z-30 -translate-x-1/2
+                 top-[calc(var(--browser-banner-h,0px)+var(--platform-header-h)+var(--platform-safe-top)+0.375rem)]
+                 inline-flex max-w-[calc(var(--platform-float-w)-24px)] items-center gap-1.5 whitespace-nowrap rounded-full
+                 bg-zinc-800/90 px-3 py-1 text-xs font-medium text-white shadow-sm
+                 dark:bg-zinc-100/90 dark:text-zinc-900"><span class="connection-status-dot h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden="true"></span><span class="connection-status-words truncate">Connecting…</span></div><div id="mobile-install-banner" class="hidden shrink-0 items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-xs"><img src="/icons/v3/icon-192.png" alt="" aria-hidden="true" class="w-8 h-8 rounded-lg shrink-0"/><div class="min-w-0 flex-1 text-start leading-tight"><div class="font-medium text-zinc-900 dark:text-zinc-100 truncate">Homeroom</div><div class="text-zinc-500 dark:text-zinc-400 truncate">Get the app</div></div><a id="mobile-install-open" target="_blank" rel="noopener noreferrer" class="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target">Get</a><button id="mobile-install-dismiss" type="button" aria-label="Dismiss install banner" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div id="view-as-non-admin-banner" class="hidden bg-amber-500/15 text-amber-800 dark:text-amber-300 border-b border-amber-500/30 px-4 py-2 text-xs flex items-center justify-center gap-2"><span>Viewing as non-admin (admin UI hidden).</span><button id="view-as-non-admin-disable" class="underline hover:text-amber-600 dark:hover:text-amber-200">Switch back</button></div><main id="home-screen" class="flex-1 overflow-y-auto" style="position:relative" data-page-bounce=""><div id="home-search-bar" data-revealed="false"><div class="home-column wip-topbar"><div class="relative wip-search"><svg class="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg><input id="home-search-input" type="text" autoComplete="off" placeholder="Search apps and communities…" aria-label="Search apps and communities" aria-keyshortcuts="Control+K Meta+K /" class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"/><button id="home-search-clear" class="hidden absolute end-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none dark:text-zinc-400" title="Clear search" aria-label="Clear search">×</button></div></div></div><div id="home-body" class="home-column home-body-fill"><div class="home-main"><section id="home-widget-strip-section" class="hidden px-3 pt-2"></section><section id="home-apps-section" class="px-3"><h2 class="home-area-label flex items-center gap-2 pt-4 pb-1.5 leading-tight"><span class="min-w-0 flex-1 truncate whitespace-nowrap text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Pinned projects</span></h2><div class="wip-card"><div id="app-list" class="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"><div class="sr-only" role="status">Loading your apps</div><div class="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2 animate-pulse" aria-hidden="true"><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div><div class="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5"><div class="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div><div class="w-full h-[26px] flex justify-center pt-1"><div class="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div></div></div></div></section><div id="home-row" class="home-row"><section id="home-challenges-section" data-panel-slot="challenges" class="home-section-pending px-3 pb-3"><h2 class="home-area-label flex items-center gap-2 pt-4 pb-1.5 leading-tight"><span class="min-w-0 flex-1 truncate whitespace-nowrap text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400"><span class="invisible">Challenges</span></span></h2><div class="home-panel-body pt-2 animate-pulse" aria-hidden="true"><div class="flex flex-col gap-2.5"><div class="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70"></div><div class="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70"></div><div class="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70"></div></div></div></section></div><section id="home-communities-section" class="px-3" hidden=""><h2 class="home-area-label flex items-center gap-2 pt-4 pb-1.5 leading-tight"><span class="min-w-0 flex-1 truncate whitespace-nowrap text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Your communities</span></h2><div class="grid grid-cols-4 gap-x-1 gap-y-4 px-1 pt-2 pb-2"></div></section><section id="home-join-section" class="px-3 pb-6" hidden=""></section></div></div></main><main id="workshop-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce="" style="position:relative"><div class="max-w-2xl mx-auto pb-8"><div class="pt-5" aria-hidden="true"></div></div></main><main id="weekly-digest-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce="" style="position:relative"><div class="max-w-2xl mx-auto pb-8"><div class="pt-5" aria-hidden="true"></div></div></main><main id="communities-screen" class="hidden flex-1 overflow-y-auto" data-page-bounce=""><div id="communities-body" class="home-column communities-page"><div class="communities-top"><div class="relative communities-search"><svg class="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg><input id="communities-search-input" type="search" autoComplete="off" placeholder="Search your communities" aria-label="Search your communities" class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600" value=""/></div></div><section id="communities-pinned-section" class="px-3" hidden=""><h2 class="home-area-label flex items-center gap-2 pt-4 pb-1.5 leading-tight"><span class="min-w-0 flex-1 truncate whitespace-nowrap text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Pinned</span></h2><div><div class="communities-grid grid grid-cols-4 gap-x-1 gap-y-4 px-1 pt-2 pb-2"></div></div></section><section id="communities-joined-section" class="px-3" hidden=""><h2 class="home-area-label flex items-center gap-2 pt-4 pb-1.5 leading-tight"><span class="min-w-0 flex-1 truncate whitespace-nowrap text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Joined</span></h2><div><div class="communities-grid grid grid-cols-4 gap-x-1 gap-y-4 px-1 pt-2 pb-2"></div></div></section><section id="communities-discover-section" class="px-3"><h2 class="home-area-label flex items-center gap-2 pt-4 pb-1.5 leading-tight"><span class="min-w-0 flex-1 truncate whitespace-nowrap text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Discover</span></h2><div class="communities-discover"><p class="communities-discover-text"><b>Find more communities</b>Public communities you have not joined yet are on Home, under Communities to join.</p><button type="button" id="communities-discover-btn" class="inline-flex items-center gap-2 rounded-full bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors communities-discover-btn shrink-0 min-h-[44px]"><svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>Discover communities</button></div></section></div></main><main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll [scrollbar-gutter:stable]" style="position:relative" data-page-bounce=""><div class="max-w-5xl mx-auto px-4 pt-5 pb-4 w-full"><div><div id="standings-tabs" class="inline-flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5 dark:ring-1 dark:ring-inset dark:ring-zinc-700 mb-4 max-w-full overflow-x-auto [scrollbar-width:none] [&amp;::-webkit-scrollbar]:hidden"></div><div id="leaderboard-event-bar" class="w-full"></div></div><div id="leaderboard-root" class="hidden max-w-[40rem] mx-auto"></div><div id="topochain-leaderboard-root" class="hidden w-full"></div><div id="challenges-root" class="w-full"></div></div></main><main id="profile-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative" data-page-bounce=""><div id="profile-root" class="max-w-2xl lg:max-w-5xl mx-auto px-4 pt-5 pb-8"></div></main><main id="admin-screen" dir="ltr" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative" data-page-bounce=""><div id="admin-root" class="w-full p-4 lg:px-6"><div id="admin-console-bar" class="hidden mb-4"><div class="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100"><span class="h-8 w-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400" aria-hidden="true"></span><div class="flex-1 min-w-0"><p class="text-sm font-semibold">Admin console</p><p class="text-xs text-amber-800 dark:text-amber-200">Platform-wide tools. These are not your settings but the settings of the platform. Be careful before changing anything.</p></div><a id="admin-exit" href="#profile" class="inline-flex items-center min-h-[36px] shrink-0 rounded-lg bg-amber-900/10 px-3 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-900/20 dark:bg-amber-100/10 dark:text-amber-100 dark:hover:bg-amber-100/20">Exit</a></div></div><div class="md:flex md:flex-col md:gap-8"><div id="admin-nav-desktop" class="hidden md:block shrink-0"></div><div class="flex-1 min-w-0"><div id="admin-view-only-banner" class="hidden bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm"><span class="font-semibold">View-only: read access only.</span> You can see every admin surface but can&#x27;t make changes. Mutating controls are hidden.</div><div id="admin-section-content" class="pb-8"></div></div></div><div id="admin-temp-pw-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div class="w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl p-6 shadow-xl"><h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1">Temporary password</h2><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Give this to <span id="admin-temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" class="text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 underline">Settings → Change password</a>. It signs them out everywhere and <span class="font-medium">won&#x27;t be shown again</span>.</p><div class="flex gap-2"><code id="admin-temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code><button id="admin-temp-pw-copy" class="bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-violet-600 shrink-0">Copy</button></div><button id="admin-temp-pw-close" class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 mt-4 w-full">Done</button></div></div></div></main><main id="settings-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll dc-lift dc-lift-strip" style="position:relative" data-page-bounce=""><div id="settings-root" class="max-w-5xl mx-auto p-4 md:pt-5 w-full"><header class="settings-frame-head"><div class="settings-frame-head-tx"><h1 class="settings-frame-title">Settings</h1><p class="settings-frame-purpose">Your account, your preferences and your tools.</p></div></header><div class="lg:flex lg:items-start lg:gap-6"><div id="settings-sidebar-col" class="hidden lg:block lg:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"><nav id="settings-nav-desktop" aria-label="Settings sections" class="space-y-1"></nav><div id="settings-footer" class="mt-6 pt-2"><button id="settings-logout" class="ui-btn ui-btn-bad ui-btn-block w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-red-500/10">Sign out</button></div></div><div id="settings-content-col" class="flex-1 min-w-0"><div id="settings-mobile-menu-host" class="lg:hidden"></div><div id="settings-section-content" class="settings-sheet dc-lift dc-lift-session"></div></div></div></div></main><main id="messages-screen" class="hidden flex-1 min-h-0 overflow-hidden" style="position:relative"><div class="messages-layout dc-lift dc-lift-strip"><section class="messages-list-pane flex" aria-label="Conversations"><div class="messages-toolbar"><div class="messages-search"><svg class="messages-search-glyph w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg><input id="messages-search" type="search" class="messages-search-input" placeholder="Search" aria-label="Search messages" value=""/></div><button type="button" id="messages-new" class="messages-new-btn" aria-haspopup="menu" aria-expanded="false" aria-label="New message" title="New message"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg></button></div><div class="messages-list-scroll platform-safe-scroll" data-page-bounce=""></div><div class="relative z-10 shrink-0" data-inbox-to-end=""><div class="pointer-events-none absolute inset-x-0 flex justify-center" style="bottom:calc(var(--platform-tabs-h, 0px) + 12px)"><button type="button" inert="" aria-label="Jump to the oldest chats, at the end of the list" title="Jump to the oldest chats, at the end of the list" class="pointer-events-auto relative flex h-9 items-center justify-center gap-1.5 rounded-full bg-white ps-3 pe-3.5 text-[0.8125rem] font-semibold text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] dark:bg-zinc-800 dark:text-zinc-200 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none pointer-events-none translate-y-2 scale-90 opacity-0"><svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>Oldest chats</button></div></div></section><section class="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your chats open here. A community&#x27;s channel is on its hub, under Communities.</p></section></div></main><div id="messages-create-dialog" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div data-new-message="" class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl"><div class="flex items-center justify-between mb-4"><h2 class="text-lg font-bold">New message</h2><button type="button" class="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div class="grid grid-cols-2 gap-1 p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800" role="tablist" aria-label="Conversation type"><button type="button" role="tab" aria-selected="true" class="rounded-md px-3 py-1.5 text-sm font-medium bg-white dark:bg-zinc-700 text-violet-700 dark:text-violet-300 shadow-sm">Direct</button><button type="button" role="tab" aria-selected="false" class="rounded-md px-3 py-1.5 text-sm font-medium text-zinc-500 dark:text-zinc-400">Group</button></div><label class="block"><span class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Find a person</span><input placeholder="Search by username" autoComplete="off" autofocus="" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value=""/></label><div class="mt-2 min-h-12 max-h-52 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800"></div><div class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-2"><button type="button" class="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">Blocked people</button><div class="ms-auto flex gap-2"><button type="button" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button></div></div></div></div></div><div id="messages-members-dialog" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl"><div class="flex items-center justify-between mb-4"><div><h2 class="text-lg font-bold">Group members</h2><p class="text-xs text-zinc-500 dark:text-zinc-400">Accepted members can read the complete retained history.</p></div><button type="button" class="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800"></div><div class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between"><button type="button" class="text-xs text-red-700 dark:text-red-400 disabled:opacity-50">Leave group</button><button type="button" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Done</button></div></div></div></div><div id="messages-share-dialog" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl"><div class="flex items-center justify-between mb-4"><div><h2 class="text-lg font-bold">Share item</h2><p class="text-xs text-zinc-500 dark:text-zinc-400">Access is checked separately for every recipient.</p></div><button type="button" class="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><input type="search" placeholder="Search apps" aria-label="Search apps" autoComplete="off" enterKeyHint="search" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 mb-3" value=""/><fieldset class="mb-3 min-w-0"><legend class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Item type</legend><div class="flex overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&amp;::-webkit-scrollbar]:hidden -m-1 gap-2 p-1 sm:flex-wrap sm:overflow-x-visible"><button type="button" aria-pressed="true" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 text-[0.9375rem] [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-11 px-4 sm:h-9 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500" data-share-type="app">App</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors text-zinc-900 dark:text-zinc-100 text-[0.9375rem] [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-11 px-4 sm:h-9 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700" data-share-type="issue">Request</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors text-zinc-900 dark:text-zinc-100 text-[0.9375rem] [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-11 px-4 sm:h-9 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700" data-share-type="proposal">Code proposal</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors text-zinc-900 dark:text-zinc-100 text-[0.9375rem] [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-11 px-4 sm:h-9 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700" data-share-type="governance">Governance proposal</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors text-zinc-900 dark:text-zinc-100 text-[0.9375rem] [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-11 px-4 sm:h-9 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700" data-share-type="spec">Plan version</button></div></fieldset><fieldset class="mb-3 min-w-0"><legend class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">App</legend><div role="listbox" aria-label="Apps" data-share-apps="" class="min-h-12 max-h-60 overflow-y-auto"></div></fieldset><p class="text-xs text-zinc-500 dark:text-zinc-400">The server resolves the live title and state. If access is later removed, the card becomes metadata-free and unavailable.</p><div class="mt-5 flex justify-end gap-2"><button type="button" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="button" disabled="" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Attach item</button></div></div></div></div><div id="share-to-dialog" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl"><div class="flex items-center justify-between mb-4"><h2 class="text-lg font-bold">Share to…</h2><button type="button" class="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><label class="block"><span class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Send to</span><input placeholder="Search people, groups and discussions" autoComplete="off" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value=""/></label><div role="listbox" aria-label="Where to share" data-share-destinations="" class="mt-2 min-h-12 max-h-60 overflow-y-auto"></div><label class="block mt-3"><span class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Add a message (optional)</span><textarea rows="2" maxLength="2000" placeholder="Say why you’re sharing it" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></textarea></label><div class="mt-5 flex justify-end gap-2"><button type="button" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="button" disabled="" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Send</button></div></div></div></div><main id="ai-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce="" style="position:relative"><div class="ai-screen-body max-w-2xl mx-auto pb-8"><div class="flex flex-col gap-3 pt-4" data-ai-lists=""><div class="mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)] pt-1" data-ai-sheet="head"><section class="flex items-center gap-3 px-4 pt-3" data-ai-hero=""><img src="/brand/homeroom-mark.png" alt="" class="w-12 h-12 rounded-2xl object-cover shrink-0"/><span class="min-w-0 flex-1 flex flex-col"><h1 class="text-[1.375rem] font-bold leading-tight">Homeroom bot</h1></span><button type="button" class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5" aria-label="Search threads and messages" title="Search threads and messages" aria-expanded="false" data-ai-search-toggle=""><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg></button><button type="button" title="New chat" data-bot-new-thread="" data-ai-new-chat="" class="rounded-full bg-violet-600 hover:bg-violet-500 text-white transition-colors inline-flex h-10 min-w-10 shrink-0 items-center justify-center gap-1.5 text-[15px] font-semibold [&amp;&gt;svg]:h-[18px] [&amp;&gt;svg]:w-[18px]"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg><span>New chat</span></button></section><div class="pb-3"></div></div><div class="mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)] pb-4" data-ai-sheet="open"><section class="pb-1" data-ai-list="work"><div class="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band=""><h2 class="text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400 px-0 pt-0 pb-0">Needs you</h2></div><div class="px-4"><div class="sr-only" role="status">Loading what needs you</div><div class="animate-pulse flex flex-col gap-8 py-4" aria-hidden="true" data-ai-loading=""><div class="shrink-0 h-3 rounded bg-zinc-200 dark:bg-zinc-800 w-1/2"></div><div class="shrink-0 h-3 rounded bg-zinc-200 dark:bg-zinc-800 w-2/5"></div></div></div></section></div><div class="mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)] pb-2 scroll-mt-4" data-ai-sheet="history"><section class="pb-1" data-ai-list="history"><div class="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band=""><h2 class="text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400 px-0 pt-0 pb-0">History</h2></div><div role="group" aria-label="Show one kind of work" class="flex gap-1.5 overflow-x-auto px-4 pt-1.5 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&amp;::-webkit-scrollbar]:hidden" data-ai-history-kinds=""><button type="button" aria-pressed="true" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-8 px-3 text-[13px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]" data-ai-history-kind="all">All</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-8 px-3 text-[13px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]" data-ai-history-kind="change">Changes</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-8 px-3 text-[13px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]" data-ai-history-kind="request">Requests</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-8 px-3 text-[13px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]" data-ai-history-kind="vote">Votes</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 h-8 px-3 text-[13px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]" data-ai-history-kind="solo">Only you</button></div><div class="px-4"><div class="sr-only" role="status">Loading your history</div><div class="animate-pulse flex flex-col gap-8 py-4" aria-hidden="true" data-ai-history-loading=""><div class="shrink-0 h-3 rounded bg-zinc-200 dark:bg-zinc-800 w-1/2"></div><div class="shrink-0 h-3 rounded bg-zinc-200 dark:bg-zinc-800 w-2/5"></div></div></div></section></div></div><div class="ai-askbar-gap" aria-hidden="true"></div></div><div class="ai-askbar messages-composer" data-ai-askbar=""><a href="#homeroom-bot/new" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot"><span class="ai-askbar-text">Ask Homeroom bot</span><span class="messages-composer-action" aria-hidden="true"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"></path></svg></span></a></div></main><main id="auth-landing-screen" class="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col"></main><main id="auth-login-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"></main><main id="auth-register-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"></main><main id="auth-waiting-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"></main><main id="auth-waitlist-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"></main><main id="auth-more-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"></main><div id="app-view" role="main" class="hidden flex flex-col" data-app-surface="platform" style="flex:1;min-height:0;height:0"><div id="app-content" class="flex-1" style="min-height:0;overflow:hidden"></div><div id="app-frame-host" class="hidden flex-1" style="min-height:0;overflow:hidden"><div class="app-launch-host w-full h-full"></div></div></div><aside id="platform-side-panel" class="side-panel hidden" aria-label="Side panel"><div id="side-panel-divider" class="side-panel-divider" role="separator" aria-orientation="vertical" aria-controls="platform-side-panel" aria-label="Resize panel" title="Drag to resize · double-click to reset" tabindex="0"></div><div class="side-panel-head flex items-center gap-2 shrink-0"><button type="button" aria-label="Close panel" title="Close panel" class="side-panel-ai-close inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-full border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] un-touch-target"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div id="side-panel-body" class="side-panel-body"><div id="side-panel-loading" class="side-panel-loading hidden" aria-hidden="true"><div class="dc-status-spinner-arc side-panel-spinner"></div></div></div></aside><div id="platform-parked" class="platform-parked hidden"></div><nav id="platform-tabs" class="platform-tabs" aria-label="Sections"><div class="platform-side-apps hidden"><span class="platform-side-apps-head" aria-hidden="true">Apps</span></div><span class="platform-tabs-marker" aria-hidden="true"></span><a id="platform-tab-home" class="platform-tab" href="/" data-tab="home"><span class="platform-tab-mark"><svg class="platform-tab-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"></path></svg></span><span class="platform-tab-label">Home</span></a><a id="platform-tab-ai" class="platform-tab" href="#homeroom-bot" data-tab="ai"><span class="platform-tab-mark"><svg class="platform-tab-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.8 7.2 7.4 19"></path><path stroke-linecap="round" stroke-linejoin="round" d="M14.8 5.6 13.4 13.8C12.9 16.8 14 17.7 15.3 17.6 16.4 17.5 17.4 16.5 18.1 15.3"></path><path stroke-linecap="round" stroke-linejoin="round" d="M2.9 17C2.9 14.6 5.6 13.2 9 12.8 10.6 12.6 12.1 12.5 13.3 12.2"></path><path stroke-linecap="round" stroke-linejoin="round" d="M19.6 3.6Q20.18 6.62 23.2 7.2 20.18 7.78 19.6 10.8 19.02 7.78 16 7.2 19.02 6.62 19.6 3.6Z"></path></svg><span id="platform-tabs-ai-badge" class="platform-tab-badge hidden" aria-label="Unread messages from the Homeroom bot"></span></span><span class="platform-tab-label">Homeroom bot</span></a><a id="platform-tab-messages" class="platform-tab" href="#messages" data-tab="messages"><span class="platform-tab-mark"><svg class="platform-tab-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg><span id="platform-tabs-badge" class="platform-tab-badge hidden" aria-label="Unread conversations"></span></span><span class="platform-tab-label">Messages</span></a><a id="platform-tab-workshop" class="platform-tab" href="#communities" data-tab="workshop"><span class="platform-tab-mark"><svg class="platform-tab-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9"></path></svg><span id="platform-tabs-badge-communities" class="platform-tab-badge hidden" aria-label="Channels with unread messages"></span></span><span class="platform-tab-label">Communities</span></a><div id="platform-rail-pinned" class="platform-rail-pinned hidden" role="group" aria-labelledby="platform-rail-pinned-label"><div class="platform-rail-head"><span id="platform-rail-pinned-label" class="platform-rail-head-label">Recents</span></div></div><div id="platform-rail-communities" class="platform-rail-communities" role="group" aria-labelledby="platform-rail-communities-label"><div class="platform-rail-head"><span id="platform-rail-communities-label" class="platform-rail-head-label">Recents</span><a id="platform-rail-search" class="platform-rail-search" href="/" aria-label="Search your communities" title="Search your communities"><svg class="platform-rail-search-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg></a></div></div><a id="platform-tab-me" class="platform-tab" href="#profile" data-tab="me"><span class="platform-tab-mark"><svg class="platform-tab-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg></span><span class="platform-tab-label">You</span></a><a id="platform-rail-settings" class="platform-rail-settings" href="#settings" aria-label="Settings" title="Settings"><svg class="platform-rail-settings-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg></a></nav><div class="platform-side-strip-ground" aria-hidden="true"></div><div class="platform-side-strip-frost" aria-hidden="true"></div><div id="platform-side-strip-top" class="platform-side-strip-top"><a id="platform-side-strip-back" class="platform-side-strip-back hidden" data-back="none" aria-label="Home"><svg class="platform-side-strip-glyph" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"></path></svg></a></div><div id="apps-switcher-overlay" aria-hidden="true" class="fixed inset-0 z-40"></div><div id="apps-switcher-sheet" role="dialog" aria-label="Menu" aria-hidden="true" class="fixed z-50 flex flex-col dc-lift dc-lift-panel app-context-transition"><div class="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0"><span class="flex-1 min-w-0"><span id="apps-switcher-title" class="block truncate text-[15px] leading-5 font-[650] text-zinc-900 dark:text-zinc-100">Feedback &amp; info</span><span class="flex-1 min-w-0 block truncate text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">this app</span></span><button id="apps-switcher-close" type="button" class="shrink-0 -me-2 inline-flex items-center justify-center w-9 h-9 rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 un-touch-target outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500 dark:focus-visible:ring-violet-400" aria-label="Close"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div id="improve-quick-actions" class="shrink-0 flex items-stretch gap-2 px-4 pt-1 pb-2"><button id="improve-row-feedback" type="button" class="inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-10 px-3 rounded-full text-sm font-semibold transition-colors un-touch-target bg-violet-600 hover:bg-violet-500 text-white"><span class="min-w-0 truncate">Suggest an improvement</span></button></div><nav id="switcher-nav" class="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"><a id="app-menu-row-workshop" data-context-row="workshop" href="#" class="flex items-center gap-3 px-5 min-h-[44px] text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500 dark:focus-visible:ring-violet-400"><span class="shrink-0 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9"></path></svg></span><span class="flex-1 min-w-0 truncate font-medium">Go to community</span><svg class="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg></a><button id="app-menu-row-about" type="button" class="flex items-center gap-3 px-5 min-h-[44px] text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500 dark:focus-visible:ring-violet-400 w-full text-start"><span class="shrink-0 [&amp;&gt;svg]:h-5 [&amp;&gt;svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></span><span class="flex-1 min-w-0 truncate font-medium">About this app</span><svg class="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path></svg></button></nav></div><div class="overlay-scrim" aria-hidden="true"></div><div id="notifications-sheet-overlay" aria-hidden="true" class="fixed inset-0 z-40"></div><div id="notifications-sheet" role="dialog" aria-label="Notifications" aria-hidden="true" class="fixed z-50 flex flex-col dc-lift dc-lift-panel nav-sheet-transition"><div class="flex items-center gap-2 px-4 pt-4 pb-1 shrink-0"><h2 class="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">Notifications</h2><button id="notifications-screen-mark-all" type="button" class="inline-flex items-center h-8 px-3 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target" disabled="">Mark all read</button><button id="notifications-sheet-close" type="button" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target" aria-label="Close" title="Close"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div id="notifications-search" class="px-4 pt-1 pb-2 shrink-0"><div class="relative"><svg class="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg><input id="notifications-search-input" type="search" placeholder="Search notifications…" aria-label="Search notifications…" autoComplete="off" spellCheck="false" enterKeyHint="search" class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600" value=""/></div></div><div id="notifications-screen-tabs" class="flex gap-2 px-4 pt-1 pb-2 shrink-0 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&amp;::-webkit-scrollbar]:hidden" role="tablist" aria-label="Notification filters"><button id="notifications-tab-unread" role="tab" aria-selected="true" class="shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-sm font-semibold transition-colors bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">Unread</button><button id="notifications-tab-threads" role="tab" aria-selected="false" class="shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-sm font-semibold transition-colors bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800">Recent threads</button><button id="notifications-tab-all" role="tab" aria-selected="false" class="shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-sm font-semibold transition-colors bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800">All</button></div><div class="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll"><div id="notifications-saved" class="shrink-0 overflow-y-auto max-h-64"></div><div id="notifications-invites" class="shrink-0"></div><p class="px-4 py-8 text-sm text-zinc-500 text-center">You’re all caught up.</p></div></div><div class="overlay-scrim" aria-hidden="true"></div><div id="dev-console-panel" class="hidden fixed start-0 end-0 bottom-0 z-50 flex flex-col bg-zinc-950 border-t border-zinc-700" style="height:40vh;max-height:60vh"><div class="flex items-center gap-3 px-3 py-2 border-b border-zinc-800 shrink-0 text-sm"><span class="font-medium text-zinc-200">Developer console</span><span id="dev-console-counts" class="text-xs text-zinc-400"></span><span class="flex-1"></span><select id="dev-console-filter" class="text-xs bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-zinc-200"><option value="all">All</option><option value="error">Errors</option><option value="warn">Warnings</option><option value="info">Info</option><option value="log">Log</option><option value="debug">Debug</option></select><button id="dev-console-clear" class="text-xs text-zinc-400 hover:text-zinc-200">Clear</button><button id="dev-console-close" class="text-zinc-400 hover:text-zinc-100" aria-label="Close"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div id="dev-console-log" class="flex-1 overflow-y-auto font-mono text-xs leading-relaxed p-2 space-y-0.5"></div><div id="dev-console-empty-hint" class="hidden px-3 py-2 text-xs text-zinc-400 border-t border-zinc-800 shrink-0">No messages yet. If this app was created before dev-console support shipped, ask Homeroom bot to &quot;add dev-console forwarding to public/index.html&quot;.</div></div><div id="staging-overlay" class="hidden staging-overlay flex flex-col" data-placement="full" data-view="preview" role="region" aria-label="Preview"><div class="staging-chrome-bar staging-head shrink-0"><button id="staging-back" type="button" class="staging-disc staging-exit" aria-label="Back" title="Back"><svg class="staging-exit-back w-4 h-4 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg><svg class="staging-exit-close w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button><span class="staging-tile" aria-hidden="true"></span><div class="staging-titles"><span id="staging-url-label" class="staging-title">Preview</span><span id="staging-facts" class="staging-facts"></span></div><div id="staging-view-switch" class="hidden staging-switch" role="tablist" aria-label="Show"><button type="button" role="tab" id="staging-view-preview" aria-selected="true" data-on="">Preview</button><button type="button" role="tab" id="staging-view-shots" aria-selected="false">Before &amp; after</button></div><span class="staging-gap"></span><button id="staging-vote-btn" type="button" class="hidden staging-vote"></button><div class="staging-tools"><button id="staging-comment-btn" type="button" class="staging-disc" aria-label="Comment" title="Comment"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z"></path></svg></button><button id="staging-size-btn" type="button" class="hidden staging-disc" aria-label="Full window" title="Full window" aria-pressed="false"><svg class="staging-size-expand w-4 h-4 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14 4h6v6"></path><path stroke-linecap="round" stroke-linejoin="round" d="M20 4l-7 7"></path><path stroke-linecap="round" stroke-linejoin="round" d="M10 20H4v-6"></path><path stroke-linecap="round" stroke-linejoin="round" d="M4 20l7-7"></path></svg><svg class="staging-size-dock w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"></path></svg></button><button id="staging-dev-console-btn" class="relative staging-disc staging-console" aria-label="Open developer console"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"></path></svg><span id="staging-dev-console-badge" class="hidden absolute -top-1 -end-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span></button></div></div><div id="staging-context" class="hidden staging-context shrink-0"><span class="hidden staging-context-item"><svg class="w-3.5 h-3.5 shrink-0 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14 4h6v6"></path><path stroke-linecap="round" stroke-linejoin="round" d="M20 4l-7 7"></path><path stroke-linecap="round" stroke-linejoin="round" d="M10 20H4v-6"></path><path stroke-linecap="round" stroke-linejoin="round" d="M4 20l7-7"></path></svg>Opened full width: this change is for larger screens.</span><span id="staging-note" class="staging-context-item"><span>Members try a change here before they vote. Anything you add here stays in the preview.</span><button type="button" class="staging-link">Got it</button></span><button id="staging-test-btn" type="button" class="hidden staging-link" aria-expanded="false" aria-controls="staging-testing-panel"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"></path></svg>How to test<svg class="staging-steps-closed w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg><svg class="staging-steps-open w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"></path></svg></button><span class="hidden staging-context-item"><svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><span></span><button type="button" class="staging-link">See it as now</button></span></div><div id="staging-testing-panel" class="hidden staging-steps shrink-0"><div id="staging-testing-content" class="staging-steps-content"></div><button id="staging-testing-close" type="button" class="staging-steps-close" aria-label="Dismiss testing instructions"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button></div><div class="staging-body relative flex-1"><iframe id="staging-iframe" class="absolute inset-0 w-full h-full border-0" style="background:#08080f" allow="clipboard-write"></iframe><div id="staging-shots" class="hidden staging-shots" role="region" aria-label="Before &amp; after"></div><div id="staging-loader" class="hidden staging-loader absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-6"><div class="staging-spinner w-8 h-8 rounded-full animate-spin"></div><div id="staging-loader-title" class="staging-loader-title text-[15px] font-semibold">Opening preview…</div><div id="staging-loader-sub" class="staging-loader-sub text-[13px] max-w-xs leading-relaxed"></div><button id="staging-retry-btn" type="button" class="rounded-full bg-violet-600 hover:bg-violet-500 text-white hidden min-h-[44px] px-4 py-2 text-sm font-medium">Retry sign-in</button><button type="button" class="hidden staging-link staging-loader-shots">See the before &amp; after instead</button></div></div><span id="staging-live-pill" class="hidden staging-live" aria-hidden="true"><span class="staging-live-dot"></span>Live</span></div><div id="visual-compare-overlay" class="hidden fixed inset-0 z-50 bg-zinc-950/95 flex flex-col" role="dialog" aria-modal="true" aria-label="Before / after comparison"><div class="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0"><button id="visual-compare-back" class="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"><svg class="w-4 h-4 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>Close</button><span class="flex-1"></span><span id="visual-compare-label" class="text-xs text-zinc-400 font-mono truncate"></span></div><div id="visual-compare-body" class="usn-compare-body flex-1 overflow-auto p-4"></div></div><div id="rename-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1">Rename app</h2><p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">Current app name:<span id="rename-current" class="font-mono text-zinc-500 dark:text-zinc-400"></span></p><form id="rename-form" class="space-y-4"><div><label for="rename-input" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">New app name</label><input id="rename-input" type="text" required="" minLength="3" maxLength="64" autoComplete="off" placeholder="a better name" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/><p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">3–64 characters. This is the app&#x27;s display name, and the URL won&#x27;t change. Opens a PR that edits<span class="font-mono">dapp.json</span>; the rename applies once the PR is voted in and merged.</p></div><div id="rename-error" class="text-red-700 dark:text-red-400 text-sm hidden"></div><div class="flex gap-3"><button type="button" id="rename-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="submit" id="rename-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Open PR</button></div></form></div></div></div><div id="close-issue-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1">Propose closing issue<span id="close-issue-number" class="font-mono">#</span>?</h2><p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">This opens a group vote. If it passes, the issue is closed here and on GitHub.</p><form id="close-issue-form" class="space-y-4"><div><label for="close-issue-reason" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Why should this issue be closed?<span class="font-normal">(optional)</span></label><textarea id="close-issue-reason" rows="3" maxLength="2000" placeholder="e.g. obsolete, duplicate, already fixed…" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"></textarea><p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Posted publicly on the GitHub issue when the vote passes.</p></div><div id="close-issue-error" class="text-red-700 dark:text-red-400 text-sm hidden"></div><div class="flex gap-3"><button type="button" id="close-issue-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="submit" id="close-issue-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Propose close</button></div></form></div></div></div><div id="fork-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1 break-words">Make your own version of <span id="fork-source-name">this app</span></h2><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">It’s yours to change. It starts as Just you.</p><form id="fork-form" class="space-y-4"><div><label for="fork-input" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Name for your version</label><input id="fork-input" type="text" required="" minLength="3" maxLength="64" autoComplete="off" placeholder="My version" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/></div><div class="text-xs text-zinc-600 dark:text-zinc-300 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3"><p><strong class="font-semibold text-zinc-900 dark:text-zinc-100">Copied:</strong> the code, the look and the icon.</p><p><strong class="font-semibold text-zinc-900 dark:text-zinc-100">Starts fresh:</strong> it’s Just you, with an empty database. Invite people or open it up later.</p><p><strong class="font-semibold text-zinc-900 dark:text-zinc-100">Not copied:</strong> anyone’s data, keys, chat or members. If the app needs a key, you’ll add your own before it goes live.</p></div><label for="fork-follow" class="fork-follow"><span class="min-w-0 flex-1"><span class="fork-follow-title">Get its updates</span><span class="fork-follow-sub">When the original changes, you get the change to try and vote on. Nothing changes unless you say yes.</span></span><input id="fork-follow" type="checkbox" class="un-switch" checked=""/></label><div id="fork-error" class="text-red-700 dark:text-red-400 text-sm hidden"></div><div class="flex gap-3"><button type="button" id="fork-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="submit" id="fork-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors">Make my version</button></div></form></div></div></div><div id="import-pr-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl"><h2 class="text-lg font-bold mb-1">Import a pull request</h2><p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">Pick an open pull request to add to In progress. It stays there until you ask for approval.</p><p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">A staging preview is built from the pull request&#x27;s head commit, so it takes a few minutes to appear, and automated checks stay pending until it does. Rows marked <span class="text-amber-800 dark:text-amber-400">from a fork</span> are branches in someone else&#x27;s repository: review the changes on GitHub before importing.</p><div id="import-pr-list" class="max-h-80 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-2"></div><div id="import-pr-progress" class="hidden mt-3 text-sm text-zinc-500 dark:text-zinc-400"><div class="flex items-center gap-2"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span><span id="import-pr-progress-text"></span></div><div id="import-pr-progress-slow" class="hidden mt-1 text-xs opacity-80">Still working. GitHub is being slow, so don’t close this window.</div></div><div id="import-pr-error" class="text-red-700 dark:text-red-400 text-sm hidden mt-3"></div><div class="flex gap-3 mt-5"><button type="button" id="import-pr-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="button" id="import-pr-submit" disabled="" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Import</button></div></div></div></div><div id="members-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 id="members-modal-title" class="text-lg font-bold mb-4">Members &amp; approvals</h2><div id="members-load-error" class="hidden text-sm text-red-700 dark:text-red-400 mb-4"></div><div id="members-invite-section" class="hidden mb-4"><label for="members-invite-input" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Invite a user</label><div class="relative"><input id="members-invite-input" type="text" autoComplete="off" spellCheck="false" placeholder="username" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/><div id="members-invite-suggestions" class="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div></div><div id="members-invite-status" class="text-sm mt-2"></div></div><div id="members-list-section" class="hidden mb-4"><p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Collaborators</p><div id="members-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div></div><div id="members-who-decides" class="hidden mb-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"><button type="button" data-members-who-decides="" class="flex w-full min-h-[44px] items-center gap-3 text-start"><span class="min-w-0 flex-1"><span class="block text-sm font-semibold">Who can see &amp; change it</span><span class="block text-sm text-zinc-500 dark:text-zinc-400">Private or public, and how changes are approved</span></span><span aria-hidden="true" class="text-zinc-500 dark:text-zinc-400">›</span></button></div><div id="members-governance-section" class="hidden space-y-3 mb-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"><p class="text-sm font-semibold">Proposal approvals</p><div><label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Who can approve proposals</label><div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium"><button type="button" data-m-approver-policy="anyone" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Everyone</button><button type="button" data-m-approver-policy="invited" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Invited approvers</button></div></div><div><label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">How many approvals are needed</label><div class="flex items-center gap-2"><div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium flex-1"><button type="button" data-m-approvals-mode="default" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Time &amp; majority</button><button type="button" data-m-approvals-mode="at_least" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">At least</button></div><input id="members-approvals-n" type="number" min="1" max="50" class="hidden w-16 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent" value="1"/><button type="button" id="members-approvals-propose" class="hidden rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors">Propose</button></div><p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Changes open a proposal that is voted on under the current rules.</p></div><div id="members-initial-approvers" class="hidden space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3"><p class="text-sm font-medium">Initial approvers</p><p id="members-initial-approvers-status" class="text-xs text-zinc-500 dark:text-zinc-400"></p><div id="members-initial-approvers-list" class="space-y-1"></div><div class="relative"><input id="members-initial-approver-input" type="text" autoComplete="off" spellCheck="false" placeholder="add approvers to invite (optional)" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/><div id="members-initial-approver-suggestions" class="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div></div><div class="flex gap-2"><button type="button" id="members-initial-approvers-propose" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors">Propose</button><button type="button" id="members-initial-approvers-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button></div></div><div id="members-governance-error" class="text-red-700 dark:text-red-400 text-sm hidden"></div></div><div id="members-approvers-section" class="hidden mb-4"><p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Approvers</p><div id="members-approvers-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div><p id="members-approvers-dormant-note" class="hidden text-xs text-zinc-500 dark:text-zinc-400 mt-1">Approvers only take effect when “Who can approve proposals” is set to Invited approvers.</p><div id="members-approver-invite" class="hidden relative mt-2"><input id="members-approver-invite-input" type="text" autoComplete="off" spellCheck="false" placeholder="invite an approver by username" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/><div id="members-approver-suggestions" class="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div></div><div id="members-approver-status" class="text-sm mt-2"></div></div><div id="members-appadmins-section" class="hidden mb-4"><p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App admins</p><div id="members-appadmins-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div><div id="members-appadmins-edit" class="hidden mt-2"><div class="relative"><input id="members-appadmins-input" type="text" autoComplete="off" spellCheck="false" placeholder="add an admin by username" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/><div id="members-appadmins-suggestions" class="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div></div><div id="members-appadmins-actions" class="hidden mt-2"><div class="flex gap-2"><button type="button" id="members-appadmins-propose" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Propose</button><button type="button" id="members-appadmins-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button></div></div></div><p id="members-appadmins-status" class="text-sm mt-2 hidden"></p><p id="members-appadmins-note" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Set in<code>dapp.json</code>. To change them, open a pull request that edits the<code>admins</code>list. That proposal needs real Yes votes and won’t merge on a timer.</p></div><div class="flex gap-3"><button type="button" id="members-close" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Close</button></div></div></div></div><div id="feedback-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><div aria-hidden="true" class="feedback-sheet-grabber"></div><div id="feedback-form"><h2 class="text-lg font-bold">Suggest an improvement</h2><p class="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">Members can see it, vote on it and pick it up.</p><button id="feedback-form-mine" type="button" class="-mt-3 mb-4 block text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">See your requests</button><div class="hidden"><span class="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label="How to suggest it"><button type="button" role="radio" aria-checked="true" title="Suggest it with this form" class="inline-flex h-7 items-center gap-1.5 rounded-full bg-white ps-2 pe-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"><svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"></path></svg>Form</button><button type="button" role="radio" aria-checked="false" title="Comment on the page" class="inline-flex h-7 items-center gap-1.5 rounded-full ps-2 pe-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"><svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>Comment</button></span><span class="text-xs text-zinc-500 dark:text-zinc-400">Click on the page to comment</span></div><p id="feedback-target-label" class="mb-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">Where should this go?</p><div id="feedback-target" class="flex gap-2 mb-3" role="radiogroup" aria-labelledby="feedback-target-label"><div class="flex-1 flex flex-col items-center"><button type="button" role="radio" aria-checked="false" data-feedback-target="app" id="feedback-target-app" class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-start transition-colors"><span id="feedback-target-app-name" class="block truncate text-sm font-semibold">This app</span><span id="feedback-target-app-sub" class="block truncate text-xs opacity-75">This app</span></button></div><div class="flex-1 flex flex-col items-center"><button type="button" role="radio" aria-checked="false" data-feedback-target="platform" id="feedback-target-platform" class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-start transition-colors"><span class="block truncate text-sm font-semibold">Homeroom</span><span class="block truncate text-xs opacity-75">The platform itself</span></button></div></div><p id="feedback-target-hint" class="hidden -mt-1 mb-3 text-xs text-zinc-600 dark:text-zinc-400"></p><div class="mb-2"><label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" id="feedback-title-label" for="feedback-title">Title<span class="font-normal text-zinc-500 dark:text-zinc-500"> optional</span></label><input id="feedback-title" type="text" maxLength="200" enterKeyHint="next" placeholder="Suggested as you type" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"/></div><div><label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" id="feedback-text-label" for="feedback-text">What should change?</label><textarea id="feedback-text" rows="4" maxLength="64000" aria-required="true" placeholder="Describe the change, or the problem you hit" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"></textarea><p id="feedback-text-error" role="alert" class="hidden mt-1 text-xs text-red-700 dark:text-red-400"></p></div><div class="mt-2"><div class="flex flex-wrap items-center gap-2"><button id="feedback-screenshot-btn" type="button" class="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z"></path></svg><span data-screenshot-label="">Attach screenshot</span></button><div class="relative"><button id="feedback-attach-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="feedback-attach-menu" aria-label="Attach a photo or video" title="Attach a photo or video" class="hidden inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></button><div id="feedback-attach-menu" role="menu" aria-label="Attach" class="feedback-attach-pop hidden"><button id="feedback-screenshot-picker-btn" type="button" role="menuitem" class="feedback-attach-option hidden"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5l5.25-5.25a2.25 2.25 0 013.182 0L15 14.818m-1.5-1.5 1.068-1.068a2.25 2.25 0 013.182 0L21 15.5m-18 3.75h18A2.25 2.25 0 0023.25 17V6.75A2.25 2.25 0 0021 4.5H3A2.25 2.25 0 00.75 6.75V17A2.25 2.25 0 003 19.25z"></path></svg>Photo</button><button id="feedback-video-btn" type="button" role="menuitem" class="feedback-attach-option hidden"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"></path></svg><span data-video-label="">Video</span></button></div></div><input id="feedback-screenshot-input" type="file" accept="image/png,image/jpeg" multiple="" class="hidden" tabindex="-1" aria-hidden="true"/><input id="feedback-video-input" type="file" accept="video/mp4,video/webm,video/quicktime" class="hidden" tabindex="-1" aria-hidden="true"/></div><p id="feedback-screenshot-count" class="hidden mt-1 text-xs text-zinc-500 dark:text-zinc-400"></p><div id="feedback-screenshot-preview" class="hidden mt-2 flex-wrap items-center gap-2"></div><div id="feedback-video-preview" class="hidden mt-2 flex-wrap items-center gap-2"></div></div><div id="feedback-state-row" class="hidden mt-2"><label class="flex items-start gap-2 cursor-pointer select-none"><input id="feedback-state-checkbox" type="checkbox" class="accent-violet-500 w-4 h-4 mt-0.5" checked=""/><span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Include app state:</span>this app can attach a snapshot of its current state to help debugging</span></label></div><div id="feedback-private-row" class="hidden mt-2"><label class="flex items-start gap-2 cursor-pointer select-none"><input id="feedback-private-checkbox" type="checkbox" class="accent-violet-500 w-4 h-4 mt-0.5"/><span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Private request</span>: only platform admins can see it<br/><span class="text-zinc-500 dark:text-zinc-500">Kept in Homeroom only, never posted on GitHub. Pictures, clips and kudos are not attached.</span></span></label></div><div id="feedback-bounty-row" class="hidden mt-2"><label class="flex items-start gap-2 cursor-pointer select-none"><input id="feedback-bounty-checkbox" type="checkbox" class="accent-violet-500 w-4 h-4 mt-0.5"/><span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Put a kudos on this</span> to thank whoever solves it<br/><span id="feedback-bounty-note" class="text-zinc-500 dark:text-zinc-500"></span></span></label></div><div id="feedback-status" class="text-sm mt-2 hidden"></div><button id="feedback-queue-retry" type="button" class="hidden mt-1 min-h-[44px] text-sm font-semibold text-violet-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-300">Try again</button><div class="feedback-actions flex gap-3 mt-4"><button id="feedback-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button id="feedback-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Post request</button></div></div><section id="feedback-edit" class="hidden" aria-labelledby="feedback-edit-heading" tabindex="-1"><h2 id="feedback-edit-heading" class="text-xl font-bold mb-1">Edit your request</h2><p id="feedback-edit-window" class="text-xs text-zinc-500 dark:text-zinc-400 mb-4"></p><label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="feedback-edit-title">Title</label><input id="feedback-edit-title" maxLength="200" enterKeyHint="next" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 mb-3"/><label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="feedback-edit-text">What should change?</label><textarea id="feedback-edit-text" rows="5" maxLength="64000" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></textarea><p id="feedback-edit-status" role="status" class="hidden text-sm text-red-700 dark:text-red-400 mt-2"></p><div class="feedback-actions flex gap-3 mt-4"><button id="feedback-edit-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors min-h-[44px]">Cancel</button><button id="feedback-edit-save" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors min-h-[44px]">Save changes</button></div></section><section id="feedback-first-success" class="hidden" aria-labelledby="feedback-first-title" tabindex="-1"><h2 id="feedback-first-title" class="text-xl font-bold mb-3">Congratulations on your first request!</h2><p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">You’ve helped make this app better. Want to take the next step?</p><p id="feedback-first-notice" class="text-sm text-emerald-700 dark:text-emerald-400 mb-4" role="status"></p><div class="flex flex-col gap-3"><button id="feedback-first-fix" class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors min-h-[44px]">Build it now</button><p id="feedback-first-fix-note" class="text-xs text-zinc-500 dark:text-zinc-400">Homeroom bot builds it now where it builds for this project. Otherwise the request’s page shows how to build it with your own coding agent.</p><button id="feedback-first-board" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors min-h-[44px]">See this app’s board</button><button id="feedback-first-mine" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors min-h-[44px]">See your requests</button><button id="feedback-first-edit" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors hidden min-h-[44px]">Edit</button><button id="feedback-first-work" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors hidden min-h-[44px]">Work on it with Homeroom bot</button><button id="feedback-first-done" class="px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors min-h-[44px]">Done</button></div></section><section id="feedback-sent" class="hidden" aria-labelledby="feedback-sent-title" tabindex="-1"><h2 id="feedback-sent-title" class="text-lg font-bold mb-3">Request posted</h2><p id="feedback-sent-notice" class="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p><p id="feedback-sent-line" class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Your idea is on the board now.</p><div id="feedback-sent-first" class="hidden mb-4 rounded-lg bg-emerald-50 px-3 py-2.5 dark:bg-emerald-500/10"><p class="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Your first request!</p><p id="feedback-sent-first-line" class="text-sm text-zinc-600 dark:text-zinc-400">You just helped shape this app.</p><p class="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">Homeroom bot will pick up your request and look at it. It will message you in your chat with it: a question if something is unclear, a note if a person needs to decide, or a change to vote on if it can build it.</p></div><div class="flex flex-col gap-3"><button id="feedback-sent-done" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors min-h-[44px]">Done</button><button id="feedback-sent-work" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors hidden min-h-[44px]">Work on it with Homeroom bot</button><button id="feedback-sent-chat" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors hidden min-h-[44px]">Open chat</button><button id="feedback-sent-request" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors hidden min-h-[44px]">Open this request</button><div class="flex items-center justify-center [&amp;:not(:has(&gt;:not(.hidden)))]:hidden"><button id="feedback-sent-mine" type="button" class="text-sm min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">See your requests</button><span aria-hidden="true" class="hidden text-sm text-zinc-500 dark:text-zinc-400 [:not(.hidden)+&amp;:has(+:not(.hidden))]:inline">·</span><button id="feedback-sent-edit" type="button" class="text-sm hidden min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">Edit</button></div><button id="feedback-sent-fix" type="button" class="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">Build it now</button></div></section></div></div></div><div id="share-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative"><button id="share-close" class="absolute top-4 end-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors" aria-label="Close share"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button><h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Share this app</h2><p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">Only members can open it. Invite people to let them in.</p><div class="flex gap-2"><input id="share-url-input" type="text" readOnly="" aria-label="Share URL" class="flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-violet-500"/><button id="share-copy-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors whitespace-nowrap">Copy</button></div><p id="share-homeroom-address" class="hidden"></p><div class="mt-4 flex items-center justify-between gap-3"><button type="button" class="inline-flex items-center gap-2 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9"></path></svg>Invite people</button><a id="share-open-link" href="#" target="_blank" rel="noopener" class="text-sm text-violet-700 hover:text-violet-400 transition-colors inline-flex items-center gap-1 dark:text-violet-400">Open in new tab<svg class="w-4 h-4 rtl:-scale-x-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg></a></div></div></div></div><div id="app-secrets-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-lg mx-4 shadow-xl relative max-h-[80vh] flex flex-col"><button id="app-secrets-close" class="absolute top-4 end-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors" aria-label="Close"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg></button><h2 id="app-secrets-title" class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">App secrets</h2><p id="app-secrets-subtitle" class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Environment variables this app declares in<code class="text-xs">dapp.json</code>.</p><div class="flex-1 overflow-y-auto -mx-2 px-2"><div id="app-secrets-list"></div><div id="app-secrets-declare" class="mt-3 hidden"></div></div><div id="app-secrets-status" class="text-sm mt-3 hidden"></div><div id="app-secrets-footer" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 hidden">Changes apply on the next deploy. Admins can<button id="app-secrets-redeploy" class="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">redeploy now</button>.</div></div></div><div id="board-filters-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1">Filters</h2><p class="text-xs text-zinc-500 mb-4">All conditions apply together.</p><div class="space-y-4"><div><label for="board-filters-priority" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Priority</label><select id="board-filters-priority" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"><option value="" selected="">Any priority</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></div><div><label for="board-filters-category" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Category</label><select id="board-filters-category" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"><option value="" selected="">Any category</option></select></div><div><label for="board-filters-assignee" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Assignee</label><select id="board-filters-assignee" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"><option value="" selected="">Anyone</option><option value=" __unassigned__">Nobody yet</option></select></div><label for="board-filters-needsvote" class="flex items-center justify-between gap-3 cursor-pointer select-none"><span class="min-w-0"><span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Waiting on you</span><span class="block text-xs text-zinc-500">Only proposals you haven’t weighed in on yet</span></span><input id="board-filters-needsvote" type="checkbox" class="un-switch"/></label><div class="flex justify-end"><button type="button" id="board-filters-done" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Done</button></div></div></div></div></div><div id="wallet-recovery-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Connect your existing wallet</h2><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">No new mobile wallet is available. If you previously joined with email, prove that address to connect its current-season wallet.</p><form class="space-y-4"><label class="block"><span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Previous account email</span><div class="flex gap-2"><input type="email" autoComplete="email" placeholder="you@example.com" class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/><button type="button" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors">Send code</button></div></label><label class="block"><span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Email code</span><input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength="6" pattern="[0-9]{6}" placeholder="123456" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"/></label><div class="flex gap-3"><button type="button" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors">Connect wallet</button></div></form></div></div></div><div id="app-settings-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1">App settings</h2><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4"></p><section id="app-access-section" class="mb-4 hidden"><h3 class="font-semibold mb-1">Access</h3><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-1">Now: Public community. Who can see it and how its changes are approved are set together, in one proposal.</p><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">The code is public on GitHub either way.</p><button id="app-access-open" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors">Who can see &amp; change it</button></section><section class="hidden border border-red-300 dark:border-red-800 rounded-lg p-4 mb-4"><h3 class="font-semibold text-red-700 dark:text-red-400 mb-2">Danger zone</h3><p class="text-sm mb-4">Deleting this app removes it for everyone, including its app data. This cannot be undone. It does not just remove the icon from your home page.</p><form class="space-y-3"><label for="app-delete-name" class="block text-sm">Type <strong></strong> to confirm deletion.</label><input id="app-delete-name" autoComplete="off" disabled="" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value=""/><button type="submit" disabled="" class="rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Delete app for everyone</button></form></section><button type="button" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Close</button></div></div></div><div id="app-notifications-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative"><h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Notifications</h2><p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">What this app can tell you about.</p><div class="space-y-3"></div><p class="text-xs text-zinc-500 dark:text-zinc-500 mt-4 leading-relaxed">Turning something off stops the notification, not the thing itself. New issues and proposals still appear on this app&#x27;s board.</p><div class="flex justify-end mt-5"><button type="button" id="app-notifications-done" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Done</button></div></div></div></div><div id="report-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"></div></div></div><div id="app-domain-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1">Custom domain</h2><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4"></p><p id="app-domain-error" role="alert" class="hidden text-sm text-red-700 dark:text-red-400 mb-4"></p><button type="button" class="rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors mt-4">Close</button></div></div></div><div id="topics-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1">Topics</h2><p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Each change is a proposal the group votes on. It applies once voted in.</p><p id="topics-error" role="alert" class="hidden text-sm text-red-700 dark:text-red-400 mb-3"></p></div></div></div><div id="who-decides-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"></div></div></div><div id="reopen-issue-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60"><div data-modal-backdrop="" class="flex min-h-full items-center justify-center p-4"><div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl"><h2 class="text-lg font-bold mb-1">Propose reopening issue<span id="reopen-issue-number" class="font-mono">#</span>?</h2><p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">This opens a group vote. If it passes, the issue is reopened here and on GitHub.</p><form id="reopen-issue-form" class="space-y-4"><div><label for="reopen-issue-reason" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Why should this issue be reopened?<span class="font-normal">(optional)</span></label><textarea id="reopen-issue-reason" rows="3" maxLength="2000" placeholder="e.g. not actually fixed, closed by mistake…" class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"></textarea><p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Posted publicly on the GitHub issue when the vote passes.</p></div><div id="reopen-issue-error" class="text-red-700 dark:text-red-400 text-sm hidden"></div><div class="flex gap-3"><button type="button" id="reopen-issue-cancel" class="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors">Cancel</button><button type="submit" id="reopen-issue-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Propose reopen</button></div></form></div></div></div><div id="home-tour" class="hidden fixed inset-0 z-[9993] overflow-hidden pointer-events-none" role="dialog" aria-modal="true" aria-labelledby="home-tour-title"><div id="home-tour-shade-top" class="absolute pointer-events-auto"></div><div id="home-tour-shade-right" class="absolute pointer-events-auto"></div><div id="home-tour-shade-bottom" class="absolute pointer-events-auto"></div><div id="home-tour-shade-left" class="absolute pointer-events-auto"></div><div id="home-tour-spotlight" class="hidden absolute rounded-xl ring-2 ring-violet-500 dark:ring-violet-400 shadow-[0_0_0_200vmax_black] shadow-zinc-950/60 dark:shadow-zinc-950/75"></div><div id="home-tour-card" tabindex="-1" class="absolute w-[340px] max-w-[calc(var(--platform-float-w)-1.5rem)] rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xl focus:outline-none pointer-events-auto"><div id="home-tour-body"><div id="home-tour-counter" class="text-[0.6875rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">1 of 6</div><h2 id="home-tour-title" class="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Communities</h2><p id="home-tour-text" class="mt-1 text-sm text-zinc-600 dark:text-zinc-300">Communities here build apps together. Anyone can propose a change, and the community votes on it. Find yours here.</p><div class="mt-4 flex items-center gap-2"><button id="home-tour-skip" type="button" class="text-sm text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors rounded px-1 py-1">Skip</button><div class="ms-auto flex items-center gap-2"><button id="home-tour-back" type="button" disabled="" class="rounded border border-zinc-300 dark:border-zinc-700 disabled:opacity-50 px-3 py-1.5 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Back</button><button id="home-tour-next" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors">Next</button></div></div></div><div id="home-tour-confirm" class="hidden"><p id="home-tour-confirm-text" class="text-sm text-zinc-700 dark:text-zinc-200">Are you sure? You can reopen this from Settings.</p><div class="mt-4 flex items-center justify-end gap-2"><button id="home-tour-confirm-cancel" type="button" class="rounded border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Keep going</button><button id="home-tour-confirm-skip" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors">Skip the tour</button></div></div></div></div><script src="/js/nav-link.js"></script><script src="/js/platform-ui.js"></script><script src="/js/ui-telemetry.js"></script><script src="/js/native-chrome.js"></script><script src="/js/dev-host.js"></script><script src="/js/social-push.js"></script><script src="/js/confirm-modal.js"></script><script src="/js/build-venues.js"></script><script src="/js/credit-options.js"></script><script src="/js/group-chat.js"></script><script src="/js/merge-status.js"></script><script src="/js/session-state.js"></script><script src="/js/topochain-events.js"></script><script src="/js/build-log.js"></script><script src="/js/app-view.js"></script><script src="/js/auth-screens.js"></script><script src="/js/feedback-queue.js"></script><script src="/js/app.js"></script></body>
+</html>

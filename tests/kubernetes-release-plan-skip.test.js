@@ -20,6 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const YAML = require('yaml');
+const { verifiedRun } = require('../scripts/reuse-kubernetes-postgres-check');
 
 const ROOT = path.join(__dirname, '..');
 const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
@@ -98,7 +99,8 @@ const behind = (minutes) => [`compare ${OLD} ${MINE} ahead`, `date ${OLD} ${T0}`
 
 test('the step runs only for pushes to main, and its interval is the publish step\'s', () => {
   assert.ok(behindStep && selectStep);
-  assert.equal(behindStep.if, "github.event_name == 'push' && github.ref == 'refs/heads/main'");
+  assert.equal(workflow.jobs.plan.if, "github.ref == 'refs/heads/main'");
+  assert.equal(behindStep.if, "github.event_name == 'push'");
   assert.equal(String(behindStep.env.RELEASE_EVERY_MINUTES), String(publishStep.env.RELEASE_EVERY_MINUTES));
   assert.ok(plan.indexOf(behindStep) < plan.indexOf(selectStep), 'decided before the release work is selected');
 });
@@ -150,11 +152,11 @@ function runSelect(env) {
   try {
     const res = spawnSync('bash', ['-c', selectStep.run], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary, CLAUDE_CODE_VERSION: '1.0.0', ...env },
+      env: { PATH: process.env.PATH, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary, ...env },
     });
     assert.equal(res.status, 0, res.stderr);
     const out = fs.readFileSync(output, 'utf8');
-    return { shouldRelease: /should_release=true/.test(out), matrix: /"component":"platform"/.test(out), summary: fs.readFileSync(summary, 'utf8') };
+    return { shouldRelease: /should_release=true/.test(out), summary: fs.readFileSync(summary, 'utf8') };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -163,14 +165,126 @@ function runSelect(env) {
 test('Select release work: a run that can release builds and publishes; one that cannot, neither', () => {
   const normal = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'false' });
   assert.equal(normal.shouldRelease, true);
-  assert.match(normal.summary, /Normal source release\./);
   const skipped = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'true', BEHIND_REASON: 'No build: main is at x.' });
   assert.equal(skipped.shouldRelease, false);
   assert.match(skipped.summary, /No build: main is at x\./);
-  const dispatched = runSelect({ GITHUB_EVENT_NAME: 'workflow_dispatch' });
+  const dispatched = runSelect({});
   assert.equal(dispatched.shouldRelease, true, 'a run dispatched by hand is never held back');
-  // The build and the release job both follow should_release.
+  const claude = workflow.jobs.plan.steps.find((step) => step.id === 'claude');
+  assert.equal(claude.if, "steps.release.outputs.should_release == 'true'");
+  assert.ok(workflow.jobs.plan.steps.indexOf(claude) > workflow.jobs.plan.steps.indexOf(selectStep));
   assert.equal(workflow.jobs.build.if, "needs.plan.outputs.should_release == 'true'");
   assert.deepEqual([].concat(workflow.jobs.release.needs),
-    ['build', 'security-lockfiles', 'security-regressions', 'preview-schema-compatibility']);
+    ['plan', 'build', 'preview-schema-compatibility']);
+});
+
+function postgresResultFixture() {
+  const tree = 'a'.repeat(40);
+  const revision = 'b'.repeat(40);
+  const head = 'c'.repeat(40);
+  const revisionInfo = { repo: 'Usernode-Labs/social-vibecoding', repoId: 123, revision, tree };
+  const root = `repos/${revisionInfo.repo}`;
+  const runPath = `${root}/actions/runs/99`;
+  const artifactName = `postgres-17-18-v1-pr19-attempt2-${tree}`;
+  const pull = {
+    number: 19, merged_at: '2026-11-20T12:00:00Z', merge_commit_sha: revision,
+    base: { ref: 'main', repo: { id: 123 } },
+    head: { sha: head, repo: { id: 456 } },
+  };
+  const run = {
+    id: 99, run_attempt: 2, path: '.github/workflows/kubernetes-pr-checks.yml',
+    event: 'pull_request', status: 'completed', conclusion: 'success',
+    head_sha: head, head_repository: { id: 456 }, pull_requests: [],
+  };
+  const artifact = {
+    name: artifactName, expired: false,
+    workflow_run: { id: 99, head_sha: head, repository_id: 123 },
+  };
+  const job = {
+    name: 'Preview schema compatibility (PostgreSQL 17/18) / PostgreSQL 17 and 18',
+    conclusion: 'success',
+    steps: [
+      { name: 'Verify database identities and tenant copies', conclusion: 'success' },
+      { name: 'Publish PostgreSQL check result', conclusion: 'success' },
+    ],
+  };
+  const responses = {
+    [`${root}/commits/${revision}/pulls?per_page=25`]: [pull],
+    [`${root}/actions/workflows/kubernetes-pr-checks.yml/runs?event=pull_request&status=success&head_sha=${head}&per_page=3`]: { workflow_runs: [run] },
+    [`${runPath}/artifacts?name=${artifactName}`]: { artifacts: [artifact] },
+    [`${runPath}/attempts/2/jobs?per_page=100`]: { jobs: [job] },
+  };
+  const calls = [];
+  return {
+    result: () => verifiedRun(revisionInfo, (path) => {
+      calls.push(path);
+      return responses[path] ?? { artifacts: [] };
+    }),
+    calls, pull, run, job, artifact,
+  };
+}
+
+test('a successful PostgreSQL run for the exact tree can be reused without downloading artifacts', () => {
+  const f = postgresResultFixture();
+  assert.equal(f.result(), 99);
+  assert.equal(f.calls.length, 4);
+  assert.match(f.calls.at(-1), /\/attempts\/2\/jobs/);
+});
+
+test('a direct push, different merge, or different repository has no reusable result', () => {
+  for (const invalidate of [
+    (f) => { f.pull.merged_at = null; },
+    (f) => { f.pull.merge_commit_sha = 'd'.repeat(40); },
+    (f) => { f.pull.base.ref = 'candidate'; },
+    (f) => { f.pull.base.repo.id = 999; },
+  ]) {
+    const f = postgresResultFixture();
+    invalidate(f);
+    assert.equal(f.result(), null);
+    assert.equal(f.calls.length, 1);
+  }
+});
+
+test('results from the wrong workflow, commit, or fork cannot authorize release', () => {
+  for (const invalidate of [
+    (f) => { f.run.path = '.github/workflows/other.yml'; },
+    (f) => { f.run.event = 'push'; },
+    (f) => { f.run.conclusion = 'failure'; },
+    (f) => { f.run.head_sha = 'd'.repeat(40); },
+    (f) => { f.run.head_repository.id = 999; },
+  ]) {
+    const f = postgresResultFixture();
+    invalidate(f);
+    assert.equal(f.result(), null);
+    assert.equal(f.calls.length, 2);
+  }
+});
+
+test('a different tree, PR, or attempt and an expired or unrelated artifact cannot be reused', () => {
+  for (const invalidate of [
+    (f) => { f.artifact.name = f.artifact.name.replace(/a{40}$/, 'd'.repeat(40)); },
+    (f) => { f.artifact.name = f.artifact.name.replace('pr19', 'pr20'); },
+    (f) => { f.run.run_attempt = 3; },
+    (f) => { f.artifact.expired = true; },
+    (f) => { f.artifact.workflow_run.id = 31; },
+    (f) => { f.artifact.workflow_run.repository_id = 999; },
+  ]) {
+    const f = postgresResultFixture();
+    invalidate(f);
+    assert.equal(f.result(), null);
+    assert.equal(f.calls.length, 3);
+  }
+});
+
+test('a missing, skipped, or failed PostgreSQL step requires fresh release checks', () => {
+  for (const invalidate of [
+    (f) => { f.job.conclusion = 'failure'; },
+    (f) => { f.job.steps.pop(); },
+    (f) => { f.job.steps[0].conclusion = 'skipped'; },
+  ]) {
+    const f = postgresResultFixture();
+    invalidate(f);
+    assert.equal(f.result(), null);
+    assert.equal(f.calls.length, 4);
+  }
 });
