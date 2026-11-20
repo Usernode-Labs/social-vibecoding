@@ -2626,6 +2626,13 @@ function inviteView(inv) {
 // The read state has to match too. A run is entirely unread or entirely read,
 // which is what lets the sheet's Unread tab filter whole rows without ever
 // hiding an unread message inside a row it counted as read.
+//
+// And so does whether the bell counts it (#18). A plain message is the
+// Messages tab's; a reaction, a reply or a mention in the same conversation
+// is the bell's. The run's row takes its newest member's view, plainMessage
+// included, so a reaction folded under a newer plain message was hidden from
+// Unread while the bell still counted it: "Unread (1)" over "You're all
+// caught up" (20 Nov 2026). A run is all plain or all counted.
 function collapseConversationRuns(items) {
   const runs = [];
   for (const n of items) {
@@ -2636,12 +2643,14 @@ function collapseConversationRuns(items) {
     // ("hrbot:<said>:<app>" on a row from before "one story", "hrbot2:{…}"
     // now; kept to the shape here so the function stands on its own.)
     const moment = !!(n && /^hrbot(?::[a-z_]{1,20}:|2:\{)/.test(String(n.detail || '')));
+    // isPlainMessageNotification's rule, spelled here for the same reason.
+    const plain = !!n && ((n.kind === 'conversation_message' && n.appId == null) || n.kind === 'channel_message');
     if (prev && id !== null && prev.conversationId === id
-        && prev.read === !!n.readAt && !moment && !prev.moment) {
+        && prev.read === !!n.readAt && prev.plain === plain && !moment && !prev.moment) {
       prev.count += 1;
       continue;
     }
-    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1, moment });
+    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1, moment, plain });
   }
   return runs;
 }
