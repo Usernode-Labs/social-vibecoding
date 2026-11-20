@@ -175,6 +175,27 @@ test('the menu and the top bar: one block for the standard look and this one, ev
     /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
 });
 
+test('on a community\'s page the Communities tab gives way to its row', () => {
+  const block = menuBlock();
+  const GIVE = 'html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"]';
+  const all = rules(block);
+  const row = all.find((r) => r.selector === GIVE);
+  assert.ok(row, 'the tab gives up its fill while a community\'s row is current');
+  assert.match(row.body, /background: transparent;/, 'the lit-row rule above would otherwise paint it');
+  assert.match(row.body, /color: var\(--wip-nav-ink\);/, 'it wears an unlit row\'s ink');
+  const glyph = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-glyph, .platform-tab-label)`);
+  assert.ok(glyph, 'the glyph and the word stop wearing the lit row\'s on-ink');
+  assert.match(glyph.body, /color: inherit;/);
+  const count = all.find((r) => r.selector === `${GIVE} .platform-tab-votes`);
+  assert.ok(count, 'its count goes back to an unlit row\'s disc');
+  assert.match(count.body, /background: var\(--wip-nav-count-bg\);/);
+  assert.match(count.body, /color: var\(--wip-nav-count-ink\);/);
+  // It is a wide display's rule and it is in this block, whose scope is what out-ranks the lit row.
+  assert.ok(block.includes(`@media (min-width: 768px) {\n  ${GIVE} {`), 'the give-way rules sit in a wide-display group of the menu block');
+  // The look's own lit row is still there, so the give-way rule is what makes the difference.
+  assert.match(block, /html:not\(\[data-skin\]\) #platform-tabs :is\(\.platform-tab, [^{]*\)\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);/);
+});
+
 test('folded, the menu is a strip of icons and logos, and a medium display starts on it', () => {
   const css = read('public', 'css', 'app.css');
   const block = menuBlock();
