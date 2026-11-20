@@ -38,8 +38,7 @@ type Tone = 'ok' | 'err';
 interface Status { text: string; tone: Tone }
 
 const TONE_CLASS: Record<Tone, string> = {
-  // Two different greens, preserved: the credits line has always been
-  // emerald and the limits line green-500.
+  // Each status line passes its own green (okClass).
   ok: '',
   err: 'text-red-400',
 };
