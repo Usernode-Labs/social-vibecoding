@@ -482,9 +482,14 @@
       "schemaSha256": "933757d701ecab7769895883fab51f7a807e716507d20017b766bd71776e8a9a"
     },
     {
+      "id": "platform-limit-refusals",
+      "sha256": "40a8ab6559cc2cabfccd4d6452c704363bd5f68219ae840e9b077fdbd213ecb7",
+      "schemaSha256": "075e0e0ccb2fc560922614a69af29a6a90f8e356b53e8cf96eeba7530aad99e4"
+    },
+    {
       "id": "shots-copy-content-types",
       "sha256": "db77afe6c58fcc0ba0da17decf55361c43c7865f88f108424fa35dd4d766deea",
-      "schemaSha256": "db45b45fc28d6fe654c9b5d5a6c08c253acf67aafa6d73e95244bfba14ae60ef"
+      "schemaSha256": "20ceadaf35cfcdaf216fb3176031d58c31b6a6c7f1f7be250272fb18b86dd34b"
     }
   ]
 }
