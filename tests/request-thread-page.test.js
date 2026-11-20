@@ -211,6 +211,20 @@ test('#6680: a request filed from a private thread links its owner back to it', 
   assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: null } }), /data-request-from-thread/);
 });
 
+// Artifacts, stage 4 (light): when the owner's plan here was made from the
+// design that thread holds, the head offers them the design itself, running,
+// at the version the plan shows. Nobody else's read carries it (the route
+// test and tests/plan-design-source-postgres.test.js), and everyone else
+// sees the plan's own screens.
+test('artifacts: a plan made from its owner\'s design opens that design, at the version the plan shows, for its owner', () => {
+  const html = renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372, designVersion: 3 } } });
+  assert.match(html, /href="#homeroom-bot\/thread\/17372\/design\/3" data-request-design-door="3">Open the design, version 3<\/a>/);
+  assert.match(html, /data-request-from-thread="17372">[\s\S]*?data-request-design-door="3"/, 'beside the link back to its thread');
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372 } } }), /data-request-design-door/,
+    'a thread that filed no plan from a design opens no design');
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: requestView() }), /data-request-design-door/);
+});
+
 function appView(username = 'evan', globals = {}) {
   const c = {
     ...globals,
@@ -978,7 +992,8 @@ test('#6594 an approved change says Approved in the header and the list', () => 
   });
   const checking = requestPill(layout, standing('checking', 'approved_checking'), (id) => id);
   assert.equal(checking.key, 'checking');
-  assert.equal(checking.label, 'project:topic.thread.pill.checking');
+  // 19 Nov 2026, the one rule: in the row's own words.
+  assert.equal(checking.label, 'core:work.stage.checking');
   assert.equal(checking.tone, 'progress', 'Checking takes the in-progress look');
   assert.equal(checking.spinner, true);
   assert.equal(requestPill(layout, standing('going_live', 'github_checks'), (id) => id).key, 'approved');

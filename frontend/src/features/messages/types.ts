@@ -1,5 +1,5 @@
 import type { ReleaseOutlook } from '../../lib/release-eta';
-import type { WorkState } from '../../lib/work-state';
+import type { WorkState, WorkWords } from '../../lib/work-state';
 import type { UnreadMark } from './unread-anchor';
 
 /**
@@ -281,6 +281,19 @@ export interface HomeroomBotGoesLive {
   missing: number;
   waitingOn: string[];
   more: number;
+  /**
+   * What the change's stored work state says it still waits on although its
+   * approvals are in (services/homeroom-bot-dm.js waitsBeforeLive): its
+   * checks, a sync with main, a merge GitHub holds. The words are the row's
+   * own phrase ids, the ones every screen says.
+   */
+  waits?: HomeroomBotWaits;
+}
+
+export interface HomeroomBotWaits {
+  stage: string;
+  line: { code: string } | null;
+  words: WorkWords;
 }
 
 /** B6: one of a plan's choices, or one of two questions: the suggested answer first. */
@@ -619,7 +632,9 @@ export interface HomeroomBotActivity {
   /** A `build_failed` ending: why the build stopped. */
   stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other'
     // T2.9: the one decoder's other causes (services/bot-stop-cause.js).
-    | 'plan' | 'push' | 'push_permanent' | 'push_gave_up' | 'stopped';
+    | 'plan' | 'push' | 'push_permanent' | 'push_gave_up' | 'stopped'
+    // T2.2: it stopped for building credit, and starts again by itself.
+    | 'credit';
   /**
    * A `held` ending: which of the bot's limits holds it back. #6156: the
    * project's builds (`builds_per_app`: it waits for the bot's turn) and its

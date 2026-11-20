@@ -1260,42 +1260,6 @@ function canResume(review, max = MAX_REVIEW_RESUMES) {
 }
 
 /**
- * Whether a fix turn's `result` restart recovery followed is the one a
- * review's saved state was waiting on: its last round has a `fix` verdict
- * and no fix yet, the turn was dispatched (its `inFlight` says so, or a
- * review saved before `inFlight` existed was waiting on it), and it is not
- * a commit a round already recorded, which is spent. Pure.
- */
-function awaitsFix(review, result) {
-  if (!review || typeof review !== 'object' || !result || typeof result !== 'object') return false;
-  const rounds = Array.isArray(review.rounds) ? review.rounds : [];
-  const last = rounds.length ? rounds[rounds.length - 1] : null;
-  const awaiting = !!last && last.verdict === 'fix' && !last.fix
-    && (review.inFlight ? review.inFlight.step === 'fix' : true);
-  const spent = new Set([review.round0?.sha, ...rounds.map((r) => r?.fix?.sha)].filter(Boolean));
-  return awaiting && !(result.sha && spent.has(result.sha));
-}
-
-/**
- * The result of a fix turn restart recovery followed to its end (the
- * journal's `result`), in fix()'s shape, for runReviewLoop's
- * `recoveredFix`: a turn its clock stopped is `stopped`, one that failed
- * (homeroom-bot-live.js failedClaudeTurn) is an error, and anything else
- * landed, with the commit it pushed. `costUsd` and `ms` are the caller's,
- * read from the turn ledger. Pure apart from the shared failure reader.
- */
-function recoveredFixOf({ result = {}, timedOut = false, costUsd = null, ms = null } = {}) {
-  const r = result && typeof result === 'object' ? result : {};
-  if (timedOut) return { ok: false, stopped: true, costUsd: num(costUsd), ms: num(ms) };
-  const failed = require('./homeroom-bot-live').failedClaudeTurn(r);
-  if (failed) return { ok: false, error: `the fix turn failed (${failed})`, costUsd: num(costUsd), ms: num(ms) };
-  return {
-    ok: true, sha: r.pushOk ? (r.sha || null) : null, commits: Number(r.ahead) > 0 ? Number(r.ahead) : null,
-    costUsd: num(costUsd), ms: num(ms),
-  };
-}
-
-/**
  * A capture as a live run keeps it (homeroom_bot_runs.review): whether it
  * booted, and each screenshot's place and stored artifact, which is all the
  * pairs and the restart path read. The checks' text samples and the boot log
@@ -1365,6 +1329,7 @@ function summaryOf(review) {
 }
 
 module.exports = {
+  num,
   MAX_ISSUES,
   SEVERITIES,
   STOPS,
@@ -1400,8 +1365,6 @@ module.exports = {
   recordFinalLook,
   startFinalLook,
   canResume,
-  recoveredFixOf,
-  awaitsFix,
   slimCapture,
   reviewForm,
   slimState,

@@ -301,10 +301,12 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     const number = nextIssue;
     const root = design.rootId;
     const sql = (state) => pool.query('UPDATE private_threads SET state = $2 WHERE root_message_id = $1', [root, state]);
+    // Artifacts, stage 4: Propose it above posted version 2 as the request's
+    // plan, so the owner's link carries the version it shows, which opens the design.
     await sql('filed');
-    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root });
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root, designVersion: 2 });
     await sql('posted');
-    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root },
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root, designVersion: 2 },
       'a plan posted on the request links it too');
     assert.equal(await designs.threadForRequest(pool, { userId: sam.id, appId: app.id, number }), null,
       'another person reads nothing of a private thread');
@@ -395,7 +397,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.match(section(seen[1]), /WHAT YOU WERE ASKED TO DRAW\nThe seeds they can swap, as cards/);
     // #6257: the first drawing may ask first, so its last line says so; the
     // clear brief here still draws in the turn (the next scripted call).
-    assert.match(section(seen[1]), /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
+    assert.match(section(seen[1]), /THERE IS NO SCREEN YET: draw it with write_artifact, or ask first as FIRST SCREEN says\.$/);
     // The third request also carries start_design's own result (round one):
     // the reads are the last three tool results, from round two.
     const results = seen[2].filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content)).slice(-3);

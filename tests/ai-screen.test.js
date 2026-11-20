@@ -1179,9 +1179,9 @@ test('the server arranges Waiting nearest to live first, and matches the stored 
 });
 
 test('a request the bot handed back is one its records say it left for a person, or whose build stopped', () => {
-  const { handedBack, stageOf } = require('../src/services/homeroom-bot-progress');
+  const { handedBack } = require('../src/services/homeroom-bot-progress');
   const looked = { mode: 'live', verdict: 'person', request_closed: false, proposal_status: null };
-  assert.equal(stageOf(looked), null, 'nothing about it is in progress');
+  assert.equal(require('../src/services/work-state').derive(looked).stage, 'waiting_for_you', 'nothing about it is in progress');
   assert.equal(handedBack(looked), 'decide');
   assert.equal(handedBack({ ...looked, verdict: 'ready', build_ok: false, build_error: 'turn timed out' }), 'build_stopped');
   assert.equal(handedBack({ ...looked, verdict: 'ready', build_ok: false, build_error: 'skipped: answered meanwhile' }), null, 'a skip did not stop');

@@ -1040,9 +1040,11 @@ test('takeBase bounds the shell\'s own draw, and layInPanel bounds the panel blo
 test('takeBase asks each design frame for its own picture and lays it in on the first picture and the retake', () => {
   const src = read('frontend/src/features/comment-pin/picture.ts');
   // Both design iframes carry the marker the shell finds them by.
-  assert.match(read('frontend/src/features/messages/design-pane.tsx'), /data-design-frame=""/);
-  assert.match(read('frontend/src/features/messages/design-card.tsx'), /data-design-frame=""/);
-  assert.match(src, /iframe\[\$\{DESIGN_FRAME_ATTR\}\]/);
+  // Artifacts, stage 1: the one frame marks a running page that is to be
+  // pictured (frontend/src/features/artifact/frame.tsx `pictured`).
+  assert.match(read('frontend/src/features/messages/design-pane.tsx'), /<ArtifactFrame[\s\S]{0,260}?\bpictured\b/);
+  assert.match(read('frontend/src/features/messages/design-card.tsx'), /<ArtifactFrame[\s\S]{0,260}?\bpictured\b/);
+  assert.match(src, /iframe\[\$\{ARTIFACT_PICTURED_ATTR\}\]/);
   // Asked beside the shell, the app and the panel, bounded like the panel: a
   // design that misses its bound draws nothing, holding no longer than it.
   assert.match(src, /const designs = within\(designPictures\(scale\), PANEL_PICTURE_TIMEOUT_MS, \[\]\);/);
@@ -1084,7 +1086,7 @@ test('designFrames finds the marked frames on screen and stops at eight', () => 
   const offscreen = frameAt({ left: 900, top: 0, width: 100, height: 100, right: 1000, bottom: 100 });
   const gone = frameAt({ left: 0, top: 0, width: 10, height: 10, right: 10, bottom: 10 }, { contentWindow: null });
   globalThis.document = {
-    querySelectorAll: (sel) => (sel === 'iframe[data-design-frame]' ? [good, tiny, hidden, offscreen, gone] : []),
+    querySelectorAll: (sel) => (sel === 'iframe[data-artifact-pictured]' ? [good, tiny, hidden, offscreen, gone] : []),
     documentElement: {},
   };
   globalThis.window = { innerWidth: 800, innerHeight: 600 };
@@ -1123,7 +1125,7 @@ test('requestDesignPicture takes only this frame\'s answer with the id it sent, 
   try {
     const asked = picture.requestDesignPicture(frame, 2, '/* snapdom */', 1000);
     assert.equal(sent.length, 1, 'one request is posted');
-    assert.equal(sent[0].__design, 'picture');
+    assert.equal(sent[0].__artifact, 'picture');
     assert.equal(sent[0].scale, 2);
     assert.equal(sent[0].lib, '/* snapdom */');
     assert.equal(typeof sent[0].id, 'string');
@@ -1132,12 +1134,12 @@ test('requestDesignPicture takes only this frame\'s answer with the id it sent, 
     // Another frame's answer, and this frame's answer with another id, are
     // both ignored: a design's script can supply only its own frame's image.
     for (const answer of [
-      { source: other, data: { __design: 'picture', id, blob } },
-      { source: target, data: { __design: 'picture', id: 'another', blob } },
-      { source: target, data: { __design: 'pin', id, blob } },
+      { source: other, data: { __artifact: 'picture', id, blob } },
+      { source: target, data: { __artifact: 'picture', id: 'another', blob } },
+      { source: target, data: { __artifact: 'pin', id, blob } },
     ]) listeners.slice().forEach((fn) => fn(answer));
     assert.equal(listeners.length, 1, 'still waiting after the wrong answers');
-    listeners.slice().forEach((fn) => fn({ source: target, data: { __design: 'picture', id, blob } }));
+    listeners.slice().forEach((fn) => fn({ source: target, data: { __artifact: 'picture', id, blob } }));
     assert.equal(await asked, blob);
     assert.equal(listeners.length, 0, 'the listener is gone once answered');
     // Nothing said: the bound resolves null, and the listener is gone too.

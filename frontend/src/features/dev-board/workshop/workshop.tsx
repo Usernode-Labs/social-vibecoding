@@ -90,6 +90,7 @@ import { useDevActions } from '../actions-store';
 import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import { shownPill } from '../card/model';
 import { CardSkeleton, CountSkeleton } from '../card/skeleton';
 import { composeNoReason, VotePicker } from '../card/dev-card';
 import type { NoChoice } from '../../review-flow/vote-sheet';
@@ -1348,7 +1349,10 @@ type Fact = { key: string; tone: string | undefined; text: string; topic?: boole
 const SAID_ELSEWHERE = new Set(['needs_vote', 'tally', 'approvals']);
 export function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
-  const st = row.card.pill ? row.card.pill.state : null;
+  // The stored row's words while it is not up for a vote (card/model.ts
+  // shownPill): "Taking screenshots" after the count, never a bare tally
+  // that reads as a vote still wanted.
+  const st = shownPill(row.card);
   // The count the card shows once it is answered (#5236), and the snapshot
   // it keeps when nothing fresher can be said.
   const now = answeredCount(row, voted);
@@ -1565,7 +1569,7 @@ function labelTally(a: { tally?: string }): string {
  * that is not the wait itself ("Checks failing") still follows it.
  */
 function tallyLine(row: QueueRow, voted: string | null): string {
-  const st = row.card.pill ? row.card.pill.state : null;
+  const st = shownPill(row.card);
   // The count the sheet shows once it is answered (#5236), the same fresh
   // read `factsFor` takes; the snapshot when nothing fresher can be said.
   const now = answeredCount(row, voted);

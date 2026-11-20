@@ -32,8 +32,6 @@
 const log = require('./logger');
 
 const NOTE_CHARS = 2000;
-// The most notes one stop is handed (TAKE_SQL's LIMIT).
-const MAX_TAKE = 10;
 
 function dmModule(deps) { return deps.dm || require('./homeroom-bot-dm'); }
 function mayorModule(deps) { return deps.mayor || require('./homeroom-bot-mayor'); }
@@ -753,7 +751,6 @@ async function forward(pool, config, { row, user, card, message = null, deps = {
 
 module.exports = {
   NOTE_CHARS,
-  MAX_TAKE,
   noteText,
   buildUnderWay,
   buildForRequest,

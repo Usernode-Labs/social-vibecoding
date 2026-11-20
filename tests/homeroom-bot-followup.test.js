@@ -301,7 +301,7 @@ function harness({
   return { pool, deps, calls };
 }
 
-async function run(t, h) {
+async function run(t, h, item = ITEM) {
   const realPost = live.post;
   const realSeen = live.advanceSeen;
   t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
@@ -311,7 +311,7 @@ async function run(t, h) {
   // decided for its request's debt is on h.look.out.
   h.look = bot._newLookForTests({ owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
   return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, {
-    bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+    bot: BOT, app: APP, item, mode: 'shadow', settings: SETTINGS, deps: h.deps,
   }));
 }
 
@@ -881,27 +881,48 @@ test('a GLM follow-up whose agent failed is no revision: its push is never recon
 
 test('a GLM follow-up that ended on an API error with exit 0 is no revision, whatever it pushed', async (t) => {
   const notice = 'API Error: 429 {"error":{"message":"Provider returned error","code":429}}';
+  const comments = [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }];
   // Pushed anyway (a runner that did not discard it): never reconciled.
+  // Review A2: and never a try spent on the reply. The provider failed, not
+  // the change: no run is written, and the request keeps its debt and backs
+  // off (the look ends as a platform fault).
   const h = harness({
-    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    comments,
     result: { agentHarness: 'claude', ccExit: 0, exitCode: 0, pushOk: true, sha: NEW_HEAD, lastResultText: notice },
   });
   const out = await run(t, h);
-  assert.equal(out.verdict, 'failed');
+  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'infra' });
+  assert.equal(h.look.out.queue, 'fault');
   assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
-  assert.equal(insertOf(h).params[18], 'the follow-up turn failed (it ended on an API error: '
-    + 'API Error: 429 {"error":{"message":"Provider returned error","code":429}})');
-  // Discarded by run-cc.sh, as it now is: the same, and the reason is named.
+  assert.equal(insertOf(h), undefined, 'no failed run that would count as one of the reply\'s tries');
+  // Discarded by run-cc.sh, as it now is: the same.
   const discarded = harness({
-    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    comments,
     result: { agentHarness: 'claude', ccExit: 0, exitCode: 1, pushOk: false, sha: null, lastResultText: notice },
   });
   const out2 = await run(t, discarded);
-  assert.equal(out2.verdict, 'failed');
+  assert.deepEqual({ ran: out2.ran, reason: out2.reason }, { ran: false, reason: 'infra' });
   assert.equal(discarded.calls.reconciled.length, 0);
-  // The notice, read before the exit code run-cc.sh gave it.
-  assert.equal(insertOf(discarded).params[18], 'the follow-up turn failed (it ended on an API error: '
+  assert.equal(insertOf(discarded), undefined);
+  // Its third platform failure in a row is written, with the reason named
+  // (the notice, read before the exit code run-cc.sh gave it), and said as
+  // Homeroom's failure, never the change's.
+  const third = harness({
+    comments,
+    result: { agentHarness: 'claude', ccExit: 0, exitCode: 1, pushOk: false, sha: null, lastResultText: notice },
+  });
+  const notes = [];
+  third.deps.ws = { async sendBotMessage(p, appId, m) { notes.push(m); return { id: 1 }; } };
+  const out3 = await run(t, third, { ...ITEM, faults: 2 });
+  assert.equal(out3.verdict, 'failed');
+  assert.equal(third.calls.reconciled.length, 0);
+  assert.equal(insertOf(third).params[18], 'the follow-up turn failed (it ended on an API error: '
     + 'API Error: 429 {"error":{"message":"Provider returned error","code":429}})');
+  const said = notes.map((m) => String(m.content || m.text || '')).join('\n');
+  if (notes.length) {
+    assert.match(said, /Homeroom had a problem on its side, not with this change/);
+    assert.doesNotMatch(said, /something went wrong while it worked on it/);
+  }
 });
 
 test('a Codex follow-up whose agent failed fails exactly as it did', async (t) => {

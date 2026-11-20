@@ -282,9 +282,21 @@ test('work state: an approved change GitHub holds is going live, with what it wa
 });
 
 test('work state: the bot\'s own change at its vote step reads the same', () => {
-  const src = read('src/services/work-state.js');
-  const vote = src.slice(src.indexOf("    case 'vote':"), src.indexOf("    case 'merging':"));
-  assert.match(vote, /const hold = githubHold\(row\);\s*if \(hold\) return state\(hold\.stage, \{ since, line: \{ code: hold\.code \} \}\);/);
+  // A request reads its change's own row (services/work-state.js withBot),
+  // so an approved change GitHub holds says the hold on both.
+  const ws = require('../src/services/work-state');
+  const now = new Date('2026-11-19T12:00:00Z');
+  for (const [reason, stage, code] of [
+    ['github_checks', 'going_live', 'github_checks'], ['github_refused', 'going_live', 'github_wait'],
+    ['github_busy', 'going_live', 'github_wait'], ['github_checks_failing', 'checking', 'github_checks_failing'],
+    ['github_stuck', 'going_live', 'github_stuck'],
+  ]) {
+    const held = { check_state: 'passing', votes_in: true, integration_block_reasons: [reason] };
+    const request = ws.derive({ proposal_status: 'promoted', ...held }, { now });
+    const change = ws.deriveChange({ status: 'promoted', ...held }, { now });
+    assert.deepEqual([request.stage, request.line], [stage, { code }], reason);
+    assert.deepEqual([request.stage, request.line], [change.stage, change.line], `${reason}: as its change says`);
+  }
 });
 
 test('#6593: the page read asks GitHub for the count only while the checks are running', () => {

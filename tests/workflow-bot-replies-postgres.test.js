@@ -231,7 +231,7 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref) VALUES ($1, $2, 'File it?', 'message', '{}', 'message', $3) RETURNING id`,
       [app.id, bot.id, root]);
     const { rows: [offer] } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id) VALUES ($1, 'file_request', '{}', $2, $3) RETURNING id`,
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id) VALUES ('thread', $1, 'file_request', '{}', $2, $3) RETURNING id`,
       [app.id, ada.id, reply.id]);
     const key = `place:${app.id}:message:${root}`;
     const tap = (who, choice = 'yes') => send('bot-voice', key, 'OfferTapped', { appId: app.id, place: thread, offerId: offer.id, userId: who.id, choice });
@@ -244,12 +244,12 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     // (never left deciding with its buttons up: bug 7).
     reset();
     const { rows: [o2] } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id) VALUES ($1, 'file_request', '{}', $2, NULL) RETURNING id`,
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id) VALUES ('thread', $1, 'file_request', '{}', $2, NULL) RETURNING id`,
       [app.id, ada.id]);
     const { rows: [reply2] } = await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref) VALUES ($1, $2, 'Again?', 'message', '{}', 'message', $3) RETURNING id`,
       [app.id, bot.id, root]);
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [o2.id, reply2.id]);
+    await pool.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1', [o2.id, reply2.id]);
     work.answer.set(voice.WORK.act, (input) => { if (!input.gaveUp) throw new Error('GitHub is down'); return { decision: 'failed' }; });
     assert.equal((await send('bot-voice', key, 'OfferTapped', { appId: app.id, place: thread, offerId: o2.id, userId: ada.id, choice: 'yes' })).result, 'accepted');
     assert.deepEqual(calls(voice.WORK.act).map((c) => [c.key, !!c.input.gaveUp, c.input.key]),
