@@ -8373,7 +8373,7 @@ html:not([data-skin]) {
   --wip-nav-fold: 32px;                  /* the fold button: a quiet rounded square inside the panel, at its end */
   --wip-nav-fold-ic: 20px;
   --wip-nav-fold-rest: 0.78;             /* the glyph at rest; whole under the pointer or the keyboard's focus */
-  --wip-nav-fold-inset: 0px;             /* the fold button touches the panel's edge, on either side of it */
+  --wip-nav-fold-inset: -4px;            /* the fold button's own air laps the panel's edge, so its glyph sits 2px from it on either side */
   --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
   --wip-nav-ic-size: 20px;
   --wip-nav-ic-size-small: 18px;
