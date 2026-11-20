@@ -59,6 +59,7 @@ import { t } from '../../../lib/i18n/runtime';
 import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
 import type { ActionSpec, BadgeSpec, DevCardModel, ListRow, StatusPillState } from './model';
+import { shownPill } from './model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
@@ -203,7 +204,7 @@ export function RowBand({ card, trailing, chips: withChips = true }: {
    */
   chips?: boolean;
 }): ReactNode {
-  const s = card.pill?.state || null;
+  const s = shownPill(card);
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
   // `meta` chips (the status tags) ride the row's META line, which is

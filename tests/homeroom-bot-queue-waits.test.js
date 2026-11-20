@@ -385,9 +385,11 @@ test('#6246: a queue row on hold does not hide a plan waiting for Build it', () 
     run_at: '2026-11-04T06:00:00Z', plan_waiting_at: '2026-11-04T06:10:00Z',
     queue_id: 4, enqueued_at: '2026-11-03T22:00:00Z', held_until: '2026-11-09T00:00:00Z',
   };
-  assert.deepEqual(progress.stageOf(waiting, { now }), {
-    stage: 'plan', since: '2026-11-04T06:10:00Z', waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
-  });
+  const ws = require('../src/services/work-state');
+  assert.equal(progress.planWaits(waiting), true);
+  const plan = ws.derive(waiting, { now });
+  assert.deepEqual([plan.stage, plan.why, plan.since], ['waiting_for_you', 'plan', '2026-11-04T06:10:00.000Z']);
   // The same held queue row with no waiting run still reads on hold.
-  assert.equal(progress.stageOf({ ...waiting, mode: null, verdict: null, plan_waiting_at: null }, { now }).stage, 'on_hold');
+  const held = ws.derive({ ...waiting, mode: null, verdict: null, plan_waiting_at: null }, { now });
+  assert.deepEqual([held.stage, held.line.code], ['reading', 'on_hold']);
 });

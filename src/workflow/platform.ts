@@ -956,7 +956,7 @@ export async function botNote(sessionId: number, type: string, payload: Record<s
 // answer, or null when no machine runs a turn there (a person's own turn:
 // the route's own path stops it). A job that changed since the person read
 // it is refused as the route refuses it.
-export async function stopWorkflowTurn(p: { sessionId: number; by: string | null; expectedTurnId?: string | null }): Promise<Reply | null> {
+export async function stopWorkflowTurn(p: { sessionId: number; by: string | null; byId?: number | null; expectedTurnId?: string | null }): Promise<Reply | null> {
   if (!runtime) return null;
   const { rows: [owner] } = await kernelPool!.query(TURN_OWNER_SQL, [p.sessionId]);
   if (!owner?.machine || !owner?.key) return null;
@@ -969,7 +969,7 @@ export async function stopWorkflowTurn(p: { sessionId: number; by: string | null
     }
   }
   const outcome = await runtime.appendAndWait(owner.machine, owner.key,
-    { type: 'StopRequested', payload: { sessionId: p.sessionId, by: p.by ?? null } as any },
+    { type: 'StopRequested', payload: { sessionId: p.sessionId, by: p.by ?? null, byId: p.byId ?? null } as any },
     { requestKey: `stop:${p.sessionId}:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, actor: p.by ?? undefined, waitMs: 5000 });
   if (outcome.status === 'rejected') {
     return { status: 200, body: { ok: true, stopped: false, reason: 'no active turn', code: outcome.reason || null } };

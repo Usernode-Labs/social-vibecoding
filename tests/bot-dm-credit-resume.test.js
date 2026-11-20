@@ -278,9 +278,31 @@ test('credit\'s return reaches every DM that kept a message, in the lane\'s own 
   const read = await m.facts(tx, { name: 'open', data }, { type: 'CreditBack' }, ctx);
   assert.deepEqual(read.creditDms, [{ key: 'person:9', userId: 9 }]);
   assert.deepEqual(queries.find(([q]) => q === laneFacts.CREDIT_OWED_DMS_SQL)[1], [replies.DM]);
+  // Review A5: and for any pass that finds the stored outage gone while the
+  // lane still holds its pause (the wake-up was lost): that pass lifts it,
+  // so it reads who to tell too.
   queries.length = 0;
-  const look = await m.facts(tx, { name: 'open', data }, { type: 'Look' }, ctx);
+  const lifting = await m.facts(tx, { name: 'open', data }, { type: 'Look' }, ctx);
+  assert.equal(lifting.credit, null, 'no outage is stored');
+  assert.deepEqual(lifting.creditDms, [{ key: 'person:9', userId: 9 }]);
+  // An ordinary pass (no pause held, or the outage still standing) does not.
+  queries.length = 0;
+  const look = await m.facts(tx, { name: 'open', data: { ...data, credit: null } }, { type: 'Look' }, ctx);
   assert.equal(look.creditDms, undefined);
+  assert.equal(queries.some(([q]) => q === laneFacts.CREDIT_OWED_DMS_SQL), false);
+  const standing = {
+    async query(text, params) {
+      queries.push([String(text), params]);
+      if (/FROM platform_settings/.test(text)) {
+        return { rows: [{ key: laneFacts.CREDIT_STATE_KEY, value: JSON.stringify({ outage: { since: '2026-11-19T09:00:00.000Z', words: 'Insufficient credits' } }) }] };
+      }
+      return { rows: [] };
+    },
+  };
+  queries.length = 0;
+  const still = await m.facts(standing, { name: 'open', data }, { type: 'Look' }, ctx);
+  assert.deepEqual(still.credit, { since: '2026-11-19T09:00:00.000Z', words: 'Insufficient credits' });
+  assert.equal(still.creditDms, undefined);
   assert.equal(queries.some(([q]) => q === laneFacts.CREDIT_OWED_DMS_SQL), false);
   assert.match(laneFacts.CREDIT_OWED_DMS_SQL, /WHERE machine = \$1 AND jsonb_typeof\(data->'credit'\) = 'array' AND data->'credit' <> '\[\]'::jsonb/);
   // And the DM takes the lane's message.
@@ -299,6 +321,27 @@ const EVAN = { id: USER, username: 'evan', hasPlatformAccess: true };
 const MESSAGE = { id: 80, content: 'What is on my plate today?' };
 
 const fail = (code, status) => async () => { throw Object.assign(new Error(`HTTP ${status}`), { code, status }); };
+// Review A1: the chat's model request through the REAL client
+// (services/openrouter.js streamChat, what runDmTurn calls in production),
+// its fetch answered as OpenRouter answers. These tests built the failure by
+// hand with the code the fix expected (`fail('credit_out', 402)`), which the
+// real client never produced: it said `billing`, so none of this ran.
+const openrouter = require('../src/services/openrouter');
+const OUT_OF_CREDIT = JSON.stringify({
+  error: {
+    message: 'This request would exceed your available credits given your current in-flight requests. '
+      + 'Retry after in-flight requests settle, or add credits.',
+    code: 402,
+  },
+});
+const throughTransport = (status, body, seen = []) => (args) => openrouter.streamChat({
+  ...args,
+  baseUrl: 'https://openrouter.test/api/v1',
+  fetchImpl: async (url) => {
+    seen.push(String(url));
+    return new Response(body, { status, headers: { 'content-type': 'application/json' } });
+  },
+});
 const replyWith = (text) => async () => ({
   content: '', toolCalls: [{ id: 'c1', function: { name: 'reply', arguments: JSON.stringify({ text }) } }],
 });
@@ -307,7 +350,8 @@ const replyWith = (text) => async () => ({
 async function chatTurn(chat, deps = {}) {
   const sent = [];
   const told = { later: [], credit: 0, outage: 0 };
-  const pool = { async query() { return { rows: [] }; } };
+  const { pool = { async query() { return { rows: [] }; } }, ...rest } = deps;
+  deps = rest;
   await mayor.runDmTurn(pool, { selfAppSlug: 'homeroom' }, {
     bot: BOT, user: EVAN, settings: { mode: 'live', perPerson: 2 }, conversationId: CONV, message: MESSAGE,
     deps: {
@@ -324,7 +368,9 @@ async function chatTurn(chat, deps = {}) {
 }
 
 test('the chat\'s turn tells its DM it ended on credit: its first line, its silent tries, its last line', async () => {
-  const out = fail('credit_out', 402);
+  // Through the real client, answered with OpenRouter's own 402 body.
+  const requests = [];
+  const out = throughTransport(402, OUT_OF_CREDIT, requests);
   assert.deepEqual(await chatTurn(out), {
     said: [['hrbot-mayor-80', mayor.CREDIT_TEXT]], told: { later: [1], credit: 1, outage: 1 },
   });
@@ -334,11 +380,69 @@ test('the chat\'s turn tells its DM it ended on credit: its first line, its sile
   });
 });
 
+test('A1, end to end: OpenRouter\'s real 402 through the real client is an outage the chat says, records and resumes from', async () => {
+  // 1. The client: one request, refused, read as out of credit.
+  const requests = [];
+  const chat = throughTransport(402, OUT_OF_CREDIT, requests);
+  await assert.rejects(chat({ apiKey: 'sk-test', model: mayor.DEFAULT_MODEL, reasoning: 'low', messages: [{ role: 'user', content: 'hi' }], tools: [] }),
+    (err) => err.code === 'credit_out' && err.status === 402);
+  // 2. The chat: its credit line (never the key's "an admin needs to fix
+  //    that"), the outage recorded once in the one stored state, its DM told.
+  const credit = require('../src/services/openrouter-credit');
+  const writes = [];
+  const settings = new Map();
+  const pool = {
+    async query(text, params) {
+      const sql = String(text);
+      if (/INSERT INTO platform_settings/.test(sql)) { settings.set(params[0], params[1]); writes.push(params[0]); return { rows: [] }; }
+      if (/FROM platform_settings/.test(sql)) {
+        const keys = Array.isArray(params[0]) ? params[0] : [params[0]];
+        return { rows: keys.filter((k) => settings.has(k)).map((k) => ({ key: k, value: settings.get(k) })) };
+      }
+      if (/INSERT INTO events/.test(sql)) { writes.push('incident'); return { rows: [{ id: 1 }] }; }
+      return { rows: [] };
+    },
+  };
+  requests.length = 0;
+  const first = await chatTurn(chat, { pool, credit: { ...credit, noteOutage: (p, what) => credit.noteOutage(p, what, { staging: true }) } });
+  assert.deepEqual(first.said, [['hrbot-mayor-80', mayor.CREDIT_TEXT]]);
+  assert.doesNotMatch(first.said[0][1], /access to it isn't working|admin needs to fix/);
+  assert.deepEqual(first.told, { later: [1], credit: 1, outage: 0 }, 'the real noteOutage ran, not the stub');
+  assert.equal(requests.length, 1, 'no plain answer is tried against the same 402');
+  const stored = JSON.parse(settings.get(credit.KEY_STATE));
+  assert.ok(stored.outage?.since, 'the outage is in the one stored state');
+  assert.deepEqual(writes.filter((w) => w === 'incident').length, 1, 'one incident for the outage');
+  assert.deepEqual(await credit.creditState(pool), { out: true, since: stored.outage.since, words: stored.outage.words });
+  // 3. While that outage stands, the next message asks the stored state
+  //    first and sends no request at all (review B1).
+  requests.length = 0;
+  const second = await chatTurn(chat, { pool, credit: { ...credit, noteOutage: (p, what) => credit.noteOutage(p, what, { staging: true }) } });
+  assert.deepEqual(second.said, [['hrbot-mayor-80', mayor.CREDIT_TEXT]]);
+  assert.equal(requests.length, 0, 'the model is not called to meet the 402 again');
+  assert.equal(writes.filter((w) => w === 'incident').length, 1, 'still one incident');
+  // 4. The DM machine: what the turn reported (credit) keeps the message
+  //    through its tries, and credit's return answers it exactly once.
+  assert.equal(first.told.credit, 1);
+  const { last } = outOfCreditThroughItsTries();
+  assert.deepEqual(kept(last), [[501, []]], 'held');
+  const back = creditBack(last.state, 30);
+  assert.deepEqual(answers(back).map((w) => w.key), ['msg:501:r1'], 'answered once');
+  assert.deepEqual(answers(creditBack(back.state, 31)), [], 'a second return answers nothing');
+});
+
+test('a 402 that only asks for a shorter reply is not an outage for the chat', async () => {
+  const shorter = JSON.stringify({ error: { message: 'This request requires more credits, or fewer max_tokens. You requested up to 4000 tokens, but can only afford 900.', code: 402 } });
+  const out = await chatTurn(throughTransport(402, shorter));
+  assert.equal(out.told.credit, 0);
+  assert.equal(out.told.outage, 0, 'no outage is recorded and no admin is told');
+  assert.notEqual(out.said[0]?.[1], mayor.CREDIT_TEXT);
+});
+
 test('the answer owed once credit came back is the turn again under its round\'s key, and says nothing when it meets the 402 again', async () => {
   assert.deepEqual(await chatTurn(replyWith('Nothing waits on you today.'), { resume: 1 }), {
     said: [['hrbot-mayor-80-r1', 'Nothing waits on you today.']], told: { later: [], credit: 0, outage: 0 },
   });
-  assert.deepEqual(await chatTurn(fail('credit_out', 402), { resume: 1 }), {
+  assert.deepEqual(await chatTurn(throughTransport(402, OUT_OF_CREDIT), { resume: 1 }), {
     said: [], told: { later: [], credit: 1, outage: 1 },
   }, 'kept for the next return, with no word and nothing on the clock');
   // A busy provider is asked again on the round's own clock, quietly, and

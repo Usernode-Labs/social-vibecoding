@@ -209,6 +209,16 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.match(spec.spec_html, /<div data-side="before">[\s\S]*<button class="save">Save<\/button>/, 'the capture before');
     assert.match(spec.spec_html, /<div data-side="after" data-change="1">[\s\S]*Save it/, 'the version after');
     assert.equal(cards.at(-1).metadata.specShare.version, 1, 'its card on the request\'s thread');
+    // Artifacts, stage 0: the plan's version stores the design it came from.
+    const { rows: [from] } = await pool.query(
+      `SELECT s.design_thread_id, s.design_version FROM chat_session_specs s
+         JOIN chat_sessions cs ON cs.id = s.session_id
+        WHERE cs.app_id = $1 AND cs.created_from_issue_number = 12 AND cs.source = 'request_spec' AND cs.user_id = $2
+        ORDER BY s.version DESC LIMIT 1`,
+      [app.id, ada.id],
+    );
+    assert.deepEqual([Number(from.design_thread_id), from.design_version], [Number(about.threadId), 2]);
+    assert.deepEqual((await specs.personPlanOf(pool, { appId: app.id, issueNumber: 12 })).design, { threadId: Number(about.threadId), version: 2 });
     assert.match(comments.at(-1).body, /\[Read the plan on Homeroom\]\(https:\/\/example\.test\/#app\/dp-plant-pal\/dev\/issues\/12\)/);
     assert.equal((await lastSaid(about.rootId)).content, 'Posted version 2 as a plan on request #12 on Plant pal, under your name.');
 

@@ -182,7 +182,9 @@ const EVENTS = {
   // and a Stop, a merge or a person writing finds the look by it.
   LookOn: (p: any) => ({ ...request(p), n: int(p?.n, 'n'), sessionId: int(p?.sessionId, 'sessionId') }),
   // A person's Stop of the bot's turn on a session (the session's routes).
-  StopRequested: (p: any) => ({ sessionId: optInt(p?.sessionId), by: optText(p?.by, 100) }),
+  // `byId`: the account that pressed Stop, when the route knows it, so an
+  // ask somebody else made meanwhile is told apart from the stopper's own.
+  StopRequested: (p: any) => ({ sessionId: optInt(p?.sessionId), by: optText(p?.by, 100), byId: optInt(p?.byId) }),
   // #6377: a payer's week has room again (a weekly limit raised or set to 0,
   // a charge refunded): what the spent week held back may look again now.
   AllowanceFreed: (p: any) => request(p),
@@ -327,11 +329,22 @@ function owed(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outc
   // takes it (its own wait, as a refused look's: never a hold for the
   // payer's week, so nothing about it says "on hold"). A look under way or a
   // build takes it when it ends anyway.
+  const o = merged(d.owed, p, ctx);
+  // Review, 19 Nov 2026: a person's ask goes now. It cleared a hold (merged
+  // starts it fresh) but not a back-off, so after repeated faults it could
+  // wait up to an hour behind one. It clears both.
+  if (p.priority === 0) return queue({ ...d, owed: o, backoff: null }, ctx);
+  // The debt's own wait holds it only when the debt is what is owed (as the
+  // branch above guards it): one that merged into a person's ask already
+  // waiting must not delay that ask. And it never shortens or resets a
+  // back-off already standing: the later of the two holds, its count kept.
   const wait = Number(p.waitMs) || 0;
-  const held: Data = wait > 0
-    ? { ...d, backoff: { failures: 0, until: later(ctx, wait).toISOString(), reason: String(p.reason).slice(0, 64) } }
+  const own = wait > 0 && o.priority !== 0 && o.reason === p.reason;
+  const until = own ? later(ctx, wait).toISOString() : null;
+  const held: Data = until && (!d.backoff || Date.parse(d.backoff.until) < Date.parse(until))
+    ? { ...d, backoff: { failures: d.backoff?.failures || 0, until, reason: String(p.reason).slice(0, 64) } }
     : d;
-  return queue({ ...held, owed: merged(d.owed, p, ctx) }, ctx);
+  return queue({ ...held, owed: o }, ctx);
 }
 
 function notOwed(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
@@ -637,10 +650,20 @@ function stopRequested(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext
   const by = e.payload.by ?? e.actor ?? null;
   if (LOOKING.has(s.name) && d.look && (!e.payload.sessionId || e.payload.sessionId === d.look.sessionId)) {
     // Stopped by a person: the look ends there, and what it was owed is
-    // not taken again until something owes it again.
+    // not taken again until something owes it again. Review, 19 Nov 2026:
+    // what came in while it ran is another matter. Everything owed was
+    // dropped, so a different person's ask that arrived meanwhile was lost
+    // and nobody was told. That ask is theirs, not the stopper's: it is
+    // kept, and looked at next. (Told apart by account: without the
+    // stopper's, as from a release before this one, all is dropped as it
+    // was.)
     const stop = stopLook(d, by, true, `stop:${d.look.n}`);
     const fx = answerFix({ ...d, slot: null, look: null }, 'stopped');
-    return rest({ ...fx.data, owed: null, backoff: null }, ctx, {
+    const byId = e.payload.byId as number | null;
+    const meanwhile = d.owed;
+    const theirs = meanwhile && meanwhile.priority === 0 && meanwhile.requestedBy != null && byId != null
+      && Number(meanwhile.requestedBy) !== Number(byId) ? meanwhile : null;
+    return rest({ ...fx.data, owed: theirs, backoff: null }, ctx, {
       cancel: [{ kind: WORK.look, key: `look:${d.look.n}` }],
       work: stop ? [stop] : [],
       messages: [toLane('Released', {}, d.appId), ...fx.messages],

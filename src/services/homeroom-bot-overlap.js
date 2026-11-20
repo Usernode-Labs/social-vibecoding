@@ -29,6 +29,7 @@
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const { withoutEmDashes } = require('./em-dashes');
+const { domainOf } = require('./homeroom-bot-move');
 
 // Notes per project per day (the number the removed question tripwire used,
 // 3 Nov 2026): an app the bot reads a lot is not to be talked at.
@@ -149,7 +150,7 @@ function parseOverlap(raw, candidates, issueNumber = null) {
   return { kind, other, otherTitle: clip(found.title, TITLE_MAX_CHARS) || null, why: why || null, first };
 }
 
-/** Pure: the other request named by its number, as a markdown link a chat renders tappable. */
+/** Pure: a request named by its number, as a markdown link a chat renders tappable. */
 function requestMd(domain, appSlug, issueNumber) {
   const link = require('./homeroom-bot-move').requestLink(domain, appSlug, issueNumber);
   return `[#${Number(issueNumber)}](${link})`;
@@ -300,10 +301,6 @@ async function offerOverlap(pool, {
   }
 }
 
-function domainOf(deps) {
-  return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
-}
-
 function wsOf(deps) {
   return deps.ws || require('./ws');
 }
@@ -313,6 +310,7 @@ module.exports = {
   KINDS,
   candidatesFor,
   overlapNote,
+  requestMd,
   parseOverlap,
   overlapText,
   linkText,

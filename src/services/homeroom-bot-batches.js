@@ -81,10 +81,21 @@ const BUCKET_OF = Object.freeze({
 const BUCKETS = Object.freeze(['live', 'ready', 'checks', 'building', 'waiting', 'stopped']);
 // The stages that hold a batch open: the bot is still at it.
 const ACTIVE_STAGES = new Set(['reading', 'planning', 'building', 'checking']);
-// A request ready to build, waiting its turn or a limit (work-state.js READY).
-const READY_LINES = new Set(['queued', 'held_builds', 'held_waiting']);
+// A request ready to build, waiting its turn, a limit or building credit:
+// the one table's (work-stages.json `ready`). Its own copy missed
+// `credit_wait`, so a build waiting for credit counted as building.
+const { READY: READY_LINES } = require('./work-stages');
 // The card's own word for work under way, by stage.
 const UNDERWAY_WHY = Object.freeze({ building: 'building', checking: 'checks', up_for_vote: 'vote', going_live: 'going_live' });
+// Every `why` a row of the table can carry (readOf, and requestsFor's
+// not_built_here and not_member), which the card words
+// (frontend/src/features/messages/bot-cards/batch.tsx WHY_LINES):
+// tests/work-stages-client.test.js holds the two to each other, and readOf
+// to this over every state of the one table.
+const ROW_WHYS = Object.freeze([
+  'live', 'allowance', 'held', 'build_queued', 'vote', ...Object.values(UNDERWAY_WHY).filter((w) => w !== 'vote'),
+  'plan', 'works', 'empty', 'not_built_here', 'not_member',
+]);
 
 /** Pure: a track's roll-up bucket. Done by somebody else's change counts as live; held for a limit, as waiting. */
 function bucketOf(track) {
@@ -740,10 +751,12 @@ module.exports = {
   BATCH_PROPOSALS_PER_APP,
   READS,
   BUCKETS,
+  ROW_WHYS,
   numbersOf,
   readOf,
   countsOf,
   summaryOf,
+  bucketOf,
   rollupOf,
   managesApp,
   raiseFor,

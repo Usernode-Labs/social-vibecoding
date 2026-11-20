@@ -12,7 +12,9 @@
  * goes next.
  */
 
-import { isSettled, type WorkState } from '../../../lib/work-state';
+import { isSettled, lineWords, stageWords, type WorkState } from '../../../lib/work-state';
+import { testsFailing } from './card-model';
+import { lookOf, type Stage } from '../../../lib/work-stages';
 
 export type ThreadItemType = 'request' | 'change' | 'close' | 'decision';
 
@@ -512,14 +514,110 @@ export function ballotVotes(ballot: Ballot, pick: number | 'neither' | 'close'):
  * whatever an older read of the thread still lists as up for one; its change
  * is drawn as up for a vote only while the standing says its vote is open;
  * and a build waiting its turn is the server's Ready to build.
+ *
+ * 19 Nov 2026, the one rule (lib/work-state.ts): with a stored row, the
+ * pill's word and tone are the row's, always (`rowPill`). What the thread's
+ * own items say (`threadPill`: a change underway, one up for a vote, a
+ * ballot) decides only whether the header names the work at all, and adds
+ * its detail on hover. It used to be the other way round wherever the row
+ * had no case here: a request whose row said "Stopped: its tests still
+ * fail" or "Taking screenshots" had no pill, and one whose row said Homeroom
+ * bot was reading it said "Being built" because a change in its thread was
+ * underway. With no row (an older server), the thread's items as before.
  */
+export type RequestPill = {
+  tier: number; key: string; label: string; tone: string; yes: number; no: number; majority: number; advisory: number; lock: boolean;
+  spinner?: boolean; title?: string;
+};
+
 export function requestPill(
   layout: ThreadLayout,
   stand: 'closed' | WorkState | null,
-  say: (id: string) => string = (id) => id,
-): { tier: number; key: string; label: string; tone: string; yes: number; no: number; majority: number; advisory: number; lock: boolean; spinner?: boolean } | null {
+  say: (id: string, values?: Record<string, string | number>) => string = (id) => id,
+  yours = true,
+): RequestPill | null {
   if (stand === 'closed') return null;
   const work = stand && typeof stand === 'object' ? stand : null;
+  const items = threadPill(layout, work, say);
+  if (!work) return items;
+  // The header names the work once its row says it is built or being built,
+  // or once the thread has a change in it (what its items said, which a
+  // change whose vote is not open yet leaves out). A vote to close it while
+  // nothing is built is the request's own vote, no stage of its work: it
+  // keeps its pill. Which stages say so is the stage's look
+  // (lib/work-stages.ts STAGE_LOOK `named`).
+  const named = lookOf(work.stage).named
+    || (!!items && items.key !== 'close')
+    || layout.changes.some((c) => c.state === 'review');
+  if (!named) return items;
+  return rowPill(work, say, yours, items && items.key === 'choosing' ? say('project:topic.thread.pill.choosing') : null);
+}
+
+/**
+ * Each stage's pill in a request's header: its `data-request-status` key,
+ * its tone and whether it spins. One entry for every stage of the one table
+ * (lib/work-stages.ts), so a new stage is drawn on purpose
+ * (tests/work-stages-client.test.js holds the keys to the table's); the
+ * row's words refine three of them (`rowPill`).
+ */
+export const STAGE_PILLS: Readonly<Record<Stage, { key: string; tone: string; spinner: boolean }>> = Object.freeze({
+  reading: { key: 'reading', tone: 'neutral', spinner: false },
+  planning: { key: 'planning', tone: 'neutral', spinner: false },
+  waiting_for_you: { key: 'waiting_for_you', tone: 'neutral', spinner: false },
+  building: { key: 'building', tone: 'progress', spinner: true },
+  checking: { key: 'checking', tone: 'progress', spinner: true },
+  up_for_vote: { key: 'vote', tone: 'neutral', spinner: false },
+  going_live: { key: 'going_live', tone: 'progress', spinner: true },
+  live: { key: 'live', tone: 'ok', spinner: false },
+  stopped: { key: 'stopped', tone: 'blocked', spinner: false },
+  closed: { key: 'closed', tone: 'neutral', spinner: false },
+});
+
+/**
+ * Pure: the request's pill from its stored row: the row's own words (as its
+ * requester reads them, or anyone else) and a tone from its stage, with the
+ * row's second line on hover. The keys are the ones the thread's items give
+ * the same stages, so what reads `data-request-status` reads one vocabulary.
+ * `choosing`: a ballot between changes is open, which the row (up for a
+ * vote) says nothing more about; its words go on hover.
+ */
+function rowPill(
+  work: WorkState,
+  say: (id: string, values?: Record<string, string | number>) => string,
+  yours: boolean,
+  choosing: string | null,
+): RequestPill {
+  const base = { tier: 1, yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
+  const phrase = stageWords(work, { yours });
+  const said = work.words?.stage.id || '';
+  const line = lineWords(work);
+  const own = Object.prototype.hasOwnProperty.call(STAGE_PILLS, work.stage) ? STAGE_PILLS[work.stage] : null;
+  let key: string = own ? own.key : work.stage;
+  let tone = own ? own.tone : 'neutral';
+  let spinner = own ? own.spinner : false;
+  // What the row's words say more than its stage, by the words the server
+  // chose: Approved, held by GitHub, is still going live; a build that
+  // waits is Ready to build and does not spin; failing tests do not spin.
+  if (work.stage === 'going_live' && said === 'core:work.stage.approved') key = 'approved';
+  if (work.stage === 'building' && said === 'core:work.stage.readyToBuild') { key = 'ready_to_build'; tone = 'neutral'; spinner = false; }
+  if (work.stage === 'checking' && testsFailing(work)) { tone = 'blocked'; spinner = false; }
+  if (work.stage === 'up_for_vote' && choosing) key = 'choosing';
+  // Two whole facts, joined as the catalog joins them.
+  const facts = [line ? say(line.id, line.values) : '', choosing || ''].filter(Boolean);
+  const title = facts.length > 1 ? say('project:facts.pair', { first: facts[0], second: facts[1] }) : facts[0] || '';
+  return {
+    ...base, key, label: say(phrase.id, phrase.values), tone,
+    ...(spinner ? { spinner: true } : {}),
+    ...(title ? { title } : {}),
+  };
+}
+
+/** The pill from what the thread's items say, read with the row where it already led (an approved, settled or building row). */
+function threadPill(
+  layout: ThreadLayout,
+  work: WorkState | null,
+  say: (id: string) => string,
+): RequestPill | null {
   const base = { tier: 1, yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
   const goingLivePill = { ...base, key: 'going_live', label: say('project:topic.thread.pill.goingLive'), tone: 'progress', spinner: true };
   const livePill = { ...base, key: 'live', label: say('project:topic.thread.pill.live'), tone: 'ok' };

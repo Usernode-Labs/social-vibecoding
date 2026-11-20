@@ -22,8 +22,9 @@
 // the card is (`card`), never a card it made before.
 //
 // The chat's old offer table is this store, renamed, so its rows carried on
-// as they were; a thread's offers made before stay answerable in
-// homeroom_bot_voice_offers until answered or 14 days old (voice OFFERS_SQL).
+// as they were; a thread's offers made before stayed answerable in
+// homeroom_bot_voice_offers until each was 14 days old, and are no longer
+// read (19 Nov 2026, voice OFFERS_SQL).
 // A card is open 14 days (`expires_at`), and a tap after that is refused and
 // its buttons go. Its buttons also go when what it is about moves on
 // (retireOnMove, from the standing). At most MAX_PER_REPLY cards go under one

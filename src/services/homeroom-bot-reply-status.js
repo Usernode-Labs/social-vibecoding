@@ -239,6 +239,7 @@ async function readStatus(pool, { appId, place, issueNumber, answerable = true, 
 
 async function appRow(pool, appId) {
   const { rows } = await pool.query(
+    // With what the access checks read (app-access.js ACCESS_COLUMNS).
     `SELECT id, slug, name, repo_url, created_by, self_hosted, community_id,
             collab_visibility, view_visibility, moderation_suspended_at
        FROM apps WHERE id = $1`,
@@ -373,4 +374,5 @@ module.exports = {
   readStatus,
   wouldAnswer,
   publish,
+  appRow,
 };

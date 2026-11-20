@@ -207,8 +207,8 @@ async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WIND
 // The answers the bot gave on these requests, and those decided and still
 // going out (bot_posts pending: the bot-voice machine claims one with its
 // decision, keyed by its mention), oldest first. An answer decided before
-// step 4 is its pending homeroom_bot_posts row alone: its post, keyed by
-// that row (sayHeld), is not counted beside it.
+// step 4 (11 Nov 2026) was its pending homeroom_bot_posts row alone, its
+// post keyed by that row and so not counted beside it.
 async function answers(pool, appId, numbers) {
   const { rows } = await pool.query(
     `SELECT issue_number, kind, created_at FROM (
@@ -315,29 +315,13 @@ async function sayHeld(pool, { appId, issueNumber, kind, text, mention = null, m
   if (!repo) return { skipped: 'no_repo' };
   const bot = await (deps.dm || require('./homeroom-bot-dm')).botAccount(pool);
   if (!bot) throw new Error('Homeroom bot is not available');
-  // A held answer decided before step 4 (11 Nov 2026) has no mention in its
-  // work and its row is the pending homeroom_bot_posts row the machine wrote
-  // then: that row is its key, and is finished when it is said, so it is
-  // never counted twice (answers) nor said twice by a retry. For one release.
-  const before = Number(mentionId) > 0 ? null : await heldBefore(pool, { appId: app.id, issueNumber, kind });
   const out = await live.post({
     pool, github: deps.github || require('./github'), ws: deps.ws || require('./ws'), app, repo, issueNumber: Number(issueNumber),
     kind, text, sender: bot, senderId: bot.id, mention, mentions, notifications: deps.notifications || null,
     strict: true,
-    ...(Number(mentionId) > 0 ? { version: heldVersion(mentionId) } : before ? { version: `post-${before}`, requestPostId: before } : {}),
+    ...(Number(mentionId) > 0 ? { version: heldVersion(mentionId) } : {}),
   });
   return { postId: out?.postId ?? null };
-}
-
-/** The pending homeroom_bot_posts row a held answer decided before step 4 left, or null (for one release). */
-async function heldBefore(pool, { appId, issueNumber, kind }) {
-  const { rows: [row] = [] } = await pool.query(
-    `SELECT id FROM homeroom_bot_posts
-      WHERE app_id = $1 AND issue_number = $2 AND kind = $3 AND run_id IS NULL AND pending IS TRUE
-      ORDER BY id DESC LIMIT 1`,
-    [Number(appId), Number(issueNumber), String(kind)],
-  );
-  return row ? Number(row.id) : null;
 }
 
 /**

@@ -125,15 +125,26 @@ test('a thread of the bot\'s chat takes its whole column, alone: the chat is dra
   assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /<EmbeddedConversation [^>]*threadsOnly onBack=\{onBack\}/);
 });
 
-test('where a private thread stands says what it is and what a reply answers', () => {
-  const svc = read('src/services/private-threads.js');
-  const fn = svc.slice(svc.indexOf('async function stateOf('), svc.indexOf('async function record('));
-  assert.match(fn, /LEFT JOIN threads t ON t\.id = p\.target_thread_id/);
-  assert.match(fn, /return \{ state: 'open', kind: 'idea', app: null, target: null, mine \};/);
-  assert.match(fn, /kind: row\.kind/);
+test('where a private thread stands says what it is and what a reply answers', async () => {
+  const { stateOf } = require('../src/services/private-threads');
+  const user = { id: 7 };
+  const at = (row) => stateOf({ async query() { return { rows: row ? [row] : [] }; } }, { user, rootId: 40, bot: { id: 1 } });
+  const base = {
+    state: 'open', result_ref: null, kind: 'draft_reply', own_title: null, title_source: null, slug: 'recipebot', name: 'RecipeBot',
+    target_number: 12, design_title: null, artifact_kind: null, design_version: null, made: false, root_app_name: null,
+  };
+  // What it is, and the thread a draft reply answers.
+  const reply = await at(base);
+  assert.equal(reply.kind, 'draft_reply');
+  assert.equal(reply.target, 12);
+  assert.deepEqual(reply.app, { slug: 'recipebot', name: 'RecipeBot' });
   // 1 Nov 2026: and whether it is the viewer's private thread at all.
-  assert.match(fn, /const mine = !!\(await ownRoot\(pool, \{ user, bot: who, rootId \}\)\);/);
-  assert.match(fn, /mine: true,\n/);
-  // B04 (audit 2 Nov 2026): and a screen drawn in it for no project yet.
-  assert.match(fn, /\.\.\.\(!app && row\.design_version != null\n\s+\? \{ design: \{ title: row\.design_title \|\| null, version: Number\(row\.design_version\) \} \} : \{\}\),\n {2}\};/);
+  assert.equal(reply.mine, true, 'a row of theirs');
+  // B04 (audit 2 Nov 2026): a screen drawn in it for no project yet, which New project makes the project from.
+  const idea = { ...base, kind: 'ask', slug: null, name: null, target_number: null, design_title: 'Watering', design_version: 3 };
+  assert.deepEqual((await at({ ...idea, artifact_kind: 'design' })).design, { title: 'Watering', version: 3 });
+  assert.deepEqual((await at(idea)).design, { title: 'Watering', version: 3 }, 'a row from before kinds were stored is a design');
+  assert.equal((await at({ ...idea, slug: 'recipebot', name: 'RecipeBot' })).design, undefined, 'a design of a project posts there instead');
+  // Artifacts: a plain page is never made into a project, so its thread names no design for New project.
+  assert.equal((await at({ ...idea, artifact_kind: 'page', design_title: 'Trip budget' })).design, undefined);
 });
