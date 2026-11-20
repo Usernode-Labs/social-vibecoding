@@ -7710,12 +7710,14 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[d
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc > .rf-desc-by { color: var(--wip-ink-muted); }
 /* THE BOARD (All items), framed as Home and the hub are: on the page's own
    ground with no sheet behind it, under the place's name as a label of the
-   look (both shared with the hub and Needs you, above). The Workshop's door
-   opens the board under this look, so the board has no "‹ All items" line
-   of its own: the place's name is its title. Its toolbar is the look's: the
-   search is Home's field, and the filters are plain pills on the card's
-   ground. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead { display: none; }
+   look (both shared with the hub and Needs you, above). Under Standard
+   (WIP) the Workshop's door opens the board, so there the board has no
+   "‹ All items" line of its own: the place's name is its title. The
+   standard look's door opens the Workshop's overview (asked 20 Nov 2026),
+   so its board keeps the line, its way back up (THE STANDARD LOOK'S BOARD,
+   below). Its toolbar is the look's: the search is Home's field, and the
+   filters are plain pills on the card's ground. */
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead { display: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-actions { padding-inline: 0; padding-top: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar { padding-inline: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban-search {
@@ -8005,9 +8007,21 @@ html:not([data-skin]) body > :is(.dev-ws-side) {
 html:not([data-skin]) #app-list .app-card-opened { display: none; }
 /* THE STANDARD LOOK'S BOARD KEEPS ITS WALLPAPER (20 Nov 2026), so the head that stays put while the columns scroll
    under it (the place's name, then the filter line and the columns' names) wears the card's colour, nearly solid, where
-   Standard (WIP) paints its flat page colour. No blur: the shell keeps none over a few pixels (tests/no-glass-one-scheme). */
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar,
+   Standard (WIP) paints its flat page colour. No blur: the shell keeps none over a few pixels (tests/no-glass-one-scheme).
+   The place's bar wears it only once it is pinned (`data-ws-pinned`, workshop.tsx usePinnedStrip): at rest nothing is
+   under it, and it sits on the page over its hairline as it does over the hub. */
+html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"][data-ws-pinned] > .dev-ws-placebar,
 html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: color-mix(in srgb, var(--wip-card-bg) 90%, transparent); }
+/* THE STANDARD LOOK'S BOARD IS A PAGE UNDER THE WORKSHOP (20 Nov 2026): the Workshop's door opens its overview, and the
+   board's head leads with the way back up to it and the page's name, "‹ All items", the page's one heading. So the
+   place's name over it is the quiet name of where you are, as "Hub" is over the hub's hero, not a second title. */
+html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }
+/* On a phone the filters share that line, at its far end, and the search takes the line under it, so the head that
+   stays put over the column is no taller for the way back. */
+@media (max-width: 639px) {
+  html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-filter-chips { order: 1; }
+  html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-search { order: 2; }
+}
 /* THE LEFT MENU AND THE TOP BAR are the standard look's too since 20 Nov
    2026: their rules and tokens, the menu's colours among them, are the
    block after this one ("THE LEFT MENU AND THE TOP BAR"). What is left here

@@ -3121,10 +3121,13 @@ export function DevWorkshop(): ReactNode {
   // has since left. The first render is the loading skeleton either way, so
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
-  // Standard (WIP) folds Invite into the hero's row (no Invite card), and its Workshop door opens the board (below).
+  // Standard (WIP) folds Invite into the hero's row (no Invite card) and draws the board as the kit does.
   const wipLook = isKitHome(useLiveSkin());
-  // The hub is the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome); the board is not yet.
+  // The hub and the board are the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome).
   const kitHub = isKitHome(useLiveSkin());
+  // The Workshop's door opens the board under Standard (WIP) alone (below). The standard look took the kit's board and
+  // not its door: there the Workshop opens on its overview, and the board is the page under it (asked 20 Nov 2026).
+  const boardDoor = useLiveSkin() === 'wip';
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -3255,7 +3258,8 @@ export function DevWorkshop(): ReactNode {
   // items, before paint. The overview is still there one step up: All
   // items' own way back opens it (a step from All items or the bot's slots
   // is left alone), and so does Back or Forward onto an entry that was the
-  // overview (the router marks those `traversal`).
+  // overview (the router marks those `traversal`). Under that look alone
+  // (`boardDoor`): the standard look's Workshop opens on its overview.
   const cameFrom = useRef<TabKey | null>(null);
   const traversed = useRef(false);
   useEffect(() => {
@@ -3272,13 +3276,13 @@ export function DevWorkshop(): ReactNode {
   useLayoutEffect(() => {
     const was = cameFrom.current;
     cameFrom.current = tab;
-    if (!wipLook || tab !== 'workshop') return;
+    if (!boardDoor || tab !== 'workshop') return;
     if (was === 'all' || was === 'bot') return;
     if (traversed.current) { traversed.current = false; return; }
     cameFrom.current = 'all';
     setTab('all');
     callAppView('_setWorkshopTab', 'all');
-  }, [tab, wipLook]);
+  }, [tab, boardDoor]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
   // moment the browser tab comes back to the front — the moment a stale
