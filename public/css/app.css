@@ -8372,7 +8372,7 @@ html:not([data-skin]) {
   --wip-nav-ic-unfold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='3.5'/%3E%3Cpath d='M9 4v16'/%3E%3Cpath d='m14 9.500 2.500 2.500-2.500 2.500'/%3E%3C/svg%3E");
   --wip-nav-fold: 28px;                  /* the fold button: a quiet rounded square inside the panel, at its end */
   --wip-nav-fold-ic: 18px;
-  --wip-nav-fold-inset: 4px;             /* between the fold button and the panel's edge, on either side of it */
+  --wip-nav-fold-inset: 0px;             /* the fold button touches the panel's edge, on either side of it */
   --wip-nav-ic: none;                    /* the row's own glyph, named on the row */
   --wip-nav-ic-size: 20px;
   --wip-nav-ic-size-small: 18px;
