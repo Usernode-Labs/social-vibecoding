@@ -180,6 +180,25 @@ test('a thread row reads the copy only off the bot\'s own reply, and an edit dro
     'an edited message\'s copy no longer says what its words do');
 });
 
+test('a comparison rides only off the bot\'s own reply, within a laid-out reply\'s length', () => {
+  const gc = loadGroupChat();
+  const base = { id: 9, msg_type: 'message', username: 'homeroom_bot', content: 'Side by side.', created_at: '2026-11-20T10:00:00Z' };
+  const comparison = { title: 'Before and after', html: '<p>Before</p><p>After</p>' };
+  const drawn = gc._messageView({ ...base, metadata: { homeroomBot: { kind: 'voice', comparison } } }).botComparison;
+  assert.equal(drawn.title, comparison.title);
+  assert.equal(drawn.html, comparison.html);
+  assert.equal(gc._messageView({ ...base, metadata: {} }).botComparison, null, 'a person\'s message');
+  assert.equal(gc._messageView({ ...base, metadata: { homeroomBot: { kind: 'live', comparison } } }).botComparison, null, 'only a reply');
+  assert.equal(gc._messageView({ ...base, metadata: { homeroomBot: { kind: 'voice', comparison, offer: { id: 1, status: 'open' } } } }).botComparison, null,
+    'an offer keeps its own line');
+  assert.equal(gc._messageView({ ...base, deleted: true, metadata: { homeroomBot: { kind: 'voice', comparison } } }).botComparison, null, 'deleted');
+  assert.equal(gc._messageView({ ...base, metadata: { homeroomBot: { kind: 'voice', comparison: { ...comparison, html: '   ' } } } }).botComparison, null);
+  assert.equal(gc._messageView({ ...base, metadata: { homeroomBot: { kind: 'voice', comparison: { ...comparison, html: `<p>${'x'.repeat(60001)}</p>` } } } }).botComparison, null,
+    'no longer than a laid-out reply');
+  assert.equal(gc._messageView({ ...base, metadata: { homeroomBot: { kind: 'voice', comparison: { html: '<p>x</p>' } } } }).botComparison, null,
+    'a title is required');
+});
+
 test('the body draws the copy in its own box, folded the same way, with the words until it is drawn', () => {
   const body = loadTsx('frontend/src/features/group-chat/long-body.tsx');
   // No page to clean it on (as in this render): the words, in the same box.

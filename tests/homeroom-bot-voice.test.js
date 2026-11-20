@@ -1245,22 +1245,50 @@ test('#6534: make_pictures in a thread stores its pictures under the reply, with
   assert.equal(ctx.attached[0].kind, 'image');
 });
 
-test('#6534: an HTML comparison is self-contained, and a stored one is an html attachment', async () => {
+test('#6534 / 20 Nov 2026: an HTML comparison is self-contained, and is drawn under the reply, never stored', async () => {
   const { pool, ctx } = pictureCtx();
   const refused = await voice.runTool(pool, ctx, 'attach_files', {
     comparison: { title: 'Before and after', html: '<img src="https://example.com/x.png">' },
   });
   assert.match(refused.error, /may not load anything from another address/);
 
-  const stored = await voice.runTool(pool, ctx, 'attach_files', {
+  const drawn = await voice.runTool(pool, ctx, 'attach_files', {
     comparison: { title: 'Before and after', html: '<html><body><p>Before</p><p>After</p></body></html>' },
   });
-  assert.equal(stored.ok, true, JSON.stringify(stored));
-  assert.equal(ctx.attached[0].kind, 'html');
-  assert.match(ctx.attached[0].filename, /^Before-and-after.*\.html$/);
+  assert.equal(drawn.ok, true, JSON.stringify(drawn));
+  assert.equal(drawn.drawn, true);
+  assert.match(drawn.note, /Drawn under your reply, for everyone in this thread; nothing in it runs\./);
+  assert.deepEqual(ctx.attached, [], 'no file is stored: the comparison is metadata under the reply');
+  assert.deepEqual(ctx.comparison, {
+    title: 'Before and after',
+    html: '<html><body><p>Before</p><p>After</p></body></html>',
+  });
+  // A second comparison in the turn replaces the first.
+  await voice.runTool(pool, ctx, 'attach_files', {
+    comparison: { title: 'Now and then', html: '<p>Now</p>' },
+  });
+  assert.deepEqual(ctx.comparison, { title: 'Now and then', html: '<p>Now</p>' });
+  // As long as a laid-out reply, and no longer.
+  const tooLong = await voice.runTool(pool, ctx, 'attach_files', {
+    comparison: { title: 'Huge', html: `<p>${'x'.repeat(60001)}</p>` },
+  });
+  assert.match(tooLong.error, /too long; keep it under 60000 characters\. Nothing was attached\./);
+  assert.deepEqual(ctx.comparison, { title: 'Now and then', html: '<p>Now</p>' }, 'the last good one stays');
 
   const both = await voice.runTool(pool, ctx, 'attach_files', { shots: true, design: 'mine' });
   assert.match(both.error, /one thing per call/);
+});
+
+test('20 Nov 2026: a comparison rides on the reply\'s metadata, and never beside an offer', () => {
+  const src = read('src/services/homeroom-bot-voice.js');
+  assert.match(src, /comparison: ctx\.comparison/);
+  assert.match(src, /comparison && typeof comparison === 'object' && !offer \? \{ comparison \}/);
+  assert.match(src, /const COMPARISON_MAX_CHARS = 60000;/);
+  // What the model is told: the comparison is drawn under the reply, not attached as a file.
+  assert.match(voice.toolsFor({ type: 'issue', ref: 7 }, { requestChange: true }).find((t) => t.function.name === 'attach_files')
+    .function.description, /drawn under your reply for everyone here with nothing in it running/);
+  assert.match(voice.toolsFor({ type: 'issue', ref: 7 }, { requestChange: true }).find((t) => t.function.name === 'attach_files')
+    .function.parameters.properties.comparison.description, /nothing in it runs/);
 });
 
 // #6600: a takeover the bot queued in a turn can have failed before its
