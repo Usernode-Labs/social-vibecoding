@@ -112,16 +112,15 @@ test('two panes of ONE sheet, not two sheets', () => {
   assert.ok(!SHEET.includes('id="apps-switcher-list"'), 'no app strip');
 });
 
-test('the invite pane can be opened for a community that is not the app in context', () => {
-  // A row of the Communities page's Invite people list opens a community's
-  // link from a page where no project is in context (app-context-controller
-  // `openInvite`). The pane takes `inviteFor` as its subject for that
-  // opening; the header and the menu keep naming the app in context, and the
-  // sheet still hands the pane the app it is on.
+test('the invite pane can be opened for the community its hub belongs to', () => {
+  // The hub's Invite card records that community with the opening
+  // (app-context-controller `openInvite`). The pane takes `inviteFor` as its
+  // subject for that opening; the header and the menu keep naming the app in
+  // context, and the sheet still hands the pane the app it is on.
   assert.match(PANE, /const openedFor = appContextStore\.get\(\)\.inviteFor;/);
-  assert.match(PANE, /if \(!openedFor \|\| openedFor\.slug === slug\) return \{ slug, label, unnamed \};/,
-    'the app in context is the subject unless a community was named');
-  assert.match(PANE, /return \{ slug: openedFor\.slug, label: openedFor\.name \|\| openedFor\.slug, unnamed: false \};/);
+  assert.match(PANE, /if \(!openedFor\) return \{ slug, label, unnamed \};/,
+    'the app in context is the subject only when no community was named');
+  assert.match(PANE, /return \{ slug: openedFor\.slug, label: openedFor\.name \|\| label, unnamed: false \};/);
   assert.match(CONTROLLER, /appContextStore\.set\(\{ inviteFor: override \}\);/,
     'and every opening names its subject, so none is left behind');
   assert.match(CONTROLLER, /if \(!inviteFor \|\| inviteFor\.slug !== override\.slug\) return;/,

@@ -40,18 +40,17 @@ export const appContextStore = createStore({
    */
   back: 'menu',
   /**
-   * A community the invite pane is opened for that is NOT the app in
-   * context: `{ slug, name }`, or null. The Communities page's Invite people
-   * list opens a community's link while no project is in context (that page
-   * is not inside an app), so the pane needs its own subject; the header chip
-   * and the Improve target stay untouched (app-context-controller.js
-   * `openInvite`).
+   * The community the invite pane is opened for: `{ slug, name }`, or null
+   * when the opener named none and the app in context is the subject. The
+   * hub's Invite card records its own community here, so the pane reads that
+   * community's links whoever the header and the Improve target happen to
+   * name (app-context-controller.js `openInvite`).
    *
    * Write it only from `openInvite`, which does so on EVERY opening: the
-   * community's own object when it is not the app in context, null when the
-   * pane is about the app in context. The pane takes it once, at mount
-   * (./invite-pane.tsx `useInviteSubject`), which is why a value left behind
-   * by an opening that closed is never shown to the next one.
+   * community it was given, null when it was given none. The pane takes it
+   * once, at mount (./invite-pane.tsx `useInviteSubject`), which is why a
+   * value left behind by an opening that closed is never shown to the next
+   * one.
    */
   inviteFor: /** @type {{ slug: string, name?: string } | null} */ (null),
   /**

@@ -206,10 +206,9 @@ export function InviteSkeleton({ label, unnamed = false, canShare }: { label: st
 
 /**
  * The subject the pane shows: the app in context it was given, unless the
- * opener named a community that is not the app in context — a row of the
- * Communities page's Invite people list, where no project is in context at all
- * (app-context-controller `openInvite`, which publishes `inviteFor`). The
- * menu behind the pane still names the app in context, so the header is
+ * opener recorded the community it is for — the hub's Invite card names its
+ * own (`app-context-controller` `openInvite`, which publishes `inviteFor`).
+ * The menu behind the pane still names the app in context, so the header is
  * unchanged.
  *
  * Read ONCE, at mount: the pane cannot change subject under itself, and the
@@ -219,8 +218,8 @@ export function InviteSkeleton({ label, unnamed = false, canShare }: { label: st
 function useInviteSubject({ slug, label, unnamed }: { slug: string | null; label: string; unnamed: boolean }) {
   const [subject] = useState(() => {
     const openedFor = appContextStore.get().inviteFor;
-    if (!openedFor || openedFor.slug === slug) return { slug, label, unnamed };
-    return { slug: openedFor.slug, label: openedFor.name || openedFor.slug, unnamed: false };
+    if (!openedFor) return { slug, label, unnamed };
+    return { slug: openedFor.slug, label: openedFor.name || label, unnamed: false };
   });
   return subject;
 }

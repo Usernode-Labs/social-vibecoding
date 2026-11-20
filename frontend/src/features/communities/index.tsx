@@ -29,11 +29,6 @@
  *                        has no Needs you card (Standard and the frame's
  *                        looks): Standard (WIP) and the brand look say it on
  *                        Home.
- *   Invite people        the page's action beside Edit: it lists every
- *                        community you are in, each row opening that
- *                        community's invite link to copy or share
- *                        (AppContext.openInvite). One clear way in, rather
- *                        than a button on every tile (Evan, 20 Nov 2026).
  *   New community        the create flow. In Standard (WIP) and the brand
  *                        look it is the filled button beside the search field
  *                        from 768px, as New project is on Home; everywhere
@@ -58,13 +53,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { PlusIcon, SearchIcon, UserPlusIcon } from '@/components/ui/icons';
+import { PlusIcon, SearchIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useSkin } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
   homePinsActivityStore, homePinsStore, loadHomePinsActivity, refreshHomePins, setHomePin,
   type HomePin,
@@ -78,12 +72,6 @@ import { WipCard, WipCta, WipHeadMore } from '../home/wip-kit';
 import { communityScopeStore } from '../workshop/community-scope';
 
 const GRID = 'communities-grid grid grid-cols-4 gap-x-1 gap-y-4 px-1 pt-2 pb-2';
-/**
- * The card the Invite people list sits in, outside Standard (WIP): the plane
- * colour, 20px corners, one inset hairline, the same three values as the
- * Discover card and every other shell card. The look's own card is WipCard's.
- */
-const INVITE_CARD = 'rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
 /**
  * How many communities a group shows folded under Standard (WIP): three rows
@@ -103,17 +91,6 @@ if (typeof window !== 'undefined') {
   };
 }
 
-/**
- * Open a community's invite link: `AppContext.openInvite` carries the slug to
- * the invite pane, which reads that community's links while the header keeps
- * naming no project (this page is outside an app). `name` names the pane
- * ("Invite people to …").
- */
-function invite(slug: string, name: string) {
-  const win = typeof window !== 'undefined' ? (window as any) : null;
-  win?.AppContext?.openInvite?.({ slug, name });
-}
-
 /** Open Home at Communities to join, the public directory (Home.showCommunitiesToJoin). */
 function discover() {
   const win = window as any;
@@ -121,63 +98,15 @@ function discover() {
   else win.App?.navigateHome?.();
 }
 
-/** A community the page can make an invite link to. */
-export type InviteTarget = { slug: string; name: string; iconUrl?: string | null; iconEmoji?: string | null };
-
-/**
- * THE COMMUNITIES' ROWS in the Invite people list: the icon, the name and the
- * people-with-a-plus glyph, each row the whole button. It reuses the Your
- * communities switcher's row, so a row is 60px, reads at the same type as the
- * rest of the platform's lists, and looks right in every look without a rule
- * of its own. The row's accessible name says what pressing it does, since the
- * visible words are only the community's name.
- */
-export function InvitePeopleList({ communities, onPick }: {
-  communities: InviteTarget[];
-  onPick: (community: InviteTarget) => void;
-}) {
-  const t = useMessages('communities');
-  return (
-    <div className="py-1">
-      {communities.map((c) => {
-        const app = { slug: c.slug, name: c.name, icon_url: c.iconUrl || null, icon_emoji: c.iconEmoji || null };
-        return (
-          <button
-            key={c.slug}
-            type="button"
-            className="community-switcher-row"
-            data-communities-invite={c.slug}
-            aria-label={t('communities:page.invite.to', { community: c.name })}
-            onClick={() => onPick(c)}
-          >
-            <span className="app-icon-tile community-switcher-tile" data-icon={appIconKind(app as never)} aria-hidden="true">
-              <AppIconContent app={app as never} />
-            </span>
-            <span className="community-switcher-text">
-              <span className="community-switcher-name">{c.name}</span>
-            </span>
-            <UserPlusIcon className="w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export function CommunitiesScreen() {
   const t = useMessages('communities');
   const th = useMessages('home');
-  const tc = useMessages('core');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'communities-screen', false);
   const shown = useVisibility('communities-screen', false);
   const state = useStoreState(homePinsStore);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(false);
-  // The Invite people list: it opens under the page's top row, above the
-  // groups, and closes when a community is picked, when Edit is pressed, or
-  // when the page is left.
-  const [inviting, setInviting] = useState(false);
   // Standard (WIP): which groups are unfolded past their first rows.
   const [open, setOpen] = useState<{ pinned: boolean; joined: boolean }>({ pinned: false, joined: false });
   const { badgeNeeds } = useStoreState(communityScopeStore) as { badgeNeeds?: number };
@@ -201,7 +130,7 @@ export function CommunitiesScreen() {
     if (cards && shown && state.ready && listKey !== '|') void loadHomePinsActivity();
   }, [cards, shown, state.ready, listKey]);
   // Leaving the page ends an edit and a search: it opens as it was first seen.
-  useEffect(() => { if (!shown) { setEditing(false); setQuery(''); setInviting(false); setOpen({ pinned: false, joined: false }); } }, [shown]);
+  useEffect(() => { if (!shown) { setEditing(false); setQuery(''); setOpen({ pinned: false, joined: false }); } }, [shown]);
   const q = query.trim();
   // Standard (WIP): every community there is to join is listed here too, under
   // Joined, as Home lists them (the same section, ../home/communities-to-join).
@@ -222,7 +151,7 @@ export function CommunitiesScreen() {
     return () => { live = false; };
   }, [wip, shown, directoryAttempt]);
   const mine = useMemo(() => new Set([...state.joined.map((c) => c.slug), ...state.pins.map((p) => p.slug)]), [state.joined, state.pins]);
-  useEffect(() => { if (q) { setEditing(false); setInviting(false); } }, [q]);
+  useEffect(() => { if (q) setEditing(false); }, [q]);
 
   const pinned = useMemo(() => state.pins.filter((p) => matchesQuery(q, p.name, p.slug)), [state.pins, q]);
   const joined = useMemo(() => {
@@ -232,19 +161,6 @@ export function CommunitiesScreen() {
       .map((c) => ({ slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null, iconColor: c.icon_color || null }))
       .filter((c) => matchesQuery(q, c.name, c.slug));
   }, [state.joined, state.pins, q]);
-  // EVERY COMMUNITY YOU CAN INVITE PEOPLE TO: the ones you are in, pinned or
-  // not. A pin you have not joined has no membership whose link you could
-  // make, so it is not one of them.
-  const invitable = useMemo(() => {
-    const bySlug = new Map<string, { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null }>();
-    for (const pin of state.pins) {
-      if (pin.member) bySlug.set(pin.slug, { slug: pin.slug, name: pin.name, iconUrl: pin.iconUrl || null, iconEmoji: pin.iconEmoji || null });
-    }
-    for (const c of state.joined) {
-      if (!bySlug.has(c.slug)) bySlug.set(c.slug, { slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null });
-    }
-    return [...bySlug.values()];
-  }, [state.pins, state.joined]);
   const say = (name: string) => ({
     pinned: th('home:communities.pinned', { community: name }),
     unpinned: th('home:communities.unpinned', { community: name }),
@@ -288,23 +204,6 @@ export function CommunitiesScreen() {
   // Joined, so the first pin can be made from here.
   const canEdit = state.ready && total > 0 && !q;
   const editOn: 'pinned' | 'joined' | null = !canEdit ? null : state.pins.length ? 'pinned' : 'joined';
-  // INVITE PEOPLE is the page's own action, beside Edit, not a small control
-  // on every tile: the person asked for one clear way in, and the product is
-  // moving away from extra tiny buttons on a grid of tiles (Evan, 20 Nov
-  // 2026). It opens the list below, of every community they can invite to.
-  const canInvite = state.ready && invitable.length > 0 && !q && !editing;
-  const inviteAction = canInvite ? (
-    <button
-      type="button"
-      id="communities-invite"
-      className={HEAD_ACTION}
-      aria-expanded={inviting}
-      aria-controls="communities-invite-section"
-      onClick={() => setInviting((on) => !on)}
-    >
-      <span className="whitespace-nowrap">{t('communities:page.invite')}</span>
-    </button>
-  ) : null;
   const edit = (
     <button
       type="button"
@@ -312,7 +211,7 @@ export function CommunitiesScreen() {
       className={HEAD_ACTION}
       aria-label={editing ? th('home:edit.done') : t('communities:page.editLabel')}
       aria-pressed={editing}
-      onClick={() => { setInviting(false); setEditing((on) => !on); }}
+      onClick={() => setEditing((on) => !on)}
     >
       <span className="whitespace-nowrap">{editing ? th('home:edit.done') : th('home:edit.start')}</span>
     </button>
@@ -354,32 +253,8 @@ export function CommunitiesScreen() {
           ) : null}
         </div>
 
-        {/* INVITE PEOPLE'S LIST: every community you are in, each one a row
-            that opens its invite link to copy or share. It is a list rather
-            than a button on every tile, so the page keeps one clear Invite
-            action and the tiles stay what they are (Evan, 20 Nov 2026). */}
-        {state.ready && inviting && invitable.length ? (
-          <section id="communities-invite-section" className="px-3">
-            <SectionHeading
-              action={(
-                <button type="button" id="communities-invite-done" className={HEAD_ACTION} onClick={() => setInviting(false)}>
-                  <span className="whitespace-nowrap">{tc('core:common.done')}</span>
-                </button>
-              )}
-            >
-              {t('communities:page.invite.heading')}
-            </SectionHeading>
-            <WipCard on={wip} className={wip ? undefined : INVITE_CARD}>
-              <InvitePeopleList
-                communities={invitable}
-                onPick={(c) => { setInviting(false); invite(c.slug, c.name); }}
-              />
-            </WipCard>
-          </section>
-        ) : null}
-
         <section id="communities-pinned-section" className="px-3" hidden={!showPinned}>
-          <SectionHeading action={editOn === 'pinned' ? <>{inviteAction}{edit}</> : null}>
+          <SectionHeading action={editOn === 'pinned' ? edit : null}>
             {groupLabel('pinned', t('communities:page.pinned'), pinned.length)}
           </SectionHeading>
           <WipCard on={wip}>
@@ -401,7 +276,7 @@ export function CommunitiesScreen() {
         </section>
 
         <section id="communities-joined-section" className="px-3" hidden={!showJoined}>
-          <SectionHeading action={editOn === 'joined' ? <>{inviteAction}{edit}</> : null}>
+          <SectionHeading action={editOn === 'joined' ? edit : null}>
             {groupLabel('joined', t('communities:page.joined'), joined.length)}
           </SectionHeading>
           <WipCard on={wip}>

@@ -54,7 +54,8 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   // The Invite card: a member's, where other people are in, opening the invite pane.
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   assert.match(card, /export function showsInviteHero\(data: CommunityPayload \| null \| undefined\): boolean \{\s*if \(!data \|\| !data\.is_member \|\| data\.audience === 'solo'\) return false;\s*return \(Number\(data\.member_count\) \|\| 0\) > 1;/);
-  assert.match(card, /className="dev-ws-invite-hero-btn"\s+data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}/);
+  assert.match(card, /className="dev-ws-invite-hero-btn"\s+data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{\(\) => openInviteFor\(slug, data\.name \|\| slug\)\}/,
+    'the card opens the pane for its own community');
   // Not under Standard (WIP), where Invite stays the hero row's own button.
   assert.match(ws, /\{slug && !wipLook \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
   assert.equal(message('project:hub.invite.button'), 'Invite people');

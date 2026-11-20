@@ -76,17 +76,17 @@ export const AppContext = Object.assign(
      * From About's Invite the sheet is already open, and `back: 'about'`
      * makes its back disc return there.
      *
-     * A `slug` names a community that is not the app in context — a row of
-     * the Communities page's Invite people list, where no project is in
-     * context at all: `inviteFor` carries that community to the pane, and the
-     * app in context (the header's chip, what Improve targets) is left
-     * untouched.
+     * A `slug` names the community the pane is for: the hub's Invite card
+     * passes its own, so Copy, Share and Your links act on that community's
+     * link while the header's chip and what Improve targets stay as the page
+     * made them. The pane reads the name once, at mount (./invite-pane.tsx
+     * `useInviteSubject`), so it cannot change subject under itself.
      *
      * @param {{ back?: 'about', slug?: string, name?: string }} [opts]
      */
     openInvite(opts = {}) {
       const { slug: contextSlug } = improveStore.get();
-      const override = typeof opts.slug === 'string' && opts.slug !== '' && opts.slug !== contextSlug
+      const override = typeof opts.slug === 'string' && opts.slug !== ''
         ? { slug: opts.slug, name: opts.name || opts.slug }
         : null;
       const slug = override ? override.slug : contextSlug;
@@ -117,9 +117,8 @@ export const AppContext = Object.assign(
           return;
         }
         // Audit D07: from About, Back retraces the step. From anywhere else
-        // (the hub's Invite, the Share dialog, a community's tile) the sheet
-        // opened on this pane, so there is no menu behind it to go back to:
-        // only the close.
+        // (the hub's Invite card, the Share dialog) the sheet opened on this
+        // pane, so there is no menu behind it to go back to: only the close.
         appContextStore.set({ back: opts.back === 'about' ? 'about' : 'none' });
         openAt('invite');
       });

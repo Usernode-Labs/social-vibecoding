@@ -83,18 +83,6 @@
     "text": "{{count}} to vote",
     "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
   },
-  "page.invite": {
-    "text": "Invite people",
-    "description": "Action at the right of the first group's heading on the Communities page, beside Edit. Opens a list of the communities the person is in, to invite people to one of them."
-  },
-  "page.invite.heading": {
-    "text": "Choose a community",
-    "description": "Heading of the list that opens under the Communities page's Invite people action: each row opens that community's invite link to copy or share."
-  },
-  "page.invite.to": {
-    "text": "Invite people to {{community}}",
-    "description": "Name of a community's row in the Communities page's invite list, for screen readers: opens that community's invite link to copy or share. {{community}} is the community's name."
-  },
   "page.search.placeholder": {
     "text": "Search your communities",
     "description": "Placeholder inside the search field at the top of the Communities page (desktop widths), which filters the person's pinned and joined communities by name."

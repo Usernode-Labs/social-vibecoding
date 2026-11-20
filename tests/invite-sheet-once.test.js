@@ -189,12 +189,12 @@ test('an open the sheet refuses leaves the menu on its first pane', async () => 
     'or the next open from the Homeroom mark would land on Invite');
 });
 
-// ── a community's Invite, from the Communities page ──────────────────────
+// ── a community's Invite, from its hub ───────────────────────────────────
 //
-// The Communities page draws communities, not an app, so `improveStore.slug`
-// is null there. A row of its Invite people list calls
-// `openInvite({ slug, name })`, which names the community the pane is opened
-// for without making it the app in context: the header chip and Improve keep
+// The hub's Invite card names its own community, so the pane reads that
+// community's links even while `improveStore` names something else (or
+// nothing at all): `openInvite({ slug, name })` records the subject without
+// making it the app in context, and the header chip and Improve keep
 // pointing where they did.
 
 test('a community\'s Invite reads that community first and presents once, on it', async () => {
@@ -264,6 +264,14 @@ test('the hub and the Share dialog open it with one call, not open() then a pane
   const fn = body.slice(0, body.indexOf('\n}\n') + 2);
   assert.match(fn, /void ctx\.openInvite\?\.\(\);/);
   assert.doesNotMatch(fn, /ctx\.open\?\.\(\)|showInvite/, 'no menu present before the pane');
+  // The full-width Invite people card names the community it sits on, so
+  // Copy, Share and Your links act on that community's link.
+  const forBody = hub.slice(hub.indexOf('export function openInviteFor('));
+  const forFn = forBody.slice(0, forBody.indexOf('\n}\n') + 2);
+  assert.match(forFn, /void ctx\.openInvite\?\.\(\{ slug, name \}\);/,
+    'the community is recorded with the opening');
+  const card = hub.slice(hub.indexOf('export function InviteHeroCard('));
+  assert.match(card, /onClick=\{\(\) => openInviteFor\(slug, data\.name \|\| slug\)\}/);
 
   const share = read('frontend/src/features/dialogs/share.tsx');
   const at = share.indexOf('function openInvitePane(): void {');
