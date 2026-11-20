@@ -159,19 +159,21 @@ function runSelect(env) {
     });
     assert.equal(res.status, 0, res.stderr);
     const out = fs.readFileSync(output, 'utf8');
-    return { shouldRelease: /should_release=true/.test(out), summary: fs.readFileSync(summary, 'utf8') };
+    return { shouldRelease: /should_release=true/.test(out), lane: /^build_lane=(\d+)$/m.exec(out)?.[1], summary: fs.readFileSync(summary, 'utf8') };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
 test('Select release work: a run that can release builds and publishes; one that cannot, neither', () => {
-  const normal = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'false' });
+  const normal = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'false', GITHUB_RUN_NUMBER: '1601' });
   assert.equal(normal.shouldRelease, true);
+  assert.equal(normal.lane, '1');
   const skipped = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'true', BEHIND_REASON: 'No build: main is at x.' });
   assert.equal(skipped.shouldRelease, false);
   assert.match(skipped.summary, /No build: main is at x\./);
-  const dispatched = runSelect({});
+  const dispatched = runSelect({ GITHUB_RUN_NUMBER: '1602' });
+  assert.equal(dispatched.lane, '0');
   assert.equal(dispatched.shouldRelease, true, 'a run dispatched by hand is never held back');
   const claude = workflow.jobs.plan.steps.find((step) => step.id === 'claude');
   assert.equal(claude.if, "steps.release.outputs.should_release == 'true'");

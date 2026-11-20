@@ -306,9 +306,18 @@ test('every Kubernetes chart release validates its immutable platform image with
 test('Kubernetes workflow retains queued releases, publishes the tip, and never an older revision over a newer one', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const release = workflow.slice(workflow.indexOf('\n  release:\n'));
-  assert.match(workflow,
-    /concurrency:\n  group: kubernetes-images-\$\{\{ github\.ref \}\}\n  cancel-in-progress: false\n(?:  #[^\n]*\n)*  queue: max/,
-    'a later waiting push must not cancel an earlier merge before it gets a release run');
+  assert.doesNotMatch(workflow, /^concurrency:/m, 'verified releases must not wait behind unrelated earlier builds');
+  for (const [start, end, component] of [
+    ['build', 'preview-schema-compatibility', '\${{ matrix.component }}'],
+    ['preview-schema-compatibility', 'release', 'postgres'],
+  ]) {
+    const job = workflow.slice(workflow.indexOf(`\n  ${start}:\n`), workflow.indexOf(`\n  ${end}:\n`));
+    assert.ok(job.includes(`group: kubernetes-build-\${{ github.ref }}-${component}-\${{ needs.plan.outputs.build_lane }}`));
+    assert.match(job, /cancel-in-progress: false\n\s+queue: max/);
+  }
+  assert.match(release,
+    /concurrency:\n      group: kubernetes-images-\$\{\{ github\.ref \}\}\n      cancel-in-progress: false\n      queue: max/,
+    'the publisher shares a single lock with old workflow revisions');
   assert.match(release, /git ls-remote --exit-code origin "\$GITHUB_REF"/);
   assert.match(release, /if \[ "\$current_sha" = "\$GITHUB_SHA" \]; then/);
   // Behind the tip (5 October: twelve queued runs in a row skipped, so
