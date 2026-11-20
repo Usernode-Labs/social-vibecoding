@@ -17,6 +17,18 @@
 //             nothing is idle. Set in Admin → Limits, else
 //             MAX_GLOBAL_SESSIONS (services/session-limit.js).
 //
+// and the cluster's own, measured outside the database by
+// services/platform-capacity.js (which says how each is read):
+//
+//   db_disk   the shared Postgres server's volume, MiB used against its
+//             capacity. Full, Postgres stops writing.
+//   quota_apps, quota_workers, quota_builds
+//             each runtime namespace's ResourceQuota, its tightest resource
+//             in thousandths of the hard value. Full, Kubernetes refuses the
+//             next pod: an app, a session or check, a build.
+//   node_pool the worker nodes' local volume pool, the fullest node's MiB
+//             taken against its size. Full, new volumes fail to mount.
+//
 // and one that is GitHub's rather than ours, its hourly REST budget as the
 // last response reported it (services/github-budget.js):
 //
@@ -153,7 +165,30 @@ const LIMITS = Object.freeze([
     window: () => githubBudget.alertFigures('installation').resetAt,
   }),
 ]);
-const LIMIT_BY_KEY = new Map(LIMITS.map((limit) => [limit.key, limit]));
+// The cluster's own ceilings (services/platform-capacity.js). Each is one
+// `measure` rather than a cap and a count, because one outside read answers
+// both, and what it was about (the claim, the resource, the node) is kept
+// beside the figure in `detail`. A measure of null means the limit does not
+// apply here (off Kubernetes, in a preview, no read grant yet): nothing is
+// recorded and the area shows no row.
+const CAPACITY_ENV = Object.freeze({
+  db_disk: 'CHECK_POOL_METRICS_URL',
+  quota_apps: 'APP_NAMESPACE',
+  quota_workers: 'WORKER_NAMESPACE',
+  quota_builds: 'BUILD_NAMESPACE',
+  node_pool: 'APP_RUNTIME',
+});
+function capacity() {
+  return require('./platform-capacity');
+}
+const CAPACITY_LIMITS = Object.freeze(Object.entries(CAPACITY_ENV).map(([key, envKey]) => Object.freeze({
+  key,
+  envKey,
+  enabled: (config) => capacity().enabled(config, key),
+  measure: (config, _pool, deps) => capacity().measure(config, key, deps),
+})));
+const ALL_LIMITS = Object.freeze([...LIMITS, ...CAPACITY_LIMITS]);
+const LIMIT_BY_KEY = new Map(ALL_LIMITS.map((limit) => [limit.key, limit]));
 
 function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
@@ -209,8 +244,9 @@ function decide({ used, cap, percent = DEFAULT_WARN_PERCENT, level }) {
 // notifications.detail token: "<limit>_<level>:<used>:<cap>", e.g.
 // "apps_warn:40:50". The drawer and the push copy parse it back; neither
 // shows it raw. Figures are clamped to seven digits so the widest token
-// ("sessions_full:9999999:9999999", 29) stays inside the 32 characters every
-// creator keeps to.
+// ("node_pool_full:9999999:9999999", 30) stays inside the 32 characters every
+// creator keeps to. A quota's figure is thousandths, clamped to four digits
+// (platform-capacity.js), so "quota_workers_full:9999:1000" is 28.
 const MAX_FIGURE = 9999999;
 
 function figure(n) {
@@ -221,7 +257,7 @@ function detailToken(key, level, used, cap) {
   return `${key}_${level}:${figure(used)}:${figure(cap)}`;
 }
 
-const DETAIL_RE = /^(apps|sessions|connections|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parseDetail(detail) {
   const m = DETAIL_RE.exec(String(detail || ''));
@@ -269,12 +305,23 @@ function defaultPublish(pool, row) {
 async function evaluate(pool, config, key, deps = {}) {
   const limit = LIMIT_BY_KEY.get(key);
   if (!limit) throw new Error(`unknown platform limit: ${key}`);
-  const cap = await limit.cap(config, pool);
+  const unknown = { key, used: null, cap: null, level: null, notified: null, recipients: 0, unknown: true };
+  let cap;
+  let used;
+  let detail = null;
+  if (limit.measure) {
+    const measured = limit.enabled(config) ? await limit.measure(config, pool, deps.capacity || {}) : null;
+    if (!measured) return unknown;
+    ({ used, cap } = measured);
+    detail = measured.detail || null;
+  } else {
+    cap = await limit.cap(config, pool);
+  }
   // A process that has not heard from GitHub yet knows no figures: recording
   // "ok" would re-arm a crossing already told (each new process used to).
-  if (limit.fromAnswers && !(Number(cap) > 0)) return { key, used: null, cap: null, level: null, notified: null, recipients: 0, unknown: true };
+  if (limit.fromAnswers && !(Number(cap) > 0)) return unknown;
   const percent = limit.percent ? limit.percent() : warnPercent();
-  const used = await limit.count(pool);
+  if (!limit.measure) used = await limit.count(pool);
   if (!Number.isFinite(used) || used < 0) throw new Error(`bad ${key} count`);
   const staging = deps.staging ?? isStaging();
   const create = deps.create || defaultCreate;
@@ -316,10 +363,11 @@ async function evaluate(pool, config, key, deps = {}) {
           SET level = $2, used = $3, cap = $4, measured_at = NOW(),
               notified_at = CASE WHEN $5::boolean THEN NOW() ELSE notified_at END,
               window_reset_at = CASE WHEN $6::float8 IS NULL THEN window_reset_at ELSE to_timestamp($6::float8 / 1000) END,
-              refusals_since = CASE WHEN $4::int IS NULL OR $3::int < $4::int THEN NULL ELSE refusals_since END
+              refusals_since = CASE WHEN $4::int IS NULL OR $3::int < $4::int THEN NULL ELSE refusals_since END,
+              detail = $7::jsonb
         WHERE limit_key = $1`,
       [key, decision.level, used, Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : null,
-        !!decision.notify, window]
+        !!decision.notify, window, detail ? JSON.stringify(detail) : null]
     );
     let inserted = [];
     if (decision.notify && !staging) {
@@ -537,7 +585,7 @@ function noteRefusal(pool, config, key, userId) {
 /** Evaluate every cap. Never throws; errors are collected per cap. */
 async function sweep(pool, config, deps = {}) {
   const summary = { results: [], errors: [] };
-  for (const limit of LIMITS) {
+  for (const limit of ALL_LIMITS) {
     try {
       summary.results.push(await evaluate(pool, config, limit.key, deps));
     } catch (err) {
@@ -573,6 +621,8 @@ function nudge(pool, config, key) {
 
 module.exports = {
   LIMITS,
+  CAPACITY_LIMITS,
+  ALL_LIMITS,
   REARM_RATIO,
   SWEEP_INTERVAL_MS,
   REFUSAL_NOTICE_INTERVAL_MS,

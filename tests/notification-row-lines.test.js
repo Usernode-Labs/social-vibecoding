@@ -356,6 +356,28 @@ test('platform limit rows say which cap, how full, and what happens next', async
     appName: null, sourceUsername: null });
   assert.equal(connectionsFull.label, 'Database connections used up');
 
+  // The cluster's own (services/platform-capacity.js): volumes in MiB said
+  // as GiB, a quota in thousandths said as a percentage.
+  const disk = await lines({ kind: 'platform_limit', detail: 'db_disk_warn:41000:51200',
+    appName: null, sourceUsername: null });
+  assert.equal(disk.label, 'Database disk filling up');
+  assert.match(disk.subject, /^40 of 50 GiB used\. +When it fills, Postgres stops writing\./);
+  const diskFull = await lines({ kind: 'platform_limit', detail: 'db_disk_full:51200:51200',
+    appName: null, sourceUsername: null });
+  assert.equal(diskFull.label, 'Database disk full');
+  const workers = await lines({ kind: 'platform_limit', detail: 'quota_workers_warn:917:1000',
+    appName: null, sourceUsername: null });
+  assert.equal(workers.label, 'Workers quota running low');
+  assert.match(workers.subject, /^91% used\. +When it fills, new coding sessions and checks wait\./);
+  const builds = await lines({ kind: 'platform_limit', detail: 'quota_builds_full:1000:1000',
+    appName: null, sourceUsername: null });
+  assert.equal(builds.label, 'Builds quota used up');
+  assert.match(builds.subject, /New image builds fail until the quota is raised\./);
+  const nodePool = await lines({ kind: 'platform_limit', detail: 'node_pool_full:10000:10000',
+    appName: null, sourceUsername: null });
+  assert.equal(nodePool.label, 'Node volume pool full');
+  assert.match(nodePool.subject, /^9\.8 of 9\.8 GiB taken\. +New worker and preview volumes fail to mount\./);
+
   // GitHub's hourly budget, the bot token's and the App's.
   const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
     appName: null, sourceUsername: null });
