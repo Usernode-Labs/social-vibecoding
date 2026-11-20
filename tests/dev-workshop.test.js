@@ -3872,7 +3872,8 @@ test('exactly one surface draws the toolbar, so its ids stay unique', () => {
 
 /** The hero, drawn after the community read has answered (fetch stubbed). */
 async function heroWithMenu(menuProps, over) {
-  const card = loadTsx('frontend/src/features/dev-board/workshop/community-card.tsx');
+  // The hero as every look but the kit's draws it; the standard look's is the kit's since 20 Nov 2026 (lib/skin.ts isKitHome).
+  const card = loadTsx('frontend/src/features/dev-board/workshop/community-card.tsx', { stubs: { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } });
   const row = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
   const payload = {
     slug: 'garden', name: 'Garden', member_count: 12, is_member: true, is_creator: false,

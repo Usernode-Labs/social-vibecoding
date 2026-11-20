@@ -283,10 +283,6 @@
     "text": "vérifiez le compte · débloquez 10 $/jour",
     "source": "a683560b105736011e2ca80f55b26c7586d9c0d2f1eae5708f29060f47aba45b"
   },
-  "credit.meter.lockedKeyAvailable": {
-    "text": "<0>· </0><1>votre clé disponible</1>",
-    "source": "f8432b7108696dc9ca62b454eeba6021e55765680cb83674b18203472f9aebe2"
-  },
   "credit.meter.unavailable": {
     "text": "crédits temporairement indisponibles",
     "source": "b028cfa7020d0eeee89a5b0f9fc1a670f51e9e66d0ddcce26489bf6d9b40b1f1"
@@ -295,21 +291,9 @@
     "text": "Connectez GitHub ou X dans les réglages pour débloquer 10 $/jour.",
     "source": "131c7dbab35b5c4af999008dfdca85d92d41390d9b89dc6b935833f36b60e3c2"
   },
-  "credit.tip.lockedWithKey": {
-    "text": "Connectez GitHub ou X dans les réglages pour débloquer 10 $/jour. Votre propre clé Anthropic reste disponible.",
-    "source": "58461487ee4bac10ab8f643e5eb79cae59ff52c3f976adc3e97a042a4086a9cc"
-  },
   "credit.tip.unavailable": {
     "text": "Impossible de vérifier l’éligibilité aux crédits. Réessayez dans un instant.",
     "source": "9fe063691a85c86978f341431d92edad49644a885aa29e6d3ef5d28b08ea13d7"
-  },
-  "credit.tip.keyBilledWeekly": {
-    "text": "Votre allocation hebdomadaire de {{limit}} est épuisée. Les requêtes IA sont désormais facturées à la clé Anthropic enregistrée dans les réglages.",
-    "source": "eca49d1101b008498fe2075b693296eba452e8c118f8ae3c135ff6f2b58fa787"
-  },
-  "credit.tip.keyBilledDaily": {
-    "text": "Votre allocation quotidienne de {{limit}} est épuisée. Les requêtes IA sont désormais facturées à la clé Anthropic enregistrée dans les réglages.",
-    "source": "8d15e6abc6989cf3b0e926435e912ff7b0fce3538217fa306acfce4c95532cf7"
   },
   "credit.tip.usedAllWeekly": {
     "text": "Vous avez utilisé la totalité des {{limit}} de votre allocation IA de la semaine.",

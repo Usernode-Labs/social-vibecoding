@@ -182,19 +182,18 @@ test('an unavailable snapshot refuses BEFORE forwarding', () => {
 // Review's last two findings. The fail-closed sentinel means "we cannot
 // tell", and arithmetic alone reads it as "at cap" — which is a DIFFERENT
 // thing with worse consequences on each path.
-test('an unreadable ledger refuses before the BYOK switch, not after', () => {
+// The worker relay's own-key switch and the global-ledger read it needed
+// went with people's own Anthropic keys (task 2275): what is left to pin is
+// that an unreadable ledger refuses before the start-of-call gate and before
+// anything is forwarded (tests/anthropic-proxy-gates.test.js drives it).
+test('an unreadable ledger refuses before the relay\'s start-of-call gate and its forward', () => {
   const src = read('src/routes/anthropic-proxy.js');
   const refusal = src.indexOf("code: 'budget_unavailable',");
-  const byok = src.indexOf('limits.loadUserApiKey');
-  assert.ok(refusal > 0 && refusal < byok,
-    'read as "over cap", an outage would switch a user onto their OWN key and '
-    + 'bill them for a Postgres blip');
-});
-
-test('an unreadable GLOBAL ledger refuses rather than resolving to "not over"', () => {
-  const src = read('src/routes/anthropic-proxy.js');
-  assert.match(src, /isUnavailable\(globalSpend\)/,
-    'otherwise a keyless caller spends the platform key during an outage');
+  const gate = src.indexOf("'Start-of-call gate fired'");
+  const forward = src.lastIndexOf('anthropicStream.forwardCall(');
+  assert.ok(refusal > 0 && refusal < gate && gate < forward,
+    'read as "over cap", an outage would end a turn as if its allowance were spent');
+  assert.doesNotMatch(src, /loadUserApiKey|globalSpend/, 'no own-key switch is left to guard');
 });
 
 test('an unreadable app ledger is not dressed up as an exhausted cap', () => {

@@ -40,8 +40,13 @@ export interface PermissionConsentModalView {
   reason: string | null;
   /** What granting means: scope, how to undo it, and any reopen to come. */
   note: string;
-  /** "Allow", or "Allow and reopen" when the frame must re-navigate. */
+  /**
+   * "Always allow" where "Allow this time" is also offered (the App tab);
+   * elsewhere "Allow", or "Allow and reopen" when the frame must re-navigate.
+   */
   confirmLabel: string;
+  /** "Allow this time": a grant for as long as the app stays open, never stored. Null where it cannot apply. */
+  onceLabel?: string | null;
 }
 
 export interface LlmConsentModalView {

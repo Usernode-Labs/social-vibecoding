@@ -55,7 +55,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { reducedMotion } from '../../lib/reduced-motion';
-import { ProjectNeedsEmpty, ProjectWaysIn } from './project-needs';
+import { ProjectNeedsEmpty, ProjectWaysIn, useDescBeside } from './project-needs';
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
@@ -596,6 +596,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const safeRef = useRef<HTMLDivElement>(null);
   // What the change does in full, dropped from under the bar over the page.
   const [desc, setDesc] = useState(false);
+  // On a large screen a project's own Needs you keeps that card open beside the change instead of under the arrow
+  // (./project-needs.tsx useDescBeside, asked 20 Nov 2026).
+  const beside = useDescBeside(slug, project);
   const [barTop, setBarTop] = useState(0);
   // The run is fixed once it starts: a vote takes its change out of the
   // controller's feed, and the run must not move under you.
@@ -1038,7 +1041,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   }
 
   const page = open ? (
-    <div className="rf-page-wrap" data-rf-page="">
+    <div className="rf-page-wrap" data-rf-page="" data-rf-beside={beside ? '' : undefined}>
       <div
         ref={pageRef}
         className="rf-page"
@@ -1070,7 +1073,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           </button>
           <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} />
         </div>
-        <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={{ top: barTop }} aria-hidden={!desc} inert={!desc || undefined}>
+        <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={beside ? undefined : { top: barTop }} aria-hidden={!desc && !beside} inert={(!desc && !beside) || undefined}>
           <div className="rf-desc-dim" onClick={() => setDesc(false)} />
           <div className="rf-desc" id="rf-desc" data-rf-desc="">
             {appName ? <p className="rf-desc-app">{appName}</p> : null}

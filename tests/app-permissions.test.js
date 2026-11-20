@@ -328,17 +328,20 @@ test('the shell answers the __usernode_permission family', () => {
 });
 
 test('a dismissed prompt is a denial, never a grant', () => {
-  // Backdrop, Escape and "Not now" all resolve the same way, and the POST
-  // that stores a grant is only reached when the promise resolves truthy.
+  // Backdrop, Escape and "Not now" all resolve the same way, and only the two
+  // named yeses ('always', which is stored, and 'once', which is not) grant.
+  // tests/device-permissions-ask.test.js runs the relay with each answer.
   const shell = read('public/js/app-view.js');
-  assert.match(shell, /AppView\._permissionConsentSettle = \(allow\) => done\(allow \? true : null\);/);
+  assert.match(shell, /AppView\._permissionConsentSettle = \(choice\) => done\(choice === 'always' \|\| choice === 'once' \? choice : null\);/);
   const handler = shell.slice(
     shell.indexOf('async handlePermissionBridgeMessage('),
     shell.indexOf('// ── App file storage relay')
   );
-  assert.match(handler, /if \(!decision\) \{\s*\n\s*reply\(\{ capability, state: 'denied', active: false, reason: 'declined' \}\);/);
+  assert.match(handler, /if \(decision !== 'always' && decision !== 'once'\) \{\s*\n\s*reply\(\{ capability, state: 'denied', active: false, reason: 'declined' \}\);/);
   assert.ok(handler.indexOf("reason: 'declined'") < handler.indexOf("'/api/me/permission-grants'"),
     'the decline path returns before the grant is stored');
+  assert.ok(handler.indexOf("if (decision === 'once')") < handler.indexOf("'/api/me/permission-grants'"),
+    'a one-time grant returns before the POST that stores a grant');
 });
 
 test('the two ungated capabilities answer granted, not "unknown"', () => {

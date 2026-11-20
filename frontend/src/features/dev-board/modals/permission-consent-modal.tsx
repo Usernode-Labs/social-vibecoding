@@ -60,7 +60,7 @@ export function PermissionConsentCard({ view }: { view: PermissionConsentModalVi
         <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{t('project:modals.permission.reasonQuote', { reason: view.reason })}</p>
       ) : null}
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{view.note}</p>
-      <div className="flex justify-end gap-2 mt-5">
+      <div className="flex flex-wrap justify-end gap-2 mt-5">
         <Button
           type="button"
           id="permission-consent-decline"
@@ -70,6 +70,20 @@ export function PermissionConsentCard({ view }: { view: PermissionConsentModalVi
         >
           {t('project:modals.permission.notNow')}
         </Button>
+        {view.onceLabel ? (
+          // 20 Nov 2026: a grant for as long as the app stays open, never
+          // stored (app-view.js _onceGrantsFor). Beside the lasting one, not
+          // instead of it, and quieter than it.
+          <Button
+            type="button"
+            id="permission-consent-allow-once"
+            variant="neutral"
+            ink="neutral"
+            onClick={() => call('_permissionConsentAllowOnce')}
+          >
+            {view.onceLabel}
+          </Button>
+        ) : null}
         <Button
           type="button"
           id="permission-consent-allow"

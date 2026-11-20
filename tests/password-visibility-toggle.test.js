@@ -44,10 +44,10 @@ const SHELL_FIELDS = {
   'frontend/src/features/auth/register.tsx': 1,
   'frontend/src/features/settings/sections/password.tsx': 3,
   'frontend/src/features/settings/sections/username.tsx': 1,
-  // The two API-key fields are `type="password"` too, and a viewer who cannot
-  // read back what they pasted is the same complaint. They sit in a flex row
-  // beside their buttons, so the width moves to the wrapper.
-  'frontend/src/features/settings/sections/api-key.tsx': 1,
+  // The API-key field is `type="password"` too, and a viewer who cannot read
+  // back what they pasted is the same complaint. It sits in a flex row beside
+  // its button, so the width moves to the wrapper. (The Anthropic key's field
+  // went with that part in task 2275.)
   'frontend/src/features/settings/sections/openrouter.tsx': 1,
 };
 

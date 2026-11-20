@@ -773,10 +773,10 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(require('./lib/platform-i18n').message('settings:openrouter.intro'), /comes with an included OpenRouter key/);
   // The runtime copy is that same message: settings.js writes it over the static markup.
   assert.match(settings, /intro\.textContent = tr\('settings:openrouter\.intro'\);/);
-  assert.ok(
-    settings.indexOf("{ key: 'openrouter'") < settings.indexOf("{ key: 'api-key'"),
-    'OpenRouter precedes the Anthropic key in the AI settings group',
-  );
+  assert.ok(settings.indexOf("{ key: 'openrouter'") > settings.indexOf("{ key: 'usage'"),
+    'OpenRouter follows the allowance in the AI settings group');
+  assert.equal(settings.indexOf("{ key: 'api-key'"), -1,
+    'and there is no Anthropic key part after it any more (task 2275)');
   assert.match(deploy, /secrets\.USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
   // #2568 retired the gate. The deploy workflow still writes the variable
   // (workflow files are not this change's to edit) and nothing reads it —

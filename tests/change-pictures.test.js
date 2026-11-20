@@ -271,18 +271,21 @@ test('#6548: the opened email is drawn at its full height in a scrolling box, at
   // The opened email's box scrolls; the old fixed 70vh cut is gone.
   assert.match(src, /max-h-\[70vh\] overflow-auto rounded-xl/);
   assert.doesNotMatch(src, /h-\[70vh\] overflow-hidden/);
-  // The measured frame may read its own document, but scripts never run and
-  // no form, popup or top navigation is allowed.
-  assert.match(src, /sandbox=\{measured \? 'allow-same-origin' : ''\}/, 'the thumbnail frame stays sandbox=""');
-  assert.doesNotMatch(src, /allow-scripts/);
-  assert.doesNotMatch(src, /allow-forms|allow-popups|allow-top-navigation/);
-  assert.match(src, /pointerEvents: 'none'/);
-  assert.match(src, /inert=\{measured \? true : undefined\}/);
-  assert.match(src, /contentDocument/);
-  assert.match(src, /documentElement\.scrollHeight/);
+  // Both passes are the one frame every page the bot writes draws: the
+  // thumbnail static, the opened email in the helper mode, whose nonce'd
+  // helper reports its height. Nothing here is same-origin with Homeroom.
+  assert.match(src, /<ArtifactFrame\b[\s\S]*?mode="static"/, 'the thumbnail frame is the one frame, static');
+  assert.match(src, /mode="helper"/, 'the opened email is measured by the helper');
+  assert.doesNotMatch(src, /allow-same-origin|allow-scripts|<iframe|\bsrcDoc=/, 'it keeps no frame of its own');
+  assert.doesNotMatch(src, /contentDocument|documentElement\.scrollHeight/, 'it no longer reads the frame');
+  assert.match(src, /__artifact: 'measure'/, 'it asks the helper to measure');
+  assert.match(src, /__artifact !== 'size'/, 'the helper\'s size message is what sets the height');
+  assert.match(src, /FALLBACK_EMAIL_HEIGHT/, 'a helper that never answers still gets a full box');
+  assert.match(src, /scrolls|overflow-auto/, 'the email scrolls inside its box');
   // Phone is a phone's width, Desktop the desktop email's own.
   assert.match(src, /phone: 'min\(375px, 100%\)'/);
   assert.match(src, /desktop: '680px'/);
+  assert.match(src, /MIN_EMAIL_HEIGHT = 160/);
   // The switch is the comparison card's, with the same ids and words.
   assert.match(src, /messages:botCards\.compare\.sizeGroup/);
   assert.match(src, /messages:botCards\.compare\.phone/);

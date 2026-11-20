@@ -106,7 +106,7 @@ const CONSENT = (over) => ({
   maxCapCents: 2500,
   defaultCapCents: 100,
   entitlement: { limitCents: 1000, entitlementAvailable: true },
-  hasApiKey: false,
+  hasOwnKey: false,
   ...over,
 });
 
@@ -146,7 +146,10 @@ test('no payer replaces the whole field with the amber box and disables Allow', 
   // "Connect GitHub or X" goes to Linked accounts, the GitHub/X rows' own
   // page since the settings restructure split them out of the connectors pane.
   assert.match(html, /href="#settings\/linked-accounts"/);
-  assert.match(html, /href="#settings\/api-key"/);
+  // The second door is the person's own OpenRouter key (task 2275; it was
+  // the Anthropic key part, which is gone).
+  assert.match(html, /href="#settings\/openrouter"/);
+  assert.match(html, /add your own OpenRouter key/);
   assert.doesNotMatch(html, /id="llm-consent-cap"/, 'no cap field to fill in');
   assert.match(html, /id="llm-consent-allow"[^>]*disabled/);
   assert.match(html, /Unavailable/);
@@ -164,10 +167,10 @@ test('an unreachable eligibility check says so instead of blaming the account', 
 
 test('BYOK-only pre-checks the opt-in and rewrites both the intro and its label', () => {
   const { AppView, published } = makeAppView();
-  AppView.showLlmConsentModal(CONSENT({ entitlement: { limitCents: 0 }, hasApiKey: true }));
+  AppView.showLlmConsentModal(CONSENT({ entitlement: { limitCents: 0 }, hasOwnKey: true }));
   const view = lastView(published);
   assert.equal(view.capacity.byok.checked, true);
-  assert.match(view.intro, /use your own Anthropic API key/);
+  assert.match(view.intro, /use your own OpenRouter key/);
   const html = consentHtml(view);
   assert.match(html, /id="llm-consent-byok"[^>]*checked/);
   assert.match(html, /required until platform credits are unlocked/);
@@ -175,7 +178,7 @@ test('BYOK-only pre-checks the opt-in and rewrites both the intro and its label'
 
 test('a key with platform credits offers the opt-in unchecked, as a fallback', () => {
   const { AppView, published } = makeAppView();
-  AppView.showLlmConsentModal(CONSENT({ hasApiKey: true }));
+  AppView.showLlmConsentModal(CONSENT({ hasOwnKey: true }));
   const view = lastView(published);
   assert.equal(view.capacity.byok.checked, false);
   assert.match(view.capacity.byok.label, /If my weekly platform budget runs out/);

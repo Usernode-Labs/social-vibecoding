@@ -6101,6 +6101,23 @@
   // Every later launch delegates it up front and resolves `active: true`
   // with no dialog and no reload at all.
   //
+  // ONCE OR ALWAYS. The dialog offers "Allow this time" beside "Always
+  // allow". `scope` says which: "always" is saved (Settings lists it), and
+  // "once" lasts only while the app stays open, so the next launch asks
+  // again. Either way, a fresh grant reloads the frame.
+  //
+  // KEEP YOUR PLACE across that reload. Pass where the person is as
+  // `place` (anything JSON, up to 16 KB), and read it back once the app
+  // has reloaded. The platform keeps it for you, for a few minutes, once:
+  //
+  //   btn.onclick = function () {
+  //     usernode.requestPermission("camera", { place: { screen: "photo" } })
+  //       .then(function (r) { if (r.state === "granted" && r.active) openCamera(); });
+  //   };
+  //   usernode.takeSavedPlace().then(function (place) {
+  //     if (place && place.screen === "photo") showPhotoScreen();
+  //   }).catch(function () {});  // standalone: no platform, no place
+  //
   // Standalone (no shell), every call rejects — the same stance as
   // requestLlmAccess. hasCapability() is the exception: it reads this
   // document's own policy, so it answers anywhere.
@@ -6129,7 +6146,7 @@
       }
     });
 
-    function permissionCall(type, capability) {
+    function permissionCall(type, capability, extra) {
       return new Promise(function (resolve, reject) {
         if (window === window.parent) {
           reject(new Error(
@@ -6158,11 +6175,13 @@
         }, _PERM_DECISION_TIMEOUT_MS);
         try {
           console.log(_BRIDGE_TAG, "permission → parent:", type, capability || "", "id", id);
-          window.parent.postMessage({
+          var message = {
             __usernode_permission: type,
             id: id,
             capability: capability || null,
-          }, "*");
+          };
+          if (extra && extra.place !== undefined) message.place = extra.place;
+          window.parent.postMessage(message, "*");
         } catch (err) {
           delete _permPending[id];
           if (entry.ackTimer) clearTimeout(entry.ackTimer);
@@ -6191,7 +6210,9 @@
     }
 
     // Ask for one capability, prompting the user if this app does not
-    // already hold it. Resolves { capability, state, active, reason }.
+    // already hold it. Resolves { capability, state, active, reason, scope }.
+    // `options.place` is kept by the platform across the reload a grant
+    // causes; read it back with takeSavedPlace().
     // `state` is "granted" or "denied"; on a denial `reason` is
     // "declined" (the user said no), "not_declared" (missing from
     // dapp.json) or "unknown_capability". Asking about one of the two
@@ -6199,8 +6220,19 @@
     // "ungated", so a caller can ask about any capability uniformly
     // rather than having to know which ones the platform gates.
     if (typeof window.usernode.requestPermission !== "function") {
-      window.usernode.requestPermission = function requestPermission(capability) {
-        return permissionCall("request", capability);
+      window.usernode.requestPermission = function requestPermission(capability, options) {
+        var place = options && typeof options === "object" ? options.place : undefined;
+        return permissionCall("request", capability, { place: place });
+      };
+    }
+
+    // The place this app passed requestPermission({ place }) before a grant
+    // reloaded it, or null. Read once: a second call answers null.
+    if (typeof window.usernode.takeSavedPlace !== "function") {
+      window.usernode.takeSavedPlace = function takeSavedPlace() {
+        return permissionCall("take-place", null).then(function (r) {
+          return r && r.place !== undefined ? r.place : null;
+        });
       };
     }
 

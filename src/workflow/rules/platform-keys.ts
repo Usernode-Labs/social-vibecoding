@@ -122,8 +122,12 @@ export const PLATFORM_ENV_UNWRITABLE = new Set([
   // Retired with the bot account GitHub suspended (25 Oct 2026): nothing
   // reads it, and it stays refused so it cannot come back from the console.
   'GITHUB_BOT_TOKEN',
-  // Model access and the platform's own dapp keypair.
+  // Retired in task 2275 (every model call goes through OpenRouter): nothing
+  // reads them, and they stay refused so they cannot come back from the
+  // console.
   'ANTHROPIC_API_KEY',
+  'ANTHROPIC_ADMIN_KEY',
+  // Model access and the platform's own dapp keypair.
   // OpenRouter organization-level credential. This may create, disable and
   // delete child keys, so it is deploy-owned and can never be entered in the
   // platform-variable UI.

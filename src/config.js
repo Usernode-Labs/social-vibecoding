@@ -501,14 +501,10 @@ function load() {
     // never sets it cannot be fed unsigned pull-request events.
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    // #555: Anthropic ADMIN API key (`sk-ant-admin…`) — a different
-    // credential from the message key above, and used for exactly one
-    // read: GET /v1/organizations/cost_report, which backs the drawer's
-    // "Anthropic credits" row. Optional; unset degrades that row to an
-    // estimate derived from the platform's own spend ledgers. Never
-    // returned by any endpoint — see services/anthropic-credits.js.
-    anthropicAdminKey: process.env.ANTHROPIC_ADMIN_KEY || '',
+    // Task 2275: there is no Anthropic key any more. ANTHROPIC_API_KEY and
+    // ANTHROPIC_ADMIN_KEY are not read; every model call the platform makes
+    // goes to OpenRouter on its own OpenRouter key
+    // (services/openrouter-messages.js).
     // Waitlist social-connect OAuth apps (two-stage waitlist survey).
     // Plain OAuth apps — unrelated to the GitHub App above (which is the
     // repo-hosting integration). Optional: without credentials the
@@ -1115,8 +1111,6 @@ function load() {
     }
   }
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
-  console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
-  console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
   console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);

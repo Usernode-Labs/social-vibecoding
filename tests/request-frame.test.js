@@ -54,8 +54,10 @@ test('under a look the request\'s page says its trail to the bar, wears the kit\
   assert.match(src, /useSideStack\(frame, `\[data-request-root="\$\{r\.number\}"\] > \[data-image-viewer-scope\]`, \['\.dev-request-track', '\.dev-request-at'\]\);/, 'what stands in the context column (Status) is stacked beside the words by measured heights; the sentence and its action stay in the words');
   // The page's own lines stay as written.
   assert.match(src, /<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.work\.stage\} inert=\{!!r\.trackPending\}>/);
-  // 19 Nov 2026: the head card measures itself (thread-head-fit.ts).
-  assert.match(src, /<header ref=\{head\} className="messages-thread-header">/);
+  // 20 Nov 2026: the head card is the one every thread page draws, which
+  // measures itself (thread-head.tsx, thread-head-fit.ts).
+  assert.match(src, /<ThreadHeadCard\s/);
+  assert.match(read('frontend/src/features/dev-board/topic/thread-head.tsx'), /<header \{\.\.\.attrs\} ref=\{head\} className="messages-thread-header">/);
 });
 
 test('the bar puts the project first on a page that says its own trail inside a project', () => {
@@ -97,7 +99,7 @@ test('a change\'s page does the same: its title in the kit\'s head, its trail, i
   assert.match(src, /useFramePage\(frame \? \[placeName\('workshop'\), trail\] : null, topicBack\);/);
   assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-status', '\.dev-change-pair'\]\);/);
   assert.match(src, /name=\{card\.title\.text \|\| card\.title\.title \|\| null\}/, 'the bar is handed the change\'s own title');
-  assert.match(src, /<header ref=\{head\} className="messages-thread-header">/, 'the standard head stays as written, measuring itself (thread-head-fit.ts)');
+  assert.match(src, /<ThreadHeadCard\s/, 'the standard head is the one every thread page draws, measuring itself (thread-head.tsx)');
 });
 
 test('where a request stands is said in two places, each once: the sentence and its action after the request, the pill and five stops in the context column', () => {

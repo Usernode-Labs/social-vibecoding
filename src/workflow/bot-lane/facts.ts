@@ -7,7 +7,7 @@
 
 import type { Tx } from '../kernel/index.ts';
 import { BOT_USERNAME } from '../rules/bot-notes.ts';
-import { DM } from '../rules/bot-replies.ts';
+import { DM, VOICE } from '../rules/bot-replies.ts';
 import {
   BUILD_CANDIDATES_SQL, LANE_DEFAULTS, LANE_SETTING_KEYS, NEXT_ELIGIBLE_SQL, READ_CANDIDATES_SQL, SLOTS_IN_USE_SQL,
   botOn, laneSettings, raisedOf, slotOfRow,
@@ -40,6 +40,21 @@ export const CREDIT_OWED_DMS_SQL = `
    ORDER BY key`;
 
 export interface CreditDm { key: string; userId: number }
+
+// #6920: the places that kept a thread answer which met OpenRouter's credit
+// (bot-voice machine `data.credit`), and the looks held for it (bot-look
+// `held`), told when it is back (CreditBack). Read only when the pause lifts.
+export const CREDIT_OWED_VOICES_SQL = `
+  SELECT key, data->>'appId' AS app_id, data->'place' AS place FROM wf_instances
+   WHERE machine = $1 AND jsonb_typeof(data->'credit') = 'array' AND data->'credit' <> '[]'::jsonb
+   ORDER BY key`;
+export const CREDIT_OWED_LOOKS_SQL = `
+  SELECT key FROM wf_instances
+   WHERE machine = 'bot-look' AND state = 'held'
+   ORDER BY key`;
+
+export interface CreditVoice { key: string; appId: number; place: unknown }
+export interface CreditLook { key: string }
 
 // The one stored credit outage (services/openrouter-credit.js KEY_STATE, a
 // platform setting whose `outage` is set while OpenRouter's credit is out).
@@ -75,8 +90,11 @@ export interface Facts {
   // was read (NO_FACTS: a test, or a machine driven without a database).
   credit?: CreditOutage | null;
   // Read when the pause lifts (CreditBack, or the stored outage gone while
-  // the lane still held it): the DMs owed an answer once credit is back.
+  // the lane still held it): the DMs, places and looks owed an answer once
+  // credit is back.
   creditDms?: CreditDm[];
+  creditVoices?: CreditVoice[];
+  creditLooks?: CreditLook[];
 }
 
 export const NO_FACTS: Facts = {
@@ -88,6 +106,19 @@ export async function readCreditDms(tx: Tx): Promise<CreditDm[]> {
   const { rows } = await tx.query(CREDIT_OWED_DMS_SQL, [DM]);
   return rows.map((r: any) => ({ key: String(r.key), userId: Number(r.user_id) }))
     .filter((r: CreditDm) => Number.isInteger(r.userId) && r.userId > 0);
+}
+
+/** The places that kept a thread answer for credit (CREDIT_OWED_VOICES_SQL). */
+export async function readCreditVoices(tx: Tx): Promise<CreditVoice[]> {
+  const { rows } = await tx.query(CREDIT_OWED_VOICES_SQL, [VOICE]);
+  return rows.map((r: any) => ({ key: String(r.key), appId: Number(r.app_id), place: r.place }))
+    .filter((r: CreditVoice) => Number.isInteger(r.appId) && r.appId > 0 && r.place && typeof r.place === 'object');
+}
+
+/** The looks held for credit (CREDIT_OWED_LOOKS_SQL). */
+export async function readCreditLooks(tx: Tx): Promise<CreditLook[]> {
+  const { rows } = await tx.query(CREDIT_OWED_LOOKS_SQL);
+  return rows.map((r: any) => ({ key: String(r.key) }));
 }
 
 export async function readFacts(tx: Tx, deps: { staging: boolean }): Promise<Facts> {

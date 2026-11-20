@@ -87,7 +87,7 @@ test('the client and the server agree on which thread was started from New chat'
   // the person wrote instead of on the bot's "New thread.". Nothing draws
   // the bot chat's own stream, so nothing else on the client asks.
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /\{root && !\(botChat && isPlusThreadOpener\(root\)\) \? <MessageRow /);
+  assert.match(index, /const rootRow = root && !\(botChat && isPlusThreadOpener\(root\)\) \? <MessageRow /);
   assert.equal((index.match(/isPlusThreadOpener\(/g) || []).length, 1);
   // The stream, the preview and the unread count all leave the plus thread out.
   const server = read('src/services/conversations.js');

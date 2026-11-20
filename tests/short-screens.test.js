@@ -60,7 +60,9 @@ test('the layout audit\'s world has a request page and a phone browser\'s instal
 test('B25: on the Duo held sideways a thread in the bot tab\'s column stops at the Duo\'s column; its sheet still runs under it', () => {
   // Send, the "Live ›" row's chevron and the New label sat in the 84px column.
   // 14 Nov 2026: the chat is drawn there threads only, so the rule names the thread alone.
-  assert.match(APP_CSS, /html\[data-side-strip\] #ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] > \.messages-reply-pane :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\n  padding-inline-end: var\(--ai-edge, 0px\);\n\}/);
+  assert.match(APP_CSS, /html\[data-side-strip\] #ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] > \.messages-reply-pane :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\):not\(\.dev-request \*\) \{\n  padding-inline-end: var\(--ai-edge, 0px\);\n\}/);
+  // 20 Nov 2026: a thread drawn as the thread page stops there as a whole.
+  assert.match(APP_CSS, /html\[data-side-strip\]:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.messages-reply-pane > \.dev-private-thread \{ padding-inline-end: var\(--ai-edge, 0px\); \}/);
   // The column itself still reaches the screen's edge (no band of another colour).
   assert.match(rule('#ai-screen .ai-main-pane'), /width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(rule('#ai-screen .ai-main-pane'), /inset-inline-end: 0;/);

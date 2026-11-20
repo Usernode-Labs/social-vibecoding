@@ -870,11 +870,6 @@ function authRoutes(config) {
       }
       return res.status(401).json({ error: 'Not authenticated' });
     }
-    // Include BYOK state (#30) so the settings modal can render
-    // "sk-ant-…abcd" without decrypting anything — the last-4 is stored
-    // in plaintext for display purposes only.
-    let hasApiKey = false;
-    let keyLast4 = null;
     let usernodePubkey = null;
     let openrouterAvailable = false;
     // Profile customization (#982): the editable identity fields plus the
@@ -960,7 +955,7 @@ function authRoutes(config) {
     let adultAttested = false;
     try {
       const { rows } = await pool.query(
-        `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
+        `SELECT u.usernode_pubkey,
                 u.display_name, u.bio,
                 u.needs_username_choice,
                 u.needs_communities_choice,
@@ -985,10 +980,6 @@ function authRoutes(config) {
           WHERE u.id = $1`,
         [req.user.id]
       );
-      if (rows[0]?.anthropic_key_enc) {
-        hasApiKey = true;
-        keyLast4 = rows[0].anthropic_key_last4 || null;
-      }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
       // #2568: no allowlist any more — availability is the deployment
       // switch plus whether this account actually holds a usable key.
@@ -1009,15 +1000,6 @@ function authRoutes(config) {
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
-    // #1055 staging fixture: report a saved BYOK key so the screens that
-    // show one render that state. STRICTLY request-time — nothing is
-    // written, users.anthropic_key_enc is untouched, and dropping `demo=1`
-    // gives the honest unset state back on the very next request. A no-op in
-    // production: same IS_STAGING && ?demo=1 gate as /api/me/ai-budget below.
-    if (IS_STAGING && req.query.demo === '1') {
-      hasApiKey = true;
-      keyLast4 = '7f2c';
-    }
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
     const platformApp = await getPlatformApp(pool);
@@ -1132,8 +1114,6 @@ function authRoutes(config) {
         // (public/js/app.js _privateNoClose, features/app-context/about-data.ts).
         homeWalkOwed,
         homeroomReached,
-        hasApiKey,
-        keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a
         // currently usable personal or company OpenRouter credential.
         openrouterAvailable,
@@ -1184,9 +1164,6 @@ function authRoutes(config) {
     });
   });
 
-  // #30 BYOK: set / replace the user's Anthropic key. We verify with a
-  // cheap 1-token ping before persisting so we never save a key that
-  // the Anthropic API would reject at runtime.
   // --------------------------------------------------------------
   // GET /api/me/ai-budget — the drawer's "AI credit" row (#555).
   //
@@ -1199,7 +1176,7 @@ function authRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     // Staging mock data: obviously-fake, read-only, written nowhere, and
     // a strict no-op in production. Gives the row a partial-spend state
-    // (plus BYOK spillover) so a reviewer sees the real layout.
+    // (plus an app's own-key spend) so a reviewer sees the real layout.
     if (IS_STAGING && req.query.demo === '1') {
       const reset = new Date();
       reset.setUTCDate(reset.getUTCDate() + (((8 - reset.getUTCDay()) % 7) || 7));
@@ -1209,7 +1186,6 @@ function authRoutes(config) {
         spentCents: 1360,
         remainingCents: 3640,
         byokCents: 450,
-        hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
         // #1788 stated which window the row's copy follows; #2571 leaves
@@ -1257,67 +1233,6 @@ function authRoutes(config) {
       res.json(await buildingTime.weekFor(pool, req.user.id));
     } catch (err) {
       log.error('homeroom-bot', 'building-time read failed', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  router.post('/api/me/api-key', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { key } = req.body || {};
-    if (typeof key !== 'string' || !key.trim()) {
-      return res.status(400).json({ error: 'Key required' });
-    }
-    const clean = key.trim();
-    if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(clean)) {
-      return res.status(400).json({ error: 'That doesn\'t look like a valid Anthropic API key.' });
-    }
-
-    try {
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      const test = new Anthropic({ apiKey: clean });
-      // Thinking off: Haiku 5.5 thinks by default and the thinking counts
-      // against max_tokens, so one token would end inside it.
-      await test.messages.create({
-        model: 'claude-haiku-5-5',
-        max_tokens: 1,
-        thinking: { type: 'disabled' },
-        messages: [{ role: 'user', content: 'ping' }],
-      });
-    } catch (err) {
-      const msg = err?.status === 401 || err?.status === 403
-        ? 'Anthropic rejected the key.'
-        : `Couldn't verify the key (${err?.message || 'unknown error'}).`;
-      return res.status(400).json({ error: msg });
-    }
-
-    try {
-      // #30 dual-write (plan.md PR2): persist through the generic
-      // credential store, which also mirrors into the legacy
-      // users.anthropic_key_* columns during the migration window. Same
-      // envelope, same verification — behavior unchanged, but the key now
-      // also lives in user_ai_credentials for the openrouter era.
-      const credentialStore = require('../services/credential-store');
-      const saved = await credentialStore.writeAnthropicCodingAgent({
-        pool, userId: req.user.id, apiKey: clean, dataKey: config.dataEncryptionKey,
-      });
-      const last4 = saved?.secret_last4 || clean.slice(-4);
-      log.info('byok', 'API key saved', { userId: req.user.id });
-      res.json({ ok: true, keyLast4: last4 });
-    } catch (err) {
-      log.error('byok', 'Failed to persist key', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  router.delete('/api/me/api-key', sameOriginBrowserOnly, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    try {
-      const credentialStore = require('../services/credential-store');
-      await credentialStore.deleteAnthropicCodingAgent({ pool, userId: req.user.id });
-      log.info('byok', 'API key removed', { userId: req.user.id });
-      res.json({ ok: true });
-    } catch (err) {
-      log.error('byok', 'Failed to remove key', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

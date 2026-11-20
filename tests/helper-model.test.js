@@ -2,9 +2,10 @@
 
 // The helper calls' model (src/services/llm.js helperMessage): GLM 5.3 Flash
 // through OpenRouter first, on the Homeroom bot's key, with a time limit per
-// helper, and Haiku 5.5 when GLM is late, fails or gives nothing usable.
-// Pins the request GLM is sent, the fallback, the cases that never reach GLM
-// (a BYOK key, HELPER_MODEL=haiku, no bot key, a picked model), a caller's
+// helper, and Haiku 5.5 when GLM is late, fails or gives nothing usable (over
+// OpenRouter too, on the same key, since task 2275). Pins the request GLM is
+// sent, the fallback, the cases that never reach GLM (HELPER_MODEL=haiku, no
+// bot key, a picked model), a caller's
 // cancel, the cost the answer is billed at, the telemetry pair, and that
 // every helper the switch names goes through the path. And the model it is
 // as an admin setting (services/helper-model.js): read through a short
@@ -126,7 +127,7 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
     const [glm, haiku] = events;
     assert.equal(glm.outcome, 'error');
     assert.equal(glm.error_class, 'timeout');
-    assert.equal(haiku.provider, 'anthropic');
+    assert.equal(haiku.provider, 'openrouter', 'the second try goes to OpenRouter too');
     assert.equal(haiku.attempt_number, 2);
     assert.equal(haiku.correlation_id, glm.correlation_id, 'one logical run');
   });
@@ -139,21 +140,24 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
   });
 });
 
-test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude model', async () => {
+test('never GLM: HELPER_MODEL=haiku, no bot key, a named Claude model', async () => {
   const params = { max_tokens: 80, messages: [{ role: 'user', content: 'x' }] };
   const defaults = { backend: 'helper', component: 'short_description' };
   await withHelpers({ reply: { description: 'GLM' } }, async ({ openrouter, client }) => {
-    const byok = await llm.helperMessage({
+    // A key a caller still passes is ignored: there are no own Anthropic
+    // keys any more (task 2275), so GLM is asked first as for anyone.
+    const passed = await llm.helperMessage({
       helper: 'short_description', activeClient: client, params, schema: llm.SHORT_DESCRIPTION_SCHEMA, apiKey: 'sk-ant-own', defaults,
     });
-    assert.equal(byok.model, 'claude-haiku-5-5');
+    assert.equal(passed.model, 'z-ai/glm-5.3-flash');
+    assert.equal(openrouter.calls.length, 1);
+    openrouter.calls.length = 0;
     const named = await llm.helperMessage({
       helper: 'short_description', activeClient: client, params, schema: llm.SHORT_DESCRIPTION_SCHEMA, defaults, model: 'claude-sonnet-5-5',
     });
-    assert.deepEqual(client.calls[0].thinking, { type: 'disabled' }, 'BYOK Haiku is asked with thinking off too');
     assert.equal(named.model, 'claude-sonnet-5-5');
-    assert.equal(client.calls[1].model, 'claude-sonnet-5-5');
-    assert.equal(client.calls[1].thinking, undefined, 'a named model is sent as written');
+    assert.equal(client.calls[0].model, 'claude-sonnet-5-5');
+    assert.equal(client.calls[0].thinking, undefined, 'a named model is sent as written');
     assert.equal(openrouter.calls.length, 0);
 
     const prev = process.env.HELPER_MODEL;
@@ -273,7 +277,7 @@ test('the plan at Make it: each answer its parse refuses is asked again of Haiku
       assert.equal(client.calls[0].max_tokens, 2000, shape);
       // The GLM attempt reads as the error it was, not a success.
       assert.deepEqual(events.map((e) => [e.provider, e.outcome, e.attempt_number]),
-        [['openrouter', 'error', 1], ['anthropic', 'success', 2]], shape);
+        [['openrouter', 'error', 1], ['openrouter', 'success', 2]], shape);
       assert.equal(events[0].component, 'first_version_plan');
     });
   }
@@ -502,9 +506,9 @@ test('withHelperThinking: thinking off on the Haiku fallback only, and never ove
   assert.equal(llm.withHelperThinking({ model: 'claude-sonnet-5-5' }).thinking, undefined);
   const own = { type: 'adaptive' };
   assert.equal(llm.withHelperThinking({ model: 'claude-haiku-5-5', thinking: own }).thinking, own);
-  // The BYOK key check asks for one token, so it must not think either.
-  assert.match(read('src/routes/auth.js'),
-    /model: 'claude-haiku-5-5',\s+max_tokens: 1,\s+thinking: \{ type: 'disabled' \},/);
+  // The own-key check that asked Haiku for one token went with people's own
+  // Anthropic keys (task 2275).
+  assert.doesNotMatch(read('src/routes/auth.js'), /claude-haiku-5-5/);
 });
 
 test('every helper the switch names goes through the path, and telemetry knows each by name', () => {

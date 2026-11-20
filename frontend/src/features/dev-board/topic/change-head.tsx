@@ -58,7 +58,7 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, TitleEditButton, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel, StatusPillState, TitleSpec } from '../card/model';
-import { useThreadHeadFit } from './thread-head-fit';
+import { ThreadHeadCard } from './thread-head';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { shortDate } from '../../../lib/timestamp';
 import { changeRail, leadRow, type RailOpen } from './rail-model';
@@ -134,9 +134,6 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
   // s34): what it is in a small line over the change's title, with this menu.
   const frame = isFrameSkin(useLiveSkin());
-  // The head card is measured and tightens as the thread scrolls (./thread-head-fit.ts).
-  const head = useRef<HTMLElement>(null);
-  useThreadHeadFit(head, !frame);
   if (frame) return <TopicFrameHead title={name || title} over={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
   // 18 Nov 2026: the bar is the thread's head (app.css), on its own page and
   // in either panel alike. Its project and topic are what the card's kicker
@@ -150,10 +147,12 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
       {own ? <TitleContent t={{ ...own, edit: undefined, editing: undefined }} /> : title}
     </span>
   );
+  // 20 Nov 2026: the card every thread page leads with (./thread-head.tsx),
+  // measured and tightened as the thread scrolls.
   return (
-    <header ref={head} className="messages-thread-header">
-      <ThreadBarTile />
-      <div className="min-w-0 flex-1 dev-thread-bar-text">
+    <ThreadHeadCard
+      tile={<ThreadBarTile />}
+      line={(
         <div className="flex min-w-0 items-center gap-2">
           <div className="messages-thread-kicker min-w-0" data-change-kicker="">{title}</div>
           {pill ? (
@@ -162,6 +161,8 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
             </span>
           ) : null}
         </div>
+      )}
+      title={(
         <div className="messages-thread-name min-w-0">
           {detailsId ? (
             <button
@@ -177,11 +178,11 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
           ) : heading}
           {own?.edit ? <TitleEditButton edit={own.edit} /> : null}
         </div>
-        {v.category
-          ? <div className="messages-thread-sub" data-change-category="">{where}</div>
-          : where ? <div className="messages-thread-sub">{where}</div> : null}
-      </div>
-      {menuKey ? (
+      )}
+      sub={v.category
+        ? <div className="messages-thread-sub" data-change-category="">{where}</div>
+        : where ? <div className="messages-thread-sub">{where}</div> : null}
+      menu={menuKey ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
@@ -193,8 +194,8 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
           <EllipsisHorizontalIcon aria-hidden="true" />
         </button>
       ) : null}
-      <ThreadExits />
-    </header>
+      exits={<ThreadExits />}
+    />
   );
 }
 

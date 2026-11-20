@@ -146,7 +146,7 @@ test('the route is the viewer\'s own, with a staging demo; its words are catalog
     assert.ok(entry && entry.text && entry.description, key);
   }
   const manifest = JSON.parse(read('dapp.json'));
-  const check = manifest.tests.find((t) => t.path === '/?demo=1#settings/api-key' && /data-credits-remaining/.test(t.expectSelector || ''));
+  const check = manifest.tests.find((t) => t.path === '/?demo=1#settings/usage' && /data-credits-remaining/.test(t.expectSelector || ''));
   assert.match(check.expectSelector, /\[data-building-time-request\]/, 'the AI-credit check also finds the building time card');
   assert.ok(check.expectSelector.length <= 256);
 });

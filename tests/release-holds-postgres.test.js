@@ -89,7 +89,8 @@ test('a held change against the full schema', async (t) => {
 
   // ── An admin's own change needs another admin ──────────────────────────
   const own = await change(boss);
-  await holds.apply(pool, { sessionId: own, appId, commitHash: 'c'.repeat(40), rules: ['secret'] });
+  // (`secret` only tells since 20 Nov 2026: `content` holds.)
+  await holds.apply(pool, { sessionId: own, appId, commitHash: 'c'.repeat(40), rules: ['content'] });
   await vote(own, boss);
   gate = await holds.gateFor(pool, own);
   assert.deepEqual([gate.approved, gate.needsAnotherAdmin], [false, true]);
@@ -103,7 +104,8 @@ test('a held change against the full schema', async (t) => {
     sendMail: async (_config, mail) => { mails.push(mail); },
   };
   const draft = await change(maya, 'active');
-  await holds.apply(pool, { sessionId: draft, appId, commitHash: 'd'.repeat(40), rules: ['script'] });
+  // (`script` is a failing check since 20 Nov 2026, not a rule: `wallet` holds.)
+  await holds.apply(pool, { sessionId: draft, appId, commitHash: 'd'.repeat(40), rules: ['wallet'] });
   assert.deepEqual(await holds.notifyIfDue({ pool, sessionId: draft, deps }), { notified: 0 },
     'a change still being worked on asks nobody');
 

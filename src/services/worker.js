@@ -224,7 +224,7 @@ function requireNonEmptySecret(value, name) {
 // (bookkeeping, no free-form agent).
 function buildTurnSecretEnv({
   mode, agentBackend, agentHarness = null, workerSessionJwt, visibleChangesJwt, issuesReadJwt,
-  anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
+  anthropicProxyJwt, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
   shotsGuestToken = null, shotsInvitedMemberToken = null, shotsInvitedMemberListedToken = null,
   homeroomMcpToken = null,
@@ -272,15 +272,13 @@ function buildTurnSecretEnv({
     return env;
   }
 
-  // Claude uses a narrow proxy credential when no BYOK key is provided and a
-  // narrow issues-read credential in every mode. Only build/sync receive the
-  // general callback token. In particular, scout has no worker:session token
-  // hidden under ANTHROPIC_API_KEY, ISSUES_JWT, or PROD_DEBUG_JWT.
-  const useProxy = !anthropicApiKey;
+  // Claude uses the narrow relay credential (there is no other: people's own
+  // Anthropic keys are gone, task 2275) and a narrow issues-read credential
+  // in every mode. Only build/sync receive the general callback token. In
+  // particular, scout has no worker:session token hidden under
+  // ANTHROPIC_API_KEY, ISSUES_JWT, or PROD_DEBUG_JWT.
   const env = {
-    ANTHROPIC_API_KEY: useProxy
-      ? requireNonEmptySecret(anthropicProxyJwt, 'anthropicProxyJwt')
-      : requireNonEmptySecret(anthropicApiKey, 'anthropicApiKey'),
+    ANTHROPIC_API_KEY: requireNonEmptySecret(anthropicProxyJwt, 'anthropicProxyJwt'),
   };
   if (mode !== 'shots') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
   if (mode !== 'scout' && mode !== 'shots') {
@@ -2063,25 +2061,16 @@ function codingErrorClass(state, outcome) {
   return 'provider';
 }
 
-function claudeBillingPath({ directByok, byokCents, costUsd }) {
-  if (directByok) return 'anthropic_byok';
-  const observedByok = Number(byokCents || 0);
-  if (observedByok <= 0) return 'platform';
-  const totalCents = Number(costUsd) * 100;
-  if (Number.isFinite(totalCents) && totalCents > 0
-      && observedByok >= totalCents - 0.5) return 'anthropic_byok';
-  if (Number.isFinite(totalCents) && totalCents > 0) {
-    // A proxy-routed run can cross the allowance boundary mid-turn. Keep the
-    // provider-reported total intact while naming the two-payer path instead
-    // of presenting a known mixed run as missing attribution.
-    return 'anthropic_mixed';
-  }
-  return 'unknown';
+// A platform Claude Code run is paid by the platform: its calls go through
+// the worker relay on the platform's OpenRouter key (task 2275). There is no
+// own-key path left for a run to switch onto.
+function claudeBillingPath() {
+  return 'platform';
 }
 
 function recordClaudeCodingRun({
   sessionId, turnId, result, requestedModel, component, startedAt, durationMs,
-  directByok = false, byokCents = 0, attemptNumber = 1, correlationId = null,
+  attemptNumber = 1, correlationId = null,
 }) {
   if (!component || !turnId) return;
   const { outcome, stopReason } = codingRunOutcome(result);
@@ -2095,12 +2084,12 @@ function recordClaudeCodingRun({
     invocationKey: `claude_code:${turnId}`,
     timestamp: startedAt,
     sessionId,
-    provider: 'anthropic',
+    provider: 'openrouter',
     backend: 'coding_agent',
     component,
     requestedModel,
     servedModel: (result && result.agentModel) || requestedModel || null,
-    billingPath: claudeBillingPath({ directByok, byokCents, costUsd }),
+    billingPath: claudeBillingPath(),
     // Current Claude result events expose aggregate run usage. Older or
     // partial result shapes keep these fields null; no values are inferred
     // from cost or duration.
@@ -3621,7 +3610,6 @@ async function execInWorker(sessionId, {
   commitMsg,
   resumeSessionId,
   branchName,
-  anthropicApiKey,
   // Backend selection (plan.md): when 'codex_openrouter', the turn is
   // dispatched to the Codex runner with the user's per-exec OpenRouter key
   // (direct transport) instead of the Claude runner + Anthropic proxy.
@@ -3918,7 +3906,7 @@ async function execInWorker(sessionId, {
       throw new Error('execInWorker: shots platform assets must be boolean');
     }
   }
-  const useAnthropicProxy = isClaude && !anthropicApiKey;
+  const useAnthropicProxy = isClaude;
   const measuredTelemetryComponent = llmTelemetry.collectionComponent(telemetryComponent);
   const measuredTelemetryCorrelationId = isClaude && measuredTelemetryComponent
     ? (telemetryCorrelationId || durableTurnId)
@@ -3972,18 +3960,16 @@ async function execInWorker(sessionId, {
   // at an absent or stale system-context file.
   if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt, promptPaths.system);
 
-  // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
-  // truthy), the worker hits api.anthropic.com directly with that key
-  // — same flow as before. When no BYOK key is provided we route the
-  // SDK's traffic through the platform's in-process proxy at
-  // /api/internal/anthropic. The `claude` CLI honors ANTHROPIC_BASE_URL
-  // for endpoint retargeting and ANTHROPIC_API_KEY as the x-api-key
-  // header, so we put a purpose-bound worker:anthropic-proxy token in
-  // ANTHROPIC_API_KEY: the proxy verifies it, swaps in the real
-  // platform key, and forwards. The real key never enters the worker
-  // container, so a malicious prompt like "echo $ANTHROPIC_API_KEY"
-  // exfiltrates only a short-lived JWT that's useless against
-  // api.anthropic.com directly.
+  // The relay: every Claude Code turn on the claude_code backend (before &
+  // after shots, Sync with main) sends its model traffic through the
+  // platform's in-process relay at /api/internal/anthropic. The `claude`
+  // CLI honors ANTHROPIC_BASE_URL for endpoint retargeting and
+  // ANTHROPIC_API_KEY as the x-api-key header, so we put a purpose-bound
+  // worker:anthropic-proxy token in ANTHROPIC_API_KEY: the relay verifies
+  // it, swaps in the platform's OpenRouter key, and forwards to OpenRouter
+  // (task 2275). The real key never enters the worker container, so a
+  // malicious prompt like "echo $ANTHROPIC_API_KEY" exfiltrates only a
+  // short-lived JWT that's useless against any provider.
   // #2779: minted after the prompt files are written (a failure there has
   // nothing to revoke), and revoked on every exit from here on.
   const homeroomGrant = await mintHomeroomReadGrant(sessionId, mode);
@@ -3995,7 +3981,6 @@ async function execInWorker(sessionId, {
       agentHarness: resolvedHarness,
       workerSessionJwt, visibleChangesJwt, issuesReadJwt,
       anthropicProxyJwt,
-      anthropicApiKey,
       prodDebugJwt,
       openrouterApiKey,
       shotsJwt,
@@ -4247,9 +4232,9 @@ async function execInWorker(sessionId, {
     model: persistedModel,
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit
-    // the recovered costUsd into the bucket the turn actually billed,
-    // even if the user adds/removes their key while the turn is detached.
-    byok: !!anthropicApiKey,
+    // the recovered costUsd into the bucket the turn actually billed. A
+    // relayed turn is always the platform's (task 2275).
+    byok: false,
     owner: turnOwnerRecord || undefined,
   });
   if (!activeTurnPersist.ok) {
@@ -4479,8 +4464,6 @@ async function execInWorker(sessionId, {
         component: measuredTelemetryComponent,
         startedAt: providerStartedAt,
         durationMs: providerStartedMs == null ? null : Date.now() - providerStartedMs,
-        directByok: !!anthropicApiKey,
-        byokCents: getTurnByokCents(sessionId),
         attemptNumber: measuredTelemetryAttemptNumber,
         correlationId: measuredTelemetryCorrelationId,
       });
@@ -5264,8 +5247,6 @@ async function resumeTurnFromJournal(sessionId, {
         component: telemetryComponent,
         startedAt: safeStartedAt,
         durationMs: Math.max(0, Date.now() - safeStartedAt.getTime()),
-        directByok: !!billingByok,
-        byokCents: getTurnByokCents(sessionId),
         attemptNumber: Number(telemetryAttemptNumber) || Number(attemptNumber) || 1,
         correlationId: telemetryCorrelationId || String(turnId),
       });

@@ -210,6 +210,9 @@ test('version 2: the reply thread stays the product\'s pane, wearing the look', 
   assert.ok(worn.includes('html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::before'), 'the label\'s two rules reach it');
   // The pane itself is the product's: its head, its count, its composer.
   const src = read('frontend/src/features/messages/index.tsx');
-  assert.match(src, /className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"/);
+  // Under a look the pane is the lifted sheet it always was; the card looks
+  // draw a thread alone in the bot tab's column as the thread page instead.
+  assert.match(src, /className=\{`messages-reply-pane platform-kb-column\$\{page \? '' : ' dc-lift dc-lift-session'\}`\}/);
+  assert.match(src, /const page = sheet && !frameLook;/);
   assert.match(src, /<div className="messages-reply-count" aria-hidden=\{!merged\.length\}>/);
 });

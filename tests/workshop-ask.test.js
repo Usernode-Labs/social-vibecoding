@@ -71,9 +71,9 @@ function dispatch(map) {
   };
 }
 
-// The ask goes through llm.streamChat now, so the stub is the STREAM
-// surface (tests/llm-fallback.test.js' shape): .on('text', …) feeds the
-// token callback and finalMessage() resolves the canned response.
+// The ask's second try goes through llm.streamChat, which is one Messages
+// call on the platform's OpenRouter client since task 2275
+// (tests/llm-stream-chat.test.js): the stub is that client's create().
 const answerResp = (text, served = 'claude-haiku-5-5') => ({
   model: served,
   stop_reason: 'end_turn',
@@ -82,23 +82,11 @@ const answerResp = (text, served = 'claude-haiku-5-5') => ({
   usage: { input_tokens: 900, output_tokens: 120 },
 });
 
-// `chunks` lets a test drive real token callbacks; by default the whole
-// answer arrives as one.
-function withStubClient(response, fn, chunks = null) {
+function withStubClient(response, fn) {
   const calls = [];
-  const makeStream = (params) => {
-    calls.push(params);
-    const pieces = chunks
-      || [((response.content || []).find((b) => b.type === 'text') || {}).text || ''];
-    return {
-      on(event, handler) { if (event === 'text') pieces.forEach((c) => handler(c)); },
-      finalMessage: async () => response,
-    };
-  };
   const prev = llm._setClientForTests({
     calls,
-    messages: { stream: makeStream },
-    beta: { messages: { stream: makeStream } },
+    messages: { create: async (params) => { calls.push(params); return response; } },
   });
   return Promise.resolve(fn(calls)).finally(() => llm._setClientForTests(prev));
 }
@@ -410,32 +398,6 @@ test('ask debits the asker and reports the model', async () => {
   assert.equal(spends[0].opts.byok, false);
 });
 
-// The BYOK path goes through `new Anthropic({ apiKey })`, which is only
-// bound by llm.init() — never called in a unit test, and the same line
-// generateReportSummary carries. So this stubs the GENERATOR rather than
-// the SDK client: what is under test is which bucket the spend lands in,
-// not how a per-user client is constructed.
-test('ask routes the spend to the BYOK bucket when the user key paid', async () => {
-  dispatch([[/FROM chat_sessions/i, [PROPOSAL_ROW]]]);
-  const spends = [];
-  const prevAnswer = llm.answerWorkshopQuestion;
-  llm.answerWorkshopQuestion = async ({ apiKey }) => {
-    assert.equal(apiKey, 'sk-user', 'the user key must reach the generator');
-    return { text: 'An answer.', usage: { input_tokens: 900, output_tokens: 120 }, model: 'claude-haiku-5-5' };
-  };
-  try {
-    await withBilling(
-      { billing: { apiKey: 'sk-user', byok: true }, onSpend: (p, userId, cents, opts) => spends.push(opts) },
-      () => workshopAsk.ask({
-        pool, config: CONFIG, app: APP, userId: 42,
-        target: { kind: 'proposal', ref: 55 }, question: 'Why?', history: [],
-      })
-    );
-  } finally { llm.answerWorkshopQuestion = prevAnswer; }
-  assert.equal(spends.length, 1);
-  assert.equal(spends[0].byok, true);
-});
-
 test('ask refuses an out-of-allowance user WITHOUT calling the model or GitHub', async () => {
   dispatch([[/FROM chat_sessions/i, [PROPOSAL_ROW]]]);
   ghCalls.length = 0;
@@ -650,22 +612,19 @@ test('answerWorkshopQuestion caps max_tokens well below the streaming default', 
   });
 });
 
-// Tokens reach the caller as they arrive, AND the assembled text comes
-// back at the end — the route forwards the first and sends the second on
-// `done`, so a dropped chunk costs a flicker rather than a wrong answer.
-test('answerWorkshopQuestion streams tokens and still returns the whole answer', async () => {
+// The text reaches the caller's token callback, AND the assembled text
+// comes back at the end — the route forwards the first and sends the second
+// on `done`. Over OpenRouter the second try is one request, so the whole
+// answer is one token.
+test('answerWorkshopQuestion hands the text to onToken and still returns the whole answer', async () => {
   const seen = [];
-  await withStubClient(
-    answerResp('One two three.'),
-    async () => {
-      const out = await llm.answerWorkshopQuestion({
-        contextJson: '{}', question: 'q', onToken: (t) => seen.push(t),
-      });
-      assert.deepEqual(seen, ['One ', 'two ', 'three.']);
-      assert.equal(out.text, 'One two three.');
-    },
-    ['One ', 'two ', 'three.']
-  );
+  await withStubClient(answerResp('One two three.'), async () => {
+    const out = await llm.answerWorkshopQuestion({
+      contextJson: '{}', question: 'q', onToken: (t) => seen.push(t),
+    });
+    assert.deepEqual(seen, ['One two three.']);
+    assert.equal(out.text, 'One two three.');
+  });
 });
 
 test('answerWorkshopQuestion caps how much history rides along', async () => {
