@@ -8672,6 +8672,8 @@ html:not([data-skin]) {
   --wip-btn-bad-hover: #fde9e5;
   --wip-btn-link-ink: #121a0e;
   --wip-btn-link-line: #3090e1;
+  --wip-btn-link-size: 13px;
+  --wip-btn-link-weight: 500;
 }
 html:not([data-skin]).dark {
   --wip-btn-line: rgb(255 254 234 / 0.55);
@@ -8767,6 +8769,27 @@ html:not([data-skin]) .gc-vote-btn:is(.gc-vote-btn-yes, .gc-vote-btn-no):active:
    The page's rules are where they were, in the STANDARD (WIP) block, with
    html:not([data-skin]) for their scope; the components draw the kit's Home
    for both (lib/skin.ts isKitHome). */
+/* "Show all 77 apps" and "See all", after a section's label, are a button
+   written as a link (level 4 of the element levels sheet; asked 20 Nov 2026),
+   not an outlined pill: the words in the ink, underlined in blue, then the
+   chevron. The label and the link are still one thing to press. */
+html:not([data-skin]) .wip-fold-pill {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--wip-btn-link-ink);
+  font-size: var(--wip-btn-link-size);
+  font-weight: var(--wip-btn-link-weight);
+  text-decoration: underline;
+  text-decoration-color: var(--wip-btn-link-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; }
+html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none; transform: none; }
 /* END OF HOME. */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
 @keyframes wip-hero-drift {
