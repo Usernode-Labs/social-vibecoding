@@ -7703,7 +7703,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips
    reach the title. Under 900px it is the full-width line above the page it
    always was. */
 @media (min-width: 900px) {
-  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) > #dev-code-pause-notice,
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"])) > #dev-code-pause-notice,
   html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) > #dev-code-pause-notice {
     position: relative;
     z-index: 2;
@@ -7714,7 +7714,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips
     overflow: visible;
     pointer-events: none;
   }
-  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) > #dev-code-pause-notice > [data-code-pause],
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"])) > #dev-code-pause-notice > [data-code-pause],
   html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) > #dev-code-pause-notice > [data-code-pause] {
     flex: none;
     max-width: 62%;
