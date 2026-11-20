@@ -46,12 +46,12 @@ import { StatusPill, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
 import type { BotTrack } from '../../messages/types';
-import { normalizeWorkState, type WorkState } from '../../../lib/work-state';
+import { normalizeWorkState, type Standing, type WorkState } from '../../../lib/work-state';
 import { TrackCard, trackClock, trackEyebrow, trackLinks } from '../../messages/bot-track';
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
 import { TranslateNote, useTranslate } from '../../messages/translate';
-import { useThreadHeadFit } from './thread-head-fit';
+import { ThreadHeadCard } from './thread-head';
 import {
   STAGES,
   newestSpecVersion,
@@ -171,32 +171,28 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
   // standard bar's title. The bar above it carries the trail and the way
   // back (RequestHead below).
   const frame = isFrameSkin(useLiveSkin());
-  // 19 Nov 2026: the head card is measured and tightens as the thread
-  // scrolls (./thread-head-fit.ts).
-  const head = useRef<HTMLElement>(null);
-  useThreadHeadFit(head, !frame);
   if (frame) return <TopicFrameHead title={r.title} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
   // 18 Nov 2026: the bar is the thread's head (app.css), as a change's is
   // (./change-head.tsx ChangeBar). 19 Nov 2026: a card that leads with the
   // request's title; the project, the topic, the number and the status are
   // the small line over it, which app.css lays out from these same nodes.
+  // 20 Nov 2026: the card every thread page leads with (./thread-head.tsx),
+  // measured and tightened as the thread scrolls.
   const where = dotLine([threadProjectName(), r.category]);
   return (
-    <header ref={head} className="messages-thread-header">
-      <ThreadBarTile />
-      <div className="min-w-0 flex-1 dev-thread-bar-text">
-        {pill ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="messages-thread-kicker min-w-0" data-request-kicker="">{kicker}</div>
-            <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
-          </div>
-        ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
-        <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{title || r.title}</div>
-        {r.category
-          ? <div className="messages-thread-sub" data-request-category="">{where}</div>
-          : where ? <div className="messages-thread-sub">{where}</div> : null}
-      </div>
-      {menuKey ? (
+    <ThreadHeadCard
+      tile={<ThreadBarTile />}
+      line={pill ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="messages-thread-kicker min-w-0" data-request-kicker="">{kicker}</div>
+          <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
+        </div>
+      ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
+      title={<div className="messages-thread-name line-clamp-2 dev-request-bar-title">{title || r.title}</div>}
+      sub={r.category
+        ? <div className="messages-thread-sub" data-request-category="">{where}</div>
+        : where ? <div className="messages-thread-sub">{where}</div> : null}
+      menu={menuKey ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
@@ -208,8 +204,8 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
           <EllipsisHorizontalIcon aria-hidden="true" />
         </button>
       ) : null}
-      <ThreadExits />
-    </header>
+      exits={<ThreadExits />}
+    />
   );
 }
 
@@ -757,8 +753,13 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // server stored and worded it (issue.standing; from an older server, the
   // track's own work state). A standing gone live never draws a vote, and a
   // build waiting its turn is Ready to build (thread-model.ts requestPill).
+  // Its word and tone are the standing's, as its requester or anyone else
+  // reads them; the thread's changes only add detail.
   const standing = useMemo(() => normalizeWorkState(r.standing) || track?.work || null, [r.standing, track]);
-  const pill = requestPill(layout, r.status.closed ? 'closed' : standing, (id) => translate(id));
+  const pill = requestPill(
+    layout, r.status.closed ? 'closed' : standing, (id, values) => translate(id, values),
+    (r.standing as { mine?: boolean } | null | undefined)?.mine !== false,
+  );
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one
@@ -837,8 +838,16 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // One summary for the request and its one change, as the card credits it:
   // the change's own words are not said again under it.
   const covers = cardLook && !editing && summary?.basis === 'change';
-  const cardContext = useMemo(() => ({ card: cardLook, page, covers }), [cardLook, page, covers]);
   const yours = (r.standing as { mine?: boolean } | null | undefined)?.mine !== false;
+  // The request's own stored row, for the foot of its one change
+  // (./thread-changes.tsx): the page is the request's, so that foot says
+  // where the request stands, as the timeline's last step does (requestRail).
+  // A closed request's page says how it ended; its change keeps its own foot.
+  const row = useMemo<Standing | null>(
+    () => (standing && !r.status.closed ? { ...standing, mine: yours } : null),
+    [standing, r.status.closed, yours],
+  );
+  const cardContext = useMemo(() => ({ card: cardLook, page, covers, row }), [cardLook, page, covers, row]);
   const planOpen = openNow?.kind === 'plan' ? specs.find((card) => card.key === openNow.key) || null : null;
   /** One of the ballot's changes, which the card look opens over the card (./thread-changes.tsx LookedChange). */
   const competes = (id: number) => typeof document !== 'undefined' && !!document.querySelector(`#gc-thread-head [data-thread-look="${id}"]`);
@@ -966,6 +975,21 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               >
                 {t('project:topic.request.fromThread')}
               </a>
+              {/* Artifacts, stage 4: the design the plan was made from, running,
+                  at the version the plan shows: for its author alone, as the
+                  link above is. Everyone else sees the plan's own screens. */}
+              {r.fromThread.designVersion ? (
+                <>
+                  <span aria-hidden="true"> · </span>
+                  <a
+                    className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                    href={`#homeroom-bot/thread/${r.fromThread.rootId}/design/${r.fromThread.designVersion}`}
+                    data-request-design-door={r.fromThread.designVersion}
+                  >
+                    {t('project:topic.request.openDesign', { version: r.fromThread.designVersion })}
+                  </a>
+                </>
+              ) : null}
             </p>
           ) : null}
           {(working && !r.status.closed) || cardLook ? null : (

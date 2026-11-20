@@ -11,44 +11,21 @@ const worker = require('../src/services/worker');
 const agentTurn = require('../src/services/agent-turn');
 const { runCodexAttemptLoop } = require('../src/routes/sessions');
 
-function fakeStream(message) {
-  return {
-    on() {},
-    finalMessage: async () => {
-      if (message instanceof Error) throw message;
-      return message;
-    },
-  };
-}
-
-function fakeEventStream(message, events = []) {
-  const handlers = new Map();
-  return {
-    on(name, callback) {
-      if (!handlers.has(name)) handlers.set(name, []);
-      handlers.get(name).push(callback);
-    },
-    finalMessage: async () => {
-      for (const event of events) {
-        for (const callback of handlers.get('streamEvent') || []) callback(event);
-      }
-      if (message instanceof Error) throw message;
-      return message;
-    },
-  };
-}
-
+// streamChat's client: the platform's OpenRouter Messages client
+// (services/openrouter-messages.js) since task 2275, one create() per call.
 function streamClient(responses) {
   const calls = [];
-  const invoke = (kind, params, options) => {
-    calls.push({ kind, params, options });
-    if (!responses.length) throw new Error('no canned response');
-    return fakeStream(responses.shift());
-  };
   return {
     calls,
-    messages: { stream: (params, options) => invoke('plain', params, options) },
-    beta: { messages: { stream: (params, options) => invoke('beta', params, options) } },
+    messages: {
+      create: async (params, options) => {
+        calls.push({ kind: 'plain', params, options });
+        if (!responses.length) throw new Error('no canned response');
+        const next = responses.shift();
+        if (next instanceof Error) throw next;
+        return next;
+      },
+    },
   };
 }
 
@@ -105,7 +82,6 @@ test('stream telemetry leaves the complete Anthropic request object unchanged', 
       max_tokens: 8192,
       system: 'unchanged system',
       messages,
-      stream: true,
       tools,
       tool_choice: toolChoice,
     });
@@ -153,7 +129,7 @@ test('Anthropic cache usage is preserved and absent usage stays null', async () 
   });
 });
 
-test('recommended-model retry records two correlated physical attempts', async () => {
+test('a refusal is one invocation: no server-side fallback, no retry on a recommended model', async () => {
   await withTelemetrySink(async (rows) => {
     const client = streamClient([
       finalMessage({
@@ -163,60 +139,15 @@ test('recommended-model retry records two correlated physical attempts', async (
         content: [],
         usage: { input_tokens: 3, output_tokens: 0 },
       }),
-      finalMessage({ model: 'claude-opus-5' }),
     ]);
     await withClient(client, () => llm.streamChat({
       messages: [], systemPrompt: 's', model: 'claude-fable-5-1',
       telemetryContext: { component: 'mayor_phase_1' },
     }));
-    assert.equal(client.calls.length, 2);
-    assert.equal(rows.length, 2);
-    assert.deepEqual(rows.map((row) => row.attempt_number), [1, 2]);
+    assert.equal(client.calls.length, 1);
+    assert.equal(rows.length, 1);
     assert.equal(rows[0].outcome, 'refusal');
-    assert.equal(rows[1].outcome, 'success');
-    assert.equal(rows[0].correlation_id, rows[1].correlation_id);
-    assert.notEqual(rows[0].invocation_key, rows[1].invocation_key);
-  });
-});
-
-test('server-side fallback iterations become separate model-invocation events', async () => {
-  await withTelemetrySink(async (rows) => {
-    const response = finalMessage({
-      model: 'claude-opus-5',
-      content: [
-        { type: 'fallback', from: { model: 'claude-fable-5-1' }, to: { model: 'claude-opus-5' } },
-        { type: 'text', text: 'served by fallback' },
-      ],
-      usage: {
-        input_tokens: 30,
-        output_tokens: 8,
-        iterations: [
-          {
-            type: 'message', model: 'claude-fable-5-1',
-            input_tokens: 10, cache_read_input_tokens: 4,
-            cache_creation_input_tokens: 2, output_tokens: 1,
-          },
-          {
-            type: 'fallback_message', model: 'claude-opus-5',
-            input_tokens: 20, cache_read_input_tokens: 6,
-            cache_creation_input_tokens: 3, output_tokens: 7,
-          },
-        ],
-      },
-    });
-    const client = streamClient([response]);
-    await withClient(client, () => llm.streamChat({
-      messages: [], systemPrompt: 's', model: 'claude-fable-5-1',
-      telemetryContext: { component: 'headless_decision' },
-    }));
-    assert.equal(client.calls.length, 1, 'provider API request shape is unchanged');
-    assert.equal(rows.length, 2, 'two provider model iterations are measured');
-    assert.deepEqual(rows.map((row) => row.requested_model), ['claude-fable-5-1', 'claude-fable-5-1']);
-    assert.deepEqual(rows.map((row) => row.served_model), ['claude-fable-5-1', 'claude-opus-5']);
-    assert.deepEqual(rows.map((row) => row.input_tokens), [10, 20]);
-    assert.deepEqual(rows.map((row) => row.cache_read_input_tokens), [4, 6]);
-    assert.equal(rows[0].duration_ms, null, 'enclosing duration is not duplicated');
-    assert.notEqual(rows[1].duration_ms, null);
+    assert.equal(rows[0].provider, 'openrouter');
   });
 });
 
@@ -284,12 +215,11 @@ test('Anthropic telemetry captures complete content-free request, response, cach
     const calls = [];
     const client = {
       messages: {
-        stream(params, options) {
+        async create(params, options) {
           calls.push({ params, options });
-          return fakeEventStream(response, [{ type: 'content_block_start' }]);
+          return response;
         },
       },
-      beta: { messages: { stream() { throw new Error('unexpected beta call'); } } },
     };
     const messages = [
       {
@@ -346,7 +276,7 @@ test('Anthropic telemetry captures complete content-free request, response, cach
       cache5m: row.request_cache_5m_breakpoint_count,
       cache1h: row.request_cache_1h_breakpoint_count,
     }, {
-      mode: 'stream', messages: 2, users: 1, assistants: 1, blocks: 7,
+      mode: 'single', messages: 2, users: 1, assistants: 1, blocks: 7,
       text: 22, userText: 14, assistantText: 5, toolResultText: 9,
       thinkingText: 0, system: 3, tools: 1, priorToolCalls: 1, toolResults: 1, images: 1,
       cachePoints: 4, cache5m: 2, cache1h: 2,
@@ -378,7 +308,7 @@ test('Anthropic telemetry captures complete content-free request, response, cach
     assert.equal(row.provider_turn_count, 1);
     assert.equal(row.provider_model_count, 1);
     assert.notEqual(row.provider_duration_ms, undefined);
-    assert.notEqual(row.time_to_first_output_ms, undefined);
+    assert.equal(row.provider, 'openrouter');
     const serialized = JSON.stringify(row);
     for (const secret of ['not stored', 'safe_tool', 'tool text', 'hello']) {
       assert.equal(serialized.includes(secret), false);
@@ -579,7 +509,7 @@ test('Claude coding-agent cost remains known while all token fields remain null'
   });
 });
 
-test('Claude coding-agent records reported run usage, failure reason, and mixed billing', async () => {
+test('Claude coding-agent records reported run usage, failure reason, and its payer', async () => {
   await withTelemetrySink(async (rows) => {
     const state = worker.newWatchState();
     state.telemetryDiagnosticsEnabled = true;
@@ -604,7 +534,6 @@ test('Claude coding-agent records reported run usage, failure reason, and mixed 
       component: 'coding_agent_build',
       startedAt: new Date(),
       durationMs: 50,
-      byokCents: 25,
     });
 
     assert.equal(rows.length, 1);
@@ -618,7 +547,8 @@ test('Claude coding-agent records reported run usage, failure reason, and mixed 
     }, { input: 120, cacheRead: 900, cacheWrite: 30, output: 45, reasoning: 12 });
     assert.equal(rows[0].outcome, 'error');
     assert.equal(rows[0].stop_reason, 'error_max_turns');
-    assert.equal(rows[0].billing_path, 'anthropic_mixed');
+    assert.equal(rows[0].billing_path, 'platform', 'a relayed run is the platform\'s (task 2275)');
+    assert.equal(rows[0].provider, 'openrouter');
     assert.equal(rows[0].cost_usd, 3.25);
   });
 });
@@ -827,7 +757,7 @@ test('Codex/OpenRouter JSONL produces the same content-free agent workload contr
   ]) assert.equal(serialized.includes(secret), false);
 });
 
-test('Claude coding-agent billing keeps platform and full BYOK paths distinct', async () => {
+test('Claude coding-agent billing is the platform\'s whatever an old record says (task 2275)', async () => {
   await withTelemetrySink(async (rows) => {
     const result = { costUsd: 1, providerCostSeen: true, exitCode: 0 };
     const base = {
@@ -847,9 +777,8 @@ test('Claude coding-agent billing keeps platform and full BYOK paths distinct', 
     worker._recordClaudeCodingRunForTests({
       ...base, turnId: '77777777-7777-4777-8777-777777777777', byokCents: 100,
     });
-    assert.deepEqual(rows.map((row) => row.billing_path), [
-      'platform', 'anthropic_byok', 'anthropic_byok',
-    ]);
+    assert.deepEqual(rows.map((row) => row.billing_path), ['platform', 'platform', 'platform'],
+      'people\'s own Anthropic keys are gone, so no run is billed to one');
   });
 });
 

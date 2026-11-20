@@ -5740,7 +5740,7 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
         in that test lists, so a feature added to Standard shows under
         this look too unless somebody decides otherwise there.
    ============================================================ */
-html[data-skin-wip] {
+html:not([data-skin]) {
   /* The page: its ground and its typeface. This config leaves both to the
      shell; another config may name its own. */
   --wip-page-bg: transparent;
@@ -5988,7 +5988,7 @@ html[data-skin-wip] {
    kit's own contrast table: black on blue 6.2:1, white would fail). Type is
    Geist, the kit's typeface for interface text; its serif is for headlines,
    and Home has none. */
-html[data-skin-wip][data-wip-tokens="brand"] {
+html:not([data-skin]) {
   /* The kit's three colours as the marks icons take turns in: each a pale
      wash of the colour (a quarter of it, or less, over the card) with the
      glyph in a deep tone of the same colour. */
@@ -6039,12 +6039,14 @@ html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-meter: #3090e1;
   /* The shell's own marks on a page of this config: where you are, in the
      kit's ink on a wash of it, not the standard blue. */
+}
+html[data-skin-wip][data-wip-tokens="brand"] {
   --lit-ink: #000000;
   --lit-tint: rgb(0 0 0 / 0.07);
   --lit-line: rgb(0 0 0 / 0.14);
 }
 /* In the dark it is the kit's other pairing, cream on black. */
-html[data-skin-wip][data-wip-tokens="brand"].dark {
+html:not([data-skin]).dark {
   --wip-mark-1-bg: rgb(255 238 111 / 0.16);
   --wip-mark-1-ink: #ffee6f;
   --wip-mark-2-bg: rgb(48 144 225 / 0.2);
@@ -6076,6 +6078,8 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
   --wip-fold-edge: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-fold-edge-down: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-count-line: transparent;
+}
+html[data-skin-wip][data-wip-tokens="brand"].dark {
   --lit-ink: #fffeea;
   --lit-tint: rgb(255 254 234 / 0.1);
   --lit-line: rgb(255 254 234 / 0.18);
@@ -6085,13 +6089,13 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
    become rows. Needs you's rows and Challenges' posters read the same
    number, the same gap and the same padding as that grid, so the three
    lists' columns fall on the same lines. */
-html[data-skin-wip] { --wip-cols: 1; }
-@media (min-width: 640px) { html[data-skin-wip] { --wip-cols: 2; } }
-@media (min-width: 1024px) { html[data-skin-wip] { --wip-cols: 4; } }
+html:not([data-skin]) { --wip-cols: 1; }
+@media (min-width: 640px) { html:not([data-skin]) { --wip-cols: 2; } }
+@media (min-width: 1024px) { html:not([data-skin]) { --wip-cols: 4; } }
 /* In the dark (either config): an icon's tile is a step lighter than the
    card and edged, so a dark picture stays a shape; a community's colour is
    lifted less; a challenge's band wears a third of its tone's deep colour. */
-html[data-skin-wip].dark {
+html:not([data-skin]).dark {
   --wip-cover-lift: brightness(1.2) saturate(1.25);
   --wip-poster-tone: 0%;
   --wip-poster-deep: 34%;
@@ -6112,7 +6116,7 @@ html[data-skin-wip].dark {
    words follow without a rule of their own. Under this look only: another
    look that borrows the kit (the brand look sets the kit's tokens from its
    own) has no "ask" colours to point at. */
-html[data-skin-wip] .wip-card[data-tone="ask"] {
+html:not([data-skin]) .wip-card[data-tone="ask"] {
   --wip-card-bg: var(--wip-ask-bg);
   --wip-card-line: var(--wip-ask-line);
   --wip-ink: var(--wip-ask-ink);
@@ -6124,7 +6128,7 @@ html[data-skin-wip] .wip-card[data-tone="ask"] {
 }
 /* A card of things to aim for wears the config's "goal" colours, the same
    way. */
-html[data-skin-wip] .wip-card[data-tone="goal"] {
+html:not([data-skin]) .wip-card[data-tone="goal"] {
   --wip-card-bg: var(--wip-goal-bg);
   --wip-card-line: var(--wip-goal-line);
   --wip-ink: var(--wip-goal-ink);
@@ -6416,7 +6420,7 @@ html[data-skin-wip] .wip-card[data-tone="goal"] {
 }
 /* Its menu is one of the line's own: a chip's height, shape and type, on the
    card's colour under a hairline, at the line's end. */
-html[data-skin-wip] .wip-filterbar > select {
+html:not([data-skin]) .wip-filterbar > select {
   flex: none;
   width: auto;
   height: 2.75rem;
@@ -6445,7 +6449,7 @@ html[data-skin-wip] .wip-filterbar > select {
    it keeps a clear step below the header's edge, which overlaps the top of
    the row (asked 19 Nov 2026; the field stood 5px under it). */
 @media (max-width: 767.98px) {
-  html[data-skin-wip] #home-search-bar > .wip-topbar { padding-top: var(--wip-topbar-pad-phone); }
+  html:not([data-skin]) #home-search-bar > .wip-topbar { padding-top: var(--wip-topbar-pad-phone); }
 }
 .wip-search { width: 100%; max-width: var(--wip-search-w); }
 /* A project tile's sentence and its line of facts (app-grid.tsx). */
@@ -6483,45 +6487,45 @@ html[data-skin-wip] .wip-filterbar > select {
 /* A project's name is the same size and weight at every width (the row's
    title size): under the icon it may take two lines, and the cell is a
    little taller for them. */
-html[data-skin-wip] #app-list .app-card-title {
+html:not([data-skin]) #app-list .app-card-title {
   font-size: var(--wip-title-size);
   line-height: 1.25;
   font-weight: var(--wip-title-weight);
 }
 /* The pinned grid keeps the same air on its four sides (asked 19 Nov 2026): the column's own padding all round. */
-html[data-skin-wip] #app-list { padding: var(--wip-cell-pad); }
+html:not([data-skin]) #app-list { padding: var(--wip-cell-pad); }
 /* Its two lines of facts sit close: members, then contributors. */
-html[data-skin-wip] #app-list .app-card-people + .app-card-people { margin-top: 0.125rem; }
+html:not([data-skin]) #app-list .app-card-people + .app-card-people { margin-top: 0.125rem; }
 /* A pinned project says its name and how many use it and made it, not its sentence (asked 19 Nov 2026). */
-html[data-skin-wip] #app-list .app-card-desc { display: none; }
+html:not([data-skin]) #app-list .app-card-desc { display: none; }
 @media (max-width: 1023.98px) {
-  html[data-skin-wip] #app-list .app-card-people { display: none; }
-  html[data-skin-wip] { --home-cell-h: var(--wip-tile-h-stacked); }
-  html[data-skin-wip] #app-list .app-card-title { margin-top: var(--wip-title-gap-stacked); font-size: var(--wip-title-size-mid); min-height: 2.5em; }
+  html:not([data-skin]) #app-list .app-card-people { display: none; }
+  html:not([data-skin]) { --home-cell-h: var(--wip-tile-h-stacked); }
+  html:not([data-skin]) #app-list .app-card-title { margin-top: var(--wip-title-gap-stacked); font-size: var(--wip-title-size-mid); min-height: 2.5em; }
 }
 /* On a phone the tile gives its side padding to the name: at this size a
    name needs every pixel of its quarter of the screen. */
 @media (max-width: 639.98px) {
-  html[data-skin-wip] #app-list > .app-card { padding-inline: 2px; }
-  html[data-skin-wip] { --home-cell-h: var(--wip-tile-h-phone); }
+  html:not([data-skin]) #app-list > .app-card { padding-inline: 2px; }
+  html:not([data-skin]) { --home-cell-h: var(--wip-tile-h-phone); }
   /* And the name is a size down there (four across leaves each about 85px):
      at the row's size a long name broke in the middle of a word. */
-  html[data-skin-wip] #app-list .app-card-title { font-size: var(--wip-title-size-phone); line-height: 1.2; min-height: 2.4em; }
+  html:not([data-skin]) #app-list .app-card-title { font-size: var(--wip-title-size-phone); line-height: 1.2; min-height: 2.4em; }
 }
 @media (min-width: 1024px) {
-  html[data-skin-wip] { --home-cell-h: var(--wip-tile-h); }
-  html[data-skin-wip] #app-list > .app-card {
+  html:not([data-skin]) { --home-cell-h: var(--wip-tile-h); }
+  html:not([data-skin]) #app-list > .app-card {
     flex-direction: row;
     align-items: center; /* a tile with no sentence keeps its two lines beside the icon's middle */
     gap: var(--wip-tile-gap);
     text-align: start;
   }
-  html[data-skin-wip] #app-list > .app-card > .min-w-0 { flex: 1 1 0; width: auto; }
-  html[data-skin-wip] #app-list > .app-card > .relative,
-  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { width: var(--wip-icon); height: var(--wip-icon); }
-  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
-  html[data-skin-wip] #app-list .app-card-people { justify-content: flex-start; }
-  html[data-skin-wip] #app-list .app-card-title {
+  html:not([data-skin]) #app-list > .app-card > .min-w-0 { flex: 1 1 0; width: auto; }
+  html:not([data-skin]) #app-list > .app-card > .relative,
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { width: var(--wip-icon); height: var(--wip-icon); }
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
+  html:not([data-skin]) #app-list .app-card-people { justify-content: flex-start; }
+  html:not([data-skin]) #app-list .app-card-title {
     -webkit-line-clamp: 1;
     line-clamp: 1;
     min-height: 0;
@@ -6532,7 +6536,7 @@ html[data-skin-wip] #app-list .app-card-desc { display: none; }
    and in the dark a hairline round a tile a step lighter than the card, so
    a dark picture or glyph stays a shape. (No gloss: it read as a grey cap
    on a dark icon and as nothing on a light one.) */
-html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile {
+html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile {
   position: relative;
   border-color: transparent;
   background-color: var(--wip-icon-tile);
@@ -6542,7 +6546,7 @@ html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile {
    its tile. Only where a pointer hovers, never while the tiles are being
    arranged, and not with reduced motion. */
 @media (hover: hover) {
-  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::after {
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile::after {
     content: "";
     position: absolute;
     inset: -20% auto -20% 0;
@@ -6551,28 +6555,29 @@ html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile {
     background: linear-gradient(105deg, transparent 0%, var(--wip-sheen) 50%, transparent 100%);
     transform: translateX(-180%) skewX(-12deg);
   }
-  html[data-skin-wip] #app-list:not([data-editing]) > .app-card:hover > .relative > .app-icon-tile::after {
+  html:not([data-skin]) #app-list:not([data-editing]) > .app-card:hover > .relative > .app-icon-tile::after {
     transform: translateX(280%) skewX(-12deg);
     transition: transform var(--wip-sheen-time) ease-out;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
 
 /* ── Home's page ────────────────────────────────────────────── */
 /* It takes the page's whole width: no 1024px cap on its column (the search
    row's and the body's). */
-html[data-skin-wip] #home-screen .home-column { max-width: none; }
+html:not([data-skin]) #home-screen .home-column { max-width: none; }
 /* Its ground and typeface are the config's, and so is the accent the
    shell's own pieces on it read (Edit, a focus ring): one action colour on
    the page whichever config is on. */
-html[data-skin-wip] #home-screen {
-  background-color: var(--wip-page-bg);
+html:not([data-skin]) #home-screen {
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
 }
+/* The page's own ground is Standard (WIP)'s alone: the standard look keeps its wallpaper behind the cards (asked 20 Nov 2026). */
+html[data-skin-wip] #home-screen { background-color: var(--wip-page-bg); }
 /* While Home is the screen on show, a config that names a page colour gives
    it to the frame too (the header and the sidebar are clear over the body),
    so the page and its frame are one ground with no seam. */
@@ -6588,52 +6593,52 @@ html[data-skin-wip][data-wip-tokens] body:has(> #app-view > #app-content > div >
    placed on its own.
    ANYTHING ELSE on Home, a section added to the standard look among them,
    takes the last place and is drawn. */
-html[data-skin-wip] #home-screen .home-main { display: flex; flex-direction: column; }
-html[data-skin-wip] #home-screen .home-main > * { order: 4; }
+html:not([data-skin]) #home-screen .home-main { display: flex; flex-direction: column; }
+html:not([data-skin]) #home-screen .home-main > * { order: 4; }
 /* Pinned projects, what is above it (the phone app's widget strip) and the
    line right under it (a search nothing answers) stay first. */
-html[data-skin-wip] #home-screen .home-main > :is(#home-apps-section, :has(~ #home-apps-section), #home-apps-section + :not(.home-row)) { order: 0; }
-html[data-skin-wip] #home-screen .home-main > .home-row { display: contents; }
-html[data-skin-wip] #home-screen .home-row > .home-aside { order: 1; }
-html[data-skin-wip] #home-screen .home-row > #home-challenges-section { order: 2; }
-html[data-skin-wip] #home-screen #home-join-section:not([hidden]) { display: contents; }
-html[data-skin-wip] #home-screen #home-join-section > * {
+html:not([data-skin]) #home-screen .home-main > :is(#home-apps-section, :has(~ #home-apps-section), #home-apps-section + :not(.home-row)) { order: 0; }
+html:not([data-skin]) #home-screen .home-main > .home-row { display: contents; }
+html:not([data-skin]) #home-screen .home-row > .home-aside { order: 1; }
+html:not([data-skin]) #home-screen .home-row > #home-challenges-section { order: 2; }
+html:not([data-skin]) #home-screen #home-join-section:not([hidden]) { display: contents; }
+html:not([data-skin]) #home-screen #home-join-section > * {
   order: 4;
   margin-inline: 0;
   padding-inline: var(--wip-gutter); /* the section's own gutter, which its box no longer gives */
 }
-html[data-skin-wip] #home-screen #home-join-section > [data-home-join-featured] {
+html:not([data-skin]) #home-screen #home-join-section > [data-home-join-featured] {
   order: 3;
   padding-top: var(--wip-row-gap);
   padding-bottom: 0;
 }
 /* Its rows stand one row gap apart, and nothing is drawn between them. A
    section's label brings one card gap of its own. */
-html[data-skin-wip] #home-screen #home-join-section > .home-area-label { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
+html:not([data-skin]) #home-screen #home-join-section > .home-area-label { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
 /* Needs you is a row of its own, as wide as the column, right under Pinned
    projects, and Challenges the row after it. Each is a section as Pinned
    projects is: its label line on the page, then one card. The label brings
    one card gap of its own above it. */
-html[data-skin-wip] .home-row > .home-aside {
+html:not([data-skin]) .home-row > .home-aside {
   display: flex;
   padding: calc(var(--wip-row-gap) - var(--wip-card-gap)) var(--wip-gutter) 0;
 }
-html[data-skin-wip] .home-row > .home-aside > * { flex: 1 1 auto; min-width: 0; }
-html[data-skin-wip] .home-row > #home-challenges-section { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
+html:not([data-skin]) .home-row > .home-aside > * { flex: 1 1 auto; min-width: 0; }
+html:not([data-skin]) .home-row > #home-challenges-section { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
 /* A pinned project's press area, the search field and the sort menu: inside
    a card, or a field. */
-html[data-skin-wip] #app-list > .app-card,
-html[data-skin-wip] .wip-search > input,
-html[data-skin-wip] #home-join-section select { border-radius: var(--wip-radius-inner); }
+html:not([data-skin]) #app-list > .app-card,
+html:not([data-skin]) .wip-search > input,
+html:not([data-skin]) #home-join-section select { border-radius: var(--wip-radius-inner); }
 /* A community's card, and the placeholders that stand for one while it
    loads, are cards on the page. */
-html[data-skin-wip] #home-join-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
+html:not([data-skin]) #home-join-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
 /* A community's card with no picture of its own wears its colour, which is
    picked to carry white text elsewhere and is dark for a field this size.
    Here a copy of that colour lies on it, lifted (lighter and fuller, not
    washed toward grey), under the glow and the icon, which keep their own
    strength. (A card with a picture has no colour laid on it, and no lift.) */
-html[data-skin-wip] #home-join-section [data-guest-card-cover][style]::before {
+html:not([data-skin]) #home-join-section [data-guest-card-cover][style]::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -6643,8 +6648,8 @@ html[data-skin-wip] #home-join-section [data-guest-card-cover][style]::before {
 /* Under a token config, Home's section labels are drawn from the config's
    label tokens (the shell's own label's values unless the config names
    others): the three label lines and Featured's. */
-html[data-skin-wip][data-wip-tokens] #home-screen .home-area-label > span:first-child,
-html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3 {
+html:not([data-skin]) #home-screen .home-area-label > span:first-child,
+html:not([data-skin]) #home-screen [data-home-join-featured] > h3 {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
   font-weight: var(--wip-label-weight);
@@ -6656,9 +6661,9 @@ html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3
    lower half of the label's words (their own words only: a count or a
    chevron beside them is not struck). In a label that is a link, the
    kit's own span round the words carries it. */
-html[data-skin-wip][data-wip-tokens] #home-screen .home-area-label > span:first-child:not(:has(.wip-head-words)),
-html[data-skin-wip][data-wip-tokens] #home-screen .home-area-label .wip-head-words,
-html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3 {
+html:not([data-skin]) #home-screen .home-area-label > span:first-child:not(:has(.wip-head-words)),
+html:not([data-skin]) #home-screen .home-area-label .wip-head-words,
+html:not([data-skin]) #home-screen [data-home-join-featured] > h3 {
   text-decoration-line: underline;
   text-decoration-color: var(--wip-label-mark);
   text-decoration-thickness: 0.42em;
@@ -6670,18 +6675,18 @@ html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3
    first paint), so what arrives takes the place its placeholder held.
    Pinned projects, from 1024px: rows, an icon and two lines beside it. */
 @media (min-width: 1024px) {
-  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div {
+  html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div {
     flex-direction: row;
     align-items: center;
     gap: var(--wip-tile-gap);
     height: var(--wip-tile-h);
   }
-  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :first-child {
+  html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :first-child {
     width: var(--wip-icon);
     height: var(--wip-icon);
     border-radius: var(--wip-icon-radius);
   }
-  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :last-child {
+  html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :last-child {
     flex: 1 1 0;
     flex-direction: column;
     align-items: flex-start;
@@ -6690,8 +6695,8 @@ html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3
     height: auto;
     padding-top: 0;
   }
-  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :last-child > div { width: 55%; height: 0.75rem; }
-  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :last-child::after {
+  html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :last-child > div { width: 55%; height: 0.75rem; }
+  html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :last-child::after {
     content: "";
     width: 85%;
     height: 0.625rem;
@@ -6701,18 +6706,18 @@ html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3
 }
 /* Challenges: a card of posters, as many as the look has columns for (the
    placeholder brings three). */
-html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-body {
+html:not([data-skin]) #home-challenges-section.home-section-pending > .home-panel-body {
   padding: var(--wip-card-pad);
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
-html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-body > div {
+html:not([data-skin]) #home-challenges-section.home-section-pending > .home-panel-body > div {
   flex-direction: row;
   gap: var(--wip-col-gap);
   overflow: hidden;
 }
-html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-body > div > div {
+html:not([data-skin]) #home-challenges-section.home-section-pending > .home-panel-body > div > div {
   flex: 0 0 calc((100% - (var(--wip-cols) - 1) * var(--wip-col-gap)) / var(--wip-cols));
   height: var(--wip-poster-art);
   border-radius: var(--wip-radius-inner);
@@ -6723,7 +6728,7 @@ html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-
    communities, which are the Communities tab's page now): the section stays
    mounted, since it loads the pins other parts of Home read, and is not
    displayed. */
-html[data-skin-wip] #home-communities-section { display: none; }
+html:not([data-skin]) #home-communities-section { display: none; }
 
 
 /* ── A project's hub ────────────────────────────────────────── */
@@ -6736,17 +6741,19 @@ html[data-skin-wip] #home-communities-section { display: none; }
    project sits across from Home's search. The hero and the Invite card keep
    their markup and are still two sections; the look joins them where they
    are neighbours. */
-html[data-skin-wip] body #dev-workshop:has(> .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) {
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="status"]),
+html[data-skin-wip] body #dev-workshop:has(> .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
   max-width: none;
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { row-gap: var(--wip-row-gap); column-gap: var(--wip-col-gap); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { row-gap: var(--wip-row-gap); column-gap: var(--wip-col-gap); }
 /* The hub sits on the page itself, as Home does: the project page's own
    sheet (a tinted, shadowed panel with round top corners behind everything)
    is cleared while the hub is the place on show, so its cards are the only
    cards. */
-html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) {
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]),
+html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="needs"], [data-ws-tab="all"])) {
   border-radius: 0;
   border-color: transparent;
   background-color: var(--wip-page-bg);
@@ -6754,11 +6761,13 @@ html[data-skin-wip] body #app-content > :has(> #dev-forum-scroll > #dev-body > #
   -webkit-backdrop-filter: none;
   box-shadow: none;
 }
+/* The standard look keeps its wallpaper behind the hub's cards, as on Home: the page's own ground is Standard (WIP)'s alone. */
+html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="status"]) { background-color: transparent; }
 /* The hub has no Topics card under the look: a topic's channel is reached by its own address. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-topics] { display: none; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-topics] { display: none; }
 /* A section's label, outside its card: Home's label, from the same tokens. */
-html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > h2,
-html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > :first-child h2 {
+html:not([data-skin]) #dev-workshop .dev-ws-hub-section > h2,
+html:not([data-skin]) #dev-workshop .dev-ws-hub-section > :first-child h2 {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
   font-weight: var(--wip-label-weight);
@@ -6772,7 +6781,7 @@ html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > :first-
   text-decoration-skip-ink: none;
 }
 /* A section's card is the look's card. */
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-strip {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-strip {
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
   backdrop-filter: none;
@@ -6780,8 +6789,9 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-strip {
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
 /* The head: one card. */
-html[data-skin-wip].dark {
-  --wip-hero-bg: color-mix(in srgb, hsl(from var(--wip-hero-tint) h 60% 50%) 6%, var(--wip-card-bg));
+html:not([data-skin]).dark {
+  /* Lighter than the cards under it (asked 20 Nov 2026: the heroes were too dark): a clear step of the project's own hue on a raised grey. */
+  --wip-hero-bg: color-mix(in srgb, hsl(from var(--wip-hero-tint) h 55% 48%) 26%, #2a2b30);
   --wip-hero-wash-a: hsl(from var(--wip-hero-tint) h 70% 45% / 0.22);
   --wip-hero-wash-b: hsl(from var(--wip-hero-tint) calc(h + 40) 70% 42% / 0.18);
   --wip-hero-wash-c: hsl(from var(--wip-hero-tint) calc(h - 30) 70% 40% / 0.16);
@@ -6789,7 +6799,7 @@ html[data-skin-wip].dark {
   --wip-hero-dot: rgb(255 255 255 / 0.08);
   --wip-hero-art-shadow: 0 18px 34px -18px rgb(0 0 0 / 0.7), 0 0 0 1px var(--wip-card-line);
 }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
   position: relative;
   isolation: isolate;
   align-content: center;
@@ -6807,7 +6817,7 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbod
    each other; a field of dots thins out toward the words; rings spread from
    where the picture is; and the picture floats: the project's own
    illustration, tilted, with its icon in front, or the icon alone. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > :is(.wip-hero-art, .wip-hero-wash) { grid-column: auto; grid-row: auto; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > :is(.wip-hero-art, .wip-hero-wash) { grid-column: auto; grid-row: auto; }
 .wip-hero-art {
   position: absolute;
   z-index: -1;
@@ -6890,27 +6900,27 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > :is(.wip-hero-art, .wip
 .wip-hero-art-icon > img { width: 100%; height: 100%; object-fit: cover; }
 .wip-hero-art-pic + .wip-hero-art-icon { --wip-hero-art: 3.25rem; align-self: end; justify-self: start; margin: 0 0 0.75rem 22%; }
 /* The pointer on the card straightens the picture a little, as if picked up. */
-html[data-skin-wip] .dev-ws-hero-summary:hover .wip-hero-art-pic { transform: rotate(-2deg) translateY(-7%) scale(1.03); }
-html[data-skin-wip] .dev-ws-hero-summary:hover .wip-hero-art-icon { transform: rotate(3deg) scale(1.05); }
+html:not([data-skin]) .dev-ws-hero-summary:hover .wip-hero-art-pic { transform: rotate(-2deg) translateY(-7%) scale(1.03); }
+html:not([data-skin]) .dev-ws-hero-summary:hover .wip-hero-art-icon { transform: rotate(3deg) scale(1.05); }
 @media (min-width: 900px) {
   .wip-hero-stage { display: grid; }
-  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: min(30%, 20rem); }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: min(30%, 20rem); }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] .wip-hero-wash::before { animation: none; }
-  html[data-skin-wip] .wip-hero-stage { animation: none; }
-  html[data-skin-wip] .wip-hero-art-pic { transition: none; }
-  html[data-skin-wip] .wip-hero-art-icon { transition: none; }
+  html:not([data-skin]) .wip-hero-wash::before { animation: none; }
+  html:not([data-skin]) .wip-hero-stage { animation: none; }
+  html:not([data-skin]) .wip-hero-art-pic { transition: none; }
+  html:not([data-skin]) .wip-hero-art-icon { transition: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-wash::before { animation: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-stage { animation: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-art-pic { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-art-icon { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-wash::before { animation: none; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-stage { animation: none; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-art-pic { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-hero-art-icon { transition: none; }
 /* WHO IT IS FOR AND WHO IS IN IT, under the name, as two things: the kind
    of community with its own mark (a lit dot on one anybody may join, the
    lock or the person otherwise), then a few members' faces and how many
    there are. No tag round them. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { margin-top: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { margin-top: 0.25rem; }
 .wip-hub-meta { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.875rem; }
 .wip-hub-meta-kind {
   display: inline-flex;
@@ -6952,15 +6962,15 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { mar
 }
 .wip-hub-meta-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
 /* "Make it public", beside the main action: the same height, a plain pill. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { height: 2.75rem; padding-inline: 1.125rem; font-size: 0.9375rem; font-weight: 600; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { height: 2.75rem; padding-inline: 1.125rem; font-size: 0.9375rem; font-weight: 600; }
 /* THE QUESTION "Make it public" asks hangs under its button, which is at
    the hero's start here: so it opens from the button's own start edge and
    runs toward the page (hung from its end, as on the standard hub where the
    button is at the far side, it ran off the page's edge and was cut). It is
    the look's card, and its two answers are the look's: the filled action,
    and a plain "Not now". */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-join-anchor { margin-inline-start: 0; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-join-anchor { margin-inline-start: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop {
   inset-inline: 0 auto;
   width: min(20rem, var(--platform-float-w));
   border: 0;
@@ -6969,14 +6979,14 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
   transform-origin: 2rem 0;
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop::before {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop::before {
   inset-inline: 1.75rem auto;
   border-color: var(--wip-card-line);
   background-color: var(--wip-card-bg);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-ask-q { color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-sub { color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-answer-btn {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-ask-q { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-sub { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-answer-btn {
   height: 2.75rem;
   border-radius: var(--wip-radius-pill);
   background-color: transparent;
@@ -6984,7 +6994,7 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev
   color: var(--wip-cta-ink);
   box-shadow: 0 8px 18px -8px var(--wip-cta-glow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-later {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-later {
   align-self: center;
   background-color: transparent;
   color: var(--wip-ink-muted);
@@ -7022,16 +7032,16 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev
   transition: transform 0.25s ease;
 }
 .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg) translateX(3px); }
-html[data-skin-wip][dir="rtl"] .wip-hub-meta-arrow { transform: scaleX(-1) rotate(-4deg); }
+html:not([data-skin])[dir="rtl"] .wip-hub-meta-arrow { transform: scaleX(-1) rotate(-4deg); }
 @media (max-width: 639.98px) {
   .wip-hub-meta-arrow { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] .wip-hub-meta-arrow { transition: none; }
-  html[data-skin-wip] .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
+  html:not([data-skin]) .wip-hub-meta-arrow { transition: none; }
+  html:not([data-skin]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-hub-meta-arrow { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta-arrow { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
 .wip-hub-meta-seat {
   flex: none;
   width: 1.375rem;
@@ -7051,7 +7061,7 @@ html[data-skin-wip]:where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-hub
 }
 /* With nothing on the hero's last line but the ⋯ (which is in the corner,
    out of the line), the line takes no room: no empty band under the words. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
   height: 0;
   min-height: 0;
   margin-block: calc(-1 * 0.5rem) 0; /* and gives back the row gap above it */
@@ -7060,13 +7070,13 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:h
    ground, with its edge and the kit's soft shadow, so it is seen over the
    hero's picture; its edge darkens under the pointer or while its menu is
    open. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-plus {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-plus {
   position: absolute;
   inset-block-start: 0.5rem;
   inset-inline-end: 0.5rem;
   margin: 0;
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn {
   width: 2.25rem;
   height: 2.25rem;
   min-width: 0;
@@ -7077,19 +7087,19 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev
   color: var(--wip-ink);
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-icon-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn:is(:hover, :focus-visible, [aria-expanded="true"]) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn:is(:hover, :focus-visible, [aria-expanded="true"]) {
   box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-icon-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
   width: var(--wip-hub-icon);
   height: var(--wip-hub-icon);
   border-radius: var(--wip-icon-radius);
   font-size: calc(var(--wip-hub-icon) / 2);
   box-shadow: var(--wip-icon-shadow);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-name {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-name {
   font-family: var(--wip-hub-name-font);
   font-size: var(--wip-hub-name);
   font-weight: var(--wip-hub-name-weight);
@@ -7097,21 +7107,21 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-name {
   letter-spacing: -0.035em;
   color: var(--wip-hero-ink);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-id-sub, .dev-ws-hero-audience, .dev-ws-hero-lineage, .dev-ws-hero-active-names, .dev-ws-hero-member) { font-size: 0.875rem; color: var(--wip-hero-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-active-n, .dev-ws-hero-lineage-link, .dev-ws-hero-line) { color: var(--wip-hero-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-desc { max-width: 40rem; font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink-soft); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-id-sub, .dev-ws-hero-audience, .dev-ws-hero-lineage, .dev-ws-hero-active-names, .dev-ws-hero-member) { font-size: 0.875rem; color: var(--wip-hero-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-active-n, .dev-ws-hero-lineage-link, .dev-ws-hero-line) { color: var(--wip-hero-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-desc { max-width: 40rem; font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink-soft); }
 /* What you can do is the hero's last line, under its words: the main
    action first, then the quiet ones, and the ⋯ at the far end. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row { grid-column: 1 / -1; order: 9; margin-top: 0.75rem; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions { flex: 1; gap: 0.625rem; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is(button, a) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row { grid-column: 1 / -1; order: 9; margin-top: 0.75rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions { flex: 1; gap: 0.625rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is(button, a) {
   border-color: var(--wip-hero-glass-line);
   background-color: var(--wip-hero-glass);
   background-image: none;
   color: var(--wip-hero-ink);
   box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
   position: relative;
   overflow: hidden;
   height: 2.75rem;
@@ -7128,7 +7138,7 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(butt
    the filled action (Home's New project), and plain pills on the card's
    ground. A sheen crosses the filled one when the pointer comes to it. */
 @media (hover: hover) {
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after {
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after {
     content: "";
     position: absolute;
     inset-block: 0;
@@ -7137,18 +7147,18 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(butt
     background-image: linear-gradient(100deg, transparent, var(--wip-sheen), transparent);
     transform: translateX(-140%) skewX(-12deg);
   }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]):hover::after {
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]):hover::after {
     transform: translateX(380%) skewX(-12deg);
     transition: transform 0.7s ease-out;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
 /* A phone has no room for the hero's sizes. */
 @media (max-width: 639.98px) {
-  html[data-skin-wip] { --wip-hub-icon: 3rem; --wip-hub-name: 1.75rem; --wip-hero-pad: 1.25rem; --wip-hero-min: 0; }
+  html:not([data-skin]) { --wip-hub-icon: 3rem; --wip-hub-name: 1.75rem; --wip-hero-pad: 1.25rem; --wip-hero-min: 0; }
 }
 /* THE HUB'S ORDER, AND ITS PARTS AS CARDS OF THEIR OWN. The hub answers
    three things in turn: what this is and how to use it (the head, with its
@@ -7161,25 +7171,25 @@ html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-sum
    (`display: contents`), so they can be placed apart, each on the look's
    card. Everything else the page may draw between (a first version, an
    update, Share it) keeps its place under the head. */
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you],
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou { display: contents; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { order: 1; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { order: 0; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > :first-child { order: 2; margin-bottom: calc(0.5rem - var(--wip-row-gap)); /* a label sits on its card, not a row away */ }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]) { order: 3; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you],
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou { display: contents; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { order: 1; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { order: 0; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { order: 2; margin-bottom: calc(0.5rem - var(--wip-row-gap)); /* a label sits on its card, not a row away */ }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]) { order: 3; }
 /* Its label heads the vote line alone here, so with no vote line (a project nobody else is in) there is no label. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
 /* Top contributors (request 6837) comes last, after Recently live, on the look's card, its switch from the look's tokens. */
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-contributors] .dev-ws-foryou > * + * { border-top-color: var(--wip-soft-line); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-contributors] .ui-lrow-t { color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-contributors] :is(.dev-ws-foryou-count, .dev-ws-week-note) { color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span { background-color: var(--wip-tray); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button { color: var(--wip-ink-soft); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button[aria-pressed="true"] { background-color: var(--wip-ink); color: var(--wip-card-bg); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-foryou > * + * { border-top-color: var(--wip-soft-line); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .ui-lrow-t { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] :is(.dev-ws-foryou-count, .dev-ws-week-note) { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span { background-color: var(--wip-tray); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button { color: var(--wip-ink-soft); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button[aria-pressed="true"] { background-color: var(--wip-ink); color: var(--wip-card-bg); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
   border-top: 0;
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
@@ -7194,16 +7204,16 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
    The same padding, the same height, the same sizes as a row on Home. A
    card that opens a place answers the pointer: its edge darkens and it
    lifts a little. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { display: flex; align-items: center; min-height: 4.5rem; margin: 0; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.wip-hub-door, .dev-ws-foryou-row),
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] > .dev-ws-foryou-row {
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { display: flex; align-items: center; min-height: 4.5rem; margin: 0; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.wip-hub-door, .dev-ws-foryou-row),
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] > .dev-ws-foryou-row {
   gap: var(--wip-tile-gap);
   width: 100%;
   padding: 0.875rem 1rem;
   text-align: start;
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { padding: 0; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { padding: 0; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
   flex: none;
   width: 2.5rem;
   height: 2.5rem;
@@ -7212,56 +7222,56 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou :is(.wi
   color: var(--wip-mark-1-ink);
 }
 /* Each door its own mark: what waits on you, the Workshop, the discussion. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
 .wip-hub-door-title { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); line-height: 1.3; color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
 .wip-hub-door-sub { font-size: var(--wip-link-size); line-height: 1.4; color: var(--wip-ink-muted); }
 .wip-hub-door-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
 .wip-hub-door-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wip-hub-door-sub .dev-ws-link { font: inherit; font-weight: 650; color: var(--wip-ink-action); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { color: var(--wip-ink-muted); transition: transform 0.18s ease; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row,
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: box-shadow 0.18s ease, transform 0.18s ease; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover,
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: translateX(2px); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { color: var(--wip-ink-muted); transition: transform 0.18s ease; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row,
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: box-shadow 0.18s ease, transform 0.18s ease; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover,
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: translateX(2px); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
 }
 
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
 /* On a phone the vote line may take two lines, so its link is not cut off. */
 @media (max-width: 767.98px) {
-  html[data-skin-wip] #dev-workshop .wip-hub-door-sub { white-space: normal; }
+  html:not([data-skin]) #dev-workshop .wip-hub-door-sub { white-space: normal; }
 }
 /* Stacked (a phone), the three are one group: a card's gap between them, not
    the room the page leaves between its sections. */
 @media (max-width: 767.98px) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
 }
 @media (min-width: 768px) {
-  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     column-gap: var(--wip-card-gap);
     align-content: start;
     align-items: start;
   }
-  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
-  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
 }
 /* RECENTLY LIVE, as a list and not a wall of pictures. Each change is a row
    of Home's own kind: a small picture at its side (a thumbnail, not a
@@ -7269,15 +7279,15 @@ html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for
    768px, on the same column gap and inner padding as every list of the
    look; one under another on a phone. The "N more live this month" door is
    the card's quiet foot. */
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent { padding: 0.5rem; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent { padding: 0.5rem; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0.25rem var(--wip-col-gap);
   padding: 0;
   overflow: visible;
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card {
   display: grid;
   grid-template-columns: var(--wip-thumb) minmax(0, 1fr);
   grid-template-rows: auto 1fr;
@@ -7288,15 +7298,15 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card {
   border-radius: var(--wip-radius-inner);
   transition: background-color 0.15s ease;
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--wip-ghost); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--wip-ghost); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic {
   grid-row: 1 / -1;
   align-self: center;
   border-radius: var(--wip-radius-small);
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { width: 1.75rem; height: 1.75rem; border-radius: var(--wip-radius-small); font-size: 0.875rem; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-title {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { width: 1.75rem; height: 1.75rem; border-radius: var(--wip-radius-small); font-size: 0.875rem; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-title {
   align-self: end;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -7305,9 +7315,9 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-title {
   line-height: 1.3;
   color: var(--wip-ink);
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--wip-ink-action); font-weight: 600; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--wip-ink-action); font-weight: 600; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
   min-height: 2.75rem;
   margin: 0.5rem -0.5rem -0.5rem;
   width: auto;
@@ -7316,15 +7326,15 @@ html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
   box-shadow: inset 0 1px 0 var(--wip-card-line);
   color: var(--wip-ink);
 }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-n { min-width: 0; height: 1.5rem; padding: 0 0.5rem; border-radius: var(--wip-radius-pill); background-color: var(--wip-count-bg); color: var(--wip-count-ink); font-size: 0.75rem; }
-html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-words { font-size: var(--wip-link-size); font-weight: 600; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-n { min-width: 0; height: 1.5rem; padding: 0 0.5rem; border-radius: var(--wip-radius-pill); background-color: var(--wip-count-bg); color: var(--wip-count-ink); font-size: 0.75rem; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-words { font-size: var(--wip-link-size); font-weight: 600; }
 @media (min-width: 768px) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
 /* THE ⋯'S MENU, drawn as the hub's own cards are. It is the look's card
    (its corners, ground and edge, one soft drop), and each row in it is a
    door of the same shape as For you's: a small tile in the look's mark
@@ -7333,7 +7343,7 @@ html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-rec
    pointer or the keyboard puts the look's soft ground under a row and
    nudges it; the row the menu marks (Build it now) wears that soft ground
    at rest. It opens with a short rise. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
   width: 19rem;
   padding: 0.5rem;
   border: 0;
@@ -7342,9 +7352,9 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
   font-family: var(--wip-font);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: wip-menu-rise 0.16s ease-out; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) * { border-top-width: 0; border-bottom-width: 0; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: wip-menu-rise 0.16s ease-out; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) * { border-top-width: 0; border-bottom-width: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) {
   align-items: center;
   box-shadow: none; /* not the hero's own buttons' edge: these are rows */
   color: var(--wip-ink);
@@ -7356,9 +7366,9 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(b
   background-color: transparent;
   transition: background-color 0.12s ease, transform 0.12s ease;
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { background-color: var(--wip-ghost); transform: translateX(2px); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a).bg-violet-50 { background-color: var(--wip-ghost); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:first-child {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { background-color: var(--wip-ghost); transform: translateX(2px); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a).bg-violet-50 { background-color: var(--wip-ghost); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:first-child {
   box-sizing: content-box;
   width: 1rem;
   height: 1rem;
@@ -7369,19 +7379,94 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(b
   color: var(--wip-mark-1-ink);
 }
 /* The rows take the three marks in turn. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n + 2) > svg:first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n) > svg:first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:not(:first-child) { color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:first-child { font-size: var(--wip-link-size); font-weight: 650; line-height: 1.3; color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:last-child:not(:first-child) { font-size: 0.75rem; line-height: 1.35; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n + 2) > svg:first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n) > svg:first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:not(:first-child) { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:first-child { font-size: var(--wip-link-size); font-weight: 650; line-height: 1.3; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:last-child:not(:first-child) { font-size: 0.75rem; line-height: 1.35; color: var(--wip-ink-muted); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+/* THE HERO WEARS A BRAND BACKGROUND (asked 20 Nov 2026): one of the kit's six pictures, the one the community's pinned
+   card opens on, fills the hero's far side and fades into the card toward the words, so they stay on the card's own
+   colour. It stands in place of the drifting washes; the dots and the rings are drawn over it. */
+html:not([data-skin]) {
+  --wip-hero-scene: var(--wip-scene-1);
+  --wip-hero-scene-mask: linear-gradient(to right, transparent 30%, #000000 78%);
+  --wip-hero-scene-mask-rtl: linear-gradient(to left, transparent 30%, #000000 78%);
+  --wip-hero-scene-mask-phone: linear-gradient(to right, transparent 45%, #000000 100%);
+  --wip-hero-scene-mask-phone-rtl: linear-gradient(to left, transparent 45%, #000000 100%);
+  --wip-hero-home-bg: #fffeea;
+  --wip-hero-home-rule: linear-gradient(to right, #ffee6f 0 40%, #3c7bd8 40% 70%, #a9cf97 70% 100%);
+}
+html:not([data-skin]).dark { --wip-hero-home-bg: transparent; }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene] {
+  background-image: var(--wip-hero-scene);
+  background-size: cover;
+  background-position: center;
+  -webkit-mask-image: var(--wip-hero-scene-mask);
+  mask-image: var(--wip-hero-scene-mask);
+}
+html:not([data-skin])[dir="rtl"] #dev-workshop .wip-hero-wash[data-scene] {
+  -webkit-mask-image: var(--wip-hero-scene-mask-rtl);
+  mask-image: var(--wip-hero-scene-mask-rtl);
+}
+/* On a phone the words run the hero's whole width, so the picture is a hint at the far edge and no more. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene] {
+    opacity: 0.45;
+    -webkit-mask-image: var(--wip-hero-scene-mask-phone);
+    mask-image: var(--wip-hero-scene-mask-phone);
+  }
+  html:not([data-skin])[dir="rtl"] #dev-workshop .wip-hero-wash[data-scene] {
+    -webkit-mask-image: var(--wip-hero-scene-mask-phone-rtl);
+    mask-image: var(--wip-hero-scene-mask-phone-rtl);
+  }
+}
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="2"] { --wip-hero-scene: var(--wip-scene-2); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="3"] { --wip-hero-scene: var(--wip-scene-3); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="4"] { --wip-hero-scene: var(--wip-scene-4); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="5"] { --wip-hero-scene: var(--wip-scene-5); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="6"] { --wip-hero-scene: var(--wip-scene-6); }
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene]::before { content: none; }
+/* HOMEROOM'S OWN HERO is the brand's own page (asked 20 Nov 2026): its cream, the people at the far side standing on
+   the bottom edge, and the three-colour rule along it. On a dark page the card keeps its own colour under them. */
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] {
+  opacity: 1;
+  background: var(--wip-hero-home-bg);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 6px;
+  background-image: var(--wip-hero-home-rule);
+}
+html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] + .wip-hero-art .wip-hero-stage { animation: none; place-items: end center; padding-block-end: 6px; }
+.wip-hero-people { position: absolute; inset-block-end: 6px; inset-inline-end: 1.25rem; height: calc(100% - 14px); width: auto; max-width: none; }
+/* THE PROJECT'S PREVIEW STANDS BESIDE THE HERO (asked 20 Nov 2026), in its row from 1024px: the hero takes two of the
+   hub's three columns and the preview the third, the two as tall as each other. Narrower, there is no card: the hero keeps the picture at its own side, tilted, as before. */
+html:not([data-skin]) #dev-workshop .wip-hero-preview { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: var(--wip-card-radius); box-shadow: inset 0 0 0 1px var(--wip-card-line); background-color: var(--wip-card-bg); }
+html:not([data-skin]) #dev-workshop .wip-hero-preview > .wip-hero-preview-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+@media (min-width: 1024px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary[data-has-preview] { grid-column: 1 / 3; align-self: stretch; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .wip-hero-preview { grid-column: 3; align-self: stretch; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .wip-hero-preview { aspect-ratio: auto; min-height: 9rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws-hero-summary[data-has-preview] .wip-hero-art-pic { display: none; }
+}
+@media (max-width: 1023.98px) {
+  html:not([data-skin]) #dev-workshop .wip-hero-preview { display: none; }
+}
+/* THE VOTE COUNT on the Needs you door is the look's filled action in small: black on a light page, yellow on a dark
+   one. It was the accent with white words, and under this look the accent on a dark page is cream (20 Nov 2026). */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou-pill:not([data-ws-channel-unread]):not(.dev-ws-foryou-pill-light) { background: var(--wip-cta-from); color: var(--wip-cta-ink); }
 /* A PROJECT'S NEEDS YOU is laid out as its hub is (review-flow.tsx): the
    page's whole width on the page's own ground, its name a label of the
    look, what waits as rows of Home's kind in the look's card, in the look's
@@ -7513,11 +7598,11 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-
 .wip-caught-door-sub { font-size: var(--wip-link-size); line-height: 1.4; color: var(--wip-ink-muted); }
 .wip-caught-door-go { flex: none; width: 1.25rem; height: 1.25rem; color: var(--wip-ink-muted); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] .wip-caught-door { transition: none; }
-  html[data-skin-wip] .wip-caught-door:is(:hover, :focus-visible) { transform: none; }
+  html:not([data-skin]) .wip-caught-door { transition: none; }
+  html:not([data-skin]) .wip-caught-door:is(:hover, :focus-visible) { transform: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-caught-door { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-caught-door:is(:hover, :focus-visible) { transform: none; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-caught-door { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-caught-door:is(:hover, :focus-visible) { transform: none; }
 /* THE BOARD (All items), framed as Home and the hub are: on the page's own
    ground with no sheet behind it, under the place's name as a label of the
    look (both shared with the hub and Needs you, above). The Workshop's door
@@ -7789,11 +7874,11 @@ html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-vo
   animation: wip-board-link-head 0.2s ease-out 0.36s forwards;
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] .wip-board-link-line { animation: none; stroke-dashoffset: 0; }
-  html[data-skin-wip] .wip-board-link-end { animation: none; opacity: 0.75; }
+  html:not([data-skin]) .wip-board-link-line { animation: none; stroke-dashoffset: 0; }
+  html:not([data-skin]) .wip-board-link-end { animation: none; opacity: 0.75; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-board-link-line { animation: none; stroke-dashoffset: 0; }
-html[data-skin-wip]:where([data-motion="reduce"]) .wip-board-link-end { animation: none; opacity: 0.75; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-board-link-line { animation: none; stroke-dashoffset: 0; }
+html:not([data-skin]):where([data-motion="reduce"]) .wip-board-link-end { animation: none; opacity: 0.75; }
 /* AN ITEM OPENED BESIDE THE BOARD (the side panel) is a card of the look.
    The standard look draws the panel clear, on the project page's sheet;
    this look clears that sheet, so with nothing behind it the board showed
@@ -7808,7 +7893,7 @@ html[data-skin-wip] body > :is(.dev-ws-side) {
 }
 /* A pinned app's tile does not say when it was opened under the look: its
    tiles say less. */
-html[data-skin-wip] #app-list .app-card-opened { display: none; }
+html:not([data-skin]) #app-list .app-card-opened { display: none; }
 /* THE LEFT MENU AND THE TOP BAR are the standard look's too since 20 Nov
    2026: their rules and tokens, the menu's colours among them, are the
    block after this one ("THE LEFT MENU AND THE TOP BAR"). What is left here
@@ -7820,20 +7905,6 @@ html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-nav-bar-ink: var(--wip-ink);
   --wip-nav-bar-tint: var(--wip-ghost);
   --wip-nav-bar-line: var(--wip-card-line);
-}
-/* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
-   is drawn from its own tokens, which are the filled action's unless the
-   config names others. */
-html[data-skin-wip] :is(#home-new-project-top, #communities-new-top) {
-  background: var(--wip-top-cta-bg);
-  color: var(--wip-top-cta-ink);
-  font-weight: var(--wip-top-cta-weight);
-  box-shadow: var(--wip-top-cta-edge);
-}
-html[data-skin-wip] :is(#home-new-project-top, #communities-new-top):hover { transform: var(--wip-top-cta-lift); }
-html[data-skin-wip] :is(#home-new-project-top, #communities-new-top):active {
-  box-shadow: var(--wip-top-cta-edge-down);
-  transform: var(--wip-top-cta-press);
 }
 /* The hub's "All in Workshop", beside Recently live, is the same button: the way to the rest of a section reads as one everywhere under the look. */
 html[data-skin-wip] #dev-workshop [data-ws-recent-all] {
@@ -7860,12 +7931,13 @@ html[data-skin-wip] #dev-workshop [data-ws-recent-all]:active { box-shadow: var(
    action at the row's end, each group a label on the page and one card. From
    1024px a community is a row as a pinned project is (its icon, its name and
    how many members); narrower it is the icon and, under it, the name. */
-html[data-skin-wip] #communities-screen {
-  background-color: var(--wip-page-bg-communities);
+html:not([data-skin]) #communities-screen {
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
 }
-html[data-skin-wip] #communities-screen .home-column { max-width: none; }
+/* The page's own ground is Standard (WIP)'s alone: the standard look keeps its wallpaper behind the cards, as on Home. */
+html[data-skin-wip] #communities-screen { background-color: var(--wip-page-bg-communities); }
+html:not([data-skin]) #communities-screen .home-column { max-width: none; }
 html[data-skin-wip][data-wip-tokens] body:has(#communities-screen:not(.hidden)) {
   background-color: var(--wip-page-bg-communities);
   background-image: none;
@@ -7873,22 +7945,22 @@ html[data-skin-wip][data-wip-tokens] body:has(#communities-screen:not(.hidden)) 
 /* The search row is on a phone too under the look (asked 19 Nov 2026), as
    Home's is: the field, then New community as the filled action at its end,
    a clear step under the header. */
-html[data-skin-wip] #communities-screen .communities-top {
+html:not([data-skin]) #communities-screen .communities-top {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding: var(--wip-topbar-pad-phone) var(--wip-gutter) 0;
 }
-html[data-skin-wip] #communities-screen .communities-search { flex: 1 1 auto; min-width: 0; }
+html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; min-width: 0; }
 @media (min-width: 768px) {
-  html[data-skin-wip] #communities-screen .communities-top { padding: 1.75rem var(--wip-gutter) 0; }
-  html[data-skin-wip] #communities-screen .communities-search { flex: 0 1 var(--wip-search-w); }
-  html[data-skin-wip] #communities-screen .communities-top > .wip-cta { margin-inline-start: auto; }
+  html:not([data-skin]) #communities-screen .communities-top { padding: 1.75rem var(--wip-gutter) 0; }
+  html:not([data-skin]) #communities-screen .communities-search { flex: 0 1 var(--wip-search-w); }
+  html:not([data-skin]) #communities-screen .communities-top > .wip-cta { margin-inline-start: auto; }
 }
-html[data-skin-wip] #communities-search-input { border-radius: var(--wip-radius-inner); }
+html:not([data-skin]) #communities-search-input { border-radius: var(--wip-radius-inner); }
 /* A group's label is Home's: one row gap above every group after the first, the config's label tokens. */
-html[data-skin-wip] #communities-screen section ~ section > .home-area-label { padding-top: var(--wip-row-gap); }
-html[data-skin-wip][data-wip-tokens] #communities-screen .home-area-label > span:first-child {
+html:not([data-skin]) #communities-screen section ~ section > .home-area-label { padding-top: var(--wip-row-gap); }
+html:not([data-skin]) #communities-screen .home-area-label > span:first-child {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
   font-weight: var(--wip-label-weight);
@@ -7906,8 +7978,8 @@ html[data-skin-wip][data-wip-tokens] #communities-screen .home-area-label > span
    sides as Pinned projects has, and each community a very soft card inside it:
    a faint tint and no edge. The pointer on it deepens the tint a step;
    nothing moves. */
-html[data-skin-wip] #communities-screen .communities-grid { padding: var(--wip-cell-pad); gap: var(--wip-col-gap); }
-html[data-skin-wip] #communities-screen .communities-grid > :is(a, button) {
+html:not([data-skin]) #communities-screen .communities-grid { padding: var(--wip-cell-pad); gap: var(--wip-col-gap); }
+html:not([data-skin]) #communities-screen .communities-grid > :is(a, button) {
   padding: var(--wip-cell-pad) 0.25rem;
   border-radius: var(--wip-radius-inner);
   background-color: var(--wip-soft-bg);
@@ -7915,39 +7987,39 @@ html[data-skin-wip] #communities-screen .communities-grid > :is(a, button) {
 }
 /* On a phone four stand across: the side padding is given to the name, and two lines are held for it so a row's cells are one height. */
 @media (max-width: 639.98px) {
-  html[data-skin-wip] #communities-screen .communities-grid > :is(a, button) { padding-inline: 2px; }
-  html[data-skin-wip] #communities-screen .communities-grid > :is(a, button) > .line-clamp-2 { min-height: 2.4em; }
+  html:not([data-skin]) #communities-screen .communities-grid > :is(a, button) { padding-inline: 2px; }
+  html:not([data-skin]) #communities-screen .communities-grid > :is(a, button) > .line-clamp-2 { min-height: 2.4em; }
 }
 @media (hover: hover) {
-  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) .communities-grid > :is(a, button):hover { background-color: var(--wip-soft-bg-on); }
+  html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) .communities-grid > :is(a, button):hover { background-color: var(--wip-soft-bg-on); }
 }
 /* A community's icon is the look's: a rounded square on the tile colour with one soft shadow, and no ring of its own colour. */
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > span:first-child > span:first-child {
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > span:first-child > span:first-child {
   padding: 0;
   border-radius: var(--wip-icon-radius);
   box-shadow: none;
 }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile {
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile {
   border-color: transparent;
   border-radius: var(--wip-icon-radius);
   background-color: var(--wip-icon-tile);
   box-shadow: inset 0 0 0 1px var(--wip-icon-edge), var(--wip-icon-shadow);
 }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > .line-clamp-2 {
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > .line-clamp-2 {
   font-size: var(--wip-title-size-mid);
   line-height: 1.25;
   font-weight: var(--wip-title-weight);
   color: var(--wip-ink);
 }
 @media (max-width: 639.98px) {
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > .line-clamp-2 { font-size: var(--wip-title-size-phone); line-height: 1.2; }
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > .line-clamp-2 { font-size: var(--wip-title-size-phone); line-height: 1.2; }
 }
 /* Home's sheen: one band of light crosses the icon when the pointer comes
    over its card. Only where a pointer hovers, never while the cards are
    being arranged, and not with reduced motion. */
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile { position: relative; }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile { position: relative; }
 @media (hover: hover) {
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile::after {
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after {
     content: "";
     position: absolute;
     inset: -20% auto -20% 0;
@@ -7956,17 +8028,17 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community] 
     background: linear-gradient(105deg, transparent 0%, var(--wip-sheen) 50%, transparent 100%);
     transform: translateX(-180%) skewX(-12deg);
   }
-  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) .communities-grid [data-home-community]:hover .app-icon-tile::after {
+  html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) .communities-grid [data-home-community]:hover .app-icon-tile::after {
     transform: translateX(280%) skewX(-12deg);
     transition: transform var(--wip-sheen-time) ease-out;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
 /* The votes waiting there: the look's count, ringed in the card's own colour. */
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community-votes] {
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community-votes] {
   background-color: var(--wip-count-bg);
   color: var(--wip-count-ink);
   box-shadow: 0 0 0 2px var(--wip-card-bg);
@@ -7976,11 +8048,11 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
    what it says it is, then, under a hairline, this week: the faces of a few who were there with
    how many, how many changes went live, or that it was quiet. */
 @media (min-width: 1024px) {
-  html[data-skin-wip] #communities-screen .communities-grid {
+  html:not([data-skin]) #communities-screen .communities-grid {
     grid-template-columns: repeat(var(--wip-cols), minmax(0, 1fr));
     gap: var(--wip-col-gap);
   }
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] {
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     grid-template-rows: auto auto auto 1fr;
@@ -7990,21 +8062,21 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
     padding: var(--wip-cell-pad);
     text-align: start;
   }
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile {
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile {
     /* Home's own icon: its size, its corner and its glyph (asked 19 Nov 2026). */
     width: var(--wip-icon);
     height: var(--wip-icon);
     font-size: var(--wip-icon-glyph);
   }
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > .line-clamp-2 {
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > .line-clamp-2 {
     grid-area: 1 / 2;
     align-self: end;
     font-size: var(--wip-title-size);
   }
   /* With no line of facts yet, the name stands beside the icon's middle. */
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community-meta] {
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community-meta] {
     display: block;
     grid-area: 2 / 2;
     min-width: 0;
@@ -8017,7 +8089,7 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
     color: var(--wip-ink-muted);
   }
   /* What it is, in its own words, under the head: two lines at most (asked 19 Nov 2026). */
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community-desc] {
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community-desc] {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -8031,7 +8103,7 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
     color: var(--wip-ink-soft);
     overflow-wrap: anywhere;
   }
-  html[data-skin-wip] #communities-screen .communities-grid [data-home-community-detail] {
+  html:not([data-skin]) #communities-screen .communities-grid [data-home-community-detail] {
     display: flex;
     flex-direction: column;
     gap: 0.375rem;
@@ -8042,7 +8114,7 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
     padding-top: var(--wip-cell-pad);
     border-top: 1px solid var(--wip-soft-line);
   }
-  html[data-skin-wip] #communities-screen .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
+  html:not([data-skin]) #communities-screen .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -8053,22 +8125,22 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
     font-variant-numeric: tabular-nums;
     color: var(--wip-ink-soft);
   }
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-words {
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-words {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-glyph {
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-glyph {
     flex: none;
     width: var(--wip-face);
     height: 0.9375rem;
     color: var(--wip-ink-muted);
   }
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-quiet { color: var(--wip-ink-muted); }
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-news,
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-news > .home-community-glyph { font-weight: 600; color: var(--wip-mark-2-ink); }
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-people .dev-ws-hero-face {
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-quiet { color: var(--wip-ink-muted); }
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-news,
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-news > .home-community-glyph { font-weight: 600; color: var(--wip-mark-2-ink); }
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-people .dev-ws-hero-face {
     width: var(--wip-face);
     height: var(--wip-face);
     margin-inline-end: -0.375rem;
@@ -8076,20 +8148,20 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community-v
     font-size: 0.625rem;
     box-shadow: 0 0 0 2px var(--wip-card-bg);
   }
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
-  html[data-skin-wip] #communities-screen .communities-grid .home-community-people .dev-ws-hero-face > img { width: 100%; height: 100%; object-fit: cover; }
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
+  html:not([data-skin]) #communities-screen .communities-grid .home-community-people .dev-ws-hero-face > img { width: 100%; height: 100%; object-fit: cover; }
 }
 /* JOINED IS A LIST (19 Nov 2026), as Home's Recent threads are. One
    community a line: its logo small, its name, how many members (or what it
    says it is, with the members at the row's end) and this week at the end.
    A hairline between two rows, two columns from 1024px and three from
    1280px, and no card or tint of its own. */
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid {
   grid-template-columns: minmax(0, 1fr);
   gap: 0 var(--wip-row-gap);
   padding: 0.25rem var(--wip-card-pad);
 }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid > [data-home-community] {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid > [data-home-community] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
@@ -8103,15 +8175,15 @@ html[data-skin-wip] #communities-body #communities-joined-section .communities-g
   box-shadow: inset 0 -1px 0 var(--wip-soft-line);
   text-align: start;
 }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child > span:first-child { border-radius: var(--wip-item-icon-radius); }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] .app-icon-tile {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child > span:first-child { border-radius: var(--wip-item-icon-radius); }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] .app-icon-tile {
   width: var(--wip-item-icon);
   height: var(--wip-item-icon);
   border-radius: var(--wip-item-icon-radius);
   font-size: 1.125rem;
 }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] > .line-clamp-2 {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] > .line-clamp-2 {
   grid-area: 1 / 2;
   align-self: end;
   min-height: 0;
@@ -8120,9 +8192,9 @@ html[data-skin-wip] #communities-body #communities-joined-section .communities-g
   font-size: var(--wip-title-size);
   line-height: 1.25;
 }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> :is([data-home-community-meta], [data-home-community-desc]))) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community-desc],
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community-meta] {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> :is([data-home-community-meta], [data-home-community-desc]))) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community-desc],
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community-meta] {
   display: block;
   grid-area: 2 / 2;
   align-self: start;
@@ -8136,8 +8208,8 @@ html[data-skin-wip] #communities-body #communities-joined-section .communities-g
   color: var(--wip-ink-muted);
 }
 /* With a sentence of its own, the members go to the row's end, over the week. */
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community]:has(> [data-home-community-desc]) > [data-home-community-meta] { grid-area: 1 / 3; align-self: end; text-align: end; }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community-detail] {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community]:has(> [data-home-community-desc]) > [data-home-community-meta] { grid-area: 1 / 3; align-self: end; text-align: end; }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community-detail] {
   display: flex;
   flex-direction: row;
   justify-content: flex-end;
@@ -8148,8 +8220,8 @@ html[data-skin-wip] #communities-body #communities-joined-section .communities-g
   padding: 0;
   border: 0;
 }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> [data-home-community-desc])) > [data-home-community-detail] { grid-row: 1 / span 2; align-self: center; }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> [data-home-community-desc])) > [data-home-community-detail] { grid-row: 1 / span 2; align-self: center; }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
   display: flex;
   align-items: center;
   gap: 0.375rem;
@@ -8159,9 +8231,9 @@ html[data-skin-wip] #communities-body #communities-joined-section .communities-g
   white-space: nowrap;
   color: var(--wip-ink-muted);
 }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-news { font-weight: 600; color: var(--wip-mark-2-ink); }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-glyph { flex: none; width: 0.9375rem; height: 0.9375rem; }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face {
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-news { font-weight: 600; color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-glyph { flex: none; width: 0.9375rem; height: 0.9375rem; }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face {
   width: var(--wip-face);
   height: var(--wip-face);
   margin-inline-end: -0.375rem;
@@ -8169,22 +8241,22 @@ html[data-skin-wip] #communities-body #communities-joined-section .communities-g
   font-size: 0.625rem;
   box-shadow: 0 0 0 2px var(--wip-card-bg);
 }
-html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
+html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
 @media (hover: hover) {
-  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) #communities-joined-section .communities-grid > [data-home-community]:hover { background-color: var(--wip-soft-bg); }
+  html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) #communities-joined-section .communities-grid > [data-home-community]:hover { background-color: var(--wip-soft-bg); }
 }
 @media (min-width: 1024px) {
-  html[data-skin-wip] #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  html:not([data-skin]) #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* PINNED IS A SHELF (19 Nov 2026): one row of cards that moves sideways,
    each a card on the page with the cell described above inside it (the
    logo, the name, the members, what it says it is and this week). So the
    few you chose are large and the many you are in are a list. */
-html[data-skin-wip] #communities-body #communities-pinned-section > .wip-card {
+html:not([data-skin]) #communities-body #communities-pinned-section > .wip-card {
   background-color: transparent;
   box-shadow: none;
 }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid {
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid {
   display: flex;
   gap: var(--wip-card-gap);
   padding: 0 0 var(--wip-cell-pad);
@@ -8193,7 +8265,7 @@ html[data-skin-wip] #communities-body #communities-pinned-section .communities-g
   scroll-snap-type: x proximity;
   scrollbar-width: thin;
 }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > :is(a, button) {
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > :is(a, button) {
   flex: 0 0 var(--wip-shelf-card);
   scroll-snap-align: start;
   padding: var(--wip-card-pad);
@@ -8207,13 +8279,13 @@ html[data-skin-wip] #communities-body #communities-pinned-section .communities-g
    public/brand/bg, whose README says where they came from), each
    community its own. The icon stands half on the band, and the words are on
    the card's own ground under it, so nothing is read over a picture. */
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community] {
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community] {
   position: relative;
   isolation: isolate;
   overflow: hidden;
   padding-top: calc(var(--wip-scene-band) + var(--wip-cell-pad));
 }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community]::before {
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community]::before {
   content: "";
   position: absolute;
   inset: 0 0 auto;
@@ -8223,23 +8295,23 @@ html[data-skin-wip] #communities-body #communities-pinned-section .communities-g
   background: var(--wip-scene-1) center / cover no-repeat;
 }
 /* Which one is the community's own (pinned-communities.tsx `communityScene`), three on from its logo's, so the logo stands out on it and a reordered shelf keeps every card's picture. */
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="1"]::before { background-image: var(--wip-scene-4); }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="2"]::before { background-image: var(--wip-scene-5); }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="3"]::before { background-image: var(--wip-scene-6); }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="4"]::before { background-image: var(--wip-scene-1); }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="5"]::before { background-image: var(--wip-scene-2); }
-html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="6"]::before { background-image: var(--wip-scene-3); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="1"]::before { background-image: var(--wip-scene-4); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="2"]::before { background-image: var(--wip-scene-5); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="3"]::before { background-image: var(--wip-scene-6); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="4"]::before { background-image: var(--wip-scene-1); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="5"]::before { background-image: var(--wip-scene-2); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="6"]::before { background-image: var(--wip-scene-3); }
 @media (min-width: 1024px) {
-  html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community] > span:first-child { margin-top: var(--wip-scene-icon-rise); }
+  html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community] > span:first-child { margin-top: var(--wip-scene-icon-rise); }
 }
 @media (max-width: 1023.98px) {
-  html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > :is(a, button) { flex-basis: var(--wip-shelf-card-narrow); }
+  html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > :is(a, button) { flex-basis: var(--wip-shelf-card-narrow); }
 }
 @media (hover: hover) {
-  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) #communities-pinned-section .communities-grid > :is(a, button):hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
+  html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) #communities-pinned-section .communities-grid > :is(a, button):hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
 }
 @media (min-width: 1280px) {
-  html[data-skin-wip] #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html:not([data-skin]) #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 /* A COMMUNITY'S OWN LOGO, AND ITS APPS (asked 19 Nov 2026). A community is
    not its app: its face on this page is a logo of its own (a square of one
@@ -8247,23 +8319,32 @@ html[data-skin-wip] #communities-body #communities-pinned-section .communities-g
    for the same community; pinned-communities.tsx `CommunityLogo`),
    and the app's icon is one small icon in a row of the community's apps,
    with two places after it for the apps to come. */
-/* SOFT (asked 19 Nov 2026): the glow in its pale tints, spread wide, with a faint edge and no lift of its own. */
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo {
-  border-color: transparent;
-  background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-1));
-  box-shadow: inset 0 0 0 1px var(--wip-soft-line);
+/* THE EMBLEMS (asked 20 Nov 2026): the logo is one of ten drawings in the kit's four colours, on the card's own quiet
+   ground; the soft glow it replaced is gone. Only these two looks draw a community's own logo (the page's `community`). */
+html:not([data-skin]) {
+  --wip-emblem-1: #ffee6f;
+  --wip-emblem-2: #3090e1;
+  --wip-emblem-3: #a9cf97;
+  --wip-emblem-4: #ff9c8a;
+  --wip-emblem-ground: #fffeea;
 }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="2"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-2)); }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="3"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-3)); }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="4"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-4)); }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app,
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot {
+html:not([data-skin]).dark { --wip-emblem-ground: #1d1e1a; }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo {
+  border-color: transparent;
+  background-color: var(--wip-emblem-ground);
+  background-image: none;
+  box-shadow: inset 0 0 0 1px var(--wip-soft-line);
+  overflow: hidden;
+}
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo > .home-community-emblem { display: block; width: 100%; height: 100%; }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app,
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot {
   flex: none;
   width: var(--wip-app-chip);
   height: var(--wip-app-chip);
   border-radius: var(--wip-app-chip-radius);
 }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app {
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -8272,13 +8353,13 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community] 
   box-shadow: inset 0 0 0 1px var(--wip-icon-edge);
 }
 /* The places for the apps to come are small squares of the logo's glows (asked 19 Nov 2026). */
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-1)); }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="2"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-2)); }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="3"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-3)); }
-html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="4"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-4)); }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-1)); }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="2"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-2)); }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="3"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-3)); }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="4"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-4)); }
 /* Where a community is a card (from 1024px), its apps end the card's foot, on this week's line. */
 @media (min-width: 1024px) {
-  html[data-skin-wip] #communities-screen #communities-pinned-section .communities-grid [data-home-community] > .home-community-apps {
+  html:not([data-skin]) #communities-screen #communities-pinned-section .communities-grid [data-home-community] > .home-community-apps {
     display: flex;
     align-items: center;
     gap: 0.375rem;
@@ -8291,23 +8372,23 @@ html[data-skin-wip] #communities-screen .communities-grid [data-home-community] 
    19 Nov 2026): the same section (features/home/communities-to-join.tsx)
    in the same order Home gives it, Featured first as a row of its own and
    then the list under its label and one filter line. */
-html[data-skin-wip] #communities-all-section { display: flex; flex-direction: column; }
-html[data-skin-wip] #communities-all-section > [data-home-join-featured] {
+html:not([data-skin]) #communities-all-section { display: flex; flex-direction: column; }
+html:not([data-skin]) #communities-all-section > [data-home-join-featured] {
   order: -1;
   padding-top: var(--wip-row-gap);
   padding-bottom: 0;
 }
-html[data-skin-wip] #communities-screen #communities-all-section > .home-area-label { padding-top: var(--wip-row-gap); }
-html[data-skin-wip] #communities-all-section select { border-radius: var(--wip-radius-inner); }
-html[data-skin-wip] #communities-all-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
-html[data-skin-wip] #communities-all-section [data-guest-card-cover][style]::before {
+html:not([data-skin]) #communities-screen #communities-all-section > .home-area-label { padding-top: var(--wip-row-gap); }
+html:not([data-skin]) #communities-all-section select { border-radius: var(--wip-radius-inner); }
+html:not([data-skin]) #communities-all-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
+html:not([data-skin]) #communities-all-section [data-guest-card-cover][style]::before {
   content: "";
   position: absolute;
   inset: 0;
   background: inherit;
   filter: var(--wip-cover-lift);
 }
-html[data-skin-wip][data-wip-tokens] #communities-all-section [data-home-join-featured] > h3 {
+html:not([data-skin]) #communities-all-section [data-home-join-featured] > h3 {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
   font-weight: var(--wip-label-weight);
@@ -8321,14 +8402,14 @@ html[data-skin-wip][data-wip-tokens] #communities-all-section [data-home-join-fe
   text-decoration-skip-ink: none;
 }
 /* Discover is a card of the look, and what it says is in the look's inks. */
-html[data-skin-wip] #communities-screen .communities-discover {
+html:not([data-skin]) #communities-screen .communities-discover {
   padding: var(--wip-card-pad);
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
-html[data-skin-wip] #communities-screen :is(.communities-discover-text, .communities-note) { color: var(--wip-ink-muted); }
-html[data-skin-wip] #communities-screen .communities-discover-text > b {
+html:not([data-skin]) #communities-screen :is(.communities-discover-text, .communities-note) { color: var(--wip-ink-muted); }
+html:not([data-skin]) #communities-screen .communities-discover-text > b {
   font-size: var(--wip-title-size);
   font-weight: var(--wip-title-weight);
   color: var(--wip-ink);
@@ -8631,7 +8712,258 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     padding-inline-end: 0;
   }
 }
+/* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT COMMUNITIES, here too: the
+   same give-way rule the sidebar has always had (beside the Communities
+   tab's own comment, further down app.css), scoped to this block so it
+   out-ranks the lit-row rules above instead of losing to them. The tab
+   keeps `aria-current`; only its fill, ink and count step back. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] {
+    background: transparent;
+    color: var(--wip-nav-ink);
+    font-weight: 600;
+  }
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
+    color: inherit;
+  }
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] .platform-tab-votes {
+    background: var(--wip-nav-count-bg);
+    color: var(--wip-nav-count-ink);
+  }
+}
 /* END OF THE LEFT MENU AND THE TOP BAR. */
+/* ── BUTTONS (20 Nov 2026): the "Sticker" drawing of the element levels
+   sheet, option A, for the standard look and the brand kit's drawing of it
+   (html:not([data-skin])). A button is a pill with a thin dark outline and
+   a hard edge under it; a press pushes it down onto the edge. Its label is
+   in the serif.
+     Level 1, the main action: yellow.        (.bg-violet-600, the kit's .wip-cta)
+     Level 2, the secondary action: white.    (the grey, white and outlined buttons)
+     Destructive: white, in red.              (the red buttons)
+     Level 4, a button written as a link: the ink, underlined in blue.
+     Yes and No on a vote: green and salmon, of equal weight.
+   A button is known by the classes the shell already writes on it (the same
+   way the frame's looks wore them), so no component changes. The rule that
+   gives every level its shape reads them through :where(), so a level's own
+   rule always outranks it. Rows, choices,
+   the menu and the admin console are not these buttons.
+   EVERY VALUE IS A TOKEN, --wip-btn-*, declared once here in light and dark. */
+html:not([data-skin]) {
+  --wip-btn-font: 'Source Serif 4', 'Iowan Old Style', Georgia, serif;
+  --wip-btn-weight: 400;
+  --wip-btn-track: -0.01em;
+  --wip-btn-size: 16px;
+  --wip-btn-size-small: 13px;
+  --wip-btn-radius: 9999px;
+  --wip-btn-line: #121a0e;                              /* the outline, and the edge under */
+  --wip-btn-edge: 2px 2px 0 0 var(--wip-btn-line);
+  --wip-btn-edge-small: 1.5px 1.5px 0 0 var(--wip-btn-line);
+  --wip-btn-press: translate(2px, 2px);
+  --wip-btn-off: 0.45;
+  --wip-btn-focus: #3090e1;
+  --wip-btn-1-bg: #ffee6f;
+  --wip-btn-1-ink: #121a0e;
+  --wip-btn-1-line: #121a0e;
+  --wip-btn-1-hover: #fff59f;
+  --wip-btn-2-bg: #ffffff;
+  --wip-btn-2-ink: #121a0e;
+  --wip-btn-2-line: #121a0e;
+  --wip-btn-2-hover: #fcfab3;
+  --wip-btn-bad-bg: #ffffff;
+  --wip-btn-bad-ink: #a3281a;
+  --wip-btn-bad-line: #a3281a;
+  --wip-btn-bad-hover: #fde9e5;
+  --wip-btn-link-ink: #121a0e;
+  --wip-btn-link-line: #3090e1;
+  --wip-btn-link-size: 13px;
+  --wip-btn-link-weight: 500;
+}
+html:not([data-skin]).dark {
+  --wip-btn-line: rgb(255 254 234 / 0.55);
+  --wip-btn-1-line: #ffee6f;
+  --wip-btn-2-bg: #171715;
+  --wip-btn-2-ink: #fffeea;
+  --wip-btn-2-line: #fffeea;
+  --wip-btn-2-hover: #2a2812;
+  --wip-btn-bad-bg: #171715;
+  --wip-btn-bad-ink: #ff9c8a;
+  --wip-btn-bad-line: #ff9c8a;
+  --wip-btn-bad-hover: #2b1512;
+  --wip-btn-link-ink: #fffeea;
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
+  border: 1px solid var(--wip-btn-line);
+  border-radius: var(--wip-btn-radius);
+  box-shadow: var(--wip-btn-edge);
+  font-family: var(--wip-btn-font);
+  font-size: var(--wip-btn-size);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):is(.text-xs, .py-1, .py-0\.5, .py-1\.5) {
+  box-shadow: var(--wip-btn-edge-small);
+  font-size: var(--wip-btn-size-small);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):active:not(:disabled, [aria-disabled="true"]) {
+  box-shadow: none;
+  transform: var(--wip-btn-press);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):focus-visible {
+  outline: 2px solid var(--wip-btn-focus);
+  outline-offset: 2px;
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):is(:disabled, [aria-disabled="true"]) {
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: var(--wip-btn-off);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn-go, .gc-vote-btn-primary):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
+  border-color: var(--wip-btn-1-line);
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn-go, .gc-vote-btn-primary):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-1-hover); filter: none; }
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
+  border-color: var(--wip-btn-2-line);
+  background: var(--wip-btn-2-bg);
+  color: var(--wip-btn-2-ink);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full), .rf-desc-go, .rf-end-btn:not(.rf-end-btn-go)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-2-hover); }
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
+  border-color: var(--wip-btn-bad-line);
+  background: var(--wip-btn-bad-bg);
+  box-shadow: 2px 2px 0 0 var(--wip-btn-bad-line);
+  color: var(--wip-btn-bad-ink);
+}
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-bad-hover); }
+html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):active:not(:disabled, [aria-disabled="true"]) { box-shadow: none; }
+/* Level 4: an action written as text. Underlined, so it does not rest on colour alone. */
+html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])) {
+  color: var(--wip-btn-link-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--wip-btn-link-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; }
+/* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
+   is a level 1 button: its fill, its edge and its serif label at the block's
+   own weight, not a face of its own. (The ids outrank the class rules
+   above, so they are said here.) */
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top) {
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+  font-size: var(--wip-btn-size);
+  font-weight: var(--wip-btn-weight);
+  box-shadow: var(--wip-btn-edge);
+}
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):hover { background: var(--wip-btn-1-hover); transform: none; }
+html:not([data-skin]) :is(#home-new-project-top, #communities-new-top):active {
+  box-shadow: none;
+  transform: var(--wip-btn-press);
+}
+/* YES AND NO ON A VOTE: Homeroom's own pair, equal weight on purpose (neither answer is the main action). */
+html:not([data-skin]) {
+  --wip-btn-yes-bg: #a9cf97;
+  --wip-btn-no-bg: #ff9c8a;
+  --wip-btn-vote-ink: #121a0e;
+}
+html:not([data-skin]) .gc-vote-btn:is(.gc-vote-btn-yes, .gc-vote-btn-no) {
+  border: 1px solid var(--wip-btn-line);
+  border-radius: var(--wip-btn-radius);
+  box-shadow: var(--wip-btn-edge);
+  color: var(--wip-btn-vote-ink);
+  font-family: var(--wip-btn-font);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
+html:not([data-skin]) .gc-vote-btn.gc-vote-btn-yes { background: var(--wip-btn-yes-bg); }
+html:not([data-skin]) .gc-vote-btn.gc-vote-btn-no { background: var(--wip-btn-no-bg); }
+html:not([data-skin]) .gc-vote-btn:is(.gc-vote-btn-yes, .gc-vote-btn-no):active:not(:disabled) { box-shadow: none; transform: var(--wip-btn-press); }
+/* THE VOTE SCREEN (Needs you): Yes and No stay one joined control, with its
+   thumb that slides to the answer, drawn as a level 2 pill; the thumb is
+   the answer's own colour (green for Yes, salmon for No), so the pair keeps
+   its equal weight until one is chosen. Skip is a level 2 button, and Next,
+   which it becomes once you have answered, is the level 1. */
+html:not([data-skin]) .rf-pair {
+  border: 1px solid var(--wip-btn-2-line);
+  background: var(--wip-btn-2-bg);
+  box-shadow: var(--wip-btn-edge);
+}
+html:not([data-skin]) .rf-pair-btn {
+  color: var(--wip-btn-2-ink);
+  font-family: var(--wip-btn-font);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
+html:not([data-skin]) .rf-pair-btn[aria-checked="true"] { color: var(--wip-btn-vote-ink); }
+html:not([data-skin]) .rf-pair[data-rf-voted="yes"] .rf-pair-thumb { background: var(--wip-btn-yes-bg); }
+html:not([data-skin]) .rf-pair[data-rf-voted="no"] .rf-pair-thumb { background: var(--wip-btn-no-bg); }
+html:not([data-skin]) .rf-pair-div { background: var(--wip-btn-2-ink); }
+html:not([data-skin]) .rf-pair-btn:focus-visible,
+html:not([data-skin]) .rf-morph:focus-visible { outline-color: var(--wip-btn-focus); }
+html:not([data-skin]) .rf-morph {
+  border: 1px solid var(--wip-btn-2-line);
+  background: var(--wip-btn-2-bg);
+  box-shadow: var(--wip-btn-edge);
+  color: var(--wip-btn-2-ink);
+}
+html:not([data-skin]) .rf-morph .rf-morph-in {
+  font-family: var(--wip-btn-font);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
+html:not([data-skin]) .rf-morph[data-rf-morph="next"] {
+  border-color: var(--wip-btn-1-line);
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+}
+html:not([data-skin]) .rf-morph:active { box-shadow: none; scale: 1; transform: var(--wip-btn-press); }
+/* RESUME, in the strip that offers to go back into an app: the strip's one action, a small level 1 pill. */
+html:not([data-skin]) .platform-parked-pill {
+  border: 1px solid var(--wip-btn-1-line);
+  background: var(--wip-btn-1-bg);
+  box-shadow: var(--wip-btn-edge-small);
+  color: var(--wip-btn-1-ink);
+  font-family: var(--wip-btn-font);
+  font-size: var(--wip-btn-size-small);
+  font-weight: var(--wip-btn-weight);
+  letter-spacing: var(--wip-btn-track);
+}
+/* END OF BUTTONS. */
+/* ── HOME, A PIECE AT A TIME (20 Nov 2026): the standard look takes Standard
+   (WIP)'s Home in steps. The look's tokens are both looks' now (the token
+   rules at the head of the STANDARD (WIP) block are scoped to
+   html:not([data-skin])); its wallpaper stays the standard look's own.
+   The page's rules are where they were, in the STANDARD (WIP) block, with
+   html:not([data-skin]) for their scope; the components draw the kit's Home
+   for both (lib/skin.ts isKitHome). */
+/* "Show all 77 apps" and "See all", after a section's label, are a button
+   written as a link (level 4 of the element levels sheet; asked 20 Nov 2026),
+   not an outlined pill: the words in the ink, underlined in blue, then the
+   chevron. The label and the link are still one thing to press. */
+html:not([data-skin]) .wip-fold-pill {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--wip-btn-link-ink);
+  font-size: var(--wip-btn-link-size);
+  font-weight: var(--wip-btn-link-weight);
+  text-decoration: underline;
+  text-decoration-color: var(--wip-btn-link-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+/* It ends the label's row (asked 20 Nov 2026): the label at the start, the link at the end. */
+html:not([data-skin]) :is(.home-area-label > span:first-child, #home-needs-card-title):has(.wip-fold-pill),
+html:not([data-skin]) .wip-head-more:has(> .wip-fold-pill) { display: flex; flex: 1 1 auto; }
+html:not([data-skin]) .wip-head-more > .wip-fold-pill { margin-inline-start: auto; }
+html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; }
+html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none; transform: none; }
+/* END OF HOME. */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
 @keyframes wip-hero-drift {
   from { transform: rotate(0deg) scale(1); }
@@ -19124,15 +19456,19 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    by an inline gutter: below that width the gutter is 0 and their own 12px
    or 16px stands, so a narrower column is drawn exactly as it was. The Duo's
    rule below still takes the end side to its column. */
-#ai-screen .ai-main-pane .messages-layout[data-bot-threads] :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] :is(.chat-transcript, .chat-status, .chat-composer-bar):not(.dev-request *) {
   padding-inline: max(0px, calc((100% - 720px) / 2));
 }
-#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-status {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-status:not(.dev-request *) {
   padding-inline: max(16px, calc((100% - 720px) / 2));
 }
-#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-composer-bar {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-composer-bar:not(.dev-request *) {
   padding-inline: max(12px, calc((100% - 720px) / 2));
 }
+/* A private thread drawn on a public thread's page (20 Nov 2026, "A PRIVATE
+   THREAD IS A PUBLIC THREAD'S PAGE" below) is not held to that measure: it
+   fills the column as a request's page does in the same column, and its
+   cards keep the page's own 12px. */
 /* AND THE CHAT UNDER THE HEAD STOPS AT THE DUO'S COLUMN TOO (overnight
    audit B25, 2 November 2026). Run under it (1 Nov), the chat put its Send
    button, the "Live ›" row's chevron and the New divider's label inside the
@@ -19142,185 +19478,55 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    beside it: the chat's own sheet carries on under the column as padding,
    and only what is drawn in it stops, its head keeping its own clearance
    above. */
-html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-bot-threads] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-bot-threads] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar):not(.dev-request *) {
   padding-inline-end: var(--ai-edge, 0px);
 }
-/* A PRIVATE THREAD WITH THE BOT IS ONE COMPACT SHEET (19 Nov 2026, #6863).
-   The thread alone in the Homeroom bot tab's column — the DM-style thread,
-   a request's or a design's — was the chat's own shape: a small head, the
-   bot's answers as narrow centred rows and the viewer's as bubbles, and a
-   floating pill for the reply box. It is now drawn as a public thread is
-   (a request's page): three cards on the column's ground — a head with the
-   other member's round picture, the thread's name and the lock line as a
-   pill; the replies, every one the flat named row a channel draws, in their
-   own card; and the reply box, in the public thread's bar, as the card at
-   the foot. The cards are the public thread's own (`--thread-card`, its
-   edge and radius, "THE CARDS" below), at most 446px wide and centred in
-   whatever the column is drawn at, so the whole sheet is one screenful and
-   the reply box stays visible. Only the standard and brand looks draw a
-   public thread this way; a frame look keeps its own thread, so nothing
-   here applies under one. Messages, a project's channel threads and a
-   community's thread pane are untouched: only the bot tab's column marks
-   its pane `data-bot-sheet`.
+/* A PRIVATE THREAD IS A PUBLIC THREAD'S PAGE (20 Nov 2026). A thread alone
+   in the bot tab's column, under the standard and brand looks, is drawn on
+   the page a request's thread is drawn on (group-chat/thread-page.tsx), as
+   a request's page is drawn in the same column: the head card every thread
+   leads with, floating over the page and tightening as it scrolls; the
+   opening message as the first card, its foot saying where the thread went;
+   the replies as the second; the reply box at the foot, as wide as the
+   cards. One set of rules draws both: "ONE THREAD, ONE HEADER" and the
+   blocks after it name `:is(#dev-topic-thread, #ai-screen)`, and the panel's
+   rules ("THE PAGE ITSELF REACHES THE COLUMN'S EDGES", "IN A PANEL TOO")
+   name `#ai-screen .dev-private-thread` beside the panels they already name.
 
-   The 720px gutter `[data-bot-threads]` above gives the transcript, the
-   status line and the composer bar is replaced here by this sheet's own
-   width, by specificity rather than by editing that rule (tests/ai-screen
-   pins it). The scroller keeps the phone's keyboard, stick-to-bottom, the
-   unread line and earlier-page loading: it is the same element, restyled. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] {
-  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
-  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
-  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
-  --thread-card-r: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  box-sizing: border-box;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > :is(.messages-thread-header, .messages-thread-scroll, .chat-status, .messages-composer, [data-private-thread], [data-live-draft]) {
-  width: 100%;
-  max-width: 446px;
-  margin-inline: auto;
-  box-sizing: border-box;
-}
-/* THE HEAD CARD, as a public thread's head (19 Nov 2026, "THE THREAD'S HEAD
-   IS A CARD"): the round face, the small line that says the thread is
-   theirs alone, over the thread's name in two lines; then Preview, ⋯ (the
-   head's one disc) and, after a thin line, ✕ as a plain icon, level with
-   the face's middle. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header {
-  flex: 0 0 auto;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 12px 14px 16px;
-  padding-inline-end: calc(12px + var(--ai-edge, 0px));
-  border-radius: var(--thread-card-r);
-  background: var(--thread-card);
-  box-shadow: var(--thread-card-edge);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-avatar] {
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-avatar] > * { width: 48px; height: 48px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > .min-w-0.flex-1 {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 2px;
-}
-/* The lock line is the small line over the name: "Only you can see this
-   thread", where a public thread's head says its project and number. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-private-thread-sub] {
-  order: -1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 500;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-title] {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  white-space: normal;
-  font-size: 20px;
-  line-height: 26px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header .messages-thread-action {
-  width: 36px;
-  height: 36px;
-  color: var(--text-secondary);
+   It was a sheet of its own until now (#6863, 19 Nov 2026): three cards
+   held to 446px in the middle of the column, the replies scrolling inside
+   the middle one and cut flat at its top edge, and a copy of the public
+   head (#6877) whose rules drifted the same afternoon: Preview was forced
+   into the 36px round button, its ring through the word. What is left here
+   is only what a private thread has and a request's page does not. */
+/* The pane is the column's own, with no sheet or ground of its own: the bot
+   page's shows through, as it does behind a request's page in the column
+   (`.side-panel[data-thread-pill]`). */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-thread-page-host] {
   background: transparent;
-  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header .messages-thread-action:hover { background: var(--messages-surface-2); }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header .messages-thread-action svg { width: 18px; height: 18px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header :is([data-private-thread-menu] > .messages-thread-action, .messages-thread-preview) { box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is(.messages-thread-action, [data-private-thread-menu]) { margin-top: 6px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is([data-private-thread-menu], .messages-thread-preview) + [data-reply-close] {
-  position: relative;
-  margin-inline-start: 10px;
-  overflow: visible;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is([data-private-thread-menu], .messages-thread-preview) + [data-reply-close]::before {
-  content: "";
-  position: absolute;
-  top: 8px;
-  inset-inline-start: -10px;
-  width: 1px;
-  height: 20px;
-  background: var(--app-sheet-line);
-}
-/* A phone's drawer: the same head, a size down, after its back arrow. */
-@media (max-width: 767px) {
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-avatar] > * { width: 40px; height: 40px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-title] { font-size: 18px; line-height: 24px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header > :is(.messages-thread-action, [data-private-thread-menu]) { margin-top: 2px; }
-}
-/* THE DISCUSSION CARD: the replies scroll inside it, drawn as a public
-   thread's rows — face, name and time on the left whoever said it, the
-   words beneath, pictures as thumbnails. It takes the room between the two
-   other cards and never grows the sheet past the screen. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding-inline: 0;
-  padding-block: 6px 8px;
-  border-radius: var(--thread-card-r);
-  background: var(--thread-card);
-  box-shadow: var(--thread-card-edge);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message {
-  padding: 8px 16px;
-  gap: 12px;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message-self .messages-message-head {
-  justify-content: flex-start;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message-image {
-  max-width: min(240px, 100%);
-}
-/* THE REPLY CARD: the public thread's bar and box, at the sheet's foot, always
-   visible — the replies above scroll, this does not. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer {
-  flex: 0 0 auto;
-  padding-inline: 0;
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card,
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card:focus-within {
-  border-radius: var(--thread-card-r);
-  background: var(--thread-card);
-  box-shadow: var(--thread-card-edge);
-}
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card:focus-within {
-  box-shadow: var(--thread-card-edge), 0 0 0 2px var(--accent);
-}
-/* "Jump to latest" floats over the foot: it hangs between the discussion
-   card and the status line, where the sheet's gaps would otherwise count it
-   as a row of its own. */
-html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > [data-transcript-overlay] {
-  margin-block: -6px;
-}
-/* A phone's drawer draws the same sheet, full width less its 12px margins. */
-@media (max-width: 767px) {
-  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] {
-    gap: 10px;
-    padding: 8px 12px 12px;
-  }
-}
+/* The head's tile is the other member's round face. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread:has(.dev-thread-card) .dev-request-bar .dev-thread-bar-tile.dev-thread-bar-face { border-radius: 999px; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread .dev-thread-bar-tile.dev-thread-bar-face > * { width: 100%; height: 100%; border-radius: inherit; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread .dev-thread-bar-lock { display: inline-block; width: 12px; height: 12px; margin-inline-end: 4px; vertical-align: -1px; }
+/* The opening card holds the message itself: its words and pictures, as a
+   request's card holds the request's, with neither face nor name (its
+   author row gives way, as the card's does: `.dev-thread-card
+   .messages-message-head`). */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] .messages-message { padding: 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] .messages-message > :first-child:not(.min-w-0) { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] .messages-message-image { max-width: min(240px, 100%); }
+/* The replies card's rows are a public thread's: face, name and time on the
+   left whoever said it, the words beneath, pictures as thumbnails. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message { padding: 8px 16px; gap: 12px; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message-self .messages-message-head { justify-content: flex-start; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message-image { max-width: min(240px, 100%); }
+/* Beside iPhone Duo's column of system chrome (`--ai-edge`) the page stops
+   short of it, as the chat it replaced did (B25 below): its ground is the
+   column's, so nothing is left there but that ground. */
+html[data-side-strip]:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-reply-pane > .dev-private-thread { padding-inline-end: var(--ai-edge, 0px); }
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge
@@ -19387,12 +19593,16 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) #dev-topic-thread {
   padding-top: 0;
 }
-:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request {
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request,
+#ai-screen .dev-private-thread {
+  /* The page's gutter, which its head, its cards and its reply box keep. */
+  --thread-gutter: 12px;
   max-width: none;
   margin-inline: 0;
   padding-inline: 0;
 }
-:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request-sheet {
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request-sheet,
+#ai-screen .dev-private-thread > .dev-request-sheet {
   background: transparent;
   border: 0;
   border-start-start-radius: 0;
@@ -19401,8 +19611,9 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll) {
-  padding-inline: 12px;
+:is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) :is(.dev-request-bar, .dev-request-scroll),
+#ai-screen .dev-private-thread > .dev-request-sheet > :is(.dev-request-bar, .dev-request-scroll) {
+  padding-inline: var(--thread-gutter);
 }
 /* THE COLUMN HAS MAIN CHAT'S SURFACE, #6432. The 30 Oct rules above took the
    page's own sheets away so it would lie flat in the column, but nothing
@@ -30323,16 +30534,16 @@ html:is(:not([data-skin]), [data-skin="brand"]) .dev-request[data-thread-head-ti
 /* In a panel the head starts on the column's own top line, level with the
    first card of the list beside it (Homeroom bot's own head card, the
    Workshop's list). */
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body) .dev-request:has(.dev-thread-card) { --pill-top: 0px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body) .dev-request:has(.dev-thread-card),
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread:has(.dev-thread-card) { --pill-top: 0px; }
 html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-sheet { position: relative; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar {
   display: block !important;
   position: absolute;
   top: 0;
   inset-inline: 0;
   z-index: 6;
   height: auto;
-  margin-inline-end: 0 !important;
   padding-block: var(--pill-top) 0;
   box-shadow: none;
   animation: none;
@@ -30350,7 +30561,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
    (`data-thread-head-tight`, thread-head-fit.ts), and the cards go up
    behind it. A private thread with the bot draws the same head (the
    "PRIVATE THREAD" block's head card). */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
   pointer-events: auto;
   display: flex;
   align-items: flex-start;
@@ -30365,25 +30576,25 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
 /* The small line, then the title: one grid, so the nodes keep their order
    (the project and topic after the title, which the checks select on) and
    the kicker and its status pill are cells of the line, not a row. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text {
   display: grid;
   grid-template-columns: minmax(0, max-content) max-content max-content minmax(0, 1fr);
   align-items: center;
   row-gap: 4px;
   padding-top: 2px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > div:has(> .messages-thread-kicker) { display: contents; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-sub { grid-row: 1; grid-column: 1; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text .messages-thread-kicker { grid-row: 1; grid-column: 2; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text :is([data-change-status], [data-request-status]) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > div:has(> .messages-thread-kicker) { display: contents; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-sub { grid-row: 1; grid-column: 1; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text .messages-thread-kicker { grid-row: 1; grid-column: 2; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is([data-change-status], [data-request-status]) {
   display: inline-flex;
   grid-row: 1;
   grid-column: 3;
   margin-inline-start: 8px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name { grid-row: 2; grid-column: 1 / -1; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { grid-row: 2; grid-column: 1 / -1; }
 /* The small line's words: the project and the topic, then the number. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text :is(.messages-thread-kicker, .messages-thread-sub) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is(.messages-thread-kicker, .messages-thread-sub) {
   display: block;
   position: static;
   width: auto;
@@ -30401,13 +30612,13 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text:has(> .messages-thread-sub) .messages-thread-kicker::before {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> .messages-thread-sub) .messages-thread-kicker::before {
   content: "·";
   margin-inline: 6px;
 }
 /* The title. A request's is the node itself; a change's is the run inside
    its Details button, with the author's pencil beside it. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name {
   min-width: 0;
   margin: 0;
   font-size: 20px;
@@ -30418,19 +30629,19 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   white-space: normal;
   text-overflow: clip;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name:not(.dev-request-bar-title) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name:not(.dev-request-bar-title) {
   display: flex;
   align-items: flex-start;
   gap: 6px;
   overflow: visible;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .messages-thread-name-link {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .messages-thread-name-link {
   display: block;
   min-width: 0;
   max-width: 100%;
@@ -30438,10 +30649,10 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   white-space: normal;
   text-align: start;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { flex: none; margin-top: 3px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { flex: none; margin-top: 3px; }
 /* ⋯ is the head's one disc, level with the tile's middle; in a panel ↗
    and × follow it as plain icons, after a thin line. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action {
   flex: none;
   width: 36px;
   height: 36px;
@@ -30451,13 +30662,27 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
   background: transparent;
   box-shadow: none;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action[data-card-menu] { box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits) { margin-top: 6px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar :is(.messages-thread-action[data-card-menu], [data-private-thread-menu] > .messages-thread-action, .messages-thread-action.dev-thread-head-text) { box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+/* A word in the head (a design thread's Preview) is a pill sized to it,
+   ringed as ⋯ is: the round button's 36px would put its ring through the
+   word (20 Nov 2026). */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action.dev-thread-head-text {
+  width: auto;
+  padding-inline: 14px;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > [data-private-thread-menu] { flex: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 6px; }
 .dev-thread-exits { display: none; align-items: center; gap: 2px; flex: none; }
 .dev-thread-exit svg { width: 18px; height: 18px; }
-:is(.dev-ws-side, html.in-side-panel.side-panel-beside-ai) .dev-thread-exits { display: inline-flex; }
-.messages-thread-header > [data-card-menu] + .dev-thread-exits::before {
+:is(.dev-ws-side, html.in-side-panel.side-panel-beside-ai) .dev-thread-exits,
+#ai-screen .dev-private-thread .dev-thread-exits { display: inline-flex; }
+.messages-thread-header > :is([data-card-menu], [data-private-thread-menu]) + .dev-thread-exits::before {
   content: "";
   width: 1px;
   height: 20px;
@@ -30466,32 +30691,51 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
 }
 /* SCROLLED, the head tightens: a smaller tile, the title on one line over
    the small line, and a shadow under it now that the cards go up behind. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
   align-items: center;
   padding: 10px 12px 10px 14px;
   box-shadow: var(--thread-card-edge, inset 0 0 0 1px var(--app-sheet-line)), 0 10px 24px -14px rgba(17, 24, 39, 0.22);
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-thread-bar-tile { width: 36px; height: 36px; border-radius: 11px; font-size: 16px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text { row-gap: 0; padding-top: 0; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-thread-bar-tile { width: 36px; height: 36px; border-radius: 11px; font-size: 16px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text { row-gap: 0; padding-top: 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name {
   grid-row: 1;
   font-size: 15px;
   line-height: 20px;
   font-weight: 650;
   letter-spacing: 0;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .dev-thread-bar-text :is(.messages-thread-sub, .messages-thread-kicker, [data-change-status], [data-request-status]) { grid-row: 2; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) { -webkit-line-clamp: 1; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) #gc-thread-bar .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { margin-top: 1px; }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits) { margin-top: 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is(.messages-thread-sub, .messages-thread-kicker, [data-change-status], [data-request-status]) { grid-row: 2; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) :is(.messages-thread-name.dev-request-bar-title, .dev-thread-bar-title) { -webkit-line-clamp: 1; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .messages-thread-name > :is(.messages-thread-name-link, .dev-thread-bar-title) + button { margin-top: 1px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 0; }
 /* A phone's head: the same card, a size down. */
 @media (max-width: 767px) {
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-thread-bar-tile { width: 40px; height: 40px; border-radius: 12px; font-size: 18px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) #gc-thread-bar .dev-thread-bar-text > .messages-thread-name { font-size: 18px; line-height: 24px; }
-  html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits) { margin-top: 2px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-thread-bar-tile { width: 40px; height: 40px; border-radius: 12px; font-size: 18px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { font-size: 18px; line-height: 24px; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 2px; }
   html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card):not([data-thread-head-tight]) { --head-mid: 32px; }
 }
+/* THE HEAD EASES (20 Nov 2026). It changed size in one frame: the card
+   dropped 20px of height, the tile and the title shrank and the small line
+   jumped from over the title to under it, all at once, and back again on
+   the way up. The card's padding and shadow, the tile, ⋯ and the way back
+   now ease between the two sizes over 180ms, as the vote's row does when it
+   folds in; the words come up into their new place (thread-head-fit.ts),
+   since two layouts have nothing in between to ease through. */
+:is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-thread-bar-tile { transition: width 180ms ease, height 180ms ease, border-radius 180ms ease, font-size 180ms ease; }
+:is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { transition: margin-top 180ms ease; }
+.dev-request:has(.dev-thread-card) > .dev-request-back { transition: top 180ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-thread-bar-tile,
+  :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]),
+  .dev-request:has(.dev-thread-card) > .dev-request-back { transition: none; }
+}
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-thread-bar-tile,
+:where(html[data-motion="reduce"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]),
+:where(html[data-motion="reduce"]) .dev-request:has(.dev-thread-card) > .dev-request-back { transition: none; }
 /* The card under the head starts at the request's own words: the head says
    its title. The title is drawn only while it is being edited, since the
    editor is in its place (dev-card.tsx TitleContent). */
@@ -30502,13 +30746,13 @@ html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-car
 
 /* The scroller starts under the pill, and everything in it that stays put
    (the timeline beside the card on a wide page) stays put under it too. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-scroll {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-scroll {
   padding-top: var(--pill-under) !important;
   scroll-padding-top: var(--pill-under);
 }
 /* The scroller's scroll-padding already holds the timeline under the pill
    (a sticky box is placed inside it), so its own `top: 0` stays. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
 
 /* THE VOTE FOLDS INTO THE HEADER (18 Nov 2026, thread-card.tsx `FootFloat`).
    While a change waits on the reader's vote and its foot has gone up behind
@@ -30522,18 +30766,18 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
    its shadow while the row is there, so no shadow falls across the card;
    the row's shadow is the card's. 19 Nov 2026: at the cards' 20px corners,
    the head's own, where they were the capsule's round ends. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
   position: relative;
   z-index: 1;
   /* The head's corners, as a length they can ease from. */
   border-radius: 20px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar:has(> .dev-thread-float) .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar:has(> .dev-thread-float) .messages-thread-header {
   border-end-start-radius: 0;
   border-end-end-radius: 0;
   box-shadow: inset 0 0 0 1px var(--app-sheet-line);
 }
-.dev-request-bar > .messages-thread-header { transition: border-radius 180ms ease; }
+.dev-request-bar > .messages-thread-header { transition: border-radius 180ms ease, padding 180ms ease, box-shadow 180ms ease; }
 .dev-thread-float {
   pointer-events: auto;
   position: relative;
@@ -30561,25 +30805,17 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
 }
 .dev-thread-float-acts .dev-vote-caret { display: none; }
 @keyframes dev-thread-float-in { from { opacity: 0; transform: translateY(-12px); } }
-/* On a wide page "How it got here" stands beside the card under the header,
-   so while the row is folded in, the timeline steps down by the row's height
-   and eases back when it goes; the replies beside it do not move. */
-.dev-request-rail { transition: top 180ms ease, max-height 180ms ease; }
-@media (min-width: 1180px) {
-  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)):has(.dev-thread-float) .dev-request-rail {
-    top: 64px;
-    max-height: calc(100% - var(--pill-under) - 64px) !important;
-  }
-}
+/* On a wide page the head, and so the row folded into it, ends where the
+   card does: "How it got here" beside them stays where it is when the row
+   comes or goes (it stepped down by the row's height while the head ran on
+   over it, until 20 Nov 2026). */
 @media (prefers-reduced-motion: reduce) {
   .dev-thread-float { animation: none; }
   .dev-request-bar > .messages-thread-header { transition: none; }
-  .dev-request-rail { transition: none; }
 }
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .dev-thread-float { animation: none; }
 :where(html[data-motion="reduce"]) .dev-request-bar > .messages-thread-header { transition: none; }
-:where(html[data-motion="reduce"]) .dev-request-rail { transition: none; }
 @media (max-width: 520px) {
   .dev-thread-float { gap: 8px; padding-inline-start: 16px; }
   .dev-thread-float-acts { gap: 6px; }
@@ -30618,7 +30854,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-car
 }
 html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-back .dev-topic-back-icon { width: 18px; height: 18px; margin: 0; }
 html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-backs > .dev-topic-back ~ .dev-topic-back { display: none; }
-html:is(:not([data-skin]), [data-skin="brand"]):not(.side-panel-beside-ai) #dev-topic-thread .dev-request:has(.dev-thread-card):has(> .dev-request-back:not(:empty)) .dev-request-bar .messages-thread-header {
+html:is(:not([data-skin]), [data-skin="brand"]):not(.side-panel-beside-ai) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card):has(> .dev-request-back:not(:empty)) .dev-request-bar .messages-thread-header {
   padding-inline-start: 56px;
 }
 
@@ -30741,29 +30977,63 @@ body:has(.dev-ws-side) :is(#dev-main-pause-notice, #dev-release-stall-notice, #d
    below), so the cards reach into the round of its upper corners. They
    used to stop on a line at its top edge, with the page showing in both
    corners, as if they ended short of it. The second layer of the mask
-   shows that strip only across the card: the bar's 12px each side, and on
-   a wide page the timeline's column at its end (`--composer-end`), where
-   no card covers it. A card wider than the reply box (the full page's) is
-   still cut at the box's top edge beside it. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-scroll {
+   shows that strip across the card's column: the whole scroller, less the
+   timeline's column on a wide page (`--composer-end`), where no card
+   covers it.
+
+   Both cuts are the card column's alone. On a wide page the timeline
+   stands beside the head, level with its top (20 Nov 2026, the wide
+   block's "THE TIMELINE STARTS ON THE HEAD'S TOP LINE"), so the third
+   layer shows its column whole.
+
+   THE REPLY BOX IS AS WIDE AS THE CARDS (20 Nov 2026). The bar kept the
+   chat foot's 12px each side, so the box stood 12px inside the cards over
+   it, and the strip above stopped 12px short of their edges: a card going
+   under it was cut flat on the box's top line, its corners sticking out
+   past the box on both sides. The cards here run the scroller's full
+   width, so the bar does too, as it already does in the frame's looks.
+   In a panel the page keeps a 12px gutter (`--thread-gutter`, "THE PAGE
+   ITSELF REACHES THE COLUMN'S EDGES"), and the bar keeps the same. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-sheet > .messages-composer { padding-inline: var(--thread-gutter, 0px); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll) {
   --pill-cut: calc(var(--pill-top) + 24px);
-  -webkit-mask-image: linear-gradient(to bottom, transparent var(--pill-cut), #000 var(--pill-cut)), linear-gradient(#000, #000);
-  mask-image: linear-gradient(to bottom, transparent var(--pill-cut), #000 var(--pill-cut)), linear-gradient(#000, #000);
-  -webkit-mask-size: 100% calc(100% - var(--composer-tuck, 0px)), calc(100% - 24px - var(--composer-end, 0px)) var(--composer-tuck, 0px);
-  mask-size: 100% calc(100% - var(--composer-tuck, 0px)), calc(100% - 24px - var(--composer-end, 0px)) var(--composer-tuck, 0px);
-  -webkit-mask-position: 0 0, calc(12px + var(--composer-end, 0px) * (1 - var(--rtl-sign)) / 2) 100%;
-  mask-position: 0 0, calc(12px + var(--composer-end, 0px) * (1 - var(--rtl-sign)) / 2) 100%;
+  /* Where the card column starts, from the scroller's left edge: the
+     timeline's column is at its end, which is the left in a right-to-left
+     page. */
+  --cards-x: calc(var(--composer-end, 0px) * (1 - var(--rtl-sign)) / 2);
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--pill-cut), #000 var(--pill-cut)), linear-gradient(#000, #000), linear-gradient(#000, #000);
+  mask-image: linear-gradient(to bottom, transparent var(--pill-cut), #000 var(--pill-cut)), linear-gradient(#000, #000), linear-gradient(#000, #000);
+  -webkit-mask-size: calc(100% - var(--composer-end, 0px)) calc(100% - var(--composer-tuck, 0px)), calc(100% - var(--composer-end, 0px)) var(--composer-tuck, 0px), var(--composer-end, 0px) 100%;
+  mask-size: calc(100% - var(--composer-end, 0px)) calc(100% - var(--composer-tuck, 0px)), calc(100% - var(--composer-end, 0px)) var(--composer-tuck, 0px), var(--composer-end, 0px) 100%;
+  -webkit-mask-position: var(--cards-x) 0, var(--cards-x) 100%, calc((1 + var(--rtl-sign)) * 50%) 0;
+  mask-position: var(--cards-x) 0, var(--cards-x) 100%, calc((1 + var(--rtl-sign)) * 50%) 0;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
 }
-/* The foot's padding grows by what the scroller does, so the newest reply
-   still ends 12px over the card. Only while nothing stands between the
-   scroller and the card (nobody typing, no reply, attachment or error over
-   it); the card is opaque in both looks, so what runs under it is hidden. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-sheet:has(> .chat-status:empty + .messages-composer > .messages-composer-card):not(:has(> .messages-composer > :is(#gc-thread-reply-preview:not(.hidden), .dc-attach-error:not(.hidden), .dc-attach-strip:not(:empty)))) > #gc-thread-scroll {
+/* The scroller runs on under the card while nothing stands between the
+   two (nobody typing; nothing shown before the card in its bar: a reply, an
+   attachment or an error over a public thread's box, a private thread's
+   saved drafts or its ask to be told); the card is opaque in both looks, so
+   what runs under it is hidden. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-sheet:has(> .chat-status:empty + .messages-composer > .messages-composer-card):not(:has(> .messages-composer > :not(.hidden, :empty) ~ .messages-composer-card)) > :is(#gc-thread-scroll, .dev-request-scroll) {
   --composer-tuck: 22px;
   margin-bottom: calc(-1 * var(--composer-tuck));
-  padding-bottom: calc(12px + var(--composer-tuck)) !important;
+}
+/* THE FOOT IS A SPACER, NOT PADDING (20 Nov 2026). The newest reply ends
+   12px over the reply box, plus what the scroller runs on under it. That
+   air was the scroller's end padding, and WebKit leaves a grid or flex
+   scroller's end padding out of what it scrolls (the first session's form
+   met the same, "THOSE 200PX ARE A SPACER"): on a wide page, where the
+   scroller is the two-column grid, Safari stopped 34px short, and the last
+   line of the newest reply stayed under the box however far you scrolled.
+   An empty last item is counted by every engine. In the grid it takes a
+   row of its own under both columns. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll) { padding-bottom: 0 !important; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-scroll, .dev-request-scroll)::after {
+  content: "";
+  display: block;
+  grid-column: 1 / -1;
+  height: calc(12px + var(--composer-tuck, 0px));
 }
 /* The handle between the card and the timeline: only on a wide page, where
    the timeline stands beside the card (the 1180px block above). */
@@ -30773,7 +31043,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
     display: block;
     position: absolute;
     z-index: 4;
-    top: var(--pill-under);
+    top: var(--pill-top);
     bottom: 24px;
     inset-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap) / 2 - 12px);
     width: 24px;
@@ -30927,22 +31197,27 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
    inside it. They are the same three cards there, on the panel's own
    ground (a look names it: `--thread-ground-look`). `#dev-topic-thread`
    is in the scope so the replies' card outranks the thread's own rules. */
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)),
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread {
   --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
   --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
   --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
   --thread-card-r: 20px;
 }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: var(--thread-ground-look, transparent); }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet,
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread > .dev-request-sheet { background: var(--thread-ground-look, transparent); }
 html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail),
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread :is([data-thread-page-post], [data-thread-page-replies]) {
   min-width: 0;
   border-radius: var(--thread-card-r);
   background: var(--thread-card);
   box-shadow: var(--thread-card-edge);
 }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { padding: 8px 0 0; }
-html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { margin-top: 14px; padding: 6px 4px 8px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head,
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-post] { padding: 8px 0 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages,
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] { margin-top: 14px; padding: 6px 4px 8px; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail { margin-top: 14px; }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll { padding-top: 12px; padding-bottom: 12px; }
@@ -30995,6 +31270,21 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
      over the timeline. (19 Nov 2026: it says the title, as it does on every
      page; the card under it starts at the words.) */
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar { margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap)); }
+  /* …AND THE TIMELINE STARTS ON THE HEAD'S TOP LINE (20 Nov 2026). From
+     19 Nov the head ran on across both columns, over the timeline, and the
+     timeline waited under where the full head ended: tightened, the head
+     left a band of bare page over it. Now the page is two columns from the
+     top, the thread under its head and how it got here beside them: the
+     timeline rises from the scroller's top padding (the head's height, held
+     for the card) to the head's own line, and sticks there. The scroller's
+     cut at the top is the card column's alone (its mask, below), so the
+     timeline is not cut where it now rises into it. */
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)):has(.dev-thread-card) .dev-request-rail {
+    --rail-rise: calc(var(--pill-top) - var(--pill-under));
+    top: var(--rail-rise);
+    margin-top: var(--rail-rise);
+    max-height: calc(100% - var(--pill-top)) !important;
+  }
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet > :is(.messages-composer, .messages-jump, .messages-status-line) {
     margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap));
   }

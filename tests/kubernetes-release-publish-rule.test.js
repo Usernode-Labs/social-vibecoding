@@ -91,7 +91,7 @@ echo $(( $(cat "$STUB_CLOCK") + $1 )) > "$STUB_CLOCK"
 };
 
 function run({
-  channel = 'stable', chartVersion = '0.1.1600001', tip = TIP, tips = null, event = 'push',
+  chartVersion = '0.1.1600001', tip = TIP, tips = null, event = 'push',
   gh = [], helm = `apiVersion: v2\nappVersion: ${OLD}\nname: social-vibecoding-platform\nversion: 0.1.1545001\n`,
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-rule-'));
@@ -130,7 +130,6 @@ function run({
       GITHUB_OUTPUT: files.output,
       GITHUB_STEP_SUMMARY: files.summary,
       GH_TOKEN: 'test',
-      RELEASE_CHANNEL: channel,
       CHART_VERSION: chartVersion,
       CHART_REF: 'oci://ghcr.io/usernode-labs/charts/social-vibecoding-platform',
       RELEASE_EVERY_MINUTES: String(step.env.RELEASE_EVERY_MINUTES),
@@ -199,7 +198,6 @@ test('the release job may read its own workflow runs', () => {
 
 test('the branch tip always publishes, as before', () => {
   assert.equal(run({ tip: MINE, helm: '' }).publish, true, 'whatever the registry says');
-  assert.equal(run({ tip: MINE, channel: 'candidate' }).publish, true);
 });
 
 test('the tip waits until the newest release is RELEASE_MIN_GAP_MINUTES old, then publishes (7 October)', () => {
@@ -258,14 +256,11 @@ test('a dispatched run queued behind a waiting tip ends the wait: it publishes a
   assert.equal(queued.waited, 0);
 });
 
-test('a dispatched run and a feature-branch candidate never wait', () => {
+test('a dispatched run never waits', () => {
   const dispatched = run({ tip: MINE, event: 'workflow_dispatch', gh: [releasedAgo(1)] });
   assert.equal(dispatched.publish, true);
   assert.equal(dispatched.waited, 0);
   assert.match(dispatched.summary, /at once: it was dispatched by hand/);
-  const candidate = run({ tip: MINE, channel: 'candidate', gh: [releasedAgo(1)] });
-  assert.equal(candidate.publish, true);
-  assert.equal(candidate.waited, 0);
 });
 
 test('when the newest release or its run cannot be read, the tip publishes at once, as before', () => {
@@ -316,10 +311,6 @@ test('an older revision never publishes over a newer one', () => {
 
 test('a revision the branch no longer contains is not published', () => {
   assert.equal(run({ gh: [`compare ${MINE} ${TIP} diverged`, ...behind(66).slice(1)] }).publish, false);
-});
-
-test('a feature-branch candidate behind its tip still waits for the tip', () => {
-  assert.equal(run({ channel: 'candidate', gh: behind(66) }).publish, false);
 });
 
 test('anything that cannot be read falls back to the exact tip: no publish', () => {

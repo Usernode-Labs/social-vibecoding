@@ -31,6 +31,9 @@ const BACKENDS = {
   claude_code: {
     id: 'claude_code',
     label: 'Homeroom · Claude',
+    // Claude's models. Their calls go through the platform's worker relay
+    // to OpenRouter on the platform's key since task 2275
+    // (routes/anthropic-proxy.js), never to api.anthropic.com.
     provider: 'anthropic',
     runner: '/usr/local/bin/run-cc.sh',
     claudeLike: true,

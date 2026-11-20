@@ -211,26 +211,19 @@ test('noteAgentSpend returns undefined, never a promise to await', () => {
 // declaration, which otherwise matches the same shape as a call.
 const CALL_SITE_RE = /(?<!function )noteAgentSpend\(pool, \{/g;
 
-test('both settle points call the ledger', () => {
+// The shots eval's calls go to the eval's own ledger (shots-eval.js
+// billFor), so the platform-key branch is the one settle point that writes
+// the change's ledger. The BYOK branch that was the second went with
+// people's own Anthropic keys (task 2275).
+test('the platform-key settle point calls the ledger, once', () => {
   const callSites = SRC.match(CALL_SITE_RE) || [];
-  assert.equal(
-    callSites.length, 2,
-    'expected exactly two call sites — the BYOK branch and the platform-key branch'
-  );
-});
-
-test('the BYOK branch records alongside noteTurnByokSpend', () => {
-  // The BYOK settle is identifiable by the per-turn BYOK tally next to it.
-  const byokBlock = SRC.slice(
-    SRC.indexOf('workerMod.noteTurnByokSpend'),
-    SRC.indexOf('BYOK key rejected by Anthropic upstream')
-  );
-  assert.match(byokBlock, /noteAgentSpend\(pool, \{/);
+  assert.equal(callSites.length, 1, 'expected exactly one call site: the platform-key branch');
+  assert.doesNotMatch(SRC, /noteTurnByokSpend|loadUserApiKey|anthropic_key_enc/, 'no own-key branch is left');
 });
 
 test('the platform-key branch records alongside the live-delta fold', () => {
   const platformBlock = SRC.slice(
-    SRC.indexOf('globalBudgetCache.liveDeltaCents +='),
+    SRC.indexOf('live.liveDeltaCents += result.costCents;'),
     SRC.indexOf("'Killed call settled'")
   );
   assert.match(platformBlock, /noteAgentSpend\(pool, \{/);

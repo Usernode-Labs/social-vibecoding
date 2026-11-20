@@ -588,6 +588,17 @@ test('a still\'s smaller copies are served at their own addresses, with their ow
   const screen = await get('?size=screen');
   assert.equal(screen.headers.get('etag'), `"${'b'.repeat(64)}"`);
   assert.equal(Buffer.from(await screen.arrayBuffer()).toString(), 'webp-screen');
+  // A copy saved before copies kept their type (NULL) is WebP, as it was.
+  assert.equal(screen.headers.get('content-type'), 'image/webp');
+  // 20 Nov: the screen copy is a progressive JPEG now, and each copy is
+  // served as the type it was saved as.
+  saw = row({ screen_content_type: 'image/jpeg', thumb_content_type: 'image/webp' });
+  assert.equal((await get('?size=screen')).headers.get('content-type'), 'image/jpeg');
+  assert.equal((await get('?size=thumb')).headers.get('content-type'), 'image/webp');
+  // A type the copies are never saved as is not passed on.
+  saw = row({ screen_content_type: 'text/html' });
+  assert.equal((await get('?size=screen')).headers.get('content-type'), 'image/webp');
+  saw = row();
   // Any other word is ignored: the original, as before.
   const plain = await get('?size=huge');
   assert.equal(plain.headers.get('etag'), `"${'f'.repeat(64)}"`);

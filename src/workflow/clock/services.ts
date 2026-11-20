@@ -416,6 +416,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/platform-limit-alerts').sweep(pool, config),
   },
   {
+    // Text alerts for the same limits (Admin › Limits, "Text alerts"): each
+    // confirmed number is texted once per crossing, reminded at most every
+    // six hours while a limit stays full, through the SMS layer
+    // (services/limit-texts.js).
+    name: 'limit-texts', everyMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/limit-texts').sweep(pool, config),
+  },
+  {
     // Problems the platform finds in itself, each filed as one request,
     // updated, and closed once it stops (shadow mode: rows only). Its own
     // session advisory lock keeps two passes from filing one problem twice.
@@ -686,10 +694,10 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // The translation of this build's new interface text
-    // (services/language-sync-runner.js): a catalog not yet translated, or a
-    // batch to collect, is a target, one pass at a time. Paid: a batch is
-    // submitted once per catalog. LANGUAGE_SYNC_ENABLED=false switches it
-    // off.
+    // (services/language-sync-runner.js): a catalog not yet translated, or
+    // an older build's batch to let go, is a target, one pass at a time.
+    // Paid, by direct calls (task 2275: no batches). LANGUAGE_SYNC_ENABLED=false
+    // switches it off.
     name: 'language-sync', everyMs: 10 * MIN, newestOnly: true,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/language-sync-runner').look({ pool }),
     item: {

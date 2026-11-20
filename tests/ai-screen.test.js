@@ -1179,9 +1179,9 @@ test('the server arranges Waiting nearest to live first, and matches the stored 
 });
 
 test('a request the bot handed back is one its records say it left for a person, or whose build stopped', () => {
-  const { handedBack, stageOf } = require('../src/services/homeroom-bot-progress');
+  const { handedBack } = require('../src/services/homeroom-bot-progress');
   const looked = { mode: 'live', verdict: 'person', request_closed: false, proposal_status: null };
-  assert.equal(stageOf(looked), null, 'nothing about it is in progress');
+  assert.equal(require('../src/services/work-state').derive(looked).stage, 'waiting_for_you', 'nothing about it is in progress');
   assert.equal(handedBack(looked), 'decide');
   assert.equal(handedBack({ ...looked, verdict: 'ready', build_ok: false, build_error: 'turn timed out' }), 'build_stopped');
   assert.equal(handedBack({ ...looked, verdict: 'ready', build_ok: false, build_error: 'skipped: answered meanwhile' }), null, 'a skip did not stop');
@@ -1927,13 +1927,13 @@ test('a request opened beside the bot list fills the column, not a box inside it
   const scope = ':is\\(html\\.in-side-panel\\.side-panel-beside-ai, \\.dev-ws-side\\)';
   assert.match(css, new RegExp(`${scope} #dev-topic-thread \\{\\s*padding-top: 0;\\s*\\}`),
     'the host drops its 12px top shoulder');
-  assert.match(css, new RegExp(`${scope} \\.dev-request \\{\\s*max-width: none;\\s*margin-inline: 0;\\s*padding-inline: 0;\\s*\\}`),
+  assert.match(css, new RegExp(`${scope} \\.dev-request,\\n#ai-screen \\.dev-private-thread \\{\\s*/\\*[^*]*\\*/\\s*--thread-gutter: 12px;\\s*max-width: none;\\s*margin-inline: 0;\\s*padding-inline: 0;\\s*\\}`),
     'the page drops its 780px cap and centred 12px side margins');
-  assert.match(css, new RegExp(`${scope} \\.dev-request-sheet \\{[^}]*background: transparent;[^}]*backdrop-filter: none;`),
+  assert.match(css, new RegExp(`${scope} \\.dev-request-sheet,\\n#ai-screen \\.dev-private-thread > \\.dev-request-sheet \\{[^}]*background: transparent;[^}]*backdrop-filter: none;`),
     'the sheet takes the column\'s surface instead of painting its own fill and frost');
-  assert.match(css, new RegExp(`${scope} \\.dev-request-sheet \\{[^}]*box-shadow: none;`),
+  assert.match(css, new RegExp(`${scope} \\.dev-request-sheet,\\n#ai-screen \\.dev-private-thread > \\.dev-request-sheet \\{[^}]*box-shadow: none;`),
     'and lifts no shadow off it');
-  assert.match(css, new RegExp(`${scope} :is\\(\\.dev-request-bar, \\.dev-request-scroll\\) \\{\\s*padding-inline: 12px;\\s*\\}`),
+  assert.match(css, new RegExp(`${scope} :is\\(\\.dev-request-bar, \\.dev-request-scroll\\),\\n#ai-screen \\.dev-private-thread > \\.dev-request-sheet > :is\\(\\.dev-request-bar, \\.dev-request-scroll\\) \\{\\s*padding-inline: var\\(--thread-gutter\\);\\s*\\}`),
     'the 12px the wrapper gave the content stays on the bar and the transcript');
 });
 
@@ -2004,9 +2004,9 @@ test('the column is held inside the window, and the panel takes its place at its
   assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');
   // A wider Main holds its words to the 720px it used to be, so plan cards
   // and replies keep a readable line; below that the gutter is the part's own.
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\s+padding-inline: max\(0px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\):not\(\.dev-request \*\) \{\s+padding-inline: max\(0px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
     'a thread\'s transcript, status line and composer are centred inside a wide column');
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] \.chat-composer-bar \{\s+padding-inline: max\(12px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] \.chat-composer-bar:not\(\.dev-request \*\) \{\s+padding-inline: max\(12px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
     'and never narrow its own 12px gutter');
   // 6 Nov 2026 (#6425): the lane is kept only while a column is open.
   assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \{ padding-inline-end: var\(--ai-main-w\); \}/);

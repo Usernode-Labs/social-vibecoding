@@ -14,6 +14,16 @@
 //
 // Every function here is pure. It reads the run's own record for what
 // happened and never quotes it: the record is written for the platform.
+//
+// Review B4 (19 Nov 2026): what a build came to is stored as a code
+// (homeroom_bot_runs.build_stop, `{ cause, by?, times? }`) beside its
+// English (build_error), and the readers read the code (stopOf). The
+// English is read only where no code is stored: rows from before the code
+// (filled once by the migration homeroom-bot-run-stop-cause.sql), a writer
+// that still sends only the English (its trigger fills the code from the
+// same rules, homeroom_bot_build_stop), and a reason handed in that was
+// never stored (stopOfText). Those rules are the SQL function's and
+// stopOfText's, held equal by tests/bot-stop-cause-postgres.test.js.
 
 // A build that did not finish, by its cause. `restarts` carries `times`;
 // `stopped` (a person stopped it, written by the stop as `stopped: by
@@ -23,6 +33,12 @@ const BUILD_CAUSES = Object.freeze([
   'restarts', 'time', 'restart', 'unproposed', 'push', 'push_permanent', 'push_gave_up',
   'no_change', 'no_start', 'plan', 'credit', 'stopped', 'other',
 ]);
+
+// What else a run's build_stop says it came to, beside a build that did not
+// finish: finished and its commit waits to be uploaded, not built (skipped:
+// answered, closed or replaced meanwhile; superseded: a later verdict), or
+// found impossible as written (blocked).
+const DISPOSITIONS = Object.freeze(['waiting_push', 'skipped', 'superseded', 'blocked']);
 
 // What the bot's queue calls a build that ran out of OpenRouter's credit
 // (src/workflow/rules/bot-loop.ts CREDIT_WAIT_REASON), as a note's `reason`
@@ -70,6 +86,69 @@ function buildCause(buildError, { credit = false, noChangeSaid = null } = {}) {
   // buildAndPropose). Nothing was built.
   if (/no plan could be written|only part of a spec/.test(r)) return { cause: 'plan' };
   return { cause: 'other' };
+}
+
+/**
+ * Pure (B4): what a run's English says it came to, as its stored code:
+ * `{ cause, by?, times?, plan? }` (BUILD_CAUSES or DISPOSITIONS; `plan`
+ * when it stopped before a plan was written), or null for none.
+ * The same rules as the SQL function homeroom_bot_build_stop, for a reason
+ * that was never stored.
+ */
+function stopOfText(buildError) {
+  const raw = String(buildError || '').trim();
+  if (!raw) return null;
+  const plan = /no plan could be written|only part of a spec/.test(raw) ? { plan: true } : {};
+  if (raw === CREDIT_WAIT) return { cause: 'credit' };
+  if (raw.startsWith('waiting to push:')) return { cause: 'waiting_push', ...plan };
+  if (raw.startsWith('skipped:')) return { cause: 'skipped', ...plan };
+  if (raw.startsWith('superseded:')) return { cause: 'superseded', ...plan };
+  if (raw.startsWith('blocked:')) return { cause: 'blocked', ...plan };
+  const c = buildCause(raw);
+  return { cause: c.cause, ...(c.by ? { by: c.by } : {}), ...(c.times ? { times: c.times } : {}), ...plan };
+}
+
+/**
+ * Pure (B4): what a run came to, from its stored code (`build_stop`), else,
+ * for a row that has none (written before the code, or a fake), from its
+ * English (stopOfText). Null for a run with neither.
+ */
+function stopOf(run) {
+  const stored = run && run.build_stop;
+  const code = stored && typeof stored === 'object' ? stored
+    : typeof stored === 'string' && stored.trim().startsWith('{') ? safeJson(stored) : null;
+  if (code && typeof code.cause === 'string' && code.cause) {
+    return {
+      cause: code.cause,
+      ...(typeof code.by === 'string' && code.by ? { by: code.by } : {}),
+      ...(Number.isInteger(Number(code.times)) && Number(code.times) > 0 ? { times: Number(code.times) } : {}),
+      ...(code.plan === true ? { plan: true } : {}),
+    };
+  }
+  return stopOfText(run && run.build_error);
+}
+
+function safeJson(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+/**
+ * Pure (B4): why a build of a request did not finish, from its run's stored
+ * code (stopOf), as buildCause says it: `{ cause, times?, by?, noChange? }`.
+ * A run still waiting for its upload is a push being retried; one skipped,
+ * superseded or blocked is no cause of its own (`other`).
+ */
+function buildCauseOf(run, { credit = false, noChangeSaid = null } = {}) {
+  if (credit) return { cause: 'credit' };
+  const stop = stopOf(run);
+  if (!stop) return { cause: 'other' };
+  if (stop.cause === 'waiting_push') return { cause: 'push' };
+  if (DISPOSITIONS.includes(stop.cause) || !BUILD_CAUSES.includes(stop.cause)) return { cause: 'other' };
+  if (stop.cause === 'no_change') {
+    const why = noChangeWhy(noChangeSaid);
+    return why ? { cause: 'no_change', noChange: why } : { cause: 'no_change' };
+  }
+  return { cause: stop.cause, ...(stop.by !== undefined ? { by: stop.by } : stop.cause === 'stopped' ? { by: null } : {}), ...(stop.times ? { times: stop.times } : {}) };
 }
 
 /**
@@ -144,7 +223,7 @@ function causeOf({ next, run = null, handBack = null, credit = false } = {}) {
     switch (next.reason) {
       case 'build_failed': {
         if (!run) return null;
-        const c = buildCause(run.build_error, { credit, noChangeSaid: run.no_change_said });
+        const c = buildCauseOf(run, { credit, noChangeSaid: run.no_change_said });
         const code = c.cause === 'no_change' && c.noChange ? `no_change_${c.noChange}` : c.cause;
         return { cause: code, ...(c.by ? { names: [c.by] } : {}), ...(c.times ? { times: c.times } : {}) };
       }
@@ -160,7 +239,7 @@ function causeOf({ next, run = null, handBack = null, credit = false } = {}) {
   if (next.stage === 'waiting_for_you' && next.why === 'needs_detail') {
     // T2.11: a build that found it impossible as written is not a look that
     // found nothing to build.
-    return { cause: /^blocked:/.test(String(run?.build_error || '')) ? 'blocked' : 'empty' };
+    return { cause: stopOf(run)?.cause === 'blocked' ? 'blocked' : 'empty' };
   }
   if (next.stage === 'waiting_for_you' && next.why === 'decide' && handBack) {
     return { cause: handBack.cause, ...(handBack.names?.length ? { names: handBack.names } : {}) };
@@ -208,9 +287,13 @@ function trackCauseOf(cause) {
 
 module.exports = {
   BUILD_CAUSES,
+  DISPOSITIONS,
   HAND_BACKS,
   CREDIT_WAIT,
   buildCause,
+  buildCauseOf,
+  stopOf,
+  stopOfText,
   noChangeWhy,
   handBackOf,
   causeOf,

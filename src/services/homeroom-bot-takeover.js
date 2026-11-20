@@ -58,6 +58,13 @@ const BUSY_POLL_MS = 20 * 1000;
 // tried again by itself, this many times in all, about this far apart. The
 // asks stay queued meanwhile.
 const START_TRIES = 3;
+// Why an update did not happen, as outcomeOf's `why` (the bot's own words to
+// the people who asked): out of OpenRouter's credit, and Homeroom or its
+// provider failing under the turn (review A2).
+// A clause: voice.plainReport writes "I couldn't make that change: <why>. Ask
+// me again here to try again."
+const CREDIT_WHY = 'I\'m out of building credit right now, so nothing was changed';
+const PLATFORM_WHY = 'Homeroom had a problem on its side while I worked on it, so nothing was changed';
 const START_RETRY_MS = 4 * 60 * 1000;
 const MAX_ASK_CHARS = 8000;
 const MAX_DESCRIPTION_CHARS = 6000;
@@ -571,8 +578,23 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
         : quiet,
     };
   }
+  // Review A2: this turn had no class for a failure at all. One sort
+  // (bot-turn-failure.js) of the routed code and the worker's own account:
+  // out of credit is an outage, noted once and said as one; the platform
+  // failing under it is said as Homeroom's failure and counted.
+  // Read only once the turn is known to have failed (its routed error, or
+  // no answer and no push below): a turn that got through is never sorted.
+  const turnFailure = require('./bot-turn-failure');
+  const sortTurn = () => turnFailure.sort({ code: turn.routed?.error || null, turn: result });
+  const outOfCredit = async () => {
+    await (deps.credit?.noteOutage ? deps.credit : require('./openrouter-credit'))
+      .noteOutage(pool, { words: 'an update of a change met OpenRouter\'s 402 for credit' }).catch(() => null);
+    return { ok: false, code: 'credit', error: CREDIT_WHY, costUsd, model };
+  };
   if (turn.routed?.error) {
     const code = String(turn.routed.error);
+    const sorted = sortTurn();
+    if (sorted.class === 'credit') return outOfCredit();
     log.warn('homeroom-bot-takeover', 'An update\'s turn failed', { sessionId: change.id, err: clip(code, 300) });
     // #6602: a change the bot has no runtime for is said as that, in words,
     // never as an answer that could not be read.
@@ -582,9 +604,14 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
         error: `I can't run on a change made in ${tool || 'another coding tool'} yet`,
       };
     }
+    if (code !== 'session_busy') {
+      await turnFailure.recordPlatformIncident(pool, {
+        where: 'an update of a person\'s change', cause: sorted.cause || code, detail: { appId: change.app_id ?? null, sessionId: change.id },
+      });
+    }
     return {
-      ok: false, code: code === 'session_busy' ? 'busy' : 'failed', costUsd, model,
-      error: code === 'session_busy' ? 'somebody else started working on the change just then' : 'the platform failed while it worked on it',
+      ok: false, code: code === 'session_busy' ? 'busy' : 'platform', costUsd, model,
+      error: code === 'session_busy' ? 'somebody else started working on the change just then' : PLATFORM_WHY,
     };
   }
   const parsed = followup.parseFollowUp(result.lastResultText);
@@ -595,6 +622,16 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
   const moved = !failedTurn && !!result.pushOk && !!result.sha
     && (headBefore ? String(result.sha).toLowerCase() !== String(headBefore).toLowerCase() : parsed?.action === 'revise');
   if (!parsed && !moved) {
+    // A provider's error where its answer should be, or a worker that went
+    // from under it: the platform's, never "its answer could not be read".
+    const sorted = sortTurn();
+    if (sorted.class === 'credit') return outOfCredit();
+    if (sorted.class === 'platform') {
+      await turnFailure.recordPlatformIncident(pool, {
+        where: 'an update of a person\'s change', cause: sorted.cause, detail: { appId: change.app_id ?? null, sessionId: change.id },
+      });
+      return { ok: false, code: 'platform', error: PLATFORM_WHY, costUsd, model };
+    }
     if (!ranIt) return { ok: false, code: 'failed', error: 'the turn did not run', costUsd, model };
     return { ok: false, code: 'unreadable', error: failedTurn ? 'the turn failed' : 'its answer could not be read', costUsd, model };
   }

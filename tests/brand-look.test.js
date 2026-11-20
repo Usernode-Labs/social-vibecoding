@@ -559,7 +559,7 @@ test('Geist loads from our own origin by an absolute path, and only for this loo
   // loads the file only while that config is on.
   const outside = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
   assert.ok(!/Geist/.test(outside), 'nothing outside this look, Standard (WIP)\'s brand config and the signed-out pages\' names Geist');
-  assert.match(read('public', 'css', 'app.css'), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
+  assert.match(read('public', 'css', 'app.css'), /html:not\(\[data-skin\]\) \{[^}]*--wip-font: 'Geist',/);
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {
@@ -691,7 +691,7 @@ test('in light the cream wears six scattered lilac splotches, at every width, an
 test('Home takes Standard (WIP)\'s New project button and Needs you card, in the look\'s colours', () => {
   const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
   assert.match(island, /const brand = skin === 'brand';/);
-  assert.match(island, /\{\(wip \|\| brand\) && grid\.ready && grid\.create \? \(\s*<WipCta id="home-new-project-top"/);
+  assert.match(island, /\{\(topRow \|\| brand\) && grid\.ready && grid\.create \? \(\s*<WipCta id="home-new-project-top"/);
   assert.match(island, /<WipCard on=\{wip\}>/, 'Pinned apps keeps the look\'s own card, not WIP\'s');
   const home = read('frontend', 'src', 'features', 'home', 'home.js');
   const side = home.slice(home.indexOf('hasSideCard() {'), home.indexOf('_wireRowBudget() {'));

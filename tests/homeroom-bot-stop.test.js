@@ -154,6 +154,8 @@ test('every tool the chat, its thread tools and its capabilities offer is one wh
     // Step 6: the design's and the live draft's tools, in the chat's own turn.
     ...designBot.TOOLS.map((t) => t.function.name),
     ...require('../src/services/live-draft-bot').TOOLS.map((t) => t.function.name),
+    // Artifacts: a plain page's, by the same turn.
+    ...require('../src/services/bot-profiles').ARTIFACT_TOOLS,
   ]);
   // The thread tools, as a person's own chat is offered them (the admin's
   // own are behind confirm cards and are left as not known: see below).

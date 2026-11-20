@@ -36,7 +36,7 @@ const designBot = require('../src/services/design-bot');
 
 test('the design draws, reads the project\'s code and edits, in its twelve rounds of the chat\'s turn', () => {
   // Step 6 (#6864): the chat's own reply ends the turn, with the version's summary.
-  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan']);
+  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_artifact', 'edit_artifact', 'list_source', 'read_source', 'read_plan']);
   assert.equal(designBot.MAX_ROUNDS, 12);
   for (const t of designBot.TOOLS) {
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -210,11 +210,11 @@ test('the prompt says an app\'s compiled Tailwind holds only the classes it uses
 
 test('the prompt: a thread with no screen yet is drawn; one with a version is edited, its stylesheets left out', () => {
   const none = designBot.designPrompt({ username: 'ada', surface: 'new', brief: 'A seed calendar' });
-  assert.match(none, /This thread has no screen yet\. It is for a screen of a new project, not made yet\. Draw it with write_screen/);
+  assert.match(none, /This thread has no screen yet\. It is for a screen of a new project, not made yet\. Draw it with write_artifact/);
   assert.match(none, /the native kit \(native\.css\)/);
   assert.match(none, /WHAT YOU WERE ASKED TO DRAW\nA seed calendar/);
   assert.doesNotMatch(none, /Main Chat|MAIN CHAT/, '14 Nov 2026: there is no Main Chat to name');
-  assert.match(none, /THERE IS NO SCREEN YET: draw it with write_screen\.$/);
+  assert.match(none, /THERE IS NO SCREEN YET: draw it with write_artifact\.$/);
   assert.match(none, /Content rules: nothing sexual, no\n  realistic or graphic violence and no real-money gambling/, 'its content rules kept');
   assert.doesNotMatch(none, /—/);
   const design = { surface: 'app', app: { slug: 'garden', name: 'Garden club' }, title: 'Plots', width: 390, height: 844 };
@@ -240,9 +240,10 @@ test('#6257: a first drawing with nothing to go on asks first, and quotes a ques
 
   const asked = designBot.designPrompt({ username: 'ada', surface: 'new', askFirst: true });
   assert.match(asked, /FIRST SCREEN: Before you draw/);
-  assert.match(asked, /draw nothing: ask one short question/);
+  // Stage 3: the chat's question rule: what makes the question necessary, and what the answer decides.
+  assert.match(asked, /draw nothing: say in one clause that nothing yet says what the app is for or what this screen should do, and ask about both in one question, since the screen is drawn from the answer/);
   assert.match(asked, /Never start from a placeholder/);
-  assert.match(asked, /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
+  assert.match(asked, /THERE IS NO SCREEN YET: draw it with write_artifact, or ask first as FIRST SCREEN says\.$/);
   assert.doesNotMatch(asked, /—/);
   assert.doesNotMatch(designBot.designPrompt({ username: 'ada', surface: 'new' }), /FIRST SCREEN/,
     'a drawing with something to go on is unchanged');
@@ -315,7 +316,8 @@ test('the preview: its own column beside the thread, three where they fit, halve
   // #6230: the preview is one kind of the detail column, drawn by
   // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
   assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
-  assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.label'\)\}\n\s+>/);
+  // Artifacts: the column is named for what any preview is (a design, a page, a plan), not for a design.
+  assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.labelOpening'\)\}\n\s+>/);
   assert.match(ai, /probe=\{previewProbe\}\n\s+\/>\n\s+\)\}\n\s+<DetailPane layout=\{layout\} \/>/);
   assert.match(read('frontend/src/features/detail/detail-pane.tsx'),
     /onClose=\{closeDetail\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
@@ -342,7 +344,7 @@ test('the pane as the tab\'s column: × beside the thread, a back arrow where it
   assert.match(side, new RegExp(`aria-label="${message('messages:design.pane.close')}"[^>]*data-design-close="close"`));
   assert.doesNotMatch(side, /messages-design-view-switch/);
   const phone = renderToHtml(createElement(DesignPane, { conversationId: 4, rootId: 9, view: 'preview', onView: () => {}, onClose: () => {}, closeAs: 'back' }));
-  assert.ok(phone.indexOf('data-design-close="back"') < phone.indexOf(message('messages:design.pane.loading')), 'the arrow leads its head');
+  assert.ok(phone.indexOf('data-design-close="back"') < phone.indexOf(message('messages:design.pane.opening')), 'the arrow leads its head');
   const messages = renderToHtml(createElement(DesignPane, { conversationId: 4, rootId: 9, view: 'preview', onView: () => {} }));
   assert.doesNotMatch(messages, /data-design-close/);
   assert.match(messages, /messages-design-view-switch/);
@@ -368,8 +370,9 @@ test('a version said in a thread is drawn small, with Open preview; nothing is r
   assert.equal(message('messages:design.card.open'), 'Open preview');
   assert.match(html, />Swap list · version 2</);
   const src = read('frontend/src/features/messages/design-card.tsx');
-  assert.match(src, /sandbox=\{DESIGN_SANDBOX\}/, 'sandboxed as the pane\'s frame is');
-  assert.match(src, /tabIndex=\{-1\}\n\s+aria-hidden="true"/, 'a picture, not something to use');
+  assert.match(src, /<ArtifactFrame\s+mode="run"\s+viewer="author"/, 'the one frame, running for its author, as the pane\'s is');
+  assert.doesNotMatch(src, /<iframe|sandbox=/, 'no frame of its own');
+  assert.match(src, /<ArtifactFrame[\s\S]{0,200}?\n\s+inert\n/, 'a picture, not something to use: out of the tab order, hidden from readers, no pointer');
   assert.match(src, /const open = \(\) => openPreview\(\{ conversationId, rootId, version \}\);/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /const designVersion = inThread && message\.threadRootId && !message\.deleted \? designVersionOf\(message\) : null;/);

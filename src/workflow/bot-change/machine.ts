@@ -5,18 +5,24 @@
 // settling, the merge (each a message the sender's own transition writes:
 // rules/bot-notes.ts).
 //
-//   checking ──verdict passes, shots still to come──▶ waiting_on_shots ──settled / held long enough──▶ ready
+//   checking ──its stored work state opens it for votes (VoteOpened)──▶ ready
 //      │   └──part of it fails (checks, or its shots)──▶ with_the_bot ──the bot's round looked──▶ ready
 //      └──its preview will not start──▶ stopped          merged ──live──▶ live        (any) ──closed──▶ closed
+//   (waiting_on_shots: checking, while its row says its shots are being taken, or its plan is compared)
 //
-// Under its lock it decides what its requester and its approvers hear and
-// when the change goes back to the bot to fix: ready to try, once per
-// approval epoch (and its approvers asked once, when nothing is broken);
-// back to the bot when its checks fail or its shots show part of it failing
-// or could not reach part of it for want of seed data, once per head; and,
-// once merged and live, that it is live. Every decision is made from the
-// session's row (facts.ts) with the transaction's clock, so a message is
-// only "look now": a late or repeated one decides the same thing again.
+// Under its lock it decides what is its own: when the change goes back to
+// the bot to fix (its checks fail, or its shots show part of it failing or
+// could not reach part of it for want of seed data), once per head; and what
+// its requester hears and when: ready to try, once per approval epoch; and,
+// once merged and live, that it is live. Whether it is ready to try is not
+// its to decide (review A3): it reads the change's stored work state
+// (facts.ts `ready`: work_states.vote_open, the one reading of everything
+// that holds a vote), and services/work-state.js tells it the moment that
+// row opens (VoteOpened, sent with the voters' own ping), so the card can
+// never say ready while the change's page says Syncing with main. Every
+// decision is made from the rows (facts.ts) with the transaction's clock, so
+// a message is only "look now": a late or repeated one decides the same
+// thing again.
 // Its work only sends (services.ts), each item keyed so it is said once.
 // workflow-foundation's design-bot-notes.md is the design.
 
@@ -24,7 +30,7 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, Machine, Outcome, Push, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { toUser } from '../pushes.ts';
 import { BOT_CHANGE, botChangeKey } from '../rules/bot-notes.ts';
-import { checksDue, readiness, READY_HOLD_MS } from '../rules/bot-readiness.ts';
+import { brokenOnHead, checksDue, visualHeadForSession, READY_HOLD_MS } from '../rules/bot-readiness.ts';
 import type { Claim } from '../rules/bot-readiness.ts';
 import { NO_FACTS, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
@@ -38,7 +44,6 @@ export const WORK = Object.freeze({
   merged: 'bot.stopRequestWork',
   liveDm: 'bot.tellLive',
   livePost: 'bot.commentLive',
-  approved: 'bot.tellApproved',
   // #6264: the promises people asked for, kept where they asked.
   followups: 'bot.tellFollowups',
   // #6407: a change built from a person's plan is compared with that plan's
@@ -66,6 +71,15 @@ export const FIX_LOOK_MS = 10 * 60 * 1000;
 // again for that head: it is asked when it is next needed (a new verdict,
 // its shots, a promote), as a refusal is (design-bot-loop Q1).
 export const FIX_ROUNDS = 2;
+// Review 3e (19 Nov 2026): how long a change waits with the bot for the
+// answer to the round it asked for before it asks again. Its request's
+// instance answers every round it was asked for (it ends each look with an
+// answer or keeps the debt), so this is only a backstop for a path that
+// someday does not: asked again, the same round (the request's instance
+// holds one debt per change, so a round still owed is not doubled), never
+// counted as a lost one, so a long credit outage that holds the bot's lane
+// hands nobody the change. Long enough for a lane held for hours.
+export const FIX_ANSWER_MS = 6 * 60 * 60 * 1000;
 // The outcomes of a round that did not look at the head.
 const LOST: ReadonlySet<string> = new Set(['lost', 'requeued']);
 
@@ -135,6 +149,13 @@ const EVENTS = {
   Live: session,
   Closed: (p: any) => ({ ...session(p), reason: text(p?.reason, 64) }),
   Look: () => ({}),
+  // The clock, when the round it asked the bot for went unanswered for
+  // FIX_ANSWER_MS: asked again (`head`: the head the round was asked about).
+  FixUnanswered: (p: any) => ({ head: optSha(p?.head) }),
+  // Its stored work state opened it for votes, or says it is a first
+  // version ready to try (services/work-state.js botChangesOpened, in the
+  // transaction that stored the row). Only "look now": the row is read again.
+  VoteOpened: session,
   // A vote on the change, appended in the vote's own statement
   // (routes/votes.js recordVote, retractVote): `vote` 'retracted' for one
   // taken back. `epoch`: the approval epoch it was cast at.
@@ -214,40 +235,40 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   if (row.status === 'merging') return at(kept === 'merged' ? 'checking' : kept, { timer: lookIn(ctx) });
   if (row.status === 'merged') return at('merged', { timer: null });
   if (row.status !== 'promoted') return at('checking', { timer: null });
-  const r = readiness(row, now);
   const due = checksDue({ ...row, looked: f.looked, fix_revised: f.fixRevised });
   const fixHere = d.fix && due && d.fix.head === due.head ? d.fix : null;
-  // Its shots on the head still to come: it waits, at most READY_HOLD_MS
-  // after the later of the verdict and the slot's last move.
-  if (r.checked && r.heldUntil != null) {
-    return at('waiting_on_shots', { timer: { at: new Date(r.heldUntil + 1000), event: { type: 'Look' } } });
-  }
   // Part of it fails, and no round looked at this head yet: it goes back to
   // the bot, once per head (its round revises it, a new head, or records it
   // looked), unless the bot would not take it or gave up waiting. (With its
-  // checks passed, what is due is what its shots show.)
+  // checks passed, what is due is what its shots show.) This is the
+  // machine's own decision, whatever its row says of the vote.
   if (due && !(fixHere && (fixHere.refused || fixHere.gaveUp))) {
-    if (fixHere?.asked) return at('with_the_bot', { timer: null });
+    // Still waiting for the bot's answer: its backstop clock keeps running.
+    if (fixHere?.asked) return at('with_the_bot', {});
     return askFix(d, due.head, fixHere?.lost || 0, ctx, extra);
   }
-  // Failing checks the bot does not fix (it is off, not on this app, or the
-  // failure looks like the platform's and it said so itself): nobody else is
-  // told anything, as on [main].
-  if (!r.checked) return at('checking', { timer: null });
+  // Not ready to try, by its stored work state: its checks still run or
+  // fail (failing checks the bot does not fix: nobody else is told
+  // anything), its shots are being taken, it must sync with main first,
+  // GitHub holds its merge, an update is on its way. It waits to be told the
+  // row opened (VoteOpened); the row's own due time ends a shots hold.
+  if (!f.ready) return at(f.shots ? 'waiting_on_shots' : 'checking', { timer: null });
+  const epoch = Number(row.approval_epoch) || 0;
+  const visual = visualHeadForSession(row);
+  const head = visual ? visual.toLowerCase() : null;
   // #6407: a change built from a person's plan is compared with that plan's
-  // after screen once its shots are in and before anybody is asked to vote.
-  // It stays here (still up for its vote, no card, no bells) while it waits,
-  // at most READY_HOLD_MS; no answer in that time is `unchecked`, and an
-  // unchecked change goes to the vote exactly as it used to.
+  // after screen before its requester is told it is ready. It stays here (no
+  // card) while it waits, at most READY_HOLD_MS; no answer in that time is
+  // `unchecked`, and an unchecked change is told exactly as it used to be.
   let offPlan: string[] = [];
-  if (f.builtFromSessionId && r.head) {
-    let plan = d.plan && d.plan.head === r.head ? d.plan : null;
+  if (f.builtFromSessionId && head) {
+    let plan = d.plan && d.plan.head === head ? d.plan : null;
     if (!plan) {
-      const key = `plan:${shortSha(r.head)}:v${ctx.version + 1}`;
+      const key = `plan:${shortSha(head)}:v${ctx.version + 1}`;
       const work: WorkRequest[] = [...follow, {
-        kind: WORK.planCheck, key, input: { sessionId: d.sessionId, head: r.head },
+        kind: WORK.planCheck, key, input: { sessionId: d.sessionId, head },
       }];
-      d = asked({ ...d, plan: { head: r.head, state: 'asked', misses: [], at: now } }, work);
+      d = asked({ ...d, plan: { head, state: 'asked', misses: [], at: now } }, work);
       return step('waiting_on_shots', d, { work, push: extra.push, timer: { at: new Date(now + READY_HOLD_MS), event: { type: 'Look' } } });
     }
     if (plan.state === 'asked') {
@@ -262,20 +283,20 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   // Ready to try: said once per epoch, saying what does not work. An epoch
   // asked before and not sent (it was being merged meanwhile) is asked
   // again under a key of its own; the DM's own key is the epoch's.
-  const broken = words(r.broken);
-  const first = `ready:${r.epoch}`;
-  const voteKey = `followups:vote:${r.epoch}`;
-  const work: WorkRequest[] = d.told === r.epoch ? [] : [{
+  const broken = words(brokenOnHead(row, visual));
+  const first = `ready:${epoch}`;
+  const voteKey = `followups:vote:${epoch}`;
+  const work: WorkRequest[] = d.told === epoch ? [] : [{
     kind: WORK.ready, key: d.notes[first] ? `${first}:v${ctx.version + 1}` : first,
-    input: { sessionId: d.sessionId, epoch: r.epoch, broken, ...(offPlan.length ? { offPlan } : {}) },
+    input: { sessionId: d.sessionId, epoch, broken, ...(offPlan.length ? { offPlan } : {}) },
   }];
   // Whoever asked to be told when it is ready to vote hears it once, at
   // this epoch (a later epoch is a newer change to vote on).
   if (!d.notes[voteKey]) {
-    work.push({ kind: WORK.followups, key: voteKey, input: { sessionId: d.sessionId, event: 'vote', epoch: r.epoch } });
+    work.push({ kind: WORK.followups, key: voteKey, input: { sessionId: d.sessionId, event: 'vote', epoch } });
   }
   if (!work.length) return at('ready', { timer: null });
-  d = asked({ ...d, ...(d.told === r.epoch ? {} : { told: r.epoch }) }, work);
+  d = asked({ ...d, ...(d.told === epoch ? {} : { told: epoch }) }, work);
   return step('ready', d, { push: extra.push, work: [...follow, ...work], timer: null });
 }
 
@@ -284,7 +305,25 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
 function askFix(base: Data, head: string, lost: number, ctx: TransitionContext, extra: { push?: Push[] } = {}): Outcome<BState> {
   const work: WorkRequest[] = [{ kind: WORK.fix, key: `fix:${shortSha(head)}:v${ctx.version + 1}`, input: { sessionId: base.sessionId, head } }];
   const d = asked({ ...base, fix: { head, asked: true, lost, refused: null, gaveUp: false } }, work);
-  return step('with_the_bot', d, { work, push: extra.push, timer: null });
+  // 3e: a backstop, in case the answer never comes (FIX_ANSWER_MS).
+  const timer = { at: new Date(ctx.now.getTime() + FIX_ANSWER_MS), event: { type: 'FixUnanswered', payload: { head } } };
+  return step('with_the_bot', d, { work, push: extra.push, timer });
+}
+
+/**
+ * 3e: the round it asked for went unanswered for FIX_ANSWER_MS. While the
+ * same head is still due a round and the bot was asked for it, it is asked
+ * again, as the same round (its lost count stands); anything else (a new
+ * head, an answer that came, the change no longer up) decides as any look.
+ */
+function unanswered(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
+  const fix = s.data.fix;
+  const row = f.row;
+  const due = row && row.status === 'promoted' ? checksDue({ ...row, looked: f.looked, fix_revised: f.fixRevised }) : null;
+  if (fix && fix.asked && due && due.head === fix.head && (!e.payload.head || e.payload.head === fix.head)) {
+    return askFix(s.data, fix.head, fix.lost, ctx);
+  }
+  return decide(s, f, ctx, s.data);
 }
 
 // The bot's answer about the round it was asked for: looked at the head
@@ -324,6 +363,7 @@ function look(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   if (NEWS.has(e.type) && d.fix?.refused) d = { ...d, fix: { ...d.fix, refused: null } };
   const push = e.type === 'Proposed' && fromProposal(e) ? tray(f) : undefined;
   if (live && live.name === 'with_the_bot' && (e.type === 'FixRoundEnded' || e.type === 'FixRefused')) return answered(live, e, f, ctx);
+  if (live && live.name === 'with_the_bot' && e.type === 'FixUnanswered') return unanswered(live, e, f, ctx);
   return decide(live && live.name !== 'closed' ? live : null, f, ctx, d, { push });
 }
 
@@ -424,8 +464,9 @@ function wentLive(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
 // A vote: whoever asked for the change reads where its requests stand again
 // (they name who it still waits on). 5 Nov 2026 (docs/plans/bot-one-model.md,
 // decision 6): a yes is no longer a line in the request's thread ("ada
-// approved it."); the change's votes are on its page. WORK.approved stays
-// for work owed before, which its service now settles quietly.
+// approved it."); the change's votes are on its page. (Its work,
+// bot.tellApproved, settled quietly what was owed before; nothing has
+// enqueued it since, and it is gone.)
 function voted(s: BState, _e: Event<any>, f: Facts, _ctx: TransitionContext): Outcome<BState> {
   const live = s as Live;
   return step(live.name as Name, live.data, { work: [], push: tray(f) });
@@ -525,6 +566,7 @@ export function botChange(): Machine<BState, Facts> {
   const works = { WorkSucceeded: workResult('done'), WorkFailed: workResult('failed'), WorkExhausted: workResult('exhausted') };
   const looks = {
     Proposed: { to: look }, Verdict: { to: look }, ShotsSettled: { to: look }, FixRoundEnded: { to: look }, FixRefused: { to: look }, Look: { to: look },
+    VoteOpened: { to: look }, FixUnanswered: { to: look },
     PreviewStopped: { to: stopped },
     Merged: { to: merged },
     DeployFailed: { to: deployFailed },
@@ -538,7 +580,8 @@ export function botChange(): Machine<BState, Facts> {
   };
   const ended = {
     Proposed: { ignore: 'ended' }, Verdict: { ignore: 'ended' }, ShotsSettled: { ignore: 'ended' }, FixRoundEnded: { ignore: 'ended' }, FixRefused: { ignore: 'ended' },
-    Look: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' }, Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
+    Look: { ignore: 'ended' }, VoteOpened: { ignore: 'ended' }, FixUnanswered: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' },
+    Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
     DeployFailed: { ignore: 'ended' }, ConflictUnresolved: { ignore: 'ended' }, MergeStuck: { ignore: 'ended' },
     Closed: { ignore: 'ended' }, Voted: { ignore: 'ended' }, RetryFollowup: retryFollowup, ...works,
   };
@@ -547,7 +590,9 @@ export function botChange(): Machine<BState, Facts> {
   const mergedState = {
     ...looks,
     Proposed: { ignore: 'merged' }, Verdict: { ignore: 'merged' }, ShotsSettled: { ignore: 'merged' },
-    FixRoundEnded: { ignore: 'merged' }, FixRefused: { ignore: 'merged' }, Look: { ignore: 'merged' }, PreviewStopped: { ignore: 'merged' },
+    FixRoundEnded: { ignore: 'merged' }, FixRefused: { ignore: 'merged' }, Look: { ignore: 'merged' }, VoteOpened: { ignore: 'merged' },
+    FixUnanswered: { ignore: 'merged' },
+    PreviewStopped: { ignore: 'merged' },
     ConflictUnresolved: { ignore: 'merged' }, MergeStuck: { ignore: 'merged' },
   };
   // Closed: put up for a vote again (reopened), it is followed again.
@@ -569,12 +614,24 @@ export function botChange(): Machine<BState, Facts> {
     // a fix lost twice is handed to its requester (bot.handOffFix), and a
     // merge whose deploy failed is told (DeployFailed, bot.tellDeployFailed),
     // and a conflict the sync could not resolve is handed to its requester
-    // (ConflictUnresolved, bot.handOffConflict).
-    version: 3,
+    // (ConflictUnresolved, bot.handOffConflict). 4 (review A3): it no longer
+    // decides that a change is ready to try; it reads the change's stored
+    // work state and is told when that row opens (VoteOpened). An older Pod
+    // decides it by its own rule and would refuse the event, so it leaves
+    // the instances this version wrote alone; `data` keeps its shape, and an
+    // instance version 3 wrote is read as it is (its `told` epoch stands, so
+    // nothing is said twice). A rollback past it lowers them:
+    // UPDATE wf_instances SET machine_version = 3 WHERE machine = 'bot-change'.
+    // Also new in 4 (review 3e): a round asked of the bot that goes
+    // unanswered for FIX_ANSWER_MS is asked again (FixUnanswered, its clock).
+    version: 4,
     events: EVENTS,
     create: CREATE,
-    // What web appends: a vote on the change, and the admin console's Retry follow-up.
-    web: ['Voted', 'RetryFollowup'],
+    // What web appends: a vote on the change, the admin console's Retry
+    // follow-up, and its stored row opening for votes when a route's own
+    // refresh stored it (services/work-state.js touched). VoteOpened decides
+    // nothing by itself (the row is read again), so a forged one says nothing.
+    web: ['Voted', 'RetryFollowup', 'VoteOpened'],
     terminal: [...FINAL],
     decode: (row) => ({ name: row.state, data: row.data } as BState),
     facts: (tx: Tx, state: BState, event: Event<any>) => {
@@ -598,6 +655,8 @@ export function botChange(): Machine<BState, Facts> {
       Live: fromMachine('merge-followups'),
       Closed: fromMachine('proposal'),
       Look: timer,
+      FixUnanswered: timer,
+      VoteOpened: (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer')),
       Voted: (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer')),
       RetryFollowup: admin,
     },

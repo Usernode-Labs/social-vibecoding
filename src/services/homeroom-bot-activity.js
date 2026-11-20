@@ -88,6 +88,8 @@ const appAccess = require('./app-access');
 const { HOMEROOM_BOT_CARDS_LOCK } = require('./advisory-locks');
 const { changeHref } = require('./change-destination');
 const { firstVersionSql } = require('./first-version-rule');
+// The one table of a work state's stages, whys, reasons and line codes.
+const stages = require('./work-stages');
 // The shared per-request record (requestRecordJoinsSql), for the SQL read at
 // load; its module requires nothing of this one's.
 const recordJoins = require('./homeroom-bot-progress');
@@ -642,12 +644,40 @@ function outcomeOf(row) {
   }
 }
 
-// T2.12 (19 Nov 2026): the stages in which a request's work is still going.
-const STILL_GOING = new Set(['reading', 'planning', 'building']);
+// T2.12 (19 Nov 2026): the stages in which a request's work is still going:
+// the one table's stages the bot works in (work-stages.json `works`).
+const STILL_GOING = new Set(stages.STAGES.filter((stage) => stages.STAGE[stage].works === true));
 const WORKING = Symbol('working');
 // What a card's run came to once its build became a change (outcomeOf): the
 // change's own states, which the request's work still going never undoes.
 const CHANGE_OUTCOMES = new Set(['proposed', 'checking', 'needs_look', 'going_live', 'live', 'closed']);
+
+// What a card came to, by its request's stopped reason: one entry for every
+// reason of the one table (work-stages.json), so a new reason is said on
+// purpose (tests/work-stages-client.test.js holds the keys to the table's).
+const REASON_OUTCOMES = Object.freeze({
+  build_failed: 'build_failed',
+  look_failed: 'failed',
+  change_closed: 'closed',
+  stalled: 'stopped',
+  // Homeroom bot stopped fixing its change's failing tests: built, and a
+  // person has to look. It had no case here, so the card fell through to
+  // its run's own record and read "Testing" under a request every other
+  // screen called Stopped.
+  fix_stopped: 'needs_look',
+});
+
+// And by its why, while it waits for its requester: one entry for every why
+// of the table. `null`: the row has nothing of its own to say (a plan waiting
+// for its OK is the card's run's, its plan card). `needs_detail` is a build
+// found impossible as written when its stored cause says so.
+const WHY_OUTCOMES = Object.freeze({
+  question: 'question',
+  plan: null,
+  decide: 'person',
+  already_works: 'person',
+  needs_detail: 'empty',
+});
 
 /**
  * Pure (T2.12): what a card's request's stored work state says the card came
@@ -659,17 +689,11 @@ const CHANGE_OUTCOMES = new Set(['proposed', 'checking', 'needs_look', 'going_li
 function outcomeFromWork(work) {
   if (!work || !work.stage) return null;
   if (STILL_GOING.has(work.stage)) return WORKING;
-  if (work.stage === 'stopped') {
-    if (work.reason === 'build_failed') return 'build_failed';
-    if (work.reason === 'look_failed') return 'failed';
-    if (work.reason === 'change_closed') return 'closed';
-    if (work.reason === 'stalled') return 'stopped';
-    return null;
-  }
+  const own = (map, key) => (key && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null);
+  if (work.stage === 'stopped') return own(REASON_OUTCOMES, work.reason);
   if (work.stage === 'waiting_for_you') {
-    if (work.why === 'question') return 'question';
-    if (work.why === 'decide' || work.why === 'already_works') return 'person';
-    if (work.why === 'needs_detail') return work.cause === 'blocked' ? 'blocked' : 'empty';
+    if (work.why === 'needs_detail' && work.cause === 'blocked') return 'blocked';
+    return own(WHY_OUTCOMES, work.why);
   }
   return null;
 }
@@ -725,7 +749,13 @@ function buildUnderWay(row) {
 // (services/work-state.js), the row every screen draws, in the same words
 // (`doing`), never from a reading of the bot's records of its own.
 const WAITING_TURN = new Set(['queued', 'waiting', 'first_version_wait']);
-const HELD_LINES = new Set(['held_builds', 'held_waiting', 'claimed']);
+// A request waiting rather than worked on: its project's build slots, its
+// changes waiting for votes, somebody's claim, or the bot's building credit
+// (credit_wait: its words said so, but its card spun as if building). A
+// subset of the one table's waiting lines on a build (work-stages.json
+// `waits`), which tests/work-stages-client.test.js holds it to: the build's
+// own turn in line (`queued`) and an update on its way are the build's.
+const HELD_LINES = new Set(['held_builds', 'held_waiting', 'claimed', 'credit_wait']);
 
 /**
  * Pure: a card's working entry from its request's stored work state: the
@@ -806,6 +836,11 @@ function changeOutcomeOf(row, work) {
   // A first version whose checks passed goes live without a vote; one
   // GitHub holds once approved is going live too.
   if (work.stage === 'going_live') return 'going_live';
+  // The request's row says Stopped: Homeroom bot gave up fixing the change's
+  // tests. Nothing is being tested any more, whether or not the "needs a
+  // look" message has gone out yet (`needs_look`), and whichever look is the
+  // request's newest (the fix's own run, usually, not this card's).
+  if (work.stage === 'stopped' && work.reason === 'fix_stopped') return 'needs_look';
   if (change.voteOpen) return 'proposed';
   return row.needs_look ? 'needs_look' : 'checking';
 }
@@ -1564,6 +1599,11 @@ module.exports = {
   // T2.12: a card's outcome from its request's stored row, when its run is the newest.
   outcomeFor,
   outcomeFromWork,
+  REASON_OUTCOMES,
+  WHY_OUTCOMES,
+  STILL_GOING,
+  HELD_LINES,
+  CHANGE_OUTCOMES,
   entryOfWork,
   queueWords,
   changeOutcomeOf,

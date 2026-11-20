@@ -25,14 +25,8 @@ const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-test('Q34: the API key note has a space either side of the spend-limits link', () => {
-  const { ApiKeySection } = loadTsx('frontend/src/features/settings/sections/api-key.tsx');
-  const html = renderToHtml(createElement(ApiKeySection));
-  assert.match(html,
-    /that level of access\. <a href="https:\/\/console\.anthropic\.com\/settings\/keys"[^>]*>Set tight spend limits<\/a> on the key itself for defense in depth\./);
-  const src = read('frontend/src/features/settings/sections/api-key.tsx');
-  assert.doesNotMatch(src, /\{' '\}/, 'no whitespace-only child: it cannot survive hydration (React #418)');
-});
+// Q34 pinned the spacing round the link in the Anthropic API key's note.
+// That section went with people's own Anthropic keys (task 2275).
 
 test('Q32c: the standings line reads "done · View challenges", spaced both sides', () => {
   const src = read('frontend/src/features/leaderboard/topochain-standings.tsx');

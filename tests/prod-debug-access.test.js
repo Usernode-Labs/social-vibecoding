@@ -315,13 +315,19 @@ test('secret env: Claude scout has no general worker-token alias', () => {
   });
   assert.deepEqual(scout, { ANTHROPIC_API_KEY: 'proxy-jwt', ISSUES_JWT: 'issues-jwt' });
   assert.ok(!Object.values(scout).includes('must-not-travel'));
+  // There is no own-key turn any more (task 2275): a build carries the
+  // relay token too, and a key a caller still passes is never used.
   const build = worker.buildTurnSecretEnv({
     mode: 'build', workerSessionJwt: 'session-jwt', issuesReadJwt: 'issues-jwt',
-    anthropicProxyJwt: null, anthropicApiKey: 'sk-byok', prodDebugJwt: null,
+    anthropicProxyJwt: 'proxy-jwt', anthropicApiKey: 'sk-byok', prodDebugJwt: null,
   });
   assert.deepEqual(build, {
-    ANTHROPIC_API_KEY: 'sk-byok', WORKER_JWT: 'session-jwt', ISSUES_JWT: 'issues-jwt',
+    ANTHROPIC_API_KEY: 'proxy-jwt', WORKER_JWT: 'session-jwt', ISSUES_JWT: 'issues-jwt',
   });
+  assert.throws(() => worker.buildTurnSecretEnv({
+    mode: 'build', workerSessionJwt: 'session-jwt', issuesReadJwt: 'issues-jwt',
+    anthropicProxyJwt: null, anthropicApiKey: 'sk-byok', prodDebugJwt: null,
+  }), /anthropicProxyJwt required/, 'no relay token, no turn');
 });
 
 // ── JWT claims ─────────────────────────────────────────────────────────

@@ -153,7 +153,28 @@ test('T1.3: a chat answer that met the 402 for credit notes the outage, says so,
   const mayor = require('../src/services/homeroom-bot-mayor');
   let noted = 0;
   const t = { ctx: { userText: 'hello', deps: { credit: { noteOutage: async () => { noted += 1; } } } }, failures: [] };
-  const out = await mayor.fallbackAnswer({ query: async () => ({ rows: [] }) }, t, { error: 'credit_out', history: [] });
+  // Review A1: the code is the one the REAL client gives for OpenRouter's
+  // own 402 (services/openrouter.js, what the chat calls). This test used to
+  // pass `error: 'credit_out'` by hand, a code that client never produced.
+  const openrouter = require('../src/services/openrouter');
+  let error = null;
+  try {
+    await openrouter.streamChat({
+      apiKey: 'k', baseUrl: 'https://openrouter.test/api/v1', model: mayor.DEFAULT_MODEL, reasoning: 'low',
+      messages: [{ role: 'user', content: 'hello' }], tools: [],
+      fetchImpl: async () => new Response(JSON.stringify({
+        error: {
+          message: 'This request would exceed your available credits given your current in-flight requests. '
+            + 'Retry after in-flight requests settle, or add credits.',
+          code: 402,
+        },
+      }), { status: 402, headers: { 'content-type': 'application/json' } }),
+    });
+  } catch (err) {
+    error = mayor.codeOf(err);
+  }
+  assert.equal(error, 'credit_out');
+  const out = await mayor.fallbackAnswer({ query: async () => ({ rows: [] }) }, t, { error, history: [] });
   assert.equal(out.fallback, 'credit');
   assert.equal(out.text, mayor.CREDIT_TEXT);
   assert.equal(out.defer, true, 'its DM\'s own clock asks it again');

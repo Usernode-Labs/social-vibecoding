@@ -8,11 +8,26 @@
 //             wall: past it, POST /api/apps and /fork answer 429 "This
 //             server is at its app limit" to everyone but full admins. Set
 //             in Admin → Limits, else MAX_APPS (services/app-limit.js).
+//   connections  the shared Postgres server's client connections against
+//             the line where ordinary logins are refused (max_connections
+//             less the reserved blocks). Postgres itself refuses past it.
 //   sessions  the session limit — active + promoted coding workers. A soft
 //             wall: at it, starting or reopening a session pauses somebody
 //             else's idle one, and 429s "Platform is at capacity" when
 //             nothing is idle. Set in Admin → Limits, else
 //             MAX_GLOBAL_SESSIONS (services/session-limit.js).
+//
+// and the cluster's own, measured outside the database by
+// services/platform-capacity.js (which says how each is read):
+//
+//   db_disk   the shared Postgres server's volume, MiB used against its
+//             capacity. Full, Postgres stops writing.
+//   quota_apps, quota_workers, quota_builds
+//             each runtime namespace's ResourceQuota, its tightest resource
+//             in thousandths of the hard value. Full, Kubernetes refuses the
+//             next pod: an app, a session or check, a build.
+//   node_pool the worker nodes' local volume pool, the fullest node's MiB
+//             taken against its size. Full, new volumes fail to mount.
 //
 // and one that is GitHub's rather than ours, its hourly REST budget as the
 // last response reported it (services/github-budget.js):
@@ -76,6 +91,10 @@ const GITHUB_WARN_PERCENT = 80;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 // A level re-arms once the count is this far under the line it crossed.
 const REARM_RATIO = 0.9;
+// #6901: while people keep being turned away at the app limit, the full
+// admins get one count notice at most this often. The first refusal of a run
+// notifies at once, whatever the level already says.
+const REFUSAL_NOTICE_INTERVAL_MS = 3 * 60 * 60 * 1000;
 
 const LEVELS = Object.freeze(['ok', 'warn', 'full']);
 const RANK = Object.freeze({ ok: 0, warn: 1, full: 2 });
@@ -110,6 +129,30 @@ const LIMITS = Object.freeze([
     count: (pool) => require('./session-caps').countGlobalSessions(pool),
   }),
   Object.freeze({
+    // The shared Postgres server's client connections, against the line
+    // where ordinary logins (every app's) are refused: max_connections less
+    // the superuser and reserved blocks (services/server-budget.js keeps the
+    // platform's own pools inside the reserved block, so apps meet the wall
+    // first). Postgres itself enforces it; the count is the census the
+    // status screen shows (db/connection-census.js).
+    key: 'connections',
+    envKey: 'max_connections',
+    enabled: () => true,
+    async cap(_config, pool) {
+      const { rows } = await pool.query(
+        `SELECT current_setting('max_connections')::int
+                - current_setting('superuser_reserved_connections')::int
+                - COALESCE(NULLIF(current_setting('reserved_connections', true), ''), '0')::int AS cap`
+      );
+      return Number(rows[0] && rows[0].cap);
+    },
+    async count(pool) {
+      const census = await require('../db/connection-census').connectionCensus(pool);
+      if (!census) throw new Error('the connection census could not be taken');
+      return census.used;
+    },
+  }),
+  Object.freeze({
     key: 'github_app',
     // Read off GitHub's answers to this process: unknown (no cap) until it
     // has made a call, which says nothing about the level.
@@ -122,7 +165,30 @@ const LIMITS = Object.freeze([
     window: () => githubBudget.alertFigures('installation').resetAt,
   }),
 ]);
-const LIMIT_BY_KEY = new Map(LIMITS.map((limit) => [limit.key, limit]));
+// The cluster's own ceilings (services/platform-capacity.js). Each is one
+// `measure` rather than a cap and a count, because one outside read answers
+// both, and what it was about (the claim, the resource, the node) is kept
+// beside the figure in `detail`. A measure of null means the limit does not
+// apply here (off Kubernetes, in a preview, no read grant yet): nothing is
+// recorded and the area shows no row.
+const CAPACITY_ENV = Object.freeze({
+  db_disk: 'CHECK_POOL_METRICS_URL',
+  quota_apps: 'APP_NAMESPACE',
+  quota_workers: 'WORKER_NAMESPACE',
+  quota_builds: 'BUILD_NAMESPACE',
+  node_pool: 'APP_RUNTIME',
+});
+function capacity() {
+  return require('./platform-capacity');
+}
+const CAPACITY_LIMITS = Object.freeze(Object.entries(CAPACITY_ENV).map(([key, envKey]) => Object.freeze({
+  key,
+  envKey,
+  enabled: (config) => capacity().enabled(config, key),
+  measure: (config, _pool, deps) => capacity().measure(config, key, deps),
+})));
+const ALL_LIMITS = Object.freeze([...LIMITS, ...CAPACITY_LIMITS]);
+const LIMIT_BY_KEY = new Map(ALL_LIMITS.map((limit) => [limit.key, limit]));
 
 function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
@@ -178,8 +244,9 @@ function decide({ used, cap, percent = DEFAULT_WARN_PERCENT, level }) {
 // notifications.detail token: "<limit>_<level>:<used>:<cap>", e.g.
 // "apps_warn:40:50". The drawer and the push copy parse it back; neither
 // shows it raw. Figures are clamped to seven digits so the widest token
-// ("sessions_full:9999999:9999999", 29) stays inside the 32 characters every
-// creator keeps to.
+// ("node_pool_full:9999999:9999999", 30) stays inside the 32 characters every
+// creator keeps to. A quota's figure is thousandths, clamped to four digits
+// (platform-capacity.js), so "quota_workers_full:9999:1000" is 28.
 const MAX_FIGURE = 9999999;
 
 function figure(n) {
@@ -190,12 +257,32 @@ function detailToken(key, level, used, cap) {
   return `${key}_${level}:${figure(used)}:${figure(cap)}`;
 }
 
-const DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parseDetail(detail) {
   const m = DETAIL_RE.exec(String(detail || ''));
   if (!m) return null;
   return { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) };
+}
+
+// #6901: a refusal notice's token, "apps_away:<people>:<cap>:<ago>", e.g.
+// "apps_away:3:210:180". `ago` is the minutes from the run's start to the
+// notice: 0 means "someone was just turned away". People clamp to five
+// digits, cap to seven and ago to four, so the widest is 28 characters,
+// inside the 32 every creator keeps to. The drawer and the push copy parse
+// it back; neither shows it raw.
+function refusalToken(people, cap, agoMinutes) {
+  const p = Math.min(99999, Math.max(0, Math.floor(Number(people) || 0)));
+  const ago = Math.min(9999, Math.max(0, Math.floor(Number(agoMinutes) || 0)));
+  return `apps_away:${p}:${figure(cap)}:${ago}`;
+}
+
+const REFUSAL_DETAIL_RE = /^apps_away:(\d{1,5}):(\d{1,7}):(\d{1,4})$/;
+
+function parseRefusalDetail(detail) {
+  const m = REFUSAL_DETAIL_RE.exec(String(detail || ''));
+  if (!m) return null;
+  return { people: Number(m[1]), cap: Number(m[2]), agoMinutes: Number(m[3]) };
 }
 
 // Resolved at call time so a test can swap either without a database.
@@ -218,12 +305,23 @@ function defaultPublish(pool, row) {
 async function evaluate(pool, config, key, deps = {}) {
   const limit = LIMIT_BY_KEY.get(key);
   if (!limit) throw new Error(`unknown platform limit: ${key}`);
-  const cap = await limit.cap(config, pool);
+  const unknown = { key, used: null, cap: null, level: null, notified: null, recipients: 0, unknown: true };
+  let cap;
+  let used;
+  let detail = null;
+  if (limit.measure) {
+    const measured = limit.enabled(config) ? await limit.measure(config, pool, deps.capacity || {}) : null;
+    if (!measured) return unknown;
+    ({ used, cap } = measured);
+    detail = measured.detail || null;
+  } else {
+    cap = await limit.cap(config, pool);
+  }
   // A process that has not heard from GitHub yet knows no figures: recording
   // "ok" would re-arm a crossing already told (each new process used to).
-  if (limit.fromAnswers && !(Number(cap) > 0)) return { key, used: null, cap: null, level: null, notified: null, recipients: 0, unknown: true };
+  if (limit.fromAnswers && !(Number(cap) > 0)) return unknown;
   const percent = limit.percent ? limit.percent() : warnPercent();
-  const used = await limit.count(pool);
+  if (!limit.measure) used = await limit.count(pool);
   if (!Number.isFinite(used) || used < 0) throw new Error(`bad ${key} count`);
   const staging = deps.staging ?? isStaging();
   const create = deps.create || defaultCreate;
@@ -264,10 +362,12 @@ async function evaluate(pool, config, key, deps = {}) {
       `UPDATE platform_limit_alerts
           SET level = $2, used = $3, cap = $4, measured_at = NOW(),
               notified_at = CASE WHEN $5::boolean THEN NOW() ELSE notified_at END,
-              window_reset_at = CASE WHEN $6::float8 IS NULL THEN window_reset_at ELSE to_timestamp($6::float8 / 1000) END
+              window_reset_at = CASE WHEN $6::float8 IS NULL THEN window_reset_at ELSE to_timestamp($6::float8 / 1000) END,
+              refusals_since = CASE WHEN $4::int IS NULL OR $3::int < $4::int THEN NULL ELSE refusals_since END,
+              detail = $7::jsonb
         WHERE limit_key = $1`,
       [key, decision.level, used, Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : null,
-        !!decision.notify, window]
+        !!decision.notify, window, detail ? JSON.stringify(detail) : null]
     );
     let inserted = [];
     if (decision.notify && !staging) {
@@ -275,7 +375,7 @@ async function evaluate(pool, config, key, deps = {}) {
         detail: detailToken(key, decision.notify, used, cap),
       });
     }
-    return { decision, inserted };
+    return { decision, inserted, previous: stored };
   });
 
   if (outcome.stale) {
@@ -290,22 +390,216 @@ async function evaluate(pool, config, key, deps = {}) {
   for (const row of outcome.inserted) {
     await Promise.resolve(publish(pool, row)).catch(() => {});
   }
+  // The admin limits area at the top of Notifications reads this level
+  // (services/platform-limits-view.js): when it moves, an open sheet and the
+  // bell's dot read it again. GitHub's budget is not in the area.
+  if (outcome.previous !== outcome.decision.level && key !== 'github_app') {
+    (deps.limitsChanged || (() => require('./platform-limits-view').changed()))();
+  }
   return {
     key, used, cap, level: outcome.decision.level,
     notified: outcome.decision.notify, recipients: outcome.inserted.length,
   };
 }
 
+/**
+ * Count the people refused since the last refusal notice and, when there are
+ * any, notify them. The platform_limit_alerts row must already be locked by
+ * the caller's transaction. `since` is `refusals_notified_at` (the run's
+ * start for its first count). Returns { token, inserted }, token null when
+ * nobody is waiting to be reported.
+ *
+ * deps.create and deps.staging work as in evaluate().
+ */
+async function flushRefusals(db, key, cap, since, deps = {}, now = null) {
+  const staging = deps.staging ?? isStaging();
+  const create = deps.create || defaultCreate;
+  const { rows } = await db.query(
+    `SELECT COUNT(DISTINCT user_id)::int AS n
+       FROM platform_limit_refusals
+      WHERE limit_key = $1 AND refused_at > $2`,
+    [key, since]
+  );
+  const people = Number(rows[0] && rows[0].n) || 0;
+  if (people <= 0) return { token: null, inserted: [] };
+  const at = now ? new Date(now) : new Date();
+  const ago = Math.max(0, Math.round((at.getTime() - new Date(since).getTime()) / 60000));
+  const token = refusalToken(people, cap, ago);
+  const inserted = staging ? [] : await create(db, { detail: token, repeatable: true });
+  await db.query(
+    'UPDATE platform_limit_alerts SET refusals_notified_at = $2 WHERE limit_key = $1',
+    [key, at]
+  );
+  return { token, inserted };
+}
+
+/** Publish what a refusal notice created, after its transaction committed. */
+async function publishAll(pool, inserted, deps = {}) {
+  const publish = deps.publish || defaultPublish;
+  for (const row of inserted) {
+    await Promise.resolve(publish(pool, row)).catch(() => {});
+  }
+}
+
+/**
+ * Record that `userId` was turned away at `key`'s cap (#6901). One row per
+ * account per UTC day, so a retry counts once.
+ *
+ * The first refusal of a run notifies the full admins AT ONCE, whatever the
+ * level says: a cap raised while the count stayed above the re-arm line
+ * leaves the level at "full", and that is exactly the case that used to tell
+ * nobody. After that at most one count notice every
+ * REFUSAL_NOTICE_INTERVAL_MS. Previews record the refusal but notify nobody.
+ *
+ * deps.create, deps.publish and deps.staging work as in evaluate().
+ */
+async function recordRefusal(pool, config, key, userId, deps = {}) {
+  if (key !== 'apps' || !userId) return { notified: null, recipients: 0 };
+  const limit = LIMIT_BY_KEY.get(key);
+  if (!limit || !limit.enabled(config)) return { notified: null, recipients: 0 };
+  const cap = await limit.cap(config, pool);
+  if (!(Number(cap) > 0)) return { notified: null, recipients: 0 };
+  const staging = deps.staging ?? isStaging();
+  const create = deps.create || defaultCreate;
+
+  const outcome = await withTransaction(pool, async (db) => {
+    await db.query(
+      `INSERT INTO platform_limit_refusals (limit_key, user_id, day)
+       VALUES ($1, $2, (NOW() AT TIME ZONE 'UTC')::date)
+       ON CONFLICT DO NOTHING`,
+      [key, userId]
+    );
+    await db.query(
+      `INSERT INTO platform_limit_alerts (limit_key) VALUES ($1)
+       ON CONFLICT (limit_key) DO NOTHING`,
+      [key]
+    );
+    const { rows } = await db.query(
+      `SELECT refusals_since, refusals_notified_at, NOW() AS now
+         FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE`,
+      [key]
+    );
+    const row = rows[0] || {};
+    const now = row.now ? new Date(row.now) : new Date();
+    if (!row.refusals_since) {
+      // A new run: the server was full and nobody had been recorded yet.
+      await db.query(
+        `UPDATE platform_limit_alerts
+            SET refusals_since = $2, refusals_notified_at = $2
+          WHERE limit_key = $1`,
+        [key, now]
+      );
+      const token = refusalToken(1, cap, 0);
+      const inserted = staging ? [] : await create(db, { detail: token, repeatable: true });
+      return { token, inserted };
+    }
+    const since = row.refusals_notified_at || row.refusals_since;
+    if (now.getTime() - new Date(since).getTime() < REFUSAL_NOTICE_INTERVAL_MS) {
+      return { token: null, inserted: [] };
+    }
+    const flushed = await flushRefusals(db, key, cap, since, { ...deps, staging, create }, now);
+    return flushed;
+  });
+
+  await publishAll(pool, outcome.inserted, deps);
+  if (outcome.token) {
+    log.info('platform-limits', 'Someone was turned away at a platform limit', {
+      limit: key, cap, detail: outcome.token, recipients: outcome.inserted.length, staging,
+    });
+    // The admin limits area shows the count (services/platform-limits-view.js).
+    (deps.limitsChanged || (() => require('./platform-limits-view').changed()))();
+  }
+  return { notified: outcome.token, recipients: outcome.inserted.length };
+}
+
+/**
+ * The leaders' sweep reports refusals that have stopped as well: with nobody
+ * new refused, the pending count still goes out once the interval is up.
+ * Never throws; the caller records a failure like the others.
+ */
+async function sweepRefusals(pool, config, key, deps = {}) {
+  const limit = LIMIT_BY_KEY.get(key);
+  if (!limit || !limit.enabled(config)) return null;
+  const cap = await limit.cap(config, pool);
+  if (!(Number(cap) > 0)) return null;
+  const staging = deps.staging ?? isStaging();
+
+  const outcome = await withTransaction(pool, async (db) => {
+    const { rows } = await db.query(
+      `SELECT refusals_since, refusals_notified_at, NOW() AS now
+         FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE`,
+      [key]
+    );
+    const row = rows[0];
+    if (!row || !row.refusals_since) return { token: null, inserted: [] };
+    const since = row.refusals_notified_at || row.refusals_since;
+    const now = row.now ? new Date(row.now) : new Date();
+    if (now.getTime() - new Date(since).getTime() < REFUSAL_NOTICE_INTERVAL_MS) {
+      return { token: null, inserted: [] };
+    }
+    return flushRefusals(db, key, cap, since, { ...deps, staging }, now);
+  });
+  await publishAll(pool, outcome.inserted, deps);
+  return outcome.token;
+}
+
+/**
+ * How many people were turned away since the server last had room, and when
+ * that run began (ISO), for Admin → Limits (#6901). { turnedAway: 0,
+ * since: null } when no run is open.
+ */
+async function refusalSummary(pool, key = 'apps') {
+  const { rows } = await pool.query(
+    `SELECT a.refusals_since,
+            (SELECT COUNT(DISTINCT r.user_id)::int
+               FROM platform_limit_refusals r
+              WHERE r.limit_key = a.limit_key
+                AND r.refused_at >= a.refusals_since) AS n
+       FROM platform_limit_alerts a
+      WHERE a.limit_key = $1`,
+    [key]
+  );
+  const row = rows[0];
+  if (!row || !row.refusals_since) return { turnedAway: 0, since: null };
+  return {
+    turnedAway: Number(row.n) || 0,
+    since: new Date(row.refusals_since).toISOString(),
+  };
+}
+
+/**
+ * Fire-and-forget for request paths: record a refusal after the response has
+ * been decided, never throw, never delay the caller. A no-op when the cap is
+ * off, so route tests that mount with `maxApps: 0` never see it.
+ */
+function noteRefusal(pool, config, key, userId) {
+  const limit = LIMIT_BY_KEY.get(key);
+  if (!limit || !limit.enabled(config) || !userId) return;
+  Promise.resolve()
+    .then(() => recordRefusal(pool, config, key, userId))
+    .catch((err) => {
+      log.warn('platform-limits', 'Platform limit refusal not recorded', { limit: key, err: err.message });
+    });
+}
+
 /** Evaluate every cap. Never throws; errors are collected per cap. */
 async function sweep(pool, config, deps = {}) {
   const summary = { results: [], errors: [] };
-  for (const limit of LIMITS) {
+  for (const limit of ALL_LIMITS) {
     try {
       summary.results.push(await evaluate(pool, config, limit.key, deps));
     } catch (err) {
       summary.errors.push(`${limit.key}: ${err.message}`);
       log.warn('platform-limits', 'Platform limit check failed', { limit: limit.key, err: err.message });
     }
+  }
+  // Refusals that have stopped still get their last count once the interval
+  // is up, so nobody goes unreported.
+  try {
+    await sweepRefusals(pool, config, 'apps', deps);
+  } catch (err) {
+    summary.errors.push(`apps refusals: ${err.message}`);
+    log.warn('platform-limits', 'Platform limit refusal check failed', { err: err.message });
   }
   return summary;
 }
@@ -327,15 +621,26 @@ function nudge(pool, config, key) {
 
 module.exports = {
   LIMITS,
+  CAPACITY_LIMITS,
+  ALL_LIMITS,
   REARM_RATIO,
   SWEEP_INTERVAL_MS,
+  REFUSAL_NOTICE_INTERVAL_MS,
   DEFAULT_WARN_PERCENT,
   warnPercent,
   lines,
   decide,
   detailToken,
   parseDetail,
+  refusalToken,
+  REFUSAL_DETAIL_RE,
+  parseRefusalDetail,
   evaluate,
+  recordRefusal,
+  flushRefusals,
+  sweepRefusals,
+  refusalSummary,
   sweep,
   nudge,
+  noteRefusal,
 };

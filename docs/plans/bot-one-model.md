@@ -115,6 +115,18 @@ Writers call `refresh` where an item's facts change:
 - the routes that change a request or change outside them: close, reopen,
   claim, vote.
 
+One writer at a time per item (review B3, 19 Nov 2026): `refresh` takes
+the item's lock (`pg_try_advisory_xact_lock`, `WORK_STATE_ITEM_LOCK`)
+before it reads the item's facts, and holds it to the end of its
+transaction, so no write puts an older reading of the facts over a row
+derived from a newer one. It never waits for the lock: a writer that finds
+an item taken leaves it to the holder (what it wrote marked the item; the
+drain marks a skipped item again). A reader that makes a missing row
+publishes it like any other write (`ensure`, `ensureChanges`). Which derive
+wrote a row is its own column, `derive_version`, as well as `standing.v`
+for the release before; a row whose only change is that, or its due time,
+is stored quietly. A row whose `since` moved has changed.
+
 ### Push and the bell
 
 Every changed row is pushed as `work_state` to everyone who can see the item.
@@ -125,6 +137,10 @@ A change of stage rings the requester's bell:
 - into `up_for_vote`: ready to vote;
 - into `stopped`: stopped;
 - into `live`: live.
+
+Once per moment (review B3): the bell carries a key of its item, stage
+(with its why or reason) and `since` (`notifications.bell_key`), and is not
+rung again while a bell with that key is unread.
 
 ### Readers
 
@@ -162,7 +178,8 @@ proposal):
   the request page's `standing` (with the viewer's `mine` and `voteOwed`),
   Homeroom bot's progress, my_work and request_detail, and the voice's
   facts read the rows. Gone: ai-work's fallback, the chat card's own
-  derivation, progressFor, progressText, proposalFacts, botWorkByIssue,
+  derivation, progressFor, progressText (corrected in step 8: it still
+  exists, and reads the rows), proposalFacts, botWorkByIssue,
   statusOf, and the track's own reads of holds, tries and who shipped it.
 - Finished 19 Nov 2026 (what was left for later):
   - A first version's App tab steps (homeroom-bot-dm.js firstVersionStateOf,
@@ -208,7 +225,8 @@ The request thread keeps:
 - its answers when somebody speaks to it there.
 
 These go:
-- DM relays of request news (`relayIssuePost`);
+- DM relays of request news (`relayIssuePost`; corrected in step 8: it
+  stays for a first version's news, its one caller);
 - milestone lines in private threads (`noteMilestone`);
 - request news in Main Chat;
 - channel status chips;
@@ -539,6 +557,15 @@ told only that its edits make "the next version", called version 4 "version
   working card says "Drawing version 4" and "Changing the draft".
 - **Asking says why.** The chat's prompt tells it to say, in one clause,
   what it found that makes a question necessary before asking it.
+- **A draft is a capability with a skill.** Its instructions are
+  `src/prompts/artifact-draft.md`, read only while its draft is open
+  (`live-draft-bot.js draftSkill`), as a design's are. It is written against
+  the chat's own rules: a question says what makes it necessary and what its
+  answer changes, and nothing is promised for later. Its file edits run the
+  same `artifact-session.js applyEdits` a design and a page do, and its
+  failures are sorted by `bot-turn-failure.js`: a failure on Homeroom's side
+  is said as Homeroom's and spends none of the turn's applies, while an app
+  that stopped after an edit is the app's own and is fixed or put back.
 
 ### What it costs
 
@@ -650,3 +677,127 @@ dropped any debt above priority 0 while the request was `building`. Request
   back; only the chat resumes by itself.
 - **The live `updateComingSql` check in Needs you stays.** The row can lag
   a turn's start by the 3-second drain.
+
+Corrections (step 8, after the independent review of 19 Nov 2026):
+- "One out-of-credit classifier ... used by every turn" was not true for
+  the chat and the thread voice: their model client (`openrouter.js`) said
+  `billing` for every 402, so their outage branches could not be reached,
+  nothing was recorded and the chat kept nothing for when credit came back.
+  Step 8 makes it true.
+- "A chat message the outage held is answered once credit is back" held
+  only once step 8 classified the 402 at the transport.
+- "Only the chat resumes by itself", under Left for later: before step 8
+  the chat did not resume either.
+- `progress.stageOf` and `handedBack` were called deleted deciders; they
+  were the derive's inner layer. Step 8 folds `stageOf` into the derive;
+  `handedBack` stays as a helper of `deriveFacts`.
+
+## Step 8: what the review found, and artifacts (19 Nov 2026)
+
+One proposal, after an independent review of step 7 (main at `6b83931c0`).
+Two halves, kept together so the bot changes once.
+
+### Credit and failures that are true
+
+- **The 402 is classified where it arrives.** One status table for both
+  model clients (`provider-error.js`): OpenRouter's 402 for credit is
+  `credit_out`, its 402 that asks only for a shorter reply stays `billing`.
+  Tests send OpenRouter's own bodies through the real client.
+- **One stored outage, read as a level.** The settings row
+  `openrouter-credit.js` keeps is the one holder. `creditState()` is how a
+  turn outside the lane asks before it calls a model (the chat, the voice,
+  look_into, an investigation, a takeover); `noteOutage` is how a turn
+  reports one. The lane reads the same row on every pass (`bot-lane/facts.ts`
+  `credit`) and, while it stands, looks again every two minutes; the pass
+  that finds it gone grants and tells the DMs that kept a message.
+  `CreditBack` is only a wake-up, sent after the cleared state is stored.
+- **One sort of a failed turn** (`bot-turn-failure.js`): credit, platform
+  (a provider's error, a transport, a worker lost or out of memory, a turn
+  that never dispatched, the runtime's own "API Error" line) or model, from
+  the turn's own fields and never from free text. A bare "402" in a
+  platform message no longer pauses every project.
+  - A platform failure spends no try: a reply's asks wait, a read is no
+    failed read of its thread (its third in a row still is, so one request
+    cannot pause the lane for ever), a checks fix gets the one retry a
+    timeout gets, a takeover says whose failure it was, and an
+    investigation does not count it toward the three that end it. Past its
+    retries it is said as Homeroom's failure, in plain words, and counted
+    as an incident (`bot_turn_platform`).
+  - A first version's one automatic retry is not spent on a 402, and a
+    credit stop whose queue write fails says what is true.
+- **The request machine:** a person's Stop of a look keeps another
+  person's ask that came in meanwhile; in `queued`, a debt with its own wait
+  no longer resets a back-off or delays a person's ask, and a person's ask
+  clears a back-off as it clears a hold.
+
+### Where a change stands: one implementation
+
+- **Composed, not duplicated.** A request whose own change is up for a vote
+  or past it reads that change's derived state, with the bot's overlay
+  (fixing, revising, an update queued, a question, fix stopped). The change
+  cases of the request's derive and the refresh's patch are gone, and so is
+  `progress.stageOf`.
+- **One table of stages and line codes** (`work-stages.json`, read through
+  `work-stages.js`): a new line code is one entry. The server's lists, the
+  project chat card's and (step 8's last part) the client's are read off it,
+  and a test fails when server and client disagree.
+- **"Ready to try" has one decider:** the change's stored row. The
+  bot-change machine (version 4) sends the card when the row opens for
+  votes (`VoteOpened`, from the push, with a sweep backstop) and keeps only
+  what is its own: when to send a change back for a fix, now with a
+  six-hour backstop clock on `with_the_bot`. `changeReadiness` and the
+  rules' `readiness` are gone; the card's later lines read the row.
+- **One writer per row.** A per-item advisory lock, never waited on: a
+  writer that finds the item taken leaves it to the holder. The bell rings
+  once per moment (`notifications.bell_key` while unread); a row a reader
+  makes rings like any other; `since` counts as a change; the derive's
+  version has its own column.
+- **Why a build stopped is a code** (`homeroom_bot_runs.build_stop`),
+  written with the text, filled by a trigger for a write that names none
+  (an old pod's), and backfilled once; its readers read the code.
+- **Decided with Evan:** a failing verdict about a commit that is not the
+  head reads as checks still running.
+- The safety net (`tests/work-state-derive-table.test.js`) records what
+  the derive said before over 12,659 cases; every difference is in its
+  `INTENDED` list.
+
+### The client draws the row
+
+The stored row gives the stage word and the tone on every surface; live
+gates add detail under it and never change the word
+(`frontend/src/lib/work-state.ts`). A request's page with one change, its
+header pill, the change line and folded pill, the board card and its
+spine, the Workshop rows, Needs you, the activity cards and the request
+chip now read the row.
+
+### Cleanup
+
+Readers of `homeroom_bot_voice_offers` and of the `homeroom_bot_dm_actions`
+view are gone (both stay in the database until a later change drops them,
+after 25 Nov), with dead code and helpers that were copied word for word.
+Prompt text that contradicted itself says one thing: the bot checks now or
+says it does not know, never "I'll check"; a filed report is "in
+Homeroom's Workshop"; the triage prompt's operator work and `platform` say
+one thing each.
+
+### Artifacts
+
+One store, one frame component with three modes and one policy for every
+page the bot writes, with design as one kind (`docs/plans/artifacts.md`).
+
+### Left for later
+
+- **Voice and look_into after an outage** still ask to be asked again; the
+  chat alone holds a message for when credit is back.
+- **A first version's steps** read the ten stages through
+  `firstVersionStepOf`, but their own functions are still keyed by the old
+  step names.
+- **The build's own failure texts** reach `build_stop` through the trigger;
+  their write sites could write the code themselves.
+- **`TURN_MARK_SQL`** stays: a follow-up's report said in the change's
+  thread is found by it.
+- **The read slots of bot-request version 1** stay until no such instance
+  is left in production and the rollback the workflow document describes
+  is retired.
+- **Dropping** `homeroom_bot_voice_offers`, the `homeroom_bot_dm_actions`
+  view and the other retired card tables: a separate change after 25 Nov.

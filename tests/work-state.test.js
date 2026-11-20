@@ -54,11 +54,10 @@ test('every phrase an item can carry is in the core catalog', () => {
     ...ws.STAGES.map((stage) => ({ stage })),
     ...ws.WHYS.map((why) => ({ stage: 'waiting_for_you', why })),
     ...ws.REASONS.map((reason) => ({ stage: 'stopped', reason })),
-    ...['queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
-      'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
-      'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots',
-      'approved_checking']
-      .map((code) => ({ stage: 'building', line: { code } })),
+    // Every line code, on each stage it is written on (the one table:
+    // src/services/work-stages.json), with the values a stored line carries.
+    ...require('../src/services/work-stages').LINE_CODES.flatMap((code) => require('../src/services/work-stages').LINE[code].stages
+      .map((stage) => ({ stage, line: { code, place: 2, round: 1, of: 2, failing: 3, minutes: 4, count: 2, by: 'ada', text: 'Why.' } }))),
     { stage: 'checking', line: { code: 'approved_checking' } },
     { stage: 'up_for_vote', line: { code: 'earlier_yes', count: 2 } },
     { stage: 'reading', line: { code: 'queued', place: 3 } },
@@ -362,18 +361,18 @@ test('a checking change words its wait: about N min left, or waiting to sync wit
     shots_state: 'exploring', shots_run_id: 'r'.repeat(32), shots_updated_at: NOW.toISOString(),
     shots_detail: { headSha: 'h1', required: true },
   }), ['checking', { code: 'conflict_on_yes' }], 'its shots are still being taken');
-  // A request's own step reads the same, from its facts row's columns.
-  const facts = { integration_merges_clean: false, integration_block_reasons: ['awaiting_approval'] };
-  const step = (stage, row) => {
-    const out = ws.fromStage({ stage, since: NOW.toISOString() }, { ...facts, ...row }, NOW);
+  // A request whose change it is reads the same, from its own facts row's
+  // columns: the request's row is the change's (deriveFacts, withBot).
+  const facts = { proposal_status: 'promoted', integration_merges_clean: false, integration_block_reasons: ['awaiting_approval'] };
+  const step = (row) => {
+    const out = derive({ ...facts, ...row });
     return [out.stage, out.line];
   };
-  assert.deepEqual(step('checks', { check_state: 'pending' }), ['checking', { code: 'conflict_on_yes' }]);
-  assert.deepEqual(step('checks_failed', { check_state: 'failing', failed_checks: 1 }), ['checking', { code: 'checks_failing', failing: 1 }]);
-  assert.deepEqual(step('checks', { check_state: 'passing', first_version: true }), ['checking', { code: 'conflict_on_yes' }]);
-  assert.deepEqual(step('checks', { check_state: 'passing', reviewed_head_sha: 'b', checks_sha: 'a' }), ['checking', { code: 'conflict_on_yes' }]);
-  assert.deepEqual(step('checks', { check_state: 'passing' }), ['up_for_vote', { code: 'conflict_on_yes' }]);
-  assert.deepEqual(step('vote', { check_state: 'passing' }), ['up_for_vote', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step({ check_state: 'pending' }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step({ check_state: 'failing', failed_checks: 1 }), ['checking', { code: 'checks_failing', failing: 1 }]);
+  assert.deepEqual(step({ check_state: 'passing', first_version: true }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step({ check_state: 'passing', reviewed_head_sha: 'b', checks_sha: 'a' }), ['checking', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step({ check_state: 'passing' }), ['up_for_vote', { code: 'conflict_on_yes' }]);
   // A passing change that has since stopped merging cleanly moves back to
   // waiting, and is not up for a vote.
   const moved = ws.deriveChange({ status: 'promoted', check_state: 'passing',
@@ -517,7 +516,7 @@ test('#6600: a takeover running says the bot is fixing it, and a failed one says
 // getting that check fixed in another request, is the bot still working:
 // Checking, with Fixing for the stage word.
 test('#6807: a change waiting on a fix for the check it fails on reads Fixing', () => {
-  const mapped = ws.fromStage({ stage: 'flake_fixing', since: ago(5) }, {});
+  const mapped = derive({ proposal_status: 'promoted', check_state: 'failing', flake_fixing: true });
   assert.deepEqual([mapped.stage, mapped.line], ['checking', { code: 'fixing_check' }]);
   assert.equal(ws.placeFor(mapped, { own: true }), 'waiting', 'Waiting, not Needs you');
   assert.deepEqual(ws.phrasesOf(mapped), {
@@ -589,7 +588,7 @@ test('#6821: a change whose votes are in and waits to sync reads Syncing with ma
     reviewed_head_sha: 'h', checks_sha: 'h', check_state: 'passing',
   };
   const step = (extra) => {
-    const out = ws.fromStage({ stage: 'checks', since: NOW.toISOString() }, { ...facts, ...extra }, NOW);
+    const out = derive({ proposal_status: 'promoted', ...facts, ...extra });
     return [out.stage, out.line];
   };
   assert.deepEqual(step({}), ['up_for_vote', { code: 'conflict_on_yes' }]);

@@ -2,8 +2,10 @@
 
 const llm = require('./llm');
 const log = require('./logger');
+const openrouterMessages = require('./openrouter-messages');
+const { refusalCode } = require('./provider-error');
 
-// Shared Anthropic stream-forwarding mechanics, extracted from
+// Shared Messages stream-forwarding mechanics, extracted from
 // routes/anthropic-proxy.js (issue #34) so the worker proxy and the
 // app-LLM proxy (/api/app-llm) don't duplicate ~200 lines of SSE
 // parsing, hop-by-hop header filtering, and the forward/kill loop.
@@ -11,12 +13,12 @@ const log = require('./logger');
 // The two proxies differ in WHO is calling (worker JWT vs app token +
 // user iframe token) and in WHICH budgets gate the call — those
 // decisions stay in the routes. What lives here is the mechanical
-// middle: forward the request to api.anthropic.com with the real key,
-// tee the SSE response to estimate running cost, ask the caller's
-// `shouldKill` after every cost update, and report the final cost so
-// the caller can settle its ledgers.
-
-const ANTHROPIC_UPSTREAM = 'https://api.anthropic.com';
+// middle: forward the request to OpenRouter's Claude Messages endpoint
+// (services/openrouter-messages.js, task 2275; api.anthropic.com before)
+// with the real key, tee the SSE response to estimate running cost, ask
+// the caller's `shouldKill` after every cost update, and report the final
+// cost so the caller can settle its ledgers. OpenRouter answers in the
+// same Messages shapes and the same event stream, so the tee is unchanged.
 
 // Hop-by-hop headers (RFC 7230 §6.1) that must NEVER be forwarded
 // through a proxy, plus a few Node/Express layer headers that would
@@ -34,7 +36,7 @@ const HOP_BY_HOP = new Set([
   'content-length', // recomputed by fetch / Express
 ]);
 
-// Minimal SSE parser that handles fragmented chunks. Anthropic frames
+// Minimal SSE parser that handles fragmented chunks. The Messages API frames
 // each event as:
 //
 //   event: <name>\n
@@ -86,71 +88,87 @@ function makeSseTee(onEvent, logTag = 'anthropic-stream') {
   };
 }
 
-// Build forwarded headers: drop hop-by-hop, drop the caller's auth
-// headers (x-api-key plus anything in `strip`), inject the real key.
-// Preserves `anthropic-version`, `anthropic-beta`, `accept`,
-// `content-type`, etc.
-function buildForwardHeaders(reqHeaders, apiKey, { strip = [] } = {}) {
-  const stripSet = new Set(strip.map((h) => h.toLowerCase()));
-  const fwdHeaders = {};
-  for (const [k, v] of Object.entries(reqHeaders)) {
+// Build forwarded headers: only what means something upstream
+// (`anthropic-version`, `anthropic-beta`, `accept`) rides along; the
+// caller's own credentials (x-api-key, a bearer token, x-usernode-*) and
+// every hop-by-hop header stay here, and the real key goes in as a bearer
+// token, as OpenRouter takes it.
+function buildForwardHeaders(reqHeaders, apiKey, { origin } = {}) {
+  const flat = {};
+  for (const [k, v] of Object.entries(reqHeaders || {})) {
     const kl = k.toLowerCase();
     if (HOP_BY_HOP.has(kl)) continue;
-    if (kl === 'x-api-key') continue;
-    if (stripSet.has(kl)) continue;
-    if (Array.isArray(v)) fwdHeaders[k] = v.join(', ');
-    else if (v != null) fwdHeaders[k] = String(v);
+    flat[kl] = Array.isArray(v) ? v.join(', ') : (v != null ? String(v) : v);
   }
-  fwdHeaders['x-api-key'] = apiKey;
-  return fwdHeaders;
+  return openrouterMessages.upstreamHeaders(flat, apiKey, origin);
 }
 
-// Forward one request to Anthropic and stream the response back,
+// Forward one request to OpenRouter and stream the response back,
 // estimating running cost from the SSE tee and killing the upstream
 // the moment `shouldKill(currentCallCents)` returns a truthy reason.
 //
 //   req, res       — Express request/response. req.body must already be
 //                    parsed JSON (both proxies mount their own scoped
 //                    express.json()).
-//   upstreamUrl    — full https://api.anthropic.com/... URL.
-//   apiKey         — the real key to inject (platform or BYOK).
-//   stripHeaders   — extra request headers to drop before forwarding
-//                    (caller-side credentials like x-usernode-*).
+//   upstreamUrl    — the OpenRouter URL (openrouterMessages.upstreamUrlFor).
+//   apiKey         — the real key to inject: the platform's OpenRouter key,
+//                    or a person's own under an app grant that allows it.
+//   origin         — the attribution origin OpenRouter is told.
 //   shouldKill     — optional (currentCallCents, model) => reason|null,
 //                    consulted after every cost update. A truthy return
 //                    aborts the upstream; the client sees a truncated
 //                    stream (a normal API error to the SDK).
 //   logTag, logCtx — logging identity for warn/error lines.
 //
-// Resolves { costCents, model, killed, status } once the response has
-// ended (normally, by kill, or by client disconnect). Mid-call costs
+// Resolves { costCents, model, killed, status, refusal } once the response
+// has ended (normally, by kill, or by client disconnect). `refusal` is how a
+// refused call was refused, in provider-error.js's one reading (#6898):
+// 'credit_out' for OpenRouter's 402 for credit, so a relay can record the
+// outage; null for a call that went through. Mid-call costs
 // are best-effort estimates (see the output-token estimator below);
-// the final message_delta overwrites the estimate with Anthropic's
+// the final message_delta overwrites the estimate with the provider's
 // exact count, so the settled cost is accurate to one event gap.
 async function forwardCall({
   req,
   res,
   upstreamUrl,
   apiKey,
-  stripHeaders = [],
+  origin = null,
   shouldKill = null,
   logTag = 'anthropic-stream',
   logCtx = {},
 }) {
-  const fwdHeaders = buildForwardHeaders(req.headers, apiKey, { strip: stripHeaders });
+  const fwdHeaders = buildForwardHeaders(req.headers, apiKey, { origin });
 
+  // The body goes up with OpenRouter's id for the model and data
+  // collection denied (openrouterMessages.requestBody). A model that is not
+  // Claude is refused here, before anything is sent: both relays are the
+  // Claude Messages contract, and an app could otherwise reach any model on
+  // the platform's key.
   let body;
   let requestModel = null;
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.body && Object.keys(req.body).length) {
-    body = JSON.stringify(req.body);
-    fwdHeaders['content-type'] = 'application/json';
+    let sent;
+    try {
+      sent = openrouterMessages.requestBody(req.body);
+    } catch (err) {
+      if (!res.headersSent) {
+        res.status(err.status || 400).json({
+          type: 'error',
+          error: { type: 'invalid_request_error', message: err.message },
+          code: err.code || 'invalid_request',
+        });
+      }
+      return { costCents: 0, model: null, killed: false, status: err.status || 400 };
+    }
+    body = JSON.stringify(sent);
     // Capture the model from the request body in case message_start
     // doesn't include it (the SDK always does, but be safe).
     requestModel = typeof req.body.model === 'string' ? req.body.model : null;
   }
 
   // Abort upstream when the client disconnects mid-stream so we don't
-  // keep the Anthropic socket open after the caller gives up. This
+  // keep the provider socket open after the caller gives up. This
   // same controller is what the budget kill triggers.
   const abort = new AbortController();
   let killReason = null;
@@ -209,12 +227,17 @@ async function forwardCall({
   let currentInputTokens = 0;
   let currentOutputTokens = 0;
   let currentModel = requestModel;
+  // OpenRouter's own figure for the call, once it has given one: it replaces
+  // the running estimate.
+  let reportedCostCents = null;
 
   function recomputeCost() {
-    currentCallCents = llm.estimateCostCents(
-      { input_tokens: currentInputTokens, output_tokens: currentOutputTokens },
-      currentModel
-    );
+    currentCallCents = reportedCostCents != null
+      ? reportedCostCents
+      : llm.estimateCostCents(
+        { input_tokens: currentInputTokens, output_tokens: currentOutputTokens },
+        currentModel
+      );
   }
 
   function checkKill() {
@@ -232,7 +255,7 @@ async function forwardCall({
     }
   }
 
-  // Output-token estimator. Anthropic only emits a final
+  // Output-token estimator. The Messages stream only emits a final
   // `message_delta` with `usage.output_tokens` near the very end of
   // the stream, so a kill check that only watches that event would
   // fire ~99% through the generation — too late to actually truncate
@@ -242,7 +265,7 @@ async function forwardCall({
   // The estimate is intentionally simple — Anthropic's tokenizer is
   // BPE, so we use a 4-chars-per-token heuristic which slightly
   // overestimates prose and slightly underestimates code. The final
-  // `message_delta` then overwrites the estimate with Anthropic's
+  // `message_delta` then overwrites the estimate with the provider's
   // exact count. For cost-cap enforcement an estimate within
   // ±25 % is plenty: we want to catch users running away with
   // dollars of spend, not police pennies.
@@ -266,7 +289,9 @@ async function forwardCall({
         // Events we observe:
         //   message_start         — sets input_tokens + model
         //   content_block_delta   — incremental output text → estimate tokens
-        //   message_delta         — final usage.output_tokens (replaces estimate)
+        //   message_delta         — final usage.output_tokens (replaces
+        //                           estimate), and usage.cost when
+        //                           OpenRouter reports what the call cost
         if (event !== 'message_start' &&
             event !== 'content_block_delta' &&
             event !== 'message_delta') {
@@ -286,7 +311,7 @@ async function forwardCall({
           }
         } else if (event === 'content_block_delta') {
           bumpEstimateFromDelta(parsed);
-          // Use the larger of "what we estimated" vs "what Anthropic
+          // Use the larger of "what we estimated" vs "what the provider
           // last told us" so we don't go backwards if message_start
           // already reported a non-zero output count.
           currentOutputTokens = Math.max(currentOutputTokens, estimatedOutputTokensFromDeltas);
@@ -294,6 +319,12 @@ async function forwardCall({
           const usage = parsed.usage;
           if (usage && Number.isFinite(usage.output_tokens)) {
             currentOutputTokens = usage.output_tokens;
+          }
+          if (usage && Number.isFinite(usage.input_tokens) && usage.input_tokens > currentInputTokens) {
+            currentInputTokens = usage.input_tokens;
+          }
+          if (usage && typeof usage.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0) {
+            reportedCostCents = usage.cost * 100;
           }
         }
         recomputeCost();
@@ -351,6 +382,9 @@ async function forwardCall({
         if (usage && Number.isFinite(usage.output_tokens)) {
           currentOutputTokens = usage.output_tokens;
         }
+        if (usage && typeof usage.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0) {
+          reportedCostCents = usage.cost * 100;
+        }
         recomputeCost();
       } catch {
         // Not JSON, or no usage block — non-/v1/messages endpoint.
@@ -375,11 +409,11 @@ async function forwardCall({
     model: currentModel,
     killed: !!killReason,
     status: upstream.status,
+    refusal: upstream.status >= 400 ? refusalCode(upstream.status, nonStreamingBody || '') : null,
   };
 }
 
 module.exports = {
-  ANTHROPIC_UPSTREAM,
   HOP_BY_HOP,
   makeSseTee,
   buildForwardHeaders,

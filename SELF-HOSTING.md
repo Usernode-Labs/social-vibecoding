@@ -376,12 +376,6 @@ Per [src/services/app-manifest.js](./src/services/app-manifest.js):
       "description": "Classic PAT for repo creation, branch pushes, PR creation"
     },
     {
-      "key": "ANTHROPIC_API_KEY",
-      "required": false,
-      "private": true,
-      "description": "Platform-wide fallback Claude key; users can BYOK"
-    },
-    {
       "key": "ADMIN_USERNAME",
       "required": true,
       "description": "Bootstrap admin username"
@@ -1840,7 +1834,7 @@ document to hand a partner.
   `dapp.json` marks every credential-bearing entry `private` (e.g.
   `ADMIN_PASSWORD`, `JWT_SECRET`, `SESSION_SECRET`,
   `USERNODE_DB_PASSWORD`, `USERNODE_APP_SECRET_KEY`,
-  `GITHUB_PRIVATE_KEY`, `GITHUB_BOT_TOKEN`, `ANTHROPIC_API_KEY`, and
+  `GITHUB_PRIVATE_KEY`, `GITHUB_BOT_TOKEN`, and
   the "Platform keys" group's `DATA_ENCRYPTION_KEY`,
   `IFRAME_JWT_PRIVATE_KEY`, `WORKER_JWT_SECRET`, `EDGE_JWT_SECRET` —
   `IFRAME_JWT_PUBLIC_KEY` is deliberately NOT private, since a public

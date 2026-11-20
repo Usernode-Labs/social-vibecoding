@@ -3,7 +3,7 @@
 // ./ai-budget.tsx, and this module builds the view model for it.
 //
 // The AI-credit row (#555) — the viewer's own daily LLM allowance. It lives
-// in Settings → Anthropic API key, which is already the page about what
+// in Settings → AI usage & models (its Usage part), the page about what
 // happens when that allowance runs out; the fetch and the throttle here are
 // unchanged from when it was a hamburger-drawer row.
 //
@@ -13,11 +13,8 @@
 // slot a declared check selects. The value is never a link.
 //
 // (A sibling "Anthropic credits" row for admins shipped alongside this
-// one and was removed again: on this deployment it could only ever read
-// "Not set up", because Anthropic publishes no credit balance and the
-// figure has to be recorded by hand. The balance now lives solely in
-// Admin & moderation → Spend limits, which still reads and writes it via
-// /api/admin/anthropic-credits.)
+// one and was removed again: Anthropic publishes no credit balance. Its
+// admin card went with the Anthropic key in task 2275.)
 //
 // Refresh cadence: once at authed boot, then on every drawer open,
 // throttled. The drawer is the only place it renders, so "open the
@@ -231,18 +228,13 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // unlock action without doing spend/limit division (which used to
         // produce a misleading $0/$0 meter and NaN percentages).
         if (state && state.level === 'locked') {
-          var lockedParts = [
-            { bare: true, runs: [{ tone: 'warn', text: PlatformI18n.t('wallet:credit.meter.locked') }] },
-          ];
-          if (s.hasByokKey) {
-            lockedParts.push({
-              runs: runs('wallet:credit.meter.lockedKeyAvailable', {}, ['dim', 'byok']),
-            });
-          }
+          // There is no saved key to fall back on any more (task 2275 removed
+          // people's own Anthropic keys), so a locked account is locked.
           show({
-            title: s.hasByokKey ? PlatformI18n.t('wallet:credit.tip.lockedWithKey')
-              : PlatformI18n.t('wallet:credit.tip.locked'),
-            parts: lockedParts,
+            title: PlatformI18n.t('wallet:credit.tip.locked'),
+            parts: [
+              { bare: true, runs: [{ tone: 'warn', text: PlatformI18n.t('wallet:credit.meter.locked') }] },
+            ],
           });
           return;
         }
@@ -270,10 +262,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // another the way the language does.
         var amounts = { limit: money(limit), spent: money(spent), remaining: money(remaining) };
         var allowance;
-        if (exhausted && s.hasByokKey) {
-          allowance = weeklyWindow ? PlatformI18n.t('wallet:credit.tip.keyBilledWeekly', amounts)
-            : PlatformI18n.t('wallet:credit.tip.keyBilledDaily', amounts);
-        } else if (exhausted) {
+        if (exhausted) {
           allowance = weeklyWindow ? PlatformI18n.t('wallet:credit.tip.usedAllWeekly', amounts)
             : PlatformI18n.t('wallet:credit.tip.usedAllDaily', amounts);
         } else {
@@ -300,14 +289,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
         if (limit <= 0) {
           parts.push({
             remaining: true,
-            runs: [{ tone: s.hasByokKey ? 'dim' : 'high', text: PlatformI18n.t('wallet:credit.meter.noAllowance') }],
-          });
-        } else if (exhausted && s.hasByokKey) {
-          // Not "$0 left" on a row that can keep going: turns bill to the
-          // key now, and the tooltip says so.
-          parts.push({
-            runs: [{ tone: 'dim', text: PlatformI18n.t(weeklyWindow
-              ? 'wallet:credit.meter.usedAllWeekly' : 'wallet:credit.meter.usedAllToday', brief) }],
+            runs: [{ tone: 'high', text: PlatformI18n.t('wallet:credit.meter.noAllowance') }],
           });
         } else {
           var leftTone = exhausted ? 'high' : spentTone;

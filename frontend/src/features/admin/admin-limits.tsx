@@ -4,17 +4,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { LimitTextsCard } from './admin-limit-texts';
 
 // Limits (#admin/limits): the server's app limit and session limit, whether
 // previews may have projects made in them, GitHub's hourly request budget
-// (read-only), the platform's LLM budget dials, and
-// the Anthropic credit balance the remaining-credit figure is derived from.
+// (read-only) and the platform's LLM budget dials. The Anthropic credit
+// balance card went with the Anthropic key in task 2275; the platform's
+// OpenRouter credit is watched by services/openrouter-credit.js.
 //
 // PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
 // same on PUT /api/admin/app-limit, PUT /api/admin/session-limit,
 // PUT /api/admin/preview-projects,
-// PUT /api/admin/limits and PUT /api/admin/anthropic-credits.
+// and PUT /api/admin/limits.
 //
 // ── Sixth section out of the chassis (#1120 slice 21) ─────────────────
 //
@@ -36,8 +38,7 @@ type Tone = 'ok' | 'err';
 interface Status { text: string; tone: Tone }
 
 const TONE_CLASS: Record<Tone, string> = {
-  // Two different greens, preserved: the credits line has always been
-  // emerald and the limits line green-500.
+  // Each status line passes its own green (okClass).
   ok: '',
   err: 'text-red-400',
 };
@@ -82,6 +83,25 @@ function StatusLine({ id, status, okClass }: { id: string; status: Status | null
 // as its placeholder, and "Use MAX_APPS" clears a stored value. When the
 // deploy has switched the cap off (MAX_APPS=0) there is nothing to set, and
 // the card says so instead of offering a field the server would refuse.
+// #6901: when the run of refusals began, in the viewer's own time zone
+// ("13 Nov, 17:31"), beside the count Admin → Limits shows.
+function turnedAwayTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const day = date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${day}, ${time}`;
+}
+
+// The turned-away line's figures, or null when nobody has been refused since
+// the server last had room (nothing is drawn then).
+export function turnedAwayLine(data: any): { count: number; when: string } | null {
+  const count = Number(data && data.turnedAway) || 0;
+  if (count <= 0 || !data.turnedAwaySince) return null;
+  const when = turnedAwayTime(data.turnedAwaySince);
+  return when ? { count, when } : null;
+}
+
 function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   const console_ = () => (window as any).AdminConsole;
   const [data, setData] = useState<any>(null);
@@ -136,6 +156,7 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   };
 
   const off = data && data.source === 'disabled';
+  const turnedAway = turnedAwayLine(data);
   const usage = !data ? 'Loading…'
     : off ? `${data.used} live apps · no limit`
       : `${data.used} of ${data.limit} live apps`;
@@ -156,12 +177,18 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
         <h2 className={AdminUI.cardTitle}>App limit</h2>
         <span id="admin-app-limit-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
       </div>
+      {turnedAway ? (
+        <p id="admin-app-limit-turned-away"
+          className={`${AdminUI.muted} mb-3 font-semibold text-amber-700 dark:text-amber-400`}>
+          {turnedAway.count} {turnedAway.count === 1 ? 'person' : 'people'} turned away since {turnedAway.when}
+        </p>
+      ) : null}
       <p className={`${AdminUI.muted} mb-3`}>
         How many live apps the whole server allows. At the limit, everyone but full admins is
         told the server is full when they create or fork an app. Apps that failed to build
         do not count. Full admins are notified at {data ? data.warnPercent : 80}% of the limit
-        and again when it is reached. A change applies to every server within ten seconds,
-        with no deploy.
+        and again when it is reached. While it is full, they are also told when someone is
+        turned away. A change applies to every server within ten seconds, with no deploy.
       </p>
       {off ? null : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
@@ -856,11 +883,6 @@ function LimitsSection() {
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
 
-  const [balance, setBalance] = useState('');
-  const [asOf, setAsOf] = useState('');
-  const [derived, setDerived] = useState('');
-  const [creditsStatus, setCreditsStatus] = useState<Status | null>(null);
-
   const alive = useRef(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -882,38 +904,12 @@ function LimitsSection() {
     setSystem(console_().centsToDollars(data.system_tokens_daily_limit_cents));
   }, []);
 
-  // Echo the derived figure back here, so an admin can confirm the admin key
-  // is actually working. This is the only place it shows.
-  const fillCredits = useCallback((data: any) => {
-    if (data.configured) {
-      setBalance(console_().centsToDollars(data.balanceCents));
-      setAsOf(data.asOf || '');
-    }
-    if (!data.configured) {
-      setDerived('Nothing recorded yet: no remaining-credit figure is being tracked.');
-    } else if (typeof data.remainingCents !== 'number') {
-      setDerived(`Couldn’t reach Anthropic to compute the remaining credit${
-        data.error ? ` (${data.error})` : ''}.`);
-    } else {
-      const src = data.source === 'anthropic'
-        ? 'from Anthropic’s billed cost report'
-        : 'estimated from platform spend records (no ANTHROPIC_ADMIN_KEY configured)';
-      setDerived(`$${console_().centsToDollars(data.remainingCents)} remaining, `
-        + `$${console_().centsToDollars(data.spentCents)} spent since ${data.asOf}, ${src}.`
-        + (data.stale ? ' Showing a cached figure; the last refresh failed.' : ''));
-    }
-  }, []);
-
   useEffect(() => {
     (async () => {
       const { data } = await console_().fetchJson('/api/admin/limits');
       if (alive.current && data && typeof data === 'object') fillLimits(data);
     })();
-    (async () => {
-      const { data } = await console_().fetchJson('/api/admin/anthropic-credits');
-      if (alive.current && data && typeof data === 'object') fillCredits(data);
-    })();
-  }, [fillLimits, fillCredits]);
+  }, [fillLimits]);
 
   const saveLimits = async () => {
     setLimitsStatus(null);
@@ -960,35 +956,6 @@ function LimitsSection() {
     }
   };
 
-  const saveCredits = async () => {
-    setCreditsStatus(null);
-    let body: any;
-    try {
-      const cents = console_().parseDollarsToCents('Credit balance', balance.trim());
-      const when = asOf.trim();
-      if (cents === null) throw new Error('Enter the credit balance.');
-      if (!when) throw new Error('Enter the date that balance was correct.');
-      body = { balanceCents: cents, asOf: when };
-    } catch (err: any) {
-      setCreditsStatus({ text: err.message, tone: 'err' });
-      return;
-    }
-    try {
-      const res = await fetch('/api/admin/anthropic-credits', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
-      if (!alive.current) return;
-      fillCredits(data);
-      setCreditsStatus({ text: 'Saved.', tone: 'ok' });
-    } catch (err: any) {
-      if (alive.current) setCreditsStatus({ text: err.message, tone: 'err' });
-    }
-  };
-
   return (
     <>
       <AppLimitCard canWrite={canWrite} />
@@ -1002,6 +969,8 @@ function LimitsSection() {
       <VersionsCard canWrite={canWrite} />
 
       <LiveDraftsCard canWrite={canWrite} />
+
+      <LimitTextsCard canWrite={canWrite} />
 
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
@@ -1061,44 +1030,6 @@ function LimitsSection() {
           ) : null}
         </div>
         <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-green-800 dark:text-green-400" />
-      </div>
-
-      {/* Anthropic credits (#555). Anthropic's API publishes billed spend,
-          never a balance, so the remaining figure is derived: the balance
-          recorded here minus cost_report spend since the as-of date.
-          Re-record both after every top-up. View-only admins see the values,
-          disabled.
-
-          This is the ONLY surface for the figure — the drawer's status pane
-          carried a matching row until it was removed for reading "Not set up"
-          indefinitely. */}
-      <div className={`${AdminUI.card} p-4 mt-4`}>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className={AdminUI.cardTitle}>Anthropic credits</h2>
-        </div>
-        <p className={`${AdminUI.muted} mb-3`}>
-          Anthropic doesn’t publish a remaining-credit figure, only what it has
-          billed. Record the balance and the date it was correct, and the platform
-          subtracts billed spend since then. Re-record both after every top-up.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-          <MoneyField id="admin-credit-balance" label="Credit balance" placeholder="5000.00"
-            value={balance} onChange={setBalance} disabled={dis} />
-          <label className="block">
-            <span className={LABEL} title="The date that balance was correct">As of</span>
-            <input id="admin-credit-as-of" type="date" disabled={dis}
-              className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
-              value={asOf} onChange={(e) => setAsOf(e.target.value)} />
-          </label>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p id="admin-credit-derived" className="text-xs text-zinc-500 dark:text-zinc-400">{derived}</p>
-          {canWrite ? (
-            <button id="admin-save-credits-btn" type="button" className={AdminUI.btn.primary}
-              onClick={saveCredits}>Save</button>
-          ) : null}
-        </div>
-        <StatusLine id="admin-credits-status" status={creditsStatus} okClass="text-emerald-700 dark:text-emerald-400" />
       </div>
     </>
   );

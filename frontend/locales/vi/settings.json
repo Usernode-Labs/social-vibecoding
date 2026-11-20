@@ -735,30 +735,6 @@
     "text": "Đặt lại vào 00:00 UTC thứ Hai.",
     "source": "8260c59430618de198b46e83610e7a2945840b03ccd8174e1d52020606f50498"
   },
-  "apiKey.title": {
-    "text": "Khóa API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.intro": {
-    "text": "Dùng khóa API Anthropic của riêng bạn để tiếp tục làm việc sau khi vượt giới hạn hằng tuần. Hạn mức hằng tuần của nền tảng được dùng trước; khi hết, khóa của bạn sẽ tự động thay thế, kể cả giữa lượt đang chạy, và chi phí được tính trực tiếp vào tài khoản Anthropic của bạn.",
-    "source": "5b0792bc208a2c15d311cd18b29c5aabb8d6bb4c085f13c01991ffe2eaad28ba"
-  },
-  "apiKey.savedKeyLabel": {
-    "text": "Khóa",
-    "source": "99a52df3ff3d499488e2fa28150c4106a2cb5e928891a830a9aa3922b2d32160"
-  },
-  "apiKey.fieldLabel": {
-    "text": "Khóa API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.remove": {
-    "text": "Xóa",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.safety": {
-    "text": "Được mã hóa khi lưu trữ, xác minh với Anthropic trước khi lưu và không bao giờ hiển thị đầy đủ sau khi lưu. Máy chủ giải mã khóa trong bộ nhớ để gọi Anthropic thay bạn, vì vậy đừng dán khóa vào các dịch vụ mà bạn không tin tưởng ở mức quyền truy cập này. <0>Hãy đặt giới hạn chi tiêu chặt chẽ</0> cho chính khóa để tăng cường bảo vệ.",
-    "source": "964372764cebc98f971f0a8a93b91718b37a66b5e4dc6fe31778a665234ac478"
-  },
   "openrouter.intro": {
     "text": "Dùng bất kỳ mô hình tương thích nào cho mọi cuộc trò chuyện và lập trình trong phiên OpenRouter. Các phiên này không dùng hạn mức Claude của nền tảng. Tài khoản của bạn có sẵn một khóa OpenRouter, nên OpenRouter là mặc định và GLM 5.3 Flash được chọn khi có, trong khi toàn bộ danh sách mô hình mà khóa nhìn thấy vẫn khả dụng. Các mô hình được đánh dấu Claude Code trong danh sách sẽ chạy trong Claude Code. Khóa được mã hóa khi lưu trữ và chỉ được đưa vào cho từng lượt.",
     "source": "227eef10170b9b0dc7009a9f48d95a0859acd84a1c5e2755f9c5415cf73d6c01"
@@ -1803,10 +1779,6 @@
     "text": "OpenRouter",
     "source": "eb70c3bc14fa7ae14285b750955958e63b64b8f19546c30fc2223ad9057a959c"
   },
-  "nav.part.apiKey": {
-    "text": "Khóa API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
   "nav.part.connectors": {
     "text": "Trình kết nối",
     "source": "c3d2e79ebdd046c6b7363de7b69dc9fb5b38235f0d328fdff0b2f9ccf2854b07"
@@ -1938,10 +1910,6 @@
   "nav.keywords.usage": {
     "text": "hạn mức giới hạn tín dụng ngân sách chi tiêu còn lại hằng tuần",
     "source": "0adb04f257b23954eed88565204036d296f01d22c8f8910de60d1ec37715c568"
-  },
-  "nav.keywords.apiKey": {
-    "text": "claude byok khóa key sk-ant thanh toán",
-    "source": "c996fca19838c733331595e2a1ae5519bade7c758661edf20d108351488a7ef7"
   },
   "nav.keywords.openrouter": {
     "text": "mô hình glm deepseek suy luận mặc định tác nhân lập trình khóa key",
@@ -2443,34 +2411,6 @@
     "text": "Không thể lưu tùy chọn thông báo đẩy trên di động",
     "source": "7c9cc454c737e22211eec5f1755a2a9f649e051365bf74886355d84ea0e96ff7"
   },
-  "apiKey.field.replacePlaceholder": {
-    "text": "Dán khóa mới để thay thế",
-    "source": "8a347fdf5687f98be7defa6bc00ee1346e79f50c7ecaa801b91a57f74907d1ca"
-  },
-  "apiKey.button.replace": {
-    "text": "Thay thế",
-    "source": "95e154398a4bc0091aa4d6b607472ac5a89e41fbc84a3a49f823314d6de9eebc"
-  },
-  "apiKey.status.pasteFirst": {
-    "text": "Hãy dán khóa API trước.",
-    "source": "448710dc61de72d49cedf6c73808a66355e18e7fe52e4eb20f52886ec200bcf8"
-  },
-  "apiKey.status.verifying": {
-    "text": "Đang xác minh với Anthropic…",
-    "source": "cabd4656e84b52428a35326940ab951d522f9ada12f2b0c94a1ffea7c24d6c31"
-  },
-  "apiKey.status.saveFailed": {
-    "text": "Không thể lưu khóa.",
-    "source": "2ca6410dbed10cffc6c57ada961d1493471bb3565ec122ef9f331d08a1eac4ca"
-  },
-  "apiKey.status.saved": {
-    "text": "Đã lưu. Các cuộc trò chuyện của bạn giờ sẽ tính phí vào tài khoản Anthropic của bạn.",
-    "source": "94373a53a9d8cd2639fa1a6a89cd48aa9d9759d80621802dc1949f64570f0cac"
-  },
-  "apiKey.status.networkError": {
-    "text": "Lỗi mạng: {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
-  },
   "openrouter.cost.free": {
     "text": "Miễn phí",
     "source": "f411a1fb62758b4c54690d0a702b4955b54dd22115416fa7b1ce51b4a084818d"
@@ -2898,30 +2838,6 @@
   "signOut.failed": {
     "text": "Không thể đăng xuất. Hãy kiểm tra kết nối và thử lại.",
     "source": "0632a4853c68c1e1f46564d9df9aaabb335f62459c2b38543b87107e9fd0a158"
-  },
-  "apiKey.remove.confirmTitle": {
-    "text": "Xóa khóa API của bạn?",
-    "source": "1ee469e473451824b7c32a8088b0d3f61de81c496df0a7d9b557b8a0ec15c301"
-  },
-  "apiKey.remove.confirmMessage": {
-    "text": "Các cuộc trò chuyện sau này sẽ dùng ngân sách chung hằng ngày.",
-    "source": "cafee8d0d055378667b569721fd4f68f2a918d395544fe9006708cfab489b51e"
-  },
-  "apiKey.remove.confirmButton": {
-    "text": "Xóa",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.remove.failed": {
-    "text": "Không thể xóa khóa.",
-    "source": "4b33ea92e4c7da9f490f106fded6a4b5033ce752e74e3eb11c5e89b3eb6c87e7"
-  },
-  "apiKey.remove.done": {
-    "text": "Đã xóa.",
-    "source": "b4df0c43b59cfbb146d94d5610850a72afbd6844486643b3e025e7eee9891af2"
-  },
-  "apiKey.remove.networkError": {
-    "text": "Lỗi mạng: {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
   },
   "grants.status.demoData": {
     "text": "Dữ liệu demo: các thay đổi không được lưu.",

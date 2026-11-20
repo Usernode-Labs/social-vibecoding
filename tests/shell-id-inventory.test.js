@@ -58,6 +58,19 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Task 2275: people's own Anthropic keys are gone ────────────────
+  // Every model call goes to OpenRouter on the platform's key, and a person
+  // brings their own OpenRouter key (the OpenRouter part beside it) instead.
+  // Settings › AI usage & models lost its "Anthropic API key" part, and with
+  // it these ids; #settings/api-key opens that page (settings.js
+  // PART_ALIASES). The spend card (#settings-spend, #settings-spend-byok)
+  // stays on the Usage part.
+  'settings-key-display': 'The saved Anthropic key\'s row ("Key sk-ant-…1234") in Settings › Anthropic API key, removed with that part (task 2275).',
+  'settings-key-last4': 'The last four characters of the saved Anthropic key, inside #settings-key-display; gone with it (task 2275).',
+  'settings-api-key': 'The field a person pasted their Anthropic key into, removed with the part (task 2275). Their own OpenRouter key goes in the OpenRouter part.',
+  'settings-save': 'Save beside the Anthropic key field, removed with the part (task 2275).',
+  'settings-remove': 'Remove beside the Anthropic key field, removed with the part (task 2275).',
+  'settings-status': 'The Anthropic key part\'s status line (verifying, saved, removed), removed with the part (task 2275).',
   // ── The native-offline proposal (18 Nov 2026) ──────────────────────
   // The full-width amber strip is gone: the header says it now, in
   // #connection-status (features/header/connection-status.tsx), as native
@@ -292,7 +305,7 @@ const RETIRED_IDS = {
   'drawer-avatar': 'The viewer\'s picture on that row. No surface carries one now: the chip names the APP you are in, and Home\'s copy went with its account row.',
   'drawer-profile-glyph': 'Its fallback glyph, retired with the picture.',
   'drawer-row-settings': 'Settings is #switcher-row-settings, a row of the chip\'s menu (#1443) — it has its own page, and the menu lists everything that does.',
-  'drawer-byok-dot': 'The BYOK dot on that row — #switcher-byok-dot. settings.js publishes the flag through the visibility store rather than writing the class by id, because the row renders inside a React-owned subtree.',
+  'drawer-byok-dot': 'The BYOK dot on that row. It became a #switcher-byok-dot flag settings.js published through the visibility store; that flag went with people\'s own Anthropic keys (task 2275).',
   'drawer-row-admin': 'Admin & moderation is #switcher-row-admin, same isAdmin gate, published rather than class-written for the same reason.',
   'drawer-node-dot': 'Its status dot — #account-node-dot. It also stops PRERENDERING: the row renders inside the Profile screen\'s account group, which draws from profile data, where the drawer shipped on every page.',
   'drawer-node-status': 'Its status text — #account-node-status, same note.',
@@ -475,8 +488,6 @@ const ADDED_IDS = {
   'communities-search-input': 'The search field at the top of the Communities page, drawn from 768px: filters the Pinned and Joined groups by name. React-owned, and the page\'s own state, unlike Home\'s field.',
   'communities-pinned-section': 'The Pinned group of the Communities page: the account\'s pinned communities (home_community_pins) as tiles that open their hubs, led by the Needs you tile in a look whose Home has no Needs you card. Ships hidden: the pins load after mount.',
   'communities-joined-section': 'The Joined group of the Communities page: the communities the viewer is a member of and has not pinned, then the New community tile. Ships hidden: the list loads after mount.',
-  'communities-discover-section': 'The Discover card at the foot of the Communities page, which leads to Home\'s Communities to join.',
-  'communities-discover-btn': 'Discover communities, the button on that card: opens Home at Communities to join (Home.showCommunitiesToJoin).',
   // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
   'connector-tool-claude': 'The Claude.ai card in Settings > Connectors (features/settings/sections/connectors.tsx): its status word, its setup steps and its connections. The four cards replace one list of setup rows; #connectors-list stays as what holds them.',
   'connector-tool-chatgpt': 'The ChatGPT card, the same shape as #connector-tool-claude.',
@@ -1040,7 +1051,7 @@ const ADDED_IDS = {
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
   'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
-  'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
+  'home-row': 'The row under Pinned projects that holds Recent threads and Challenges. The standard look\'s Home is the kit\'s since 20 Nov 2026, so the prerendered document draws it.',
   // #home-discover-section (area 2) left this map when One Home (#6361) took
   // Discover's lane off Home; #home-join-section, below #home-challenges-section,
   // is the directory there now.

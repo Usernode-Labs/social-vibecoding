@@ -147,7 +147,7 @@ test('the shell draws a change page as the request page’s sheet, with Messages
   const html = renderComponent(SHELL, 'ThreadShell', {
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
-  assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
+  assert.match(html, /^<div class="dev-request dev-change platform-kb-column" data-thread-page="change"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
   // 15 Nov 2026: "How it got here" has its host between the two (tests/thread-rail.test.js).
   assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-rail" class="dev-request-rail"><\/div><div id="gc-thread-messages"><\/div>/);
   assert.doesNotMatch(html, /gc-thread-pin/, 'a change page has no pin host any more (#6419)');
@@ -156,7 +156,7 @@ test('the shell draws a change page as the request page’s sheet, with Messages
   const request = renderComponent(SHELL, 'ThreadShell', {
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, request: true,
   });
-  assert.match(request, /^<div class="dev-request platform-kb-column">[\s\S]*aria-label="Request"/, 'the request page is unchanged');
+  assert.match(request, /^<div class="dev-request platform-kb-column" data-thread-page="request">[\s\S]*aria-label="Request"/, 'the request page is unchanged');
   assert.doesNotMatch(request, /gc-thread-pin/, 'a request page has no pin host');
 });
 

@@ -6747,6 +6747,10 @@
     "text": "Homeroom bot is building this",
     "description": "Chip on a request's card while the Homeroom bot (the platform's own building agent, a name) is building the request."
   },
+  "chips.work.botPlanning": {
+    "text": "Homeroom bot is planning this",
+    "description": "Chip on a request's card while the Homeroom bot (the platform's own building agent, a name) is writing the plan for the request, before it builds it."
+  },
   "chips.work.you": {
     "text": "you",
     "description": "Stands for the viewer in the chip on a request's card that says who is working on it, after the state and a dot, for example \"Being worked on · you\". Lower case in English because it follows the dot."
@@ -7310,6 +7314,10 @@
   "chips.workNote.bot.startsSoon": {
     "text": "It starts as soon as a builder is free.",
     "description": "Second sentence of the note on a request the Homeroom bot was asked to build and has not started. \"It\" is the bot's work; a \"builder\" is one of the machines that run it."
+  },
+  "chips.workNote.bot.afterPlan": {
+    "text": "It starts once the plan is OK'd.",
+    "description": "Second sentence of the note on a request whose plan the Homeroom bot wrote and that waits for the plan to be approved before it is built. \"It\" is the bot's work; \"OK'd\" means approved, as in \"Waiting for the plan to be OK'd\"."
   },
   "chips.workNote.bot.itStartedReading": {
     "text": "It started reading it.",
@@ -7931,17 +7939,41 @@
     "text": "Allow and reopen",
     "description": "Confirm button of the permission dialog when the app must be loaded again for the permission to work: gives the permission and reloads the app."
   },
+  "dialog.permission.allowOnce": {
+    "text": "Allow this time",
+    "description": "Button of the permission dialog an app opens when it asks for a device capability, such as the camera: gives the permission only while the app stays open. It is not saved, and is not listed in Settings. Shown beside \"Always allow\"."
+  },
+  "dialog.permission.allowAlways": {
+    "text": "Always allow",
+    "description": "Confirm button of the permission dialog, beside \"Allow this time\": gives the permission to this app until the person takes it back in Settings."
+  },
+  "dialog.permission.noteChoices": {
+    "text": "Only {{app}} gets this. Allow this time lasts until you close {{app}}. Always allow lasts until you take it back in Settings.",
+    "description": "Note in the permission dialog when both \"Allow this time\" and \"Always allow\" are offered: what each lasts. {{app}} is the app's name; \"this\" is the permission being asked for."
+  },
+  "dialog.permission.noteChoicesUnnamed": {
+    "text": "Only This app gets this. Allow this time lasts until you close it. Always allow lasts until you take it back in Settings.",
+    "description": "The same note when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+  },
+  "dialog.permission.noteChoicesReopen": {
+    "text": "Only {{app}} gets this. Allow this time lasts until you close {{app}}. Always allow lasts until you take it back in Settings. The app will reopen so the change takes effect.",
+    "description": "The same note when the app has to be loaded again for the permission to work. {{app}} is the app's name."
+  },
+  "dialog.permission.noteChoicesReopenUnnamed": {
+    "text": "Only This app gets this. Allow this time lasts until you close it. Always allow lasts until you take it back in Settings. The app will reopen so the change takes effect.",
+    "description": "The same note when the app has to be loaded again and its name is not known; \"This app\" is written as the dialog has always shown it."
+  },
   "dialog.llm.fallbackApp": {
     "text": "This app",
     "description": "Stands where the app's name is shown on its own in the dialog that asks whether an app may use AI on the person's account, when the name is not known. Shown alone, as a label; the dialog's sentences have unnamed wordings of their own."
   },
   "dialog.llm.introOwnKey": {
-    "text": "This lets {{app}} use your own Anthropic API key, without exposing the key to the app.",
-    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. {{app}} is the app's name; Anthropic is a company's name."
+    "text": "This lets {{app}} use your own OpenRouter key, without exposing the key to the app.",
+    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own OpenRouter key. {{app}} is the app's name. OpenRouter is a company name."
   },
   "dialog.llm.introOwnKeyUnnamed": {
-    "text": "This lets This app use your own Anthropic API key, without exposing the key to the app.",
-    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. Anthropic is a company's name. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+    "text": "This lets This app use your own OpenRouter key, without exposing the key to the app.",
+    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own OpenRouter key and the app has no name. OpenRouter is a company name."
   },
   "dialog.llm.introBudget": {
     "text": "This lets {{app}} spend from your weekly AI budget (the same one Homeroom bot uses when it builds for you) up to the daily cap below.",

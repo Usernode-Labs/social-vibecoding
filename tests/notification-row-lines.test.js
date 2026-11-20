@@ -347,6 +347,37 @@ test('platform limit rows say which cap, how full, and what happens next', async
   assert.equal(sessionsFull.label, 'Session limit reached');
   assert.match(sessionsFull.subject, /until the session limit is raised in Admin → Limits/);
 
+  // The shared database's connections, the limits area's fourth row.
+  const connections = await lines({ kind: 'platform_limit', detail: 'connections_warn:80:97',
+    appName: null, sourceUsername: null });
+  assert.equal(connections.label, 'Database connections running low');
+  assert.match(connections.subject, /^80 of 97 database connections open\. +At the limit, apps can't open new ones\./);
+  const connectionsFull = await lines({ kind: 'platform_limit', detail: 'connections_full:97:97',
+    appName: null, sourceUsername: null });
+  assert.equal(connectionsFull.label, 'Database connections used up');
+
+  // The cluster's own (services/platform-capacity.js): volumes in MiB said
+  // as GiB, a quota in thousandths said as a percentage.
+  const disk = await lines({ kind: 'platform_limit', detail: 'db_disk_warn:41000:51200',
+    appName: null, sourceUsername: null });
+  assert.equal(disk.label, 'Database disk filling up');
+  assert.match(disk.subject, /^40 of 50 GiB used\. +When it fills, Postgres stops writing\./);
+  const diskFull = await lines({ kind: 'platform_limit', detail: 'db_disk_full:51200:51200',
+    appName: null, sourceUsername: null });
+  assert.equal(diskFull.label, 'Database disk full');
+  const workers = await lines({ kind: 'platform_limit', detail: 'quota_workers_warn:917:1000',
+    appName: null, sourceUsername: null });
+  assert.equal(workers.label, 'Workers quota running low');
+  assert.match(workers.subject, /^91% used\. +When it fills, new coding sessions and checks wait\./);
+  const builds = await lines({ kind: 'platform_limit', detail: 'quota_builds_full:1000:1000',
+    appName: null, sourceUsername: null });
+  assert.equal(builds.label, 'Builds quota used up');
+  assert.match(builds.subject, /New image builds fail until the quota is raised\./);
+  const nodePool = await lines({ kind: 'platform_limit', detail: 'node_pool_full:10000:10000',
+    appName: null, sourceUsername: null });
+  assert.equal(nodePool.label, 'Node volume pool full');
+  assert.match(nodePool.subject, /^9\.8 of 9\.8 GiB taken\. +New worker and preview volumes fail to mount\./);
+
   // GitHub's hourly budget, the bot token's and the App's.
   const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
     appName: null, sourceUsername: null });
@@ -366,6 +397,24 @@ test('platform limit rows say which cap, how full, and what happens next', async
     appName: null, sourceUsername: null });
   assert.equal(odd.label, 'Platform limit');
   assert.ok(odd.subject.length > 0);
+});
+
+test('#6901: a refusal at the app limit says someone was turned away, then the count', async () => {
+  // The first refusal of a run: its own words, whatever the level says.
+  const just = await lines({ kind: 'platform_limit', detail: 'apps_away:1:210:0',
+    appName: null, sourceUsername: null });
+  assert.equal(just.label, 'Someone was turned away');
+  assert.match(just.subject, /^The server is at its app limit \(210 apps\)\. +Raise it in Admin → Limits or remove an app\.$/);
+  assert.equal(just.meta, 'Admin · 4m ago');
+
+  // A later count: how many, and since when, in the reader's own time zone.
+  const count = await lines({ kind: 'platform_limit', detail: 'apps_away:3:210:180',
+    appName: null, sourceUsername: null });
+  assert.equal(count.label, 'People turned away at the app limit');
+  assert.match(count.subject, /^3 people were turned away since \d{1,2}:\d{2}\s?(?:AM|PM)\. +Raise the app limit in Admin → Limits or remove an app\.$/);
+  const one = await lines({ kind: 'platform_limit', detail: 'apps_away:1:210:180',
+    appName: null, sourceUsername: null });
+  assert.match(one.subject, /^1 person was turned away since \d{1,2}:\d{2}/);
 });
 
 test('unexpected events rows say how many, of what, and where to look (#4296)', async () => {

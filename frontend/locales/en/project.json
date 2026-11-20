@@ -5196,8 +5196,8 @@
     "description": "Notice in the 'Allow app to use AI' dialog when Homeroom could not find out whether the person has free AI credit."
   },
   "modals.aiConsent.noPayer": {
-    "text": "No AI payer is available yet. <0>Connect GitHub or X</0> to unlock $10/day, or <1>add your own Anthropic API key</1>.",
-    "description": "Notice in the 'Allow app to use AI' dialog when nothing can pay for the app's AI requests. The first tagged phrase links to Settings, linked accounts; the second to Settings, API key. GitHub, X and Anthropic are names; keep $10/day as written."
+    "text": "No AI payer is available yet. <0>Connect GitHub or X</0> to unlock $10/day, or <1>add your own OpenRouter key</1>.",
+    "description": "Notice in the 'Allow app to use AI' dialog when nothing can pay for the app's AI requests. The first tagged phrase links to Settings to connect an account, the second to the OpenRouter key in Settings. OpenRouter is a company name."
   },
   "modals.aiConsent.capLabel": {
     "text": "Daily cap for this app ($ per day)",
@@ -6550,6 +6550,10 @@
   "topic.request.fromThread": {
     "text": "Open the thread it came from",
     "description": "Link under a request's words, shown only to the person whose private Homeroom bot design thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
+  },
+  "topic.request.openDesign": {
+    "text": "Open the design, version {{version}}",
+    "description": "Link beside \"Open the thread it came from\" under a request's words, shown only to the person whose plan on the request was made from a screen design in their private Homeroom bot thread. Opens that design itself, at the version the plan shows, beside the thread. {{version}} is the version's number."
   },
   "frame.hub.people": {
     "text": "People",

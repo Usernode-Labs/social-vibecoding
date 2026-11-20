@@ -432,7 +432,14 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
       );
       return { app, change, run };
     };
-    const rowOf = async (change) => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id])).rows[0];
+    // Review A3: whether it is ready to try is its stored work state's
+    // (services/work-state.js), refreshed here as the trigger's marks would
+    // within seconds (with its pushes and bells, as the drain publishes
+    // them); the bot's change machine and its card read that row.
+    const readyNow = async (change) => {
+      await workState.pushesOf(pool, await workState.refresh(pool, [{ sessionId: change.id }]));
+      return rules.readyToTry((await workState.forChanges(pool, [change.id], { ensure: false })).get(change.id));
+    };
     const count = async () => (await pool.query('SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = $1', [maya.id])).rows[0].n;
     const rangSince = async (before) => moments((await pool.query(
       'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id OFFSET $2', [maya.id, before])).rows);
@@ -455,7 +462,7 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
       await stage();
       assert.deepEqual(await rangSince(before), [], 'the change went up with its checks still running: nothing yet');
       await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [change.id]);
-      assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, true);
+      assert.equal(await readyNow(change), true);
       const ready = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
       assert.equal(ready?.messageId ?? null, null, 'no ready card in her chat');
       await stage();
@@ -476,13 +483,13 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
       'the change went up with its checks still running: nothing yet');
     assert.equal(await dm.untaggedRequester(pool, { appId: app.id, issueNumber: 1, bot, told }), maya.username,
       'and the post on the request does not tag her instead');
-    // Whether it is ready is the bot's change machine's to decide, from the
-    // row (src/workflow/bot-change/, rules/bot-readiness.ts); the card is
+    // Whether it is ready is its stored work state's (review A3), which the
+    // bot's change machine reads (src/workflow/bot-change/); the card is
     // tellReady's to send once it has.
-    assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, false, 'still pending: not ready');
+    assert.equal(await readyNow(change), false, 'still pending: not ready');
 
     await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [change.id]);
-    assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, true);
+    assert.equal(await readyNow(change), true, 'a first version going live without a vote is ready to try');
     const ready = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
     assert.ok(ready?.messageId, 'checks passed: ready to try');
     const { rows: [msg] } = await pool.query('SELECT idempotency_key, metadata FROM conversation_messages WHERE id = $1', [ready.messageId]);
@@ -510,13 +517,16 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     // A retry (or an admin's) after it merged or closed says nothing: no
     // ready card, no Approve, the chip not moved back from Live.
     await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [change.id]);
+    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } }), { stale: true, notUp: true },
+      'merged: not ready, whatever its row said a moment ago');
+    assert.equal(await readyNow(change), false);
     assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } }), { stale: true, notUp: true });
     await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [change.id]);
 
     // Its preview will not start: while it is tried again that is quiet (one
     // story: no bell, no push), and never "ready".
     await pool.query(`UPDATE chat_sessions SET check_state = 'error' WHERE id = $1`, [change.id]);
-    assert.equal(rules.readiness(await rowOf(change), Date.now()).ready, false);
+    assert.equal(await readyNow(change), false);
     const stuck = await dm.noteChangeStopped(pool, change.id, { deps: { bot } });
     const { rows: [stuckMsg] } = await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [stuck.messageId]);
     assert.match(stuckMsg.content, /its preview didn't start, so it isn't ready to try yet/);

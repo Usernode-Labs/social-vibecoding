@@ -480,6 +480,61 @@
       "id": "private-thread-make-refusal",
       "sha256": "e7efcf19f95f64919f2042ed2b2eaa8fcfba4daa0130470bc33ff21d26de0194",
       "schemaSha256": "933757d701ecab7769895883fab51f7a807e716507d20017b766bd71776e8a9a"
+    },
+    {
+      "id": "platform-limit-refusals",
+      "sha256": "40a8ab6559cc2cabfccd4d6452c704363bd5f68219ae840e9b077fdbd213ecb7",
+      "schemaSha256": "075e0e0ccb2fc560922614a69af29a6a90f8e356b53e8cf96eeba7530aad99e4"
+    },
+    {
+      "id": "plan-design-source",
+      "sha256": "76f81d8dea4eb885cff349fc7d39164f342c5070cfce38c4e28bb55928f8983a",
+      "schemaSha256": "cb835f31348306fdbbce630a443beeee6bebf1cf6c76150f5bde58659df4d3f1"
+    },
+    {
+      "id": "artifact-store",
+      "sha256": "0b2b396e8efa0057a68bb5bf7ecbc24eda697b9efe8153102b10a19ad1b23fd8",
+      "schemaSha256": "c5dd3b08b4ed6ee92e22ee8fb3ed5fde6b2f7c331448f98eb4c98ab9bf392f7d"
+    },
+    {
+      "id": "work-state-one-writer",
+      "sha256": "48d01fd14d04ff8558f5ecb3cb0f2d560219fbf93c9ed82c3a20fa0532ad28a6",
+      "schemaSha256": "82150ee4b2549bbfd952093d4a820f421ba4190e22b7f2fa91cc9f7cf6aa802e"
+    },
+    {
+      "id": "homeroom-bot-run-stop-cause",
+      "sha256": "1d0288278492a7df3df5ecb040643d9912ff77639a535cf354a9159b4882ee0d",
+      "schemaSha256": "d9bd3e082e9a0aaa67beea11645c25588e6e3e9ea3062a77a65a2f62d793a679"
+    },
+    {
+      "id": "shots-copy-content-types",
+      "sha256": "db77afe6c58fcc0ba0da17decf55361c43c7865f88f108424fa35dd4d766deea",
+      "schemaSha256": "fa13135f40668c253a33f9d48be8209d0e2e90a3ca05b664432cceafc5baaefe"
+    },
+    {
+      "id": "limit-alert-phones",
+      "sha256": "efaf4f2dbbe4634641d618c81c939d9cbc42dee4a0aa1d5032ff3c36ae930e2f",
+      "schemaSha256": "45e6a506a11df7c118ba93b3350670e25e323d2a8938869b002623a32aed1877"
+    },
+    {
+      "id": "limit-alert-refusals",
+      "sha256": "822bfc3b809b180a7f5310e5d650d5facd457d051f969a888691a2e5c7f5a089",
+      "schemaSha256": "0ab30a170689052f8e68942215edd57e92611d1addff0b14602e321946b7fefa"
+    },
+    {
+      "id": "platform-limit-detail",
+      "sha256": "cc9ec7a6d915e88bc67eb4249aef8b34bf3d714459b3232bff95ca3707621424",
+      "schemaSha256": "8590e5c622a457d888ae51f0b12ab9ceaffdc4e753727dfeb467f6af1eb8be11"
+    },
+    {
+      "id": "private-threads-filed-project",
+      "sha256": "f1beaa839fb8433a7cbf1d045a94ebceaa395f74271608c9d502be8c1fb7da89",
+      "schemaSha256": "4570ec732adce89b0fea8b8265fd45545276597d7d46b57812604e565fbaaef6"
+    },
+    {
+      "id": "anthropic-keys-wiped",
+      "sha256": "ca290627de3589255e397fef423664d812fc000cd20a452817992392ae24487b",
+      "schemaSha256": "2cf78f0ec656a4af607172e889ba3290b4ddea8fadaaba13743587aa6f396142"
     }
   ]
 }

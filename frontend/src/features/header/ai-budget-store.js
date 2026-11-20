@@ -42,7 +42,7 @@
  * has answered with nothing to show — which is what `setRowVisible` did.
  * Collapsing that into "no view means hidden" would hide the row on a
  * document that has not fetched yet, and a declared check resolves
- * `#drawer-row-ai-budget #ai-budget-slot` on a plain `/#settings/api-key`.
+ * `#drawer-row-ai-budget #ai-budget-slot` on a plain `/#settings/usage`.
  */
 
 import { createStore } from '../../lib/plain-store.js';

@@ -44,11 +44,12 @@ test('every thread kind has its profile, and every place its kind', () => {
   }
   // Step 6: what a private thread's turn adds by the thread's state. A
   // draft's tools are its own (live-draft-bot.js TOOLS), none of src/services/bot-tools/.
-  assert.deepEqual(profiles.profileOf('private').capabilities, ['design', 'draft']);
+  // Artifacts, stage 2: and a plain page's (the artifact capability).
+  assert.deepEqual(profiles.profileOf('private').capabilities, ['design', 'draft', 'artifact']);
   for (const name of profiles.profileOf('private').capabilities) {
     const cap = profiles.capabilityOf(name);
     assert.equal(cap.capability, name);
-    assert.ok(['design', 'draft'].includes(cap.scope), name);
+    assert.ok(['design', 'draft', 'artifact'].includes(cap.scope), name);
     assert.ok(cap.tools.length && cap.limits && cap.prompt, name);
   }
   assert.throws(() => profiles.capabilityOf('elsewhere'), /no capability elsewhere/);
@@ -65,6 +66,9 @@ test('every thread kind has its profile, and every place its kind', () => {
   assert.deepEqual(profiles.capabilitiesInChat({}), []);
   assert.deepEqual(profiles.capabilitiesInChat({ threadDesign: { rootId: 9 } }), ['design']);
   assert.deepEqual(profiles.capabilitiesInChat({ threadLiveDraft: { id: 3 }, threadDesign: { rootId: 9 } }), ['design', 'draft']);
+  // A thread's artifact is opened by its kind: a design's tools, or a plain page's.
+  assert.deepEqual(profiles.capabilitiesInChat({ threadDesign: { rootId: 9, artifactKind: 'design' } }), ['design']);
+  assert.deepEqual(profiles.capabilitiesInChat({ threadDesign: { rootId: 9, artifactKind: 'page' } }), ['artifact']);
   assert.throws(() => profiles.profileOf('elsewhere'), /no thread kind elsewhere/);
 });
 

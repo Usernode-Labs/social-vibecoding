@@ -1,0 +1,167 @@
+{
+  "about": "The one table of a work state's stages, whys, reasons and line codes, with what each means on every surface. Read through src/services/work-stages.js (which says what each property is); plain data, so the browser and the tests can read the same file. A new line code is one entry here.",
+  "words": {
+    "notStarted": "core:work.stage.notStarted",
+    "readyToBuild": "core:work.stage.readyToBuild"
+  },
+  "stages": {
+    "reading": { "phrase": "core:work.stage.reading", "whoseMove": "bot", "works": true, "bot": "reading", "listed": "next", "step": "plan", "firstVersion": "reading" },
+    "planning": { "phrase": "core:work.stage.planning", "whoseMove": "bot", "works": true, "bot": "building", "listed": "next", "step": "plan", "firstVersion": "planning" },
+    "waiting_for_you": { "phrase": "core:work.stage.waitingForYou", "whoseMove": "requester", "listed": "needs", "bell": "needs_you", "step": "plan", "firstVersion": null },
+    "building": { "phrase": "core:work.stage.building", "whoseMove": "bot", "works": true, "bot": "building", "listed": "next", "step": "build", "firstVersion": "building" },
+    "checking": { "phrase": "core:work.stage.checking", "whoseMove": "bot", "listed": "waiting", "step": "checks", "firstVersion": "checks" },
+    "up_for_vote": { "phrase": "core:work.stage.upForVote", "whoseMove": "group", "listed": "vote", "bell": "ready", "step": "vote", "firstVersion": "vote" },
+    "going_live": { "phrase": "core:work.stage.goingLive", "whoseMove": null, "listed": "next", "step": "live", "firstVersion": "merging" },
+    "live": { "phrase": "core:work.stage.live", "whoseMove": null, "listed": "live", "bell": "live", "step": "live", "firstVersion": null },
+    "stopped": { "phrase": "core:work.stage.stopped", "whoseMove": "requester", "listed": "needs", "bell": "stopped", "step": null, "firstVersion": "stopped" },
+    "closed": { "phrase": "core:work.stage.closed", "whoseMove": null, "listed": null, "step": null, "firstVersion": null }
+  },
+  "whys": {
+    "question": { "phrase": "core:work.why.question", "phraseOthers": "core:work.whyOthers.question", "said": "question", "firstVersion": "question" },
+    "plan": { "phrase": "core:work.why.plan", "phraseOthers": "core:work.whyOthers.plan", "said": "plan", "firstVersion": "plan", "bot": { "what": "queued", "plan": true } },
+    "decide": { "phrase": "core:work.why.decide", "phraseOthers": "core:work.whyOthers.decide", "said": "decide" },
+    "already_works": { "phrase": "core:work.why.alreadyWorks", "phraseOthers": "core:work.whyOthers.alreadyWorks", "said": "done" },
+    "needs_detail": { "phrase": "core:work.why.needsDetail", "phraseOthers": "core:work.whyOthers.needsDetail", "said": "empty" }
+  },
+  "reasons": {
+    "build_failed": { "phrase": "core:work.reason.buildFailed", "said": "build_other" },
+    "fix_stopped": { "phrase": "core:work.reason.fixStopped", "said": "checks" },
+    "look_failed": { "phrase": "core:work.reason.lookFailed", "said": "look_failed" },
+    "change_closed": { "phrase": "core:work.reason.changeClosed", "said": "change_closed" },
+    "stalled": { "phrase": "core:work.reason.stalled", "said": "build_no_start" }
+  },
+  "lines": {
+    "queued": {
+      "stages": ["reading", "building"],
+      "phrase": "core:work.line.queued",
+      "valued": { "phrase": "core:work.line.queuedAt", "need": "place", "values": { "place": "place" } },
+      "notStarted": true, "ready": true, "waits": true, "listed": "waiting", "counted": true,
+      "bot": { "reading": { "when": "asked", "then": { "what": "queued" }, "otherwise": null } },
+      "firstVersion": { "reading": "queued", "building": "build_queued" }
+    },
+    "waiting": {
+      "stages": ["reading"],
+      "phrase": "core:work.line.waiting",
+      "notStarted": true, "waits": true, "listed": "waiting",
+      "bot": { "reading": null },
+      "firstVersion": "queued"
+    },
+    "on_hold": {
+      "stages": ["reading"],
+      "phrase": "core:work.line.onHold",
+      "notStarted": true, "waits": true, "listed": "waiting",
+      "bot": { "reading": null },
+      "firstVersion": "queued"
+    },
+    "cooldown": {
+      "stages": ["reading"],
+      "phrase": "core:work.line.cooldown",
+      "notStarted": true, "waits": true, "listed": "waiting",
+      "bot": { "reading": null },
+      "firstVersion": "queued"
+    },
+    "first_version_wait": {
+      "stages": ["reading"],
+      "phrase": "core:work.line.firstVersionWait",
+      "notStarted": true, "waits": true,
+      "bot": { "reading": null },
+      "firstVersion": "queued"
+    },
+    "reply": {
+      "stages": ["reading"],
+      "phrase": "core:work.line.reply",
+      "bot": { "reading": { "when": "soon", "then": null, "otherwise": "stage" } }
+    },
+    "retry_plan": {
+      "stages": ["planning"],
+      "phrase": "core:work.line.retryPlan",
+      "waits": true, "listed": "waiting",
+      "firstVersion": "queued"
+    },
+    "planning_with_you": {
+      "stages": ["planning"],
+      "phrase": "core:work.line.planningWithYou",
+      "waits": true, "listed": "waiting",
+      "bot": { "planning": { "when": "ready", "then": { "what": "queued" }, "otherwise": null } },
+      "firstVersion": "queued", "firstVersionReady": "build_queued"
+    },
+    "held_builds": {
+      "stages": ["building"],
+      "phrase": "core:work.line.heldBuilds",
+      "ready": true, "waits": true, "listed": "waiting", "counted": true,
+      "bot": { "building": { "what": "queued", "held": true, "turn": true } },
+      "firstVersion": "held"
+    },
+    "held_waiting": {
+      "stages": ["building"],
+      "phrase": "core:work.line.heldWaiting",
+      "ready": true, "waits": true, "listed": "waiting", "counted": true,
+      "bot": { "building": { "what": "queued", "held": true } },
+      "firstVersion": "held"
+    },
+    "credit_wait": {
+      "stages": ["building"],
+      "phrase": "core:work.line.creditWait",
+      "ready": true, "waits": true, "listed": "waiting",
+      "bot": { "building": { "what": "queued" } },
+      "firstVersion": "build_queued"
+    },
+    "claimed": {
+      "stages": ["building"],
+      "phrase": null,
+      "valued": { "phrase": "core:work.line.claimed", "need": "by", "text": true, "values": { "username": "by" } },
+      "waits": true,
+      "bot": { "building": null }
+    },
+    "starting": { "stages": ["building"], "phrase": "core:work.line.starting", "firstVersion": "starting" },
+    "reviewing": {
+      "stages": ["building"],
+      "phrase": null,
+      "valued": { "phrase": "core:work.line.reviewing", "values": { "round": "round", "of": "of" }, "fallback": 1 },
+      "firstVersion": "reviewing"
+    },
+    "proposing": { "stages": ["building"], "phrase": "core:work.line.proposing", "firstVersion": "proposing" },
+    "fixing": { "stages": ["building"], "phrase": "core:work.line.fixing", "firstVersion": "fixing" },
+    "revising": { "stages": ["building"], "phrase": "core:work.line.revising", "firstVersion": "revising" },
+    "update_queued": {
+      "stages": ["building"],
+      "phrase": "core:work.line.updateQueued",
+      "waits": true, "listed": "waiting",
+      "bot": { "building": null },
+      "firstVersion": "followup_queued"
+    },
+    "checks_failing": {
+      "stages": ["checking"],
+      "phrase": "core:work.line.checksFailing",
+      "valued": { "phrase": "core:work.line.checksFailingCount", "need": "failing", "values": { "count": "failing" } },
+      "failing": true
+    },
+    "checks_running": {
+      "stages": ["checking"],
+      "phrase": null,
+      "valued": { "phrase": "core:work.line.checksRunning", "need": "minutes", "values": { "count": "minutes" } }
+    },
+    "sync_wait": { "stages": ["checking"], "phrase": "core:work.line.syncWait" },
+    "syncing": { "stages": ["checking"], "phrase": null, "stageWord": { "checking": "core:work.stage.syncing" } },
+    "conflict_on_yes": { "stages": ["checking", "up_for_vote"], "phrase": "core:work.line.conflictOnYes" },
+    "shots": { "stages": ["checking"], "phrase": "core:work.line.shots", "stageWord": { "checking": "core:work.stage.shots" } },
+    "approved_checking": { "stages": ["checking"], "phrase": "core:work.line.approvedChecking", "approved": true },
+    "fixing_check": { "stages": ["checking"], "phrase": "core:work.line.fixingCheck", "stageWord": { "checking": "core:work.stage.fixing" } },
+    "bot_fix_failed": { "stages": ["checking"], "phrase": "core:work.line.botFixFailed", "failing": true },
+    "github_checks_failing": { "stages": ["checking"], "phrase": "core:work.line.githubChecksFailing", "failing": true },
+    "github_checks": { "stages": ["going_live"], "phrase": "core:work.line.githubChecks", "approved": true, "stageWord": { "going_live": "core:work.stage.approved" } },
+    "github_wait": { "stages": ["going_live"], "phrase": "core:work.line.githubWait", "stageWord": { "going_live": "core:work.stage.waitingToMerge" } },
+    "github_stuck": { "stages": ["going_live"], "phrase": "core:work.line.githubStuck", "stageWord": { "going_live": "core:work.stage.stuck" } },
+    "first_version": { "stages": ["going_live"], "phrase": "core:work.line.firstVersion", "firstVersion": "vote" },
+    "earlier_yes": {
+      "stages": ["up_for_vote"],
+      "phrase": null,
+      "valued": { "phrase": "core:work.line.earlierYes", "need": "count", "values": { "count": "count" } }
+    },
+    "reason": {
+      "stages": ["waiting_for_you"],
+      "phrase": null,
+      "valued": { "phrase": "core:work.line.said", "need": "text", "text": true, "values": { "reason": "text" } }
+    }
+  }
+}

@@ -296,7 +296,8 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   for (const line of cards.split('\n').filter((l) => /^html/.test(l))) {
     const reader = 'html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet';
-    assert.ok(line.startsWith(scope) || line.startsWith(panel) || line.startsWith(reader) || line.startsWith('html.in-side-panel.side-panel-beside-ai .dev-thread-kicker'),
+    assert.ok(line.startsWith(scope) || line.startsWith(panel) || line.startsWith(reader) || line.startsWith('html.in-side-panel.side-panel-beside-ai .dev-thread-kicker')
+      || line.startsWith('html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread'),
       `scoped as the wide layout is, or to a side panel: ${line.slice(0, 80)}`);
   }
   assert.match(cards, /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
@@ -386,11 +387,126 @@ test('T2.3: a change\'s timeline ends on its stored row\'s words while it is not
   });
   assert.equal(names(merged).pop(), 'Live');
 
-  // A request's page with one change: its lead carries the row, so the
-  // request's timeline ends on the same words.
+  // A request's page with one change, whose own row still says only "Up
+  // for a vote": whether that vote is open is the change's row's to say
+  // (the two reach the page by different reads), so the request's timeline
+  // ends on the change's words (rail-model.ts leadRow).
   const led = requestRail({
     ...base, changes: [change()], standing: standing({ stage: 'up_for_vote', change: lead() }),
     lead: { ...input, work: standing({ stage: 'checking', line: { code: 'shots' } }) },
   });
   assert.deepEqual(names(led), ['Asked', 'Built', 'Tested', 'Taking screenshots']);
+  // And once the request's row says the same, on its own words.
+  const same = requestRail({
+    ...base, changes: [change()], standing: standing({ stage: 'checking', line: { code: 'shots' }, change: lead({ voteOpen: false }) }),
+    lead: { ...input, work: standing({ stage: 'up_for_vote' }) },
+  });
+  assert.deepEqual(names(same), ['Asked', 'Built', 'Tested', 'Taking screenshots']);
+  // With no row for the request (an older server), the change's own row words it.
+  const older = requestRail({
+    ...base, changes: [change()], standing: null,
+    lead: { ...input, work: standing({ stage: 'checking', line: { code: 'shots' } }) },
+  });
+  assert.deepEqual(names(older), ['Asked', 'Built', 'Tested', 'Taking screenshots']);
+});
+
+// ── The one rule on a request's page (frontend/src/lib/work-state.ts) ──
+//
+// A request's page with one change ended on the CHANGE's row. The two rows
+// differ on purpose: the request's says what is being done about it (the bot
+// stopped fixing, a question was asked), the change's where the change is.
+// So the Homeroom bot tab and the bell said "Stopped: its tests still fail"
+// while the request's own page showed a busy "Checking". These feed the page
+// the rows the server sends (tests/lib/stored-row.js), the request's through
+// normalizeWorkState as request-head.tsx hands it on.
+const { storedRow, storedChange } = require('./lib/stored-row');
+
+test('a request\'s page with one change ends on the REQUEST\'s row, over the change\'s events', () => {
+  const { requestRail } = loadTsx(MODEL);
+  const { normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
+  const gate = (over = {}) => ({ name: 'Votes', figure: '', tone: 'muted', done: false, note: [], ...over });
+  const failing = storedChange({ checks: { state: 'failing', phase: 'done', failing: 2 } });
+  const one = {
+    id: 51, author: 'Homeroom bot', at: '2026-11-13T15:16:00Z', plan: null,
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 },
+    votes: gate({ figure: 'Needs 2 more yes', tone: 'ask', note: ['Any of the 63 members can give it.'] }),
+    testing: gate({ name: 'Testing', figure: '2 tests failed', tone: 'bad', botFix: 'stopped' }),
+    fixNote: 'Homeroom bot tried to fix these and stopped at its own limit.',
+    // The change's own row: its tests fail, and that is all it knows.
+    work: storedRow({ stage: 'checking', line: { code: 'checks_failing', failing: 2 } }, { kind: 'change' }),
+  };
+  const page = (sent, lead = one) => requestRail({
+    ...base, changes: [change()], standing: normalizeWorkState(sent), yours: sent.mine !== false, lead,
+  });
+
+  // Homeroom bot gave up fixing the tests: the request's row is Stopped.
+  const stopped = page(storedRow({ stage: 'stopped', reason: 'fix_stopped', change: failing }));
+  assert.deepEqual(names(stopped), ['Asked', 'Built', 'Tests failed', 'Stopped'], 'never a busy "Checking"');
+  const now = stopped[stopped.length - 1];
+  assert.equal(now.now, true);
+  assert.equal(now.tone, 'bad');
+  assert.equal(now.icon, 'stopped');
+  assert.equal(now.busy, false, 'nothing is at work on it');
+  assert.equal(now.noteTone, 'bad');
+  assert.equal(words(now.note), 'Homeroom bot tried to fix these and stopped at its own limit.', 'the card\'s own words for who fixes it now');
+  assert.deepEqual(JSON.parse(JSON.stringify(now.open)), { kind: 'checks', changeId: 51 }, 'a press still opens the tests');
+  assert.equal(stopped.filter((s) => s.now).length, 1);
+
+  // The bot is fixing them: the request says so, with its line.
+  const fixing = page(storedRow({ stage: 'building', line: { code: 'fixing' }, whoseMove: 'bot', change: failing }),
+    { ...one, testing: { ...one.testing, botFix: 'fixing' } });
+  assert.deepEqual(names(fixing), ['Asked', 'Built', 'Tests failed', 'Building']);
+  assert.equal(words(fixing[fixing.length - 1].note), message('core:work.line.fixing'));
+  assert.equal(fixing[fixing.length - 1].busy, true);
+
+  // A question asked about a change that is open for votes: the request
+  // waits on its requester, in their words or in anyone else's.
+  const open = {
+    ...one, testing: gate({ name: 'Tested', figure: 'All checks passed', tone: 'done', done: true }), fixNote: null,
+    work: storedRow({ stage: 'up_for_vote' }, { kind: 'change' }),
+  };
+  const question = { stage: 'waiting_for_you', why: 'question', whoseMove: 'requester', change: storedChange({ voteOpen: true }) };
+  const mine = page(storedRow(question), open);
+  assert.deepEqual(names(mine), ['Asked', 'Built', 'Tested', message('core:work.why.question')]);
+  assert.equal(mine[mine.length - 1].noteTone, 'act', 'somebody has to answer');
+  assert.deepEqual(JSON.parse(JSON.stringify(mine[mine.length - 1].open)), { kind: 'votes', changeId: 51 });
+  const theirs = page(storedRow(question, { mine: false }), open);
+  assert.equal(names(theirs).pop(), message('core:work.whyOthers.question'));
+
+  // Both rows up for a vote: the vote's own step, with its tally's sentence.
+  const vote = page(storedRow({ stage: 'up_for_vote', whoseMove: 'group', change: storedChange({ voteOpen: true }) }), open);
+  assert.equal(names(vote).pop(), 'Up for a vote');
+  assert.equal(words(vote[vote.length - 1].note), 'Needs 2 more yes. Any of the 63 members can give it.');
+
+  // The change has since gone live: its own status is newer than any row.
+  const live = page(storedRow({ stage: 'checking', line: { code: 'shots' }, change: storedChange() }),
+    { ...open, status: { key: 'merged', label: '✓ Live', yes: 2, majority: 2 }, votes: gate({ tone: 'done', done: true }) });
+  assert.equal(names(live).pop(), 'Live');
+
+  // The request's row is about ANOTHER change (one this page no longer
+  // draws), or names none: it says nothing about this one, so this change's
+  // own row words its step, never "Stopped" or "Not started yet" borrowed
+  // from elsewhere.
+  const elsewhere = page(storedRow({ stage: 'stopped', reason: 'fix_stopped', change: storedChange({ id: 77, number: 9 }) }), open);
+  assert.equal(names(elsewhere).pop(), 'Up for a vote');
+  const shotsRow = { ...open, work: storedRow({ stage: 'checking', line: { code: 'shots' } }, { kind: 'change' }) };
+  assert.equal(names(page(storedRow({ stage: 'reading', line: { code: 'waiting' } }), shotsRow)).pop(), 'Taking screenshots');
+});
+
+test('leadRow: the request\'s row words its one change only while it is about that change', () => {
+  const { leadRow } = loadTsx(MODEL);
+  const { normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
+  const own = normalizeWorkState(storedRow({ stage: 'checking', line: { code: 'shots' } }, { kind: 'change' }));
+  const stopped = normalizeWorkState(storedRow({ stage: 'stopped', reason: 'fix_stopped', change: storedChange() }));
+  const vote = normalizeWorkState(storedRow({ stage: 'up_for_vote', change: storedChange({ voteOpen: true }) }));
+  const other = normalizeWorkState(storedRow({ stage: 'stopped', reason: 'fix_stopped', change: storedChange({ id: 77 }) }));
+  const none = normalizeWorkState(storedRow({ stage: 'reading', line: { code: 'waiting' } }));
+  assert.equal(leadRow(stopped, own, 51), stopped, 'about this change: the request\'s row');
+  assert.equal(leadRow(vote, own, 51), own, 'only "up for a vote": whether it is open is the change\'s row\'s to say');
+  assert.equal(leadRow(vote, null, 51), vote);
+  assert.equal(leadRow(other, own, 51), own, 'about another change: this one\'s own row');
+  assert.equal(leadRow(other, null, 51), null, 'and with none, the live cards');
+  assert.equal(leadRow(none, own, 51), own, 'a request\'s row that names no change');
+  assert.equal(leadRow(null, own, 51), own, 'an older server: the change\'s row');
+  assert.equal(leadRow(stopped, own, null), stopped, 'a change with no id yet');
 });

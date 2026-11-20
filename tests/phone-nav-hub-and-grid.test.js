@@ -56,7 +56,7 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   assert.match(card, /export function showsInviteHero\(data: CommunityPayload \| null \| undefined\): boolean \{\s*if \(!data \|\| !data\.is_member \|\| data\.audience === 'solo'\) return false;\s*return \(Number\(data\.member_count\) \|\| 0\) > 1;/);
   assert.match(card, /className="dev-ws-invite-hero-btn"\s+data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}/);
   // Not under Standard (WIP), where Invite stays the hero row's own button.
-  assert.match(ws, /\{slug && !wipLook \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
+  assert.match(ws, /\{slug && !kitHub \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
   assert.equal(message('project:hub.invite.button'), 'Invite people');
   // Request 6687: the card's ✕ closes it (hub-dismissed.ts), and the hero
   // row's small Invite is then the way in.

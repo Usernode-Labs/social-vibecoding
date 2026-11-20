@@ -42,6 +42,28 @@ function escapeAttr(value) {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// The shell document's own description (frontend/src/head.html), one line.
+// `withPreview` takes it out before inserting a project's, so the page has
+// exactly one. A document from an older build has none, and the removal is
+// a no-op.
+const SHELL_DESCRIPTION_RE = /[ \t]*<meta name="description" content="Homeroom is where people make apps together: suggest a change, vote on it, and see it go live\.">\n?/;
+
+/**
+ * JSON for an inline data block: `<`, `>`, `&` and the two line separators
+ * escaped, so no project's name or description can close the tag or break
+ * the script. The block is data, never executed.
+ */
+function safeJson(value) {
+  return JSON.stringify(value).replace(new RegExp('[<>&\\u2028\\u2029]', 'g'),
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/** The day a project was made (YYYY-MM-DD), or null when it cannot be read. */
+function createdDay(app) {
+  const t = Date.parse(app && app.created_at ? app.created_at : '');
+  return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null;
+}
+
 /** A name's swatch, picked as the client picks it (FNV-1a, then mixed). */
 function swatchFor(key) {
   let h = 0x811c9dc5;
@@ -240,6 +262,23 @@ function previewTags(app, origin, { cover = true, player = false } = {}) {
     }
     tags.push(`<meta property="og:image:alt" content="${escapeAttr(`${title} on Homeroom`)}">`);
   }
+  // A hidden record for a search engine: what the project is, where it is,
+  // and the day it was made on Homeroom. Inline and same-origin: a data
+  // block, never an outside script.
+  const root = `${origin}/`;
+  const data = {
+    '@context': 'https://schema.org',
+    '@type': 'WebApplication',
+    name: title,
+    description,
+    url: pageUrl(origin, app.slug),
+  };
+  const made = createdDay(app);
+  if (made) data.dateCreated = made;
+  if (image) data.image = image;
+  data.isPartOf = { '@type': 'WebSite', name: 'Homeroom', url: root };
+  data.publisher = { '@type': 'Organization', name: 'Homeroom', url: root };
+  tags.push(`<script type="application/ld+json">${safeJson(data)}</script>`);
   return tags.join('\n');
 }
 
@@ -247,7 +286,9 @@ function previewTags(app, origin, { cover = true, player = false } = {}) {
 function withPreview(html, tags, title) {
   const at = html.indexOf('</head>');
   if (at === -1) return html;
-  const named = html.replace('<title>Homeroom</title>', `<title>${escapeAttr(title)} · Homeroom</title>`);
+  const named = html
+    .replace('<title>Homeroom</title>', `<title>${escapeAttr(title)} · Homeroom</title>`)
+    .replace(SHELL_DESCRIPTION_RE, '');
   const end = named.indexOf('</head>');
   return `${named.slice(0, end)}${tags}\n${named.slice(end)}`;
 }
@@ -255,6 +296,8 @@ function withPreview(html, tags, title) {
 module.exports = {
   previewTags,
   withPreview,
+  SHELL_DESCRIPTION_RE,
+  createdDay,
   coverPng,
   canDrawCover,
   descriptionOf,

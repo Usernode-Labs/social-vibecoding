@@ -787,6 +787,83 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
   }
 });
 
+// ── The before/after shots copies: staging with no GitHub ───────────────
+//
+// The copies run as staging with no GitHub configured, so requestsOn() is
+// false there and the board serves its mocks alone. The two reads that open
+// ONE request still read the stored row: a copy is a production clone, its
+// seeds write fixture requests, and before this every request page on one
+// answered 404 and bounced to the hub (PR 6898's fixture 900095, PR 6531's
+// real #6552). Every staging test above runs with GitHub on, which is why
+// none of them saw it.
+
+async function withoutGithub(fn) {
+  const prev = github.isEnabled;
+  github.isEnabled = () => false;
+  try {
+    return await fn();
+  } finally {
+    github.isEnabled = prev;
+  }
+}
+
+test('a staging copy without GitHub opens a stored request by its address, the mock as the fallback', async () => {
+  await withoutGithub(async () => {
+    const server = await startStagingServer();
+    try {
+      const port = server.address().port;
+      const stored = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+      assert.strictEqual(stored.status, 200, 'a stored request opens, where it used to 404');
+      assert.strictEqual((await stored.json()).issue.title, 'Toggle resets after refresh');
+
+      const mock = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900014`);
+      assert.strictEqual(mock.status, 200, 'a mock number still opens, from the fallback');
+      assert.match((await mock.json()).issue.title, /^\[Mock\]/);
+
+      const none = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/777`);
+      assert.strictEqual(none.status, 404, 'a number that is neither still answers 404');
+    } finally {
+      server.close();
+    }
+  });
+});
+
+test('a staging copy without GitHub serves a stored request its own thread, not a stand-in', async () => {
+  store.setComments('o', 'r', 142, [
+    { author: 'reporter', body: 'It only happens on mobile.', createdAt: '2026-06-10T00:00:00Z' },
+  ]);
+  await withoutGithub(async () => {
+    const server = await startStagingServer();
+    try {
+      const port = server.address().port;
+      const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.deepStrictEqual(body.comments.map((c) => [c.author, c.body]),
+        [['reporter', 'It only happens on mobile.']], 'the stored thread, with no [Mock] rows');
+    } finally {
+      clearThreads();
+      server.close();
+    }
+  });
+});
+
+test('a staging copy without GitHub still lists only the mocks on its board, as before', async () => {
+  await withoutGithub(async () => {
+    const server = await startStagingServer();
+    try {
+      const port = server.address().port;
+      const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+      assert.strictEqual(res.status, 200);
+      const numbers = (await res.json()).issues.map((i) => i.number);
+      assert.ok(numbers.includes(900001), 'the mocks are served');
+      assert.ok(!numbers.some((n) => n >= 1 && n <= 5), 'the stored board is not listed: only the single reads changed');
+    } finally {
+      server.close();
+    }
+  });
+});
+
 // ── #3693: the Homeroom bot's posts, once ────────────────────────────────
 //
 // The bot says each thing on GitHub AND in the issue's own thread, and the

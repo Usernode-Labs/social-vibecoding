@@ -379,7 +379,6 @@ async function ask({ pool, config, app, userId, target, question, model, onToken
       model,
       onToken,
       signal,
-      apiKey: billing.apiKey,
       telemetryContext: { pool, appId: app.id },
     });
   } catch (err) {
@@ -391,12 +390,11 @@ async function ask({ pool, config, app, userId, target, question, model, onToken
     throw err;
   }
 
-  // Debit the asker, into the BYOK bucket when their own key paid for it —
-  // the same settle report-ai does after its Haiku call.
+  // Debit the asker: the same settle report-ai does after its Haiku call.
   if (result.usage) {
     await limits.recordSpend(
       pool, userId, llm.estimateCostCents(result.usage, result.model),
-      { byok: !!billing.apiKey }
+      { byok: false }
     );
   }
 

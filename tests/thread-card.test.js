@@ -101,8 +101,10 @@ test('in a side panel the thread is the same three cards, and the picture is one
   const css = read('public/css/app.css');
   const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
   const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
-  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
+  // 20 Nov 2026: a private thread in the bot tab's column is the same page, and its two cards the same cards.
+  const priv = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread';
+  assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\),\\n${esc(priv)} :is\\(\\[data-thread-page-post\\], \\[data-thread-page-replies\\]\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
+  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet,\\n${esc(priv)} > \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-thread-kicker \{ display: none; \}/, 'the panel\'s head already names the project and the number');
   const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
   assert.match(brand, /\.dev-request \{ --thread-ground-look: var\(--bl-page\); \}/);
@@ -121,7 +123,7 @@ test('a request with one change says it once: the card\'s summary covers the cha
   const changes = read(CHANGES);
   // The card's summary, written from the request and its change, is the one summary.
   assert.match(head, /const covers = cardLook && !editing && summary\?\.basis === 'change';/);
-  assert.match(head, /useMemo\(\(\) => \(\{ card: cardLook, page, covers \}\), \[cardLook, page, covers\]\)/);
+  assert.match(head, /useMemo\(\(\) => \(\{ card: cardLook, page, covers, row \}\), \[cardLook, page, covers, row\]\)/);
   assert.match(changes, /covered=\{thread\.card && sole && !!thread\.covers\}/);
   assert.match(changes, /const summary = covered \? '' : view\?\.body\.summaryHtml \|\| '';/);
   assert.equal(message('project:topic.card.summaryByBotChange'), 'Summary by Homeroom bot, from the request and its change.');
@@ -373,7 +375,7 @@ test('both heads draw the card only outside the frame\'s looks, and keep Votes, 
   // A lone change under a request draws the same foot, over the same pair.
   const changes = read(CHANGES);
   assert.match(changes, /const lone = thread\.card && !ballot;/);
-  assert.match(changes, /\{lone && view && item\.state !== 'underway' && hasCards\(item\)\s*\? <ChangeFoot id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} page=\{thread\.page\} tail=\{tail\} \/> : null\}/);
+  assert.match(changes, /\{lone && view && item\.state !== 'underway' && hasCards\(item\)\s*\? <ChangeFoot id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} page=\{thread\.page\} tail=\{tail\} row=\{row\} \/> : null\}/);
 });
 
 test('the layer: over the card, × on its right, Escape and the dimmed card close it', () => {
@@ -563,7 +565,7 @@ test('a request\'s one change is the card\'s own: one picture with the switch, n
   assert.match(changes, /\{view\?\.v\.shots \? \(thread\.card\s*\? <ShotsCard s=\{view\.v\.shots\} single status=\{view\.v\.status\?\.key \|\| null\} \/>\s*: <ShotsPair/);
   assert.match(changes, /const footed = thread\.card && !!view && item\.state !== 'underway' && hasCards\(item\);/);
   assert.match(changes, /<ChangeLine item=\{item\} view=\{view\} propose=\{propose\} footed=\{footed\} sole=\{thread\.card && sole\} \/>/);
-  assert.match(changes, /\{status && !footed \? <span className="shrink-0" data-thread-change-status=/, 'the foot says where it stands');
+  assert.match(changes, /\{status && pill && !footed \? <span className="shrink-0" data-thread-change-status=/, 'the foot says where it stands');
   assert.match(changes, /<h3 className=\{sole \? 'sr-only' :/, 'the title stays for a screen reader and the declared checks');
   assert.match(changes, /sole=\{!ballot && changes\.length === 1\}/);
 });
@@ -626,7 +628,8 @@ test('a foot with a vote to cast folds into the header once it has gone up behin
   assert.match(change, /const floating = float && footVote \? \{\s*sub: dotLine\(facts\.map\(\(f\) => f\.replace\(\/\[\.\\s\]\+\$\/, ''\)\)\) \|\| null,\s*actions: <>\{failed \? null : testAction\}\{footVote\}<\/>,/);
   // One card: the header's lower corners go square and its drop shadow
   // gives way while the row is there; the row ends the card. On a wide page
-  // the timeline beside the card steps down for it.
+  // the head ends where the card does (20 Nov 2026), so the timeline beside
+  // it no longer steps down for the row.
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf('THE VOTE FOLDS INTO THE HEADER'), css.indexOf("/* THE PAGE'S WAY BACK, AT THE PILL'S START."));
   assert.ok(block.length > 0, 'the fold sits in the header pill\'s own block');
@@ -634,8 +637,8 @@ test('a foot with a vote to cast folds into the header once it has gone up behin
   // 19 Nov 2026: at the head card's 20px corners, no longer the capsule's ends.
   assert.match(block, /\.dev-thread-float \{[^}]*border-radius: 0 0 20px 20px;/);
   assert.match(block, /\.dev-request-bar \.messages-thread-header \{\s*position: relative;\s*z-index: 1;\s*\/\* The head's corners, as a length they can ease from\. \*\/\s*border-radius: 20px;/);
-  assert.match(block, /\.dev-request-bar > \.messages-thread-header \{ transition: border-radius 180ms ease; \}/);
-  assert.match(block, /:has\(\.dev-thread-float\) \.dev-request-rail \{\s*top: 64px;/);
+  assert.match(block, /\.dev-request-bar > \.messages-thread-header \{ transition: border-radius 180ms ease, padding 180ms ease, box-shadow 180ms ease; \}/);
+  assert.doesNotMatch(css, /:has\(\.dev-thread-float\) \.dev-request-rail \{/, 'the row is in the card\'s column, beside the timeline');
 });
 
 test('the picture\'s chip says what the side is for this change', () => {
@@ -735,4 +738,132 @@ test('#6821: a change’s foot words its headline from the stored status', () =>
   assert.equal(live.headline, 'Needs 2 more yes');
   const sayNo = changeFoot({ ...input, work: standing({ stage: 'checking', line: { code: 'syncing' }, myVote: 'no' }) });
   assert.deepEqual(sayNo.facts.map(words), ['You voted no.']);
+});
+
+// ── The one rule: the stored row gives the word, the live gates the detail ──
+//
+// (frontend/src/lib/work-state.ts, 19 Nov 2026.) These feed the foot the
+// row the server would send (tests/lib/stored-row.js: the server's own
+// shaping and words), beside the live cards the page has.
+
+const { storedRow, storedChange } = require('./lib/stored-row');
+const { renderComponent } = require('./lib/render-tsx');
+
+const failed = () => testing({
+  name: 'Testing', figure: '2 tests failed', tone: 'bad', done: false,
+  note: ['Homeroom bot tried to fix these and stopped at its own limit.'], botFix: 'stopped',
+});
+
+test('the row words the foot and the live cards keep their explanation under it', () => {
+  const { changeFoot } = loadTsx(MODEL);
+  // Its tests failed: the change's own row says Checking and how many fail,
+  // and who fixes them now stays, from the Testing card.
+  const foot = changeFoot({
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 }, votes: votes({ tone: 'ask' }), testing: failed(),
+    work: storedRow({ stage: 'checking', line: { code: 'checks_failing', failing: 2 } }, { kind: 'change' }),
+  });
+  assert.equal(words(foot.title), 'Checking');
+  assert.deepEqual(foot.facts.map(words), ['2 tests failing']);
+  assert.deepEqual([...foot.sub], ['Homeroom bot tried to fix these and stopped at its own limit.'], 'the card\'s own account is the detail');
+  assert.equal(foot.tone, 'bad');
+  assert.equal(foot.key, 'failed', 'what there is to press stays the live gates\'');
+  // An update on its way: the Votes card's sentence says a yes cast now is cleared.
+  const update = changeFoot({
+    status: { key: 'needs_vote', label: 'Vote · 1/2', yes: 1, majority: 2 },
+    votes: votes({ tone: 'ask', note: [message('changes:page.votes.note.updateComing')] }), testing: testing(),
+    work: storedRow({ stage: 'building', line: { code: 'update_queued' } }, { kind: 'change', myVote: 'yes' }),
+  });
+  assert.equal(words(update.title), 'Building');
+  assert.deepEqual(update.facts.map(words), ['An update is on its way', 'You said yes.']);
+  assert.deepEqual([...update.sub], [message('changes:page.votes.note.updateComing')]);
+  // The row tints it too. Homeroom bot is fixing the failed tests: the
+  // Testing card is red, the foot that says "Building" is not.
+  const fixing = changeFoot({
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 }, votes: votes({ tone: 'ask' }),
+    testing: { ...failed(), note: ['Homeroom bot is fixing these.'], botFix: 'fixing' },
+    work: storedRow({ stage: 'building', line: { code: 'fixing' }, whoseMove: 'bot' }),
+  });
+  assert.equal(words(fixing.title), 'Building');
+  assert.equal(fixing.tone, null, 'not red while it is being fixed');
+  assert.equal(fixing.key, 'failed', 'See what failed is still there to press');
+  // Approved and waiting on GitHub's checks: the ok of Approved, whatever
+  // the live gates read a moment before.
+  const held = changeFoot({
+    status: { key: 'needs_vote', label: 'Vote · 1/2', yes: 1, majority: 2 }, votes: votes({ tone: 'ask' }), testing: testing(),
+    work: storedRow({ stage: 'going_live', line: { code: 'github_checks' } }, { kind: 'change' }),
+  });
+  assert.equal(words(held.title), 'Approved');
+  assert.equal(held.tone, 'ok');
+  // Its screenshots are still being taken: plain, nobody's fault.
+  const shots = changeFoot({
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 }, votes: votes({ tone: 'bad' }), testing: testing(),
+    work: storedRow({ stage: 'checking', line: { code: 'shots' } }, { kind: 'change' }),
+  });
+  assert.equal(words(shots.title), 'Taking screenshots');
+  assert.equal(shots.tone, null);
+});
+
+test('a change that has since gone live, closed or stuck keeps its own foot whatever an older row says', () => {
+  const { changeFoot } = loadTsx(MODEL);
+  // The row is a few seconds behind: it still says the screenshots are being taken.
+  const stale = storedRow({ stage: 'checking', line: { code: 'shots' } }, { kind: 'change' });
+  const base = { votes: votes({ tone: 'done', done: true, figure: '2 yes' }), testing: testing(), work: stale };
+  const live = changeFoot({ ...base, status: { key: 'merged', label: '✓ Live', yes: 2, majority: 2 } });
+  assert.equal(live.key, 'live');
+  assert.equal(words(live.title), 'Live', 'never "Taking screenshots" over a change that is live');
+  assert.equal(live.tone, 'ok');
+  const going = changeFoot({ ...base, status: { key: 'merging', label: 'Going live…', yes: 2, majority: 2 } });
+  assert.equal(words(going.title), 'Approved');
+  assert.deepEqual(going.facts.map(words), ['Going live']);
+  // Closed: why it was closed is the line under it.
+  const closed = changeFoot({
+    ...base, status: { key: 'closed', label: 'Closed' },
+    votes: votes({ figure: 'Closed', note: ['Closed without going live.', 'Its request was already built by another change.'] }),
+  });
+  assert.equal(closed.key, 'closed');
+  assert.equal(closed.headline, 'Closed');
+  assert.deepEqual([...closed.sub], ['Closed without going live.', 'Its request was already built by another change.']);
+  // GitHub refuses the merge: the Merging card's name, figure and account.
+  const merge = gate({ name: 'Couldn\'t merge', figure: 'GitHub refused it', tone: 'bad', note: ['A required check never reported. Push again to restart it.'] });
+  const stuck = changeFoot({
+    ...base, status: { key: 'needs_vote', label: 'Vote · 2/2', yes: 2, majority: 2 }, merge,
+    work: storedRow({ stage: 'going_live' }, { kind: 'change' }),
+  });
+  assert.equal(stuck.headline, 'Couldn\'t merge');
+  assert.equal(stuck.title, null);
+  assert.deepEqual([...stuck.sub], ['A required check never reported. Push again to restart it.'], 'the note of a stuck merge is not dropped');
+  assert.equal(stuck.tone, 'bad');
+});
+
+test('a request\'s page with one change: the foot is worded from the REQUEST\'s row', () => {
+  const { normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
+  // Homeroom bot gave up fixing the change's tests. The request's row says
+  // so; the change's own row only knows its tests fail.
+  const change = storedChange({ checks: { state: 'failing', phase: 'done', failing: 2 } });
+  const sent = storedRow({ stage: 'stopped', reason: 'fix_stopped', change });
+  // As the request's head hands it on (request-head.tsx): normalized, with whose it is.
+  const row = { ...normalizeWorkState(sent), mine: sent.mine };
+  const v = {
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2, tone: 'progress' },
+    votes: votes({ tone: 'ask' }), testing: failed(), merge: null,
+    work: storedRow({ stage: 'checking', line: { code: 'checks_failing', failing: 2 } }, { kind: 'change' }),
+  };
+  const props = { id: 51, card: { actions: [] }, v, page: 'request:7' };
+  const html = renderComponent(CHANGE, 'ChangeFoot', { ...props, row });
+  assert.match(html, /<b class="dev-thread-foot-head">Stopped: its tests still fail<\/b>/);
+  assert.match(html, /data-thread-foot-tone="bad"/);
+  assert.match(html, /Homeroom bot tried to fix these and stopped at its own limit\./, 'the Testing card\'s account stays under it');
+  assert.match(html, /data-thread-foot-see="checks"/, 'and See what failed is still there to press');
+  assert.doesNotMatch(html, /Checking/, 'not the change\'s own row');
+  // The change's own page (no request's row) reads the change's row.
+  assert.match(renderComponent(CHANGE, 'ChangeFoot', props), /<b class="dev-thread-foot-head">Checking<\/b>/);
+
+  // A question asked about it, read by somebody who did not ask for it.
+  const asked = storedRow({ stage: 'waiting_for_you', why: 'question', change: storedChange({ voteOpen: true }) }, { mine: false });
+  const others = renderComponent(CHANGE, 'ChangeFoot', {
+    ...props, v: { ...v, testing: testing(), work: storedRow({ stage: 'up_for_vote' }, { kind: 'change' }) },
+    row: { ...normalizeWorkState(asked), mine: asked.mine },
+  });
+  assert.match(others, new RegExp(`<b class="dev-thread-foot-head">${message('core:work.whyOthers.question')}</b>`));
+  assert.doesNotMatch(others, new RegExp(message('core:work.why.question')), 'the requester\'s wording is theirs alone');
 });

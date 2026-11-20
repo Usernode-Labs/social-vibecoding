@@ -515,11 +515,20 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     const q = await row(app2.id, 112);
     assert.equal(q.held_reason, 'cooldown');
     assert.deepEqual(progress.holdOf(q), { kind: 'cooldown', until: new Date(d.owed.heldUntil).toISOString() });
-    assert.equal(progress.stageOf({ ...q, queue_id: q.id }).hold, 'cooldown');
+    assert.equal(require('../src/services/work-state').derive({ ...q, queue_id: q.id }).line.code, 'cooldown');
     work.answer.set(request.WORK.look, { outcome: 'done' });
+    // Review of 19 Nov 2026: a person's ask lifts the hold AND the back-off
+    // standing behind it (five faults: it could wait up to an hour more), so
+    // it is looked at now rather than left queued behind `wait_until`.
+    const looksBefore = calls(request.WORK.look).length;
     await oweOnly(app2.id, 112, { reason: 'dm_answer', priority: 0 });
-    assert.equal((await inst(request.MACHINE, requestKey(app2.id, 112))).data.owed.heldUntil, null, 'a person\'s ask lifts it');
-    assert.equal((await row(app2.id, 112)).held_reason, null, 'and its reason with it');
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    await settle();
+    const asked = (await inst(request.MACHINE, requestKey(app2.id, 112))).data;
+    assert.equal(asked.owed?.heldUntil ?? null, null, 'a person\'s ask lifts it');
+    assert.equal(asked.backoff, null, 'and the back-off with it');
+    assert.equal(calls(request.WORK.look).length, looksBefore + 1, 'so it is looked at at once');
+    assert.equal((await row(app2.id, 112))?.held_reason ?? null, null, 'and its reason with it');
     work.answer.set(request.WORK.look, { outcome: 'done' });
   });
 
@@ -907,8 +916,8 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     assert.ok(await row(garden.id, 9), 'the wait and its read survive a quiet refresh');
     // Nothing about it is "on hold": the request page reads the wait, and
     // its newest failed plan, as Homeroom bot trying the plan again.
-    const stage = progress.stageOf({ queue_id: q.id, enqueued_at: q.enqueued_at, wait_until: q.wait_until,
+    const stage = require('../src/services/work-state').derive({ queue_id: q.id, enqueued_at: q.enqueued_at, wait_until: q.wait_until,
       build_ok: false, build_error: 'no plan could be written (the spec turn ended on an API error)' });
-    assert.deepEqual([stage.stage, stage.retry], ['queued', 'plan']);
+    assert.deepEqual([stage.stage, stage.line.code], ['planning', 'retry_plan']);
   });
 });

@@ -55,6 +55,9 @@ const MAX_LINE_CHARS = 200;
 const MAX_FILES_KEPT = 40;
 // T1.3: what a look that met OpenRouter's 402 for credit says (the bot's words).
 const CREDIT_ERROR = 'I\'m out of building credit right now, so the look didn\'t run. Ask me again once it\'s back.';
+// Review A2: what a look says when Homeroom or its provider failed under it:
+// whose failure it was, and nothing about their question.
+const PLATFORM_ERROR = 'The look did not finish because Homeroom had a problem on its side. Ask me again in a few minutes.';
 const FILES_SHOWN = 5;
 const MAX_PROGRESS_LINES = 600;
 // The words a look's reply ends with, which this module reads.
@@ -278,6 +281,12 @@ async function gate(pool, { user, app, settings, bot = null, deps = {}, doing = 
     const budget = await limits.checkBudget(pool, bot.id).catch(() => ({ error: 'unreadable' }));
     if (budget?.error) return { code: 'bot_budget', error: `Homeroom bot has used its own time for this week, so it cannot ${what} just now.` };
   }
+  // Review B1: asked before the model is. While the one stored outage stands
+  // (openrouter-credit.js creditState) no turn is started to meet the 402.
+  const credit = deps.credit?.creditState ? deps.credit : require('../openrouter-credit');
+  if ((await credit.creditState(pool)).out) {
+    return { code: 'credit', error: `Homeroom bot is out of building credit just now, so it cannot ${what}. Ask again once credit is back.` };
+  }
   return null;
 }
 
@@ -478,20 +487,27 @@ async function lookInto(pool, config, { user, app, question, notes = null, since
   // T1.3: OpenRouter's credit ran out under the look (its error, or what the
   // worker read of how it ended): an outage, noted once (the admins hear at
   // once), and said as one, never as findings.
-  const credit = require('../openrouter-credit');
-  if (routed && (credit.creditOut({ error: routed.error || null }) || credit.creditOut(result))) {
+  // One sort (bot-turn-failure.js): the routed code and the worker's own
+  // account of the turn, never free text. `failure` rides on every failed
+  // result, so what counts a failure (an investigation's three in a row)
+  // can leave out the ones that were credit's or the platform's.
+  const turnFailure = require('../bot-turn-failure');
+  const credit = deps.credit?.noteOutage ? deps.credit : require('../openrouter-credit');
+  const sorted = routed ? turnFailure.sort({ code: routed.error || null, turn: result }) : { class: 'platform', cause: 'no_result' };
+  if (sorted.class === 'credit') {
     await credit.noteOutage(pool, { words: 'a look met OpenRouter\'s 402 for credit' }).catch(() => null);
-    return { ok: false, code: 'credit', error: CREDIT_ERROR, costUsd, ms, model };
+    return { ok: false, code: 'credit', failure: 'credit', error: CREDIT_ERROR, costUsd, ms, model };
   }
   if (!routed || routed.error) {
     log.warn('homeroom-bot-look', 'A look\'s turn failed', { app: app.slug, err: clip(routed?.error || 'no result', 300) });
-    return { ok: false, code: 'failed', error: 'The look did not finish just now.', costUsd, ms, model };
+    return { ok: false, code: 'failed', failure: 'platform', error: PLATFORM_ERROR, costUsd, ms, model };
   }
   // T1.3: a reply that IS the runtime's provider error ("API Error: …") is
-  // a turn that failed, never what the look found.
-  if (require('../agent-result-text').agentApiFailure(result.lastResultText)) {
-    log.warn('homeroom-bot-look', 'A look\'s turn ended on a provider error', { app: app.slug });
-    return { ok: false, code: 'failed', error: 'The look did not finish just now.', costUsd, ms, model };
+  // a turn that failed, never what the look found; and a worker that went
+  // from under it (out of memory, its container gone) found nothing either.
+  if (sorted.class === 'platform') {
+    log.warn('homeroom-bot-look', 'A look\'s turn failed on the platform', { app: app.slug, cause: sorted.cause });
+    return { ok: false, code: 'failed', failure: 'platform', error: PLATFORM_ERROR, costUsd, ms, model };
   }
   const text = [result.lastResultText, ...(Array.isArray(result.answerParts) ? result.answerParts : [])]
     .filter((p) => typeof p === 'string' && p.trim()).find((p) => /```json/.test(p)) || result.lastResultText || '';

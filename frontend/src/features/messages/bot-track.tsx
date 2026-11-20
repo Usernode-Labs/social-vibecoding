@@ -10,7 +10,9 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { buttonVariants } from '@/components/ui/button';
 
 import { firstSpecScreen, type SpecScreen } from '../../lib/spec-html';
+import { ArtifactFrame } from '../artifact/frame';
 import { lineWords, stageWords, type Stage } from '../../lib/work-state';
+import { STAGE_LOOK, STAGES, type KnownWhy } from '../../lib/work-stages';
 import { BotActivityCard, ActivityLink, spanText } from './bot-activity';
 import { requestKey } from './bot-request';
 import { useBotWork } from './bot-work';
@@ -47,9 +49,15 @@ const STEP_WORDS: Record<BotTrackStep, string> = {
   live: 'messages:bot.track.step.live',
 };
 
-// Why a build that did not finish stopped (homeroom-bot-track.js
-// buildStopWhy): the second line a stopped build says.
-const CAUSE_LINES: Record<string, string> = {
+// Why a stopped request stopped, by the cause the one decoder stored
+// (services/bot-stop-cause.js, as homeroom-bot-track.js trackCauseOf names
+// it): the second line a stopped track says. One entry for every cause a
+// stop can carry, so a new cause is said on purpose: `null` where the row's
+// own words already say it (a look that failed, a fix that stopped, a
+// closed change, a stall, a wait for building credit), and the row's second
+// line or its stage word is said instead. tests/work-stages-client.test.js
+// holds the keys to the decoder's.
+export const CAUSE_LINES: Readonly<Record<string, string | null>> = Object.freeze({
   time: 'messages:bot.track.line.stopped.time',
   restart: 'messages:bot.track.line.stopped.restart',
   restarts: 'messages:bot.track.line.stopped.restarts',
@@ -64,18 +72,27 @@ const CAUSE_LINES: Record<string, string> = {
   // T2.9: the one decoder's other causes (services/bot-stop-cause.js).
   plan: 'messages:bot.track.line.stopped.plan',
   stopped: 'messages:bot.track.line.stopped.stopped',
-};
+  credit: null,
+  look_failed: null,
+  fix_stopped: null,
+  change_closed: null,
+  stalled: null,
+});
 
 // Papote #3: what a request waits on, naming who it waits on, for a page
-// anyone can open (BotTrack.waitingFor).
-const NAMED_WAITING_LINES: Record<string, string> = {
+// anyone can open (BotTrack.waitingFor): one entry for every why of the
+// table (lib/work-stages.ts). `null`: the row's own second line says it
+// (a decision handed back, a request that may already work).
+export const NAMED_WAITING_LINES: Readonly<Record<KnownWhy, string | null>> = {
   question: 'messages:bot.track.line.waiting.questionNamed',
   plan: 'messages:bot.track.line.waiting.planNamed',
+  decide: null,
+  already_works: null,
   needs_detail: 'messages:bot.track.line.waiting.detailNamed',
 };
 
-/** The stages that are over: what "finished" counts. */
-export const ENDED_STAGES: ReadonlySet<Stage> = new Set(['live', 'stopped', 'closed']);
+/** The stages that are over: what "finished" counts (lib/work-stages.ts STAGE_LOOK `ended`). */
+export const ENDED_STAGES: ReadonlySet<Stage> = new Set(STAGES.filter((stage) => STAGE_LOOK[stage].ended));
 
 /** Pure: a phrase, said. */
 const say = (p: { id: string; values?: Record<string, string | number> } | null) => (p ? translate(p.id, p.values) : '');
@@ -115,13 +132,17 @@ export function trackLine(track: BotTrack): string {
       return translate('messages:bot.track.line.cooldown.until', { date: when });
     }
   }
-  if (work.stage === 'waiting_for_you' && track.waitingFor && work.why && NAMED_WAITING_LINES[work.why]) {
-    return translate(NAMED_WAITING_LINES[work.why], { username: track.waitingFor });
+  const named = work.why && Object.prototype.hasOwnProperty.call(NAMED_WAITING_LINES, work.why)
+    ? NAMED_WAITING_LINES[work.why as KnownWhy] : null;
+  if (work.stage === 'waiting_for_you' && track.waitingFor && named) {
+    return translate(named, { username: track.waitingFor });
   }
   if (work.stage === 'stopped' && track.cause === 'stopped' && track.causeBy) {
     return translate('messages:bot.track.line.stopped.stoppedBy', { username: track.causeBy });
   }
-  if (work.stage === 'stopped' && track.cause && CAUSE_LINES[track.cause]) return translate(CAUSE_LINES[track.cause]);
+  const causeLine = work.stage === 'stopped' && track.cause && Object.prototype.hasOwnProperty.call(CAUSE_LINES, track.cause)
+    ? CAUSE_LINES[track.cause] : null;
+  if (causeLine) return translate(causeLine);
   return say(lineWords(work)) || trackStateWord(track);
 }
 
@@ -404,13 +425,11 @@ export function DrawnSide({ screen, side, label }: { screen: SpecScreen; side: '
   return (
     <div ref={box} className="relative w-full overflow-hidden rounded-lg bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" style={{ aspectRatio: PICTURE_RATIO }} role="img" aria-label={label}>
       {scale ? (
-        <iframe
-          sandbox=""
-          referrerPolicy="no-referrer"
-          tabIndex={-1}
-          aria-hidden="true"
+        <ArtifactFrame
+          mode="static"
+          inert
           title={label}
-          srcDoc={side === 'before' ? screen.before : screen.after}
+          doc={side === 'before' ? screen.before : screen.after}
           className="pointer-events-none absolute start-0 top-0 origin-top-left border-0"
           style={{ width: screen.width, height: screen.height, transform: `scale(${scale}) translate(${-x}px, ${-y}px)` }}
         />

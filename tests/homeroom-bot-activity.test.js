@@ -112,6 +112,10 @@ test('a card still going takes its step from its request\'s work state; with not
   assert.equal(doing({ stage: 'reading', line: { code: 'queued', place: 2 } }), 'Not started yet · Number 2 in my own line; I\'ll start by myself');
   // A limit that holds it keeps the words every screen says.
   assert.equal(doing({ stage: 'building', line: { code: 'held_builds' } }), 'Ready to build · Waiting for one of the project\'s builds to finish');
+  // A credit wait is waiting too: its card does not spin as a build under way.
+  const credit = activity.entryOfWork({ stage: 'building', line: { code: 'credit_wait' }, whoseMove: 'bot' });
+  assert.equal(credit.building, false, 'no build under way while it waits for credit');
+  assert.equal(activity.entryOfWork({ stage: 'building', line: null, whoseMove: 'bot' }).building, true, 'a build with no line is under way');
   // Held for its requester's plan, whatever it had reached: it waits on them, and is no build under way.
   const planning = activity.entryOfWork({ stage: 'planning', line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' });
   assert.deepEqual([planning.doing, planning.waitingOn, planning.typicalMinutes],
@@ -476,18 +480,19 @@ const progressSvc = require('../src/services/homeroom-bot-progress');
 // 19 Nov 2026 (docs/plans/bot-one-model.md): which of the person's requests
 // is under way is its stored work state (services/work-state.js), the row
 // every surface draws; requestStates' stages read the same records before.
-// Each stage of the bot's own step (progress.stageOf), as the work state
-// stores it (fromStage), with what the row it is derived from carries.
+// Each point of the bot's work on a request, as the work state stores it
+// (tests/lib/work-at.js: the derive's reading of that situation's facts).
 const ws = require('../src/services/work-state');
-const stored = (stage, row = {}) => ({ kind: 'request', appId: 1, issueNumber: 3, ...ws.fromStage({ stage, since: '2026-10-02T11:50:00Z' }, row) });
+const { workAt } = require('./lib/work-at');
+const stored = (stage, row = {}) => ({
+  kind: 'request', appId: 1, issueNumber: 3, ...workAt(stage, row, { now: new Date('2026-10-02T12:00:00Z'), since: '2026-10-02T11:50:00.000Z' }),
+});
 
 test('work under way is a look being read, or the plan and build its ready verdict started', () => {
   // The stages a card follows: the bot is at it this minute (busyNow), on
   // the request's own look.
   const under = ['reading', 'starting', 'planning', 'building', 'reviewing', 'proposing'];
   for (const stage of under) {
-    assert.ok(progressSvc.BUSY_STAGES.has(stage), `${stage}: the bot is working on it this minute`);
-    assert.ok(progressSvc.IN_FLIGHT_STAGES.has(stage), `${stage}: it is in flight`);
     const work = stored(stage);
     assert.equal(work.whoseMove, 'bot', `${stage}: the bot's to do`);
     assert.equal(activity.workUnderWay(work), true, `${stage}: under way`);
@@ -496,8 +501,7 @@ test('work under way is a look being read, or the plan and build its ready verdi
   // own: waiting in the queue, a ready verdict waiting its turn to be built,
   // a follow-up on its proposal, a merge, a project being set up. None of
   // them is given a card.
-  const others = [...progressSvc.IN_FLIGHT_STAGES].filter((stage) => !under.includes(stage)).sort();
-  assert.deepEqual(others, ['build_queued', 'fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up']);
+  const others = ['build_queued', 'fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up'];
   for (const stage of [...others, 'question', 'plan', 'held', 'stalled', 'checks', 'checks_failed', 'vote', 'fix_stopped']) {
     const work = stage === 'setting_up' ? null : stored(stage, { check_state: 'passing' });
     assert.equal(activity.workUnderWay(work), false, stage);
@@ -1473,4 +1477,45 @@ test('T2.12: a card on the newest look reads its request\'s stored row', () => {
   const proposedRun = { run_id: 40, verdict: 'ready', build_ok: true, proposal_session_id: 9, proposal_status: 'promoted', told: false };
   assert.equal(act.outcomeFor(proposedRun, { stage: 'reading', runId: 40 }), 'checking');
   assert.equal(act.outcomeFor({ ...proposedRun, told: true }, { stage: 'building', runId: 40 }), 'proposed');
+});
+
+// The one rule (frontend/src/lib/work-state.ts): the stored row gives the
+// word on every surface. A request whose row said "Stopped: its tests still
+// fail" (Homeroom bot gave up fixing its change's tests) had no case in the
+// cards' mapping, so its card fell through to its run's own record and read
+// "Testing". The request's row here is the one the server stores and sends
+// (tests/lib/stored-row.js); the card is the server's own (cardOf), drawn by
+// the client's own component.
+test('a card whose request\'s row says the bot stopped fixing its tests says Stopped, never Testing', () => {
+  const { storedRow, storedChange } = require('./lib/stored-row');
+  const { message } = require('./lib/platform-i18n');
+  const row = {
+    message_id: 31, created_at: '2026-10-02T10:30:00Z', slug: 'ear-trainer', issue_number: 12,
+    run_id: 40, verdict: 'ready', build_ok: true, run_at: '2026-10-02T10:40:00Z',
+    proposal_session_id: 51, proposal_status: 'promoted', proposal_at: '2026-10-02T10:53:00Z',
+    // Neither the ready card nor the "needs a look" message has gone out.
+    told: false, needs_look: false,
+  };
+  const failing = storedChange({ id: 51, checks: { state: 'failing', phase: 'done', failing: 2 } });
+  // The fix's own look is the request's newest run, not this card's.
+  const stopped = storedRow({ stage: 'stopped', reason: 'fix_stopped', change: failing, runId: 44 });
+  assert.equal(stopped.words.stage.id, 'core:work.reason.fixStopped');
+  const card = activity.cardOf(row, null, { work: stopped });
+  assert.equal(card.state, 'done');
+  assert.equal(card.outcome, 'needs_look', 'not "checking"');
+  const html = draw({ card: JSON.parse(JSON.stringify(card)) });
+  assert.match(html, new RegExp(`data-bot-activity-eyebrow="">${message('messages:bot.state.stopped')}<`));
+  assert.ok(html.includes(message('messages:bot.state.line.needsLook')), html);
+  assert.ok(!html.includes(message('messages:bot.state.testing')), 'never Testing under a request that stopped');
+  // The same when this card's run is the request's newest.
+  assert.equal(activity.cardOf(row, null, { work: { ...stopped, runId: 40 } }).outcome, 'needs_look');
+  assert.equal(activity.outcomeFromWork(stopped), 'needs_look');
+  // Still being tested, by the row: Testing, as before.
+  const checking = storedRow({ stage: 'checking', change: storedChange({ id: 51, checks: { state: 'pending', phase: 'running', failing: null } }), runId: 40 });
+  const going = activity.cardOf(row, null, { work: checking });
+  assert.equal(going.outcome, 'checking');
+  assert.match(draw({ card: JSON.parse(JSON.stringify(going)) }), new RegExp(`data-bot-activity-eyebrow="">${message('messages:bot.state.testing')}<`));
+  // Another change than the one this card's run proposed: the card's own record.
+  const other = storedRow({ stage: 'stopped', reason: 'fix_stopped', change: storedChange({ id: 77 }), runId: 44 });
+  assert.equal(activity.cardOf(row, null, { work: other }).outcome, 'checking');
 });

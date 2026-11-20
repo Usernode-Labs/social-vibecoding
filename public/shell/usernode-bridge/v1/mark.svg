@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Homeroom">
+  <!--
+    The Homeroom mark, as the bridge draws it in the corner of an app opened on
+    its own subdomain (the __USERNODE_PLATFORM_LINK__ block in
+    usernode-bridge/v1/bridge.js). It is served from HERE, under one of the
+    three centrally hosted asset prefixes, so an app reaches it at the RELATIVE
+    path /usernode-bridge/v1/mark.svg and carries no platform hostname — the
+    same contract bridge.js, native.css and tailwind.js are served under, and
+    for the same reason (Caddyfile's @platform_assets matcher,
+    PLATFORM_ASSET_PREFIXES in services/kubernetes.js, and the `.svg` entry in
+    scripts/serve-platform-assets.js's TYPES table that lets the Kubernetes
+    sidecar answer for it).
+
+    PROVENANCE. The path below is the star of the Homeroom logotype — Figma
+    node 1246:118 in file 4kAYqXh9NhpoCU44QwWvYo, the eighth and last of that
+    drawing's subpaths — transcribed verbatim from
+    frontend/@/components/ui/wordmark.tsx, which public/brand/README.md records
+    as the logotype's source of truth. The star is the one element of the
+    logotype that still reads at 28px; the seven letterforms beside it do not.
+    tests/bridge-platform-mark.test.js compares this copy against that one
+    character for character, so the two cannot drift.
+
+    WHY A FILE, AND NOT currentColor SOURCE. wordmark.tsx inlines its paths so
+    that one drawing takes the ink of wherever it sits. This one does not sit
+    in a document the platform owns: it sits on an app's page, over an app's
+    background, in whatever theme that app chose. So it carries its own ground
+    — the platform violet, with the star knocked out in white — which reads on
+    any backdrop. currentColor cannot promise that here, and an <img> could not
+    inherit it anyway.
+
+    The transform maps the star's own logotype coordinates (bounding box
+    331.668,50.1955 → 413.68,136.279) to a 19px figure centred in the 32px
+    tile: centre it on the box's midpoint, scale, then move that midpoint to
+    the tile's centre. Editing the `d` without redoing those three numbers will
+    push the star off the tile.
+  -->
+  <rect width="32" height="32" rx="8" fill="#7C3AED"/>
+  <path fill="#FFFFFF" transform="translate(16 16) scale(0.2207) translate(-372.674 -93.2373)" d="M376.69 50.1955C377.666 50.5451 377.879 50.6644 378.751 51.2309C379.56 52.6431 380.144 59.6809 380.651 61.8518C384.314 77.6152 386.094 84.7939 401.832 91.1538C405.632 92.6901 409.733 93.3397 413.112 95.5859C413.68 96.5188 413.5 97.0692 413.363 98.1341C413.181 98.4076 412.964 98.7294 412.717 99.1C403.498 101.849 389.977 102.267 382.784 109.796C379.186 113.565 374.333 124.66 372.542 129.752C371.546 132.575 371.035 134.922 368.451 136.279L366.752 135.487C365.002 133.492 364.476 124.573 363.926 121.379C363.413 118.448 362.754 115.545 361.953 112.679C361.604 111.407 360.536 107.746 359.758 106.704C355.701 101.291 348.249 97.4114 342.035 95.1282C338.92 93.984 335.926 93.2163 333.063 91.6978C331.911 91.086 331.902 90.6855 331.668 89.6918C331.938 88.8377 331.974 88.4387 332.803 87.9778C334.547 87.0114 337.416 86.787 339.376 86.4416C346.772 85.1384 354.228 83.6495 360.427 79.1072C368.818 72.9623 372.148 52.8035 376.69 50.1955Z"/>
+</svg>

@@ -49,9 +49,9 @@ test('the island mounts it under Standard (WIP) and the brand look, in a row of 
   assert.match(island, /\{wip \|\| brand \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
   // A row of its own, as wide as the column, placed right under Pinned projects.
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
-  assert.match(css, /html\[data-skin-wip\] #home-screen \.home-main > \.home-row \{ display: contents; \}/);
-  assert.match(css, /html\[data-skin-wip\] #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #home-screen \.home-main > \.home-row \{ display: contents; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
 });
 
 test('it is a section as Pinned apps is: its label line on the page, then one card of recent threads', () => {
@@ -176,7 +176,7 @@ test('a row is the thread\'s own page, and the card lists what is in the look\'s
   assert.match(css, /\.wip-rows-cols \{ grid-template-columns: repeat\(var\(--wip-cols, 1\), minmax\(0, 1fr\)\);/);
   // Four from 1024px, where Pinned projects' own four columns become rows: the lists share their lines.
   for (const [at, n] of [['640px', 2], ['1024px', 4]]) {
-    assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html\\[data-skin-wip\\] \\{ --wip-cols: ${n}; \\} \\}`));
+    assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html:not\\(\\[data-skin\\]\\) \\{ --wip-cols: ${n}; \\} \\}`));
   }
   assert.match(css, /\.wip-poster \{\s*display: flex;\s*flex: 0 0 calc\(\(100% - \(var\(--wip-cols, 1\) - 1\) \* var\(--wip-col-gap\)\) \/ var\(--wip-cols, 1\)\);/, 'a challenge is one of the same columns');
 });
@@ -209,9 +209,9 @@ test('a title\'s plain words have their own span, and a project\'s name is one s
   // A plain pill in a card that asks reads the card's own ink (Advisory was pale on yellow in the dark).
   assert.match(css, /--wip-ink-soft: var\(--wip-ask-ink\);/);
   // One size at every width, outside any media query.
-  assert.match(css, /\nhtml\[data-skin-wip\] #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
+  assert.match(css, /\nhtml:not\(\[data-skin\]\) #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
   // On a phone alone it is a size down: four across leaves a name about 85px.
-  assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html\[data-skin-wip\] #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
+  assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html:not\(\[data-skin\]\) #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
 });
 
 test('Standard (WIP): a project\'s hub folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
@@ -220,7 +220,7 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   // No Invite card and no Share it card under the look: both actions are the hero's.
   assert.match(ws, /const wipLook = useLiveSkin\(\) === 'wip';/);
-  assert.match(ws, /inviteCard=\{!wipLook\}/);
+  assert.match(ws, /inviteCard=\{!kitHub\}/);
   assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
   assert.match(card, /\{wipLook \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
   assert.match(card, /function WipHeroPublic\([^)]*\): ReactNode \{\s*if \(data\.audience !== 'solo' \|\| !data\.can_manage \|\| data\.audience_change\) return null;\s*return <MakePublic /, 'Make it public is offered to exactly whom Share it offers it');
@@ -228,12 +228,17 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   assert.match(card, /\{member \? \(\s*<button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title=\{t\('project:communityCard\.invite\.title'\)\} onClick=\{openInviteLinks\}>/);
   assert.match(card, /\{wipLook \? null : \(\s*<>\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(/, 'one Invite on the page');
   // The hero's scenery is for show.
-  assert.match(card, /<span className="wip-hero-wash" aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
+  assert.match(card, /<span className="wip-hero-wash" data-scene=\{platform \? 'home' : String\(communityScene\(slug\)\)\} aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
+  // The standard look's hub too (20 Nov 2026), and a project's preview beside the hero where there is one.
+  assert.match(card, /const wipLook = isKitHome\(useLiveSkin\(\)\);/);
+  assert.match(card, /const previewBeside = wipLook && !platform && !!data\.cover\?\.illustration_url;/);
+  // Pointing at that picture plays the project's loop over it, as a featured card on Home does.
+  assert.match(card, /\{data\.cover\?\.preview_url \? <CardPreview src=\{data\.cover\.preview_url\} \/> : null\}/);
   // Needs you stays in the row with nothing waiting, shaped as its neighbours.
   assert.match(hub, /if \(alone && !claims && !wipLook\) return null;/);
   assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin-wip\] #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
   assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/, 'For you is three across from 768px');
 });
 
@@ -307,8 +312,8 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   assert.match(grid, /t\('home:grid\.tile\.members', \{ count: app\.members, formatted: app\.members\.toLocaleString\(\) \}\)/);
   assert.equal(message('home:grid.tile.members_other', { formatted: '1,284', count: 1284 }), '1,284 members');
   assert.match(read('frontend/src/features/home/home.js'), /members: Math\.max\(0, Number\(app\.member_count\) \|\| 0\),/);
-  assert.match(css, /html\[data-skin-wip\] #app-list \.app-card-desc \{ display: none; \}/);
-  assert.match(css, /html\[data-skin-wip\] #app-list \{ padding: var\(--wip-cell-pad\); \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #app-list \.app-card-desc \{ display: none; \}/);
+  assert.match(css, /html:not\(\[data-skin\]\) #app-list \{ padding: var\(--wip-cell-pad\); \}/);
   // A recent thread is its title, its project and when, in every look now: there is no kind line to hide.
   assert.doesNotMatch(css, /#home-needs-card \.wip-item-kind/);
 });
@@ -328,7 +333,7 @@ test('Standard (WIP): one token set draws it, the brand kit, and the others are 
     'on whenever the look is, so a rule that asks for a token set always applies under it');
   assert.doesNotMatch(head, /TOKEN_SETS|homeroom:wip-tokens'\)|getTokens|setTokens/, 'nothing is stored or pinned for it');
   // It has a light rule and a dark rule.
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
+  assert.match(css, /html:not\(\[data-skin\]\) \{[^}]*--wip-font: 'Geist',/);
   assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\]\.dark \{[^}]*--lit-ink: #fffeea;/);
   // The menus name the look by it: one entry, no 'wip:<set>' entries, no second menu.
   const picker = read('frontend/src/features/frame/look-picker.tsx');

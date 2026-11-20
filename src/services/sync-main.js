@@ -342,7 +342,6 @@ async function runSyncWork(config, pool, {
           commitMsg: '',
           resumeSessionId: null,
           branchName: session.branch_name,
-          anthropicApiKey: null,
           onProgress,
           ...(budgetMs ? { timeoutMs: budgetMs } : {}),
           ...(extra.owner ? { owner: extra.owner } : {}),

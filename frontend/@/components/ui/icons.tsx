@@ -1079,3 +1079,40 @@ export const ArrowsRightLeftIcon = stroked(
   'ArrowsRightLeftIcon',
   'M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
 );
+
+/**
+ * THE COMMUNITY EMBLEMS (20 Nov 2026, from the sheet of twenty the product owner
+ * approved): the ones that need no member's picture, each drawn in a 100 by
+ * 100 square from the kit's four colours. `c` is those colours, turned by the
+ * community's slug, so two communities with the same emblem still differ.
+ */
+const EMBLEMS: Array<(c: string[]) => React.ReactNode> = [
+  // Overlap: three discs that meet.
+  (c) => (<><circle cx="40" cy="40" r="26" fill={c[0]} fillOpacity=".9" /><circle cx="60" cy="40" r="26" fill={c[1]} fillOpacity=".8" /><circle cx="50" cy="60" r="26" fill={c[2]} fillOpacity=".8" /></>),
+  // Signal: thick quarter rings from one corner.
+  (c) => (<><circle cx="14" cy="86" r="74" fill="none" stroke={c[2]} strokeWidth="11" /><circle cx="14" cy="86" r="52" fill="none" stroke={c[1]} strokeWidth="11" /><circle cx="14" cy="86" r="30" fill="none" stroke={c[0]} strokeWidth="11" /><circle cx="14" cy="86" r="11" fill={c[3]} /></>),
+  // Blocks: four simple shapes.
+  (c) => (<><svg x="12" y="12" width="36" height="36" viewBox="0 0 36 36"><circle cx="36" cy="36" r="36" fill={c[1]} /></svg><circle cx="70" cy="30" r="18" fill={c[0]} /><circle cx="30" cy="70" r="18" fill={c[2]} /><svg x="52" y="52" width="36" height="36" viewBox="0 0 36 36"><circle cx="0" cy="0" r="36" fill={c[3]} /></svg></>),
+  // Common ground: two circles that overlap.
+  (c) => (<><circle cx="38" cy="50" r="28" fill={c[1]} fillOpacity=".9" /><circle cx="62" cy="50" r="28" fill={c[0]} fillOpacity=".85" /><circle cx="50" cy="50" r="7" fill={c[3]} /></>),
+  // Bloom: four petals meeting in the middle.
+  (c) => (<><g fill={c[0]}><circle cx="30" cy="30" r="18" /><rect x="30" y="30" width="18" height="18" /></g><g fill={c[1]}><circle cx="70" cy="30" r="18" /><rect x="52" y="30" width="18" height="18" /></g><g fill={c[2]}><circle cx="30" cy="70" r="18" /><rect x="30" y="52" width="18" height="18" /></g><g fill={c[3]}><circle cx="70" cy="70" r="18" /><rect x="52" y="52" width="18" height="18" /></g></>),
+  // Linked: two thick rings.
+  (c) => (<><circle cx="38" cy="50" r="22" fill="none" stroke={c[0]} strokeWidth="10" /><circle cx="62" cy="50" r="22" fill="none" stroke={c[1]} strokeWidth="10" /></>),
+  // Dot grid: three by three.
+  (c) => (<>{[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => <circle key={i} cx={24 + (i % 3) * 26} cy={24 + Math.floor(i / 3) * 26} r="10" fill={c[(i * 3 + Math.floor(i / 3)) % 4]} />)}</>),
+  // Circle up: eight seats in a ring.
+  (c) => (<>{[0, 1, 2, 3, 4, 5, 6, 7].map((i) => { const t = (i / 8) * 2 * Math.PI; return <circle key={i} cx={50 + 30 * Math.cos(t)} cy={50 + 30 * Math.sin(t)} r={i % 3 === 0 ? 10 : 7} fill={c[i % 4]} />; })}<circle cx="50" cy="50" r="9" fill={c[3]} /></>),
+  // Growing: three pillars.
+  (c) => (<><rect x="16" y="52" width="20" height="34" rx="10" fill={c[2]} /><rect x="40" y="34" width="20" height="52" rx="10" fill={c[1]} /><rect x="64" y="16" width="20" height="70" rx="10" fill={c[0]} /></>),
+  // Group chat: one speech bubble, three people in it.
+  (c) => (<><rect x="24" y="60" width="16" height="16" rx="2" transform="rotate(45 32 68)" fill={c[0]} /><rect x="12" y="22" width="76" height="50" rx="14" fill={c[0]} /><circle cx="32" cy="47" r="7" fill={c[1]} /><circle cx="50" cy="47" r="7" fill={c[3]} /><circle cx="68" cy="47" r="7" fill={c[2]} /></>),
+];
+
+/** How many emblems there are to choose from. */
+export const COMMUNITY_EMBLEMS = EMBLEMS.length;
+
+/** One emblem, by its place in the list, in the colours given (four CSS colours). Decoration: the name is beside it. */
+export function CommunityEmblem({ emblem, colours, className }: { emblem: number; colours: string[]; className?: string }) {
+  return <svg className={className} viewBox="0 0 100 100" focusable="false" aria-hidden="true">{EMBLEMS[emblem % EMBLEMS.length](colours)}</svg>;
+}

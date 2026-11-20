@@ -309,7 +309,7 @@
   },
   "credit.row.label": {
     "text": "AI credit",
-    "description": "Label of the row in Settings, Anthropic API key, that shows how much of the person's free AI allowance is spent. Credit is money to spend on AI, not a loan or an attribution."
+    "description": "Label of the row in Settings, AI usage & models, that shows how much of the person's free AI allowance is spent. Credit means an allowance, not money owed."
   },
   "credit.meter.leftWeekly": {
     "text": "<0>{{remaining}}</0> of {{limit}} left this week",
@@ -319,29 +319,17 @@
     "text": "<0>{{remaining}}</0> of {{limit}} left today",
     "description": "The AI credit meter in Settings, AI usage & models, as one sentence, for an allowance that resets each day: how much of it remains, as in '$12.50 of $20 left today'. {{remaining}} and {{limit}} are dollar amounts. The numbered tag only sets the colour of the amount left: keep it around {{remaining}}."
   },
-  "credit.meter.usedAllWeekly": {
-    "text": "All {{limit}} used this week",
-    "description": "The AI credit meter in Settings, AI usage & models, when the whole weekly free allowance is spent and the person's own Anthropic API key now pays for AI use. {{limit}} is a dollar amount, as in 'All $840 used this week'."
-  },
-  "credit.meter.usedAllToday": {
-    "text": "All {{limit}} used today",
-    "description": "The AI credit meter in Settings, AI usage & models, when the whole daily free allowance is spent and the person's own Anthropic API key now pays for AI use. {{limit}} is a dollar amount, as in 'All $20 used today'."
-  },
   "credit.meter.noAllowance": {
     "text": "No free AI allowance",
     "description": "The AI credit meter in Settings, AI usage & models, for an account whose free AI allowance is zero (an admin set no allowance for it). Credit is money to spend on AI, not a loan."
   },
   "credit.meter.ownKey": {
     "text": "<0>· </0><1>your key {{amount}}</1>",
-    "description": "Last part of the AI credit meter in Settings: what was billed today to the person's own Anthropic API key, as in '· your key $4.50'. {{amount}} is a dollar amount. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
+    "description": "Last part of the AI credit meter in Settings: what was billed today to the person's own OpenRouter key, as in '· your key $1.20'. Tag 0 is the separator, tag 1 the figure."
   },
   "credit.meter.locked": {
     "text": "verify account · unlock $10/day",
     "description": "The AI credit meter in Settings for an account with no free allowance yet: connecting GitHub or X verifies the account and unlocks 10 dollars of AI use per day. Keep the middle dot and the amount."
-  },
-  "credit.meter.lockedKeyAvailable": {
-    "text": "<0>· </0><1>your key available</1>",
-    "description": "Second part of the AI credit meter in Settings for an account with no free allowance that has saved its own Anthropic API key: that key can still be used. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
   },
   "credit.meter.unavailable": {
     "text": "credits temporarily unavailable",
@@ -351,21 +339,9 @@
     "text": "Connect GitHub or X in Settings to unlock $10/day.",
     "description": "Tooltip of the AI credit meter for an account with no free allowance yet. GitHub and X are product names; $10/day is the daily AI allowance that connecting one unlocks."
   },
-  "credit.tip.lockedWithKey": {
-    "text": "Connect GitHub or X in Settings to unlock $10/day. Your own Anthropic key remains available.",
-    "description": "Tooltip of the AI credit meter for an account with no free allowance yet that has saved its own Anthropic API key. GitHub, X and Anthropic are product names; $10/day is the daily AI allowance that connecting one unlocks."
-  },
   "credit.tip.unavailable": {
     "text": "Credit eligibility could not be verified. Try again shortly.",
     "description": "Tooltip of the AI credit meter when the server could not check whether the account qualifies for free AI credits."
-  },
-  "credit.tip.keyBilledWeekly": {
-    "text": "Your {{limit}} weekly allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.",
-    "description": "First sentence of the AI credit meter's tooltip when the week's free allowance is spent and the person has their own Anthropic API key. {{limit}} is the allowance in dollars. An AI turn is one request to the AI."
-  },
-  "credit.tip.keyBilledDaily": {
-    "text": "Your {{limit}} daily allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.",
-    "description": "First sentence of the AI credit meter's tooltip when the day's free allowance is spent and the person has their own Anthropic API key. {{limit}} is the allowance in dollars. An AI turn is one request to the AI."
   },
   "credit.tip.usedAllWeekly": {
     "text": "You have used all {{limit}} of this week’s AI allowance.",
@@ -384,8 +360,8 @@
     "description": "First sentence of the AI credit meter's tooltip while some of the day's free allowance remains. {{spent}}, {{limit}} and {{remaining}} are dollar amounts."
   },
   "credit.tip.ownKeyToday": {
-    "text": "A further {{amount}} today was billed to your own Anthropic key and does not count against the allowance.",
-    "description": "Last sentence of the AI credit meter's tooltip when the person's own Anthropic API key was also charged today. {{amount}} is that charge in dollars."
+    "text": "A further {{amount}} today was billed to your own OpenRouter key and does not count against the allowance.",
+    "description": "Last sentence of the AI credit meter's tooltip when the person's own OpenRouter key was also charged today (by an app they let use it). {{amount}} is money."
   },
   "credit.tip.resetsDaily": {
     "text": "Free credits reset at {{time}}.",

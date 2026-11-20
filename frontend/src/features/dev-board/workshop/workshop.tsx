@@ -90,6 +90,7 @@ import { useDevActions } from '../actions-store';
 import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import { shownPill } from '../card/model';
 import { CardSkeleton, CountSkeleton } from '../card/skeleton';
 import { composeNoReason, VotePicker } from '../card/dev-card';
 import type { NoChoice } from '../../review-flow/vote-sheet';
@@ -128,7 +129,7 @@ import { weekName, weekRange } from './week-pages';
 import { liveSinceLine } from './hub-cards';
 import { offerJoin } from '../../../lib/join-required';
 import { watchBoardLinks } from './board-links';
-import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { isFrameSkin, isKitHome, useLiveSkin } from '../../../lib/skin';
 import { deskLine, deskWords, useDesk } from '../../ai/desk';
 import { projectTabAddress } from '../../ai/filter-address';
 import { changeHref } from '../../../lib/change-href';
@@ -1349,7 +1350,10 @@ type Fact = { key: string; tone: string | undefined; text: string; topic?: boole
 const SAID_ELSEWHERE = new Set(['needs_vote', 'tally', 'approvals']);
 export function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
-  const st = row.card.pill ? row.card.pill.state : null;
+  // The stored row's words while it is not up for a vote (card/model.ts
+  // shownPill): "Taking screenshots" after the count, never a bare tally
+  // that reads as a vote still wanted.
+  const st = shownPill(row.card);
   // The count the card shows once it is answered (#5236), and the snapshot
   // it keeps when nothing fresher can be said.
   const now = answeredCount(row, voted);
@@ -1566,7 +1570,7 @@ function labelTally(a: { tally?: string }): string {
  * that is not the wait itself ("Checks failing") still follows it.
  */
 function tallyLine(row: QueueRow, voted: string | null): string {
-  const st = row.card.pill ? row.card.pill.state : null;
+  const st = shownPill(row.card);
   // The count the sheet shows once it is answered (#5236), the same fresh
   // read `factsFor` takes; the snapshot when nothing fresher can be said.
   const now = answeredCount(row, voted);
@@ -3120,6 +3124,8 @@ export function DevWorkshop(): ReactNode {
   // AppView is not there to ask.
   // Standard (WIP) folds Invite into the hero's row (no Invite card), and its Workshop door opens the board (below).
   const wipLook = useLiveSkin() === 'wip';
+  // The hub is the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome); the board is not yet.
+  const kitHub = isKitHome(useLiveSkin());
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -4115,9 +4121,10 @@ export function DevWorkshop(): ReactNode {
           iconUrl={own ? app.iconUrl : null}
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
+          platform={!!actions.selfHosted}
           // Invite is the card after this hero (InviteHeroCard), except
           // under Standard (WIP), where it stays the row's own button.
-          inviteCard={!wipLook}
+          inviteCard={!kitHub}
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -4185,7 +4192,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
           under it on a phone. See ./community-card.tsx InviteHeroCard. */}
-      {slug && !wipLook ? <InviteHeroCard slug={slug} data={community} /> : null}
+      {slug && !kitHub ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and

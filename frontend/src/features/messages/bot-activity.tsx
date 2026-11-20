@@ -163,6 +163,8 @@ export const STOP_CAUSE_LINES: Record<NonNullable<HomeroomBotActivity['stopCause
   push_permanent: 'messages:bot.state.line.stop.push',
   push_gave_up: 'messages:bot.state.line.stop.push',
   stopped: 'messages:bot.state.line.stop.stopped',
+  // T2.2: out of building credit; it starts again by itself once credit is back.
+  credit: 'messages:bot.state.line.stop.credit',
 };
 
 /**

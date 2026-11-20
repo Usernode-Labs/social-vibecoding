@@ -3017,11 +3017,6 @@ function sessionRoutes(config) {
         'SELECT COALESCE(SUM(total_cost_cents), 0) AS total FROM llm_usage WHERE date = CURRENT_DATE'
       );
       const globalSpent = parseFloat(globalRows[0]?.total || 0);
-      // #297: surface AI availability so client chrome (a proposal's
-      // Explore pills) can disable itself with a tooltip when there's
-      // no usable LLM path — the platform key is unset AND the user has
-      // no BYOK key on file.
-      const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.dataEncryptionKey);
       res.json({
         ...snapshot,
         // #593: the two figures the composer's meter has to state out loud
@@ -3033,10 +3028,13 @@ function sessionRoutes(config) {
         // Keep the route's established spelling while the shared snapshot
         // uses `byokCents` internally.
         byokSpentCents: snapshot.byokCents,
-        // Availability means a provider exists, not that this request has
-        // allowance headroom. Keep the Explore entry points open so their
-        // locked-tier UI can explain how to connect an identity.
-        aiEnabled: llm.isEnabled() || !!userApiKey,
+        // #297: AI availability, so client chrome (a proposal's Explore
+        // pills) can disable itself with a tooltip when there's no usable
+        // LLM path: the platform cannot read its OpenRouter key. It means a
+        // provider exists, not that this request has allowance headroom.
+        // Keep the Explore entry points open so their locked-tier UI can
+        // explain how to connect an identity.
+        aiEnabled: llm.isEnabled(),
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
@@ -4015,7 +4013,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, expect
     // stop handle: the machine's instance is where it lands, the turn
     // being spun up included.
     const platform = require('../workflow/platform.ts');
-    const owned = await platform.stopWorkflowTurn({ sessionId: Number(sessionId), by: user.username, expectedTurnId });
+    const owned = await platform.stopWorkflowTurn({ sessionId: Number(sessionId), by: user.username, byId: Number(user.id) || null, expectedTurnId });
     if (owned) return owned;
 
     // #937: `{ force: true }` is offered after a normal stop has visibly

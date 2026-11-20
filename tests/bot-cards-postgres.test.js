@@ -10,8 +10,9 @@
 //      same rows through.
 //   2. A thread's new offer is a card too (place 'thread', its chat message
 //      in chat_message_id), above every older offer's id, and is found and
-//      decided by the same tap path; one made before in
-//      homeroom_bot_voice_offers is still found and decided.
+//      decided by the same tap path. One made before, in
+//      homeroom_bot_voice_offers, is 14 days old and no longer read
+//      (19 Nov 2026): a tap under its message is refused as expired.
 //   3. A card is open 14 days: a tap after that is refused (410) and its
 //      buttons go, in a thread and in the chat.
 //   4. Up to three offers under one reply, and the same one twice is one.
@@ -97,15 +98,21 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
     assert.equal(out.decision, 'declined');
     assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [offer.id])).status, 'declined');
 
-    // One made before, in the old table, still decides.
+    // One made before, in the old table, is 14 days old by now and no
+    // longer read: its act finds no card and leaves the old row alone, and
+    // a tap under its message is refused as expired, its buttons gone.
     const oldMessage = (await one(
-      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata)
-       VALUES ($1, $2, 'A note.', 'issue', 4, $3) RETURNING id`,
-      [app.id, bot.id, JSON.stringify({ homeroomBot: { kind: 'voice', offer: { status: 'open' } } })])).id;
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata, created_at)
+       VALUES ($1, $2, 'A note.', 'issue', 4, $3, NOW() - INTERVAL '15 days') RETURNING id`,
+      [app.id, bot.id, JSON.stringify({ homeroomBot: { kind: 'voice', offer: { id: Number(old.id), status: 'open' } } })])).id;
     await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [old.id, oldMessage]);
     const kept = await voice.actOnOffer(pool, {}, { offerId: old.id, userId: ada.id, choice: 'no', key: 'bc-old', deps });
-    assert.equal(kept.decision, 'declined');
-    assert.equal((await one('SELECT status FROM homeroom_bot_voice_offers WHERE id = $1', [old.id])).status, 'declined');
+    assert.equal(kept.decision, 'gone');
+    assert.equal((await one('SELECT status FROM homeroom_bot_voice_offers WHERE id = $1', [old.id])).status, 'open');
+    const late = await voice.decideOffer(pool, {}, { app, messageId: oldMessage, user: { id: ada.id }, choice: 'yes', deps });
+    assert.deepEqual([late.ok, late.status, late.code], [false, 410, 'expired']);
+    const { metadata: oldMeta } = await one('SELECT metadata FROM chat_messages WHERE id = $1', [oldMessage]);
+    assert.deepEqual([oldMeta.homeroomBot.offer.status, oldMeta.homeroomBot.actions], ['expired', []]);
   });
 
   await t.test('a card is open 14 days: a later tap is refused and its buttons go', async () => {

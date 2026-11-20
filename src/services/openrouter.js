@@ -10,6 +10,7 @@ const { platformHeaders } = require('./openrouter-client');
 // #5123: every OpenRouter request denies data collection (worker/openrouter-privacy.js).
 const { noTrainingProvider, withNoTraining } = require('../../worker/openrouter-privacy');
 const { REASONING_EFFORT_SET } = require('./reasoning-efforts');
+const { refusalCode, bodyErrorCode } = require('./provider-error');
 
 // A caller may make more than one short tool-planning call in one answer.
 // Letting any single provider request occupy the UI for 90 seconds made a
@@ -439,7 +440,7 @@ function retryAfterMs(value, now = Date.now()) {
  * a body that cannot be read leaves the provider unknown.
  */
 async function refusalDetails(response) {
-  const details = { provider: null, retryAfterMs: retryAfterMs(response.headers?.get?.('retry-after')) };
+  const details = { provider: null, text: '', retryAfterMs: retryAfterMs(response.headers?.get?.('retry-after')) };
   const body = response.body;
   if (!body || typeof body[Symbol.asyncIterator] !== 'function') return details;
   try {
@@ -451,22 +452,17 @@ async function refusalDetails(response) {
       if (bytes > MAX_ERROR_BODY_BYTES) break;
       chunks.push(value);
     }
-    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    // The provider's own words, kept even when they are not JSON: a 402's
+    // body is what tells out of credit from a reply that is only too long
+    // (provider-error.js refusalCode).
+    details.text = Buffer.concat(chunks).toString('utf8');
+    const parsed = JSON.parse(details.text);
     const name = parsed?.error?.metadata?.provider_name;
     if (typeof name === 'string' && /^[\w .-]{1,80}$/.test(name)) details.provider = name;
   } catch {
     // An unreadable or non-JSON body says nothing more.
   }
   return details;
-}
-
-function providerErrorCode(status) {
-  if (status === 401 || status === 403) return 'authentication';
-  if (status === 402) return 'billing';
-  if (status === 408 || status === 504) return 'timeout';
-  if (status === 429) return 'rate_limited';
-  if (status >= 500) return 'provider_unavailable';
-  return 'invalid_request';
 }
 
 async function streamChat({
@@ -531,8 +527,11 @@ async function streamChat({
     // hold the caller past its timeout.
     const refused = await refusalDetails(response);
     clearTimeout(timer);
+    // A 402 for credit is `credit_out` here, as in openrouter-mayor.js: the
+    // chat and the thread voice call this client, and their outage handling
+    // reads that code (review A1).
     throw new OpenRouterProviderError(
-      providerErrorCode(response.status),
+      refusalCode(response.status, refused.text),
       `OpenRouter model request failed (HTTP ${response.status})`,
       {
         status: response.status,
@@ -556,7 +555,12 @@ async function streamChat({
     servedModel = typeof completion?.model === 'string' ? completion.model : null;
     provider = typeof completion?.provider === 'string' ? completion.provider : null;
     if (completion?.error) {
-      throw new OpenRouterProviderError('provider_error', 'Provider reported a generation error', {
+      // A 200 whose body carries OpenRouter's 402 for credit is the same
+      // outage. Every other error in a body stays `provider_error`, so what
+      // is asked again does not change.
+      const outOfCredit = bodyErrorCode(completion.error) === 'credit_out';
+      throw new OpenRouterProviderError(outOfCredit ? 'credit_out' : 'provider_error', 'Provider reported a generation error', {
+        ...(outOfCredit ? { status: 402 } : {}),
         dispatched: true,
         provider,
         generationId,

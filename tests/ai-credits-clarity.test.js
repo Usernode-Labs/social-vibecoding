@@ -85,12 +85,12 @@ test('the threshold comes from the server, not from the client', () => {
     'low', 'and an old payload still warns, at the fallback');
 });
 
-test('a BYOK key never turns into a level of its own', () => {
-  // level describes the ALLOWANCE; whether the user is actually blocked is
-  // the surface's call, because a key bypasses the cap entirely (#119).
+test('an old payload\'s own-key flag is not carried into the state', () => {
+  // level describes the ALLOWANCE. The own Anthropic key that once bypassed
+  // the cap (#119) went in task 2275, so the flag is no longer read.
   const s = CO.creditState(budget({ spentCents: 2500, hasByokKey: true }));
   assert.equal(s.level, 'exhausted');
-  assert.equal(s.hasByokKey, true);
+  assert.equal('hasByokKey' in s, false);
 });
 
 test('the reset sentence names the UTC boundary and translates it', () => {

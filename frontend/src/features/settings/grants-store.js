@@ -11,7 +11,7 @@
  *
  * Every branch the template evaluated inline — is this grant revoked, does the
  * viewer have a key on file, is this a fabricated staging row — is resolved by
- * settings.js, where `Settings.state.hasApiKey` and the demo flag already live.
+ * settings.js, where the list's own-key flag and the demo flag already live.
  * The component renders; it does not decide. Same split as the launcher grid
  * (features/home/grid-store.ts) and the group chat transcript, and it is what
  * lets the module keep owning its data and its fetches while React owns the

@@ -735,30 +735,6 @@
     "text": "Réinitialisation lundi à 00:00 UTC.",
     "source": "8260c59430618de198b46e83610e7a2945840b03ccd8174e1d52020606f50498"
   },
-  "apiKey.title": {
-    "text": "Clé API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.intro": {
-    "text": "Utilisez votre propre clé API Anthropic pour continuer à travailler au-delà de la limite hebdomadaire. Votre quota hebdomadaire de la plateforme est utilisé en premier ; une fois épuisé, votre clé prend automatiquement le relais, même au milieu d'un tour en cours, et l'utilisation est facturée directement sur votre compte Anthropic.",
-    "source": "5b0792bc208a2c15d311cd18b29c5aabb8d6bb4c085f13c01991ffe2eaad28ba"
-  },
-  "apiKey.savedKeyLabel": {
-    "text": "Clé",
-    "source": "99a52df3ff3d499488e2fa28150c4106a2cb5e928891a830a9aa3922b2d32160"
-  },
-  "apiKey.fieldLabel": {
-    "text": "Clé API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
-  "apiKey.remove": {
-    "text": "Supprimer",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.safety": {
-    "text": "Chiffrée au repos, vérifiée auprès d'Anthropic avant l'enregistrement, jamais affichée en entier ensuite. Le serveur la déchiffre en mémoire pour appeler Anthropic en votre nom : ne collez donc pas de clés dans des services auxquels vous ne feriez pas confiance à ce niveau d'accès. <0>Fixez des plafonds de dépenses stricts</0> sur la clé elle-même pour une défense en profondeur.",
-    "source": "964372764cebc98f971f0a8a93b91718b37a66b5e4dc6fe31778a665234ac478"
-  },
   "openrouter.intro": {
     "text": "Utilisez n'importe quel modèle compatible pour tout le chat et tout le code d'une session OpenRouter. Ces sessions n'utilisent pas votre quota Claude de la plateforme. Votre compte inclut une clé OpenRouter : OpenRouter est donc le choix par défaut et GLM 5.3 Flash est sélectionné quand il est disponible, tandis que la liste complète des modèles visibles avec la clé reste accessible. Les modèles marqués Claude Code dans la liste s'exécutent dans Claude Code. Les clés sont chiffrées au repos et injectées uniquement pour chaque tour.",
     "source": "227eef10170b9b0dc7009a9f48d95a0859acd84a1c5e2755f9c5415cf73d6c01"
@@ -1803,10 +1779,6 @@
     "text": "OpenRouter",
     "source": "eb70c3bc14fa7ae14285b750955958e63b64b8f19546c30fc2223ad9057a959c"
   },
-  "nav.part.apiKey": {
-    "text": "Clé API Anthropic",
-    "source": "97d1086e162903067214792b5d6feab03a0b40ab4b337133b2344a28705f16c5"
-  },
   "nav.part.connectors": {
     "text": "Connecteurs",
     "source": "c3d2e79ebdd046c6b7363de7b69dc9fb5b38235f0d328fdff0b2f9ccf2854b07"
@@ -1938,10 +1910,6 @@
   "nav.keywords.usage": {
     "text": "quota limite crédits budget dépense restant hebdomadaire",
     "source": "0adb04f257b23954eed88565204036d296f01d22c8f8910de60d1ec37715c568"
-  },
-  "nav.keywords.apiKey": {
-    "text": "claude byok clé sk-ant facturation",
-    "source": "c996fca19838c733331595e2a1ae5519bade7c758661edf20d108351488a7ef7"
   },
   "nav.keywords.openrouter": {
     "text": "modèle glm deepseek raisonnement défaut agent de code clé",
@@ -2443,34 +2411,6 @@
     "text": "Impossible d’enregistrer les préférences de notifications push mobiles",
     "source": "7c9cc454c737e22211eec5f1755a2a9f649e051365bf74886355d84ea0e96ff7"
   },
-  "apiKey.field.replacePlaceholder": {
-    "text": "Collez une nouvelle clé pour remplacer",
-    "source": "8a347fdf5687f98be7defa6bc00ee1346e79f50c7ecaa801b91a57f74907d1ca"
-  },
-  "apiKey.button.replace": {
-    "text": "Remplacer",
-    "source": "95e154398a4bc0091aa4d6b607472ac5a89e41fbc84a3a49f823314d6de9eebc"
-  },
-  "apiKey.status.pasteFirst": {
-    "text": "Collez d’abord une clé API.",
-    "source": "448710dc61de72d49cedf6c73808a66355e18e7fe52e4eb20f52886ec200bcf8"
-  },
-  "apiKey.status.verifying": {
-    "text": "Vérification auprès d’Anthropic…",
-    "source": "cabd4656e84b52428a35326940ab951d522f9ada12f2b0c94a1ffea7c24d6c31"
-  },
-  "apiKey.status.saveFailed": {
-    "text": "Échec de l’enregistrement de la clé.",
-    "source": "2ca6410dbed10cffc6c57ada961d1493471bb3565ec122ef9f331d08a1eac4ca"
-  },
-  "apiKey.status.saved": {
-    "text": "Enregistré. Vos discussions sont désormais facturées à votre compte Anthropic.",
-    "source": "94373a53a9d8cd2639fa1a6a89cd48aa9d9759d80621802dc1949f64570f0cac"
-  },
-  "apiKey.status.networkError": {
-    "text": "Erreur réseau : {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
-  },
   "openrouter.cost.free": {
     "text": "Gratuit",
     "source": "f411a1fb62758b4c54690d0a702b4955b54dd22115416fa7b1ce51b4a084818d"
@@ -2898,30 +2838,6 @@
   "signOut.failed": {
     "text": "Impossible de vous déconnecter. Vérifiez votre connexion et réessayez.",
     "source": "0632a4853c68c1e1f46564d9df9aaabb335f62459c2b38543b87107e9fd0a158"
-  },
-  "apiKey.remove.confirmTitle": {
-    "text": "Supprimer votre clé API ?",
-    "source": "1ee469e473451824b7c32a8088b0d3f61de81c496df0a7d9b557b8a0ec15c301"
-  },
-  "apiKey.remove.confirmMessage": {
-    "text": "Les prochains chats utiliseront de nouveau le budget quotidien partagé.",
-    "source": "cafee8d0d055378667b569721fd4f68f2a918d395544fe9006708cfab489b51e"
-  },
-  "apiKey.remove.confirmButton": {
-    "text": "Supprimer",
-    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
-  },
-  "apiKey.remove.failed": {
-    "text": "Échec de la suppression de la clé.",
-    "source": "4b33ea92e4c7da9f490f106fded6a4b5033ce752e74e3eb11c5e89b3eb6c87e7"
-  },
-  "apiKey.remove.done": {
-    "text": "Supprimée.",
-    "source": "b4df0c43b59cfbb146d94d5610850a72afbd6844486643b3e025e7eee9891af2"
-  },
-  "apiKey.remove.networkError": {
-    "text": "Erreur réseau : {{reason}}",
-    "source": "ca4fdb02d0e67180f5b50de8afe3334e899ed0c7a850add5ad46449cf63374b0"
   },
   "grants.status.demoData": {
     "text": "Données de démonstration : les modifications ne sont pas enregistrées.",

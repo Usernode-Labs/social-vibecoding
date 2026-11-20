@@ -39,7 +39,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { HistoryIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { shotPreview } from '../../lib/shot-img';
+import { SHOT_RETRIES, shotPreview, watchShot } from '../../lib/shot-img';
 import {
   densityOf, focusBox, magnet, placeBox, rubberBand, seamStops,
   type Box, type Placement, type ReviewScreen,
@@ -148,6 +148,18 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     setLens(at);
   }, []);
 
+  // A still whose load ended with no picture is asked for again by a new
+  // element (lib/shot-img.ts watchShot), whose key carries the try: WebKit
+  // fires no event when an image's load is cancelled, so nothing else would.
+  const [tries, setTries] = useState({ before: 0, after: 0 });
+  const budgets = useRef({ before: { left: SHOT_RETRIES }, after: { left: SHOT_RETRIES } });
+  const watchBefore = useCallback((node: HTMLImageElement | null) => (node
+    ? watchShot(node, budgets.current.before, () => setTries((n) => ({ ...n, before: n.before + 1 })))
+    : undefined), []);
+  const watchAfter = useCallback((node: HTMLImageElement | null) => (node
+    ? watchShot(node, budgets.current.after, () => setTries((n) => ({ ...n, after: n.after + 1 })))
+    : undefined), []);
+
   // While a flip glides, the knob keeps the side it was sent to.
   const pinned = useRef(false);
   const put = useCallback((x: number) => {
@@ -163,6 +175,9 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     posRef.current = 0; setPos(0); setView('after'); setPressed(false);
     leanFrom.current = null; pinned.current = false;
     putLens(null);
+    setTries((n) => (n.before || n.after ? { before: 0, after: 0 } : n));
+    budgets.current.before.left = SHOT_RETRIES;
+    budgets.current.after.left = SHOT_RETRIES;
   }, [before, after, putLens]);
   useEffect(() => () => { cancelAnimationFrame(anim.current); clearTimeout(zoomTimer.current); }, []);
 
@@ -342,14 +357,16 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     : null);
 
   // #6825: a still takes the smallest copy sharp for the width it is drawn
-  // at (`srcset` and `sizes`), over its blurred preview, so the card fills in
-  // sooner and nothing moves when the sharp one lands. A placed (zoomed)
-  // still is the whole screen transformed, so its width is the scaled one
-  // and its preview stretches to the same box. Only a close-up keeps the
-  // one url.
-  const shotOf = (which: 'before' | 'after'): { url: string; srcSet?: string; placeholder?: string | null } | null => (
+  // at (`srcset` and `sizes`), over its thumbnail and its blurred preview
+  // (lib/shot-img.ts shotPreview), so the card fills in sooner, goes blur,
+  // soft, sharp, and nothing moves when the sharp one lands. A placed
+  // (zoomed) still is the whole screen transformed, so its width is the
+  // scaled one and its layers stretch to the same box. Only a close-up keeps
+  // the one url.
+  const shotOf = (which: 'before' | 'after'): { url: string; srcSet?: string; placeholder?: string | null; thumb?: string | null } | null => (
     screen ? screen[which] : pair ? { url: pair[which] ?? '' } : null);
-  const img = (which: 'before' | 'after', alt: 'before' | 'after') => {
+  // `watched` is false for the magnifier's copy, which only lives while held.
+  const img = (which: 'before' | 'after', alt: 'before' | 'after', watched = true) => {
     const shot = shotOf(which);
     const url = shot && shot.url ? shot.url : null;
     if (!url || !near) return null;
@@ -360,6 +377,9 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       : Math.max(1, Math.round(W));
     return (
       <img
+        // A new address or a new try is a new element, and a new request.
+        key={`${which}:${url}:${watched ? tries[which] : 'lens'}`}
+        ref={watched ? (which === 'after' ? watchAfter : watchBefore) : undefined}
         src={url}
         srcSet={shot?.srcSet}
         sizes={shot?.srcSet ? `${drawn}px` : undefined}
@@ -467,7 +487,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
               transformOrigin: '0 0',
             }}
           >
-            {img(lensSide === 'after' && after ? 'after' : 'before', lensSide)}
+            {img(lensSide === 'after' && after ? 'after' : 'before', lensSide, false)}
             {closeups(lensSide)}
           </span>
         </span>

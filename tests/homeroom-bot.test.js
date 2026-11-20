@@ -2275,22 +2275,71 @@ test('the continueReads setting is on by default, stored as on or off, and valid
 // it is recorded as a failed read (which the refresh counts toward
 // FAILED_TRIAGE_TRIES), its debt spent, and the lane pauses all the same.
 test('runTriage: a reply that is the provider\'s API error is a platform fault, not the model\'s', async () => {
-  const { pool, deps, calls } = triageHarness({
-    sessionId: 953,
-    result: {
-      lastResultText: 'API Error: 400 messages[6]: tool messages must include a non-empty string tool_call_id',
-      agentThreadId: 'thr-1', inputTokens: 3000, outputTokens: 20,
-    },
-  });
+  const result = {
+    lastResultText: 'API Error: 400 messages[6]: tool messages must include a non-empty string tool_call_id',
+    agentThreadId: 'thr-1', inputTokens: 3000, outputTokens: 20,
+  };
+  // Review A2: no failed read of the thread. The request keeps its debt and
+  // its tries and backs off; two provider blips used to leave it unread.
+  const { pool, deps, calls } = triageHarness({ sessionId: 953, result });
   const { out, look } = await triageInLook(pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
-  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'failed' });
+  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'infra' });
+  assert.match(out.detail, /^provider: API Error: 400 messages\[6\]/);
   assert.equal(calls.exec.length, 1, 'a thread that died on the wire is not asked for a block');
-  assert.equal(look.out.queue, 'consume', 'its debt is spent');
-  assert.equal(look.out.laneFault, true, 'the lane pauses');
-  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.ok(insert.params.some((v) => /^provider: API Error: 400 messages\[6\]/.test(String(v))), 'a failed read the refresh counts');
+  assert.equal(look.out.queue, 'fault', 'its debt is kept, and the lane pauses');
+  assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no run the refresh would count as a failed read');
   assert.deepEqual(calls.spend.map((x) => x.cents), [1.23], 'what it cost is still debited');
   assert.ok(!calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'and it is no benchmark case');
+  // One this request always gets cannot keep the lane pausing for ever: its
+  // FAULT_TRIES-th fault in a row is written as a failed read.
+  const third = triageHarness({ sessionId: 953, result });
+  const last = await triageInLook(third.pool, { bot: BOT, app: APP, item: { ...ITEM, faults: 2 }, mode: 'shadow', deps: third.deps });
+  assert.deepEqual({ ran: last.out.ran, verdict: last.out.verdict }, { ran: true, verdict: 'failed' });
+  assert.equal(last.look.out.queue, 'consume', 'its debt is spent');
+  assert.equal(last.look.out.laneFault, true, 'the lane pauses');
+  const insert = third.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.ok(insert.params.some((v) => /^provider: API Error: 400 messages\[6\]/.test(String(v))), 'a failed read the refresh counts');
+  assert.ok(!third.calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'still no benchmark case');
+});
+
+// Review B1: `creditOut` matches a bare "402" in a provider's words. The
+// platform's own error text is never read as one: a session or a worker
+// whose message happens to hold the number pauses nothing.
+test('a platform error that happens to contain 402 is no credit outage', async () => {
+  assert.equal(bot.creditOutOf('session: could not open session 402'), false);
+  assert.equal(bot.creditOutOf('worker: pod usernode-worker-402 is not ready'), false);
+  assert.equal(bot.creditOutOf('dispatch: connect ECONNREFUSED 10.0.0.7:402'), false);
+  assert.equal(bot.creditOutOf('the follow-up turn failed (the agent exited with code 402)'), false);
+  // What a provider or the runner said still is: its code, its notice, the turn's own fields.
+  assert.equal(bot.creditOutOf('insufficient_credits'), true);
+  assert.equal(bot.creditOutOf('provider: API Error: 402 {"error":{"message":"Insufficient credits"}}'), true);
+  assert.equal(bot.creditOutOf('session: anything', { providerErrorStatus: 402 }), true);
+  // And a look that ends on such a platform error is a fault, never `credit`.
+  const noted = [];
+  const credit = { noteOutage: async (_pool, what) => { noted.push(what.words); return { since: '2026-11-19T09:00:00.000Z', fresh: true }; } };
+  const end = (r, deps = { credit }) => bot._lookOutcomeForTests(r, bot._newLookForTests(), {
+    pool: { async query() { return { rows: [] }; } }, settings: {}, bot: BOT, app: APP, item: ITEM, deps,
+  });
+  const fault = await end({ ran: false, reason: 'infra', detail: 'worker: pod usernode-worker-402 is not ready' });
+  assert.equal(fault.outcome, 'fault');
+  assert.deepEqual(noted, [], 'no outage is noted, so no project is paused and no admin is told');
+  // A look that said `credit` itself notes the outage and ends as credit.
+  const out = await end({ ran: false, reason: 'credit', detail: 'insufficient_credits' });
+  assert.equal(out.outcome, 'credit');
+  assert.deepEqual(noted, ['insufficient_credits']);
+});
+
+// Review A5: the lane pauses on the stored outage. One that could not be
+// stored pauses nothing, so the look must not end as `credit` on it: it
+// ends as a platform fault, which keeps its debt and backs it off.
+test('a look that met the 402 and could not record the outage ends as a fault, after one more try to record it', async () => {
+  let tries = 0;
+  const credit = { noteOutage: async () => { tries += 1; return null; } };
+  const out = await bot._lookOutcomeForTests({ ran: false, reason: 'credit', detail: 'insufficient_credits' }, bot._newLookForTests(), {
+    pool: { async query() { return { rows: [] }; } }, settings: {}, bot: BOT, app: APP, item: ITEM, deps: { credit },
+  });
+  assert.equal(tries, 2);
+  assert.deepEqual({ outcome: out.outcome, error: out.error }, { outcome: 'fault', error: 'credit_outage_unrecorded' });
 });
 
 // A read whose reply was unusable is no conversation to continue: the next

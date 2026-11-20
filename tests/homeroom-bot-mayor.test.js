@@ -119,7 +119,7 @@ test('the tools: sixteen lookups and actions and a reply, every one closed to ex
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
-      'start_design', 'open_app_preview', 'change_plan', 'close_thread', 'report_problem', 'offer_new_project', 'reply']);
+      'start_design', 'write_artifact', 'open_app_preview', 'change_plan', 'close_thread', 'report_problem', 'offer_new_project', 'reply']);
   // 14 Nov 2026: Main Chat is gone, and with it the one tool that existed
   // only to open a thread from Main (start_project_thread). A new project
   // starts in the thread the person is in: offer_new_project and, step 6
@@ -635,7 +635,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   const prompt = mayor.systemPrompt({ username: 'ada' });
   assert.match(prompt, /- Withdraw one of your own changes that is still open when the person who asked for its request, or the\n  project's owner, asks you to \(withdraw_proposal\)\. It is withdrawn only once they tap Withdraw it under your\n  message, so ask them to\./);
   assert.match(prompt, /The one exception: a second change for a request that already has one approved\n  or up for a vote is withdrawn straight away, and you say so\./);
-  assert.match(prompt, /\(report_problem\)\. It is filed as a request from them on Homeroom's requests board, where\n  anyone can read it; the last few messages of this chat go only to the team, privately\. Say so, and give the\n  number the result returns: Filed as #N on Homeroom's requests board\./);
+  assert.match(prompt, /\(report_problem\)\. It is filed as a request from them in Homeroom's Workshop, where\n  anyone can read it; the last few messages of this chat go only to the team, privately\. Say so, and give the\n  number the result returns: Filed as #N in Homeroom's Workshop\./);
   assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
 
   const withdraw = mayor.TOOLS.find((t) => t.function.name === 'withdraw_proposal').function;
@@ -650,7 +650,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.deepEqual(Object.keys(report.parameters.properties).sort(), ['details', 'number', 'project', 'summary']);
   assert.match(report.description, /Call it only when they ask you to tell the team, or say yes when you offer\./);
   assert.match(report.description, /the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there\./);
-  assert.match(report.description, /The last few messages of this chat go only to the team, privately\. Say so, and give the number the result returns: Filed as #N on Homeroom's requests board\./);
+  assert.match(report.description, /The last few messages of this chat go only to the team, privately\. Say so, and give the number the result returns: Filed as #N in Homeroom's Workshop\./);
   assert.match(report.description, /Keep anything private out of the summary and details/);
   assert.doesNotMatch(report.description, /last few messages of this chat[^.]*anyone can read/, 'the chat is never said to be public');
   assert.deepEqual(mayor.OFFER_ANSWERS, {
@@ -1328,13 +1328,13 @@ test('#6566: the report\'s own receipt is accepted, and only for the number just
   const pool = { query: async () => ({ rows: [] }) };
   const ctx = { user: { id: 1 }, appIds: new Set(), reported: { number: 6564 } };
   const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
-  assert.deepEqual(await kinds('Filed as #6564 on Homeroom\'s requests board, where anyone can read it. The last few messages of this chat went only to the team, privately.'), [],
+  assert.deepEqual(await kinds('Filed as #6564 in Homeroom\'s Workshop, where anyone can read it. The last few messages of this chat went only to the team, privately.'), [],
     'the true receipt is no filing claim, names no unknown project, and its number is known');
-  assert.ok((await kinds('Filed as #7000 on Homeroom\'s requests board.')).includes('filed'), 'a different number is not accepted');
+  assert.ok((await kinds('Filed as #7000 in Homeroom\'s Workshop.')).includes('filed'), 'a different number is not accepted');
   // The receipt sentence is never cut, whatever else is.
-  assert.equal(mayor.stripClaims('Filed as #6564 on Homeroom\'s requests board. I closed the request.',
+  assert.equal(mayor.stripClaims('Filed as #6564 in Homeroom\'s Workshop. I closed the request.',
     [{ kind: 'closed_request' }], ctx),
-  'Filed as #6564 on Homeroom\'s requests board.');
+  'Filed as #6564 in Homeroom\'s Workshop.');
 });
 
 test('#6581: a request this conversation filed or read is real, before any queue or issues row has it', async () => {
@@ -1472,7 +1472,7 @@ test('#6566: report_problem returns the report\'s number and link, with a card, 
   assert.equal(result.ok, true);
   assert.equal(result.number, 6564);
   assert.equal(result.link, 'https://app.test/#app/usernode-2d5619/dev/issues/6564');
-  assert.equal(result.sent, 'Filed as #6564 on Homeroom\'s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.');
+  assert.equal(result.sent, 'Filed as #6564 in Homeroom\'s Workshop, where anyone can read it; the last few messages of this chat went only to the team, privately.');
   assert.deepEqual(ctx.cards, [{ type: 'issue', appId: 9, issueNumber: 6564 }], 'the card opens the report');
   assert.equal(filed.length, 1);
 
@@ -1488,7 +1488,7 @@ test('#6566: report_problem returns the report\'s number and link, with a card, 
   assert.equal(again.ok, true);
   assert.equal(again.repeat, true);
   assert.equal(again.number, 6564);
-  assert.equal(again.sent, 'Already filed as #6564 on Homeroom\'s requests board. Nothing new was filed.');
+  assert.equal(again.sent, 'Already filed as #6564 in Homeroom\'s Workshop. Nothing new was filed.');
   assert.deepEqual(repeatCtx.cards, [{ type: 'issue', appId: 9, issueNumber: 6564 }]);
   assert.equal(filed.length, 1, 'nothing new was filed');
 });

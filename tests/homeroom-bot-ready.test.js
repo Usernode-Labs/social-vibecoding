@@ -37,9 +37,17 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const dm = require('../src/services/homeroom-bot-dm');
 // The bot's change machine decided the change is ready to try
 // (src/workflow/bot-change/): its card, for the epoch it is on now.
-const tellReadyNow = async (pool, id, deps) => dm.tellReady(pool, id, {
-  epoch: (await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [id])).rows[0].approval_epoch, deps,
-});
+// Review A3: ready to try is the change's stored work state. The workflow's
+// hook stores it (services/work-state.js refresh, with its pushes and the
+// voters it asks) before the bot's change machine sends the card, so it is
+// stored here first, as that hook would.
+const tellReadyNow = async (pool, id, deps) => {
+  const ws = require('../src/services/work-state');
+  await ws.pushesOf(pool, await ws.refresh(pool, [{ sessionId: id }]));
+  return dm.tellReady(pool, id, {
+    epoch: (await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [id])).rows[0].approval_epoch, deps,
+  });
+};
 
 // ── What the card offers, and says ──
 
@@ -264,6 +272,48 @@ test('B7: the approved line, in words, in the reader\'s own week', () => {
   for (const said of [line({ waitingOn: ['ada'], at: on(2026, 9, 7) }), line({ missing: 0 }), approvedLine({ soon: true })]) {
     assert.doesNotMatch(said, /propos|merg|vote|\bPR\b|staging|\u2014/i, said);
   }
+});
+
+// Review A3 (19 Nov 2026): with its approvals in, a change goes live "in a
+// minute or two" only while its stored work state says nothing still holds
+// it. The row as the server stores and reads it (services/work-state.js),
+// through goesLiveAfterYes, the wire, the client's normalizer and the line.
+test('A3: once approved, the card says what the change\'s stored row still waits on, never "in a minute or two"', () => {
+  const ws = require('../src/services/work-state');
+  const { normalizeGoesLive } = loadTsx('frontend/src/features/messages/api.ts');
+  const { approvedLine } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
+  const now = new Date('2026-11-19T12:00:00Z');
+  const HEAD = 'a'.repeat(40);
+  const approved = {
+    status: 'promoted', source: 'native', reviewed_head_sha: HEAD, checks_commit_sha: HEAD, check_state: 'passing',
+    checks_at: '2026-11-19T11:00:00Z', promoted_at: '2026-11-19T10:00:00Z', votes_in: true,
+    merge_conflict_state: null, integration_merges_clean: true, integration_block_reasons: [],
+  };
+  // forChanges' row: the derive's state, stored and read back (fromRow).
+  const stored = (extra) => {
+    const st = ws.deriveChange({ ...approved, ...extra }, { now });
+    return ws.shapeOf({ appId: 1, kind: 'change', ref: 61, sessionId: 61, ...st, voteOpen: ws.voteOpenOf(st), standing: {} });
+  };
+  const lineFor = (work) => {
+    const sent = JSON.parse(JSON.stringify(dm.goesLiveAfterYes({ mergeable: true }, [], work)));
+    return approvedLine(normalizeGoesLive(sent), now, 'en-US');
+  };
+  assert.equal(lineFor(stored({ merge_conflict_state: 'conflict', integration_merges_clean: null })),
+    'You approved it. It is not live yet: Syncing with main.');
+  assert.equal(lineFor(stored({ integration_block_reasons: ['github_checks'] })),
+    'You approved it. It is not live yet: Approved · Waiting on GitHub\'s checks.');
+  assert.equal(lineFor(stored({ check_state: 'running' })),
+    'You approved it. It is not live yet: Checking · Checking the latest version.');
+  // Nothing holds it: as before.
+  assert.equal(lineFor(stored({})), 'You approved it. It goes live in a minute or two.');
+  assert.equal(lineFor(null), 'You approved it. It goes live in a minute or two.', 'no row to read: as before');
+  // A first version going live without a vote is not held by its own line.
+  assert.equal(lineFor(stored({ votes_in: false, first_version: true })), 'You approved it. It goes live in a minute or two.');
+  // Its approvals still to come: who it waits on, as before; the row is not read.
+  assert.deepEqual(dm.goesLiveAfterYes({ mergeable: false, thresholdMet: false }, ['ada'], stored({ check_state: 'running' })),
+    { soon: false, at: null, missing: 1, waitingOn: ['ada'], more: 0 });
+  // A malformed `waits` on the wire is dropped, not drawn.
+  assert.equal('waits' in normalizeGoesLive({ soon: false, missing: 0, waits: { stage: 'checking' } }), false);
 });
 
 test('B7: the client reads what happens next from the vote\'s answer and from the card', () => {

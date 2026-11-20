@@ -729,7 +729,7 @@
   },
   "grants.useOwnKey": {
     "text": "Use my own key past the weekly budget",
-    "description": "Checkbox label on an app's row in Settings > App AI permissions: lets the app keep using AI on the person's own Anthropic API key once the daily budget is used up."
+    "description": "Checkbox label on an app's row in Settings > App AI permissions: lets the app keep using AI on the person's own OpenRouter key once the weekly budget is spent. OpenRouter is a company name."
   },
   "grants.revoke": {
     "text": "Revoke",
@@ -745,7 +745,7 @@
   },
   "usage.intro": {
     "text": "How much of your AI allowance is left and, once you add your own key, what it has spent this week.",
-    "description": "Explanation under the Usage heading in Settings. \"Your own key\" is the person's own Anthropic API key; \"it\" is that key."
+    "description": "Explanation under the Usage heading in Settings. \"Your own key\" is the person's own OpenRouter key; \"it\" is that key."
   },
   "usage.buildingTime.title": {
     "text": "Homeroom bot building time",
@@ -826,30 +826,6 @@
   "usage.spend.resetUtc": {
     "text": "Resets Monday 00:00 UTC.",
     "description": "Last row of the \"This week's spend\" card in Settings > Usage, as it reads before the page has worked out the person's local time: when the weekly figures start again."
-  },
-  "apiKey.title": {
-    "text": "Anthropic API key",
-    "description": "Heading of the section in Settings where a person saves their own Anthropic API key. Anthropic is a company name."
-  },
-  "apiKey.intro": {
-    "text": "Bring your own Anthropic API key to keep using Homeroom's AI features past the weekly limit. Your weekly allowance is used first; once it runs out, your key takes over automatically, and usage bills directly to your Anthropic account.",
-    "description": "Explanation under the \"Anthropic API key\" heading in Settings. A \"turn\" is one round of the AI agent working on a request."
-  },
-  "apiKey.savedKeyLabel": {
-    "text": "Key",
-    "description": "Row label in Settings > Anthropic API key, before the masked end of the API key that is saved. Noun: an API key."
-  },
-  "apiKey.fieldLabel": {
-    "text": "Anthropic API key",
-    "description": "Screen-reader label of the field in Settings where the person pastes their Anthropic API key."
-  },
-  "apiKey.remove": {
-    "text": "Remove",
-    "description": "Button in Settings > Anthropic API key: deletes the saved API key from the account."
-  },
-  "apiKey.safety": {
-    "text": "Encrypted at rest, verified against Anthropic before saving, never shown in full after save. The server decrypts it in memory to call Anthropic on your behalf, so don't paste keys into services you don't trust with that level of access. <0>Set tight spend limits</0> on the key itself for defense in depth.",
-    "description": "Security note under the key field in Settings > Anthropic API key. Tag 0 is a link to the page on Anthropic's site where spend limits are set; the sentence continues after the link."
   },
   "openrouter.intro": {
     "text": "Voice input uses this key: when you press Speak, it turns what you say into text. Your account comes with an included OpenRouter key, and what it spends counts toward your weekly allowance. You can use your own OpenRouter key instead, billed to your OpenRouter account. Keys are encrypted at rest.",
@@ -2451,10 +2427,6 @@
     "text": "OpenRouter",
     "description": "Name of a part of Settings: the OpenRouter part of the AI page. OpenRouter is a company name; keep it. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
-  "nav.part.apiKey": {
-    "text": "Anthropic API key",
-    "description": "Name of a part of Settings: the part of the AI page where a person adds their own Anthropic API key. Anthropic is a company name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
-  },
   "nav.part.connectors": {
     "text": "Connectors",
     "description": "Name of a part of Settings: the Connectors part (connecting Claude, ChatGPT or Codex to Homeroom). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2525,7 +2497,7 @@
   },
   "nav.page.ai": {
     "text": "AI usage & models",
-    "description": "Name of a Settings page that groups several parts: AI usage, the OpenRouter key and model, and the Anthropic API key. Shown as a row in the Settings menu and as the phone header title inside that page."
+    "description": "Name of a Settings page that groups several parts: AI usage and the OpenRouter key and model. Shown as a row in the Settings menu and as the page heading."
   },
   "nav.page.connectors": {
     "text": "Connectors & CLI",
@@ -2670,10 +2642,6 @@
   "nav.keywords.usage": {
     "text": "allowance limit credits budget spend remaining weekly",
     "description": "Not shown on screen. Extra search words for \"Usage\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
-  },
-  "nav.keywords.apiKey": {
-    "text": "claude byok key sk-ant billing",
-    "description": "Not shown on screen. Extra search words for \"Anthropic API key\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.openrouter": {
     "text": "key voice speak dictation microphone transcription personal",
@@ -3243,34 +3211,6 @@
     "text": "Could not save mobile push preferences",
     "description": "Toast shown when a changed phone push notification category in Settings > Notifications could not be saved."
   },
-  "apiKey.field.replacePlaceholder": {
-    "text": "Paste a new key to replace",
-    "description": "Placeholder in the Anthropic API key field in Settings when a key is already saved: pasting another one replaces it."
-  },
-  "apiKey.button.replace": {
-    "text": "Replace",
-    "description": "Button beside the Anthropic API key field in Settings when a key is already saved: saves the pasted key in place of the old one."
-  },
-  "apiKey.status.pasteFirst": {
-    "text": "Paste an API key first.",
-    "description": "Error under the Anthropic API key field in Settings when Save was pressed with the field empty."
-  },
-  "apiKey.status.verifying": {
-    "text": "Verifying with Anthropic…",
-    "description": "Status under the Anthropic API key field in Settings while the pasted key is being checked. Anthropic is a company name."
-  },
-  "apiKey.status.saveFailed": {
-    "text": "Failed to save key.",
-    "description": "Error under the Anthropic API key field in Settings when the key could not be saved and the server gave no reason."
-  },
-  "apiKey.status.saved": {
-    "text": "Saved. Once your weekly allowance runs out, AI features bill to your Anthropic account.",
-    "description": "Confirmation under the Anthropic API key field in Settings: from now on AI usage is charged to the person's own Anthropic account. \"Bill\" is a verb."
-  },
-  "apiKey.status.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Error under the Anthropic API key field in Settings when the request did not reach the server. {{reason}} is the browser's own technical message."
-  },
   "openrouter.included.activeWeekly": {
     "text": "Active. It carries the platform's {{amount}} weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. The amount renews every week."
@@ -3397,15 +3337,15 @@
   },
   "usage.spend.platformOfLimit": {
     "text": "{{spent}} of {{limit}}",
-    "description": "Value in the \"Today's spend\" block of Settings > Anthropic API key: how much of the platform's allowance is used. Both are dollar amounts such as $1.20 and $5.00."
+    "description": "Value in the spend block of Settings > AI usage & models: how much of the platform's allowance is used. Both amounts are money, for example $4.20 of $10.00."
   },
   "usage.spend.resetsDaily": {
     "text": "Resets at {{time}}.",
-    "description": "Line in the spend block of Settings > Anthropic API key saying when a daily platform allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+    "description": "Line in the spend block of Settings > AI usage & models saying when a daily platform allowance starts again. \"Resets\" is about the allowance. {{time}} is a time of day."
   },
   "usage.spend.resetsWeekly": {
     "text": "Resets {{day}} at {{time}}.",
-    "description": "Line in the spend block of Settings > Anthropic API key saying when the weekly platform allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+    "description": "Line in the spend block of Settings > AI usage & models saying when the weekly platform allowance starts again. \"Resets\" is about the allowance. {{day}} is a weekday, {{time}} a time of day."
   },
   "openrouter.key.pasteFirst": {
     "text": "Paste an OpenRouter API key first.",
@@ -3534,30 +3474,6 @@
   "signOut.failed": {
     "text": "Could not sign out. Check your connection and try again.",
     "description": "Error toast when pressing Sign out in Settings did not end the session."
-  },
-  "apiKey.remove.confirmTitle": {
-    "text": "Remove your API key?",
-    "description": "Title of the confirmation dialog before removing the saved Anthropic API key in Settings."
-  },
-  "apiKey.remove.confirmMessage": {
-    "text": "Without your key, AI features use your weekly Homeroom allowance only.",
-    "description": "Body of the confirmation dialog before removing the saved Anthropic API key in Settings: AI usage will be paid from the platform's allowance again."
-  },
-  "apiKey.remove.confirmButton": {
-    "text": "Remove",
-    "description": "Red confirm button in the dialog that removes the saved Anthropic API key in Settings."
-  },
-  "apiKey.remove.failed": {
-    "text": "Failed to remove key.",
-    "description": "Error under the Anthropic API key field in Settings when the saved key could not be removed and the server gave no reason."
-  },
-  "apiKey.remove.done": {
-    "text": "Removed.",
-    "description": "Confirmation under the Anthropic API key field in Settings after the saved key was removed."
-  },
-  "apiKey.remove.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Error under the Anthropic API key field in Settings when removing the key did not reach the server. {{reason}} is the browser's own technical message."
   },
   "grants.status.demoData": {
     "text": "Demo data: changes are not saved.",

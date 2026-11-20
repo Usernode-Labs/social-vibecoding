@@ -1384,6 +1384,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           });
           // Somebody was just refused: make sure the admins have heard.
           platformLimits.nudge(pool, config, 'apps');
+          // #6901: and that they hear about the refusal itself, whatever the
+          // level already says (a cap raised above a count that stayed over
+          // the re-arm line leaves it at "full").
+          platformLimits.noteRefusal(pool, config, 'apps', req.user.id);
           return res.status(429).json({
             error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
@@ -1406,6 +1410,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (req.body.design != null) {
         fromDesign = await homeroomBotDm.designForProject(pool, { user: req.user, design: req.body.design, brief: req.body.brief });
         if (!fromDesign.ok) return res.status(fromDesign.status).json({ error: fromDesign.error });
+        // Artifacts: only a design is made into a project; a plain page stays in its thread.
+        if (!require('../services/design-threads').isDesign(fromDesign.design)) return res.status(409).json({ error: 'not_a_design' });
         if (template !== appTemplates.DEFAULT_TEMPLATE) return res.status(400).json({ error: 'A project made from a design starts from no template.' });
         req.body = { ...req.body, brief: fromDesign.brief };
       }
@@ -1828,6 +1834,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         );
         if (countRows[0].n >= maxApps) {
           platformLimits.nudge(pool, config, 'apps');
+          platformLimits.noteRefusal(pool, config, 'apps', req.user.id);
           return res.status(429).json({
             error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
