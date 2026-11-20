@@ -1,0 +1,86 @@
+name: Temporary Kubernetes CI benchmark
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  cold-scan:
+    name: Cold worker scan (${{ matrix.mode }})
+    if: github.head_ref == 'codex/benchmark-kubernetes-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+      - name: Time exact published worker scan
+        env:
+          MODE: ${{ matrix.mode }}
+          SECURITY_AUDIT_ONLY: '1'
+        run: |
+          image=ghcr.io/usernode-labs/social-vibecoding-worker@sha256:97fa8933d110258683b2d73b35effe7e1397b80d0a27a006cd5bc06d4010e6a9
+          if [ "$MODE" = baseline ]; then
+            git fetch --depth=1 origin 9072583cdd1f9fcd91f7a8caf9295389819c99af
+            git show FETCH_HEAD:scripts/check-image-security.sh > scripts/check-image-security.sh
+          fi
+          time sh scripts/check-published-image.sh "$image" "$RUNNER_TEMP/worker-scan" worker
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-${{ matrix.mode }}
+          path: ${{ runner.temp }}/worker-scan/assessment.json
+  build:
+    name: Build ${{ matrix.component }} (${{ matrix.mode }})
+    if: github.head_ref == 'codex/benchmark-kubernetes-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [worker, standalone]
+        mode: [baseline, cached]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+        name: Configure canonical cache seed builder
+        id: seed
+        if: matrix.component == 'standalone' && matrix.mode == 'cached'
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - name: Seed an isolated cache with canonical main
+        if: steps.seed.outcome == 'success'
+        run: |
+          git fetch --depth=1 origin 9072583cdd1f9fcd91f7a8caf9295389819c99af
+          git worktree add --detach "$RUNNER_TEMP/ci-benchmark-base" FETCH_HEAD
+          docker buildx build --platform linux/amd64 --pull --output type=cacheonly \
+            --cache-to "type=local,mode=max,dest=$RUNNER_TEMP/benchmark-standalone" \
+            -f "$RUNNER_TEMP/ci-benchmark-base/Dockerfile" "$RUNNER_TEMP/ci-benchmark-base"
+      - uses: docker/setup-buildx-action@v4
+        id: buildx
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - name: Time candidate build and local load
+        uses: docker/build-push-action@v7
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          context: ${{ matrix.component == 'worker' && 'worker' || '.' }}
+          file: ${{ matrix.component == 'worker' && 'worker/Dockerfile' || 'Dockerfile' }}
+          platforms: linux/amd64
+          pull: true
+          load: true
+          tags: security-${{ matrix.component }}
+          cache-from: ${{ matrix.mode == 'cached' && (matrix.component == 'worker' && 'type=gha,scope=social-vibecoding-worker' || format('type=local,src={0}/benchmark-standalone', runner.temp)) || '' }}
