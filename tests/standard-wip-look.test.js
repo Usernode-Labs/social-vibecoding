@@ -272,6 +272,32 @@ test('the fold button leads the logo\'s line, on the same spot open and folded, 
   assert.deepEqual(toggle.match(/<[A-Za-z]*(Icon|svg)\b[^>]*>/g), ['<SidebarIcon className="w-5 h-5" />']);
 });
 
+test('the page is a sheet tucked into the menu: its corners are rounded where it meets it (20 Nov 2026)', () => {
+  const all = rules(menuBlock());
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-page-radius:/.test(r.body));
+  assert.ok(tokens, 'the corners\' radius is a token of the block');
+  assert.match(tokens.body, /--wip-nav-page-radius: 20px;/);
+  // The corners: a fixed layer on <body>, just past the menu's edge, while the menu is docked.
+  const docked = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after';
+  const corners = all.find((r) => r.selector === `${MENU_SCOPE} ${docked}`);
+  assert.ok(corners, 'drawn while the menu is docked; not while it peeks over the page, nor beside a running app');
+  assert.match(corners.body, /position: fixed;/);
+  assert.match(corners.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'just past the menu\'s edge, open or folded to its strip');
+  assert.match(corners.body, /width: var\(--wip-nav-page-radius\);/);
+  assert.match(corners.body, /pointer-events: none;/, 'it takes no pointer from the page');
+  const quarter = /radial-gradient\(circle at [^,]+, transparent calc\(var\(--wip-nav-page-radius\) - 0\.5px\), var\(--wip-nav-bg\) var\(--wip-nav-page-radius\)\)/g;
+  assert.equal((corners.body.match(quarter) || []).length, 2, 'two quarter circles in the menu\'s own blue: the top corner and the bottom one');
+  assert.match(corners.body, /circle at 100% 100%[\s\S]*0 0 \/[\s\S]*circle at 100% 0[\s\S]*0 100% \//, 'the top corner at the top, the bottom one at the foot');
+  const rtl = all.find((r) => r.selector === `${MENU_SCOPE}[dir="rtl"] ${docked}`);
+  assert.ok(rtl, 'right to left the menu is on the right');
+  assert.match(rtl.body, /circle at 0 100%[\s\S]*circle at 0 0/, 'so the quarter circles open the other way');
+  // From 768px only, where the menu is a sidebar: a phone's is the bar at the screen's foot.
+  const css = read('public', 'css', 'app.css');
+  const at = css.indexOf('THE PAGE IS A SHEET TUCKED INTO THE MENU');
+  assert.ok(at > 0);
+  assert.match(css.slice(css.indexOf('*/', at) + 2, css.indexOf('*/', at) + 40), /^\n@media \(min-width: 768px\) \{/);
+});
+
 test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {
   const block = menuBlock();
   const all = rules(block);

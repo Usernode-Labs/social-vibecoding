@@ -8596,6 +8596,8 @@ html:not([data-skin]) {
   --wip-nav-bar-ink: var(--text-primary);
   --wip-nav-bar-tint: color-mix(in srgb, var(--text-primary) 8%, transparent);
   --wip-nav-bar-line: var(--app-sheet-line);
+  /* Where the page meets the panel its corners are rounded, a sheet tucked into the menu (asked 20 Nov 2026). */
+  --wip-nav-page-radius: 20px;
 }
 html:not([data-skin]).dark {
   --wip-nav-bg: #122a52;
@@ -8769,6 +8771,34 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
+}
+/* THE PAGE IS A SHEET TUCKED INTO THE MENU (asked 20 Nov 2026, from the
+   "only the sidebar is blue, header on the page" design). Where the page
+   meets the panel, its top and bottom corners are rounded, with the menu
+   open or folded to its strip: the panel's own blue is drawn round two
+   quarter circles just past its edge, by a fixed layer on <body> that takes
+   no pointer and sits in the panel's own layer, under the top bar. A
+   peeking menu floats over the page, and a running app fills the window
+   beside its menu, so neither gets the corners. */
+@media (min-width: 768px) {
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after {
+    content: "";
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: var(--platform-rail-w, 0px);
+    width: var(--wip-nav-page-radius);
+    z-index: 9;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 100% 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)) 0 0 / var(--wip-nav-page-radius) var(--wip-nav-page-radius) no-repeat,
+      radial-gradient(circle at 100% 0, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)) 0 100% / var(--wip-nav-page-radius) var(--wip-nav-page-radius) no-repeat;
+  }
+  /* Right to left the panel is on the right, so the quarter circles open the other way. */
+  html:not([data-skin])[dir="rtl"] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after {
+    background-image:
+      radial-gradient(circle at 0 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
+      radial-gradient(circle at 0 0, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius));
+  }
 }
 /* The place you are on carries a thin bar of the set's accent at its start. */
 @media (min-width: 768px) {
