@@ -37,6 +37,16 @@ const alphaOf = (decl) => {
   const m = /rgba\([^)]*?,\s*([\d.]+)\s*\)/.exec(decl);
   return m ? parseFloat(m[1]) : 1;
 };
+// THE BASE PLANES live in the two theme blocks, `:root` and `.dark`, and are
+// what every look starts from. The standard look draws its own over them
+// (app.css "WHITE CARDS": the pane is the page, a sheet is the kit's card),
+// and that block is held by the last test in this file.
+const themeBlock = (open) => {
+  const at = APP_CSS.indexOf(`\n${open} {`);
+  assert.ok(at >= 0, `the ${open} block must exist`);
+  return APP_CSS.slice(at, APP_CSS.indexOf('\n}', at));
+};
+const BASE = [themeBlock(':root'), themeBlock('.dark')];
 
 test('the two lift PLANES are glass; the surface tokens stay opaque', () => {
   // The distinction is the whole design. --dc-sheet is read by many rules as
@@ -52,9 +62,11 @@ test('the two lift PLANES are glass; the surface tokens stay opaque', () => {
     }
   }
   for (const tok of ['--dc-strip-fill:', '--dc-sheet-fill:']) {
-    const decls = APP_CSS.match(new RegExp(`${tok}[^;]+;`, 'g')) || [];
-    assert.equal(decls.length, 2, `${tok} must be declared in both themes`);
-    for (const d of decls) assert.match(d, /rgba\(/, `${tok} must be translucent: ${d.trim()}`);
+    for (const block of BASE) {
+      const decls = block.match(new RegExp(`${tok}[^;]+;`, 'g')) || [];
+      assert.equal(decls.length, 1, `${tok} must be declared once in each theme`);
+      assert.match(decls[0], /rgba\(/, `${tok} must be translucent: ${decls[0].trim()}`);
+    }
   }
 });
 
@@ -62,18 +74,19 @@ test('the sheet is denser than the strip — the ladder still reads', () => {
   // Transparency is not the point on its own: if both planes had the same
   // alpha the lift would flatten into one pane of glass and the session
   // header would stop reading as a layer above the transcript.
-  const fills = (APP_CSS.match(/--dc-(strip|sheet)-fill:[^;]+;/g) || []);
-  assert.equal(fills.length, 4);
-  const strip = fills.filter((f) => f.includes('strip')).map(alphaOf);
-  const sheet = fills.filter((f) => f.includes('sheet')).map(alphaOf);
-  for (let i = 0; i < 2; i++) {
-    assert.ok(sheet[i] > strip[i],
-      `the sheet must be denser than the strip (${sheet[i]} vs ${strip[i]})`);
+  for (const block of BASE) {
+    const fills = (block.match(/--dc-(strip|sheet)-fill:[^;]+;/g) || []);
+    assert.equal(fills.length, 2);
+    const strip = alphaOf(fills.find((f) => f.includes('strip')));
+    const sheet = alphaOf(fills.find((f) => f.includes('sheet')));
+    assert.ok(sheet > strip, `the sheet must be denser than the strip (${sheet} vs ${strip})`);
   }
 });
 
 test('both planes keep their fills and blur nothing, on every platform', () => {
-  for (const [sel, fill] of [['.dc-lift-strip', '--dc-strip-fill'], ['.dc-lift-session', '--dc-sheet-fill']]) {
+  // The base rules, at the start of a line: the standard look's own rules
+  // for the two classes (WHITE CARDS) are scoped and come earlier in the file.
+  for (const [sel, fill] of [['\n.dc-lift-strip', '--dc-strip-fill'], ['\n.dc-lift-session', '--dc-sheet-fill']]) {
     const r = rule(sel);
     assert.match(r, new RegExp(`background-color: var\\(${fill}\\)`), `${sel} is its translucent plane`);
     // Still routed through the token, prefixed and not, so turning it back on
@@ -189,4 +202,90 @@ test('no .dc- surface reads the raw surface tokens', () => {
   }
   assert.deepEqual(offenders, [],
     'a .dc- surface must take the ladder, not the raw token');
+});
+
+test('the standard look: the pane is the page and a sheet is the kit\'s card (WHITE CARDS)', () => {
+  // 20 Nov 2026: the standard look (html:not([data-skin]), Standard (WIP)
+  // too) takes one idea of "Paper, simplified, with brand styling". The pane
+  // a screen stands on is the page itself, and a sheet is the white card Home
+  // and Communities already draw (the kit's --wip-card-bg and hairline). It
+  // is done at the plane tokens, in a block of its own, so the base above
+  // stays what the other looks start from.
+  const start = APP_CSS.indexOf('── WHITE CARDS (20 Nov 2026)');
+  const end = APP_CSS.indexOf('END OF WHITE CARDS.');
+  assert.ok(start > 0 && end > start, 'app.css has the block, start to end');
+  const block = APP_CSS.slice(APP_CSS.indexOf('*/', start) + 2, APP_CSS.lastIndexOf('/*', end))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const ruleIn = (sel) => {
+    const at = block.indexOf(`\n${sel} {`);
+    assert.ok(at >= 0, `the block has ${sel}`);
+    return block.slice(at, block.indexOf('\n}', at));
+  };
+  const light = ruleIn('html:not([data-skin])');
+  const dark = ruleIn('html:not([data-skin]).dark');
+  // The pane is clear; a sheet, and the same colour opaque for what content
+  // passes behind or what floats, is the kit's card in both themes.
+  assert.match(light, /--dc-strip-fill: transparent;/);
+  assert.match(light, /--dc-sheet-fill: var\(--wip-card-bg\);/);
+  assert.match(light, /--dc-sheet-solid: var\(--wip-card-bg\);/);
+  assert.doesNotMatch(dark, /--dc-(strip|sheet)-/, 'dark reads the same tokens: the kit\'s card is its dark card there');
+  // The pane draws no edge and no lift; the sheet wears the kit card's one
+  // hairline. Neither blurs: the base rules' --dc-frost is none, and this
+  // block adds no filter of its own.
+  assert.match(ruleIn('html:not([data-skin]) .dc-lift-strip'), /border-top-color: transparent;\s*box-shadow: none;/);
+  assert.match(ruleIn('html:not([data-skin]) .dc-lift-session'),
+    /border-top-color: transparent;\s*box-shadow: inset 0 0 0 1px var\(--wip-card-line\), var\(--wip-card-shadow\);/);
+  assert.doesNotMatch(block, /backdrop-filter|blur\(/);
+  // Colours are written in the two token rules alone.
+  for (const r of block.split('}')) {
+    const head = r.slice(0, r.indexOf('{')).trim();
+    if (head === 'html:not([data-skin])' || head === 'html:not([data-skin]).dark') continue;
+    assert.doesNotMatch(r, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${head} writes a colour of its own`);
+  }
+
+  // THE CARD IS A COLOUR, NOT A LOOP. The kit's base list declares
+  // --wip-card-bg as var(--dc-sheet-solid); this block points
+  // --dc-sheet-solid at --wip-card-bg. That holds only because the kit's own
+  // token rules, light and dark, end on a colour for it. And a sheet is never
+  // darker than the page it lies on: the card is nearer the reader than the
+  // wallpaper's ground in both themes, whatever cream that ground is.
+  const lum = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const cardIn = (theme) => {
+    const re = new RegExp(`\\nhtml:not\\(\\[data-skin\\]\\)${theme === 'dark' ? '\\.dark' : ''} \\{([^}]*)\\}`, 'g');
+    const decls = [...APP_CSS.matchAll(re)].map((m) => m[1].match(/--wip-card-bg:\s*([^;]+);/)).filter(Boolean).map((m) => m[1].trim());
+    assert.ok(decls.length > 0, `${theme}: the kit declares its card`);
+    const last = decls[decls.length - 1];
+    assert.match(last, /^#[0-9a-f]{6}$/, `${theme}: the kit's card ends on a colour (${last})`);
+    return last;
+  };
+  const grounds = [...APP_CSS.matchAll(/--home-ground: (#[0-9a-f]{6});/g)].map((m) => m[1]);
+  assert.ok(grounds.length >= 2, 'the wallpaper\'s ground, light then dark');
+  for (const [theme, ground] of [['light', grounds[0]], ['dark', grounds[1]]]) {
+    const card = cardIn(theme);
+    assert.ok(lum(card) > lum(ground), `${theme}: the sheet (${card}) must be nearer the reader than the page (${ground})`);
+  }
+
+  // On the white card somebody else's bubble is cream, off the card by a
+  // visible step; your own keeps its tint (no rule here touches it).
+  const bubble = light.match(/--wip-bubble-bg: (#[0-9a-f]{6});/);
+  assert.ok(bubble, 'the other side\'s bubble is a colour in light');
+  assert.ok(lum(cardIn('light')) - lum(bubble[1]) >= 8, `the bubble (${bubble[1]}) reads on the card`);
+  assert.match(ruleIn('html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,\nhtml:not([data-skin]) .gc-bubble:not(.gc-bubble-self)'),
+    /background-color: var\(--wip-bubble-bg\);/);
+  assert.doesNotMatch(block, /messages-message-self \.messages-bubble|\.gc-bubble-self \{/);
+
+  // NOTHING WHITE ON THE WHITE CARD WITHOUT AN EDGE. What was drawn white on
+  // the off-white sheet (the reply boxes, the discs, Settings' white cards)
+  // takes the kit card's hairline; a row under the pointer or open takes the
+  // kit's soft row ground, not the white veil it wore. And a phone's
+  // Messages list stands on the card, as the conversation over it does.
+  const messages = ruleIn('html:not([data-skin]) :is(.messages-layout, .dev-ws-discussion, .side-panel-head, #ai-screen .ai-askbar)');
+  assert.match(messages, /--messages-selected: var\(--wip-item-hover\);/);
+  assert.match(messages, /--messages-disc-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
+  assert.match(ruleIn('html:not([data-skin]) .gc-composer-card,\nhtml:not([data-skin]) #settings-root .ui-card.bg-white'),
+    /box-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
+  assert.match(ruleIn('html:not([data-skin]) .messages-layout.messages-drawer'), /background-color: var\(--wip-card-bg\);/);
 });
