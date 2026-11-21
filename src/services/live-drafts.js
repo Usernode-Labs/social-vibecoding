@@ -373,6 +373,50 @@ async function readFile(draft, filePath, deps = {}) {
 const refuse = (status, code, message, extra = {}) => ({ status, body: { ok: false, error: code, message, ...extra } });
 
 /**
+ * Pure: whether `user` may open a live draft of `app` (#6961). Every project
+ * that is not self-hosted is draftable here; the collab check and the join
+ * gate follow in open(), as they always have. Homeroom's own app is the one
+ * self-hosted app that is draftable, and only by its admins: it is the app
+ * everything else runs on. Any other self-hosted app keeps its refusal.
+ */
+function draftableFor(config, app, user) {
+  if (!app?.slug) return { ok: false, status: 404, code: 'no_project', message: 'That project is gone.' };
+  if (config?.selfAppSlug && app.slug === config.selfAppSlug) {
+    if (user?.isAdmin) return { ok: true };
+    return {
+      ok: false, status: 403, code: 'admins_only',
+      message: "Only Homeroom's admins can open a live draft of Homeroom itself. You can file a request for it instead.",
+    };
+  }
+  if (app.self_hosted) {
+    return {
+      ok: false, status: 409, code: 'not_supported',
+      message: 'Homeroom itself cannot be drafted here: start a change from its Workshop.',
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Pure: whether every one of `paths` is a file the platform runs from its
+ * own source, so writing it into the running preview shows at once (#6961).
+ * Its runtime image carries the built `public/` and no `frontend/` or
+ * `styles/`: a change to those shows only when the preview is built again.
+ * A migration is rebuilt too, because `schema.sql` is generated at image
+ * build or prestart, and the supervisor runs neither.
+ */
+function platformRunsInPlace(paths) {
+  const list = Array.isArray(paths) ? paths : [];
+  return list.every((p) => {
+    const file = String(p || '').replace(/^\.\//, '');
+    if (file === 'server.js' || file === 'dapp.json') return true;
+    if (file.startsWith('worker/') || file.startsWith('app-templates/')) return true;
+    if (file.startsWith('src/')) return !file.startsWith('src/db/migrations/');
+    return false;
+  });
+}
+
+/**
  * Open the draft of one of `user`'s private threads that is about a project
  * (`rootId`, its root message), or answer the one already open there.
  * Resolves `{ status, body }`: 200 with `{ ok, draft, reused }`, else why not.
@@ -401,9 +445,9 @@ async function open(pool, config, { user, rootId, deps = {} }) {
     `SELECT ${access.nonSecretAppColumnList()} FROM apps WHERE id = $1`, [thread.app_id],
   );
   if (!app) return refuse(404, 'no_project', 'That project is gone.');
-  if (app.self_hosted || (config.selfAppSlug && app.slug === config.selfAppSlug)) {
-    return refuse(409, 'not_supported', 'Homeroom itself cannot be drafted here: start a change from its Workshop.');
-  }
+  // #6961: the same rule the thread's bar reads (the GET route), stated once.
+  const draftable = draftableFor(config, app, user);
+  if (!draftable.ok) return refuse(draftable.status, draftable.code, draftable.message);
   const repo = repoOf({ repo_url: app.repo_url });
   if (!repo) return refuse(409, 'no_code', 'That project has no code yet.');
   let allowed = false;
@@ -678,6 +722,13 @@ async function sendToPreview(pool, config, { draft, files, since, head, deps = {
     send = [...byPath.values()];
   }
   if (!send.length) return { ok: true, bootMs: 0 };
+  // #6961: on Homeroom itself, a change outside what its image runs from
+  // source (its screens, its stylesheet) shows only when the preview is
+  // built again: writing it in place would change nothing anyone sees.
+  if (config?.selfAppSlug && draft.app_slug === config.selfAppSlug
+      && !platformRunsInPlace(send.map((f) => f.path))) {
+    return rebuild(pool, config, { ...draft, head_sha: head }, 'built_files', deps);
+  }
   const applied = await control(config, draft, 'apply', {
     method: 'POST', body: { files: send, head }, timeoutMs: APPLY_TIMEOUT_MS, deps,
   });
@@ -1004,5 +1055,6 @@ module.exports = {
   byId, forThread, threadOf, rootOf, describe, liveStateOf, editsOf, noteChanged,
   editable, proposalOpen, closeReason, settle, repoOf,
   listFiles, readFile, open, supervisorCommand, runtimeFor, noteDeployed,
+  draftableFor, platformRunsInPlace,
   filesBetween, sendToPreview, syncPreview, applyEdit, proposalText, propose, updateProposal, close,
 };

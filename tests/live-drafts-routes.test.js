@@ -2,7 +2,8 @@
 
 // The live drafts routes (src/routes/live-drafts.js): every one is the
 // signed-in person's own and checks its input; a thread about Homeroom
-// itself is never offered a draft; writes are refused unless the Homeroom
+// itself is offered a draft to its admins only (#6961), and never when the
+// app is another self-hosted one; writes are refused unless the Homeroom
 // page itself sent them; and each write hands the service (stood in for
 // here, src/services/live-drafts.js has its own suite) the person and the
 // thread or draft it names.
@@ -44,7 +45,7 @@ test('the live drafts routes', async (t) => {
   const { liveDraftRoutes } = require('../src/routes/live-drafts');
   const app = express();
   app.use((req, _res, next) => {
-    if (req.headers['x-test-user']) req.user = { id: Number(req.headers['x-test-user']), username: 'evan' };
+    if (req.headers['x-test-user']) req.user = { id: Number(req.headers['x-test-user']), username: 'evan', isAdmin: req.headers['x-test-admin'] === '1' };
     next();
   });
   app.use(liveDraftRoutes({ selfAppSlug: 'usernode-self' }));
@@ -55,22 +56,26 @@ test('the live drafts routes', async (t) => {
     Object.assign(liveDrafts, real);
   });
   const base = `http://127.0.0.1:${server.address().port}`;
-  const call = (method, path, { user = 7, site = 'same-origin', body } = {}) => fetch(`${base}${path}`, {
+  const call = (method, path, { user = 7, site = 'same-origin', body, admin = false } = {}) => fetch(`${base}${path}`, {
     method,
     headers: {
       ...(user ? { 'x-test-user': String(user) } : {}),
+      ...(admin ? { 'x-test-admin': '1' } : {}),
       ...(site ? { 'sec-fetch-site': site } : {}),
       ...(body ? { 'content-type': 'application/json' } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
-  await t.test('reads: signed in, a thread named, and Homeroom itself never offered', async () => {
+  await t.test('reads: signed in, a thread named, Homeroom itself only to its admins', async () => {
     assert.equal((await call('GET', '/api/live-drafts?rootId=9', { user: null })).status, 401);
     assert.equal((await call('GET', '/api/live-drafts')).status, 400);
     const mine = await (await call('GET', '/api/live-drafts?rootId=9')).json();
     assert.deepEqual([mine.enabled, mine.draft.id, mine.draft.live], [true, 3, 'live']);
-    assert.equal((await (await call('GET', '/api/live-drafts?rootId=10')).json()).enabled, false, 'the platform by its slug');
+    // #6961: the platform, by its slug, to an admin; not to anyone else.
+    assert.equal((await (await call('GET', '/api/live-drafts?rootId=10', { admin: true })).json()).enabled, true, 'the platform to its admin');
+    assert.equal((await (await call('GET', '/api/live-drafts?rootId=10')).json()).enabled, false, 'the platform to anyone else');
+    assert.equal((await (await call('GET', '/api/live-drafts?rootId=11', { admin: true })).json()).enabled, false, 'a self-hosted app, admins included');
     assert.equal((await (await call('GET', '/api/live-drafts?rootId=11')).json()).enabled, false, 'a self-hosted app');
     const other = await (await call('GET', '/api/live-drafts?rootId=9', { user: 8 })).json();
     assert.deepEqual([other.enabled, other.draft], [false, null], 'someone else\'s thread');

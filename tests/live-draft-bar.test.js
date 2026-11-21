@@ -93,7 +93,14 @@ test('New chat offers "I want to change an app live…" once a project of its ow
   assert.equal(offersLive('', {}), false, 'not for Any project');
   assert.equal(offersLive('gym', {}), true);
   assert.equal(offersLive('gym', { gym: { selfHosted: false } }), true);
-  assert.equal(offersLive('homeroom', { homeroom: { selfHosted: true } }), false, 'never Homeroom itself');
+  // #6961: Homeroom's own app is offered to its admins, and only to them.
+  assert.equal(offersLive('homeroom', { homeroom: { selfHosted: true } }), false, 'never to a non-admin');
+  assert.equal(offersLive('homeroom', { homeroom: { selfHosted: true } }, { platformSlug: 'homeroom' }), false);
+  assert.equal(offersLive('homeroom', { homeroom: { selfHosted: true } }, { platformSlug: 'homeroom', isAdmin: true }), true);
+  assert.equal(offersLive('homeroom', {}, { platformSlug: 'homeroom', isAdmin: true }), true, 'even before the project is described');
+  assert.equal(offersLive('other-self', { 'other-self': { selfHosted: true } }, { platformSlug: 'homeroom', isAdmin: true }), false,
+    'another self-hosted app is never offered, admins included');
+  assert.equal(offersLive('gym', { gym: { selfHosted: false } }, { platformSlug: 'homeroom', isAdmin: true }), true);
   const words = message(LIVE_START.text);
   assert.equal(words, 'I want to change an app live');
   assert.equal(message(LIVE_START.label).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
@@ -101,7 +108,7 @@ test('New chat offers "I want to change an app live…" once a project of its ow
   assert.ok(!NEW_THREAD_STARTS.some((s) => s.key === 'live'), 'the five starts stay five; the sixth is drawn only with a project');
   const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text) }));
   assert.equal(startOf('I want to change an app live: make the button bigger', starts).key, 'live');
-  assert.match(read(NEW), /offersLive\(project, scope\.info[^)]*\)\s*\?\s*\[\.\.\.NEW_THREAD_STARTS, LIVE_START\]/);
+  assert.match(read(NEW), /offersLive\(project, scope\.info[\s\S]*?platformSlug: platformSlug\(\),[\s\S]*?isAdmin: typeof window !== 'undefined' && !!\(window as any\)\.App\?\.user\?\.isAdmin,/);
   // Homeroom bot is what opens it: the chat's tool, named for that start.
   const mayor = require('../src/services/homeroom-bot-mayor');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'open_app_preview').function;

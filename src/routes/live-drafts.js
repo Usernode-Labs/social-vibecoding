@@ -44,8 +44,9 @@ function liveDraftRoutes(config) {
           [rootId, req.user.id],
         ),
       ]);
-      // Homeroom itself is changed from its own Workshop, never drafted here.
-      const draftable = !!project && !project.self_hosted && project.slug !== config.selfAppSlug;
+      // #6961: the same rule open() applies: any project the person can
+      // change, and Homeroom itself only for its admins.
+      const draftable = !!project && liveDrafts.draftableFor(config, project, req.user).ok;
       res.set('Cache-Control', 'no-store');
       res.json({ ok: true, enabled: on && draftable, draft: liveDrafts.describe(draft) });
     } catch (err) { failed(res, 'Read', err); }

@@ -71,6 +71,7 @@ import { closeThread, openThread } from './store';
 import { useStagedCard } from './composer';
 import { BOT_AVATAR, pendingObjectLabel } from './format';
 import { takeCarried } from './new-chat-carry';
+import { platformSlug } from './channel-hub';
 import type { MessageAttachment, SharedObjectReference, StagedObject } from './types';
 import { communityScopeStore, describe, loadCommunities } from '../workshop/community-scope';
 import { ProjectChip, ProjectPicker } from './project-picker';
@@ -96,18 +97,28 @@ export const NEW_THREAD_STARTS = [
 
 /**
  * A sixth start, drawn only once a project of its own is picked (never Any
- * project, never Homeroom itself): changing the project live. Homeroom bot
- * opens a live draft of it beside the chat (homeroom-bot-mayor.js
- * open_app_preview, services/live-drafts.js) and changes it as they talk.
- * Its kind is any: the thread is no particular kind of change.
+ * project; Homeroom itself only for its admins, #6961): changing the project
+ * live. Homeroom bot opens a live draft of it beside the chat
+ * (homeroom-bot-mayor.js open_app_preview, services/live-drafts.js) and
+ * changes it as they talk. Its kind is any: the thread is no particular kind
+ * of change.
  */
 export const LIVE_START = {
   key: 'live', kind: 'any', label: 'messages:newThread.starts.live.label', text: 'messages:newThread.starts.live.text', Icon: PlayIcon,
 } as const;
 
-/** Pure: whether the live start is offered for the picked project. */
-export function offersLive(project: string | null | undefined, info: Record<string, { selfHosted?: boolean } | undefined>): boolean {
+/**
+ * Pure: whether the live start is offered for the picked project: any
+ * project of its own, and Homeroom's own app (the platform's slug) only to
+ * an admin who can change it. Every other self-hosted app is never offered.
+ */
+export function offersLive(
+  project: string | null | undefined,
+  info: Record<string, { selfHosted?: boolean } | undefined>,
+  { platformSlug = null, isAdmin = false }: { platformSlug?: string | null; isAdmin?: boolean } = {},
+): boolean {
   if (!project) return false;
+  if (platformSlug && project === platformSlug) return !!isAdmin;
   return !info[project]?.selfHosted;
 }
 
@@ -269,8 +280,12 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const enterKey = useEnterSends();
   // The starts in the reader's language: what each writes, and what it is for.
   const scope = useSyncExternalStore(communityScopeStore.subscribe, communityScopeStore.get, communityScopeStore.get);
-  const offered = offersLive(project, scope.info as Record<string, { selfHosted?: boolean } | undefined>)
-    ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
+  // #6961: an admin may change Homeroom itself live; the mask "View as
+  // non-admin" leaves isAdmin false, so it hides the start as it hides the rest.
+  const offered = offersLive(project, scope.info as Record<string, { selfHosted?: boolean } | undefined>, {
+    platformSlug: platformSlug(),
+    isAdmin: typeof window !== 'undefined' && !!(window as any).App?.user?.isAdmin,
+  }) ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
   const starts = offered.map((start) => ({ ...start, text: t(start.text) }));
   const begun = startOf(words, starts);
   const drawing = begun?.kind === 'design';
