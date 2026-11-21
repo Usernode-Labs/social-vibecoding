@@ -48,6 +48,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CreditList, type CreditView } from './challenge-credits';
+import { ChallengeHistory, type HistoryView } from './challenge-history';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { LockedChallengesCard, lockedHint, lockedTitle } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -754,8 +755,14 @@ export function ChallengesPane(): ReactNode {
   const state = useStoreState(topochainChallengesStore) as {
     mounted: boolean;
     grid: GridView | null;
+    history: HistoryView | null;
     detail: DetailView | null;
   };
+  // #6967: the screen's third tab. Challenges and Standings keep the pane
+  // exactly as they had it; History replaces the standing card and the grid
+  // with its own list, in every look.
+  const { section } = useLeaderboardSection();
+  const onHistory = section === 'challenge-history';
 
   // A page is a level of the screen, so the screen's scroller is the page's:
   // it opens at its top, and going back up returns the grid to where it was
@@ -809,15 +816,26 @@ export function ChallengesPane(): ReactNode {
   return (
     <>
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
-        {/*
-            The viewer's own standing leads the tab, as the prototype's
-            Challenges page does — the rank, the people it is among and the
-            token allocation the Me screen used to carry (./your-standing.tsx).
-            It is inside the grid so a challenge's page hides it too.
-        */}
-        {frame ? <ChallengesInFrame grid={state.grid} up={!state.detail} /> : null}
-        <YourStanding />
-        <Grid view={state.grid} />
+        {onHistory ? (
+          /*
+              #6967: the History tab, in both the standard and the frame
+              looks — the same cards either way. It takes the grid's place,
+              so the standing card and the challenge cards step aside.
+          */
+          <ChallengeHistory view={state.history} />
+        ) : (
+          <>
+            {/*
+                The viewer's own standing leads the tab, as the prototype's
+                Challenges page does — the rank, the people it is among and the
+                token allocation the Me screen used to carry (./your-standing.tsx).
+                It is inside the grid so a challenge's page hides it too.
+            */}
+            {frame ? <ChallengesInFrame grid={state.grid} up={!state.detail} /> : null}
+            <YourStanding />
+            <Grid view={state.grid} />
+          </>
+        )}
       </div>
       {/* Challenge detail page */}
       <div

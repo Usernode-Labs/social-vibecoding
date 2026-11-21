@@ -113,6 +113,10 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 const SECTION_TABS = [
   { key: 'challenges', label: 'leaderboard:tabs.challenges' },
   { key: 'topochain', label: 'leaderboard:tabs.standings' },
+  // #6967: what earned your points, after the two tabs people know. Its key
+  // is not `history`: that address already lands on Challenges (the parked
+  // Kudos sub-view, ./leaderboard.js's PARKED_KUDOS_SUBS).
+  { key: 'challenge-history', label: 'leaderboard:tabs.history' },
   { key: 'kudos', label: 'leaderboard:tabs.kudos' },
 ].filter((s) => !(KUDOS_PARKED && s.key === 'kudos'));
 

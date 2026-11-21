@@ -166,3 +166,46 @@ test('#6479: with a zone picked, a timed activity reads in that zone and a date-
     zone.setTimeZone(null);
   }
 });
+
+// #6967: the challenge History tab's two extra lines. A credit that did not
+// count says why, under the label; every credit says when the points were
+// written, under the day it happened. Both are optional, and a row without
+// them is exactly the row Standings and "What counted" draw.
+test('#6967: a note says why an action did not count, between the label and the date', () => {
+  const note = message('leaderboard:history.reason.earlierWeek');
+  const html = renderToHtml(createElement(mod.ActivityRow, {
+    text: 'Reported a broken map tile', points: '+250', at: '2026-10-02T16:32:00.000Z',
+    credited: '2026-10-02T12:00:00.000Z', note,
+  }));
+  const labelAt = html.indexOf('Reported a broken map tile');
+  const noteAt = html.indexOf('data-activity-note');
+  const timeAt = html.indexOf('<time');
+  assert.ok(noteAt > -1, 'the line carries the data-activity-note hook');
+  assert.ok(html.includes('From an earlier week.'), 'the catalog text is drawn');
+  assert.ok(labelAt < noteAt && noteAt < timeAt, 'and sits under the label, above the date');
+});
+
+test('#6967: credited says when the points were written, after the day it happened', () => {
+  const d = new Date('2026-10-02T12:00:00.000Z');
+  const day = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
+  const html = renderToHtml(createElement(mod.ActivityRow, {
+    text: 'Sent feedback on RecipeBot', points: '+250', at: '2026-09-30T10:00:00.000Z',
+    precision: 'instant', credited: '2026-10-02T18:00:00.000Z',
+  }));
+  const line = message('leaderboard:history.credited', { day });
+  const whenAt = html.indexOf('data-activity-when');
+  const creditedAt = html.indexOf('data-activity-credited');
+  assert.ok(creditedAt > whenAt, 'the Credited line comes after the date');
+  assert.ok(html.includes(`>${line}</time>`), 'the catalog text is drawn');
+  assert.match(html, /data-activity-credited=""/);
+});
+
+test('#6967: without note or credited the row\'s markup is what it always was', () => {
+  const html = renderToHtml(createElement(mod.ActivityRow, {
+    text: 'Joined Game Corner', points: '+500', at: '2026-10-02T10:00:00.000Z',
+  }));
+  assert.ok(!html.includes('data-activity-note'));
+  assert.ok(!html.includes('data-activity-credited'));
+  assert.doesNotMatch(html, /Credited/);
+  assert.equal((html.match(/<time/g) || []).length, 1, 'one date line only');
+});

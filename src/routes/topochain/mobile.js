@@ -700,7 +700,7 @@ async function fetchChallengesForSeason(pool, seasonId) {
 // whole list, grouped in JS per challenge_id by the route below.
 async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
   const { rows } = await pool.query(
-    `SELECT challenge_id, points, description, activity_at, metadata
+    `SELECT challenge_id, points, description, activity_at, created_at, metadata
        FROM user_activities
       WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
       ORDER BY activity_at DESC`,
@@ -715,7 +715,7 @@ async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
 async function fetchFirstChallengeCredits(pool, userId, templateIds) {
   if (!templateIds.length) return [];
   const { rows } = await pool.query(
-    `SELECT ua.challenge_id, credited.challenge_template_id, ua.points, ua.description, ua.activity_at, ua.metadata
+    `SELECT ua.challenge_id, credited.challenge_template_id, ua.points, ua.description, ua.activity_at, ua.created_at, ua.metadata
        FROM user_activities ua
        JOIN challenges credited ON credited.id = ua.challenge_id
       WHERE ua.user_id = $1 AND credited.challenge_template_id = ANY($2::bigint[])
@@ -1454,10 +1454,21 @@ function topochainMobileRoutes(config) {
       const activityView = (a) => ({
         points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
         activity_time_precision: activityTimePrecision(a),
+        // When the points were written to the ledger, which on a challenge
+        // counted on a schedule can be later than the action itself.
+        credited_at: iso(a.created_at),
+        // #3200: the challenge grader's short explanation, on graded rows.
+        grade_reason: a.metadata && typeof a.metadata.grade === 'object' && a.metadata.grade !== null
+          ? String(a.metadata.grade.reason || '').trim() || null
+          : null,
         // #3247: where it came from, and whether `progress` counts it (a
         // weekly challenge's earlier weeks do not; marked below).
         change: creditChanges.get(a.metadata && a.metadata.source_key) || null,
         counts: true,
+        // #6967: why an action does not count toward the challenge's
+        // progress. Null while it counts; an open enum, so a client that
+        // does not know a value shows no note.
+        not_counted_reason: null,
       });
       const earlierFirstCredits = new Map(firstRows.map((r) => [Number(r.id), firstCredits
         .filter((a) => Number(a.challenge_template_id) === Number(r.t_id) && Number(a.challenge_id) !== Number(r.id))
@@ -1515,7 +1526,10 @@ function topochainMobileRoutes(config) {
           ? credits.filter((a) => new Date(a.activity_at).getTime() >= thisWeek)
           : credits;
         // `activities` was built from this same list, in this order.
-        item.activities.forEach((activity, i) => { activity.counts = counted.includes(credits[i]); });
+        item.activities.forEach((activity, i) => {
+          activity.counts = counted.includes(credits[i]);
+          activity.not_counted_reason = activity.counts ? null : 'earlier_week';
+        });
         item.progress = resolveProgress({
           metricKind,
           metricTarget: item.metric ? item.metric.target : null,
