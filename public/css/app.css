@@ -19974,8 +19974,12 @@ html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [
 html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message-image { max-width: min(240px, 100%); }
 /* Beside iPhone Duo's column of system chrome (`--ai-edge`) the page stops
    short of it, as the chat it replaced did (B25 below): its ground is the
-   column's, so nothing is left there but that ground. */
-html[data-side-strip]:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-reply-pane > .dev-private-thread { padding-inline-end: var(--ai-edge, 0px); }
+   column's, so nothing is left there but that ground. Only the docked column
+   needs this: it is fixed at the screen's edge and runs under the strip. The
+   phone's drawer is already inside the body, which THE SIDE STRIP pads by the
+   strip, so padding it again left a band of empty ground beside the column
+   on the folded Duo, whose cover stands the tabs in that column (#6974). */
+html[data-side-strip]:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-reply-pane > .dev-private-thread { padding-inline-end: var(--ai-edge, 0px); }
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge

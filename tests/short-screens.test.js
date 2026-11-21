@@ -61,8 +61,13 @@ test('B25: on the Duo held sideways a thread in the bot tab\'s column stops at t
   // Send, the "Live ›" row's chevron and the New label sat in the 84px column.
   // 14 Nov 2026: the chat is drawn there threads only, so the rule names the thread alone.
   assert.match(APP_CSS, /html\[data-side-strip\] #ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] > \.messages-reply-pane :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\):not\(\.dev-request \*\) \{\n  padding-inline-end: var\(--ai-edge, 0px\);\n\}/);
-  // 20 Nov 2026: a thread drawn as the thread page stops there as a whole.
-  assert.match(APP_CSS, /html\[data-side-strip\]:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.messages-reply-pane > \.dev-private-thread \{ padding-inline-end: var\(--ai-edge, 0px\); \}/);
+  // 20 Nov 2026: a thread drawn as the thread page stops there as a whole,
+  // in the docked column that runs under the column of chrome. The phone's
+  // drawer is already inside the body's padding (#6974): padding it again
+  // left a band of empty ground beside the folded Duo's tabs.
+  assert.match(APP_CSS, /html\[data-side-strip\]:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-main-pane \.messages-reply-pane > \.dev-private-thread \{ padding-inline-end: var\(--ai-edge, 0px\); \}/);
+  assert.doesNotMatch(APP_CSS, /#ai-screen \.messages-reply-pane > \.dev-private-thread \{ padding-inline-end: var\(--ai-edge, 0px\); \}/,
+    'nothing pads the private thread page by --ai-edge outside the docked column: the folded Duo\'s drawer does not run under the strip');
   // The column itself still reaches the screen's edge (no band of another colour).
   assert.match(rule('#ai-screen .ai-main-pane'), /width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(rule('#ai-screen .ai-main-pane'), /inset-inline-end: 0;/);
