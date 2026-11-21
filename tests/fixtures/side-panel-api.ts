@@ -23,6 +23,7 @@ export {
   embeddedApi,
   sideRouteFrom,
   BESIDE_AI_QUERY,
+  EDGE_PROP,
   BESIDE_AI_CLASS,
   LIST_HIDDEN_CLASS,
   showList,

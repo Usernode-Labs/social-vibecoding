@@ -19980,6 +19980,18 @@ html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [
    strip, so padding it again left a band of empty ground beside the column
    on the folded Duo, whose cover stands the tabs in that column (#6974). */
 html[data-side-strip]:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-reply-pane > .dev-private-thread { padding-inline-end: var(--ai-edge, 0px); }
+/* #6970: the head card at the top of a request or a change opened in the
+   column beside Homeroom bot's list keeps its ⋯, open as page and close out
+   of Duo's column (or the folded corner) too. The panel's own document reads
+   no insets (side-strip.ts NO_INSETS), so the top window publishes the edge
+   onto the frame's root (features/side-panel/controller.ts,
+   --side-panel-edge) and the card narrows by it, as the heads above pad
+   themselves by `--ai-edge` in the window that owns the edge. Only the card
+   moves: the cards, replies and composer below it still run under the
+   column (THE PINNED COLUMNS RUN UNDER IT, above). */
+html:is(:not([data-skin]), [data-skin="brand"]).in-side-panel.side-panel-beside-ai .dev-request:has(.dev-thread-card) .dev-request-bar {
+  padding-inline-end: calc(var(--thread-gutter, 12px) + var(--side-panel-edge, 0px));
+}
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge

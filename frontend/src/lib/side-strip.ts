@@ -240,6 +240,44 @@ export function stripWidth(doc: Pick<Document, 'documentElement'> | null = typeo
   return parseFloat(root.style.getPropertyValue(STRIP_W_PROP)) || 0;
 }
 
+/**
+ * The corner's width now, in px, or 0 with no corner: the twin of
+ * stripWidth, for the folded Duo's pill (THE SIDE CORNER above).
+ */
+export function cornerWidth(doc: Pick<Document, 'documentElement'> | null = typeof document === 'undefined' ? null : document): number {
+  const root = doc?.documentElement;
+  if (!root || !root.hasAttribute(CORNER_ATTR)) return 0;
+  return parseFloat(root.style.getPropertyValue(CORNER_W_PROP)) || 0;
+}
+
+/**
+ * The edge a column in the side panel must keep clear of (#6970), in px: the
+ * strip's or the corner's width when it is on the side the panel stands
+ * against (the inline end, so the left in Arabic), else 0. The panel's own
+ * document reads no insets of its own (NO_INSETS in watchSideStrip), so the
+ * window that owns the device publishes this onto the frame's root
+ * (features/side-panel/controller.ts); the top band and an iPhone's notch
+ * are not published — the frame's top already sits below the band, and the
+ * `.side-panel-body` pads the notch in the top window.
+ */
+export function panelEdge(doc: Pick<Document, 'documentElement'> | null = typeof document === 'undefined' ? null : document): number {
+  try {
+    const root = doc?.documentElement;
+    if (!root) return 0;
+    const dir = root.dir || root.getAttribute('dir') || '';
+    const inlineEnd: StripSide = dir === 'rtl' ? 'left' : 'right';
+    if (root.hasAttribute(STRIP_ATTR)) {
+      return root.getAttribute(STRIP_ATTR) === inlineEnd ? stripWidth(doc) : 0;
+    }
+    if (root.hasAttribute(CORNER_ATTR)) {
+      return root.getAttribute(CORNER_ATTR) === inlineEnd ? cornerWidth(doc) : 0;
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
 let probe: HTMLElement | null = null;
 
 /**
