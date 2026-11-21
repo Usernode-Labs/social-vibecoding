@@ -346,10 +346,10 @@ test('_setSection validates its input and syncs the hash', () => {
   assert.ok(fn.length > 0, '_setSection located');
   assert.match(fn, /if \(!Leaderboard\.SECTIONS\.includes\(section\)\) return;/,
     'garbage sections are a no-op, mirroring _setSub');
-  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges'\],/,
-    'all three sections are declared in one place, History gone');
-  assert.match(lbJs, /EVENT_SECTIONS: \['topochain', 'challenges'\],/,
-    'the two event-scoped sections are declared in one place');
+  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges', 'challenge-history'\],/,
+    'every section is declared in one place, History among them (#6967)');
+  assert.match(lbJs, /EVENT_SECTIONS: \['topochain', 'challenges', 'challenge-history'\],/,
+    'the event-scoped sections are declared in one place (History shares the event, #6967)');
   assert.match(fn, /Leaderboard\._syncHash\(\);/, 'the hash follows the tab');
   assert.match(fn, /if \(!Leaderboard\._open\) return;/,
     'deep-link restore records state without rendering — open() does the first render');
@@ -388,7 +388,8 @@ test('navigateToLeaderboard routes every section segment to the section', () => 
   );
   assert.ok(fn.length > 0, 'navigateToLeaderboard located');
   assert.match(fn, /sub === 'topochain' \|\| sub === 'kudos' \|\| sub === 'challenges'/,
-    "every section segment selects the section rather than falling through to _setSub");
+    'every section segment selects the section rather than falling through to _setSub');
+  assert.match(fn, /sub === 'challenge-history'/, 'and the History tab too (#6967)');
   // #2718 REVIEW: the screen is titled after the SECTION it is showing.
   // It said "Leaderboard" for every one of them, so arriving at Challenges
   // from the Me tab's Challenges row put a word on the bar that matched

@@ -11,6 +11,58 @@
     "text": "Standings",
     "description": "Tab at the top of the Leaderboard screen: the ranking of participants by points."
   },
+  "tabs.history": {
+    "text": "History",
+    "description": "Tab at the top of the Leaderboard screen, after Standings: what earned the viewer's challenge points, when each was credited and why an action did not count."
+  },
+  "history.loading": {
+    "text": "Loading your points",
+    "description": "Accessible name of the grey placeholder shown on the History tab of the Leaderboard screen while the viewer's challenge credits are being fetched."
+  },
+  "history.empty": {
+    "text": "Nothing earned yet",
+    "description": "Title of the one card on the History tab when the viewer has no challenge points yet."
+  },
+  "history.emptyHint": {
+    "text": "Points you earn in challenges show here, with what earned them.",
+    "description": "Under \"Nothing earned yet\" on the History tab: what will appear there once the viewer earns challenge points."
+  },
+  "history.groups.done": {
+    "text": "Done",
+    "description": "Heading over the History tab's finished challenges, the ones the viewer has points on."
+  },
+  "history.groups.progress": {
+    "text": "In progress",
+    "description": "Heading over the History tab's challenges the viewer has points on but has not finished."
+  },
+  "history.how.title": {
+    "text": "How points work",
+    "description": "Title of the card on the History tab that explains when challenge points are credited and what makes an action count."
+  },
+  "history.how.credited": {
+    "text": "Points are credited when Homeroom counts what you did: at once for most challenges, or at the challenge's next count.",
+    "description": "First sentence of the \"How points work\" card on the History tab: when points are credited."
+  },
+  "history.how.qualifies": {
+    "text": "An action qualifies when it matches what the challenge counts, which its page lists under What counts. Feedback that repeats what you already sent, or says too little, is left out.",
+    "description": "Second sentence of the \"How points work\" card on the History tab: what makes an action qualify. \"What counts\" is the heading of that section on a challenge's page."
+  },
+  "history.how.standings": {
+    "text": "Standings catch up within about 10 minutes. Until then your new points show as pending.",
+    "description": "Third sentence of the \"How points work\" card on the History tab: how soon the ranking counts new points."
+  },
+  "history.credited": {
+    "text": "Credited {{day}}",
+    "description": "Under a credit on the History tab: when the points were written to the viewer's record. {{day}} is a date such as \"Thu, Nov 12\"."
+  },
+  "history.reason.earlierWeek": {
+    "text": "From an earlier week. Its points are yours, but this week's count started again on Monday.",
+    "description": "Under a credit on the History tab that does not count toward a weekly challenge's progress because it happened in an earlier week."
+  },
+  "history.reason.earlierSeason": {
+    "text": "Counted from an earlier season.",
+    "description": "Under a credit on the History tab that counts toward a First challenge's total but was earned in an earlier season."
+  },
   "eventBar.label": {
     "text": "Event",
     "description": "Accessible name of the drop-down on the Leaderboard screen that chooses which event (a season or a competition within it) is shown."
