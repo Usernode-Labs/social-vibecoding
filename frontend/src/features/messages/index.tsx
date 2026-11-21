@@ -9,9 +9,10 @@ import {
   ChatStatusLine, JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
 } from '@/components/ui/chat';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon,
-  PlusIcon, SearchIcon, UserGroupIcon, XIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronLeftIcon, EllipsisHorizontalIcon, ListBulletIcon,
+  LockIcon, PlusIcon, SearchIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
+import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
@@ -1949,6 +1950,20 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
+  // #6963: the bot tab's list is hidden behind this thread, and this is the
+  // way back to it (../ai/list-closed). Drawn only in the bot tab's own
+  // column, never in a phone's drawer or another surface's thread. First in
+  // the head, where a phone draws its back arrow, on both heads this thread
+  // can have: the compact sheet the bot tab draws it as (#6863) and the
+  // plain one every other surface draws.
+  const showList = useShowListButton();
+  const showListButton = alone && !onBack && showList ? (
+    <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
+      aria-label={t('messages:ai.list.show')} title={t('messages:ai.list.show')}
+      onClick={() => setListClosed(false)}>
+      <ListBulletIcon aria-hidden="true" />
+    </button>
+  ) : null;
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
   // #6254: this thread is its own drop area — a file dropped on the reply box
@@ -2401,6 +2416,8 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
             <ThreadHeadCard
               attrs={{ 'data-reply-head': 'alone' }}
               tile={<span className="dev-thread-bar-tile dev-thread-bar-face" data-reply-avatar=""><UserAvatar user={face} title={aloneTitle || undefined} size="lg" shape="circle" /></span>}
+              // #6963: the way back to the list, before the tile (thread-head.tsx).
+              lead={showListButton}
               // The lock line is the small line's own part that gives way
               // first in a narrow head, as a request's project does: it is
               // the head's `.messages-thread-sub`, as it was in the pane's.
@@ -2462,6 +2479,9 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
       ) : (
         <>
           <header className="messages-thread-header" data-reply-head={alone ? 'alone' : undefined}>
+            {/* #6963: the list is hidden, and this is the way back to it —
+                first in the head, where a phone draws its back arrow. */}
+            {showListButton}
             {alone && onBack ? (
               <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
                 aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>

@@ -17897,7 +17897,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-ask-text { font-size: 15px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
 .dev-request-ask-text .dev-issue-body { font-size: inherit; color: inherit; }
 .dev-request-ask-text p,
-.dev-request-ask-text .dc-p { margin: 0 0 4px; }
+.dev-request-ask-text .dc-p { margin: 0 0 8px; }
+.dev-request-ask-text :is(.dc-h3, .dc-h4, .dc-h5):first-child { margin-top: 0; }
 .dev-request-ask-text ul { margin: 0 0 4px; padding-inline-start: 20px; list-style: disc; }
 .dev-request-ask-text ol { margin: 0 0 4px; padding-inline-start: 20px; list-style: decimal; }
 .dev-request-ask-text strong { color: var(--text-primary); }
@@ -19787,6 +19788,23 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
   width: 100%;
   max-width: 42rem;
   margin-inline: auto;
+}
+/* THE LIST HIDDEN, ONE PANE (#6963). Dragging the divider past the list's
+   floor hides it, and the thread takes the room the list had: `--ai-main-w`
+   is the whole room, so the pane's lane, the pane and the divider (which
+   read it) all reach the rail, and the divider stays on the thread's edge as
+   the way to pull the list back. The list's body is not drawn while it is
+   hidden; the lane rule above already pads the page by `--ai-main-w`, which
+   is now all of it. */
+#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed] {
+  --ai-main-w: calc(var(--ai-room) - var(--ai-edge, 0px));
+}
+#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed] .ai-screen-body { display: none; }
+/* A page in Main's place (the shell's side panel, features/side-panel) reads
+   the width from body, not from the page: while the list is hidden it takes
+   the whole room too, the way the column does. */
+body:has(#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed]:not(.hidden)) {
+  --ai-main-w: calc(var(--ai-room) - var(--ai-edge, 0px));
 }
 /* The aside stays mounted, because a thread is opened from the place it is
    handed (`at`); with nothing open beside the lists it is not drawn. */
@@ -28905,6 +28923,8 @@ html[data-skin] #ai-screen[data-frame-list] > .fr-pane { container: fr-botlist /
 @media (min-width: 768px) {
   html[data-skin] #ai-screen[data-frame-list]:not([data-ai-open]) > .fr-pane > .fr-scroll { max-width: 784px; margin-inline: auto; }
   html[data-skin] #ai-screen[data-frame-list] { --ai-main-w: max(360px, calc(var(--platform-usable-w) - 520px)); }
+  /* #6963: the list hidden, the thread takes the frame's whole room. */
+  html[data-skin] #ai-screen[data-frame-list][data-ai-list-closed] { --ai-main-w: calc(var(--platform-usable-w) - var(--ai-edge, 0px)); }
   html[data-skin] #ai-screen[data-frame-list] .ai-main-pane { top: var(--fr-shell-top); background: none; border-top: 0; border-inline-start: 1px solid var(--fr-line); border-radius: 0; }
   html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
   /* The chat in the column keeps the kit's 32px gutter (the Messages
