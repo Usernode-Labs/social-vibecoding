@@ -31253,6 +31253,13 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 6px; }
 .dev-thread-exits { display: none; align-items: center; gap: 2px; flex: none; }
+/* #6973: the way back to the thread list beside a request, change or decision
+   page. The page is drawn in the panel's frame, whose <html> is marked while
+   the list is hidden (features/side-panel/controller.ts LIST_HIDDEN_CLASS),
+   so the button is shown from that class alone. Everywhere else it is not
+   drawn; a private thread draws its own (#6963). */
+.dev-thread-show-list { display: none; }
+html.in-side-panel.side-panel-beside-ai.side-panel-list-hidden .dev-thread-show-list { display: inline-flex; }
 .dev-thread-exit svg { width: 18px; height: 18px; }
 :is(.dev-ws-side, html.in-side-panel.side-panel-beside-ai) .dev-thread-exits,
 #ai-screen .dev-private-thread .dev-thread-exits { display: inline-flex; }

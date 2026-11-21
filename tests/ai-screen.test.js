@@ -2120,11 +2120,12 @@ test('a plan opened from a request in the side panel is a third column, not a sh
   assert.match(src, /slot: visible && threeUp && pageInColumn\s+\? \{ widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef \}\s+: null,/);
   // The panel reads it, and falls back to its own defaults with no slot.
   const panel = read('frontend/src/features/side-panel/side-panel.tsx');
-  assert.match(panel, /const edge = useStoreState\(panelEdgeStore\)\.slot;/);
-  assert.match(panel, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+\/>/);
+  assert.match(panel, /const edges = useStoreState\(panelEdgeStore\);\s+const edge = edges\.slot;/);
+  assert.match(panel, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+collapsed=\{snap\?\.collapsed\}\s+onCollapse=\{snap\?\.onCollapse\}\s+onRestore=\{snap\?\.onRestore\}\s+\/>/);
   // The prerender is the panel as it was: no slot until the page sets one.
   const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
   assert.equal(panelEdgeStore.get().slot, null);
+  assert.equal(panelEdgeStore.get().snap, null);
 });
 
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {
@@ -2918,4 +2919,23 @@ test('the one-pane rule: the list is not drawn and the pane takes the whole room
     'the frame looks honour it too');
   assert.match(css, /body:has\(#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\)\);\n\}/,
     'a page in Main\'s place, which reads the width from body, takes the room too');
+});
+
+test('a page in the column hands the panel\'s own edge the one-pane wiring (#6973)', () => {
+  // The divider people drag beside a request, change or decision page is the
+  // side panel's, not Main's: the AI page writes the same collapsed/restore
+  // callbacks into the edge store, and only while a page is the column.
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index,
+    /panelEdgeStore\.set\(\{\s+snap: visible && pageInColumn && snaps && !phone\s+\? \{ collapsed: oneUp, onCollapse: \(\) => setListClosed\(true\), onRestore: \(\) => setListClosed\(false\) \}\s+: null,\s+\}\);/,
+    'a page, no preview, not a phone; and it never writes the slot');
+  assert.match(index, /return \(\) => \{ panelEdgeStore\.set\(\{ snap: null \}\); \};/,
+    'cleared when the page is not the column');
+  assert.match(index, /const oneUp = listClosed && columnOpen && !detailHere && !phone;/,
+    'the same one-pane state the thread column uses');
+  const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
+  assert.equal(panelEdgeStore.get().snap, null, 'the prerender has no wiring');
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'),
+    /collapsed=\{snap\?\.collapsed\}\s+onCollapse=\{snap\?\.onCollapse\}\s+onRestore=\{snap\?\.onRestore\}/,
+    'its own divider reads it');
 });

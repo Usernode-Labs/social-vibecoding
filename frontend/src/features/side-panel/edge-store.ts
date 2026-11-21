@@ -29,4 +29,19 @@ export interface PanelEdge {
   watch: RefObject<HTMLElement | null>;
 }
 
-export const panelEdgeStore = createStore<{ slot: PanelEdge | null }>({ slot: null });
+/**
+ * The list's one-pane wiring for the panel's own edge (#6973). While a
+ * request, change or decision page is the column, the divider people drag is
+ * the panel's, so it is given the same hide-and-restore callbacks the thread
+ * column has (#6963). Null everywhere else, so the edge keeps its width.
+ */
+export interface PanelSnap {
+  collapsed: boolean;
+  onCollapse(): void;
+  onRestore(): void;
+}
+
+export const panelEdgeStore = createStore<{ slot: PanelEdge | null; snap: PanelSnap | null }>({
+  slot: null,
+  snap: null,
+});

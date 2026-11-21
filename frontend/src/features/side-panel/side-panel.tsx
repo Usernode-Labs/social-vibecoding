@@ -62,7 +62,7 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
+import { EllipsisHorizontalIcon, ListBulletIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
@@ -70,6 +70,7 @@ import { useMenuKeyboard } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { pageLinkFor } from '../ai/door';
+import { useShowListButton } from '../ai/list-closed';
 import { StatusPill } from '../dev-board/card/dev-card';
 import type { StatusPillState } from '../dev-board/card/model';
 import { copyToClipboard } from '../message-actions/clipboard';
@@ -113,7 +114,13 @@ export function SidePanel(): ReactNode {
   // The AI page sets this while the panel is the middle column of three,
   // beside a detail opened from the page it holds (#6394); otherwise the
   // divider keeps its own defaults.
-  const edge = useStoreState(panelEdgeStore).slot;
+  const edges = useStoreState(panelEdgeStore);
+  const edge = edges.slot;
+  // A request, change or decision page beside the list (#6973): the panel's
+  // own edge hides the list the way the thread's does (#6963), and the head
+  // row offers the way back while it is hidden.
+  const snap = edges.snap;
+  const showList = useShowListButton();
   const rootRef = useRef<HTMLElement | null>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
 
@@ -146,8 +153,27 @@ export function SidePanel(): ReactNode {
         widthKey={edge?.widthKey}
         probe={edge?.probe}
         watch={edge?.watch}
+        collapsed={snap?.collapsed}
+        onCollapse={snap?.onCollapse}
+        onRestore={snap?.onRestore}
       />
       <div className="side-panel-head flex items-center gap-2 shrink-0">
+        {/* #6973: the way back to the list while the panel's edge has hidden
+            it, first in the row as a private thread draws it. A request's and
+            a change's page draw their own (thread-exits.tsx); a decision's
+            page keeps this row, so the button is here. */}
+        {showList ? (
+          <button
+            type="button"
+            className="messages-thread-action messages-thread-back side-panel-show-list"
+            data-side-panel-show-list=""
+            aria-label={t('agent:sidePanel.showList')}
+            title={t('agent:sidePanel.showList')}
+            onClick={() => controller.showList()}
+          >
+            <ListBulletIcon aria-hidden="true" />
+          </button>
+        ) : null}
         {/* The column's heading as Main's own reads: the project's tile,
             what is open, and its project and number (30 Oct 2026). */}
         <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} head={s.head} />
