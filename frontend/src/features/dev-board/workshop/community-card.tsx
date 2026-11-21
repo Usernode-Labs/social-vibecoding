@@ -189,6 +189,9 @@ export interface PlacesPayload {
   proposals?: Array<{ session_id: number; pr_number: number | null; pr_url: string | null; title: string | null }>;
 }
 
+/** One row of the hub's Top contributors card: a person and how many contributions. */
+export interface HubContributor { id: number; username: string; display_name?: string | null; n: number }
+
 export type CommunityPayload = {
   slug: string;
   name?: string;
@@ -245,6 +248,12 @@ export type CommunityPayload = {
     daily?: Array<{ day: string; n: number }>;
     active_people?: Array<{ id: number; username: string; display_name?: string | null }>;
   } | null;
+  /** Who took part most (communities.js contributorsSummary, request 6837):
+      up to five people this calendar month and up to five over all time,
+      the most first, each with one number: their changes that went live,
+      their votes on changes and the requests they filed, one each. The
+      hub's Top contributors card (./hub-cards.tsx ContributorsCard). */
+  contributors?: { month: HubContributor[]; all_time: HubContributor[] } | null;
   /** Whether this viewer may propose who the project is for (the creator,
       an app admin or a platform admin; never the platform's own app). */
   can_manage?: boolean;

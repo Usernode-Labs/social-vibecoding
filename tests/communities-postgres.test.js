@@ -501,6 +501,52 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.deepEqual(Object.keys(activePeople[0]).sort(), ['display_name', 'id', 'username']);
     assert.equal(activePeople[0].id, boss.id);
 
+    // TOP CONTRIBUTORS (request 6837), on a project of its own: a change
+    // that went live, a vote on a change and a filed request count one
+    // each; a synthetic account, a change that did not go live and a
+    // decision (a non-general issue) count for nobody. This month is the
+    // calendar month; the most first, then who took part most recently;
+    // five at most; nobody at zero.
+    {
+      const proj = await app({ createdBy: owner.id });
+      const people = [];
+      for (let i = 0; i < 7; i += 1) people.push(await user());
+      const session = async (userId, status, at) => (await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, status, merged_at, created_at)
+         VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz) RETURNING id`,
+        [proj.id, userId, status, status === 'merged' ? at : null, at])).rows[0].id;
+      const { rows: [{ now, old }] } = await pool.query(
+        `SELECT NOW() AS now, date_trunc('month', NOW()) - INTERVAL '3 days' AS old`);
+      // people[0]: three this month (a live change, a vote, a request).
+      const live = await session(people[0].id, 'merged', now);
+      const open = await session(people[1].id, 'promoted', now); // not live: counts for nobody
+      await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [open, people[0].id]);
+      await pool.query(`INSERT INTO issues (app_id, title, created_by) VALUES ($1, 'A request', $2)`, [proj.id, people[0].id]);
+      // people[1]: one vote this month, and four live changes last month.
+      await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'no')`, [live, people[1].id]);
+      for (let i = 0; i < 4; i += 1) await session(people[1].id, 'merged', old);
+      // people[2]: a decision only, which is not a request.
+      await pool.query(`INSERT INTO issues (app_id, title, created_by, kind) VALUES ($1, 'Close it', $2, 'close_issue')`, [proj.id, people[2].id]);
+      // people[3..6]: one request each last month, oldest first.
+      for (let i = 3; i < 7; i += 1) {
+        await pool.query(
+          `INSERT INTO issues (app_id, title, created_by, created_at) VALUES ($1, 'Old request', $2, $3::timestamptz + ($4 || ' minutes')::interval)`,
+          [proj.id, people[i].id, old, i]);
+      }
+      // The bot votes and ships: never listed.
+      await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [live, bot.id]);
+      await session(bot.id, 'merged', now);
+      const top = await communities.contributorsSummary(pool, proj.id);
+      assert.deepEqual(top.month.map((c) => [c.username, c.n]), [[people[0].username, 3], [people[1].username, 1]]);
+      assert.deepEqual(top.all_time.map((c) => [c.username, c.n]), [
+        [people[1].username, 5], [people[0].username, 3],
+        [people[6].username, 1], [people[5].username, 1], [people[4].username, 1],
+      ], 'the most first, ties by who took part most recently, five at most');
+      assert.deepEqual(Object.keys(top.month[0]).sort(), ['display_name', 'id', 'n', 'username']);
+      // A project nobody has taken part in: two empty lists.
+      assert.deepEqual(await communities.contributorsSummary(pool, (await app()).id), { month: [], all_time: [] });
+    }
+
     // A CHANNEL IS WHAT PEOPLE SAID. A platform line with no thread — a
     // proposal put up for a vote, a merge — is written nowhere: not the
     // Homeroom project's old room, not #general, not another app's channel.

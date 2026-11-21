@@ -1867,6 +1867,34 @@
     "text": "Topics",
     "description": "Small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under or beside the For you card. Pressing a row opens that topic's channel."
   },
+  "hub.contributors.title": {
+    "text": "Top contributors",
+    "description": "Small heading over the card on a project's Hub that lists the up to five people who took part most in the project, most first. Not the platform's points Leaderboard."
+  },
+  "hub.contributors.span": {
+    "text": "Time span",
+    "description": "Spoken name, for screen readers, of the two-button switch beside the Top contributors heading on a project's Hub: This month or All time."
+  },
+  "hub.contributors.month": {
+    "text": "This month",
+    "description": "First button of the small switch beside the Top contributors heading on a project's Hub: the list counts contributions since the first day of the current calendar month."
+  },
+  "hub.contributors.allTime": {
+    "text": "All time",
+    "description": "Second button of the small switch beside the Top contributors heading on a project's Hub: the list counts every contribution since the project began."
+  },
+  "hub.contributors.count_one": {
+    "text": "{{count}} contribution",
+    "description": "Quiet count at the end of a person's row in the Top contributors card on a project's Hub: how many times they took part (a change of theirs that went live, a vote on a change, or a request they filed)."
+  },
+  "hub.contributors.count_other": {
+    "text": "{{count}} contributions",
+    "description": "Quiet count at the end of a person's row in the Top contributors card on a project's Hub: how many times they took part (a change of theirs that went live, a vote on a change, or a request they filed)."
+  },
+  "hub.contributors.emptyMonth": {
+    "text": "Nobody has taken part yet this month.",
+    "description": "Line shown inside the Top contributors card on a project's Hub when This month is picked and nobody has had a change go live, voted or filed a request since the month began."
+  },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."

@@ -7213,6 +7213,14 @@ html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is
 /* Its label heads the vote line alone here, so with no vote line (a project nobody else is in) there is no label. */
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
+/* Top contributors (request 6837) comes last, after Recently live, on the look's card, its switch from the look's tokens. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-foryou > * + * { border-top-color: var(--wip-soft-line); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .ui-lrow-t { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] :is(.dev-ws-foryou-count, .dev-ws-week-note) { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span { background-color: var(--wip-tray); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button { color: var(--wip-ink-soft); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button[aria-pressed="true"] { background-color: var(--wip-ink); color: var(--wip-card-bg); }
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
   border-top: 0;
@@ -20376,6 +20384,26 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
 .dev-ws-foryou-pill.dev-ws-foryou-pill-light { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
+/* TOP CONTRIBUTORS (ContributorsCard, request 6837): For you's card and
+   rows, read not pressed. A row is a face, a name and a muted count in
+   words. The head's switch (This month, All time) is the shell's selection
+   inversion, small: the picked one filled, the other plain. */
+.dev-ws-foryou .dev-ws-contrib-row { padding-block: 9px; }
+.dev-ws-contrib-face { width: 32px; height: 32px; margin: 0; flex: none; font-size: 12.5px; box-shadow: none; }
+.dev-ws-contrib-span {
+  margin-inline-start: auto; margin-top: 6px; display: inline-flex; gap: 2px;
+  padding: 2px; border-radius: 999px; background: var(--bg-tertiary);
+}
+.dev-ws-contrib-span > button {
+  min-height: 24px; padding: 3px 10px; border: 0; border-radius: 999px; background: transparent;
+  font-size: 12.5px; font-weight: 600; line-height: 18px; color: var(--text-secondary);
+  white-space: nowrap; cursor: pointer;
+}
+.dev-ws-contrib-span > button[aria-pressed="true"] { background: #18181b; color: #fff; }
+.dark .dev-ws-contrib-span > button[aria-pressed="true"] { background: #fafafa; color: #18181b; }
+@media (max-width: 767.98px) {
+  .dev-ws-contrib-span > button { min-height: 32px; padding-inline: 12px; }
+}
 /* The Discussion row's last line: the message gives way, the time stays
    whole (audit P04, 1 Nov 2026). */
 [data-ws-channel-last]:has(> [data-ws-channel-ago]) { display: flex; min-width: 0; }
@@ -21458,6 +21486,10 @@ a.dev-ws-hero-pending {
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
+  /* Top contributors (request 6837) goes under For you, and Topics beside
+     the two of them. Without Topics it keeps the full width. */
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics]:has(+ [data-ws-hub-contributors]) { grid-row: span 2; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] + [data-ws-hub-contributors] { grid-column: 1; }
 }
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
