@@ -8698,6 +8698,14 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     margin-inline: 0 calc((var(--wip-nav-row-h) - var(--wip-nav-settings)) / 2);
     border-radius: calc(var(--wip-nav-row-radius) - (var(--wip-nav-row-h) - var(--wip-nav-settings)) / 2);
   }
+  /* YOU'S ROW ENDS SHORT OF SETTINGS (20 Nov 2026). It ran on under the
+     button, so its lit, hover and focus grounds lay under Settings: on
+     Profile the button stood on the sun and read as lit. The row now ends
+     the space between rows short of Settings' box (its width and the air at
+     its end), so the two stand side by side, each with its own ground,
+     focus ring and press, and Settings stays where it was. The open menu
+     only: folded, the strip's rules put the two on lines of their own. */
+  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded) #platform-tab-me { margin-inline-end: calc(var(--wip-nav-settings) + (var(--wip-nav-row-h) - var(--wip-nav-settings)) / 2 + var(--wip-nav-row-space)); }
   html:not([data-skin]) #platform-tabs :is(.platform-tab-label, .platform-rail-community-name) { font-size: var(--wip-nav-size); }
   html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { text-transform: none; letter-spacing: 0; font-size: var(--wip-nav-head-size); font-weight: 600; }
   /* THE BRAND: Homeroom's logotype at the panel's top, the same on
@@ -8837,6 +8845,28 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] .platform-tab-votes {
     background: var(--wip-nav-count-bg);
     color: var(--wip-nav-count-ink);
+  }
+}
+/* ON SETTINGS, SETTINGS IS LIT, NOT YOU (20 Nov 2026): one thing lit at a
+   time. Settings is You's section (features/nav/tab-bar.tsx), so You's tab
+   keeps `aria-current` there, and its row was lit beside the lit button.
+   In the open menu its row is at rest instead: a resting row's ink
+   (--text-primary, as the shell's own row rule reads it), weight and no
+   ground, and it answers the pointer as a resting row does. Folded, the
+   strip keeps its own drawing, and the phone's bar has no Settings. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] {
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]:hover {
+    background: var(--wip-nav-hover);
+    color: var(--wip-nav-ink-strong);
+  }
+  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
+    color: inherit;
   }
 }
 /* END OF THE LEFT MENU AND THE TOP BAR. */
