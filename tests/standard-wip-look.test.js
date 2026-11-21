@@ -189,6 +189,29 @@ test('the menu and the top bar: one block for the standard look and this one, ev
     /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
 });
 
+test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s, on every page (20 Nov 2026)', () => {
+  const all = rules(menuBlock());
+  const line = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header::after`);
+  assert.ok(line, 'the top bar ends in a line');
+  assert.match(line.body, /content: "";/);
+  assert.match(line.body, /position: absolute;/, 'on the bar itself, which is the positioned box');
+  assert.match(line.body, /inset-block-end: 0;/, 'at its foot');
+  assert.match(line.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'from the menu\'s edge, open or folded to its strip');
+  assert.match(line.body, /inset-inline-end: 0;/, 'to the window\'s');
+  assert.match(line.body, /height: 1px;/);
+  assert.match(line.body, /background: var\(--wip-nav-bar-line\);/, 'in the bar\'s own line');
+  assert.match(line.body, /pointer-events: none;/);
+  // Not scoped away from a project's page: the bar is the frame's on every page.
+  assert.doesNotMatch(line.selector, /data-community-tint/);
+  // From 768px, where the bar sits beside a sidebar: it is in the bar's own block of that query.
+  const css = read('public', 'css', 'app.css');
+  const at = css.indexOf('THE BAR HAS A FOOT');
+  assert.ok(at > 0);
+  const query = css.lastIndexOf('@media', at);
+  assert.equal(css.slice(query, css.indexOf('{', query)).trim(), '@media (min-width: 768px)');
+  assert.ok(css.indexOf('\n}\n', query) > at, 'inside that query, not after it');
+});
+
 test('on a community\'s page the Communities tab gives way to its row', () => {
   const block = menuBlock();
   const GIVE = 'html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"]';

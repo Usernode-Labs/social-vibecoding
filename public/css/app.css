@@ -8487,6 +8487,21 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     background-color: transparent;
     color: var(--wip-nav-bar-ink);
   }
+  /* THE BAR HAS A FOOT (asked 20 Nov 2026, from the "only the sidebar is
+     blue, header on the page" design): a hairline from the panel's edge,
+     open or folded to its strip, to the window's, in the bar's own line, so
+     the bar reads as part of the frame rather than part of the page. On
+     every page, a project's too. */
+  html:not([data-skin]) body #platform-header#platform-header::after {
+    content: "";
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-start: var(--platform-rail-w, 0px);
+    inset-inline-end: 0;
+    height: 1px;
+    background: var(--wip-nav-bar-line);
+    pointer-events: none;
+  }
   /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
