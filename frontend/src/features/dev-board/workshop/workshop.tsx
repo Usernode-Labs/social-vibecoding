@@ -1844,8 +1844,14 @@ function ShotsPicture({ v, near, wide }: {
   if (!screen) return null;
   const W = screen.width;
   const H = Math.max(screen.before.height, screen.after.height);
-  // The crop: every outlined area on either side, so a flip never moves it.
-  const rects = screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
+  // The crop: what each change is about (its frame, on either side) when the
+  // run recorded it, else every outlined area on either side, so a flip
+  // never moves it.
+  const frameRects = (screen.frames || []).filter((f) => f && f.n > 0)
+    .flatMap((f) => [f.b, f.a])
+    .filter((v): v is number[] => !!v && v.length === 4 && v[2] > 0 && v[3] > 0)
+    .map((v) => ({ box: { x: v[0], y: v[1], w: v[2], h: v[3] }, line: false }));
+  const rects = frameRects.length ? frameRects : screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
     .filter((r): r is { box: Box; line: boolean } => !!r);
   let place: { scale: number; tx: number; ty: number } | null = null;
   if (view.w && view.h) {

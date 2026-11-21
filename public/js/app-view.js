@@ -13895,6 +13895,14 @@ const AppView = {
           bMark: box(r && r.bMark, 3),
           aMark: box(r && r.aMark, 3),
         })).filter((r) => r.b || r.a);
+        // What each change on the screen is about (the element its shots
+        // agent shot, services/shots-diff.js): the card frames on these and
+        // never outlines them.
+        const frames = (Array.isArray(screen.frames) ? screen.frames : []).map((f) => ({
+          n: f && f.story ? Math.max(0, numberOf(f.story)) : 0,
+          b: box(f && f.b, 4),
+          a: box(f && f.a, 4),
+        })).filter((f) => f.n > 0 && (f.b || f.a));
         const changes = (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
           .map(numberOf).filter((n) => n > 0);
         // Image pixels per CSS pixel; shots saved before density was recorded are 1.
@@ -13933,6 +13941,7 @@ const AppView = {
           before: side(base, heightBefore),
           after: side(head, heightAfter),
           regions,
+          ...(frames.length ? { frames } : {}),
           changes,
         };
       }).filter(Boolean);
@@ -27480,8 +27489,15 @@ const AppView = {
       const hBefore = Number(screen.heightBefore);
       const hAfter = Number(screen.heightAfter);
       if (!(width > 0 && hBefore > 0 && hAfter > 0)) return null;
+      // What each change on the screen is about (its frame: the element its
+      // shots agent shot) when the run recorded one, else its outlines.
+      const framesOn = (which) => (Array.isArray(screen.frames) ? screen.frames : [])
+        .filter((frame) => frame && numberOf(frame.story) > 0)
+        .map((frame) => (which === 'base' ? frame.b : frame.a))
+        .filter((box) => Array.isArray(box) && box.length === 4 && box[2] > 0 && box[3] > 0);
       const unionOf = (which) => {
-        const rects = (Array.isArray(screen.regions) ? screen.regions : [])
+        const framed = framesOn(which);
+        const rects = framed.length ? framed : (Array.isArray(screen.regions) ? screen.regions : [])
           .filter((region) => region && numberOf(region.story) > 0)
           .map((region) => {
             const box = which === 'base' ? region.b : region.a;

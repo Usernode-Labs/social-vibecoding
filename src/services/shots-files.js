@@ -373,6 +373,35 @@ function checkElementSize(story, target, info, screenFile = null, { deviceDensit
   }
 }
 
+// Where an element shot sits on the screen shot of the same state, from the
+// box its browser measured as it was taken (worker/shots-browser-observer.js
+// measureElement): `focus` on the visible screen and `focusPage` on the whole
+// page, each "x,y,w,h" in CSS px. A screen shot taller than its declared
+// screen is a full-page one, and takes the page's. Kept as `{ x, y, w, h }`
+// only when it is whole numbers with a size and lies inside that screen shot
+// (rounding may leave one pixel over its edge, which is cut); anything else
+// is null, and the element shot is saved as it always was, without one.
+// `screenFile` is the same side's screen shot as saved (its 1x copy).
+function parseBox(value) {
+  if (typeof value !== 'string' || value.length > 64 || !/^-?\d{1,6}(?:,-?\d{1,6}){3}$/.test(value)) return null;
+  return value.split(',').map(Number);
+}
+function elementFrame(raw, screenFile, viewport) {
+  if (!viewport || !(screenFile?.width > 0) || !(screenFile?.height > 0) || screenFile.media === 'webm') return null;
+  const k = densityFor(screenFile.width, viewport.width);
+  const W = Math.floor(screenFile.width / k);
+  const H = Math.floor(screenFile.height / k);
+  const fullPage = Number(viewport.height) > 0 && H > Number(viewport.height) + 1;
+  const box = parseBox(fullPage ? raw?.focusPage : raw?.focus);
+  if (!box) return null;
+  let [x, y, w, h] = box;
+  if (x < 0 || y < 0 || w < 1 || h < 1 || x >= W || y >= H) return null;
+  if (x + w === W + 1) w -= 1;
+  if (y + h === H + 1) h -= 1;
+  if (w < 1 || h < 1 || x + w > W || y + h > H) return null;
+  return { x, y, w, h };
+}
+
 // The changes whose before and after screen shots are the same image on
 // every screen size, so their shots cannot show them.
 function identicalStories(intent, saved) {
@@ -573,6 +602,7 @@ module.exports = {
   DESKTOP_DENSITY,
   densityFor,
   checkElementSize,
+  elementFrame,
   identicalStories,
   markUnchanged,
   markFolded,

@@ -73,10 +73,13 @@ function createComparer({ timeoutMs = TIMEOUT_MS, maxWorkers = MAX_WORKERS, work
     let images;
     try {
       transferList = [];
-      // Only the PNGs the matcher reads, never clips or dense originals.
+      // Only the PNGs the matcher reads, never clips or dense originals,
+      // with an element shot's recorded place (its frame, shots-diff).
       images = files.filter((f) => f.media === 'png' && ['context', 'focus'].includes(f.variant)).map((f) => {
         const { storyId, viewport, side, variant, media, sha256 } = f;
-        return { storyId, viewport, side, variant, media, sha256, data: owned(f.data, transferList) };
+        const focusRect = variant === 'focus' && f.focusRect && typeof f.focusRect === 'object'
+          ? { x: f.focusRect.x, y: f.focusRect.y, w: f.focusRect.w, h: f.focusRect.h } : null;
+        return { storyId, viewport, side, variant, media, sha256, ...(focusRect ? { focusRect } : {}), data: owned(f.data, transferList) };
       });
     } catch (error) { return Promise.reject(error); }
     return run({ shotsComparison: true, stories, files: images }, transferList, { signal });
@@ -119,4 +122,5 @@ module.exports = {
   screensFor: createComparer(),
   checkSave: createChecker(),
   unchangedStories: require('./shots-diff').unchangedStories,
+  elsewhereNotices: require('./shots-diff').elsewhereNotices,
 };

@@ -1534,7 +1534,13 @@ async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
       }
       if (folded.size) stories = shotsFiles.markFolded(stories, folded);
     }
-    return { ...verdict, screens, stories };
+    // A screen on which something sizeable changed outside every change's
+    // frame says so beside the agent's own notices (shots-diff
+    // elsewhereChanged). Injected comparers may not have it.
+    const notices = typeof diff.elsewhereNotices === 'function'
+      ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
+      : (verdict.notices || []);
+    return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
   } catch (error) {
     if (signal?.aborted) throw error;
     log.warn('shots', 'Could not compare the before and after screens', {

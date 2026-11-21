@@ -127,18 +127,66 @@ function readJson(file) {
 
 const stampFile = (outputDir, name) => path.join(provenanceDir(outputDir), `${path.basename(name)}.json`);
 
-/** Record the site the screenshot just saved in outputDir was taken on. */
-function stampScreenshot(outputDir, imagePath, pageUrl) {
+/**
+ * Record the site the screenshot just saved in outputDir was taken on, and
+ * return the image's digest. `boxPending` marks an element screenshot whose
+ * box the observer is still measuring (stampElementBox settles it).
+ */
+function stampScreenshot(outputDir, imagePath, pageUrl, { boxPending = false } = {}) {
+  const sha256 = digest(fs.readFileSync(imagePath));
   writePrivate(stampFile(outputDir, imagePath), {
-    origin: webOrigin(pageUrl), sha256: digest(fs.readFileSync(imagePath)),
+    origin: webOrigin(pageUrl), sha256, ...(boxPending ? { boxPending: true } : {}),
   });
+  return sha256;
+}
+
+// An element's box as the browser measured it when its screenshot was
+// taken: `view` on the visible screen, `page` on the whole page, each
+// [x, y, width, height] in the screen's CSS pixels. Whole numbers with a
+// size; a corner may sit off the screen (the platform checks it is inside
+// the screen shot before it keeps it).
+const boxInts = (value) => Array.isArray(value) && value.length === 4
+  && value.every((n) => Number.isSafeInteger(n) && Math.abs(n) <= 20000) && value[2] > 0 && value[3] > 0;
+function validElementBox(box) {
+  return !!box && boxInts(box.view) && boxInts(box.page);
+}
+
+/**
+ * Settle an element screenshot's box: the one measured, or none (`null`)
+ * when it could not be. Written only while the stamp still describes the
+ * image measured (`sha256`), so a file saved again under the same name
+ * never takes another element's box.
+ */
+function stampElementBox(outputDir, name, sha256, box) {
+  const file = stampFile(outputDir, name);
+  const value = readJson(file);
+  if (!value || typeof value.sha256 !== 'string' || value.sha256 !== sha256) return false;
+  const { boxPending: _pending, box: _previous, ...rest } = value;
+  writePrivate(file, {
+    ...rest,
+    ...(validElementBox(box) ? { box: { view: box.view.slice(), page: box.page.slice() } } : {}),
+  });
+  return true;
+}
+
+/**
+ * What this image's stamp says, or null when it has no stamp or is not the
+ * image stamped: its site (null when the page had none), its element box
+ * when one was measured, and whether that measurement is still under way.
+ */
+function screenshotStamp(outputDir, name, image) {
+  const value = readJson(stampFile(outputDir, name));
+  if (typeof value?.sha256 !== 'string' || digest(image) !== value.sha256) return null;
+  return {
+    origin: typeof value.origin === 'string' ? value.origin : null,
+    box: validElementBox(value.box) ? { view: value.box.view.slice(), page: value.box.page.slice() } : null,
+    boxPending: value.boxPending === true,
+  };
 }
 
 /** The site this image was stamped with, or null when it has no stamp or is not the image stamped. */
 function screenshotOrigin(outputDir, name, image) {
-  const value = readJson(stampFile(outputDir, name));
-  if (typeof value?.origin !== 'string' || typeof value?.sha256 !== 'string') return null;
-  return digest(image) === value.sha256 ? value.origin : null;
+  return screenshotStamp(outputDir, name, image)?.origin ?? null;
 }
 
 /** Record every site a browser session showed, as it closes (its clip's pages). */
@@ -201,6 +249,9 @@ module.exports = {
   provenanceDir,
   webOrigin,
   stampScreenshot,
+  stampElementBox,
+  validElementBox,
+  screenshotStamp,
   screenshotOrigin,
   recordSession,
   sessionOrigins,

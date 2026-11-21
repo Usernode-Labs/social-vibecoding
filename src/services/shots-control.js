@@ -234,16 +234,21 @@ class RunControl {
               + 'scrolled to the same place as the light shot, or leave it out.', 400);
         }
       }
-      shots.checkElementSize(
-        this.declaredChange(target.storyId), target, info,
-        this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
-        { deviceDensity, density },
-      );
+      const declared = this.declaredChange(target.storyId);
+      const screenFile = this.saved.get(shots.slotKey({ ...target, variant: 'context' }));
+      shots.checkElementSize(declared, target, info, screenFile, { deviceDensity, density });
       const slot = shots.slotKey(target);
       const entry = flat
         ? shots.stored(target, flatBuffer, flat, { density, data: buffer, ...info })
         : shots.stored(target, buffer, info);
       entry.publicSafe = publicSafeOf(rawTarget?.showsPrivate);
+      // An element shot's place on its screen shot, as its browser measured
+      // it: what the card frames the change on (shots-diff.screensFor). One
+      // that cannot be checked against a saved screen shot is left out.
+      if (target.variant === 'focus') {
+        entry.focusRect = shots.elementFrame(rawTarget, screenFile,
+          declared.viewports.find((viewport) => viewport.name === target.viewport));
+      }
       // A light screen taken again in another state leaves its dark shot
       // showing the old one: it goes, and is taken again with the new one.
       const previous = this.saved.get(slot);
@@ -464,6 +469,13 @@ function publicSafeOf(showsPrivate) {
 
 // A saved file as RunControl keeps it: everything but its bytes. The store
 // holds those (the old byte column until backfill); publication copies keys.
+// An element shot's stored place: whole CSS px with a size, else none.
+function focusRectOf(value) {
+  const ok = value && typeof value === 'object' && ['x', 'y', 'w', 'h']
+    .every((key) => Number.isSafeInteger(value[key]) && value[key] >= 0 && value[key] <= 20000);
+  return ok && value.w > 0 && value.h > 0 ? { x: value.x, y: value.y, w: value.w, h: value.h } : null;
+}
+
 function fileEntry(row) {
   return {
     storyId: row.story_id, viewport: row.viewport, side: row.side, variant: row.variant, media: row.media,
@@ -476,9 +488,10 @@ function fileEntry(row) {
     dense: Number.isInteger(row.density) && row.density > 1 ? {
       width: row.dense_width, height: row.dense_height, bytes: row.dense_bytes, sha256: row.dense_sha256,
     } : null,
-    // A close-up's number on its screen, region and density (shots-closeups.js).
+    // A close-up's number on its screen, region and density (shots-closeups.js);
+    // an element shot's place on its screen shot, when its browser measured it.
     ...(row.variant === 'closeup' ? { part: Number(row.part) || 1, scale: Number(row.scale), focusRect: row.focus_rect || null }
-      : { focusRect: null }),
+      : { focusRect: row.variant === 'focus' ? focusRectOf(row.focus_rect) : null }),
     // A still's smaller copies and its preview (#6825); null for a clip, a
     // close-up, and every still saved before they existed.
     sized: row.thumb_sha256 || row.screen_sha256 || row.placeholder ? {
@@ -630,7 +643,8 @@ async function persist(db, control, store) {
         f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1,
         f.dense?.width || null, f.dense?.height || null, f.dense?.bytes ?? null, f.dense?.sha256 || null,
         f.variant === 'closeup' ? f.part : 0, f.variant === 'closeup' ? f.scale : null,
-        f.variant === 'closeup' && f.focusRect ? JSON.stringify(f.focusRect) : null, f.publicSafe === true ? true : null,
+        (f.variant === 'closeup' || f.variant === 'focus') && f.focusRect ? JSON.stringify(f.focusRect) : null,
+        f.publicSafe === true ? true : null,
         objectKey, denseObjectKey,
         thumbObjectKey, f.sized?.thumb?.width || null, f.sized?.thumb?.height || null,
         f.sized?.thumb?.bytes ?? null, f.sized?.thumb?.sha256 || null,

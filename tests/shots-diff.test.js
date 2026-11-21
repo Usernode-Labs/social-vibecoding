@@ -379,3 +379,169 @@ test('checkSave compares a dark screen with its light one and finds an element s
   assert.deepEqual(diff.checkSave({ kind: 'element', screen: png(button), element: png(page) }),
     { kind: 'element', found: false, decided: false });
 });
+
+// ── Frames: the card frames on the element a claim is about ─────────────
+//
+// PR 6958 ("a thin line runs under the top bar"): the line, 10% black on the
+// cream page, differs by about 24 a channel, under the comparison's
+// tolerance, so nothing was outlined at the top; its card framed two strips
+// of card text far below instead, and the change still read as ready.
+
+const CREAM = [246, 241, 228];
+const tenthDarker = (rgb) => rgb.map((c) => Math.round(c * 0.9));
+
+test('a 1 px line a tenth darker than a light ground is found', () => {
+  const before = screen(320, 120, [...glyphs(10, 10, 12)], CREAM);
+  const after = screen(320, 120, [...glyphs(10, 10, 12), [0, 52, 320, 1, tenthDarker(CREAM)]], CREAM);
+  const found = diff.regions(before, after);
+  assert.equal(found.length, 1, 'the line is a change');
+  const [region] = found;
+  assert.equal(region.a[1], 52);
+  assert.equal(region.a[3], 1);
+  assert.ok(region.a[2] >= 300, 'as wide as the line');
+  // A short tick that faint is not a line: under 24 px it stays noise.
+  const tick = screen(320, 120, [...glyphs(10, 10, 12), [200, 52, 12, 1, tenthDarker(CREAM)]], CREAM);
+  assert.deepEqual(diff.regions(before, tick), []);
+  // A faint band four rows tall is not a hairline either: it is measured at
+  // the comparison's own tolerance, which it is under.
+  const band = screen(320, 120, [...glyphs(10, 10, 12), [0, 52, 320, 4, tenthDarker(CREAM)]], CREAM);
+  assert.deepEqual(diff.regions(before, band), []);
+});
+
+test('one or two levels of noise across a screen are still not a change', () => {
+  const base = screen(240, 160, [...glyphs(10, 10, 20), [20, 60, 120, 30, [37, 99, 235]]], CREAM);
+  // Every pixel moved by up to two levels, as image compression moves them.
+  const noisy = { w: base.w, h: base.h, d: Uint8Array.from(base.d) };
+  let seed = 7;
+  const next = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed; };
+  for (let i = 0; i < noisy.d.length; i += 4) {
+    for (let c = 0; c < 3; c += 1) noisy.d[i + c] = Math.max(0, Math.min(255, noisy.d[i + c] + (next() % 5) - 2));
+  }
+  assert.deepEqual(diff.regions(base, noisy), []);
+  // One row of that noise alone, which the hairline pass does look at.
+  const oneRow = { w: base.w, h: base.h, d: Uint8Array.from(base.d) };
+  for (let x = 0; x < base.w; x += 1) {
+    const i = (100 * base.w + x) * 4;
+    for (let c = 0; c < 3; c += 1) oneRow.d[i + c] = Math.max(0, oneRow.d[i + c] - 2 - (x % 3));
+  }
+  assert.deepEqual(diff.regions(base, oneRow), []);
+});
+
+// Two identical buttons; the change is a badge beside the first. The claim
+// is about the second, and its browser recorded that.
+function twoButtons() {
+  const button = (y) => [[20, y, 80, 24, [37, 99, 235]], ...glyphs(26, y + 7, 9, [255, 255, 255])];
+  const page = [...glyphs(10, 8, 20), ...button(40), ...button(140)];
+  const before = screen(240, 200, page);
+  const after = screen(240, 200, [...page, [104, 44, 20, 16, [220, 40, 40]]]);
+  return { before, after, element: crop(after, 20, 140, 80, 24) };
+}
+
+test('a claim\'s frame and its areas follow the element\'s recorded place, not the best image-search match', async () => {
+  const { before, after, element } = twoButtons();
+  const stories = [{ id: 'second', viewports: [{ name: 'desktop', width: 240, height: 200 }] }];
+  const files = (focusRect) => [
+    file('second', 'desktop', 'base', 'context', before), file('second', 'desktop', 'head', 'context', after),
+    { ...file('second', 'desktop', 'head', 'focus', element), ...(focusRect ? { focusRect } : {}) },
+  ];
+  // Searched for by its pixels, the element is found at both buttons, and
+  // the one beside what changed is taken: the wrong one.
+  const [searched] = await diff.screensFor(stories, files(null));
+  assert.deepEqual(searched.frames, [{ story: 'second', b: null, a: [20, 40, 80, 24] }]);
+  assert.equal(searched.regions[0].story, 'second');
+  // Recorded where it was shot, the frame is the second button, and the
+  // badge beside the first is something else that changed.
+  const [recorded] = await diff.screensFor(stories, files({ x: 20, y: 140, w: 80, h: 24 }));
+  assert.deepEqual(recorded.frames, [{ story: 'second', b: null, a: [20, 140, 80, 24] }]);
+  assert.equal(recorded.regions.length, 1);
+  assert.equal(recorded.regions[0].story, null);
+  assert.deepEqual([...diff.unchangedStories([recorded])], ['second'], 'nothing differs where the claim is about');
+  // A recorded place the screen shot does not show the element at (the
+  // page moved between the two shots) is not believed: it is searched for.
+  const [moved] = await diff.screensFor(stories, files({ x: 120, y: 100, w: 80, h: 24 }));
+  assert.deepEqual(moved.frames[0].a, [20, 40, 80, 24]);
+  // Nor is one off the screen, or of another size than the element shot.
+  for (const odd of [{ x: 200, y: 140, w: 80, h: 24 }, { x: 20, y: 140, w: 40, h: 24 }]) {
+    const [shown] = await diff.screensFor(stories, files(odd));
+    assert.deepEqual(shown.frames[0].a, [20, 40, 80, 24], JSON.stringify(odd));
+  }
+});
+
+test('unchangedStories ignores areas outside a claim\'s frame; a claim with no frame keeps the old rule', () => {
+  const frame = { story: 'bar', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] };
+  const decoys = [
+    { story: null, b: [40, 615, 400, 12], a: [40, 615, 400, 12], bMark: null, aMark: null },
+    { story: null, b: [40, 671, 400, 12], a: [40, 671, 400, 12], bMark: null, aMark: null },
+  ];
+  const shown = (regions, frames = [frame]) => [{ viewport: 'desktop', shot: 'bar', stories: ['bar'], regions, frames }];
+  assert.deepEqual([...diff.unchangedStories(shown(decoys))], ['bar'], 'what differs elsewhere says nothing about it');
+  const line = { story: 'bar', b: [0, 51, 1280, 1], a: [0, 51, 1280, 1], bMark: null, aMark: null };
+  assert.deepEqual([...diff.unchangedStories(shown([...decoys, line]))], [], 'a line inside the frame is the change');
+  // A part only one side has touches the frame by its mark line.
+  const gone = { story: null, b: [0, 20, 200, 30], a: null, bMark: null, aMark: [0, 20, 200] };
+  assert.deepEqual([...diff.unchangedStories(shown([gone]))], []);
+  // A frame with only its after side stands for the before side too.
+  const fresh = { story: 'bar', b: null, a: [0, 0, 1280, 52] };
+  assert.deepEqual([...diff.unchangedStories(shown([{ ...line, a: null, aMark: [0, 51, 1280] }], [fresh]))], []);
+  // No frame: any area on the screen counts, as before frames.
+  assert.deepEqual([...diff.unchangedStories(shown(decoys, []))], []);
+  assert.deepEqual([...diff.unchangedStories(shown([], []))], ['bar']);
+});
+
+test('something sizeable that changed outside every frame raises one notice; antialiased text does not', () => {
+  const frame = { story: 'bar', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] };
+  const area = (y, h, w = 400, story = null) => ({ story, b: [40, y, w, h], a: [40, y, w, h], bMark: null, aMark: null });
+  const shown = (regions, frames = [frame]) => [{ viewport: 'desktop', shot: 'bar', stories: ['bar'], regions, frames }];
+  // Two 12 px strips of text (PR 6958's): under the size a notice needs.
+  assert.deepEqual(diff.elsewhereNotices(shown([area(615, 12), area(671, 12)])), []);
+  const card = area(300, 120);
+  assert.deepEqual(diff.elsewhereNotices(shown([card])), [{
+    text: diff.ELSEWHERE_TEXT, change: 'bar', screen: 'desktop', shot: 'screen', alsoBefore: 'unknown',
+  }]);
+  // Inside the frame it is the change itself; with no frame there is nothing
+  // to be outside of; a block that only moved is not something else.
+  assert.deepEqual(diff.elsewhereNotices(shown([{ ...card, b: [0, 10, 400, 120] }])), []);
+  assert.deepEqual(diff.elsewhereNotices(shown([card], [])), []);
+  assert.deepEqual(diff.elsewhereNotices(shown([{ ...card, b: [40, 200, 400, 120] }])), []);
+  // After the agent's own notices, once a screen, and never past the cap.
+  const own = Array.from({ length: 4 }, (_, i) => ({ text: `n${i}`, change: 'bar', screen: 'desktop', shot: null, alsoBefore: false }));
+  const twice = [...shown([card]), { ...shown([card])[0] }];
+  assert.equal(diff.elsewhereNotices(twice, own).length, 5);
+  assert.equal(diff.elsewhereNotices(twice, own).at(-1).text, diff.ELSEWHERE_TEXT);
+  assert.equal(diff.elsewhereNotices(twice, [...own, { ...own[0] }]).length, 5, 'no room left');
+});
+
+test('PR 6958: the frame is the top bar, its faint line is the change, and the strips far below are not', async () => {
+  const bar = [252, 250, 244];
+  const page = (strips) => [
+    [0, 0, 1280, 52, bar], ...glyphs(24, 21, 14),
+    [40, 120, 560, 420, [255, 255, 255]], ...glyphs(60, 150, 30),
+    ...strips,
+  ];
+  const before = screen(1280, 800, page([...glyphs(60, 615, 40), ...glyphs(60, 671, 36)]), CREAM);
+  // After: a 1 px line at the bar's foot, 10% black over the bar, and the
+  // two strips of card text redrawn (unrelated to the claim).
+  const after = screen(1280, 800, [
+    ...page([...glyphs(63, 615, 40), ...glyphs(57, 671, 38)]),
+    [0, 51, 1280, 1, tenthDarker(bar)],
+  ], CREAM);
+  const stories = [{ id: 'line', viewports: [{ name: 'desktop', width: 1280, height: 800 }] }];
+  const topBar = { x: 0, y: 0, w: 1280, h: 52 };
+  const files = [
+    file('line', 'desktop', 'base', 'context', before), file('line', 'desktop', 'head', 'context', after),
+    { ...file('line', 'desktop', 'base', 'focus', crop(before, 0, 0, 1280, 52)), focusRect: topBar },
+    { ...file('line', 'desktop', 'head', 'focus', crop(after, 0, 0, 1280, 52)), focusRect: topBar },
+  ];
+  const screens = await diff.screensFor(stories, files);
+  assert.equal(screens.length, 1);
+  const [shown] = screens;
+  assert.deepEqual(shown.frames, [{ story: 'line', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] }], 'the frame is the top bar');
+  const mine = shown.regions.filter((region) => region.story === 'line');
+  assert.equal(mine.length, 1, 'the line is outlined, as the bar it runs under');
+  assert.deepEqual(mine[0].a, [0, 0, 1280, 52]);
+  const others = shown.regions.filter((region) => region.story === null);
+  assert.equal(others.length, 2, 'the two strips are still outlined, as something else');
+  assert.ok(others.every((region) => region.a[1] >= 600 && region.a[3] <= 14));
+  assert.deepEqual([...diff.unchangedStories(screens)], [], 'the claim is not unchanged');
+  assert.deepEqual(diff.elsewhereNotices(screens), [], 'two strips of text raise no notice');
+});
