@@ -24,7 +24,7 @@
 // ── Shape ────────────────────────────────────────────────────────────────
 //
 // A QUEUE, not an hourly sweep. `refreshQueue` reads the GitHub issue cache
-// for every app every REFRESH_INTERVAL_MS and upserts one row per eligible
+// for every app every five minutes and upserts one row per eligible
 // issue into homeroom_bot_queue; the leader's work loop drains it. Draining
 // is PER APP in batches: the bot keeps one dev session per app, so every
 // issue of that app runs through the same warm worker container and pays
@@ -372,17 +372,11 @@ const DEFAULT_WEEKLY_LIMIT_CENTS = 15000;
 // Loop cadence. The loop is EVENT-DRIVEN: an issue filed, edited or
 // discussed on the platform calls noteIssueActivity, which queues that app's
 // issues and wakes the loop at once (its bot-request and bot-lane machines,
-// src/workflow/, whichever conductor runs their work). A pass drains
-// one batch; when it did work the next pass follows almost at once, and when
-// the queue was empty the loop sleeps until the next wake. The idle delay is
-// only a fallback poll for a wake that was lost, and REFRESH_INTERVAL_MS is
+// src/workflow/, whichever conductor runs their work). The bot-lane
+// machine's refresh, every five minutes (its REFRESH_EVERY_MS), is
 // the reconcile sweep for what no event can tell us — an issue opened or
 // commented on GitHub directly, a claim that expired — read through
 // github.fetchPublicIssues' own cache.
-const FIRST_PASS_DELAY_MS = 60 * 1000;
-const BUSY_PASS_DELAY_MS = 2 * 1000;
-const IDLE_PASS_DELAY_MS = 30 * 1000;
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 // One turn for a burst. People write a thought in two or three messages, or
 // a message and then a bare "@Homeroom bot" (PR #4584, 9 Oct 2026: a message
 // and its ping 2 seconds apart were answered twice, 23 seconds apart). A
@@ -391,8 +385,6 @@ const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 // (rules/bot-loop.ts READ_CANDIDATES_SQL); a wake that long after the message picks it up then
 // (wakeAfterSettle).
 const SETTLE_MS = 20 * 1000;
-// What wakes the loop for a person's words, and so waits to settle.
-const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
 // What a person asked for in their DM with the bot queues with one of these
 // (homeroom-bot-mayor.js, homeroom-bot-dm.js). One story per request: every
 // request gets a card in its requester's chat with the bot, however it was
@@ -455,8 +447,6 @@ const MAX_WAITING_PER_APP = 100;
 // in the first day, a median of 31 seconds apart, which is the idle poll.
 const BACKOFF_BASE_MS = 2 * 60 * 1000;
 const BACKOFF_CEILING_MS = 60 * 60 * 1000;
-// How far past one turn's budget a claimed queue row counts as abandoned.
-const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
 // A build on the platform's own repository gets this many times a build's
 // clocks, its spec's and its build turn's (#3396). The repository is far
 // larger than any app's: its specs ran past 10 minutes, and a build ran out
@@ -515,6 +505,10 @@ const PLAN_RETRY_REASON = 'plan_retry';
 // gone on. It waits quietly, as a restart's row does, and the balance read
 // that lifts the pause lets the lane grant it again; nobody replies.
 const CREDIT_WAIT_REASON = 'credit_wait';
+// How often the write that queues a build's credit wait is tried, and the
+// wait before the second and third try (recordLiveBuild).
+const CREDIT_QUEUE_TRIES = 3;
+const CREDIT_QUEUE_WAIT_MS = 400;
 const PLAN_RETRY_AFTER_MS = 3 * 60 * 1000;
 // The queue reason of a request somebody asked the bot to build from its
 // page, or just filed on a project it builds on (homeroom-bot-dm.js
@@ -690,10 +684,9 @@ let triagePromptCache = null;
 // bootstrapped, the bot has no key or model, the ledger refused the turn.
 // Retrying the next issue would fail the same way, so the pass stops and
 // the loop idles; the queue row is kept for when the fault is cleared.
-const INFRA_ERRORS = new Set([
-  'backend_disabled', 'credential_required', 'model_required', 'invalid_base_url',
-  'agent_context_changed', 'session_busy', 'ledger_start_failed', 'not_a_codex_session',
-]);
+// The list is bot-turn-failure.js's, the one sort of a failed turn.
+const turnFailure = require('./bot-turn-failure');
+const INFRA_ERRORS = new Set(turnFailure.DISPATCH_CODES);
 
 // ── Settings ─────────────────────────────────────────────────────────────
 
@@ -1421,6 +1414,14 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       const limits = require('./limits');
       limits.invalidate();
     } catch {}
+    // That backstop is what OpenRouter refuses on, and the sync that moves
+    // it runs when a coding turn starts. While the bot is paused because its
+    // budget is used up at OpenRouter no turn starts, so a raised budget
+    // would not reach the key until the week turned. A saved budget is taken
+    // to the key now, and the figures read back: the pause lifts on that
+    // read, and the limits area's row follows.
+    await syncBudget(pool, config).catch((err) =>
+      log.warn('homeroom-bot', 'Could not take the saved weekly budget to the bot\'s key', { err: err.message }));
   }
   // More room for live work is used now, and a bot switched on rebuilds
   // its whole queue now (the lane: its grants and its refresh, soon). A
@@ -1438,6 +1439,30 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       log.warn('homeroom-bot', 'Could not release requests held for a week that got room', { err: err.message }));
   }
   return { ok: true };
+}
+
+/**
+ * A saved weekly budget, taken where OpenRouter enforces it: the bot key's
+ * own limit is brought in line (openrouter-managed-keys.js syncAllowance),
+ * the credit sweep reads the key back (lifting a pause whose cause was the
+ * budget, once the key can spend again), and the budget's limit is evaluated
+ * so its row and notice follow. Best-effort: the caller's save has already
+ * succeeded, and each step also happens later by itself.
+ */
+async function syncBudget(pool, config, deps = {}) {
+  const { rows: [botRow] = [] } = await pool.query(
+    'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME],
+  );
+  if (!botRow) return;
+  const managedOpenRouter = deps.managedOpenRouter || require('./openrouter-managed-keys');
+  if (managedOpenRouter.managedKeysEnabled(config)) {
+    await managedOpenRouter.syncAllowance({
+      pool, userId: botRow.id, config,
+      state: await managedOpenRouter.stateForUser(pool, botRow.id),
+    });
+  }
+  await (deps.credit || require('./openrouter-credit')).sweep(pool, config);
+  await (deps.limitAlerts || require('./platform-limit-alerts')).evaluate(pool, config, 'bot_budget');
 }
 
 // ── Identity ─────────────────────────────────────────────────────────────
@@ -3962,14 +3987,18 @@ function describeStop(result) {
  * (openrouter-credit.js creditOut): its error, as the platform wrote it (a
  * routed error code, the provider's notice), and what the worker read of how
  * the turn ended (`turn`: the Codex harness's agentErrorCode, a 402 status).
- * An error that quotes the model's reply (`unparseable: …`) is never read as
- * a provider's words; its turn still is.
+ * An error that quotes the model's reply (`unparseable: …`) or that the
+ * platform wrote itself (`session: …`, `worker: …`) is never read as a
+ * provider's words; its turn still is.
  */
 function creditOutOf(error, turn = null) {
-  const credit = require('./openrouter-credit');
-  const text = typeof error === 'string' && !error.startsWith('unparseable:') ? error : null;
-  if (text && credit.creditOut(text)) return true;
-  return !!turn && typeof turn === 'object' && credit.creditOut(turn);
+  // Review B1: the platform's own error text is never read as a provider's
+  // words (a "session: ... 402 ..." would have paused every project). Only a
+  // bare code (`insufficient_credits`) and the runtime's notice kept under
+  // `provider:` are; everything else is read from the turn's own fields.
+  const e = typeof error === 'string' ? error : '';
+  const providerText = e.startsWith('provider:') ? e.slice('provider:'.length) : null;
+  return turnFailure.sort({ code: e, turn, providerText }).class === 'credit';
 }
 
 // One outage's key (openrouter-credit.js noteOutage), so a line said for it
@@ -3984,7 +4013,7 @@ function outageKey(outage) {
 // probe_unobservable), or the provider's own error code ended it. Either is
 // the platform failing under the turn, never the model's answer.
 function emptyReplyIsInfra(result) {
-  return !!(result && (result.markerlessCause || result.agentErrorCode));
+  return !!turnFailure.turnPlatformCause(result);
 }
 
 /**
@@ -4449,12 +4478,12 @@ async function runTriage(pool, config, {
   // A platform fault (`infra`) is the platform's: the request keeps its
   // debt and its tries (trace L5), the lane pauses every grant, and no run
   // is written that a refresh would count as a failed read of the thread.
-  // Except when it is the request's FAULT_TRIES-th fault in a row, or a
-  // fault this request will always get (`recorded`: the provider refusing
-  // its conversation): then the run is written as a failed read, which the
-  // refresh counts like any (FAILED_TRIAGE_TRIES), so one request cannot
-  // keep the lane pausing for ever. Neither is a benchmark case.
-  const recordFailure = async (error, extra = {}, { infra = false, recorded = false, turn = null } = {}) => {
+  // Except when it is the request's FAULT_TRIES-th fault in a row: then the
+  // run is written as a failed read, which the refresh counts like any
+  // (FAILED_TRIAGE_TRIES), so one request (a provider refusing its
+  // conversation every time) cannot keep the lane pausing for ever. It is
+  // no benchmark case.
+  const recordFailure = async (error, extra = {}, { infra = false, turn = null } = {}) => {
     if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
     // T1.3: OpenRouter's credit ran out under the turn (its error, or what
     // the worker read of how it ended: the Codex harness's
@@ -4466,7 +4495,7 @@ async function runTriage(pool, config, {
       return { ran: false, reason: 'credit', detail: clip(String(error || 'insufficient_credits'), 300) };
     }
     const lastFault = Number(item.faults || 0) + 1 >= loopRules.FAULT_TRIES;
-    if (infra && !recorded && !lastFault) {
+    if (infra && !lastFault) {
       look.fault();
       log.warn('homeroom-bot', 'Triage failed on the platform', { app: app.slug, issueNumber, error });
       return { ran: false, reason: 'infra', detail: error, runId: null };
@@ -5267,15 +5296,18 @@ async function runTriage(pool, config, {
     // "API Error: 400 messages[6]: tool messages must include a non-empty
     // string tool_call_id") is the provider's failure, not the model's: it
     // is a platform fault, so the lane pauses, and it is no benchmark case.
-    // One this issue always gets cannot wedge the bot: the run it writes
-    // reads as unchanged at the next refresh, so the request is no longer
-    // owed, and counts toward FAILED_TRIAGE_TRIES on this thread like any
-    // failed read.
+    // Review A2: it is no failed read of the thread either. It used to be
+    // written as one at once, so two provider blips half an hour apart left
+    // a request unread until somebody wrote on it. The request keeps its
+    // debt and its tries and backs off (recordFailure's infra path). One
+    // this issue always gets still cannot wedge the bot: its FAULT_TRIES-th
+    // fault in a row is written as a failed read, which the refresh counts
+    // (FAILED_TRIAGE_TRIES) and reads as unchanged.
     const apiFailure = agentApiFailure(text);
     if (apiFailure) {
       return recordFailure(`provider: ${apiFailure.line}`, {
         sessionId: session.id, costUsd, ...usage,
-      }, { infra: true, recorded: true, turn: result });
+      }, { infra: true, turn: result });
     }
     // The reply decided in words and never wrote its block (14 of the 19
     // failed triages in the week to 2026-10-06: "Small, bounded, no schema
@@ -6002,13 +6034,13 @@ async function runFollowUp(pool, config, {
   // unless they were tried as often as they may be, and then the people who
   // asked hear so. A refusal or a platform fault never got going, so it is
   // not a try.
-  const asksFailed = async (error, { refund = false } = {}) => {
+  const asksFailed = async (error, { refund = false, why = null } = {}) => {
     const gaveUp = await voice.releaseAsks(pool, { runTag, refund }).catch(() => []);
     if (gaveUp.length) {
       // Owed by the places they asked in, and said by their work.
       await voice.reportFollowUp(pool, config, {
         app, session: reportSession, asks: gaveUp, runTag: `${runTag}-failed`, deps: voiceDeps,
-        outcome: { action: 'failed', why: replyFailedWhy(error) },
+        outcome: { action: 'failed', why: why || replyFailedWhy(error) },
       }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
     }
     if (!refund) await requeueAsks();
@@ -6016,21 +6048,36 @@ async function runFollowUp(pool, config, {
   const fail = async (error, extra = {}, opts = {}) => {
     const out = await recordFailure(error, { proposalSessionId: proposal.id, threadSeenAt: seenThrough, ...extra }, opts);
     if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
+    // Review A2: a platform failure (bot-turn-failure.js) is no try: the
+    // request keeps its debt and backs off, and its asks wait for the look
+    // that follows. Only its FAULT_TRIES-th in a row is written as a run
+    // (recordFailure): then it is said, as Homeroom's failure and never the
+    // change's, and counted as an incident.
+    const capped = !!opts.infra && !!out?.ran;
+    const why = capped ? turnFailure.PLATFORM_WHY : replyFailedWhy(error);
+    if (capped) {
+      await turnFailure.recordPlatformIncident(pool, {
+        where: 'a reply on its change', cause: turnFailure.sort({ code: error, turn: opts.turn || null }).cause,
+        detail: { appId: app.id, sessionId: proposal.id, issueNumber, runId: out.runId || null },
+      });
+    }
     if (asks.length) {
       // T1.3: a turn that ran out of OpenRouter's credit was no try either:
       // its asks wait for the look the request is owed once credit is back.
-      await asksFailed(error, { refund: !!opts.infra || REFUSAL_ERRORS.has(error) || out?.reason === 'credit' });
+      await asksFailed(error, {
+        refund: (!!opts.infra && !capped) || REFUSAL_ERRORS.has(error) || out?.reason === 'credit', why,
+      });
       if (!others.length) return out;
     }
     // #4610: a reply turn that failed used to post nothing, so the person
     // who wrote heard nothing at all. A wait (a refusal) is said where it
     // happens, and a platform fault is retried on its own row: neither is
     // this. One plain line, and whether it tries again on its own.
-    if (!opts.infra && !REFUSAL_ERRORS.has(error) && out?.ran && deps.ws) {
+    if ((!opts.infra || capped) && !REFUSAL_ERRORS.has(error) && out?.ran && deps.ws) {
       await postThreadNote({
         pool, ws: deps.ws, app, issueNumber, runId: out.runId || null, kind: 'followup_failed', bot, sessionId: noteSessionId,
         text: followup.replyFailedText({
-          why: replyFailedWhy(error), retrying: priorFailures + 1 < followup.MAX_REPLY_TRIES,
+          why, retrying: priorFailures + 1 < followup.MAX_REPLY_TRIES,
         }),
       });
     }
@@ -6348,10 +6395,15 @@ async function runFollowUp(pool, config, {
   const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
     // T1.3: its turn's own result is read for OpenRouter's 402 for credit.
-    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent, { turn: result });
+    // Review A2: and for the platform failing under it (a provider's error
+    // where an answer should be, a worker that ran out of memory): that
+    // spent one of the reply's two tries and was said as "something went
+    // wrong while it worked on it".
+    const infra = turnFailure.sort({ turn: result }).class === 'platform';
+    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent, { infra, turn: result });
     return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, {
       ...spent, unreadableReply: unreadableReplyOf(result.lastResultText),
-    }, { turn: result });
+    }, { infra, turn: result });
   }
 
   let runId = null;
@@ -7368,19 +7420,32 @@ async function runChecksFix(pool, config, {
   // counts toward MAX_REVISIONS. The second time out hands over as before.
   // Once across the look's attempts: the retry run this writes would read
   // as retried already to a resumed attempt.
-  if (turn.stopped && !await look.once('retried', () => checksRetried(pool, session.id, head))) {
+  // Review A2: and so is a fix the platform failed under (a provider's
+  // error where its answer should be, a worker that ran out of memory). One
+  // provider 5xx used to hand the change to a person.
+  const platformFailed = !turn.stopped && !code && !parsed && turnFailure.sort({ turn: result }).class === 'platform';
+  if ((turn.stopped || platformFailed) && !await look.once('retried', () => checksRetried(pool, session.id, head))) {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item), lookKind: 'retry',
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed',
-      reason: 'its attempt to fix them ran out of time', error: checksRetryError(head),
+      reason: platformFailed ? 'its attempt to fix them failed on Homeroom\'s side' : 'its attempt to fix them ran out of time',
+      error: checksRetryError(head),
       threadSeenAt, model, durationMs: Date.now() - startedMs,
-      proposalSessionId: session.id, ...spent, budgetStop: 'wall clock',
+      proposalSessionId: session.id, ...spent, ...(platformFailed ? {} : { budgetStop: 'wall clock' }),
     });
-    await recordSnapshot(runId);
+    // A platform failure is no benchmark case (recordFailure).
+    if (!platformFailed) await recordSnapshot(runId);
     await dropRow();
-    await note('checks_retry', { runId, text: followup.checksRetryText({ broken: broken.length > 0, failing: failing.length > 0, skipped: skipped.length > 0 }) });
-    log.warn('homeroom-bot', 'Fix of its proposal\'s checks ran out of time; trying once more', {
+    await note('checks_retry', {
+      runId,
+      text: followup.checksRetryText({
+        broken: broken.length > 0, failing: failing.length > 0, skipped: skipped.length > 0, platform: platformFailed,
+      }),
+    });
+    log.warn('homeroom-bot', platformFailed
+      ? 'Fix of its proposal\'s checks failed on the platform; trying once more'
+      : 'Fix of its proposal\'s checks ran out of time; trying once more', {
       app: app.slug, issueNumber, sessionId: session.id, head, runId,
     });
     // Owed again once this look ends: the fix is still due on this head.
@@ -7390,8 +7455,17 @@ async function runChecksFix(pool, config, {
 
   // The turn could not fix them: one note, and a person takes it from here.
   const turnFailed = !turn.stopped && !code ? live.failedClaudeTurn(result) : null;
+  // The platform failed under its retry too: said as Homeroom's failure,
+  // never the change's, and counted.
+  if (platformFailed) {
+    await turnFailure.recordPlatformIncident(pool, {
+      where: 'a fix of its change\'s checks', cause: turnFailure.sort({ turn: result }).cause,
+      detail: { appId: app.id, sessionId: session.id, issueNumber },
+    });
+  }
   const why = turn.stopped ? 'its attempt to fix them ran out of time'
     : code ? `its attempt to fix them failed (${clip(code, 200)})`
+      : platformFailed ? `its attempt to fix them failed twice because ${turnFailure.PLATFORM_WHY}`
       : turnFailed ? `its attempt to fix them failed (${turnFailed})`
         : parsed?.action === 'person' ? parsed.reply
           : parsed ? 'its attempt to fix them changed nothing'
@@ -7620,6 +7694,10 @@ async function keepNoChange(pool, runId, noChange) {
  */
 function autoRetryable(built) {
   if (!built || built.ok || built.skipped || built.blocked || built.lostClaim || built.notProposed) return false;
+  // Review B6: a build that stopped for OpenRouter's credit did not fail.
+  // Its one automatic retry would meet the same 402 and be spent on it; it
+  // waits for credit instead (recordLiveBuild's credit branch).
+  if (built.creditOut) return false;
   // #6267: a build waiting for its upload was built; another try would pay
   // for it again and leave the saved commit behind.
   if (built.waitingToPush) return false;
@@ -7842,16 +7920,38 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
       [runId],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record that a build waited for credit', { runId, err: err.message }));
     const credit = require('./openrouter-credit');
-    await credit.noteOutage(pool, { words: built.error || null });
-    try {
-      await platform().botOwed(pool, {
-        appId: app.id, issueNumber, reason: CREDIT_WAIT_REASON, priority: 2,
-        key: `credit_wait:${runId}`, source: CREDIT_WAIT_REASON,
-      });
-    } catch (err) {
-      log.warn('homeroom-bot', 'Could not queue a request that waited for credit', { app: app?.slug, issueNumber, err: err.message });
+    // Which figure ran out (the outage's cause): the weekly budget's note
+    // says the day it starts again, here, in the chat and on the push.
+    const budget = require('./bot-pause-words').isBudget(await credit.noteOutage(pool, { words: built.error || null }));
+    // Review B6: the write that brings the request back once credit is. It
+    // was tried once, and its failure only logged, while the next line told
+    // the person the bot "will pick this up again by itself". It is keyed by
+    // the run, so asking again is safe; and when it cannot be written the
+    // person is told what is true and the failure is counted.
+    let queued = false;
+    for (let attempt = 1; attempt <= CREDIT_QUEUE_TRIES && !queued; attempt += 1) {
+      try {
+        await platform().botOwed(pool, {
+          appId: app.id, issueNumber, reason: CREDIT_WAIT_REASON, priority: 2,
+          key: `credit_wait:${runId}`, source: CREDIT_WAIT_REASON,
+        });
+        queued = true;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Could not queue a request that waited for credit', {
+          app: app?.slug, issueNumber, attempt, err: err.message,
+        });
+        if (attempt < CREDIT_QUEUE_TRIES) await new Promise((resolve) => { setTimeout(resolve, CREDIT_QUEUE_WAIT_MS * attempt); });
+      }
     }
-    await say('build_failed', live.buildCreditText(), { dm: { reason: CREDIT_WAIT_REASON } });
+    if (!queued) {
+      await turnFailure.recordPlatformIncident(pool, {
+        where: 'queueing a build that waits for credit', cause: 'queue_write_failed',
+        detail: { appId: app.id, issueNumber, runId },
+      });
+      await say('build_failed', live.buildCreditText({ queued: false, budget }), { dm: { reason: built.error || 'credit', ...(budget ? { budget: true } : {}) } });
+      return 'credit_wait';
+    }
+    await say('build_failed', live.buildCreditText({ budget }), { dm: { reason: CREDIT_WAIT_REASON, ...(budget ? { budget: true } : {}) } });
     return 'credit_wait';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
@@ -8297,7 +8397,7 @@ const WAITING_PUSH_HOURS = 6;
 async function waitingPushRun(pool, runId) {
   const { rows: [run] = [] } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.build_ok, r.build_session_id, r.build_branch, r.build_sha,
-            r.build_commits, r.build_spec_md, r.build_error, r.build_finish,
+            r.build_commits, r.build_spec_md, r.build_error, r.build_stop, r.build_finish,
             bs.status AS session_status, bs.branch_name AS session_branch, bs.user_id AS session_user_id,
             sw.unpushed_sha, sw.unpushed_branch_name,
             a.slug, a.name, a.repo_url,
@@ -8332,7 +8432,8 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
     run = await waitingPushRun(pool, runId);
     if (!run || run.build_ok !== null || !run.build_session_id) return { ok: false, why: 'no_run', app };
     if (Number(run.newest_run_id) !== Number(run.id)) return { ok: false, why: 'not_newest', app };
-    if (!run.build_error || !String(run.build_error).startsWith('waiting to push:')) {
+    // B4: by its stored code (bot-stop-cause.js stopOf), not its English.
+    if (require('./bot-stop-cause').stopOf(run)?.cause !== 'waiting_push') {
       return { ok: false, why: 'not_waiting', app };
     }
     if (Number(run.session_user_id) !== Number((await ensureBotUser(pool, config)).id)) return { ok: false, why: 'not_bots', app };
@@ -8350,7 +8451,7 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
           SET build_finish = COALESCE(build_finish, '{}'::jsonb)
                 || jsonb_build_object('claimed_at', NOW(), 'by', $2::int, 'session_id', $3::int)
         WHERE id = $1 AND build_ok IS NULL AND proposal_session_id IS NULL AND build_session_id = $3
-          AND build_error LIKE 'waiting to push:%'
+          AND build_stop->>'cause' = 'waiting_push'
           AND (build_finish->>'claimed_at' IS NULL
                OR (build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $4))
         RETURNING id`,
@@ -8370,7 +8471,7 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
       if (!permanent) return { ok: false, why: 'push_failed', app };
       const reason = `couldn't push the build's commit (${err.code || code}, permanent)`;
       await pool.query(
-        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_stop = '{"cause":"push_permanent"}'::jsonb,
                 build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
           WHERE id = $1 AND build_ok IS NULL`,
         [run.id, reason],
@@ -8383,7 +8484,7 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
       // on top of it. Drop the saved record (done) and say retrying cannot fix it.
       const reason = `couldn't push the build's commit (non_fast_forward, permanent)`;
       await pool.query(
-        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_stop = '{"cause":"push_permanent"}'::jsonb,
                 build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
           WHERE id = $1 AND build_ok IS NULL`,
         [run.id, reason],
@@ -8469,7 +8570,7 @@ async function sweepWaitingPushes(pool, config, deps = {}) {
     `SELECT r.id,
             COALESCE((r.build_finish->>'waiting_at')::timestamptz, r.created_at) AS waiting_since
        FROM homeroom_bot_runs r
-      WHERE r.build_ok IS NULL AND r.build_error LIKE 'waiting to push:%'
+      WHERE r.build_ok IS NULL AND r.build_stop->>'cause' = 'waiting_push'
         AND r.build_session_id IS NOT NULL AND r.proposal_session_id IS NULL
         AND (r.build_finish->>'claimed_at' IS NULL
              OR (r.build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $1))
@@ -8498,9 +8599,9 @@ async function giveUpWaitingPush(pool, config, { runId, deps = {} } = {}) {
   const code = waitingPushCode(run.build_error);
   const reason = `couldn't push the build's commit (${code}, gave up after 6 hours)`;
   const { rows } = await pool.query(
-    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_stop = '{"cause":"push_gave_up"}'::jsonb,
             build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'gave_up')
-      WHERE id = $1 AND build_ok IS NULL AND build_error LIKE 'waiting to push:%'
+      WHERE id = $1 AND build_ok IS NULL AND build_stop->>'cause' = 'waiting_push'
       RETURNING id`,
     [run.id, reason],
   );
@@ -8523,7 +8624,7 @@ async function resumeWaitingPush(pool, config, { bot, app, issueNumber, deps = {
   const { rows: [run] = [] } = await pool.query(
     `SELECT r.id FROM homeroom_bot_runs r
       WHERE r.app_id = $1 AND r.issue_number = $2 AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-        AND r.build_error LIKE 'waiting to push:%'
+        AND r.build_stop->>'cause' = 'waiting_push'
         AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs n
                          WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id)
       ORDER BY r.id DESC LIMIT 1`,
@@ -9142,7 +9243,7 @@ function creatorChoiceNote(chosen, { bullets = [], requester = false, planShown 
 
 // #4175: a plan that could not be sent keeps its run waiting and is sent
 // again on a later wake, this many minutes after the attempt before (the
-// bot's sweeps run every REFRESH_INTERVAL_MS): four sends over about an
+// bot's sweeps run every five minutes): four sends over about an
 // hour. Until 8 October 2026 it was built at once, with nobody asked.
 const PLAN_SEND_RETRY_MINUTES = [5, 15, 40];
 const PLAN_SEND_ATTEMPTS = PLAN_SEND_RETRY_MINUTES.length + 1;
@@ -9685,7 +9786,7 @@ async function goAhead(pool, { runId, answers = [], planShown = true }) {
   // The tap is served by whichever Pod the person reached, and only the
   // leader runs the loop that starts the build: the local wake does nothing
   // anywhere else, and the build waited for the leader's next idle pass (up
-  // to IDLE_PASS_DELAY_MS; 43 s in run four, 13 Oct 2026). The bus wake
+  // to 30 seconds then; 43 s in run four, 13 Oct 2026). The bus wake
   // reaches the leader, as an issue event's does (noteIssueActivity).
   // Run five (13 Oct 2026): the wake only queued a pass, and a pass started
   // builds after its refresh (46 s from Submit to the spec). The build is
@@ -10589,9 +10690,9 @@ const CLOSED_WHILE_BUILDING = 'skipped: the request was closed before it was pro
 async function whyNotBuild(pool, { runId, botId, appId, issueNumber, github = null, repo = null }) {
   try {
     const { rows: [run] = [] } = await pool.query(
-      'SELECT created_at, build_ok, build_error, build_session_id FROM homeroom_bot_runs WHERE id = $1', [runId],
+      'SELECT created_at, build_ok, build_error, build_stop, build_session_id FROM homeroom_bot_runs WHERE id = $1', [runId],
     );
-    if (run?.build_ok === false && /^skipped:/.test(String(run.build_error || ''))) return String(run.build_error);
+    if (run?.build_ok === false && require('./bot-stop-cause').stopOf(run)?.cause === 'skipped') return String(run.build_error);
     const proposed = await requestProposal(pool, { appId, botId, issueNumber, since: run?.created_at || null });
     if (proposed) return hasProposalSkip(proposed.id);
     // Its own session is the run's (its claim); a plan, which links none,
@@ -11590,6 +11691,9 @@ async function adminPayload(pool, config, {
       username: botRow.username,
       weeklyLimitCents: botRow.weekly_limit_cents ?? DEFAULT_WEEKLY_LIMIT_CENTS,
       weeklySpentCents,
+      // When that week turns: Monday 00:00 UTC, which is also the weekly
+      // reset of the bot's key at OpenRouter. The console names the day.
+      weeklyResetsAt: limits.weeklyResetAt(),
       hasIncludedKey,
       model: platformDefaultModel(settings, config),
       // #3654: each stage's setting, the default filled in. A build's plan
@@ -12150,16 +12254,28 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
   // outage, not a fault: it keeps its debt and its tries, and the lane
   // pauses until credit is back. T1.3: a read, a follow-up or a checks fix
   // that recordFailure found out of credit says so itself (`credit`).
-  const creditWords = o.error || r?.detail || null;
-  if (r?.reason === 'credit' || (creditWords && require('./openrouter-credit').creditOut({ error: creditWords }))) {
-    const outage = await require('./openrouter-credit').noteOutage(pool, { words: creditWords }).catch(() => null);
+  // Review B1: only a look that said so itself. The look's free error text
+  // used to be read here as a provider's words too, where a bare "402" in
+  // any platform message would have paused every project.
+  if (r?.reason === 'credit') {
+    const creditWords = r.detail || o.error || 'insufficient_credits';
+    const credit = deps.credit || require('./openrouter-credit');
+    let outage = await credit.noteOutage(pool, { words: creditWords }).catch(() => null);
+    if (!outage) outage = await credit.noteOutage(pool, { words: creditWords }).catch(() => null);
+    // Review A5: the lane's pause is the stored outage. One that could not
+    // be stored pauses nothing, so the look ends as a platform fault: the
+    // request keeps its debt and backs off, and its next try notes it.
+    if (!outage) {
+      log.warn('homeroom-bot', 'A look met OpenRouter\'s 402 and the outage could not be recorded', { app: app?.slug, issueNumber: item.issue_number });
+      return { outcome: 'fault', error: 'credit_outage_unrecorded', ...extra };
+    }
     // T1.3: a look a person asked for (a reply, Run now, an ask on its
     // change) hears one line on the request, once an outage: the request
     // keeps its debt, and the lane takes it up again once credit is back.
     if (Number(item.priority) === 0) {
       await L.once('credit_note', () => postThreadNote({
         pool, ws: liveDeps(deps).ws, app, issueNumber: Number(item.issue_number), kind: 'credit_wait', bot,
-        text: live.buildCreditText(), version: `credit-${outageKey(outage)}`,
+        text: live.buildCreditText({ budget: require('./bot-pause-words').isBudget(outage) }), version: `credit-${outageKey(outage)}`,
       }).then(() => true).catch(() => false));
     }
     return { outcome: 'credit', words: String(creditWords).slice(0, 300), ...extra };
@@ -12781,6 +12897,7 @@ module.exports = {
   handOffConflict,
   tellDeployFailed,
   creditOutOf,
+  syncBudget,
   emptyReplyIsInfra,
   retryCardFor,
   liveBuildInput,
@@ -12911,9 +13028,6 @@ module.exports = {
   dmChatSummary,
   claimLiveBuild,
   DEFAULT_WEEKLY_LIMIT_CENTS,
-  REFRESH_INTERVAL_MS,
-  IDLE_PASS_DELAY_MS,
-  BUSY_PASS_DELAY_MS,
   BUILDS_PER_APP,
   WAITING_PER_APP,
   MAX_BUILDS_PER_APP,
@@ -12940,5 +13054,6 @@ module.exports = {
   },
   // A look's context, for a test that runs a look's steps itself.
   _newLookForTests: newLook,
+  _lookOutcomeForTests: lookOutcome,
   _runInLookForTests: (look, fn) => lookStore.run(look, fn),
 };

@@ -108,6 +108,7 @@ import {
   probeLayout,
 } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
+import { setDocked, setListClosed, useListClosed } from './list-closed';
 import { columnAddress, columnKey, pageProject, routeOf, type Column, type ColumnDetail } from './column';
 import {
   BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botNewAddress, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
@@ -128,7 +129,7 @@ import { clearSearchMark, currentSearchMark } from './search-mark';
 import { communityScopeStore } from '../workshop/community-scope';
 import { NewChatButton } from './new-chat-button';
 import { AiDrawer, ThreadPane, usePhone } from './phone-drawer';
-import { closeDetail, detailLayout, openDetail, useDetail, THREE_COLUMNS } from './detail';
+import { claimDetail, closeDetail, detailEntry, detailLayout, holdDetail, openDetail, reopenDetail, setDetailOwner, takeHeldDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
   applyWorkState, freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, movedSince, needsYou, owedCount, rankProjects,
@@ -489,7 +490,12 @@ export function AiScreen(): ReactNode {
   const detail = useDetail();
   const three = useWide(THREE_COLUMNS);
   const layout = detailLayout('bot', { phone, wide: three });
-  const detailHere = !!detail && !!botId && (detail.kind === 'design'
+  // THE COLUMN BELONGS TO ITS THREAD (20 Nov 2026). What opens beside the
+  // thread on screen is that thread's (./detail.ts setDetailOwner); another
+  // thread's is never drawn here. Leaving the thread holds it, and coming
+  // back shows it again (below).
+  const ownedHere = !detail?.owner || detail.owner === shown;
+  const detailHere = !!detail && !!botId && ownedHere && (detail.kind === 'design'
     ? detail.ref.conversationId === botId && openRoot === detail.ref.rootId
       && (phone ? level === 1 : docked && !panel.open)
     : detail.kind === 'draft'
@@ -507,6 +513,18 @@ export function AiScreen(): ReactNode {
   // floor and the thread's. In halves the list has stepped aside, so the
   // thread's edge is no handle and the preview's keeps only the thread's floor.
   const threeUp = detailHere && layout === 'three';
+  // THE LIST HIDDEN (#6963): dragging the divider past the list's floor puts
+  // the page in one pane, and the choice holds across threads and reloads
+  // (./list-closed). A preview beside the thread keeps today's layout; the
+  // choice waits for it to close.
+  const listClosed = useListClosed();
+  const oneUp = listClosed && columnOpen && !detailHere && !phone;
+  // With a preview beside the thread the preview layout wins, and the edge
+  // is the preview's business, not the list's.
+  const snaps = !threeUp && !detailHere;
+  useEffect(() => {
+    setDocked(docked && !detailHere && !phone);
+  }, [docked, detailHere, phone]);
   const pageInColumn = column?.at === 'page';
   const threadProbe = useCallback(() => {
     const probe = probeLayout();
@@ -539,28 +557,85 @@ export function AiScreen(): ReactNode {
     });
     return () => { panelEdgeStore.set({ slot: null }); };
   }, [visible, threeUp, pageInColumn, threadProbe]);
+  // AND THE SAME EDGE HIDES THE LIST (#6973): while a request, change or
+  // decision page is the column, the divider people drag is the side panel's
+  // own, not Main's, so it is handed the one-pane wiring too. It never
+  // overwrites the slot above: the store merges the patch.
+  useEffect(() => {
+    panelEdgeStore.set({
+      snap: visible && pageInColumn && snaps && !phone
+        ? { collapsed: oneUp, onCollapse: () => setListClosed(true), onRestore: () => setListClosed(false) }
+        : null,
+    });
+    return () => { panelEdgeStore.set({ snap: null }); };
+  }, [visible, pageInColumn, snaps, oneUp, phone]);
   const detailSlot: ColumnDetail | undefined = !detailHere || !detail ? undefined
     : detail.kind === 'design' ? { kind: 'design', version: detail.version }
       : detail.kind === 'plan' && detail.ref.sessionId ? { kind: 'plan', sessionId: detail.ref.sessionId, version: detail.version }
         : detail.kind === 'shots' && detail.ref.changeId ? { kind: 'shots', changeId: detail.ref.changeId }
           : undefined;
   const columnShown: Column = column && detailSlot ? { ...column, detail: detailSlot } as Column : column;
+  // The thread or page on screen claims what opens beside it, while this
+  // page is the one shown (the AI screen stays mounted behind every other).
+  // What opened before it was known (a reload's preview, reopened from its
+  // address while the page drew) is claimed by it, and drawn again.
+  const [, claimed] = useState(0);
+  useEffect(() => {
+    const owner = visible && shown && shown !== 'new' ? shown : null;
+    setDetailOwner(owner);
+    if (claimDetail(owner)) claimed((n) => n + 1);
+  }, [visible, shown]);
+  // Another thread opened: the one left holds what it showed, and the one
+  // arrived at shows what it held, if anything.
+  const ownerWas = useRef<string | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const was = ownerWas.current;
+    ownerWas.current = shown;
+    if (was === shown) return;
+    if (was) holdDetail(was);
+    const back = takeHeldDetail(shown);
+    if (back) reopenDetail(back);
+  }, [visible, shown]);
+  // Put the column's detail away with its thread, to show again when the
+  // thread is opened again; one that belongs to no thread just closes.
+  const putAway = () => {
+    const entry = detailEntry();
+    if (entry?.owner) holdDetail(entry.owner);
+    else closeDetail();
+  };
   // The column shows another thread: its detail goes — unless it was opened
   // from that very page (the forwarded plan on a request).
   // Only while this page is the one on screen: the AI screen stays mounted
   // (hidden) behind every other page, and its rule must not close a plan
   // opened beside a request's own page or in the Workshop.
   useEffect(() => {
-    if (!visible || !botId || !detail) return;
+    if (!visible || !botId || !detail || detailEntry() !== detail) return;
+    // A thread's own detail is held for it, not closed (above). A running
+    // preview with nowhere to stand is held too: its frame is placed over
+    // the column, which is not drawn.
+    if (detail.owner) {
+      if (detail.owner !== shown || (detail.kind === 'preview' && !detailHere)) holdDetail(detail.owner);
+      return;
+    }
+    // No column yet (the page still drawing after a reload): it is claimed
+    // by the thread once that is known (above), not closed for want of one.
+    if (!shown) return;
     if (detail.kind === 'design' && openRoot && openRoot !== detail.ref.rootId) closeDetail();
     if (detail.kind === 'draft' && openRoot && openRoot !== detail.ref.rootId) closeDetail();
     if (detail.kind !== 'design' && detail.kind !== 'draft' && !detailHere) closeDetail();
-  }, [visible, botId, detail, openRoot, detailHere]);
+  }, [visible, botId, detail, openRoot, detailHere, shown]);
   // The tab pressed (the page's own address, from a thread's): the list
-  // comes back, and the detail goes.
+  // comes back, and the detail is put away with its thread, to show again
+  // when the thread is opened again.
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const back = () => { if (window.location.hash === BOT_TAB) closeDetail(); };
+    const back = () => {
+      if (window.location.hash !== BOT_TAB) return;
+      const entry = detailEntry();
+      if (entry?.owner) holdDetail(entry.owner);
+      else closeDetail();
+    };
     window.addEventListener('hashchange', back);
     return () => window.removeEventListener('hashchange', back);
   }, []);
@@ -678,7 +753,7 @@ export function AiScreen(): ReactNode {
     sidePanel()?.close?.();
     closeNewThread();
     if (!detail || detail.kind === 'design') {
-      if (next.threadRootId !== detail?.ref.rootId) closeDetail();
+      if (next.threadRootId !== detail?.ref.rootId) putAway();
     }
     setAt({ ...next });
     // A thread asked for goes into the store here, not only through the chat
@@ -699,7 +774,7 @@ export function AiScreen(): ReactNode {
     sidePanel()?.close?.();
     closeNewThread();
     if (openRoot) closeThread();
-    closeDetail();
+    putAway();
     setAt(null);
   };
   // The router's ask (./door.ts): `/thread/<id>`, with a message in it, from
@@ -744,7 +819,11 @@ export function AiScreen(): ReactNode {
     else {
       const where = botTabAt(hash);
       if (where?.threadRootId) {
-        openDetail({ kind: 'design', ref: { conversationId: botId, rootId: where.threadRootId }, version: at.version });
+        openDetail({
+          kind: 'design',
+          ref: { conversationId: botId, rootId: where.threadRootId, ...(at.artifactId ? { artifactId: at.artifactId } : {}) },
+          version: at.version,
+        });
       }
     }
   }, [mounted, botId]);
@@ -850,7 +929,7 @@ export function AiScreen(): ReactNode {
     showAddress(withFilter(columnAddress(columnShown), { projects: filterRef.current.picked, kind: filterRef.current.historyKind }));
   }, [mounted, visible, botId, shown, detailSlot]); // eslint-disable-line react-hooks/exhaustive-deps
   // A page the side panel takes is the column's: no design preview beside it.
-  useEffect(() => { if (panel.open && detail?.kind === 'design') closeDetail(); }, [panel.open, detail]);
+  useEffect(() => { if (panel.open && detail?.kind === 'design') putAway(); }, [panel.open, detail]); // eslint-disable-line react-hooks/exhaustive-deps
   // On a phone the column slides back to the list; the address is the page's.
   const toList = () => {
     setLevel(0);
@@ -869,7 +948,7 @@ export function AiScreen(): ReactNode {
   // column (../messages/new-thread.tsx), slid in on a phone.
   const openBlank = () => {
     sidePanel()?.close?.();
-    closeDetail();
+    putAway();
     if (phone) setLevel(1);
   };
   // What a new chat opens set to. The page a row opened in the column (a
@@ -1081,6 +1160,7 @@ export function AiScreen(): ReactNode {
       data-ai-open={columnOpen ? '' : undefined}
       data-ai-drawer={phone ? level : undefined}
       data-ai-preview={detailHere ? layout : undefined}
+      data-ai-list-closed={oneUp ? '' : undefined}
       data-frame-list={frame ? '' : undefined}
       style={{ position: 'relative' }}
     >
@@ -1115,6 +1195,9 @@ export function AiScreen(): ReactNode {
             widthKey={threeUp ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
             probe={threeUp ? threadProbe : undefined}
             watch={threeUp ? previewRef : undefined}
+            collapsed={oneUp}
+            onCollapse={snaps ? () => setListClosed(true) : undefined}
+            onRestore={snaps ? () => setListClosed(false) : undefined}
           />
           {/* A thread is alone under its own head (ReplyThreadPanel `alone`),
               and a new chat under its own: the column draws no bar over them. */}
@@ -1131,7 +1214,7 @@ export function AiScreen(): ReactNode {
           id="ai-preview-pane"
           className="ai-preview-pane"
           data-ai-preview-pane={layout}
-          aria-label={detail.kind === 'draft' ? t('messages:draft.pane.label') : t('messages:design.pane.label')}
+          aria-label={detail.kind === 'draft' ? t('messages:draft.pane.label') : t('messages:design.pane.labelOpening')}
         >
           {/* The thread | preview edge, a handle too (#6359): it sets the
               preview's own width, and the list takes what is left. */}
@@ -1145,7 +1228,7 @@ export function AiScreen(): ReactNode {
               probe={previewProbe}
             />
           )}
-          <DetailPane layout={layout} />
+          <DetailPane layout={layout} card />
         </aside>
       ) : null}
     </main>

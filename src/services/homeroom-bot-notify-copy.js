@@ -78,7 +78,10 @@ const SAID_BY_MOMENT = Object.freeze({
     // T2.9 (19 Nov 2026): the one decoder's causes with words of their own
     // (bot-stop-cause.js): a plan that is not tried again, a credit wait, a
     // stop by a person, a read that failed, a closed change.
-    'build_no_plan_stopped', 'build_credit', 'stopped_by', 'look_failed', 'change_closed']),
+    'build_no_plan_stopped', 'build_credit', 'stopped_by', 'look_failed', 'change_closed',
+    // A wait for the bot's weekly budget, which starts again by itself on
+    // Monday (homeroom-bot-dm.js saidOf, when the outage's cause is the budget).
+    'build_budget']),
   // 16 Oct 2026: `slots`, a build held because the project's changes waiting
   // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
   // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
@@ -443,6 +446,9 @@ function bodyFor(d) {
     case 'build_no_plan_stopped': return `Stopped: I couldn't write the plan for it. ${again(d, 'build it')}`;
     // T2.9: OpenRouter's credit ran out. Nothing to tap: it starts again by itself.
     case 'build_credit': return 'Paused: I\'m out of building credit for now. I\'ll pick it up again by myself.';
+    // The same wait when it is the bot's weekly budget that ran out: the day
+    // its week turns (services/limits.js weeklyResetAt) is when it starts.
+    case 'build_budget': return require('./bot-pause-words').notify(require('./bot-pause-words').resetDay());
     // A person's Stop is no failure, and asks for nothing.
     case 'stopped_by': return d.stoppedBy ? `Stopped by @${d.stoppedBy}.` : 'Stopped by a person.';
     case 'look_failed': return `Stopped: I couldn't read it. ${again(d, 'build it')}`;

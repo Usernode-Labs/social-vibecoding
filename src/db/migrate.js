@@ -141,12 +141,22 @@ async function migrate(config) {
   // nearly full, each saying how much is used and what the limit is. Staging
   // runs no sweep against a growing database, so they are seeded.
   await seedStagingStorageNotices(pool);
+  // 20 Nov 2026 (live-draft review): a thread with a live draft up for a vote, for G and J's shots.
+  await seedStagingLiveDraftThread(pool);
+  // #6901's shots: while the server is full, Admin → Limits says how many
+  // people were turned away, and the bell has a refusal notice. A fresh
+  // staging copy has no run of refusals at all, and staging notifies nobody,
+  // so both are seeded with obviously fake people.
+  await seedStagingLimitRefusals(pool);
   // #6261's shots: a design thread with a version in the capture member's
   // chat, for the comment picture's design frames.
   await seedStagingDesignThread(pool);
   // #6354's shots: a design that started from a copy of the Homeroom bot
   // page, an obviously fake one, with the bot's change as version 2.
   await seedStagingCapturedPageThread(pool);
+  // K's shots (20 Nov 2026): one thread holding two artifacts, each with its
+  // own versions, so the artifacts column has a picker to show.
+  await seedStagingArtifactsThread(pool);
   await seedStagingBotPlanWaiting(pool);
   // #6860's shots: a plan whose build is over says what became of it, which
   // a fresh staging copy has no run to show: one built into a change up for
@@ -245,6 +255,9 @@ async function migrate(config) {
   // while its own required checks finish, so the change page has the Merging
   // card to show. A fresh copy never meets it: GitHub has to refuse a merge.
   await seedStagingGithubChecksHold(pool);
+  // The admin limits area's shots: the bot's credit under its warning line,
+  // so a full admin's Notifications sheet has a row to show.
+  await seedStagingPlatformLimit(pool);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
   await seedStagingGroupedFollowOns(pool, config);
@@ -448,6 +461,8 @@ async function migrate(config) {
   await moveMainChatToThreads(pool);
   await moveOldChatsToThreads(pool);
   await backfillPlanRows(pool);
+  // Artifacts, stage 0: a plan an older build posted during a rollout names its design.
+  await require('../services/plan-design-source').backfill(pool);
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
@@ -2184,6 +2199,38 @@ async function seedStagingBotWaitingRows(pool) {
           }),
         ],
       );
+      // #6920: a thread answer the bot held for OpenRouter's credit, and the
+      // answer it gave in the thread once credit was back. A fresh staging
+      // copy has no model and the bot is off there, so the words are stored
+      // for the before & after shots; nothing here is a signal the bot reads.
+      // Idempotent by their stagingDemo marks.
+      for (const m of [
+        {
+          mark: 'credit-held-ask', author: userId, interval: '2 days',
+          text: '@Homeroom bot is the header blue on the settings page too?', bot: false,
+        },
+        {
+          mark: 'credit-held-line', author: botRow.rows[0].id, interval: '47 hours',
+          text: 'OpenRouter\'s credit ran out. I\'ll answer this here as soon as it\'s back.', bot: true,
+        },
+        {
+          mark: 'credit-held-answer', author: botRow.rows[0].id, interval: '1 day',
+          text: 'Yes. The settings page uses the same header as the rest of the app, so it is blue there too.', bot: true,
+        },
+      ]) {
+        await pool.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+           SELECT $1, $2, $3, 'message', 'issue', 9119, $4, NOW() - ($5)::interval
+            WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                               WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9119
+                                 AND metadata->>'stagingDemo' = $6)`,
+          [
+            appId, m.author, m.text,
+            JSON.stringify({ stagingDemo: m.mark, ...(m.bot ? { homeroomBot: { kind: 'voice' } } : {}) }),
+            m.interval, m.mark,
+          ],
+        );
+      }
       // #6311: the note about Homeroom itself, with the copy offer under it
       // (Put it on Homeroom's board / Keep it here only). The before & after
       // shots need the state on the after copy; nothing here is a signal the
@@ -2286,6 +2333,45 @@ async function seedStagingBotWaitingRows(pool) {
           ],
         );
       }
+      // 20 Nov 2026 (#6914): a request's page whose Homeroom bot reply carries
+      // a comparison, so the shots can show it drawn under the reply with
+      // nothing running. Obviously fake and inert (no script, no address);
+      // idempotent by its stagingDemo mark; a no-op outside staging.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '10 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'thread-comparison')`,
+        [
+          appId, botRow.rows[0].id,
+          'Staging demo: here they are side by side. Today\'s filter row on the left, the request\'s on the right.',
+          JSON.stringify({
+            stagingDemo: 'thread-comparison',
+            homeroomBot: {
+              kind: 'voice',
+              comparison: {
+                title: 'Before and after',
+                html: '<!doctype html><html><head><style>'
+                  + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+                  + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+                  + 'h3{margin:0 0 8px;font-size:14px}'
+                  + '.chips{display:flex;gap:6px;flex-wrap:wrap}'
+                  + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+                  + '.chip.new{background:#dbe8ff}'
+                  + 'p{margin:8px 0 0;color:#71717a;font-size:12px}'
+                  + '</style></head><body><div class="cols">'
+                  + '<div><h3>Today</h3><div class="chips"><span class="chip">Open</span><span class="chip">Mine</span>'
+                  + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+                  + '<div><h3>With this change</h3><div class="chips"><span class="chip new">Open</span>'
+                  + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+                  + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+                  + '</div></body></html>',
+              },
+            },
+          }),
+        ],
+      );
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
@@ -2505,6 +2591,28 @@ async function seedStagingChangePictures(pool) {
         caption: `${picture.subject} · ${picture.sha.slice(0, 7)}`,
       })),
     };
+    // 20 Nov 2026: the comparison a thread reply carries is drawn under it,
+    // static, with nothing running (homeroom-bot-voice.js say). A fresh
+    // staging copy has no model to lay one out, so this obviously fake one is
+    // stored with the reply. It is inert markup: no script, no address.
+    const comparison = {
+      title: 'Staging demo: the filter row, today and with this change',
+      html: '<!doctype html><html><head><style>'
+        + 'body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;color:#18181b;background:#fff}'
+        + '.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}'
+        + 'h3{margin:0 0 8px;font-size:14px}'
+        + '.row{display:flex;gap:6px;margin:0 0 8px;flex-wrap:wrap}'
+        + '.chip{padding:4px 10px;border-radius:999px;background:#f4f4f5}'
+        + '.chip.new{background:#dbe8ff}'
+        + 'p{margin:0;color:#71717a;font-size:12px}'
+        + '</style></head><body><div class="cols">'
+        + '<div><h3>Today</h3><div class="row"><span class="chip">Open</span><span class="chip">Mine</span>'
+        + '<span class="chip">Voting</span></div><p>Three chips, each wrapping onto its own line.</p></div>'
+        + '<div><h3>With this change</h3><div class="row"><span class="chip new">Open</span>'
+        + '<span class="chip new">Mine</span><span class="chip new">Voting</span></div>'
+        + '<p>One line: all three fit, and wrap together when they cannot.</p></div>'
+        + '</div></body></html>',
+    };
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
        SELECT $1, $2, 'Here is what this change looks like, drawn from bbbbbbb, its newest version: the admit email as it is today and with this change.',
@@ -2513,7 +2621,7 @@ async function seedStagingChangePictures(pool) {
                            WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $3
                              AND metadata->>'stagingDemo' = 'change-pictures')`,
       [app.id, bot.id, Number(change.id), JSON.stringify({
-        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery },
+        stagingDemo: 'change-pictures', homeroomBot: { kind: 'voice', gallery, comparison },
       })],
     );
   } catch (err) {
@@ -2868,6 +2976,176 @@ async function seedStagingFoldedLiveNotifications(pool) {
 // for the same project, so a real bell holds one per project. The one at
 // half full has only the early notice, and the one nearly full has only the
 // warning (a sweep that jumped past both lines sends the highest alone).
+// #6901's shots: the run of refusals Admin → Limits counts, and the bell's
+// refusal notices. Obviously fake people, staging only, idempotent.
+async function seedStagingLimitRefusals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = (await pool.query(
+      `SELECT id FROM users
+        WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'staging-demo-user')
+        ORDER BY id`
+    )).rows;
+    if (!people.length) return;
+    const refusals = people.slice(0, 3);
+    await pool.query(
+      `INSERT INTO platform_limit_alerts
+         (limit_key, level, used, cap, measured_at, refusals_since, refusals_notified_at)
+       VALUES ('apps', 'full', 50, 50, NOW(), NOW() - interval '4 hours', NOW() - interval '4 hours')
+       ON CONFLICT (limit_key) DO UPDATE
+         SET refusals_since = COALESCE(platform_limit_alerts.refusals_since, NOW() - interval '4 hours'),
+             refusals_notified_at = COALESCE(platform_limit_alerts.refusals_notified_at, NOW() - interval '4 hours')`
+    );
+    for (const person of refusals) {
+      await pool.query(
+        `INSERT INTO platform_limit_refusals (limit_key, user_id, day, refused_at)
+         VALUES ('apps', $1, (NOW() AT TIME ZONE 'UTC')::date, NOW() - interval '2 hours')
+         ON CONFLICT DO NOTHING`,
+        [person.id]
+      );
+    }
+    // The bell's two notices, as the code writes them: the first refusal of
+    // the run, then a count a few hours later. The shots pair's own full admin
+    // (services/shots-fixtures.js) is inserted AFTER boot, so a seed here
+    // cannot write to it by lookup. On a shots copy only, make the row it will
+    // claim, unable to sign in and not an admin; installFullAdminFixture then
+    // promotes it in place. SHOTS_PHONE_TEST_CODE is set on the self app's
+    // pair and never on production or an ordinary staging preview, so no
+    // other copy grows this account. An ordinary staging copy still seeds the
+    // notices for the administrators it has, which is what the Admin → Limits
+    // card reads.
+    const shotsCopy = !!require('../config').shotsPhoneTestCodeFrom(process.env).code;
+    let fixtureUsername = null;
+    if (shotsCopy) {
+      const shotsFixtures = require('../services/shots-fixtures');
+      fixtureUsername = shotsFixtures.FULL_ADMIN_USERNAME;
+      await pool.query(
+        `INSERT INTO users (id, username, password, is_admin, admin_readonly,
+                            can_create_apps, has_platform_access)
+         VALUES ($1, $2, '__shots_not_a_login__', FALSE, FALSE, FALSE, FALSE)
+         ON CONFLICT DO NOTHING`,
+        [shotsFixtures.FULL_ADMIN_USER_ID, fixtureUsername]
+      );
+    }
+    const notices = [
+      { detail: 'apps_away:1:50:0', minutesAgo: 4 * 60 },
+      { detail: `apps_away:${refusals.length}:50:230`, minutesAgo: 10 },
+    ];
+    for (const notice of notices) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, source_user_id, kind, detail, created_at)
+         SELECT u.id, NULL, 'platform_limit', $1::varchar(32), NOW() - make_interval(mins => $2::int)
+           FROM users u
+          WHERE ((u.is_admin = TRUE AND u.admin_readonly = FALSE) OR u.username = $3)
+            AND NOT EXISTS (
+              SELECT 1 FROM notifications n
+               WHERE n.user_id = u.id AND n.kind = 'platform_limit' AND n.detail = $1::varchar(32)
+            )`,
+        [notice.detail, notice.minutesAgo, fixtureUsername]
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging limit refusals seed failed', { message: err.message });
+  }
+}
+
+// 20 Nov 2026 (live-draft review, C, G, I, J): the before & after shots
+// show a private thread whose live draft is up for a vote and has one change
+// not in the proposal yet: no bar under its head, its Artifacts button, and
+// its preview's header with Update proposal, Close draft and where it
+// stands. A fresh staging copy has no draft (one is opened by asking
+// Homeroom bot, which staging has no model for), so its rows are stored:
+// the shots' member fixture (usernode-capture) on the fake project
+// seedStagingStorageNotices made theirs, the bot's lines as words, the
+// draft's change and its proposal as paused and promoted fixture changes
+// with no preview and no pull request. Nothing here is a signal the code
+// reads to decide anything. Idempotent through the root message's key and
+// the draft's own row; strictly a no-op outside staging.
+async function seedStagingLiveDraftThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')",
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    const app = (await pool.query("SELECT id, slug, name FROM apps WHERE slug = 'staging-demo-recipe-box' LIMIT 1")).rows[0];
+    if (!member || !bot || !app || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const conversationId = (await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    )).rows[0]?.conversation_id;
+    if (!conversationId) return;
+    const key = 'staging-demo-live-draft-thread';
+    let rootId = (await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, bot.id, key],
+    )).rows[0]?.id;
+    if (!rootId) {
+      rootId = (await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5, NOW() - INTERVAL '40 minutes') RETURNING id`,
+        [conversationId, bot.id, `New thread, about ${app.name}.`,
+          JSON.stringify({ homeroomBot: { kind: 'opened_thread', appSlug: app.slug, appName: app.name } }), key],
+      )).rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: can you make the recipe rows look more like a phone app''s list?', $4, NOW() - INTERVAL '39 minutes'),
+                ($1, $3, 'Staging demo: done in the app''s preview: each recipe is one white row with its cooking time in grey under its name, and a chevron at the end.', $4, NOW() - INTERVAL '37 minutes'),
+                ($1, $2, 'Staging demo: nice. Now the rows should line up with the search box above them.', $4, NOW() - INTERVAL '6 minutes'),
+                ($1, $3, 'Staging demo: done in the app''s preview: the rows now share the search box''s left and right edges. That change is saved on the draft and is not in the proposal yet: Update proposal in the preview''s header puts it there, which clears its votes.', $4, NOW() - INTERVAL '5 minutes')`,
+        [conversationId, member.id, bot.id, rootId],
+      );
+    }
+    const thread = (await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, title, title_source,
+                                    created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'ask', 'open', 'Staging demo: recipe rows like a phone app', 'person',
+               NOW() - INTERVAL '40 minutes', NOW() - INTERVAL '5 minutes')
+       ON CONFLICT (root_message_id) DO UPDATE SET updated_at = private_threads.updated_at
+       RETURNING id`,
+      [member.id, conversationId, rootId, app.id],
+    )).rows[0];
+    const had = await pool.query('SELECT id FROM live_drafts WHERE root_message_id = $1 AND user_id = $2', [rootId, member.id]);
+    if (had.rows.length) {
+      // Kept open on every boot: a seeded draft is never idle or over.
+      await pool.query("UPDATE live_drafts SET updated_at = NOW(), live_state = 'live' WHERE id = $1", [had.rows[0].id]);
+      return;
+    }
+    const sha = (c) => c.repeat(40);
+    const change = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title, branch_name, last_activity_at)
+       VALUES ($1, $2, 'paused', FALSE, '{}', $3, 'staging-fixture/live-draft', NOW()) RETURNING id`,
+      [app.id, member.id, `Live draft of ${app.name}`],
+    )).rows[0];
+    const proposal = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title, branch_name,
+                                  promoted_at, last_activity_at)
+       VALUES ($1, $2, 'promoted', FALSE, '{}', 'Staging demo: recipe rows like a phone app', 'staging-fixture/live-draft-proposal',
+               NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes') RETURNING id`,
+      [app.id, member.id],
+    )).rows[0];
+    const draft = (await pool.query(
+      `INSERT INTO live_drafts (app_id, user_id, private_thread_id, root_message_id, session_id, state, base_sha, head_sha,
+                                edits, live_state, proposal_session_id, proposed_head_sha, proposed_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'proposed', $6, $7, 2, 'live', $8, $9, NOW() - INTERVAL '30 minutes',
+               NOW() - INTERVAL '40 minutes', NOW())
+       RETURNING id`,
+      [app.id, member.id, thread.id, rootId, change.id, sha('a'), sha('c'), proposal.id, sha('b')],
+    )).rows[0];
+    await pool.query(
+      `INSERT INTO live_draft_edits (draft_id, commit_sha, summary, paths, created_at)
+       VALUES ($1, $2, 'Staging demo: recipe rows as one list with grey cooking times', ARRAY['public/index.html'], NOW() - INTERVAL '37 minutes'),
+              ($1, $3, 'Staging demo: rows line up with the search box', ARRAY['public/index.html'], NOW() - INTERVAL '5 minutes')`,
+      [draft.id, sha('b'), sha('c')],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging live draft thread seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingStorageNotices(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -3534,7 +3812,7 @@ async function seedStagingBotReportReply(pool) {
       rootId = root.rows[0].id;
       const filed = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Filed as #6564 on Homeroom''s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
+         VALUES ($1, $2, 'Filed as #6564 in Homeroom''s Workshop, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
@@ -3545,7 +3823,7 @@ async function seedStagingBotReportReply(pool) {
       );
       const again = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Already filed as #6564 on Homeroom''s requests board. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
+         VALUES ($1, $2, 'Already filed as #6564 in Homeroom''s Workshop. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
@@ -9757,6 +10035,114 @@ async function seedStagingCapturedPageThread(pool) {
   }
 }
 
+// 20 Nov 2026 (live-draft review, K): a thread holds several artifacts, and
+// the thread's artifacts column picks between them. A clean staging copy has
+// no bot turn to run (there is no model), so this stores what two turns
+// leave in the capture member's chat: one thread holding two pages, the
+// first at version 2 and the second at version 1, each version said by the
+// bot's line as a turn says it. Written through the store
+// (services/artifacts.js). Obviously fake, idempotent by the thread's first
+// message (its key) and its holding two artifacts already, and a strict
+// no-op outside staging.
+const STAGING_ARTIFACTS_KEY = 'staging-artifacts-thread';
+const STAGING_ARTIFACT_TITLES = Object.freeze(['Staging demo: style directions', 'Staging demo: list layouts']);
+
+/** Pure: a small, obviously fake page for the two-artifact fixture. */
+function stagingArtifactPage(title, rows, accent) {
+  const items = rows.map((row) => `<li style="padding:12px 14px;border-radius:12px;background:#fff;`
+    + `box-shadow:inset 0 0 0 1px #e4e4e7;margin-top:8px;font-size:15px">${row}</li>`).join('');
+  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+    + `<body style="margin:0;font-family:system-ui,sans-serif;background:#faf8f5;color:#18181b">`
+    + `<main style="padding:24px 16px"><h1 style="font-size:20px;margin:0;color:${accent}">${title}</h1>`
+    + '<p style="font-size:13px;color:#71717a;margin:6px 0 0">Staging demo page: obviously fake.</p>'
+    + `<ul style="list-style:none;margin:12px 0 0;padding:0">${items}</ul></main></body></html>`;
+}
+
+async function seedStagingArtifactsThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const member = (await pool.query(
+      'SELECT id FROM users WHERE username = \'usernode-capture\' AND is_synthetic = FALSE LIMIT 1'
+    )).rows[0];
+    if (!member) return;
+    // The bot's account, in the posture botAccount() reads.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    const bot = (await pool.query(
+      'SELECT id FROM users WHERE username = \'homeroom_bot\' AND is_synthetic = TRUE LIMIT 1'
+    )).rows[0];
+    if (!bot || Number(bot.id) === Number(member.id)) return;
+    const dm = require('../services/homeroom-bot-dm');
+    const store = require('../services/artifacts');
+    const user = { id: Number(member.id) };
+    // The thread's first message, its row written with it (sendDm `thread`),
+    // as a thread the bot opens for a page starts (design-threads.js
+    // openDrawThread). The same key finds the same message on a later boot.
+    const opened = await dm.sendDm(pool, {
+      bot,
+      userId: member.id,
+      content: 'Staging demo: I\'m writing two artifacts in this thread, a page of style directions and a page of list '
+        + 'layouts. Only you can see it.',
+      thread: { kind: 'ask', appId: null },
+      moment: null,
+      idempotencyKey: STAGING_ARTIFACTS_KEY,
+      metadata: { kind: 'opened_thread', changeKind: 'any', designTitle: STAGING_ARTIFACT_TITLES[0] },
+    });
+    if (!opened?.messageId) return;
+    const room = { rootId: Number(opened.messageId), conversationId: Number(opened.conversationId), app: null };
+    const held = await store.artifactFor(pool, { userId: member.id, rootId: room.rootId });
+    if ((held?.artifacts || []).length >= 2) return;
+    // Each version as a turn keeps it: the store's version, then the bot's
+    // line that says it ("Title, version N: ..." once the thread holds two),
+    // and that line's id on the version.
+    const say = async (artifact, html, note, line) => {
+      const made = await store.addVersion(pool, { threadId: artifact.threadId, artifactId: artifact.artifactId, html, author: 'bot', note });
+      if (!made) return;
+      const sent = await dm.sendDm(pool, {
+        bot,
+        userId: member.id,
+        content: line,
+        threadRootId: room.rootId,
+        moment: null,
+        idempotencyKey: `${STAGING_ARTIFACTS_KEY}-a${artifact.artifactId}-v${made.version}`,
+        metadata: { kind: 'design_version', designVersion: made.version, artifactId: artifact.artifactId, designTitle: artifact.title },
+      }).catch(() => null);
+      await store.noteVersionMessage(pool, {
+        threadId: artifact.threadId, artifactId: artifact.artifactId, version: made.version, messageId: sent?.messageId,
+      });
+    };
+    let first = held;
+    if (!first) {
+      const made = await store.addArtifact(pool, {
+        user, thread: room, kind: 'page', title: STAGING_ARTIFACT_TITLES[0], viewport: 'phone', surface: 'new',
+      });
+      first = made.ok ? made.artifact : null;
+    }
+    if (!first) return;
+    if (!first.latest) {
+      const rows = ['Calm: warm greys, one blue accent', 'Bold: dark ground, bright type', 'Soft: rounded cards, pastel tints'];
+      await say(first, stagingArtifactPage('Style directions', rows, '#0a6ee0'), 'Staging demo: three style directions',
+        'Version 1: Staging demo: three style directions.');
+      await say(first, stagingArtifactPage('Style directions', rows, '#18181b'), 'Staging demo: a darker title',
+        'Version 2: Staging demo: a darker title.');
+    }
+    const second = await store.addArtifact(pool, {
+      user, thread: room, kind: 'page', title: STAGING_ARTIFACT_TITLES[1], viewport: 'phone', surface: 'new',
+    });
+    if (!second.ok) return;
+    await say(second.artifact,
+      stagingArtifactPage('List layouts', ['Plain rows with a chevron', 'Inset grouped cards', 'Rows with a leading icon'], '#0a6ee0'),
+      'three ways to lay out a list',
+      require('../services/design-threads').versionLine(1, 'three ways to lay out a list', { title: STAGING_ARTIFACT_TITLES[1] }));
+    log.info('db', 'Staging two-artifact thread seeded', { rootId: room.rootId });
+  } catch (err) {
+    log.warn('db', 'Staging two-artifact thread seeding failed', { message: err.message });
+  }
+}
+
 // Fixtures for the home screen's "Your apps" section + search bar
 // (homepage restructure). The section is the union of membership
 // (app_collaborators status='member') and manual favorites
@@ -10772,7 +11158,7 @@ async function seedSizedCopies(pool, file) {
   for (const name of ['thumb', 'screen']) {
     const copy = copies[name];
     if (!copy) continue;
-    await withStagingMedia(pool, copy.data, 'image/webp', (tx, m) => Promise.resolve(m));
+    await withStagingMedia(pool, copy.data, copy.contentType || 'image/webp', (tx, m) => Promise.resolve(m));
     keys[name] = copy;
   }
   if (!keys.thumb && !keys.screen && !copies.placeholder) return;
@@ -10780,14 +11166,14 @@ async function seedSizedCopies(pool, file) {
     `UPDATE shot_artifacts
         SET thumb_object_key = $2, thumb_width = $3, thumb_height = $4, thumb_bytes = $5, thumb_sha256 = $6,
             screen_object_key = $7, screen_width = $8, screen_height = $9, screen_bytes = $10, screen_sha256 = $11,
-            placeholder = $12
+            placeholder = $12, thumb_content_type = $13, screen_content_type = $14
       WHERE id = $1`,
     [file.id,
       keys.thumb ? media.objectKey(keys.thumb.data) : null, keys.thumb?.width ?? null, keys.thumb?.height ?? null,
       keys.thumb?.bytes ?? null, keys.thumb?.sha256 ?? null,
       keys.screen ? media.objectKey(keys.screen.data) : null, keys.screen?.width ?? null, keys.screen?.height ?? null,
       keys.screen?.bytes ?? null, keys.screen?.sha256 ?? null,
-      copies.placeholder]
+      copies.placeholder, keys.thumb?.contentType ?? null, keys.screen?.contentType ?? null]
   );
 }
 
@@ -11493,16 +11879,13 @@ async function seedStagingWeeklyCaps(pool) {
 
 // Daily spend distribution fixtures (the seven-bucket stacked chart on
 // /dashboard). The chart counts users per platform-spend bucket per day,
-// with the $20+ tier split into "capped" (no usable own key) vs "kept going
-// on own key". Two staging facts force a dedicated seed:
-//   1. llm_usage is staging:private (schema-only clone → empty), so there is
-//      no per-day spend to bucket at all without seeding it here.
-//   2. users.anthropic_key_enc is a staging:private COLUMN (scrubbed to NULL
-//      on clone), so the "has own key" branch would never populate from real
-//      users — the $20+/own-key segment would always be empty.
-// We create obviously-fake users (staging-demo-spend-*) at fixed high ids,
-// give a subset a non-null anthropic_key_enc sentinel so the own-key branch
-// lights up, and write 30 days of llm_usage spanning every bucket. A couple
+// with the $20+ tier split into "capped" vs "kept going on own key" (own-key
+// spend recorded that day). llm_usage is staging:private (schema-only clone
+// → empty), so there is no per-day spend to bucket at all without seeding it
+// here. We create obviously-fake users (staging-demo-spend-*) at fixed high
+// ids, give a subset own-key spend so that branch lights up (the stored
+// Anthropic key sentinel it used went with those keys, task 2275), and write
+// 30 days of llm_usage spanning every bucket. A couple
 // are is_admin so the "Include admin users" toggle visibly changes the bars.
 // Idempotent (fixed ids + ON CONFLICT DO NOTHING); strict no-op outside
 // staging; never references real users.
@@ -11533,26 +11916,23 @@ async function seedStagingSpendDistribution(pool) {
 
     const records = fixtures.map(f => ({
       id: f.id, name: f.name, admin: f.admin,
-      key_enc: f.key ? 'v1:staging-demo-fake-key' : null,
-      key_last4: f.key ? 'demo' : null,
       base: { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier] || 0,
       tier: f.tier,
     }));
-    // Sentinel passwords/keys are non-loginable and carry no real secret.
+    // Sentinel passwords are non-loginable and carry no real secret.
     await pool.query(
-      `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
-       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin, f.key_enc, f.key_last4
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean, key_enc text, key_last4 text)
+      `INSERT INTO users (id, username, password, is_admin)
+       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean)
        ON CONFLICT (id) DO NOTHING`,
       [JSON.stringify(records)]
     );
-    // Re-pin roles/keys, and only backdate signups that are too recent.
+    // Re-pin roles, and only backdate signups that are too recent.
     await pool.query(
-      `UPDATE users u SET is_admin = f.admin, anthropic_key_enc = f.key_enc,
-              anthropic_key_last4 = f.key_last4,
+      `UPDATE users u SET is_admin = f.admin,
               created_at = CASE WHEN u.created_at > NOW() - INTERVAL '45 days'
                                 THEN NOW() - INTERVAL '45 days' ELSE u.created_at END
-         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean, key_enc text, key_last4 text)
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean)
         WHERE u.id = f.id`,
       [JSON.stringify(records)]
     );
@@ -13804,6 +14184,64 @@ async function seedStagingRestartEligibleMerge(pool, config) {
 // request), idempotent, and strictly a no-op outside staging. Its session id
 // is apart from every other fixture's and in a range no real session can
 // reach.
+// The admin limits area's shots (services/platform-limits-view.js,
+// frontend/src/features/notifications/platform-limits.tsx): a fresh staging
+// copy carries production's credit state, which is usually well above the
+// warning line, so the area would have nothing to show. This writes a sample
+// read, as the credit sweep stores one (openrouter-credit.js): the account's
+// credit at $184, going down about $92 a day over two days of readings, and
+// the bot's key with $152 left of an $800 week, so $648 used. The area then
+// shows both rows: the account's credit under its $200 line, and Homeroom
+// bot's weekly budget at 81%. Staging only. A preview has no OpenRouter key
+// and no management key, so its own credit sweep has nothing to ask and
+// leaves this standing. A read goes stale after 45 minutes (the area then
+// says it could not check), and a preview outlives that, so the sample read
+// is dated twelve hours ahead: it stays "just read" for the preview's life.
+// The readings behind the days estimate stay in the past, where a rate is
+// measured. Warnings are never sent from staging (openrouter-credit.js and
+// platform-limit-alerts.js isStaging), so no admin is told.
+const STAGING_SAMPLE_READ_AHEAD_MS = 12 * 60 * 60 * 1000;
+
+async function seedStagingPlatformLimit(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const now = Date.now();
+  const at = new Date(now + STAGING_SAMPLE_READ_AHEAD_MS).toISOString();
+  const state = {
+    accountCents: 18400,
+    keyCents: 15200,
+    keyLimitCents: 80000,
+    keyReset: 'weekly',
+    management: true,
+    creditCents: 18400,
+    creditAt: at,
+    creditSource: 'account',
+    spendableCents: 15200,
+    at,
+    armed: { low: false, urgent: false },
+    outage: null,
+    readings: [48, 36, 24, 12, 0].map((hours) => ({
+      at: new Date(now - hours * 60 * 60 * 1000).toISOString(),
+      cents: 18400 + Math.round((hours * 9200) / 24),
+    })),
+    stagingFixture: 'platform limits area',
+  };
+  try {
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ('homeroom_bot_credit_state', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(state)],
+    );
+    // The weekly budget's row is built from its limit's stored level, which
+    // its sweep writes every five minutes: measured once here, by that same
+    // code, so the row is there before the first sweep.
+    await require('../services/platform-limit-alerts').evaluate(pool, {}, 'bot_budget', { staging: true, limitsChanged: () => {} });
+    log.info('db', 'Staging platform-limit fixture seeded', { creditCents: state.creditCents, keyCents: state.keyCents });
+  } catch (err) {
+    log.warn('db', 'Staging platform-limit fixture failed', { err: err.message });
+  }
+}
+
 async function seedStagingGithubChecksHold(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   const SESSION_ID = 999_999_991;
@@ -16919,6 +17357,8 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
+  // 20 Nov 2026 (live-draft review): its own suite runs it (tests/live-draft-seed-postgres.test.js).
+  seedStagingLiveDraftThread,
   migrateAppDbsToPerRole,
   markChangesWithoutWorkState,
   seedStagingTranslations,
@@ -16934,6 +17374,7 @@ module.exports = {
   seedStagingBotFixesPlatform,
   // #6563: the approved change GitHub is holding, the Merging card's shot.
   seedStagingGithubChecksHold,
+  seedStagingPlatformLimit,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.
@@ -16946,6 +17387,8 @@ module.exports = {
   seedStagingFoldedLiveNotifications,
   seedStagingDesignThread,
   seedStagingCapturedPageThread,
+  // K (20 Nov 2026): one thread holding two artifacts, the picker's shots.
+  seedStagingArtifactsThread,
   // The private thread about a change that is live, which History lists.
   seedStagingLiveChangePrivateThread,
   seedStagingOlderFirstVersionThread,

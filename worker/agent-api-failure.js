@@ -35,6 +35,23 @@
 // renderings. Anchored at line start.
 const API_ERROR_LINE = /^[\s>*\-•⎿|]*API\s+Error\b/i;
 
+// A provider that refuses the KEY (a 401, or a 403 such as OpenRouter's
+// "Key limit exceeded (weekly limit)" once a key's spending limit is used
+// up) is reported with the runtime's own reading in front of the same
+// notice:
+//
+//   Failed to authenticate. API Error: 403 Key limit exceeded (weekly
+//   limit). Manage it using https://openrouter.ai/workspaces/default/keys/…
+//   $100.03 of $100.00 used; resets 2026-10-19T00:00:00.000Z.
+//
+// (bench run 196, trial 1500, 14 Oct 2026: its first request was refused
+// and that line was the turn's whole final message; claude exited 1.) The
+// anchored pattern above did not see it, so the host read such a turn as
+// "the agent exited with code 1" and never as a provider's refusal. Only
+// that exact lead, at the start of the first line, in front of "API
+// Error": a reply that merely mentions failing to authenticate is not one.
+const REFUSED_KEY_LINE = /^[\s>*\-•⎿|]*Failed to authenticate\.\s+API\s+Error\b/i;
+
 // Transport failures the runtime reports as a bare one-line message with
 // no "API Error" prefix. Only ever matched against a SINGLE-line result,
 // so a spec that ends on such a sentence can't trip them.
@@ -78,7 +95,7 @@ function agentApiFailure(text) {
   if (!lines.length) return null;
 
   const first = lines[0];
-  if (API_ERROR_LINE.test(first)) return { kind: 'api_error', line: clip(first) };
+  if (API_ERROR_LINE.test(first) || REFUSED_KEY_LINE.test(first)) return { kind: 'api_error', line: clip(first) };
   if (lines.length === 1 && WHOLE_MESSAGE_NOTICES.some((re) => re.test(first))) {
     return { kind: 'api_error', line: clip(first) };
   }

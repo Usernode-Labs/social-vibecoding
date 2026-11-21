@@ -26,6 +26,7 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, Machine, Outcome, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { SETTLE_CAP_MS, SETTLE_MS, VOICE, placeOf, voiceKey } from '../rules/bot-replies.ts';
 import type { Place } from '../rules/bot-replies.ts';
+import { BOT_LANE } from '../rules/bot-loop.ts';
 
 export const MACHINE = VOICE;
 export { voiceKey };
@@ -40,6 +41,9 @@ export const WORK = Object.freeze({
 
 type Name = 'quiet' | 'settling' | 'answering';
 interface Note { kind: string; status: 'pending' | 'done' | 'failed' | 'exhausted' }
+// #6920: messages whose answer met OpenRouter's credit, and the people who
+// asked, waiting for credit's return. One per burst that was held.
+export interface Held { ids: number[]; speakers: number[]; sorry?: true }
 export interface Data {
   appId: number;
   place: Place;
@@ -58,6 +62,13 @@ export interface Data {
   taps: Record<string, string>;
   // The work this place owes others (offers, reports, held answers).
   notes: Record<string, Note>;
+  // Version 2 (20 Nov 2026): asks whose answer met OpenRouter's credit,
+  // oldest first, answered here once credit is back (CreditBack).
+  credit?: Held[];
+  // Those asks, owed since credit came back: answered before any newer turn.
+  resume?: Held[];
+  // The ask the answering turn resumed, while it runs.
+  resuming?: Held;
 }
 export type VState = { name: Name; data: Data } | { name: typeof NONE; data: null };
 type Live = Extract<VState, { data: Data }>;
@@ -115,6 +126,9 @@ const EVENTS = {
       mention: text(p?.mention, 80), mentions: names(p?.mentions),
     };
   },
+  // #6920: OpenRouter's credit is back (the bot's lane, told by the credit
+  // sweep): each ask kept for it is answered here, once.
+  CreditBack: (p: any) => ({ ...where(p) }),
 };
 const CREATE = ['Heard', 'OfferTapped', 'Report', 'HeldAnswer'];
 
@@ -141,35 +155,98 @@ function heard(s: VState, e: Event<any>, _f: Facts, ctx: TransitionContext): Out
     { timer: { at: settleAt(first, ctx.now), event: { type: 'Settled' } } });
 }
 
-function turn(d: Data, ctx: TransitionContext): Outcome<VState> {
+/**
+ * Start a turn. `hold` resumes a kept ask: its own messages are answered and
+ * `through` does not move; `again` stays, so a normal turn follows it.
+ */
+function turn(d: Data, ctx: TransitionContext, hold: Held | null = null): Outcome<VState> {
   const n = d.turns + 1;
   const work: WorkRequest[] = [{
     kind: WORK.turn, key: `turn:${n}`,
-    input: { appId: d.appId, place: d.place as unknown as Json, through: d.through, sorry: d.sorry },
+    input: {
+      appId: d.appId, place: d.place as unknown as Json, through: d.through,
+      sorry: hold ? !!hold.sorry : d.sorry,
+      ...(hold ? { resume: { ids: hold.ids } } : {}),
+    },
   }];
-  return step('answering', { ...d, turns: n, first: null, again: false }, { work, timer: null });
+  const next: Data = hold
+    ? { ...d, turns: n, first: null, resuming: hold }
+    : { ...d, turns: n, first: null, again: false, resuming: undefined };
+  return step('answering', next, { work, timer: null });
 }
 
-const settled = (s: VState, _e: Event<any>, _f: Facts, ctx: TransitionContext) => turn((s as Live).data, ctx);
+// The first ask credit's return owed, before any normal turn.
+function nextTurn(d: Data, ctx: TransitionContext): Outcome<VState> {
+  const [first, ...rest] = d.resume || [];
+  if (first) return turn({ ...d, resume: rest }, ctx, first);
+  return turn(d, ctx);
+}
+
+const settled = (s: VState, _e: Event<any>, _f: Facts, ctx: TransitionContext) => nextTurn((s as Live).data, ctx);
+
+const ids = (v: unknown): number[] =>
+  (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : []);
+
+// An ask answered since: the people it was for are dropped from what waits,
+// so they are never answered twice. An entry with nobody left goes.
+function dropSpeakers(list: Held[] | undefined, speakers: number[]): Held[] | undefined {
+  if (!list?.length || !speakers.length) return list;
+  const gone = new Set(speakers);
+  return list.map((h) => ({ ...h, speakers: h.speakers.filter((s) => !gone.has(s)) }))
+    .filter((h) => h.speakers.length > 0);
+}
+
+// After a turn: a kept ask credit's return owes goes first (keeping `again`,
+// so the burst written to meanwhile gets its normal turn after it), then a
+// turn that has to say sorry, then the burst settles, then quiet.
+function after(d: Data, ctx: TransitionContext): Outcome<VState> {
+  if ((d.resume || []).length) return nextTurn(d, ctx);
+  if (d.sorry) return turn(d, ctx);
+  if (d.again) {
+    const first = ctx.now;
+    return step('settling', { ...d, again: false, first: first.toISOString() },
+      { timer: { at: settleAt(first, ctx.now), event: { type: 'Settled' } } });
+  }
+  return step('quiet', d, { timer: null });
+}
 
 // A turn's end: what it read through is the place's; anything written while
-// it ran gets a turn of its own.
+// it ran gets a turn of its own. A turn that met credit keeps its ask for the
+// next return; a later turn by the same person drops their older one.
 function turnEnded(status: 'done' | 'failed') {
   return (s: VState, e: Event<WorkResultPayload>, _f: Facts, ctx: TransitionContext): Outcome<VState> => {
     const d = (s as Live).data;
-    const r = (e.payload.result || {}) as { throughId?: number };
-    const through = status === 'done' ? Math.max(d.through, Number(r.throughId) || 0) : d.through;
-    // Failed for good: whoever spoke to it hears sorry, once, in the next
-    // turn (which runs now).
-    const next: Data = { ...d, through, sorry: status === 'failed' && !d.sorry };
-    if (next.sorry) return turn(next, ctx);
-    const quiet: Data = { ...next, sorry: false };
-    if (d.again) {
-      const first = ctx.now;
-      return step('settling', { ...quiet, again: false, first: first.toISOString() },
-        { timer: { at: settleAt(first, ctx.now), event: { type: 'Settled' } } });
+    const r = (e.payload.result || {}) as { throughId?: number; held?: any; speakerIds?: number[] };
+    const held: Held | null = status === 'done' && r.held && ids(r.held.ids).length
+      ? { ids: ids(r.held.ids), speakers: ids(r.held.speakers) } : null;
+    const speakers = ids(r.speakerIds);
+    const wasResume = !!d.resuming;
+    const through = status === 'done' && !wasResume ? Math.max(d.through, Number(r.throughId) || 0) : d.through;
+    const base: Data = { ...d, through, resuming: undefined };
+    if (wasResume) {
+      if (held) {
+        // Still out of credit: the thread already says it, so nothing is
+        // said again; it waits at the front of the next return's list.
+        return after({ ...base, credit: [held, ...(base.credit || []), ...(base.resume || [])], resume: [] }, ctx);
+      }
+      if (status !== 'done' && d.resuming && !d.resuming.sorry) {
+        // Failed for good: one more turn says sorry on the same messages.
+        return turn(base, ctx, { ...d.resuming, sorry: true });
+      }
+      return after(base, ctx);
     }
-    return step('quiet', quiet, { timer: null });
+    if (status === 'done') {
+      let data: Data = {
+        ...base, sorry: false,
+        credit: dropSpeakers(base.credit, speakers),
+        resume: dropSpeakers(base.resume, speakers),
+      };
+      if (held) data = { ...data, credit: [...(data.credit || []), held] };
+      return after(data, ctx);
+    }
+    // Failed for good: whoever spoke to it hears sorry, once, in the next
+    // turn (which runs now, or after a kept ask credit owes).
+    return after({ ...base, sorry: !d.sorry }, ctx);
   };
 }
 
@@ -284,23 +361,33 @@ function result(status: 'done' | 'failed' | 'exhausted') {
 const route = (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer'));
 const system = (e: Event<any>): Check => (e.source.kind === 'system' || e.source.kind === 'service' ? ok() : reject('not_a_producer'));
 const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reject('timer_only'));
+// CreditBack: the bot's lane's message (bot-lane CreditBack), or the system.
+const fromLane = (e: Event<any>): Check => ((e.source.kind === 'message' && e.source.from?.machine === BOT_LANE)
+  || e.source.kind === 'system' ? ok() : reject('not_the_lane'));
+
+// #6920: credit is back. Every ask kept for it is owed an answer, once, after
+// the ones already owed. Answering or settling: it waits for the turn to end.
+function creditBack(s: VState, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<VState> {
+  const d = (s as Live).data;
+  const owed = d.credit || [];
+  if (!owed.length) return step(s.name as Name, d);
+  const moved: Data = { ...d, credit: [], resume: [...(d.resume || []), ...owed] };
+  if (s.name === 'quiet') return nextTurn(moved, ctx);
+  return step(s.name as Name, moved);
+}
 
 async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
   if (event.type !== 'OfferTapped') return NO_FACTS;
   const id = Number(event.payload?.offerId);
-  // 5 Nov 2026: a thread's offers are Homeroom bot's cards (bot_cards); one
-  // made before is still read from its old table (homeroom-bot-voice.js
-  // OFFERS_SQL). A card's id is above every older offer's.
+  // 5 Nov 2026: a thread's offers are Homeroom bot's cards (bot_cards). One
+  // made before had its own table, read here until the last was 14 days old
+  // (19 Nov 2026, homeroom-bot-voice.js OFFERS_SQL): it has no card now,
+  // and the guard answers no_such_offer.
   const { rows: [card] } = await tx.query(
     `SELECT o.id, o.app_id, o.kind, o.user_id AS for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
        FROM bot_cards o JOIN chat_messages m ON m.id = o.chat_message_id
       WHERE o.id = $1 AND o.place = 'thread' FOR UPDATE OF o`, [id]);
-  if (card) return { offer: card };
-  const { rows: [offer] } = await tx.query(
-    `SELECT o.id, o.app_id, o.kind, o.for_user_id, o.status, m.thread_type, m.thread_ref, m.app_id AS message_app_id
-       FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id
-      WHERE o.id = $1 FOR UPDATE OF o`, [id]);
-  return { offer: offer || null };
+  return { offer: card || null };
 }
 
 export function botVoice(): Machine<VState, Facts> {
@@ -318,7 +405,10 @@ export function botVoice(): Machine<VState, Facts> {
   };
   return defineMachine<VState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2 (20 Nov 2026): the asks kept for OpenRouter's credit (`credit`,
+    // `resume`, `resuming`) and CreditBack. An older release leaves the
+    // instances this one wrote alone.
+    version: 2,
     events: EVENTS,
     create: CREATE,
     // What web appends: a message heard where the bot listens, and its offer tapped.
@@ -331,6 +421,7 @@ export function botVoice(): Machine<VState, Facts> {
       OfferTapped: route,
       Report: system,
       HeldAnswer: system,
+      CreditBack: fromLane,
     },
     writes: {
       // The held answer's post, claimed pending until voice.post has said it
@@ -357,10 +448,13 @@ export function botVoice(): Machine<VState, Facts> {
       },
     },
     transitions: {
-      [NONE]: { Heard: keyed(heard), OfferTapped: owed.OfferTapped, Report: owed.Report, HeldAnswer: owed.HeldAnswer },
-      quiet: { Heard: { to: heard }, Settled: { ignore: 'not_settling' }, ...owed },
-      settling: { Heard: { to: heard }, Settled: { to: settled }, ...owed },
-      answering: { Heard: { to: heard }, Settled: { ignore: 'answering' }, ...owed },
+      [NONE]: {
+        Heard: keyed(heard), OfferTapped: owed.OfferTapped, Report: owed.Report, HeldAnswer: owed.HeldAnswer,
+        CreditBack: { ignore: 'nothing_owed' },
+      },
+      quiet: { Heard: { to: heard }, Settled: { ignore: 'not_settling' }, CreditBack: keyed(creditBack), ...owed },
+      settling: { Heard: { to: heard }, Settled: { to: settled }, CreditBack: keyed(creditBack), ...owed },
+      answering: { Heard: { to: heard }, Settled: { ignore: 'answering' }, CreditBack: keyed(creditBack), ...owed },
     } as any,
   });
 }

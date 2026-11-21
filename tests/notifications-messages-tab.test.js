@@ -113,6 +113,37 @@ test('read and unread never share a run', () => {
   assert.equal(merged.length, 2);
 });
 
+test('a plain message and a row the bell counts never share a run', () => {
+  // 20 Nov 2026: a 🙏 reaction (counted by the bell) and a newer plain
+  // message from the same group chat folded into one row. The row took the
+  // message's plainMessage, so Unread hid it while the bell said 1.
+  const reaction = (id, conversationId) => ({ id, kind: 'conversation_reaction', conversationId, readAt: null });
+  const reply = (id, conversationId) => ({ id, kind: 'conversation_reply', conversationId, readAt: null });
+  const runs = collapse([msg(4, 7), reaction(3, 7), reply(2, 7), msg(1, 7)]);
+  assert.deepEqual(runs.map((r) => r.item.id), [4, 3, 1], 'plain, counted, plain: three rows');
+  assert.deepEqual(runs.map((r) => r.count), [1, 2, 1], 'the two counted rows still fold together');
+  assert.deepEqual(runs.map((r) => r.plain), [true, false, true]);
+  // A conversation message carrying an app (the bot's reply about a project,
+  // #5580) is counted, so it does not fold into a plain one either.
+  const project = { id: 6, kind: 'conversation_message', conversationId: 7, appId: 3, readAt: null };
+  assert.equal(collapse([project, msg(5, 7)]).length, 2);
+});
+
+test('the run\'s plain rule is isPlainMessageNotification\'s', () => {
+  const isPlain = topLevelFn('isPlainMessageNotification', ['n']);
+  const rows = [
+    { id: 1, kind: 'conversation_message', conversationId: 7, readAt: null },
+    { id: 2, kind: 'conversation_message', conversationId: 7, appId: 3, readAt: null },
+    { id: 3, kind: 'channel_message', conversationId: 7, readAt: null },
+    { id: 4, kind: 'conversation_reaction', conversationId: 7, readAt: null },
+    { id: 5, kind: 'conversation_mention', conversationId: 7, readAt: null },
+    { id: 6, kind: 'conversation_thread_reply', conversationId: 7, readAt: null },
+  ];
+  for (const row of rows) {
+    assert.equal(collapse([row])[0].plain, isPlain(row), `${row.kind}${row.appId ? ' with an app' : ''}`);
+  }
+});
+
 test('the count rides only on a genuine collapse', () => {
   const views = FE_SRC.slice(FE_SRC.indexOf('function screenViews('),
     FE_SRC.indexOf('// One notification row, as data.'));

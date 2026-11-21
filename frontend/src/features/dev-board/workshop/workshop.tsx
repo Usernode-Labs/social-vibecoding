@@ -90,6 +90,7 @@ import { useDevActions } from '../actions-store';
 import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import { shownPill } from '../card/model';
 import { CardSkeleton, CountSkeleton } from '../card/skeleton';
 import { composeNoReason, VotePicker } from '../card/dev-card';
 import type { NoChoice } from '../../review-flow/vote-sheet';
@@ -127,7 +128,7 @@ import { weekName, weekRange } from './week-pages';
 import { liveSinceLine } from './hub-cards';
 import { offerJoin } from '../../../lib/join-required';
 import { watchBoardLinks } from './board-links';
-import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { isFrameSkin, isKitHome, useLiveSkin } from '../../../lib/skin';
 import { deskLine, deskWords, useDesk } from '../../ai/desk';
 import { projectTabAddress } from '../../ai/filter-address';
 import { changeHref } from '../../../lib/change-href';
@@ -1348,7 +1349,10 @@ type Fact = { key: string; tone: string | undefined; text: string; topic?: boole
 const SAID_ELSEWHERE = new Set(['needs_vote', 'tally', 'approvals']);
 export function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
-  const st = row.card.pill ? row.card.pill.state : null;
+  // The stored row's words while it is not up for a vote (card/model.ts
+  // shownPill): "Taking screenshots" after the count, never a bare tally
+  // that reads as a vote still wanted.
+  const st = shownPill(row.card);
   // The count the card shows once it is answered (#5236), and the snapshot
   // it keeps when nothing fresher can be said.
   const now = answeredCount(row, voted);
@@ -1565,7 +1569,7 @@ function labelTally(a: { tally?: string }): string {
  * that is not the wait itself ("Checks failing") still follows it.
  */
 function tallyLine(row: QueueRow, voted: string | null): string {
-  const st = row.card.pill ? row.card.pill.state : null;
+  const st = shownPill(row.card);
   // The count the sheet shows once it is answered (#5236), the same fresh
   // read `factsFor` takes; the snapshot when nothing fresher can be said.
   const now = answeredCount(row, voted);
@@ -1840,8 +1844,14 @@ function ShotsPicture({ v, near, wide }: {
   if (!screen) return null;
   const W = screen.width;
   const H = Math.max(screen.before.height, screen.after.height);
-  // The crop: every outlined area on either side, so a flip never moves it.
-  const rects = screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
+  // The crop: what each change is about (its frame, on either side) when the
+  // run recorded it, else every outlined area on either side, so a flip
+  // never moves it.
+  const frameRects = (screen.frames || []).filter((f) => f && f.n > 0)
+    .flatMap((f) => [f.b, f.a])
+    .filter((v): v is number[] => !!v && v.length === 4 && v[2] > 0 && v[3] > 0)
+    .map((v) => ({ box: { x: v[0], y: v[1], w: v[2], h: v[3] }, line: false }));
+  const rects = frameRects.length ? frameRects : screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
     .filter((r): r is { box: Box; line: boolean } => !!r);
   let place: { scale: number; tx: number; ty: number } | null = null;
   if (view.w && view.h) {
@@ -3117,8 +3127,13 @@ export function DevWorkshop(): ReactNode {
   // has since left. The first render is the loading skeleton either way, so
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
-  // Standard (WIP) folds Invite into the hero's row (no Invite card), and its Workshop door opens the board (below).
-  const wipLook = useLiveSkin() === 'wip';
+  // Standard (WIP) folds Invite into the hero's row (no Invite card) and draws the board as the kit does.
+  const wipLook = isKitHome(useLiveSkin());
+  // The hub and the board are the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome).
+  const kitHub = isKitHome(useLiveSkin());
+  // The Workshop's door opens the board under Standard (WIP) alone (below). The standard look took the kit's board and
+  // not its door: there the Workshop opens on its overview, and the board is the page under it (asked 20 Nov 2026).
+  const boardDoor = useLiveSkin() === 'wip';
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -3249,7 +3264,8 @@ export function DevWorkshop(): ReactNode {
   // items, before paint. The overview is still there one step up: All
   // items' own way back opens it (a step from All items or the bot's slots
   // is left alone), and so does Back or Forward onto an entry that was the
-  // overview (the router marks those `traversal`).
+  // overview (the router marks those `traversal`). Under that look alone
+  // (`boardDoor`): the standard look's Workshop opens on its overview.
   const cameFrom = useRef<TabKey | null>(null);
   const traversed = useRef(false);
   useEffect(() => {
@@ -3266,13 +3282,13 @@ export function DevWorkshop(): ReactNode {
   useLayoutEffect(() => {
     const was = cameFrom.current;
     cameFrom.current = tab;
-    if (!wipLook || tab !== 'workshop') return;
+    if (!boardDoor || tab !== 'workshop') return;
     if (was === 'all' || was === 'bot') return;
     if (traversed.current) { traversed.current = false; return; }
     cameFrom.current = 'all';
     setTab('all');
     callAppView('_setWorkshopTab', 'all');
-  }, [tab, wipLook]);
+  }, [tab, boardDoor]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
   // moment the browser tab comes back to the front — the moment a stale
@@ -4114,9 +4130,10 @@ export function DevWorkshop(): ReactNode {
           iconUrl={own ? app.iconUrl : null}
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
+          platform={!!actions.selfHosted}
           // Invite is the card after this hero (InviteHeroCard), except
           // under Standard (WIP), where it stays the row's own button.
-          inviteCard={!wipLook}
+          inviteCard={!kitHub}
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -4184,7 +4201,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
           under it on a phone. See ./community-card.tsx InviteHeroCard. */}
-      {slug && !wipLook ? <InviteHeroCard slug={slug} data={community} /> : null}
+      {slug && !kitHub ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and

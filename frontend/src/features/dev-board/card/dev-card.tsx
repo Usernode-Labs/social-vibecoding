@@ -81,6 +81,7 @@ import type {
   TitleEditTarget,
   TitleSpec,
 } from './model';
+import { shownPill } from './model';
 
 /** Layout-timed on the client; a no-op under the server renderer, warning-free. */
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
@@ -1695,7 +1696,9 @@ export function DevCard(
   // the sibling chain the checks walk stays intact — and emits the facts row
   // only when a reader could see something in it. The detail head keeps its
   // one uncapped row, the pill as an inline capsule among the chips.
-  const pill = m.pill ? <StatusPill s={m.pill.state} inline={m.pill.inline} /> : null;
+  // The stored row's words while it is not up for a vote (model.ts shownPill).
+  const shown = shownPill(m);
+  const pill = m.pill && shown ? <StatusPill s={shown} inline={m.pill.inline} /> : null;
   const factsShown = kept.length > 0;
   const statusRow = dense ? (
     <div className="dev-card-badges dev-card-status" data-empty={pill || voteBtn ? undefined : '1'}>{pill}{voteBtn}</div>
@@ -1762,7 +1765,8 @@ export function DevCard(
  * amber so the Issues column is not the one bare column.
  */
 export function edgeFor(m: DevCardModel): string {
-  const s = m.pill?.state;
+  // The spine follows the pill the card draws: the stored row's tone too.
+  const s = shownPill(m);
   if (s && s.label) return isOpenVote(s) ? 'vote' : (s.tone || 'neutral');
   const kind = String(m.key || '').split(':')[0];
   if (kind === 'issue') return 'attention';

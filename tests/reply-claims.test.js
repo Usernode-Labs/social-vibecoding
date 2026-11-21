@@ -173,8 +173,8 @@ test('the repair note names only the tools its place offers, and asks for no den
   assert.match(main, /call start_design now with what to draw and its title, draw it, then reply/);
   assert.doesNotMatch(main, /draw_screen|do not reply/);
   assert.match(main, /to finish this private thread, call close_thread\./);
-  const design = claims.repairNote([{ kind: 'design_done', said: 'x' }], { tools: new Set(['reply', 'write_screen', 'edit_design', 'start_design']) });
-  assert.match(design, /Call write_screen \(or edit_design\) now, then reply\./, 'with the design loaded it draws now');
+  const design = claims.repairNote([{ kind: 'design_done', said: 'x' }], { tools: new Set(['reply', 'write_artifact', 'edit_artifact', 'capture_page', 'start_design']) });
+  assert.match(design, /Call write_artifact \(or edit_artifact\) now, then reply\./, 'with the design loaded it draws now');
   // A live draft's change said with none saved (step 6, draft_done).
   const draft = claims.repairNote([{ kind: 'draft_done', said: 'says you changed or saved the draft' }], { tools: new Set(['reply', 'apply_changes']) });
   assert.match(draft, /Nothing was saved to the draft this turn\. Make the change with edit_file and save it with apply_changes/);
@@ -344,4 +344,164 @@ test('#6784: a bullet idea, or a short idea with a short reply, is no problem', 
   assert.deepEqual(await kinds(pool(), threadTurn({}), PLAN_REPLY), [], 'no idea, nothing to compare');
   assert.equal(claims.briefShortOfPlan('', PLAN_REPLY), false);
   assert.equal(claims.briefShortOfPlan('A line', PLAN_REPLY), true);
+});
+
+// ── 20 Nov 2026 (live-draft review, E): "I looked it up" needs a search ──
+
+test('E: "I researched" is backed only by a web search this turn, on the chat that counts them', async () => {
+  const chat = (webSearched) => ({ user: { id: 1 }, bot: { id: 2 }, appIds: new Set(), conversationId: 5, webSearched });
+  const said = 'I researched how iOS apps lay out a list like this. Most use an inset grouped list.';
+  assert.deepEqual(await kinds(pool(), chat(0), said), ['searched'], 'no search ran: shown false');
+  assert.deepEqual(await kinds(pool(), chat(1), said), [], 'a search ran: it stands');
+  assert.deepEqual(await kinds(pool(), { user: { id: 1 }, appIds: new Set() }, said), [], 'a surface that counts no searches is not checked for it');
+  for (const words of [
+    'I looked it up: iOS uses inset grouped lists.', 'I searched online and found three patterns.',
+    'From my research, most apps use a grouped list.', 'Let me research that.', 'Here is what I found on the web.',
+  ]) {
+    assert.deepEqual(await kinds(pool(), chat(0), words), ['searched'], words);
+  }
+  for (const words of [
+    'I searched the open requests and found none like it.', 'I looked it up in your requests: it is up for a vote.',
+    'Here is how iOS apps usually lay out a list, from what I know.', 'I can search the web for this if you want.',
+  ]) {
+    assert.deepEqual(await kinds(pool(), chat(0), words), [], words);
+  }
+});
+
+test('E: the repair asks for a search where there is one, else for "from what I know", and the cut drops the claim', async () => {
+  const problems = await claims.checkReply(pool(), { user: { id: 1 }, appIds: new Set(), webSearched: 0 },
+    'I researched it. Most iOS apps use an inset grouped list for settings.');
+  assert.deepEqual(problems.map((p) => p.kind), ['searched']);
+  const on = claims.repairNote(problems, { tools: new Set(['reply', 'web_search']) });
+  assert.match(on, /You did not search the web in this turn\. If they asked you to look something up, call web_search now and name the pages you used as links; otherwise say plainly that you are answering from what you know\./);
+  const off = claims.repairNote(problems, { tools: new Set(['reply']) });
+  assert.match(off, /You cannot search the web here: say plainly that you are answering from what you know/);
+  assert.doesNotMatch(off, /web_search/, 'a tool the place does not have is never named');
+  assert.doesNotMatch(`${on}${off}`, /—/);
+  assert.equal(claims.cut('I researched it. Most iOS apps use an inset grouped list for settings.', problems, {}),
+    'Most iOS apps use an inset grouped list for settings.');
+});
+
+// ── 20 Nov 2026 (live-draft review, A): how a draft's preview looks ────────
+
+test('A: in a draft turn, "it is fixed" or how the preview looks now needs a look after the last save', () => {
+  const found = (text, turn) => claims.check(claims.mentions(text), { turn }).map((p) => p.kind);
+  const saved = { liveDraft: true, draftSaved: true };
+  for (const said of [
+    'It\'s fixed.', 'The delete button is fixed now.', 'Fixed: the delete button now sits on the right.', 'That is sorted.',
+    'The delete button now sits on the right of each row.', 'It looks right now.', 'The header now shows the date.', 'All fixed!',
+  ]) {
+    assert.deepEqual(found(said, saved), ['draft_looks'], said);
+    assert.deepEqual(found(said, { ...saved, draftLooked: true }), [], `${said} (looked)`);
+  }
+  // What it expects, the app running again (what the apply said), and an
+  // earlier change are no such claim.
+  for (const said of [
+    'The change is applied: I expect the delete button to sit at the right of each row.', 'It should now sit on the right.',
+    'It\'ll now show the date.', 'Fixed: the app is running again.', 'The bug was fixed in an earlier save.',
+  ]) {
+    assert.deepEqual(found(said, saved), [], said);
+  }
+  assert.deepEqual(found('It\'s fixed.', {}), [], 'only a draft turn');
+});
+
+test('A: the repair note asks for a look where the turn has one, and the cut keeps what it expects', () => {
+  const problem = [{ kind: 'draft_looks', said: 'says it is fixed or how the preview looks now, without looking at it since your last save' }];
+  const withLook = claims.repairNote(problem, { tools: new Set(['reply', 'apply_changes', 'look_at_preview']) });
+  assert.match(withLook, /Look with look_at_preview, then say what it shows; if you cannot look, say the change is applied and what you expect it to show, in those words\./);
+  const without = claims.repairNote(problem, { tools: new Set(['reply']) });
+  assert.doesNotMatch(without, /look_at_preview/);
+  assert.match(without, /say the change is applied and what you expect it to show, never that it is fixed/);
+  for (const note of [withLook, without]) assert.doesNotMatch(note, /—/);
+  const text = 'It\'s fixed: the delete button now sits on the right. I expect it to stay there on a phone too.';
+  const ctx = { liveDraft: true, draftSaved: true };
+  assert.equal(claims.cut(text, claims.check(claims.mentions(text), { turn: ctx }), ctx), 'I expect it to stay there on a phone too.');
+});
+
+// ── 20 Nov 2026 (live-draft review, C): no offer to change a proposal no tool can change ──
+
+// Thread 58972 at 16:05: the thread's live draft was a new one, opened from
+// main, with none of PR 142's work, and the reply's buttons were these.
+const BUTTONS_1605 = ["Apply this page's look onto PR #142 now", 'Keep iterating on the page first', "Show me #142's before and after"];
+/** A chat turn with a live draft open that is not up for a vote, or `taps`. */
+const draftTurn = (taps = {}, extra = {}) => ({
+  user: { id: 7 }, bot: { id: 2 }, appIds: new Set(), deps: {},
+  toolNames: new Set(['reply', 'revise_proposal', 'offer_propose_draft']),
+  proposalTaps: { pr: null, update: false, propose: false, ...taps }, ...extra,
+});
+/** The bot's own proposals up for a vote, as REVISABLE_SQL answers. */
+const ownProposals = (rows = []) => pool([[/FROM chat_sessions cs/, rows]]);
+
+test('C (16:05): "Apply this page\'s look onto PR #142 now" in a thread whose draft is not PR 142\'s is cut', async () => {
+  const turn = draftTurn();
+  const p = ownProposals();
+  const found = await claims.checkReply(p, turn, 'The page has the new look now.', { buttons: BUTTONS_1605 });
+  assert.deepEqual(found.map((x) => x.kind), ['proposal_action']);
+  assert.deepEqual(found[0].buttons, [BUTTONS_1605[0]]);
+  assert.deepEqual(claims.keptButtons(BUTTONS_1605, turn), BUTTONS_1605.slice(1), 'the other two stay');
+  // What revise_proposal could change was read once, for the number named.
+  const read = p.seen.filter((q) => /FROM chat_sessions cs/.test(q.sql));
+  assert.equal(read.length, 1);
+  assert.deepEqual(read[0].params, [2, [142], 7]);
+  // The second pass is told to leave it out, and how the draft's own proposal is reached.
+  const note = claims.repairNote(found, { tools: turn.toolNames });
+  assert.match(note, /Nothing you can do here changes that proposal, so never offer or promise it, in words or as a button \(leave out "Apply this page's look onto PR #142 now"\)\./);
+  assert.match(note, /offer_propose_draft puts Propose, or Update proposal, under your reply\./);
+  assert.match(note, /revise_proposal changes only a proposal you built\./);
+  assert.doesNotMatch(note, /—/);
+  assert.doesNotMatch(claims.repairNote(found, { tools: new Set(['reply']) }), /offer_propose_draft|revise_proposal changes only/);
+});
+
+test('C: the same offer in words is cut, and the rest of the reply stays', async () => {
+  const turn = draftTurn();
+  const text = 'The page has the new look now. Want me to apply this look onto PR #142 next? Or keep iterating here.';
+  const found = await claims.checkReply(ownProposals(), turn, text);
+  assert.deepEqual(found.map((x) => x.kind), ['proposal_action']);
+  assert.equal(claims.cut(text, found, turn), 'The page has the new look now. Or keep iterating here.');
+  for (const said of [
+    'I can update the proposal with this.', 'Shall I push these changes into PR #142?', "I'm updating PR #142 now.",
+    'Let me add the red confirm step to PR 142.',
+  ]) assert.deepEqual(await kinds(ownProposals(), draftTurn(), said), ['proposal_action'], said);
+  // Telling them what to tap, saying where things are, or saying it cannot: no offer.
+  for (const said of [
+    'Tap Update proposal in the preview\'s header to add these to PR #142.',
+    'Update the proposal from the preview\'s header when you are ready.',
+    'This draft is up for a vote as PR #142.',
+    'I can\'t change PR #142 from here: a draft cannot start from it.',
+    'I\'ll change the button in the draft; it reaches the proposal when you tap Update proposal.',
+  ]) assert.deepEqual(await kinds(ownProposals(), draftTurn(), said), [], said);
+});
+
+test('C: an offer stands on the draft\'s own proposal with Update proposal to tap, or a proposal the bot built', async () => {
+  const offer = 'Want me to apply this look onto PR #142 now?';
+  // (a) This thread's draft is PR 142, and Update proposal is under the reply or in the preview's header.
+  assert.deepEqual(await kinds(ownProposals(), draftTurn({ pr: 142, update: true }), offer), []);
+  assert.deepEqual(claims.keptButtons(BUTTONS_1605, draftTurn({ pr: 142, update: true })), BUTTONS_1605);
+  // ... but not while the proposal already has every change: there is nothing to tap.
+  assert.deepEqual(await kinds(ownProposals(), draftTurn({ pr: 142, update: false }), offer), ['proposal_action']);
+  // ... and never another PR than the draft's own.
+  assert.deepEqual(await kinds(ownProposals(), draftTurn({ pr: 141, update: true }), offer), ['proposal_action']);
+  // "The proposal" in a thread whose draft has one is the draft's.
+  assert.deepEqual(await kinds(ownProposals(), draftTurn({ pr: 142, update: true }), 'I can update the proposal with this.'), []);
+  assert.deepEqual(await kinds(ownProposals([{ id: 9, pr_number: 77, theirs: true }]), draftTurn({ pr: 142, update: false }),
+    'I can update the proposal with this.'), ['proposal_action'], 'not one of the bot\'s elsewhere');
+  // (b) PR 142 is one the bot built and is up for a vote: revise_proposal can change it.
+  assert.deepEqual(await kinds(ownProposals([{ id: 9, pr_number: 142, theirs: false }]), draftTurn(), offer), []);
+  assert.deepEqual(await kinds(ownProposals([{ id: 9, pr_number: 142, theirs: false }]),
+    draftTurn({}, { toolNames: new Set(['reply']) }), offer), ['proposal_action'], 'only where revise_proposal is offered');
+  // With no draft proposal, "the proposal" stands on one the bot built for them, or a revision this turn queued.
+  assert.deepEqual(await kinds(ownProposals([{ id: 9, pr_number: 77, theirs: true }]), draftTurn(), 'I can update the proposal with this.'), []);
+  assert.deepEqual(await kinds(ownProposals(), draftTurn({}, { revised: true }), 'I can update the proposal with this.'), []);
+  assert.deepEqual(await kinds(ownProposals(), draftTurn(), 'I can update the proposal with this.'), ['proposal_action']);
+  // A read that fails cannot tell: the words stand.
+  const broken = { query: async () => { throw new Error('down'); } };
+  assert.deepEqual(await kinds(broken, draftTurn(), offer), []);
+});
+
+test('C: only the chat carries the facts; another surface\'s replies are left as they are', async () => {
+  const voice = { user: { id: 7 }, bot: { id: 2 }, appIds: new Set(), place: { type: 'session', ref: 5 } };
+  assert.deepEqual(await kinds(ownProposals(), voice, 'I can update the proposal with this.'), []);
+  assert.deepEqual(claims.keptButtons(BUTTONS_1605, voice), BUTTONS_1605);
+  assert.deepEqual(claims.keptButtons(BUTTONS_1605, null), BUTTONS_1605);
+  assert.deepEqual(claims.proposalNumbers('PR #142, PR 7, pull request #3 and proposal #6011; #9 is a request'), [142, 7, 3, 6011]);
 });

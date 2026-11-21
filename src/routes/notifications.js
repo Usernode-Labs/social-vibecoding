@@ -128,6 +128,27 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // ...and, next to that pair in the same conversation, a reaction to the
+    // viewer's own message: a row the bell COUNTS, unlike the two plain
+    // messages it sits beside. It must not fold into their run, or the
+    // Unread tab hides it under their plain row while the bell still counts
+    // it ("Unread (1)" over "You're all caught up", 20 Nov 2026). Here so a
+    // preview shows it on Unread as its own row.
+    {
+      ...base,
+      id: 990233, kind: 'conversation_reaction',
+      createdAt: new Date(now - 3.1 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      sourceUsername: 'staging-demo-user',
+      conversationId: 990401,
+      conversationKind: 'direct',
+      conversationTitle: '[Mock] Staging demo conversation',
+      conversationMessageId: 990506,
+      messageContent: '[Mock] The release notes are up.',
+      detail: '🙏',
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #5404: the Monday count of the changes you voted on that were decided.
     // It names no project (services/voted-digest.js), so its app fields are
     // nulled; a preview has no Monday to wait for without this row.

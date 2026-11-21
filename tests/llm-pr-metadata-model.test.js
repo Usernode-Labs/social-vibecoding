@@ -64,20 +64,17 @@ test('the metadata call runs on Sonnet 5.5 at low effort with room past its thin
   assert.equal(out.model, 'claude-sonnet-5-5');
 });
 
-test('it opts into the server-side refusal fallback through the beta endpoint', async () => {
-  const c = client([reply()]);
-  await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
-  assert.equal(c.calls[0].kind, 'beta');
-  assert.deepEqual(c.calls[0].params.betas, [llm.FALLBACK_BETA]);
-  assert.equal(c.calls[0].params.fallbacks, 'default');
-});
-
-test('a client without the beta namespace keeps the plain call', async () => {
-  const c = client([reply()], { withBeta: false });
-  await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
-  assert.equal(c.calls[0].kind, 'plain');
-  assert.equal(c.calls[0].params.fallbacks, undefined);
-  assert.equal(c.calls[0].params.betas, undefined);
+// Task 2275: the call goes to OpenRouter, where Anthropic's server-side
+// refusal fallback (a beta of Anthropic's own API) does not exist. Every
+// client takes the plain call, with or without a beta namespace.
+test('the call is the plain one, never the beta endpoint', async () => {
+  for (const withBeta of [true, false]) {
+    const c = client([reply()], { withBeta });
+    await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
+    assert.equal(c.calls[0].kind, 'plain', `withBeta ${withBeta}`);
+    assert.equal(c.calls[0].params.fallbacks, undefined);
+    assert.equal(c.calls[0].params.betas, undefined);
+  }
 });
 
 test('a refusal throws so the caller keeps its deterministic title', async () => {
@@ -88,12 +85,12 @@ test('a refusal throws so the caller keeps its deterministic title', async () =>
   );
 });
 
-test('a fallback-served answer is billed at the model that answered', async () => {
+test('the answer is billed at the model asked for, as OpenRouter names it or not', async () => {
   const served = reply({
-    model: 'claude-opus-5-5',
-    usage: { input_tokens: 900, output_tokens: 120, iterations: [{ type: 'fallback_message' }] },
+    model: 'anthropic/claude-sonnet-5.5',
+    usage: { input_tokens: 900, output_tokens: 120 },
   });
   const c = client([served]);
   const out = await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
-  assert.equal(out.model, 'claude-opus-5-5');
+  assert.equal(out.model, 'claude-sonnet-5-5');
 });

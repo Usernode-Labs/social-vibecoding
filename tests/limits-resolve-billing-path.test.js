@@ -3,13 +3,10 @@
 // run) routes through.
 //
 // Covers the contract the call sites rely on:
-//   1. Budget headroom → platform path ({ apiKey: null, byok: false }),
-//      and the BYOK key is never even looked up.
-//   2. Cap hit + key on file → BYOK path with the decrypted key.
-//   3. Cap hit + no key → the same 429 error message as today.
-//   4. Global cap hit + key on file → BYOK path (key-holders fall back
-//      to their key instead of being blocked by the global cap).
-//   5. Key-decrypt failure → treated as "no key" → error at the cap.
+//   1. Budget headroom → platform path ({ apiKey: null, byok: false }).
+//   2. Cap hit → the cap's own error, with nothing about a key: people's
+//      own Anthropic keys, which once took over at the cap (#30), went in
+//      task 2275, and no stored key is read any more.
 //
 // #2571: the cap in every one of those sentences is the WEEKLY one. The
 // per-user daily cap is switched off platform-wide, so a spent daily
@@ -21,14 +18,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const limits = require('../src/services/limits');
-const secrets = require('../src/services/secrets');
 
-// At-rest encryption key (services/secrets.js KDF input) — not a
-// signing key. Same value the old shared JWT_SECRET held; the split was
-// a rename, so existing ciphertext keeps decrypting.
-const DATA_KEY = 'test-jwt-secret';
-const USER_KEY = 'sk-ant-test-123';
-const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
+const DATA_KEY = 'test-data-key';
 
 // ── Mock pool ───────────────────────────────────────────────────────────
 // Answers the SQL shapes checkBudget + the key lookup issue. The user's
@@ -44,7 +35,6 @@ function makePool({
   weeklySpent = 0,
   globalLimit = 20000,
   globalSpent = 0,
-  keyEnc = null,
 } = {}) {
   const calls = [];
   return {
@@ -70,9 +60,6 @@ function makePool({
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
         return { rows: [{ total: globalSpent }] };
       }
-      if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
-        return { rows: keyEnc ? [{ anthropic_key_enc: keyEnc }] : [] };
-      }
       return { rows: [] };
     },
     issued(re) { return calls.some((c) => re.test(c.sql)); },
@@ -83,50 +70,27 @@ function makePool({
 // tests so each one's globalLimit takes effect.
 test.beforeEach(() => limits.invalidate());
 
-test('budget headroom → platform path; the key is never looked up', async () => {
-  const pool = makePool({ weeklySpent: 100, keyEnc: GOOD_KEY_ENC });
+test('budget headroom → platform path', async () => {
+  const pool = makePool({ weeklySpent: 100 });
   const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.deepEqual(r, { apiKey: null, byok: false });
-  assert.equal(pool.issued(/anthropic_key_enc/), false,
-    'no key lookup while the allowance has headroom');
+  assert.equal(pool.issued(/anthropic_key_enc/), false, 'no stored Anthropic key is read');
 });
 
-test('weekly cap hit + key on file → BYOK path with the decrypted key', async () => {
-  const pool = makePool({ weeklySpent: 5000, keyEnc: GOOD_KEY_ENC });
-  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
-  assert.deepEqual(r, { apiKey: USER_KEY, byok: true });
-});
-
-test('weekly cap hit + no key → the weekly-limit error with the BYOK hint (#463)', async () => {
+test('weekly cap hit → the weekly-limit error, and no hint about a key', async () => {
   const pool = makePool({ weeklySpent: 5000 });
   const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.equal(r.apiKey, undefined);
   assert.match(r.error, /Weekly limit reached \(\$50\.00\)\. Resets Monday 00:00 UTC\./);
-  assert.match(r.error, /Add your own Anthropic API key in Settings to keep going\.$/,
-    'the no-key error carries the Settings hint');
+  assert.doesNotMatch(r.error, /Anthropic|API key/, 'there is no own key to add any more');
+  assert.equal(pool.issued(/anthropic_key_enc/), false);
 });
 
-test('global cap hit + key on file → BYOK path', async () => {
-  const pool = makePool({ globalSpent: 20000, keyEnc: GOOD_KEY_ENC });
-  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
-  assert.deepEqual(r, { apiKey: USER_KEY, byok: true });
-});
-
-test('global cap hit + no key → the global-limit error message with the BYOK hint (#463)', async () => {
+test('global cap hit → the global-limit error', async () => {
   const pool = makePool({ globalSpent: 20000 });
   const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.match(r.error, /Global daily limit reached/);
-  assert.match(r.error, /Add your own Anthropic API key in Settings to keep going\.$/,
-    'the global-cap error carries the same hint — BYOK bypasses the global cap too');
-});
-
-test('key-decrypt failure is treated as no key → error at the cap', async () => {
-  // A ciphertext encrypted under a DIFFERENT secret: decrypt returns
-  // null (auth-tag mismatch), which must degrade to the no-key path.
-  const wrongSecretEnc = secrets.encrypt(USER_KEY, 'some-other-secret');
-  const pool = makePool({ weeklySpent: 5000, keyEnc: wrongSecretEnc });
-  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
-  assert.match(r.error, /Weekly limit reached/);
+  assert.doesNotMatch(r.error, /Anthropic/);
 });
 
 // ── #2571: one cap, and it is the weekly one ───────────────────────────
@@ -162,15 +126,6 @@ test('weekly cap 0 → no allowance at all, and it fails CLOSED', async () => {
   assert.equal(r.reason, 'no_allowance');
   assert.match(r.error, /No AI allowance is configured for this account\./);
   assert.match(r.error, /An admin can set a weekly cap in the admin console\./);
-  // …but BYOK still works: this gate is about platform-funded credits.
-  limits.invalidate();
-  const withKey = makePool({
-    userLimit: 2500, userSpent: 0, weeklyLimit: 0, keyEnc: GOOD_KEY_ENC,
-  });
-  assert.deepEqual(
-    await limits.resolveBillingPath(withKey, DATA_KEY, 7),
-    { apiKey: USER_KEY, byok: true }
-  );
 });
 
 test('a weekly cap cannot unlock what identity verification gates', async () => {

@@ -207,3 +207,58 @@ test('web uses the separate reader for git and API access', async (t) => {
   process.env.PROCESS_ROLE = 'conductor';
   assert.deepEqual(gitHost.readCredential(), { username: 'writer', token: 'test-writer-token' });
 });
+
+test('private project rollout is scoped and publication is recorded only on a visibility transition', async (t) => {
+  withEnv(t, {
+    GIT_HOST_URL: 'https://git.example.test',
+    GIT_HOST_ORG: 'apps',
+    GIT_HOST_USER: 'writer',
+    GIT_HOST_TOKEN: 'disposable-test-value',
+    GIT_HOST_PRIVATE_PROJECTS: 'a-project',
+    GIT_HOST_PRIVATE_PROJECTS_WRITE: 'true',
+    WORKER_JWT_SECRET: 'test-project-source-key',
+  });
+  const source = require('../src/services/project-source');
+  const visibility = require('../src/services/project-repo-visibility');
+  const app = {
+    id: 5, slug: 'a-project', repo_url: 'https://git.example.test/apps/a-project',
+    status: 'running', view_visibility: 'private', collab_visibility: 'private',
+  };
+  assert.equal(visibility.privateAtCreation(app), true);
+  assert.equal(visibility.privateAtCreation({ ...app, slug: 'other-project' }), false);
+  assert.equal(source.privateApp(app), true);
+  assert.equal(source.privateApp({ ...app, repo_url: 'https://git.example.test/other-org/a-project' }), false);
+  assert.equal(source.workloadRead('apps', 'other-project'), null);
+  const revision = 'd'.repeat(40);
+  const { token } = source.workOrderRead({ app, task: { id: 8, base_sha: revision }, userId: 9, origin: 'https://homeroom.example' });
+  assert.equal(source.verifyGrant(token, 'work-order', 'a-project').revision, revision);
+  assert.equal(source.verifyGrant(token, 'git', 'a-project'), null);
+  assert.equal(source.verifyGrant(token, 'work-order', 'other-project'), null);
+
+  const calls = [];
+  const client = {
+    async query(sql, params) {
+      calls.push([sql, params]);
+      return { rows: sql.includes('FOR UPDATE') ? [app] : [] };
+    },
+    release() {},
+  };
+  const pool = { connect: async () => client };
+  const patch = t.mock.method(gitHost, 'setPrivate', async () => {});
+  t.mock.method(gitHost, 'api', async () => ({ data: { private: false } }));
+  await visibility.record(pool, app, { collab: 'private', view: 'public' });
+  assert.equal(patch.mock.callCount(), 0);
+  assert.deepEqual(calls.find(([sql]) => sql.startsWith('UPDATE'))[1], ['private', 'public', true, app.id]);
+
+  Object.assign(app, { view_visibility: 'public', repo_publication_pending: false });
+  await visibility.reconcileRepo(pool, app.id);
+  assert.equal(patch.mock.callCount(), 0, 'a public app without pending publication is left alone');
+
+  calls.length = 0;
+  patch.mock.mockImplementation(async () => {
+    assert.equal(calls.some(([sql]) => sql.startsWith('UPDATE')), false, 'privatization happens before updating the app');
+  });
+  await visibility.record(pool, app, { collab: 'private', view: 'private' });
+  assert.deepEqual(patch.mock.calls[0].arguments, ['a-project', true]);
+  assert.deepEqual(calls.find(([sql]) => sql.startsWith('UPDATE'))[1], ['private', 'private', false, app.id]);
+});

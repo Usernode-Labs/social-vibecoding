@@ -10,6 +10,7 @@ const { platformHeaders } = require('./openrouter-client');
 // #5123: every OpenRouter request denies data collection (worker/openrouter-privacy.js).
 const { noTrainingProvider, withNoTraining } = require('../../worker/openrouter-privacy');
 const { REASONING_EFFORT_SET } = require('./reasoning-efforts');
+const { refusalCode, bodyErrorCode } = require('./provider-error');
 
 // A caller may make more than one short tool-planning call in one answer.
 // Letting any single provider request occupy the UI for 90 seconds made a
@@ -35,6 +36,21 @@ const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 // "inference-net"). At most this many on one request.
 const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
 const MAX_IGNORED_PROVIDERS = 8;
+
+// 20 Nov 2026 (live-draft review, E): one web search, run by OpenRouter
+// before the model answers (its `web` plugin), for Homeroom bot's
+// web_search tool (bot-web-search.js). A caller asks for it by `webSearch`
+// and never hands in a plugin of its own. Exa is named so the fee is known
+// (OpenRouter's fallback engine for a model with no search of its own, as
+// the chat's are): about $0.005 to $0.007 a search for up to ten results,
+// on the request's usage.cost. Each result comes back as a `url_citation`
+// annotation on the message (`citations` below).
+const WEB_SEARCH_ENGINE = 'exa';
+const MAX_WEB_RESULTS = 10;
+const MAX_CITATIONS = 20;
+const MAX_CITATION_URL_CHARS = 2048;
+const MAX_CITATION_TITLE_CHARS = 300;
+const MAX_CITATION_CONTENT_CHARS = 2000;
 
 class OpenRouterProviderError extends Error {
   constructor(code, message, {
@@ -119,6 +135,7 @@ function buildRequest({
   parallelToolCalls = null,
   toolChoice = 'auto',
   ignoreProviders = null,
+  webSearch = null,
 }) {
   const copiedTools = jsonArray(tools, 'tools', MAX_TOOLS);
   const availableToolNames = new Set(copiedTools.map((tool) => tool?.function?.name).filter(Boolean));
@@ -182,6 +199,13 @@ function buildRequest({
   const ignore = [...new Set((Array.isArray(ignoreProviders) ? ignoreProviders : [])
     .map(providerSlug).filter(Boolean))].slice(0, MAX_IGNORED_PROVIDERS);
   if (ignore.length) request.provider = noTrainingProvider({ ...request.provider, ignore });
+  if (webSearch) {
+    request.plugins = [{
+      id: 'web',
+      engine: WEB_SEARCH_ENGINE,
+      max_results: boundedInteger(webSearch.maxResults, 5, 1, MAX_WEB_RESULTS, 'webSearch.maxResults'),
+    }];
+  }
   if (temperature != null) {
     request.temperature = boundedNumber(temperature, 0.1, 0, 2, 'temperature');
   }
@@ -240,6 +264,26 @@ function contentDelta(value) {
     if (part && typeof part.text === 'string') return part.text;
     return '';
   }).join('');
+}
+
+/**
+ * Pure: a message's `url_citation` annotations (a web search's results) as
+ * { url, title, content }, http(s) only, bounded, each address once. A
+ * citation is what a web page says: its caller reads it as untrusted.
+ */
+function citationsOf(annotations) {
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(annotations) ? annotations : []) {
+    if (out.length >= MAX_CITATIONS) break;
+    const cite = item && item.type === 'url_citation' ? (item.url_citation || item) : null;
+    const url = typeof cite?.url === 'string' ? cite.url.trim() : '';
+    if (!url || url.length > MAX_CITATION_URL_CHARS || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    const text = (value, max) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+    out.push({ url, title: text(cite.title, MAX_CITATION_TITLE_CHARS), content: text(cite.content, MAX_CITATION_CONTENT_CHARS) });
+  }
+  return out;
 }
 
 function appendToolCall(map, raw) {
@@ -331,6 +375,7 @@ async function readEventStream(body, { startedAt, state, onDelta }) {
   const decoder = new TextDecoder('utf-8');
   const out = { id: null, model: null, provider: null, usage: null, error: null, finish: null };
   const toolCalls = new Map();
+  const annotations = [];
   let content = '';
   let buffer = '';
   let bytes = 0;
@@ -359,6 +404,10 @@ async function readEventStream(body, { startedAt, state, onDelta }) {
     if (piece) {
       content += piece;
       if (content.length > MAX_CONTENT_CHARS) throw tooLarge();
+    }
+    // A web search's results (citationsOf), as they arrive.
+    if (Array.isArray(delta.annotations) && annotations.length < MAX_CITATIONS) {
+      annotations.push(...delta.annotations.slice(0, MAX_CITATIONS - annotations.length));
     }
     for (const call of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
       // A provider that repeats a call's id or name on every delta (rather
@@ -412,6 +461,7 @@ async function readEventStream(body, { startedAt, state, onDelta }) {
         role: 'assistant',
         content,
         tool_calls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call),
+        ...(annotations.length ? { annotations } : {}),
       },
     }],
     usage: out.usage,
@@ -439,7 +489,7 @@ function retryAfterMs(value, now = Date.now()) {
  * a body that cannot be read leaves the provider unknown.
  */
 async function refusalDetails(response) {
-  const details = { provider: null, retryAfterMs: retryAfterMs(response.headers?.get?.('retry-after')) };
+  const details = { provider: null, text: '', retryAfterMs: retryAfterMs(response.headers?.get?.('retry-after')) };
   const body = response.body;
   if (!body || typeof body[Symbol.asyncIterator] !== 'function') return details;
   try {
@@ -451,22 +501,17 @@ async function refusalDetails(response) {
       if (bytes > MAX_ERROR_BODY_BYTES) break;
       chunks.push(value);
     }
-    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    // The provider's own words, kept even when they are not JSON: a 402's
+    // body is what tells out of credit from a reply that is only too long
+    // (provider-error.js refusalCode).
+    details.text = Buffer.concat(chunks).toString('utf8');
+    const parsed = JSON.parse(details.text);
     const name = parsed?.error?.metadata?.provider_name;
     if (typeof name === 'string' && /^[\w .-]{1,80}$/.test(name)) details.provider = name;
   } catch {
     // An unreadable or non-JSON body says nothing more.
   }
   return details;
-}
-
-function providerErrorCode(status) {
-  if (status === 401 || status === 403) return 'authentication';
-  if (status === 402) return 'billing';
-  if (status === 408 || status === 504) return 'timeout';
-  if (status === 429) return 'rate_limited';
-  if (status >= 500) return 'provider_unavailable';
-  return 'invalid_request';
 }
 
 async function streamChat({
@@ -531,8 +576,11 @@ async function streamChat({
     // hold the caller past its timeout.
     const refused = await refusalDetails(response);
     clearTimeout(timer);
+    // A 402 for credit is `credit_out` here, as in openrouter-mayor.js: the
+    // chat and the thread voice call this client, and their outage handling
+    // reads that code (review A1).
     throw new OpenRouterProviderError(
-      providerErrorCode(response.status),
+      refusalCode(response.status, refused.text),
       `OpenRouter model request failed (HTTP ${response.status})`,
       {
         status: response.status,
@@ -556,7 +604,12 @@ async function streamChat({
     servedModel = typeof completion?.model === 'string' ? completion.model : null;
     provider = typeof completion?.provider === 'string' ? completion.provider : null;
     if (completion?.error) {
-      throw new OpenRouterProviderError('provider_error', 'Provider reported a generation error', {
+      // A 200 whose body carries OpenRouter's 402 for credit is the same
+      // outage. Every other error in a body stays `provider_error`, so what
+      // is asked again does not change.
+      const outOfCredit = bodyErrorCode(completion.error) === 'credit_out';
+      throw new OpenRouterProviderError(outOfCredit ? 'credit_out' : 'provider_error', 'Provider reported a generation error', {
+        ...(outOfCredit ? { status: 402 } : {}),
         dispatched: true,
         provider,
         generationId,
@@ -581,6 +634,9 @@ async function streamChat({
       .sort(([left], [right]) => left - right)
       .map(([, call]) => call);
     const finishReason = choice?.finish_reason || null;
+    // 20 Nov 2026 (live-draft review, E): a web search's results, when the
+    // request asked for one (webSearch).
+    const citations = citationsOf(message.annotations);
 
     // A missing terminal reason or a length cutoff is incomplete and must
     // never be accepted as a partial action. Distinguish output exhaustion so
@@ -612,6 +668,7 @@ async function streamChat({
         content: content || null,
         ...(orderedToolCalls.length ? { tool_calls: orderedToolCalls } : {}),
       },
+      ...(citations.length ? { citations } : {}),
       usage: usageFrom(completion.usage),
       timings: timingSnapshot(startedAt, timingState),
     };
@@ -646,6 +703,7 @@ module.exports = {
   reasoningEffort,
   buildRequest,
   providerSlug,
+  citationsOf,
   usageFrom,
   retryAfterMs,
   streamChat,

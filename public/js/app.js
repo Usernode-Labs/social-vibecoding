@@ -1885,6 +1885,8 @@ const App = {
         reason: 'Records your voice notes',
         needsReload: true,
         surfaced: false,
+        // As the App tab asks it: "Allow this time" beside "Always allow".
+        allowOnce: true,
       });
     };
     setTimeout(attempt, 50);
@@ -3545,6 +3547,13 @@ const App = {
             break;
           case 'app_allowance_changed':
             window.UsernodeReact?.appAllowance?.invalidate?.();
+            break;
+          case 'platform_limits_changed':
+            // A platform-wide limit moved (services/platform-limits-view.js,
+            // an admin-only broadcast with no figures in it). The full
+            // admins' limits area and the bell's dot read it again; anyone
+            // else's page does nothing (features/notifications/platform-limits.tsx).
+            window.UsernodeReact?.platformLimits?.refresh?.();
             break;
           case 'budget_updated':
             // #2598: a model call's cost just landed against this user's
@@ -7510,6 +7519,7 @@ const App = {
 
   LEADERBOARD_TITLES: {
     challenges: 'shell:title.leaderboard.challenges',
+    'challenge-history': 'shell:title.leaderboard.history',
     kudos: 'shell:title.leaderboard.kudos',
     prs: 'shell:title.leaderboard.kudos',
     users: 'shell:title.leaderboard.kudos',
@@ -7532,7 +7542,8 @@ const App = {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
       Leaderboard._setSection('challenges');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
+                || sub === 'challenge-history')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is

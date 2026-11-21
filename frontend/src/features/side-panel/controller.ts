@@ -56,7 +56,9 @@
  *     it closes or goes with the page. */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
+import { CORNER_ATTR, panelEdge, STRIP_ATTR } from '../../lib/side-strip';
 import { isBotChatRoute } from '../ai/door';
+import { setListClosed, showsListButton, subscribeListClosed } from '../ai/list-closed';
 import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
 import {
   embeddedAllows,
@@ -127,6 +129,14 @@ export interface PanelHint {
  * "‹ Workshop" chip), which would be a second one to somewhere else.
  */
 export const BESIDE_AI_CLASS = 'side-panel-beside-ai';
+
+/**
+ * The class on the panel DOCUMENT's <html> while the bot page's list is
+ * hidden and the page in the panel is the column that took its room (#6973).
+ * The page's head button reads it (app.css shows `.dev-thread-show-list`
+ * only under it), since the frame is a separate JS realm.
+ */
+export const LIST_HIDDEN_CLASS = 'side-panel-list-hidden';
 
 interface AppLike {
   user?: unknown;
@@ -219,9 +229,62 @@ export function isBesideAi(): boolean {
  */
 function markBeside(): void {
   try {
-    sidePanelRefs.frame?.contentDocument?.documentElement?.classList.toggle(BESIDE_AI_CLASS, isBesideAi());
+    const root = sidePanelRefs.frame?.contentDocument?.documentElement;
+    root?.classList.toggle(BESIDE_AI_CLASS, isBesideAi());
+    // #6973: the page in the panel shows its way back to the list only while
+    // the list is hidden and the split is up. Told by class, because the
+    // frame's own React tree cannot see this document's list store.
+    root?.classList.toggle(LIST_HIDDEN_CLASS, isBesideAi() && showsListButton());
   } catch {
     /* a frame that is going away: the next one is marked when it reports */
+  }
+  markEdge();
+}
+
+/**
+ * The width the top window must keep clear of iPhone Duo's column of system
+ * chrome, published onto the panel document's root (#6970). The panel's own
+ * document reads no insets (side-strip.ts NO_INSETS), so without this its
+ * head card's ⋯, open as page and close sat under the clock while the top
+ * window's headers padded themselves by `--ai-edge`. app.css pads the head
+ * card by this property.
+ */
+export const EDGE_PROP = '--side-panel-edge';
+
+/** The observer that keeps the frame's edge in step with the top root. */
+let edgeObserver: MutationObserver | null = null;
+
+function markEdge(): void {
+  try {
+    const root = sidePanelRefs.frame?.contentDocument?.documentElement;
+    if (!root) return;
+    const px = typeof document === 'undefined' ? 0 : Math.round(panelEdge(document));
+    const value = px > 0 ? `${px}px` : '';
+    if ((root.style.getPropertyValue(EDGE_PROP) || '') === value) return;
+    if (value) root.style.setProperty(EDGE_PROP, value);
+    else root.style.removeProperty(EDGE_PROP);
+  } catch {
+    /* a frame that is going away: the next one is marked when it reports */
+  }
+}
+
+/**
+ * Follow the top root, so folding, turning, Split View and a resume move the
+ * frame's edge too. `watchSideStrip` already rewrites these attributes on
+ * every read (a resize, an inset change, RESUME_SETTLE_MS), so observing them
+ * is the same information without a second set of device listeners. Started
+ * once, the first time a frame is opened.
+ */
+function watchEdge(): void {
+  if (edgeObserver || typeof MutationObserver === 'undefined') return;
+  try {
+    edgeObserver = new MutationObserver(() => markEdge());
+    edgeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: [STRIP_ATTR, CORNER_ATTR, 'style', 'dir'],
+    });
+  } catch {
+    edgeObserver = null;
   }
 }
 
@@ -358,6 +421,7 @@ export function take(route: string, hint?: PanelHint | null): boolean {
 
 /** Put `route` in the panel, starting its document if there is none yet. */
 export function open(route: string, given?: PanelHint | null): void {
+  watchEdge();
   const s = sidePanelStore.get();
   const { place = null, label = null } = given || {};
   if (!s.frameSrc) {
@@ -392,6 +456,12 @@ export function close(): void {
   stack = [];
   if (sidePanelStore.get().open) sidePanelStore.set({ open: false });
   writeAddress(null);
+}
+
+/** Bring the bot page's thread list back (#6973). A press on the list button
+ *  in a page's head comes here from inside the frame, through the bridge. */
+export function showList(): void {
+  setListClosed(false);
 }
 
 /** Drop the panel and its document — the app it stood beside is gone. */
@@ -757,6 +827,9 @@ export function onNavigate(e: NavigateEventLike): void {
 export function installIntercepts(win: Window): void {
   if (isEmbeddedPanel()) return;
   win.addEventListener('click', onClickCapture, true);
+  // The list hiding or coming back is a re-mark of the page in the frame
+  // (#6973): it is how the frame's own button appears and goes.
+  subscribeListClosed(markBeside);
   const nav = (win as unknown as {
     navigation?: { addEventListener?: (type: string, fn: (e: NavigateEventLike) => void) => void };
   }).navigation;
@@ -771,6 +844,7 @@ export const SidePanel = {
   take,
   open,
   close,
+  showList,
   drop,
   back,
   expand,
@@ -791,6 +865,8 @@ export function _resetForTests(): void {
   head = null;
   bypass = false;
   restoring = false;
+  edgeObserver?.disconnect();
+  edgeObserver = null;
   sidePanelStore.set({ ...INITIAL });
   sidePanelRefs.frame = null;
 }

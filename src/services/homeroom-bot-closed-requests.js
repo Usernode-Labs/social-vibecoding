@@ -54,6 +54,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
+const { numbersOf } = require('./homeroom-bot-red-changes');
 
 const BOT_USERNAME = 'homeroom_bot';
 const REASON = 'request-closed';
@@ -89,10 +90,6 @@ const LINKED_TO_NONE_SQL = `
 
 function parseRepo(url) {
   return repoRef.ownerRepo(url);
-}
-
-function numbersOf(list) {
-  return [...new Set((Array.isArray(list) ? list : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
 }
 
 /** Pure: the line a withdrawal leaves on each of its requests (the proposal machine's close writes it). */

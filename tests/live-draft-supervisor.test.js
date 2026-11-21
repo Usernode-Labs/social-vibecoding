@@ -33,15 +33,25 @@ http.createServer((req, res) => {
 `;
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
+// `count` free ports, all different. Every probe stays open until the last
+// one has its port: a probe that closes before the next opens leaves the
+// system free to hand the same port out again, and it did (PR 6935's checks:
+// the supervisor and the app were both given :46371, the app could not
+// listen, and seven tests failed on a restart page).
+async function freePorts(count) {
+  const probes = [];
+  try {
+    for (let i = 0; i < count; i += 1) {
+      probes.push(await new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => resolve(server));
+      }));
+    }
+    return probes.map((server) => server.address().port);
+  } finally {
+    await Promise.all(probes.map((server) => new Promise((resolve) => server.close(resolve))));
+  }
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -107,8 +117,8 @@ before(async () => {
     name: 'tiny', scripts: { start: 'node server.js' }, dependencies: {},
   }));
   fs.writeFileSync(path.join(dir, 'server.js'), appSource(1));
-  port = await freePort();
-  const inner = await freePort();
+  const [outer, inner] = await freePorts(2);
+  port = outer;
   child = spawn(process.execPath, ['-e', SOURCE], {
     cwd: dir,
     env: {
@@ -119,13 +129,19 @@ before(async () => {
   });
   child.stdout.on('data', (d) => { output += d; });
   child.stderr.on('data', (d) => { output += d; });
-  for (let i = 0; i < 100; i += 1) {
+  // Up means the app answers through the supervisor, not only the
+  // supervisor's own /health: the first test reads the app's page, and a
+  // supervisor that is up before its app answers with the restart page. A
+  // start that never gets there fails here, once, with what the two said.
+  let up = false;
+  for (let i = 0; i < 150 && !up; i += 1) {
     try {
-      const res = await fetch(`${base()}/health`);
-      if (res.ok) break;
+      const health = await fetch(`${base()}/health`);
+      up = health.ok && (await (await fetch(`${base()}/`)).text()) === 'version 1';
     } catch {}
-    await sleep(100);
+    if (!up) await sleep(100);
   }
+  assert.ok(up, `the draft's app never answered through its supervisor:\n${output}`);
 });
 
 after(async () => {

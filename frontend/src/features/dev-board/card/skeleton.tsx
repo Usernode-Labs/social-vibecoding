@@ -194,6 +194,28 @@ export function skeletonKanbanHtml(): string {
  * of these components can mount, and this keeps the two from drifting
  * apart the first time the card geometry changes.
  */
+/**
+ * A REQUEST'S OR A CHANGE'S PAGE, IN OUTLINE (20 Nov 2026): the head, the
+ * card with its picture and actions, the reply box, and "How it got here"
+ * beside them on a wide window. One card-shaped bar stood for all of it and
+ * the page jumped when it arrived; this is the page's own shape (app.css
+ * `.thread-skel`). A string, for the host React never looks inside
+ * (../topic-frame.tsx).
+ */
+export function threadSkeletonHtml(): string {
+  const bar = (w: number) => `<i class="thread-skel-bar" data-w="${w}"></i>`;
+  const step = (w: number) => `<div class="thread-skel-step"><i></i>${bar(w)}</div>`;
+  return `<div class="sr-only" role="status">${htmlText('project:kanban.skeleton.loading')}</div>`
+    + '<div class="thread-skel animate-pulse" aria-hidden="true">'
+    + '<div class="thread-skel-main">'
+    + `<div class="thread-skel-card thread-skel-head"><i class="thread-skel-tile"></i><div class="thread-skel-lines">${bar(1)}${bar(3)}</div></div>`
+    + `<div class="thread-skel-card thread-skel-body">${bar(4)}${bar(4)}${bar(3)}<i class="thread-skel-pic"></i>${bar(2)}<div class="thread-skel-acts"><i></i><i></i></div></div>`
+    + `<div class="thread-skel-card thread-skel-reply">${bar(2)}<i></i></div>`
+    + '</div>'
+    + `<div class="thread-skel-card thread-skel-rail">${bar(2)}${step(2)}${step(3)}${step(2)}${step(3)}</div>`
+    + '</div>';
+}
+
 export function skeletonListHtml(n: number): string {
   let rows = '';
   for (let i = 0; i < n; i += 1) rows += cardHtml(i);

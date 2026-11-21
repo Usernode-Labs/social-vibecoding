@@ -33,16 +33,18 @@
  * options as drawShell, run in the panel's own document — and takeBase lays
  * it in at the frame's rectangle, beside the app's picture.
  *
- * ── Designs draw themselves (#6261) ───────────────────────────────────
+ * ── Designs and bot replies draw themselves (#6261) ───────────────────
  *
  * A design's frame (../messages/design-pane.tsx, ./design-card.tsx) is
  * `sandbox="allow-scripts"` with an opaque origin, so the shell cannot draw
- * into it and it came out a blank box. Each marked frame is asked for its
- * own picture (../design/frame.ts's helper injects the vendored SnapDOM
- * source as an inline script), and takeBase lays it into the frame's
- * rectangle, clipped to its wrapper, on the first picture and the retake.
- * `drawDocument` runs the same leg in the panel's own document. A frame that
- * does not answer in three seconds keeps today's empty box.
+ * into it and it came out a blank box. A bot's laid-out reply
+ * (../messages/bot-html.tsx) is a frame of the same kind. Each marked frame
+ * is asked for its own picture (../artifact/frame-doc.ts's helper injects the
+ * vendored SnapDOM source as an inline script, with the frame's nonce),
+ * and takeBase lays it into the frame's rectangle, clipped to its wrapper, on
+ * the first picture and the retake. `drawDocument` runs the same leg in the
+ * panel's own document. A frame that does not answer in three seconds keeps
+ * today's empty box.
  *
  * ── When ───────────────────────────────────────────────────────────────
  *
@@ -87,7 +89,7 @@
  * comment it belongs to goes with the part that was cut away.
  */
 
-import { DESIGN_FRAME_ATTR } from '../design/frame';
+import { ARTIFACT_PICTURED_ATTR } from '../artifact/frame-doc';
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
 /** The feedback endpoint's cap (src/routes/feedback.js MAX_SCREENSHOT_BYTES). */
@@ -502,11 +504,11 @@ export function requestPanelPicture(
   });
 }
 
-// ── A design draws its own picture (#6261) ────────────────────────────
+// ── A design or a bot reply draws its own picture (#6261) ─────────────
 //
-// The two design frames carry `data-design-frame`; see the header. They are
-// another origin, so nothing here looks inside one: it is asked, and what it
-// sends back is drawn in its rectangle only.
+// The design's frames and a bot's laid-out reply carry `data-artifact-pictured`;
+// see the header. They are another origin, so nothing here looks inside one:
+// it is asked, and what it sends back is drawn in its rectangle only.
 
 /** The viewport the picture is taken of, as its own measurements use it. */
 function viewportSize(): Size {
@@ -534,7 +536,7 @@ export function designFrames(max = 8): DesignFrameBox[] {
   const out: DesignFrameBox[] = [];
   if (typeof document.querySelectorAll !== 'function') return out;
   const view = viewportSize();
-  for (const el of Array.from(document.querySelectorAll(`iframe[${DESIGN_FRAME_ATTR}]`))) {
+  for (const el of Array.from(document.querySelectorAll(`iframe[${ARTIFACT_PICTURED_ATTR}]`))) {
     const frame = el as HTMLIFrameElement;
     if (!frame.contentWindow) continue;
     const r = frame.getBoundingClientRect();
@@ -605,13 +607,13 @@ export function requestDesignPicture(
     const onMessage = (e: MessageEvent) => {
       if (e.source !== target) return;
       const d = e.data as Record<string, unknown> | null;
-      if (!d || d.__design !== 'picture' || d.id !== id) return;
+      if (!d || d.__artifact !== 'picture' || d.id !== id) return;
       finish(isPictureBlob(d.blob) ? d.blob : null);
     };
     window.addEventListener('message', onMessage);
     timer = setTimeout(() => finish(null), timeoutMs);
     try {
-      target.postMessage({ __design: 'picture', id, scale, lib }, '*');
+      target.postMessage({ __artifact: 'picture', id, scale, lib }, '*');
     } catch {
       finish(null);
     }

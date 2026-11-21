@@ -1373,6 +1373,89 @@ const STATES = [
     },
   },
   {
+    // The member's chat with the Homeroom bot ending in a laid-out answer
+    // (#6975): a change to how a long reply is drawn had nothing to point
+    // at on either copy, because no demo state held a thread with one. The
+    // reply is a chat answer with the same words it shows, laid out as the
+    // reply tool writes one (src/services/homeroom-bot-html.js): a short
+    // heading, a list and a small table. It is a thread of the member's
+    // chat with the bot (memberBotChat), written after the drafted
+    // request's. It is a plain chat answer, not insertBotDm: that also
+    // records the message as news about one of their requests, which a
+    // chat answer is not.
+    id: 'shots-demo-member-bot-laid-out-reply-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'thread_root_id', 'idempotency_key',
+        'metadata', 'created_at'],
+      private_threads: THREAD_COLUMNS,
+    },
+    free: async (client, ctx) => await messagesFree(client,
+      ['shots-fixture-hrbot-layout-ask', 'shots-fixture-hrbot-layout-reply']) && botChatFree(client, ctx),
+    async install(client, ctx) {
+      const chat = await memberBotChat(client, ctx);
+      const html = [
+        '<h3>A weekly book club</h3>',
+        '<ul>',
+        '<li>Make a project for the club and invite the members.</li>',
+        '<li>Ask me to add a reading list and a meeting day.</li>',
+        '<li>Members vote on next week\'s book.</li>',
+        '</ul>',
+        '<table>',
+        '<thead><tr><th>Week</th><th>What happens</th></tr></thead>',
+        '<tbody>',
+        '<tr><td>1</td><td>Pick a book</td></tr>',
+        '<tr><td>2</td><td>Meet and talk</td></tr>',
+        '</tbody>',
+        '</table>',
+      ].join('');
+      const content = [
+        'A weekly book club',
+        '',
+        '- Make a project for the club and invite the members.',
+        '- Ask me to add a reading list and a meeting day.',
+        '- Members vote on next week\'s book.',
+        '',
+        'Week 1: Pick a book',
+        'Week 2: Meet and talk',
+      ].join('\n');
+      const { rows: [ask] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-layout-ask', '{}'::jsonb, NOW() - INTERVAL '3 minutes')
+         RETURNING id`,
+        [chat.conversationId, ctx.member.id, 'How could I run a weekly book club here?']
+      );
+      const { rows: [reply] } = await client.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, thread_root_id, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-layout-reply', $5::jsonb, NOW() - INTERVAL '2 minutes')
+         RETURNING id`,
+        [chat.conversationId, chat.botId, content, ask.id,
+          JSON.stringify({ homeroomBot: { kind: 'chat', html } })]
+      );
+      await client.query('UPDATE conversations SET updated_at = GREATEST(updated_at, NOW() - INTERVAL \'2 minutes\') WHERE id = $1',
+        [chat.conversationId]);
+      await client.query(
+        `UPDATE conversation_members SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0), $3)
+          WHERE conversation_id = $1 AND user_id = $2`,
+        [chat.conversationId, ctx.member.id, reply.id]
+      );
+      // Their question is its own thread's first, and the answer its reply.
+      const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: reply.id });
+      return {
+        shows: [{
+          state: 'Your thread with Homeroom bot that starts with your question about a weekly book club, on the Homeroom bot page: under it, the bot\'s laid-out reply with a short heading, a bulleted list and a small table. Nothing in it is unread.',
+          path,
+        }],
+      };
+    },
+  },
+  {
     // A project of the member's with a GitHub repository (#4664): App
     // settings' Access section is live only on an app its viewer manages
     // that has a repository, and the member's fixture apps have none, so
@@ -1666,7 +1749,7 @@ const STATES = [
       return {
         shows: [
           { state: `Your weekly building allowance nearly spent, ${dollars(leftCents)} of ${dollars(limitCents)} left: Settings' AI credit line says what is left this week, in red.`,
-            path: '/#settings/api-key' },
+            path: '/#settings/usage' },
         ],
       };
     },

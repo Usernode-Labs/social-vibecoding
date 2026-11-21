@@ -57,7 +57,7 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   assert.match(card, /className="dev-ws-invite-hero-btn"\s+data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{\(\) => openInviteFor\(slug, data\.name \|\| slug\)\}/,
     'the card opens the pane for its own community');
   // Not under Standard (WIP), where Invite stays the hero row's own button.
-  assert.match(ws, /\{slug && !wipLook \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
+  assert.match(ws, /\{slug && !kitHub \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
   assert.equal(message('project:hub.invite.button'), 'Invite people');
   // Request 6687: the card's ✕ closes it (hub-dismissed.ts), and the hero
   // row's small Invite is then the way in.

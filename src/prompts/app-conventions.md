@@ -1941,7 +1941,10 @@ const resp = await fetch(`${process.env.USERNODE_LLM_PROXY_URL}/v1/messages`, {
 ```
 
 The body/response are standard Anthropic Messages API shapes
-(streaming SSE included). Error codes the app must handle:
+(streaming SSE included). Name a Claude model the way Anthropic does
+(`claude-sonnet-5-5`); the platform serves it through OpenRouter, and a
+model that is not Claude is refused with `400 { code: 'unsupported_model' }`.
+Error codes the app must handle:
 
 - `403 { code: 'grant_required' }` — the user hasn't granted this app
   access (or revoked it). Surface this to the frontend, have it call
@@ -3151,15 +3154,27 @@ recordBtn.onclick = async () => {
 };
 ```
 
-The answer is `{ capability, state, active, reason }`. `state` is
+The answer is `{ capability, state, active, reason, scope }`. `state` is
 `"granted"` or `"denied"`; on a denial `reason` is `"declined"` (the person
 said no), `"not_declared"` (missing from your `dapp.json`) or
 `"unknown_capability"`.
 
+**Once or always.** The dialog offers **Allow this time** beside **Always
+allow**. On a grant, `scope` says which: `"always"` is saved and listed in
+the person's Settings, and `"once"` lasts only while your app stays open,
+so the next time they open it, asking again shows the dialog again. Write
+your app so either works: ask on the tap that needs it every time, and let
+the platform answer at once when the grant still stands.
+
+Declaring a capability holds no change for an admin. Each person decides
+for themselves, so the platform only tells its admins that your project
+now asks for it.
+
 `usernode.getPermission(name)` reads the same answer without ever
 prompting, so you can render an "enable" button from it.
 `usernode.getPermissions()` returns the whole picture for your app:
-`{ declared, granted, active }`.
+`{ declared, granted, grantedOnce, active }`, where `grantedOnce` lists the
+grants that last only while the app is open.
 
 ### `active` is the field to read twice
 
@@ -3168,10 +3183,35 @@ capability granted just now cannot apply to the document that asked for it.
 On that first grant the platform tells the person the app will reopen, and
 reloads the frame. `active: false` therefore means "granted, and you are
 about to be reloaded": stop, do not call the web API, and let the reload
-land. Save anything you need to keep first.
+land.
+
+**Keep your place across that reload.** Pass where the person is as
+`place` (anything JSON, up to 16 KB). The platform keeps it for a few
+minutes, and `usernode.takeSavedPlace()` hands it back once after the app
+reloads (a second call answers `null`). Read it when your app starts, and
+open the screen it names:
+
+```js
+photoBtn.onclick = async () => {
+  const r = await usernode.requestPermission('camera', { place: { screen: 'photo', draftId } });
+  if (r.state !== 'granted') return showWhyWeNeedIt(r.reason);
+  if (!r.active) return;  // the app reopens, then the code below brings it back here
+  openCamera();
+};
+
+// At startup:
+usernode.takeSavedPlace().then((place) => {
+  if (place && place.screen === 'photo') showPhotoScreen(place.draftId);
+}).catch(() => {});  // standalone, with no platform: nothing was saved
+```
+
+Keep the place small: the screen and the ids that rebuild it, never the
+person's data. Anything typed but not yet saved should be saved the way
+your app already saves it.
 
 Every later launch delegates it up front and `requestPermission()` resolves
-`active: true` with no dialog and no reload at all.
+`active: true` with no dialog and no reload at all, for a grant that was
+**Always allow**, or for **Allow this time** while the app stays open.
 
 For the same reason, a revoke in Settings takes effect the next time the
 app opens rather than instantly. A running document's policy cannot be
@@ -3830,10 +3870,12 @@ Rules:
   recorded in `public/vendor/README.md`), and the inline `tailwind.config`
   beside the tag keeps working untouched — so the swap is
   behaviour-identical, with no visual difference and no rebuild.
-- **No proposal check rejects a `cdn.tailwindcss.com` tag.** Nothing the
-  platform runs inspects an app's source for one, and apps still on the CDN
-  pass their checks — moving the fleet off it is housekeeping, never a merge
-  gate, and never a drive-by inside an unrelated proposal. (Vendoring the
+- **No proposal check rejects a `cdn.tailwindcss.com` tag already in an
+  app.** The "No script from another site" check reads only the lines a
+  change adds, so apps still on the CDN pass their checks (a tag the change
+  only moves or re-indents passes too) — moving the fleet off it is
+  housekeeping, never a merge gate, and never a drive-by inside an
+  unrelated proposal. A change that adds a new one fails that check. (Vendoring the
   hosted files into a repo is the rule that is real, and it too holds by
   convention rather than by a check — see the bridge section.)
 - **Why bother:** the CDN is one outside dependency shared by the entire
@@ -4249,7 +4291,9 @@ cannot override them.
   app would run code nobody voted on and nobody can see in the repo.
   Install libraries from npm and serve them from the app's own origin, as
   Homeroom Maps does with MapLibre. A legacy `cdn.tailwindcss.com` tag
-  (rule 1) is tolerated; new code adds none.
+  (rule 1) is tolerated; new code adds none. A change that adds such a
+  tag fails its checks ("No script from another site"), with the file and
+  line. Relative paths pass, the hosted `/usernode-*/v1/…` files included.
 
   Everything else from other sites is fine: images, video and audio hosted
   elsewhere; map tiles and map styles; web fonts; public API data (from the

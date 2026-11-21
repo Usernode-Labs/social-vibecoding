@@ -106,11 +106,13 @@ test('route: bucket boundaries match the spec ($5/$10/$15/$20 in cents)', () => 
   assert.match(sql, /total_cost_cents >= 2000/, '$20+ threshold = 2000 cents');
 });
 
-test('route: the $20+ tier splits on the BYOK "usable key" predicate', () => {
+test('route: the $20+ tier splits on the "kept going on an own key" predicate', () => {
   const src = read('src/routes/dashboard.js');
-  // Capability OR same-day own-key spend (the chosen, snapshot-corrected signal).
-  assert.match(src, /u\.anthropic_key_enc IS NOT NULL OR lu\.byok_cost_cents > 0/,
-    'BYOK predicate must be key-configured OR own-key spend that day');
+  // Same-day own-key spend. The stored-key snapshot it was OR'd with went
+  // with people's own Anthropic keys (task 2275).
+  assert.match(src, /const byok = '\(lu\.byok_cost_cents > 0\)';/,
+    'the own-key predicate is own-key spend that day');
+  assert.doesNotMatch(src, /anthropic_key_enc/, 'no stored Anthropic key is read');
   const start = src.indexOf("analytics/spend-distribution'");
   const sql = src.slice(start, src.indexOf('return router;', start));
   assert.match(sql, /total_cost_cents >= 2000 AND NOT \$\{byok\}/, 'b5 = $20+ capped (no usable key)');
@@ -141,11 +143,13 @@ test('seed: both $20+ sub-buckets are represented (own-key and no-key users)', (
   const src = read('src/db/migrate.js');
   const start = src.indexOf('async function seedStagingSpendDistribution');
   const body = src.slice(start, src.indexOf('\nasync function', start + 10));
-  // A tier-5 user (capped, no key) and a tier-6 user (own key, anthropic_key_enc set).
+  // A tier-5 user (capped) and a tier-6 user (own-key spend recorded).
   assert.match(body, /tier: 5/, 'must seed a $20+ capped user');
   assert.match(body, /tier: 6, key: true/, 'must seed a $20+ own-key user');
-  // Own-key users get a non-null sentinel key; the chart only tests IS NOT NULL.
-  assert.match(body, /anthropic_key_enc/, 'own-key users must set anthropic_key_enc');
+  // The chart reads own-key spend that day, so that is what the seed writes;
+  // no stored Anthropic key sentinel any more (task 2275).
+  assert.match(body, /CASE WHEN f\.tier = 6 THEN 800/, 'own-key users get own-key spend');
+  assert.doesNotMatch(body, /anthropic_key_enc/, 'no stored key is seeded');
   // Obviously-fake usernames, never real users.
   assert.match(body, /staging-demo-spend-/, 'fixtures must use the staging-demo-spend- prefix');
 });

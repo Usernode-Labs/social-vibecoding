@@ -4,7 +4,7 @@
  * design (src/services/design-threads.js): the bot draws a screen from words
  * there, and says each version in the thread ("Version 2: a green Save
  * button."). Under its words the version is drawn small, in a frame like the
- * design pane's (../design/frame.ts: its own origin, scripts and nothing
+ * design pane's (../artifact/frame.tsx: its own origin, scripts and nothing
  * else, this site's stylesheets only), scaled to the card, and Open preview
  * opens the pane as the Homeroom bot tab's own column (../ai/preview.ts).
  *
@@ -27,11 +27,13 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
-import { currentSheets, designFrameDoc, DESIGN_SANDBOX } from '../design/frame';
+import { ArtifactFrame } from '../artifact/frame';
+import { currentSheets } from '../artifact/frame-doc';
 import { inlinePictures } from '../design/pictures';
 import { openPreview } from '../ai/preview';
 import * as api from './api';
 import type { DesignThread } from './api';
+import { paneWordIds } from './artifact-kind';
 
 // The card's picture: a phone screen 180px wide, a desktop one 320px, at
 // most 260px tall (the top of the screen, where its point usually is).
@@ -49,24 +51,27 @@ export function cardBox(design: { width: number; height: number } | null): { wid
 
 // One read of a thread's design and of each version, shared by its cards:
 // a design read again once a card names a version newer than it knew.
-const designs = new Map<number, { latest: number; read: Promise<DesignThread> }>();
+// 20 Nov 2026 (live-draft review, K): keyed by the artifact too; 0 is the
+// thread's first (a message from before names none).
+const designs = new Map<string, { latest: number; read: Promise<DesignThread> }>();
 const versions = new Map<string, Promise<{ version: number; html: string }>>();
 
-export function readDesign(rootId: number, version: number): Promise<DesignThread> {
-  const had = designs.get(rootId);
+export function readDesign(rootId: number, version: number, artifactId: number | null = null): Promise<DesignThread> {
+  const key = `${rootId}:${artifactId || 0}`;
+  const had = designs.get(key);
   if (had && had.latest >= version) return had.read;
-  const read = api.getDesign(rootId);
+  const read = api.getDesign(rootId, artifactId);
   const entry = { latest: version, read };
-  designs.set(rootId, entry);
-  read.then((d) => { entry.latest = Math.max(version, d.latest); }, () => { designs.delete(rootId); });
+  designs.set(key, entry);
+  read.then((d) => { entry.latest = Math.max(version, d.latest); }, () => { designs.delete(key); });
   return read;
 }
 
-export function readVersion(rootId: number, version: number): Promise<{ version: number; html: string }> {
-  const at = `${rootId}:${version}`;
+export function readVersion(rootId: number, version: number, artifactId: number | null = null): Promise<{ version: number; html: string }> {
+  const at = `${rootId}:${artifactId || 0}:${version}`;
   let read = versions.get(at);
   if (!read) {
-    read = api.getDesignVersion(rootId, version);
+    read = api.getDesignVersion(rootId, version, artifactId);
     versions.set(at, read);
     read.catch(() => { versions.delete(at); });
   }
@@ -79,36 +84,44 @@ export function designVersionOf(message: { sender?: { bot?: boolean }; metadata?
   return message?.sender?.bot && Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-export function DesignVersionCard({ conversationId, rootId, version, title = null }: {
+/** Pure (K): which of the thread's artifacts a bot message's version is of, or null for its first. */
+export function designArtifactOf(message: { metadata?: { homeroomBot?: { artifactId?: number } | null } | null }): number | null {
+  const n = Number(message?.metadata?.homeroomBot?.artifactId);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+export function DesignVersionCard({ conversationId, rootId, version, title = null, artifactId = null }: {
   conversationId: number;
   rootId: number;
   version: number;
   /** The design's name, as the message carries it. */
   title?: string | null;
+  /** K: which of the thread's artifacts; none is its first. */
+  artifactId?: number | null;
 }): ReactNode {
   const t = useMessages('messages');
   const [design, setDesign] = useState<DesignThread | null>(null);
-  const [doc, setDoc] = useState<string | null>(null);
+  const [doc, setDoc] = useState<{ html: string; sheets: string[]; site: boolean } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    readDesign(rootId, version).then((found) => {
+    readDesign(rootId, version, artifactId).then((found) => {
       if (!live) return;
       setDesign(found);
       // P8: the pictures it names, written in (../design/pictures.ts).
-      return readVersion(rootId, version).then((v) => inlinePictures(v.html)).then((html) => {
+      return readVersion(rootId, version, artifactId).then((v) => inlinePictures(v.html)).then((html) => {
         if (!live) return;
-        const sheets = found.surface === 'platform' ? currentSheets() : [];
-        setDoc(designFrameDoc(html, { origin: window.location.origin, sheets }));
+        setDoc({ html, sheets: found.surface === 'platform' ? currentSheets() : [], site: found.kind !== 'page' });
       });
     }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [rootId, version]);
+  }, [rootId, version, artifactId]);
 
   const box = cardBox(design);
   const named = title || design?.title || '';
-  const open = () => openPreview({ conversationId, rootId, version });
+  // I: the column opens on this artifact, at this version.
+  const open = () => openPreview({ conversationId, rootId, version, artifactId });
   return (
     <div className="messages-design-card mt-2 flex w-fit max-w-full flex-col gap-2" data-design-card={version}>
       <div
@@ -116,22 +129,23 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
         style={{ width: box.width, height: box.height }}
       >
         {doc && design ? (
-          <iframe
-            title={t('messages:design.card.frameTitle', { version })}
-            sandbox={DESIGN_SANDBOX}
-            referrerPolicy="no-referrer"
-            srcDoc={doc}
-            data-design-frame=""
-            tabIndex={-1}
-            aria-hidden="true"
+          <ArtifactFrame
+            mode="run"
+            viewer="author"
+            html={doc.html}
+            sheets={doc.sheets}
+            site={doc.site}
+            pictured
+            inert
+            title={design.kind === 'page' ? t('messages:design.card.frameTitlePage', { version }) : t('messages:design.card.frameTitle', { version })}
             style={{
               width: design.width, height: design.height, transform: `scale(${box.scale})`, transformOrigin: '0 0',
-              border: 0, background: '#fff', pointerEvents: 'none',
+              border: 0, background: '#fff',
             }}
           />
         ) : (
           <span className="absolute inset-0 flex items-center justify-center p-3 text-center text-[12px] text-zinc-500">
-            {failed ? t('messages:design.card.failed') : t('messages:design.pane.loading')}
+            {failed ? t('messages:design.card.failed') : t(paneWordIds(design?.kind).loading)}
           </span>
         )}
         <button

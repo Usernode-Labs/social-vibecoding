@@ -81,10 +81,10 @@ test('batched fixtures preserve real PostgreSQL data, ordering and repeated-boot
     const before = await snapshot();
     for (const name of names) await seeds[name](client, config);
     assert.deepEqual(await snapshot(), before, 'second boot preserves all existing fixture rows');
-    await client.query("UPDATE users SET is_admin=true, anthropic_key_enc='changed' WHERE id=9300003");
+    await client.query('UPDATE users SET is_admin=true WHERE id=9300003');
     await client.query('UPDATE llm_usage SET total_cost_cents=123 WHERE user_id=9300003');
     await seeds.seedStagingSpendDistribution(client);
-    assert.deepEqual(await rows('SELECT is_admin, anthropic_key_enc FROM users WHERE id=9300003'), [{ is_admin: false, anthropic_key_enc: null }]);
+    assert.deepEqual(await rows('SELECT is_admin FROM users WHERE id=9300003'), [{ is_admin: false }]);
     assert.equal(await scalar('SELECT count(*)::int n FROM llm_usage WHERE user_id=9300003 AND total_cost_cents=123'), 30);
     // A partially seeded thread is filled back in without replacing its neighbors.
     await client.query("DELETE FROM chat_messages WHERE thread_type='session' AND content LIKE '%#2:%'");

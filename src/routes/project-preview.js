@@ -199,6 +199,9 @@ function projectPreviewRoutes(config) {
   // ── For search engines (Evan, 21 Oct 2026: search traffic is wanted) ──
   // Both are public paths (middleware/auth.js), and both name only what the
   // public directory already shows anybody.
+  // A private path is marked noindex (server.js's catch-all), never
+  // disallowed here: a blocked address is never read, so a search engine
+  // would never see that it should drop it.
   router.get('/robots.txt', (req, res) => {
     res.set('Cache-Control', 'public, max-age=3600');
     return res.type('text/plain').send(robotsTxt(requestOrigin(req)));

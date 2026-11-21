@@ -25,6 +25,14 @@
  * before either — the same corner the prototype and all four of those
  * products use.
  *
+ * The standard look draws it over the menu instead (app.css, "THE FOLD
+ * BUTTON IS PART OF THE PANEL", 20 Nov 2026): first on the logo's line, its
+ * glyph in the rows' icon column, on the same spot whether the menu is open
+ * or folded to its strip. It stays here in the markup all the same, which
+ * is what keeps the keyboard's order right: the header comes before the
+ * screens and the rail, so after "Skip to navigation" (./skip-link.tsx) the
+ * next stop is this, the first control on screen from the top left.
+ *
  * DESKTOP ONLY, and only where there is a rail to fold — but BOTH of those
  * are app.css's to decide, not this component's. The breakpoint, because a
  * phone's bar is at the foot and folding it would leave a reader with no

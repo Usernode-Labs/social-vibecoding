@@ -48,6 +48,7 @@ function repoOf(app) {
   return repoRef.ownerRepo(app?.repo_url);
 }
 
+// Where links point: the platform's own domain, as the mayor's own posts use it.
 function domainOf(deps) {
   return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
 }
@@ -554,16 +555,9 @@ async function moveRequest(pool, config, {
   return { ok: true, target: to, issueNumber: filed.issueNumber, title: gate.issue.title, how, reasons, mine, appName };
 }
 
-/** #4239: a move to Homeroom's own board. */
-async function moveToHomeroom(pool, config, opts) {
-  const target = await platformApp(pool, opts.deps || {});
-  if (!target) return { ok: false, code: 'no_platform', error: 'Homeroom\'s own board isn\'t available right now.' };
-  return moveRequest(pool, config, { ...opts, target });
-}
-
 /**
  * A tap under a move offer in their chat with the bot (homeroom-bot-mayor.js
- * settleOffer), made before 5 Nov 2026: moveToHomeroom, its action row
+ * settleOffer), made before 5 Nov 2026: moveRequest, its action row
  * marked. `ack` sends the answer. Resolves what was sent.
  */
 async function decideMove(pool, config, { bot = null, user, settings, action, yes, ack, deps = {} }) {
@@ -926,6 +920,7 @@ module.exports = {
   foldOffer,
   foldedOfferSent,
   DONE_ACTIONS,
+  domainOf,
   requestLink,
   movedFooter,
   copiedFooter,
@@ -945,7 +940,6 @@ module.exports = {
   closeNow,
   closedWords,
   moveRequest,
-  moveToHomeroom,
   decideMove,
   moveOfferText,
   moveOfferMeta,

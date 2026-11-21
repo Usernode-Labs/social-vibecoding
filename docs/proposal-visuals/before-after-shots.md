@@ -1181,11 +1181,14 @@ app's first screens does declare changes, its run takes the after side only
 (see "A project's first version").
 
 The bot offers a change of its own as ready to try only once its shots on
-that exact head have settled (`shots-state.holdsReady`, read by
-`homeroom-bot-dm.changeReadiness`), for at most 45 minutes after its checks
-verdict. Every way the shots slot settles (a terminal transition, a waiver,
-a run that will not start) calls `homeroom-bot-dm.noteShotsSettled`, and the
-bot's refresh sends anything held past the limit. When the shots show a
+that exact head have settled, for at most 45 minutes after its checks
+verdict: until then the change's stored work state says Taking screenshots
+and is not open for votes (`services/work-state.js`, through
+`bot-readiness.ts heldUntil`), and "ready to try" is read off that row
+(review A3: the bot's change machine is told when it opens). Every way the
+shots slot settles (a terminal transition, a waiver, a run that will not
+start) marks the change's row, and the row's own due time ends a hold that
+lapsed. When the shots show a
 declared change failing, the change goes back to the bot in the round a
 failing check gets (`homeroom-bot-followup.checksDue`'s `broken`, once per
 head and within its revisions) before anybody is told it is ready. Once that

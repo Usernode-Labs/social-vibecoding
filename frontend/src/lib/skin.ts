@@ -41,6 +41,18 @@ export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
 export const MENU_SKINS = ['wip', 'brand'] as const;
 export type MenuSkin = typeof MENU_SKINS[number];
 
+/**
+ * True where Home and the Communities page are drawn with the kit's pieces
+ * (the one-column page, the pinned projects card, Recent threads, the
+ * challenge posters; the grid of pinned communities and the joined list): Standard
+ * (WIP), which drew them first, and the standard look, which took them on 20
+ * Nov 2026. The first render's 'standard' is one of them, so the prerendered
+ * document and the hydrated one agree.
+ */
+export function isKitHome(skin: Skin): boolean {
+  return skin === 'wip' || skin === 'standard';
+}
+
 /** True for a look that draws a page in the frame; 'brand' keeps the standard pages. */
 export function isFrameSkin(skin: Skin): skin is FrameSkin {
   return (FRAME_SKINS as readonly string[]).includes(skin);

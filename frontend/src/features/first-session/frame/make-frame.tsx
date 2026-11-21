@@ -42,7 +42,7 @@ export function MakeFrameShell({ rootRef, scrollerRef, rootClass, entry, mode, c
       data-make-entry={entry}
       data-make-kit={mode}
       className={rootClass}
-      style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
+      style={{ background: 'var(--home-wallpaper, #fffeea)' }}
     >
       <div ref={scrollerRef} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">
         {children}

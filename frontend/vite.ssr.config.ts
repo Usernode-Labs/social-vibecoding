@@ -13,6 +13,12 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 // put the prerender entry at an unrelated path. This pass produces a
 // throwaway Node module that the build imports, calls once, and deletes.
 export default defineConfig({
+  // The same pin and publicDir off as vite.config.ts, for the same reason: a
+  // run started from the repository root copied its `public/` into the build
+  // output (PR 6917, 20 Nov 2026). Without these, it would copy it into
+  // `frontend/.ssr` on this pass.
+  root: dirname,
+  publicDir: false,
   plugins: [react()],
   resolve: {
     alias: { '@': path.resolve(dirname, './@') },

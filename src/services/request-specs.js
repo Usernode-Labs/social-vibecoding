@@ -175,12 +175,31 @@ function specCommentText({ username, version, markdown, webPath, announced = tru
 }
 
 /**
+ * Pure (artifacts, stage 0): the design a plan was made from, as it is
+ * stored on the plan's version: { threadId, version }, both positive
+ * integers, or null when either is missing or wrong.
+ *
+ * 20 Nov 2026 (live-draft review, K): and `artifactId`, which of the
+ * thread's artifacts, only for a later one: none means the first, as on
+ * every plan from before.
+ */
+function designSource(design) {
+  const threadId = Number(design?.threadId);
+  const version = Number(design?.version);
+  if (!Number.isSafeInteger(threadId) || threadId <= 0) return null;
+  if (!Number.isSafeInteger(version) || version <= 0 || version > 2147483647) return null;
+  const artifactId = Number(design?.artifactId);
+  const later = Number.isSafeInteger(artifactId) && artifactId > 1 && artifactId <= 2147483647;
+  return { threadId, version, ...(later ? { artifactId } : {}) };
+}
+
+/**
  * Post a spec on a request. `app` carries id, slug, self_hosted and the
  * owner/repo already parsed; the caller has checked membership, access and
  * that the request is open. Resolves { sessionId, version, createdRecord,
  * format, title, markdownChars, htmlChars, commentPosted }.
  */
-async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null, user, text, webPath = null }, deps = {}) {
+async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null, user, text, webPath = null, design = null }, deps = {}) {
   const ws = deps.ws || require('./ws');
   const github = deps.github || require('./github');
   const prepared = prepareSpec(text);
@@ -234,11 +253,18 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
       'UPDATE chat_sessions SET spec_md = $2, spec_html = $3, last_activity_at = NOW() WHERE id = $1',
       [sessionId, prepared.markdown, html]
     );
+    // Artifacts, stage 0: a plan made from a design names it (the design's
+    // thread and the version shown as its after side), so nothing reads it
+    // back out of the plan's words. Null for every other plan. K (20 Nov
+    // 2026): and a later artifact of its thread by number (null: the first).
+    const source = designSource(design);
     const { rows: versionRows } = await client.query(
-      `INSERT INTO chat_session_specs (session_id, version, content, content_html, shared_to_group_at)
-       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3, NOW())
+      `INSERT INTO chat_session_specs (session_id, version, content, content_html, shared_to_group_at, design_thread_id, design_version,
+                                       design_artifact_id)
+       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3, NOW(), $4, $5, $6)
        RETURNING version`,
-      [sessionId, prepared.markdown, html]
+      [sessionId, prepared.markdown, html, source ? source.threadId : null, source ? source.version : null,
+        source?.artifactId || null]
     );
     version = versionRows[0].version;
     await client.query('COMMIT');
@@ -371,7 +397,8 @@ async function personPlanOf(pool, { appId, issueNumber }) {
   const n = Number(issueNumber);
   if (!appId || !Number.isSafeInteger(n) || n <= 0) return null;
   const { rows: [row] } = await pool.query(
-    `SELECT s.session_id, s.version, s.content, s.content_html, cs.user_id, u.username
+    `SELECT s.session_id, s.version, s.content, s.content_html, s.design_thread_id, s.design_version, s.design_artifact_id,
+            cs.user_id, u.username
        FROM chat_session_specs s
        JOIN chat_sessions cs ON cs.id = s.session_id
        LEFT JOIN users u ON u.id = cs.user_id
@@ -395,6 +422,8 @@ async function personPlanOf(pool, { appId, issueNumber }) {
     authorId: row.user_id == null ? null : Number(row.user_id),
     screens,
     enough: screens > 0 && markdown.trim().length >= MIN_PERSON_PLAN_CHARS,
+    // Artifacts, stage 0: the design this plan was made from, as stored.
+    design: designSource({ threadId: row.design_thread_id, version: row.design_version, artifactId: row.design_artifact_id }),
   };
 }
 
@@ -454,4 +483,5 @@ module.exports = {
   openRequest,
   MIN_PERSON_PLAN_CHARS,
   personPlanOf,
+  designSource,
 };

@@ -231,9 +231,13 @@ const SENDERS = new Map([
   ['src/services/bot-pictures.js', 'POST /chat/completions for Homeroom bot\'s pictures (an image-output model)'],
   ['worker/codex-openrouter-request.js', 'POST /responses for every Codex coding turn'],
   ['worker/claude-openrouter-request.js', 'POST /messages and /messages/count_tokens for every Claude Code OpenRouter turn'],
+  ['src/services/openrouter-messages.js', 'POST /messages for llm.js\'s Claude calls; its requestBody is the body both relays forward (task 2275)'],
 ]);
 
 const NOT_SENDERS = new Map([
+  ['src/routes/anthropic-proxy.js', 'the worker relay forwards through anthropic-stream.js, whose body is openrouter-messages.js requestBody'],
+  ['src/routes/app-llm-proxy.js', 'the app relay forwards through anthropic-stream.js, whose body is openrouter-messages.js requestBody'],
+  ['scripts/language-sync.js', 'translates through llm.js, which sends through openrouter-messages.js'],
   ['src/agents/codex-openrouter.js', 'writes Codex\'s config.toml; Codex reaches OpenRouter only through worker/codex-openrouter-request.js'],
   ['src/config.js', 'reads the base URL'],
   ['src/routes/credentials.js', 'validates a key (GET /key)'],
@@ -243,6 +247,8 @@ const NOT_SENDERS = new Map([
   ['src/services/bot-review.js', 'sends through openrouter-mayor.js'],
   ['src/services/homeroom-bot-already-done.js', 'sends through openrouter.js'],
   ['src/services/homeroom-bot-layout.js', 'sends through the turn\'s own transport, openrouter.js streamChat'],
+  // 20 Nov 2026 (live-draft review, E): the chat's web search (tests/bot-web-search.test.js holds its deny).
+  ['src/services/bot-web-search.js', 'sends through the turn\'s own transport, openrouter.js streamChat'],
   ['src/services/homeroom-bot-mayor.js', 'sends through openrouter.js and openrouter-mayor.js'],
   ['src/services/llm.js', 'sends through openrouter.js'],
   ['src/services/model-costs.js', 'names the catalog URL in a comment'],
@@ -297,17 +303,31 @@ test('the coding CLIs reach OpenRouter only through the listeners that deny it',
   assert.match(dockerfile, /^COPY openrouter-privacy\.js \/usr\/local\/bin\/openrouter-privacy\.js$/m);
 });
 
-test('the app-facing LLM proxy forwards to Anthropic only, so no app can reach OpenRouter through it', () => {
-  // USERNODE_LLM_PROXY_URL (src/routes/app-llm-proxy.js) is the one model
-  // route an app's own code can call. It forwards to Anthropic's Messages API,
-  // where OpenRouter's provider routing does not exist. Should it ever forward
-  // to OpenRouter, it becomes a SENDER above and must override an app's
-  // `provider` with the helper.
-  const { ANTHROPIC_UPSTREAM } = require('../src/services/anthropic-stream');
-  assert.equal(ANTHROPIC_UPSTREAM, 'https://api.anthropic.com');
-  const proxy = fs.readFileSync(path.join(ROOT, 'src/routes/app-llm-proxy.js'), 'utf8');
-  assert.match(proxy, /const upstreamUrl = `\$\{anthropicStream\.ANTHROPIC_UPSTREAM\}\/\$\{upstreamPathRaw\}`;/);
-  assert.doesNotMatch(proxy, /openrouter/i);
+// Task 2275: the platform's Claude calls and both relays (the worker's and
+// the apps') go to OpenRouter's Messages endpoint. An app's own code can
+// call the app relay, so its body must deny data collection over anything
+// the app put in `provider`, and only a Claude model may pass.
+test('the Claude Messages transport denies it on a call, and on every body a relay forwards', async () => {
+  const messages = require('../src/services/openrouter-messages');
+  const sent = [];
+  await messages.createMessage({
+    apiKey: 'k', baseUrl: 'https://openrouter.example/api/v1',
+    params: { model: 'claude-haiku-5-5', max_tokens: 5, messages: [], provider: { data_collection: 'allow' } },
+    fetchImpl: async (url, init) => {
+      sent.push({ url, body: JSON.parse(init.body) });
+      return new Response('{"type":"message","content":[],"usage":{"input_tokens":1,"output_tokens":1}}', { status: 200 });
+    },
+  });
+  assert.equal(new URL(sent[0].url).pathname, '/api/v1/messages');
+  assertDenied(sent[0].body, 'openrouter-messages.js createMessage');
+  assertDenied(messages.requestBody({ model: 'claude-sonnet-5-5', messages: [], provider: { data_collection: 'allow', order: ['x'] } }),
+    'the body a relay forwards');
+  assert.throws(() => messages.requestBody({ model: 'openai/gpt-6-astra', messages: [] }), /Only Claude models/);
+  const stream = fs.readFileSync(path.join(ROOT, 'src/services/anthropic-stream.js'), 'utf8');
+  assert.match(stream, /sent = openrouterMessages\.requestBody\(req\.body\);/, 'both relays forward that body');
+  for (const relay of ['src/routes/app-llm-proxy.js', 'src/routes/anthropic-proxy.js']) {
+    assert.match(fs.readFileSync(path.join(ROOT, relay), 'utf8'), /openrouterMessages\.upstreamUrlFor\(config\.openrouterApiBase/, relay);
+  }
 });
 
 test('31 Oct 2026: a retry leaves out the providers that failed it, by slug, and still denies data collection', () => {

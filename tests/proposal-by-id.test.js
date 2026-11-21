@@ -608,7 +608,7 @@ test('?demo=1: the going-live mock reads the same on its page and in the Done co
   assert.equal(p.live_at, null);
   assert.equal(p.release.state, 'next');
   const minutes = Math.round((Date.parse(p.release.etaAt) - Date.now()) / 60000);
-  assert.equal(minutes, 4, 'four minutes off: the demo waits out the release gap (four minutes since 10 Oct 2026)');
+  assert.equal(minutes, 4, 'four minutes off: the demo build started two minutes ago');
   const route = findRoute(routes, 'get', '/api/apps/:slug/merged');
   let payload;
   let statusCode = 200;

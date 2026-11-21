@@ -839,6 +839,10 @@
     "text": "Waiting for building credit. Homeroom bot picks this up again by itself.",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a build stopped because the credit that pays for building ran out, and nothing needs doing."
   },
+  "work.line.budgetWait": {
+    "text": "Waiting until Monday: this week's building budget is used up. Homeroom bot picks this up again by itself, or sooner if an admin raises it.",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a build stopped because the money Homeroom bot may spend on AI models this week is used up. The budget starts again on Monday, and nothing needs doing."
+  },
   "work.line.reply": {
     "text": "Reading your reply",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot is reading what the person replied."
@@ -1054,5 +1058,21 @@
   "change.closedWhy.withdrawn": {
     "text": "It was withdrawn.",
     "description": "One whole sentence saying why a change (a proposed edit to a project) was closed without going live. It follows \"This change was closed without going live.\" on the Votes card of the change's page, and the change's title on a notification row, so the change's name is not repeated. Somebody took it back without a vote deciding it."
+  },
+  "artifact.viewer.staticNote": {
+    "text": "This page has scripts. They are off for you, because someone else made it.",
+    "description": "Under a page Homeroom bot wrote with another person, when the viewer is not that person: the page is shown with its scripts switched off. Beside the Run it button."
+  },
+  "artifact.viewer.run": {
+    "text": "Run it",
+    "description": "Button beside the note that a page's scripts are off: switches them on for this viewer, who is not the page's author."
+  },
+  "artifact.viewer.runningNote": {
+    "text": "This page was made in a chat with Homeroom bot. It is not part of Homeroom. Never type a password into it.",
+    "description": "Warning line above a page that is running its scripts for someone who did not make it, when the maker's name is not known. Homeroom bot is the assistant's name."
+  },
+  "artifact.viewer.runningNoteBy": {
+    "text": "{{author}} made this page in a chat with Homeroom bot. It is not part of Homeroom. Never type a password into it.",
+    "description": "Warning line above a page that is running its scripts for someone who did not make it. {{author}} is the name of the person who made it. Homeroom bot is the assistant's name."
   }
 }

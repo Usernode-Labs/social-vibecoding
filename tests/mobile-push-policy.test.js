@@ -467,6 +467,36 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   });
   assert.equal(copy('sessions_full:75:75').title, 'Session limit reached');
   assert.match(copy('sessions_full:75:75').body, /raised in Admin → Limits/);
+  // The shared database's connections (platform-limit-alerts.js).
+  assert.deepEqual(copy('connections_warn:80:97'), {
+    title: 'Database connections running low',
+    body: "80 of 97 database connections are open. At 97, apps can't open new ones",
+  });
+  assert.equal(copy('connections_full:97:97').title, 'Database connections used up');
+  // The cluster's own (services/platform-capacity.js).
+  assert.deepEqual(copy('db_disk_warn:41000:51200'), {
+    title: 'Database disk filling up',
+    body: "40 of 50 GiB of the database's disk is used. When it fills, Postgres stops writing",
+  });
+  assert.equal(copy('db_disk_full:51200:51200').title, 'Database disk full');
+  assert.deepEqual(copy('quota_workers_warn:917:1000'), {
+    title: 'Cluster quota running low (workers)',
+    body: "91% of the workers namespace's quota is used. When it fills, new coding sessions and checks wait",
+  });
+  assert.equal(copy('quota_apps_full:1000:1000').title, 'Cluster quota used up (apps)');
+  assert.match(copy('quota_builds_full:1000:1000').body, /new image builds fail/);
+  assert.equal(copy('node_pool_full:10000:10000').title, 'Node volume pool full');
+  // Homeroom bot's weekly budget, in cents (services/openrouter-credit.js
+  // budget). The day is the next week boundary, which is always a Monday.
+  assert.deepEqual(copy('bot_budget_warn:64800:80000'), {
+    title: "Homeroom bot's weekly budget is 81% used",
+    body: "$648 of $800 used. At $800 the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until Monday",
+  });
+  assert.deepEqual(copy('bot_budget_full:80000:80000'), {
+    title: "Homeroom bot's weekly budget is used up",
+    body: "Building, screenshots, sync with main and apps' AI features have stopped. They start again on Monday, or once the budget is raised",
+  });
+  assert.match(copy('node_pool_warn:9000:10000').body, /^8\.8 of 9\.8 GiB of a node's volume pool is used/);
   // GitHub's hourly budget (services/github-budget.js).
   assert.deepEqual(copy('github_warn:4000:5000'), {
     title: 'GitHub requests running low',
@@ -484,6 +514,29 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   // An unreadable token still says what kind of alert it is.
   assert.equal(copy('disk_warn:1:2').title, 'Platform limit');
   assert.equal(copy(undefined).title, 'Platform limit');
+});
+
+test('#6901: a refusal at the app limit says so, with a count for later notices', () => {
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_limit', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('apps_away:1:210:0'), {
+    title: 'Someone was turned away',
+    body: 'The server is at its app limit (210 apps). Raise it in Admin → Limits or remove an app',
+  });
+  assert.deepEqual(copy('apps_away:1:210:61'), {
+    title: 'People turned away at the app limit',
+    body: '1 person was turned away in the last 2 hours',
+  });
+  assert.deepEqual(copy('apps_away:3:210:180'), {
+    title: 'People turned away at the app limit',
+    body: '3 people were turned away in the last 3 hours',
+  });
+  // Under the hour says "in the last hour"; 60 minutes is the last hour too.
+  assert.equal(copy('apps_away:2:210:60').body, '2 people were turned away in the last hour');
+  for (const detail of ['apps_away:1:210:0', 'apps_away:3:210:180']) {
+    assert.ok(!/—/.test(JSON.stringify(copy(detail))), detail);
+  }
 });
 
 test('#2386: a friend request and its acceptance name the person and what to do', () => {
@@ -505,4 +558,17 @@ test('#2386: a friend request and its acceptance name the person and what to do'
   // The opaque data payload is unchanged by the kind.
   assert.equal(request.data.notification_id, '42');
   assert.equal(Object.keys(request.data).includes('source_username'), false);
+});
+
+test('the credit warnings are the account\'s credit, with days only when there is a rate', () => {
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_incident', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('credit:low:500:480:6'), {
+    title: 'OpenRouter credit is below $500',
+    body: '$480 left, about 6 days at the recent rate. Add credit before Homeroom bot stops building',
+  });
+  assert.equal(copy('credit:urgent:200:184:1').body, '$184 left, about 1 day at the recent rate. Add credit before Homeroom bot stops building');
+  assert.equal(copy('credit:low:500:480:0').body, '$480 left. Add credit before Homeroom bot stops building');
+  assert.equal(copy('credit:out').title, 'OpenRouter credit ran out');
 });

@@ -648,3 +648,22 @@ test('app-conventions documents the forwarded insets for generated apps', () => 
   assert.ok(doc.includes('var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))'),
     'the doc must show the exact form apps should write');
 });
+
+// ── 7. #6970: the panel's head card keeps clear of the Duo's column ─────
+
+test('the panel\'s head card pads the edge the top window publishes', () => {
+  // The panel's own document reads no insets (side-strip.ts NO_INSETS), so
+  // the top window publishes the column's width onto the frame's root and
+  // this rule spends it on the head card alone.
+  const rule = APP_CSS.match(
+    /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\)\.in-side-panel\.side-panel-beside-ai \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{([^}]*)\}/
+  );
+  assert.ok(rule, 'one rule, scoped to the column in the looks that draw the head card there');
+  assert.match(rule[1], /padding-inline-end: calc\(var\(--thread-gutter, 12px\) \+ var\(--side-panel-edge, 0px\)\);/,
+    'the card narrows by the column, on its inline end');
+  assert.doesNotMatch(rule[1], /padding-block/, 'the card\'s top padding belongs to --pill-top');
+  // Below the card the page still runs under the column (THE PINNED COLUMNS
+  // RUN UNDER IT), so the scroller is never padded by this edge.
+  assert.doesNotMatch(APP_CSS, /dev-request-scroll[^{}]*\{[^}]*--side-panel-edge/,
+    'the cards, replies and composer below the head keep running under the column');
+});

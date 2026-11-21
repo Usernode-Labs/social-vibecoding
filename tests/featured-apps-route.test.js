@@ -28,7 +28,6 @@ function stub(id, exports) {
 const ids = {
   logger: require.resolve('../src/services/logger'),
   limits: require.resolve('../src/services/limits'),
-  anthropicCredits: require.resolve('../src/services/anthropic-credits'),
   dbExport: require.resolve('../src/services/db-export'),
   events: require.resolve('../src/services/events'),
   appRollover: require.resolve('../src/services/app-rollover'),
@@ -51,7 +50,6 @@ stub(ids.limits, {
   getSystemTokensLimitCents: async () => 0,
   invalidate: () => {},
 });
-stub(ids.anthropicCredits, {});
 stub(ids.dbExport, {});
 stub(ids.events, { record: () => {} });
 stub(ids.appRollover, {});
@@ -68,6 +66,11 @@ stub(ids.rateLimits, {
   smsTestLimiter: (_req, _res, next) => next(),
   smsTestNumberLimiter: (_req, _res, next) => next(),
   featuredAdminLimiter: (_req, _res, next) => next(),
+  // The platform limits area's Check again (routes/admin-platform-limits.js),
+  // composed into admin.js.
+  platformLimitsCheckLimiter: (_req, _res, next) => next(),
+  limitTextSendLimiter: (_req, _res, next) => next(),
+  limitTextVerifyLimiter: (_req, _res, next) => next(),
 });
 stub(ids.status, { snapshot: async () => ({}) });
 

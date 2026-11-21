@@ -67,6 +67,7 @@ test('the generated index.html is a plausible shell document, not a stub', () =>
 const buildScript = fs.readFileSync(path.join(ROOT, 'frontend', 'scripts', 'build-shell.mjs'), 'utf8');
 const prerenderSrc = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'prerender.tsx'), 'utf8');
 const viteConfig = fs.readFileSync(path.join(ROOT, 'frontend', 'vite.config.ts'), 'utf8');
+const viteSsrConfig = fs.readFileSync(path.join(ROOT, 'frontend', 'vite.ssr.config.ts'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
 const kubernetesDockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile.kubernetes'), 'utf8');
 
@@ -245,6 +246,19 @@ test('the untracked shell keeps its fixed-name, no-CSS build contract', () => {
     'chunk names must stay unhashed and readable, like the entry');
   assert.doesNotMatch(viteConfig, /\[hash\]/,
     'a content hash anywhere here would churn SHELL_ASSETS on every build');
+  // PR 6917 (20 Nov 2026): a Vite run started from the repository root took
+  // public/ as its default publicDir and copied it into public/shell/, and the
+  // worker committed the 127 files. The root is pinned to the frontend folder
+  // and the public-folder copy is off, so the build cannot depend on the
+  // caller's working directory.
+  assert.match(viteConfig, /root:\s*dirname/,
+    'the client build root must be pinned to frontend/, not the caller\'s cwd');
+  assert.match(viteConfig, /publicDir:\s*false/,
+    'the client build must never copy a public folder into public/shell/');
+  assert.match(viteSsrConfig, /root:\s*dirname/,
+    'the prerender build root must be pinned to frontend/ too');
+  assert.match(viteSsrConfig, /publicDir:\s*false/,
+    'the prerender build must never copy a public folder into its output');
   assert.match(buildScript, /strayCss\.length/,
     'the build must reject CSS imports that would violate the stylesheet cascade');
 
@@ -252,13 +266,20 @@ test('the untracked shell keeps its fixed-name, no-CSS build contract', () => {
   const dockerignore = fs.readFileSync(path.join(ROOT, '.dockerignore'), 'utf8').split(/\r?\n/);
   assert.ok(gitignore.includes('/public/index.html'),
     'the generated HTML must not be committed');
-  // The directory: every emitted chunk is generated, not just the entry.
-  assert.ok(gitignore.includes('/public/shell/assets/'),
-    'no generated chunk may be committed');
   assert.ok(dockerignore.includes('public/index.html'),
     'an ignored local HTML artifact must not enter the Docker build context');
-  assert.ok(dockerignore.includes('public/shell/assets/'),
-    'no ignored local chunk may enter the Docker build context');
+  // The whole folder is build output (PR 6917 committed 127 files from it).
+  // One folder-wide line, not three paths: nothing under it is source.
+  assert.ok(gitignore.includes('/public/shell/'),
+    'the shell build output folder must be ignored as a whole');
+  assert.ok(dockerignore.includes('public/shell/'),
+    'the shell build output folder must stay out of the Docker build context');
+  for (const stale of ['/public/shell/assets/', '/public/shell/release.json', '/public/shell/worker.js']) {
+    assert.ok(!gitignore.includes(stale), `${stale} is covered by /public/shell/ now`);
+  }
+  for (const stale of ['public/shell/assets/', 'public/shell/release.json', 'public/shell/worker.js']) {
+    assert.ok(!dockerignore.includes(stale), `${stale} is covered by public/shell/ now`);
+  }
   assert.ok(dockerignore.includes('**/node_modules'),
     'the local frontend install used by tests must not enter the Docker build context');
 

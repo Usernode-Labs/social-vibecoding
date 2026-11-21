@@ -31,6 +31,10 @@ const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+// The hub as every look but the kit's draws it (the cards these tests hold): since 20 Nov 2026 the standard look's hub
+// is the kit's (lib/skin.ts isKitHome), held by tests/home-needs-you-card.test.js and tests/standard-wip-look.test.js.
+const LEGACY_SKIN = { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } };
+const LEGACY_HUB = { stubs: LEGACY_SKIN };
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 const DISMISSED = 'frontend/src/features/dev-board/workshop/hub-dismissed.ts';
 const DAY = 24 * 60 * 60 * 1000;
@@ -124,7 +128,7 @@ test('Share it: a ✕ that closes it, and one line about the invite that is out'
     const presses = [];
     const card = loadTsx(CARD, {
       cache: false,
-      stubs: { './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => presses.push([slug, which])] } },
+      stubs: { ...LEGACY_SKIN, './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => presses.push([slug, which])] } },
     });
     for (const slug of Object.keys(records)) await card.reloadCommunity(slug);
     const draw = (slug) => renderToHtml(createElement(card.ShareItCard, { slug, name: 'Garden' }));
@@ -161,7 +165,7 @@ test('the Invite card: its ✕ closes it, and the hero row\'s small Invite is th
   let closed = false;
   const card = loadTsx(CARD, {
     cache: false,
-    stubs: { './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => { closed = true; }] } },
+    stubs: { ...LEGACY_SKIN, './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => { closed = true; }] } },
   });
   const drawCard = () => renderToHtml(createElement(card.InviteHeroCard, { slug: 'garden-invite', data: record }));
   assert.match(drawCard(), /^<section class="dev-ws-invite-hero" data-ws-invite-hero="" aria-label="[^"]*"><button type="button" class="dev-ws-card-close un-touch-target" data-ws-card-close="invite" aria-label="Close this card" title="Close this card"><svg[^>]*>/,
@@ -183,7 +187,7 @@ test('the Invite card: its ✕ closes it, and the hero row\'s small Invite is th
 });
 
 test('the invite line says how many joined and how long the soonest link has left, in words', () => {
-  const { inviteSentLine, linkTimeLeft } = loadTsx(CARD);
+  const { inviteSentLine, linkTimeLeft } = loadTsx(CARD, LEGACY_HUB);
   const now = Date.parse('2026-10-15T12:00:00Z');
   const at = (ms) => new Date(now + ms).toISOString();
   const line = (over) => inviteSentLine({ links: 1, joined: 0, waiting: 0, expires_at: at(7 * DAY - 60000), ...over }, now);

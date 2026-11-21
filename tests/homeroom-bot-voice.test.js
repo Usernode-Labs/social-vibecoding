@@ -889,7 +889,21 @@ test('the DM, a chat\'s fix and a No vote\'s line become asks, and a merge drops
 test('#6766: it never states a platform limit the rules do not plainly forbid', () => {
   const prompt = voice.systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue', ref: 1 }, tools: [] });
   assert.match(prompt, /Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it\./);
-  assert.match(prompt, /When\n  unsure, say you will check rather than state a limit; a live app already doing it \(Homeroom Maps has a real\n  map and place search\) shows it can be built\./);
+  // Review C (19 Nov 2026): it said "say you will check", which is the
+  // promise to come back that the rule above it forbids. One rule: it
+  // checks now, in this turn, or says it does not know.
+  assert.match(prompt, /When\n  unsure, check now with a tool you have and answer from what you found, or say plainly that you do not know:\n  never state a limit you have not checked, and never say you will check later\. A live app already doing it\n  \(Homeroom Maps has a real map and place search\) shows it can be built\./);
+  assert.doesNotMatch(prompt, /say you will check rather/);
+  assert.match(prompt, /Never promise to look into something or come back to\n  it later/);
+  // The chat's prompt says the same thing.
+  const chat = require('../src/services/homeroom-bot-mayor').systemPrompt({ username: 'ada' });
+  assert.match(chat, /check now with a tool you have and answer from what you found, or say plainly that you do not know/);
+  assert.doesNotMatch(chat, /say you will check rather/);
+  assert.match(chat, /Never promise to follow up, look into, sort out, investigate or get back to them later/);
+  // And where a project's requests are listed is its Workshop, in the rule
+  // and in what a filed report says.
+  assert.match(chat, /Workshop, never a "board"/);
+  assert.doesNotMatch(chat.slice(0, chat.indexOf('PLATFORM RULES')), /requests board/);
 });
 
 // ── Step 5 (11 Nov 2026): a comment that does not change the ask ─────────
@@ -1231,22 +1245,50 @@ test('#6534: make_pictures in a thread stores its pictures under the reply, with
   assert.equal(ctx.attached[0].kind, 'image');
 });
 
-test('#6534: an HTML comparison is self-contained, and a stored one is an html attachment', async () => {
+test('#6534 / 20 Nov 2026: an HTML comparison is self-contained, and is drawn under the reply, never stored', async () => {
   const { pool, ctx } = pictureCtx();
   const refused = await voice.runTool(pool, ctx, 'attach_files', {
     comparison: { title: 'Before and after', html: '<img src="https://example.com/x.png">' },
   });
   assert.match(refused.error, /may not load anything from another address/);
 
-  const stored = await voice.runTool(pool, ctx, 'attach_files', {
+  const drawn = await voice.runTool(pool, ctx, 'attach_files', {
     comparison: { title: 'Before and after', html: '<html><body><p>Before</p><p>After</p></body></html>' },
   });
-  assert.equal(stored.ok, true, JSON.stringify(stored));
-  assert.equal(ctx.attached[0].kind, 'html');
-  assert.match(ctx.attached[0].filename, /^Before-and-after.*\.html$/);
+  assert.equal(drawn.ok, true, JSON.stringify(drawn));
+  assert.equal(drawn.drawn, true);
+  assert.match(drawn.note, /Drawn under your reply, for everyone in this thread; nothing in it runs\./);
+  assert.deepEqual(ctx.attached, [], 'no file is stored: the comparison is metadata under the reply');
+  assert.deepEqual(ctx.comparison, {
+    title: 'Before and after',
+    html: '<html><body><p>Before</p><p>After</p></body></html>',
+  });
+  // A second comparison in the turn replaces the first.
+  await voice.runTool(pool, ctx, 'attach_files', {
+    comparison: { title: 'Now and then', html: '<p>Now</p>' },
+  });
+  assert.deepEqual(ctx.comparison, { title: 'Now and then', html: '<p>Now</p>' });
+  // As long as a laid-out reply, and no longer.
+  const tooLong = await voice.runTool(pool, ctx, 'attach_files', {
+    comparison: { title: 'Huge', html: `<p>${'x'.repeat(60001)}</p>` },
+  });
+  assert.match(tooLong.error, /too long; keep it under 60000 characters\. Nothing was attached\./);
+  assert.deepEqual(ctx.comparison, { title: 'Now and then', html: '<p>Now</p>' }, 'the last good one stays');
 
   const both = await voice.runTool(pool, ctx, 'attach_files', { shots: true, design: 'mine' });
   assert.match(both.error, /one thing per call/);
+});
+
+test('20 Nov 2026: a comparison rides on the reply\'s metadata, and never beside an offer', () => {
+  const src = read('src/services/homeroom-bot-voice.js');
+  assert.match(src, /comparison: ctx\.comparison/);
+  assert.match(src, /comparison && typeof comparison === 'object' && !offer \? \{ comparison \}/);
+  assert.match(src, /const COMPARISON_MAX_CHARS = 60000;/);
+  // What the model is told: the comparison is drawn under the reply, not attached as a file.
+  assert.match(voice.toolsFor({ type: 'issue', ref: 7 }, { requestChange: true }).find((t) => t.function.name === 'attach_files')
+    .function.description, /drawn under your reply for everyone here with nothing in it running/);
+  assert.match(voice.toolsFor({ type: 'issue', ref: 7 }, { requestChange: true }).find((t) => t.function.name === 'attach_files')
+    .function.parameters.properties.comparison.description, /nothing in it runs/);
 });
 
 // #6600: a takeover the bot queued in a turn can have failed before its

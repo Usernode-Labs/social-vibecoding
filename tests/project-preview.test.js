@@ -21,7 +21,10 @@ const ORIGIN = 'https://app.example';
 const APP = {
   id: 7, slug: 'game-corner', name: 'Game Corner', description: 'Classic games, fresh every day.',
   member_count: 87, icon_emoji: '📊', icon_url: null, icon_color: '#2e6660',
+  created_at: '2026-10-03T12:00:00.000Z',
 };
+const ldJson = (tags) => [...tags.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+const ldData = (tags) => JSON.parse(ldJson(tags)[0][1]);
 
 const pixel = (png, x, y) => {
   const o = (y * png.width + x) * 4;
@@ -52,6 +55,48 @@ test('the shell keeps everything and gains the tags before </head>, named for th
   const html = '<html><head><title>Homeroom</title></head><body></body></html>';
   const out = preview.withPreview(html, '<meta property="og:title" content="X">', 'Game Corner');
   assert.equal(out, '<html><head><title>Game Corner · Homeroom</title><meta property="og:title" content="X">\n</head><body></body></html>');
+});
+
+test('the page tells a search engine what the project is, and the day it was made', () => {
+  const tags = preview.previewTags(APP, ORIGIN);
+  assert.equal(ldJson(tags).length, 1, 'exactly one data block');
+  const data = ldData(tags);
+  assert.equal(data['@context'], 'https://schema.org');
+  assert.equal(data['@type'], 'WebApplication');
+  assert.equal(data.name, 'Game Corner');
+  assert.equal(data.description, 'Classic games, fresh every day. 87 members are making it together on Homeroom.');
+  assert.equal(data.url, preview.pageUrl(ORIGIN, 'game-corner'));
+  assert.equal(data.dateCreated, '2026-10-03');
+  assert.equal(data.image, 'https://app.example/api/public/apps/game-corner/cover.png');
+  assert.deepEqual(data.isPartOf, { '@type': 'WebSite', name: 'Homeroom', url: 'https://app.example/' });
+  assert.deepEqual(data.publisher, { '@type': 'Organization', name: 'Homeroom', url: 'https://app.example/' });
+
+  // No readable date: the date line is left out, the rest of the record stays.
+  const noDate = ldData(preview.previewTags({ ...APP, created_at: 'not a date' }, ORIGIN));
+  assert.equal('dateCreated' in noDate, false);
+  assert.equal(noDate.name, 'Game Corner');
+  // No picture: no image.
+  const noImage = ldData(preview.previewTags({ ...APP, icon_url: null, icon_emoji: null }, ORIGIN, { cover: false }));
+  assert.equal('image' in noImage, false);
+
+  // A name that tries to close the data block stays inside it.
+  const evil = preview.previewTags({ ...APP, name: 'x</script><script>alert(1)</script>' }, ORIGIN);
+  assert.equal((evil.match(/<\/script>/g) || []).length, 1, 'the only </script> is the block’s own');
+  assert.equal(ldData(evil).name, 'x</script><script>alert(1)</script>');
+});
+
+test('the project page has one description: the shell’s is taken out, the project’s goes in', () => {
+  const html = '<html>\n<head>\n<title>Homeroom</title>\n'
+    + '  <meta name="description" content="Homeroom is where people make apps together: suggest a change, vote on it, and see it go live.">\n'
+    + '</head>\n<body></body>\n</html>';
+  const out = preview.withPreview(html, preview.previewTags(APP, ORIGIN), 'Game Corner');
+  assert.equal((out.match(/name="description"/g) || []).length, 1);
+  assert.doesNotMatch(out, /is where people make apps together/);
+  assert.match(out, /<meta name="description" content="Classic games, fresh every day\. 87 members are making it together on Homeroom\.">/);
+
+  // An older document without the shell line still gets the project's.
+  const old = preview.withPreview('<html><head><title>Homeroom</title></head></html>', preview.previewTags(APP, ORIGIN), 'Game Corner');
+  assert.equal((old.match(/name="description"/g) || []).length, 1);
 });
 
 test('the cover: the project\'s colour, its icon on a rounded tile in the middle, 1200 by 630', () => {
@@ -200,6 +245,12 @@ test('the sitemap lists the front page and each public project worth finding, at
   assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
   assert.deepEqual([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]), ['https://app.example/', 'https://app.example/app/game-corner']);
   assert.match(xml, /<loc>https:\/\/app\.example\/app\/game-corner<\/loc><lastmod>2026-10-20<\/lastmod>/);
+  // A public project with a description and no merges is listed at once, with
+  // the day it was made as its last change.
+  const fresh = sitemapXml(ORIGIN, [
+    { slug: 'made-today', description: 'A fresh app.', active_users: 0, created_at: '2026-11-20T09:15:00.000Z', last_merged_at: null },
+  ]);
+  assert.match(fresh, /<loc>https:\/\/app\.example\/app\/made-today<\/loc><lastmod>2026-11-20<\/lastmod>/);
 
   const srv = await startServer();
   try {

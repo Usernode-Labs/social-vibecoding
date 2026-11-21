@@ -11,6 +11,8 @@ const plan = require('../services/visible-changes');
 const state = require('../services/shots-state');
 const view = require('../services/shots-view');
 const stagingDemoPreview = require('../services/staging-demo-preview');
+// The types a still's smaller copy may be served as (services/shots-sized.js).
+const COPY_TYPES = new Set(require('../services/shots-sized').COPY_TYPES);
 const { fromRun: shotDiagnosisFromRun } = require('../services/shots-diagnosis');
 const mediaStore = require('../services/media-store');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
@@ -299,8 +301,8 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
                 CASE WHEN $4 THEN COALESCE(a.dense_object_key, a.object_key) ELSE a.object_key END AS object_key,
                 CASE WHEN $4 THEN COALESCE(a.dense_bytes, a.bytes) ELSE a.bytes END AS bytes,
                 a.content_type, a.variant,
-                a.thumb_sha256, a.thumb_object_key, a.thumb_bytes,
-                a.screen_sha256, a.screen_object_key, a.screen_bytes
+                a.thumb_sha256, a.thumb_object_key, a.thumb_bytes, a.thumb_content_type,
+                a.screen_sha256, a.screen_object_key, a.screen_bytes, a.screen_content_type
            FROM shot_artifacts a
            JOIN shot_runs r ON r.id = a.run_id
            JOIN chat_sessions s ON s.id = r.session_id
@@ -334,9 +336,15 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
         return res.status(404).json({ error: 'Shots artifact not found' });
       }
       // The file this address names: a smaller copy when one was asked for
-      // and saved, else the dense still for the experiment, else the 1x.
+      // and saved, else the dense still for the experiment, else the 1x. A
+      // copy is served as the type it was saved as: the screen copy is a
+      // progressive JPEG now, and a copy saved before types were kept is
+      // WebP (NULL).
       const artifact = (size && found[`${size}_sha256`])
-        ? { sha256: found[`${size}_sha256`], object_key: found[`${size}_object_key`], bytes: found[`${size}_bytes`], content_type: 'image/webp' }
+        ? {
+          sha256: found[`${size}_sha256`], object_key: found[`${size}_object_key`], bytes: found[`${size}_bytes`],
+          content_type: COPY_TYPES.has(found[`${size}_content_type`]) ? found[`${size}_content_type`] : 'image/webp',
+        }
         : found;
       // #6793: the browser already has this exact image. Answered only after
       // the lookup above, so a stale or hidden one is still a 404, and

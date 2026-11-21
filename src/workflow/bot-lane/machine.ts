@@ -13,9 +13,11 @@
 // ended by a look that ran) or the bot's weekly cap is reached, and it
 // keeps the refresh's clock: every five minutes, and soon after a project
 // is asked for (bot.refresh: services/homeroom-bot.js refresh), with the
-// loop's five-minute sweeps beside it (bot.sweep). When OpenRouter's credit
-// is back (CreditBack, from the credit sweep) it lifts its credit pause and
-// tells each person's DM that kept a message for it (bot-dm CreditBack).
+// loop's five-minute sweeps beside it (bot.sweep). While OpenRouter's credit
+// is out it grants nothing: that pause is a level, the one stored outage
+// (services/openrouter-credit.js), read on every pass. When the outage is
+// gone it tells each person's DM that kept a message for it (bot-dm
+// CreditBack). CreditBack, from the credit sweep, only wakes it sooner.
 // workflow-foundation's design-bot-loop.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
@@ -25,9 +27,9 @@ import {
   faultMs, pickLive, pickLiveBuilds, requestKey,
 } from '../rules/bot-loop.ts';
 import type { Slot } from '../rules/bot-loop.ts';
-import { NO_FACTS, readCreditDms, readFacts } from './facts.ts';
-import type { Facts } from './facts.ts';
-import { DM } from '../rules/bot-replies.ts';
+import { NO_FACTS, readCreditDms, readCreditLooks, readCreditVoices, readFacts } from './facts.ts';
+import type { CreditDm, CreditLook, CreditVoice, Facts } from './facts.ts';
+import { DM, VOICE } from '../rules/bot-replies.ts';
 
 export const MACHINE = BOT_LANE;
 export const KEY = LANE_KEY;
@@ -46,9 +48,9 @@ export interface Data {
   // refresh found it so).
   github?: { until: string } | null;
   // #6867: OpenRouter's credit ran out (a 402 on the bot's key): no grant
-  // until the balance read says credit is back (CreditBack, from
-  // services/openrouter-credit.js sweep). `since` and the provider's words
-  // are the outage itself; nothing here times it out.
+  // while it stands. A copy of the stored outage (facts `credit`), kept so
+  // the pass that finds it gone knows a pause just lifted and tells the DMs
+  // once; the stored outage, not this, is what pauses (review A5).
   credit?: { since: string; words: string | null } | null;
   // The refresh: when the next full one is due, the projects asked for
   // since (null: all), the one under way.
@@ -89,6 +91,25 @@ const created = (ctx: TransitionContext): Data => ({
 const live = (s: LState, ctx: TransitionContext): Data => (s.name === NONE ? created(ctx) : (s as Live).data);
 const before = (iso: string | null | undefined, ctx: TransitionContext) => !!iso && Date.parse(iso) <= ctx.now.getTime();
 
+// While a credit pause stands the lane looks again this often, whatever else
+// is on its clock (and with the bot off, when nothing else is): the pass
+// that finds the stored outage gone lifts it, with no event needed.
+export const CREDIT_RECHECK_MS = 2 * 60 * 1000;
+
+// Each DM, place and look that kept something for credit hears it is back.
+const tellOwed = (f: Facts | undefined): MessageRequest[] => [
+  ...(f?.creditDms || []).map((dm: CreditDm) => ({
+    to: { machine: DM, key: dm.key }, event: { type: 'CreditBack', payload: { userId: dm.userId } }, appId: null,
+  })),
+  ...(f?.creditVoices || []).map((v: CreditVoice) => ({
+    to: { machine: VOICE, key: v.key },
+    event: { type: 'CreditBack', payload: { appId: v.appId, place: v.place } as Json }, appId: v.appId,
+  })),
+  ...(f?.creditLooks || []).map((l: CreditLook) => ({
+    to: { machine: 'bot-look', key: l.key }, event: { type: 'CreditBack', payload: {} }, appId: null,
+  })),
+];
+
 // Grant what may start now, and set the clock for what comes next.
 function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   let d = d0;
@@ -96,7 +117,18 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   const messages: MessageRequest[] = [];
   if (d.budget && before(d.budget.until, ctx)) d = { ...d, budget: null };
   if (d.github && before(d.github.until, ctx)) d = { ...d, github: null };
-  // #6867: the credit pause has no time of its own; only CreditBack lifts it.
+  // #6867, review A5: the credit pause is the stored outage, read on this
+  // pass (`f.credit`). The lane's own copy follows it: taken when an outage
+  // is found (whoever noted it: a look, a build, the chat), and dropped,
+  // with the DMs told, on the first pass that finds it gone. Where nothing
+  // was read (`f.credit` undefined) the copy stands as it is.
+  if (f.credit !== undefined) {
+    if (f.credit && !d.credit) d = { ...d, credit: { since: f.credit.since, words: f.credit.words } };
+    else if (!f.credit && d.credit) {
+      d = { ...d, credit: null };
+      messages.push(...tellOwed(f));
+    }
+  }
   // The refresh: the full one due, or a project asked for whose burst has
   // settled, and none under way (nor GitHub's budget held).
   const r = d.refresh;
@@ -147,7 +179,8 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   // The clock: the earliest of the refresh, a project asked for, the end
   // of a pause, and the next request to become eligible.
   const times = [d.refresh.running == null ? d.refresh.due : null, d.refresh.running == null ? d.refresh.soon : null,
-    d.fault?.until ?? null, d.budget?.until ?? null, d.github?.until ?? null, f.nextEligible]
+    d.fault?.until ?? null, d.budget?.until ?? null, d.github?.until ?? null, f.nextEligible,
+    d.credit ? at(ctx, CREDIT_RECHECK_MS) : null]
     .filter((t): t is string => !!t).map((t) => Date.parse(t)).filter((t) => Number.isFinite(t) && t > ctx.now.getTime());
   const timer = times.length ? { at: new Date(Math.min(...times)), event: { type: 'Tick' } } : null;
   return step(d, { work, messages, timer });
@@ -171,18 +204,27 @@ function released(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext): O
   }
   if (p.budget) d = { ...d, budget: { until: at(ctx, BUDGET_PAUSE_MS) } };
   if (p.github) d = { ...d, github: { until: p.github } };
-  if (p.credit && !d.credit) d = { ...d, credit: { since: ctx.now.toISOString(), words: e.payload.words ?? null } };
+  // A turn that found credit gone noted the outage before it let go
+  // (openrouter-credit.js noteOutage), so this pass reads it (decide). Only
+  // where nothing was read does the report itself start the pause.
+  if (p.credit && !d.credit && f.credit === undefined) {
+    d = { ...d, credit: { since: ctx.now.toISOString(), words: e.payload.words ?? null } };
+  }
   return decide(d, f, ctx);
 }
 
-// #6867: credit is back (the balance read): grants resume from here. 19 Nov
-// 2026: and every DM that kept a message whose answer ended on credit hears
-// it (bot-dm CreditBack), in this event, so each is answered once.
+// #6867: the credit sweep says credit is back. A wake-up: the pass reads the
+// stored outage like any other, and while it still stands nothing lifts.
+// With it gone, grants resume from here, and every DM that kept a message
+// whose answer ended on credit hears it (bot-dm CreditBack), whether or not
+// this lane ever held the pause (the chat may have been the only one to
+// meet the outage). A DM told twice answers once: it keeps nothing after the
+// first.
 function creditBack(s: LState, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<LState> {
-  const out = decide({ ...live(s, ctx), credit: null }, f, ctx);
-  const told: MessageRequest[] = (f.creditDms || []).map((dm) => ({
-    to: { machine: DM, key: dm.key }, event: { type: 'CreditBack', payload: { userId: dm.userId } }, appId: null,
-  }));
+  const d = live(s, ctx);
+  if (f.credit) return decide(d, f, ctx);
+  const out = decide({ ...d, credit: null }, f, ctx);
+  const told = tellOwed(f);
   return told.length ? { ...out, messages: [...(out.messages || []), ...told] } : out;
 }
 
@@ -232,10 +274,19 @@ export function botLane(deps: Deps = { staging: false }) {
     // What web appends: a new request or a chat line asking the lane to look again.
     web: ['RefreshAsked'],
     decode: (r) => ({ name: r.state as Name, data: r.data as Data }),
-    // CreditBack also reads the DMs to tell (readCreditDms).
-    facts: async (tx, _s, e) => {
+    // The pass a pause lifts on also reads what kept something for credit
+    // (readCreditDms, readCreditVoices, readCreditLooks): CreditBack, or any
+    // pass that finds the stored outage gone while the lane still holds its copy.
+    facts: async (tx, s, e) => {
       const f = await readFacts(tx, deps);
-      return e?.type === 'CreditBack' ? { ...f, creditDms: await readCreditDms(tx) } : f;
+      const held = s.name !== NONE && !!(s as Live).data?.credit;
+      if (e?.type === 'CreditBack' || (held && !f.credit)) {
+        const [creditDms, creditVoices, creditLooks] = await Promise.all([
+          readCreditDms(tx), readCreditVoices(tx), readCreditLooks(tx),
+        ]);
+        return { ...f, creditDms, creditVoices, creditLooks };
+      }
+      return f;
     },
     authorize: {
       Look: () => ok(), Released: () => ok(), RefreshAsked: () => ok(), CreditBack: () => ok(),

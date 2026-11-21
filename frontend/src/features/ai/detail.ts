@@ -41,6 +41,11 @@ export interface DetailRef {
   changeId?: number;
   /** A request draft's offer (`homeroom_bot_dm_actions.id`, #6248). */
   actionId?: number;
+  /**
+   * 20 Nov 2026 (live-draft review, K): which of the thread's artifacts a
+   * design shows; none means the thread's first, as a card from before says.
+   */
+  artifactId?: number;
 }
 
 /** What the message says about a draft, shown until the saved row is read. */
@@ -60,6 +65,13 @@ export interface DetailPayload {
   error?: boolean;
   /** A request draft's own copy, until the pane reads the saved row (#6248). */
   draft?: DetailDraftCopy;
+  /**
+   * A running preview's project and whether it opened read only, so the
+   * column can ask for it again when its thread is come back to (20 Nov
+   * 2026): its frame is the staging overlay's, opened by
+   * AppView.ensureStaging, not by this store.
+   */
+  staging?: { slug: string | null; readOnly: boolean };
 }
 
 export interface DetailEntry {
@@ -69,6 +81,12 @@ export interface DetailEntry {
   payload?: DetailPayload;
   /** The column key of the thread it was opened from, when the opener knew it. */
   from: string | null;
+  /**
+   * The thread or page it belongs to (20 Nov 2026): `from`, else the column
+   * on screen when it opened (setDetailOwner). Null where no column claims
+   * it (a request's own page, the Workshop).
+   */
+  owner: string | null;
   /** Counts each open, so a second press on the same thing shows it again. */
   seq: number;
 }
@@ -163,6 +181,16 @@ interface Shared {
   listeners: Set<() => void>;
   /** A change's before and after whose page had no column to draw it (#6315). */
   shotsArrival?: { id: number; at: number };
+  /** The column on screen, which claims what opens beside it (setDetailOwner). */
+  owner?: string | null;
+  /** What each thread had open when it was left, shown again on return. */
+  held?: Map<string, DetailEntry>;
+  /** Everything opened beside each thread, for its picker, newest version kept. */
+  seen?: Map<string, DetailEntry[]>;
+  /** The words each opened thing was shown with, for its row in the picker. */
+  labels?: Map<string, { title: string; line: string | null }>;
+  /** 20 Nov 2026 (I): what each thread showed last, for its Artifacts button. */
+  last?: Map<string, DetailEntry>;
 }
 const holder: Shared = ((globalThis as any).__usernodeDetail ||= {
   state: CLOSED,
@@ -390,9 +418,12 @@ export function openDetail(input: {
     version: input.version ?? null,
     payload: input.payload,
     from: input.from ?? null,
+    // A design or a draft is its thread's wherever it was opened from.
+    owner: input.from ?? ((kind === 'design' || kind === 'draft') && valid(ref.rootId) ? `private:${ref.rootId}` : null) ?? holder.owner ?? null,
     seq: holder.seq,
   };
   holder.state = { entry, title: '', subtitle: null, canCopy: false, body: null, raw: null };
+  remember(entry);
   notify();
   if (kind === 'plan') {
     if (valid(ref.sessionId)) {
@@ -434,11 +465,144 @@ export function openDetail(input: {
   }
 }
 
-/** Close the detail. */
+/**
+ * Close the detail: the person's own close (its ×, Escape, the list's tab
+ * pressed), so its thread does not show it again when it is come back to.
+ */
 export function closeDetail(): void {
-  if (!holder.state.entry) return;
+  const entry = holder.state.entry;
+  if (!entry) return;
+  if (entry.owner) heldMap().delete(entry.owner);
   holder.state = CLOSED;
   notify();
+}
+
+// ── A detail belongs to its thread (20 Nov 2026) ───────────────────────
+//
+// The column beside a thread is the thread's: what it shows goes when
+// another thread is opened, and is there again when this one is come back
+// to. The bot page names the thread on screen (setDetailOwner), and what
+// opens then is that thread's; leaving the thread holds it (holdDetail)
+// instead of closing it, and coming back reopens it (takeHeldDetail and
+// reopenDetail). Everything a thread has opened is remembered for its
+// picker (seenDetails), as are the words it was shown with.
+
+const MAX_SEEN = 12;
+
+function heldMap(): Map<string, DetailEntry> {
+  return (holder.held ||= new Map());
+}
+
+function seenMap(): Map<string, DetailEntry[]> {
+  return (holder.seen ||= new Map());
+}
+
+function labelMap(): Map<string, { title: string; line: string | null }> {
+  return (holder.labels ||= new Map());
+}
+
+/** Pure: which thing an entry shows, whatever its version: one row of a picker. */
+export function detailIdentity(entry: Pick<DetailEntry, 'kind' | 'ref' | 'payload'>): string {
+  const ref = entry.ref || {};
+  // K: one row per artifact; none is the thread's first (the address from before).
+  if (entry.kind === 'design') return `design:${ref.rootId ?? ''}${ref.artifactId ? `:${ref.artifactId}` : ''}`;
+  if (entry.kind === 'draft') return `draft:${ref.actionId ?? ''}`;
+  if (entry.kind === 'preview') return `preview:${ref.sessionId ?? ''}`;
+  if (entry.kind === 'shots') return `shots:${ref.changeId ?? ''}`;
+  return ref.sessionId ? `plan:${ref.sessionId}` : `plan:${entry.payload?.title || ''}`;
+}
+
+function remember(entry: DetailEntry): void {
+  if (!entry.owner) return;
+  (holder.last ||= new Map()).set(entry.owner, entry);
+  const list = (seenMap().get(entry.owner) || []).slice();
+  const id = detailIdentity(entry);
+  const at = list.findIndex((had) => detailIdentity(had) === id);
+  if (at >= 0) list[at] = entry;
+  else list.push(entry);
+  seenMap().set(entry.owner, list.slice(-MAX_SEEN));
+}
+
+/** The column on screen, which claims what opens beside it; null when none is. */
+export function setDetailOwner(owner: string | null): void {
+  holder.owner = owner || null;
+}
+
+/**
+ * What opened before the column knew its thread (a reload's preview,
+ * reopened from its address while the page was still drawing) is the
+ * thread's on screen once it is known. Answers whether it claimed one; the
+ * entry is the same object, so a fetch under way for it still lands.
+ */
+export function claimDetail(owner: string | null | undefined): boolean {
+  const entry = holder.state.entry;
+  if (!owner || !entry || entry.owner) return false;
+  entry.owner = owner;
+  remember(entry);
+  return true;
+}
+
+/**
+ * 20 Nov 2026 (live-draft review, I): what a thread showed last, whatever
+ * closed it since, so its Artifacts button opens the column on that again.
+ */
+export function lastDetail(owner: string | null | undefined): DetailEntry | null {
+  return owner ? (holder.last?.get(owner) || null) : null;
+}
+
+/** Everything opened beside a thread, in the order it was first opened. */
+export function seenDetails(owner: string | null | undefined): DetailEntry[] {
+  return owner ? (seenMap().get(owner) || []) : [];
+}
+
+/** The words a thing was shown with, for its row in the picker. */
+export function noteDetailLabel(entry: DetailEntry, label: { title: string; line: string | null }): void {
+  if (!entry.owner || !label.title) return;
+  labelMap().set(`${entry.owner}|${detailIdentity(entry)}`, label);
+}
+
+export function detailLabel(owner: string | null | undefined, identity: string): { title: string; line: string | null } | null {
+  return owner ? labelMap().get(`${owner}|${identity}`) || null : null;
+}
+
+/**
+ * The thread is left: what it shows is held for it, not closed, and the
+ * column empties. Only the thread's own detail: another's is left alone.
+ */
+export function holdDetail(owner: string | null | undefined): void {
+  const entry = holder.state.entry;
+  if (!owner || !entry || entry.owner !== owner) return;
+  heldMap().set(owner, entry);
+  holder.state = CLOSED;
+  notify();
+}
+
+/** What a thread held when it was left, taken once (it is open again after). */
+export function takeHeldDetail(owner: string | null | undefined): DetailEntry | null {
+  if (!owner) return null;
+  const entry = heldMap().get(owner) || null;
+  heldMap().delete(owner);
+  return entry;
+}
+
+/**
+ * Open a thing again as it was. A running preview is asked for again (its
+ * frame is the staging overlay's, which put the column's entry away when it
+ * closed); everything else reopens in the column.
+ */
+export function reopenDetail(entry: DetailEntry): void {
+  if (entry.kind === 'preview') {
+    const view = typeof window !== 'undefined' ? (window as any).AppView : null;
+    const sessionId = entry.ref.sessionId;
+    if (!valid(sessionId) || !view || typeof view.ensureStaging !== 'function') return;
+    const staging = entry.payload?.staging;
+    void view.ensureStaging(sessionId, null, null, {
+      readOnly: staging ? staging.readOnly : true,
+      ...(staging?.slug ? { app: { slug: staging.slug } } : {}),
+    });
+    return;
+  }
+  openDetail({ kind: entry.kind, ref: entry.ref, version: entry.version, payload: entry.payload, from: entry.owner });
 }
 
 export function isDetailOpen(): boolean {
@@ -484,6 +648,9 @@ function bindEscape(): void {
     if (e.key !== 'Escape' || !holder.state.entry) return;
     const target = e.target as HTMLElement | null;
     if (target && target.closest('input, textarea, [contenteditable="true"]')) return;
+    // The head card's picker is open: Escape closes it, not the column
+    // (../detail/detail-card.tsx).
+    if (document.querySelector('[data-detail-menu]')) return;
     // The owner of the detail closes it; a surface's own Escape (the
     // Workshop's panel) sees defaultPrevented and stays open.
     e.preventDefault();

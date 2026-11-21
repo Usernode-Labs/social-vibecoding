@@ -781,11 +781,19 @@
   },
   "row.credit.low.label": {
     "text": "OpenRouter credit is below {{threshold}}",
-    "description": "First line of a notification sent to platform administrators: the credit that pays for Homeroom bot's building has dropped below a level it warns at. {{threshold}} is a dollar amount, such as $500."
+    "description": "First line of a notification sent to platform administrators: the credit in the OpenRouter account, which pays for Homeroom bot's building, has dropped below a level it warns at. {{threshold}} is a dollar amount, such as $500."
   },
-  "row.credit.low.body": {
-    "text": "{{balance}} left, about {{days}} days at this week's rate. Add credit before Homeroom bot stops building.",
-    "description": "Second line of that notification. {{balance}} is the credit left as a dollar amount, {{days}} how many days it lasts at this week's spending."
+  "row.credit.low.body_one": {
+    "text": "{{balance}} left, about a day at the recent rate. Add credit before Homeroom bot stops building.",
+    "description": "Second line of the \"OpenRouter credit is below\" notification, when the credit lasts about one day. {{balance}} is the OpenRouter account's credit left as a dollar amount. \"The recent rate\" is how fast that credit has been going down over the last few days."
+  },
+  "row.credit.low.body_other": {
+    "text": "{{balance}} left, about {{count}} days at the recent rate. Add credit before Homeroom bot stops building.",
+    "description": "Second line of the \"OpenRouter credit is below\" notification. {{balance}} is the OpenRouter account's credit left as a dollar amount, {{count}} how many days it lasts at the rate it has been going down over the last few days."
+  },
+  "row.credit.low.bodyNoDays": {
+    "text": "{{balance}} left. Add credit before Homeroom bot stops building.",
+    "description": "Second line of the \"OpenRouter credit is below\" notification when there is no estimate of how long the credit lasts. {{balance}} is the OpenRouter account's credit left as a dollar amount."
   },
   "row.credit.out.label": {
     "text": "OpenRouter credit ran out",
@@ -810,6 +818,110 @@
   "row.releaseHold.noticeBody": {
     "text": "A change was too large to check in full",
     "description": "Second line of the \"Not read in full\" notification when the change has no name to show."
+  },
+  "row.releaseHold.capabilityLabel": {
+    "text": "{{app}} now asks for {{what}}",
+    "description": "First line of a notification sent to platform administrators: a proposed change to a project starts asking for a device capability, such as the camera. The change is not held and nothing is asked of the reader: each person is asked before the app can use it. {{app}} is the project's name; {{what}} is what it asks for, such as \"the camera\" or \"the camera and the microphone\". The change's name is on the line below."
+  },
+  "row.releaseHold.capabilityLabelUnnamed": {
+    "text": "A project now asks for {{what}}",
+    "description": "The same first line when the project's name is not known. {{what}} is what it asks for, such as \"the camera\"."
+  },
+  "row.releaseHold.capabilityLabelAny": {
+    "text": "{{app}} now asks for a device capability",
+    "description": "The same first line when the notification does not say which capability, such as one sent before it did. {{app}} is the project's name."
+  },
+  "row.releaseHold.capabilityLabelAnyUnnamed": {
+    "text": "A project now asks for a device capability",
+    "description": "The same first line when neither the project nor the capability is known."
+  },
+  "row.releaseHold.capabilityBody": {
+    "text": "Each person is asked before it can use it",
+    "description": "Second line of that notification when the change has no name to show: the change is not held, because each person is asked before the app can use the capability."
+  },
+  "row.releaseHold.capability.geolocation": {
+    "text": "your location",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the location capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.microphone": {
+    "text": "the microphone",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the microphone capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.camera": {
+    "text": "the camera",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the camera capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.display-capture": {
+    "text": "screen sharing",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the screen sharing capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.usb": {
+    "text": "USB devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the USB devices capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.serial": {
+    "text": "serial devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the serial devices capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.hid": {
+    "text": "input devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the input devices such as keyboards and gamepads capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.bluetooth": {
+    "text": "Bluetooth devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the Bluetooth devices capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.capability.midi": {
+    "text": "MIDI devices",
+    "description": "What a project now asks for, filling {{what}} in \"{{app}} now asks for {{what}}\": the MIDI devices capability, with the words a sentence needs before it."
+  },
+  "row.releaseHold.peopleLabel": {
+    "text": "{{app}} now keeps people's {{what}}",
+    "description": "First line of a notification sent to platform administrators: a proposed change to a project starts keeping a kind of personal detail about the people who use it. The change is not held and nothing is asked of the reader. {{app}} is the project's name; {{what}} is what it keeps, such as \"email addresses\" or \"email addresses and phone numbers\". The change's name is on the line below."
+  },
+  "row.releaseHold.peopleLabelUnnamed": {
+    "text": "A project now keeps people's {{what}}",
+    "description": "The same first line when the project's name is not known. {{what}} is what it keeps, such as \"email addresses\"."
+  },
+  "row.releaseHold.peopleLabelAny": {
+    "text": "{{app}} now keeps data about people",
+    "description": "The same first line when the notification does not say what kind of detail, such as one sent before it did. {{app}} is the project's name."
+  },
+  "row.releaseHold.peopleLabelAnyUnnamed": {
+    "text": "A project now keeps data about people",
+    "description": "The same first line when neither the project nor the kind of detail is known."
+  },
+  "row.releaseHold.people.email": {
+    "text": "email addresses",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their email addresses."
+  },
+  "row.releaseHold.people.phone": {
+    "text": "phone numbers",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their phone numbers."
+  },
+  "row.releaseHold.people.birth": {
+    "text": "dates of birth",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their dates of birth."
+  },
+  "row.releaseHold.people.address": {
+    "text": "home addresses",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their home or postal addresses."
+  },
+  "row.releaseHold.people.name": {
+    "text": "full names",
+    "description": "What a project now keeps about people, filling {{what}} in \"{{app}} now keeps people's {{what}}\": their first, last or full names."
+  },
+  "row.releaseHold.secretLabel": {
+    "text": "{{app}} now uses a private key for an outside service",
+    "description": "First line of a notification sent to platform administrators: a proposed change to a project declares a private key, such as an API key, for a service outside Homeroom. The change is not held and nothing is asked of the reader. {{app}} is the project's name. The change's name is on the line below."
+  },
+  "row.releaseHold.secretLabelUnnamed": {
+    "text": "A project now uses a private key for an outside service",
+    "description": "The same first line when the project's name is not known."
+  },
+  "row.releaseHold.toldBody": {
+    "text": "It is not held, and you can look at it",
+    "description": "Second line of that notification when the change has no name to show: the change goes live on its votes and checks, and the reader may open it."
   },
   "row.limit.unknown.body": {
     "text": "the server is nearing one of its limits",
@@ -862,6 +974,30 @@
   "row.limit.apps.warn.label": {
     "text": "Nearing the app limit",
     "description": "First line of a notification to an administrator: the server holds almost as many apps as it is allowed to."
+  },
+  "row.limit.appsAway.just.label": {
+    "text": "Someone was turned away",
+    "description": "First line of a notification to an administrator: somebody just tried to make or copy a project and was refused because the server holds as many apps as it is allowed to."
+  },
+  "row.limit.appsAway.just.body_one": {
+    "text": "<0>The server is at its app limit ({{count}} app).</0> Raise it in Admin → Limits or remove an app.",
+    "description": "Second line of the \"Someone was turned away\" notification to an administrator. {{count}} is the server's app limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
+  },
+  "row.limit.appsAway.just.body_other": {
+    "text": "<0>The server is at its app limit ({{count}} apps).</0> Raise it in Admin → Limits or remove an app.",
+    "description": "Second line of the \"Someone was turned away\" notification to an administrator. {{count}} is the server's app limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
+  },
+  "row.limit.appsAway.count.label": {
+    "text": "People turned away at the app limit",
+    "description": "First line of a notification to an administrator: while the server is full, more than one person has been refused when trying to make or copy a project."
+  },
+  "row.limit.appsAway.count.body_one": {
+    "text": "<0>{{count}} person was turned away since {{time}}.</0> Raise the app limit in Admin → Limits or remove an app.",
+    "description": "Second line of the \"People turned away at the app limit\" notification to an administrator. {{count}} is how many people were refused and {{time}} is a clock time, such as 9:00 AM. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
+  },
+  "row.limit.appsAway.count.body_other": {
+    "text": "<0>{{count}} people were turned away since {{time}}.</0> Raise the app limit in Admin → Limits or remove an app.",
+    "description": "Second line of the \"People turned away at the app limit\" notification to an administrator. {{count}} is how many people were refused and {{time}} is a clock time, such as 9:00 AM. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
   },
   "row.limit.sessions.full.label": {
     "text": "Session limit reached",
@@ -1882,5 +2018,473 @@
   "row.changeClosed.yourChange": {
     "text": "your change",
     "description": "Second line of a notification that the viewer's change was closed, when the change has no title. Lower case: it stands where the title would."
+  },
+  "limits.heading": {
+    "text": "Platform limits",
+    "description": "Small-caps label over the platform limits area (top of the notifications sheet, full admins only): limits that, when reached, make Homeroom refuse people until an admin raises them. Also the area's accessible name."
+  },
+  "limits.foot": {
+    "text": "Only full admins see this. A row stays until its figure is back under its line.",
+    "description": "Line at the foot of the platform limits area (top of the notifications sheet, full admins only). It explains that the rows cannot be dismissed: each one leaves only once the limit is no longer near."
+  },
+  "limits.kicker.near": {
+    "text": "Near the limit",
+    "description": "Small coloured word over a row of the platform limits area (top of the notifications sheet, full admins only): the count is past 80% of the limit."
+  },
+  "limits.kicker.at": {
+    "text": "At the limit",
+    "description": "Small coloured word over a row of the platform limits area (top of the notifications sheet, full admins only): the count has reached the limit, so Homeroom is refusing people."
+  },
+  "limits.kicker.over": {
+    "text": "Over the limit",
+    "description": "Small coloured word over a row of the platform limits area (top of the notifications sheet, full admins only): the count is above the limit (full admins can go past it)."
+  },
+  "limits.kicker.low": {
+    "text": "Running low",
+    "description": "Small coloured word over the OpenRouter credit row of the platform limits area (top of the notifications sheet, full admins only): the credit is under its warning line."
+  },
+  "limits.kicker.out": {
+    "text": "Out of credit",
+    "description": "Small coloured word over the OpenRouter credit row of the platform limits area (top of the notifications sheet, full admins only): the credit has run out."
+  },
+  "limits.kicker.unknown": {
+    "text": "Couldn't check",
+    "description": "Small grey word over a row of the platform limits area (top of the notifications sheet, full admins only): the figure could not be read just now."
+  },
+  "limits.apps.title": {
+    "text": "Apps: {{used}} of {{cap}}",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is how many apps count toward the server's app limit, {{cap}} is that limit."
+  },
+  "limits.apps.titleUnknown": {
+    "text": "App limit",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the app count could not be read."
+  },
+  "limits.apps.near_one": {
+    "text": "New projects stop at {{cap}} for everyone but full admins. {{count}} left.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the app count. {{cap}} is the limit; {{count}} is how many more apps can be made (one)."
+  },
+  "limits.apps.near_other": {
+    "text": "New projects stop at {{cap}} for everyone but full admins. {{count}} left.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the app count. {{cap}} is the limit; {{count}} is how many more apps can be made."
+  },
+  "limits.apps.at": {
+    "text": "New projects are refused for everyone but full admins.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the app limit is reached."
+  },
+  "limits.apps.over": {
+    "text": "Only full admins can still make projects. Everyone else is refused.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when more apps count than the limit allows."
+  },
+  "limits.sessions.title": {
+    "text": "Sessions: {{used}} of {{cap}}",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is how many coding sessions are running, {{cap}} is the session limit."
+  },
+  "limits.sessions.titleUnknown": {
+    "text": "Session limit",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the session count could not be read."
+  },
+  "limits.sessions.near": {
+    "text": "At {{cap}}, new sessions pause idle ones, then are refused.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the session count. {{cap}} is the session limit."
+  },
+  "limits.sessions.at": {
+    "text": "New sessions pause idle ones, and are refused when none are idle.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the session limit is reached."
+  },
+  "limits.connections.title": {
+    "text": "Database connections: {{used}} of {{cap}}",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is how many connections the shared database has open, {{cap}} is the number at which apps are refused new ones."
+  },
+  "limits.connections.titleUnknown": {
+    "text": "Database connections",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the connection count could not be read."
+  },
+  "limits.connections.near": {
+    "text": "At {{cap}}, apps can't open new connections and their pages start failing.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the database connection count. {{cap}} is the line where apps are refused."
+  },
+  "limits.connections.at": {
+    "text": "Apps can't open new connections, so their pages are failing.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the database has no connections left for apps."
+  },
+  "limits.credit.title": {
+    "text": "OpenRouter credit: {{amount}} left",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{amount}} is the credit left in the OpenRouter account, which pays for Homeroom bot's building, as a dollar amount."
+  },
+  "limits.credit.titleOut": {
+    "text": "OpenRouter credit: out",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the credit for Homeroom bot has run out."
+  },
+  "limits.credit.titleUnknown": {
+    "text": "OpenRouter credit",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the credit could not be read."
+  },
+  "limits.credit.near_one": {
+    "text": "Under {{line}}. At the recent rate that lasts about a day. At $0 the bot stops planning and building.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the OpenRouter credit, when it lasts about one day. {{line}} is the dollar level it warns at. \"The recent rate\" is how fast the account's credit has been going down over the last few days."
+  },
+  "limits.credit.near_other": {
+    "text": "Under {{line}}. At the recent rate that lasts about {{count}} days. At $0 the bot stops planning and building.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the OpenRouter credit. {{line}} is the dollar level it warns at, {{count}} how many days the credit lasts at the rate it has been going down over the last few days."
+  },
+  "limits.credit.nearNoDays": {
+    "text": "Under {{line}}. At $0 the bot stops planning and building.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the credit left, when this week's spend is not known. {{line}} is the warning line in dollars."
+  },
+  "limits.credit.out": {
+    "text": "The bot's plans and builds are paused, and pick up again once there is credit.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the credit has run out."
+  },
+  "limits.credit.outSince": {
+    "text": "Out since {{time}}. The bot's plans and builds are paused, and pick up again once there is credit.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the credit has run out. {{time}} is the time of day it ran out, for example 14:02."
+  },
+  "limits.credit.unknownNoAnswer": {
+    "text": "The last read got no answer from OpenRouter. The last figure was {{amount}}.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the credit could not be read. {{amount}} is the last credit figure that was read, in dollars."
+  },
+  "limits.credit.unknownStale": {
+    "text": "Not read since {{time}}. The last figure was {{amount}}.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the credit has not been read for a while. {{time}} is the time of day of the last read; {{amount}} is the figure it found, in dollars."
+  },
+  "limits.unknown.read": {
+    "text": "This figure couldn't be read just now.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when a limit's count could not be read."
+  },
+  "limits.turnedAway_one": {
+    "text": "1 person was turned away since it filled.",
+    "description": "Sentence added to a row of the platform limits area (top of the notifications sheet, full admins only): how many people were refused because the limit was reached. English spells the one out."
+  },
+  "limits.turnedAway_other": {
+    "text": "{{count}} people were turned away since it filled.",
+    "description": "Sentence added to a row of the platform limits area (top of the notifications sheet, full admins only): {{count}} is how many people were refused because the limit was reached."
+  },
+  "limits.action.raise": {
+    "text": "Raise the limit",
+    "description": "Button on a row of the platform limits area (top of the notifications sheet, full admins only): opens Admin, Limits, where the limit is raised."
+  },
+  "limits.action.credit": {
+    "text": "Add credit",
+    "description": "Button on the credit row of the platform limits area (top of the notifications sheet, full admins only): opens OpenRouter's credits page in a new tab."
+  },
+  "limits.action.status": {
+    "text": "See connections",
+    "description": "Button on the database connections row of the platform limits area (top of the notifications sheet, full admins only): opens Admin, Health and status, which shows the connections."
+  },
+  "limits.action.check": {
+    "text": "Check again",
+    "description": "Button on a row of the platform limits area (top of the notifications sheet, full admins only) whose figure could not be read: reads it again."
+  },
+  "limits.action.checking": {
+    "text": "Checking",
+    "description": "The Check again button of the platform limits area (top of the notifications sheet, full admins only) while the figures are being read again."
+  },
+  "limits.action.newTab": {
+    "text": "(opens in a new tab)",
+    "description": "Hidden text for screen readers after a button of the platform limits area (top of the notifications sheet, full admins only) that opens another site in a new tab."
+  },
+  "limits.unknown.stale": {
+    "text": "Not read since {{time}}.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when a cluster figure has not been read for a while. {{time}} is the time of day of the last read."
+  },
+  "limits.action.cluster": {
+    "text": "See the cluster",
+    "description": "Button on a row of the platform limits area (top of the notifications sheet, full admins only) about the cluster (the database disk, a namespace quota, a node's volume pool): opens Admin, Health and status."
+  },
+  "limits.dbDisk.title": {
+    "text": "Database disk: {{used}} of {{cap}} GiB",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is how much of the shared database's disk is used and {{cap}} its size, both in GiB."
+  },
+  "limits.dbDisk.titleUnknown": {
+    "text": "Database disk",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the database disk could not be read."
+  },
+  "limits.dbDisk.near": {
+    "text": "When it fills, Postgres stops writing and every app's saves fail.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the database disk figure, when it is past 80%."
+  },
+  "limits.dbDisk.at": {
+    "text": "Postgres has no room to write, so saves are failing. The volume needs to grow.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when the shared database's disk is full."
+  },
+  "limits.nodePool.title": {
+    "text": "Node volume pool: {{used}} of {{cap}} GiB",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is how much of the fullest node's local volume pool is taken and {{cap}} its size, both in GiB."
+  },
+  "limits.nodePool.titleUnknown": {
+    "text": "Node volume pools",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the nodes' local volume pools could not be read."
+  },
+  "limits.nodePool.node": {
+    "text": "On {{node}}.",
+    "description": "Start of the row text in the platform limits area (top of the notifications sheet, full admins only) for a node's volume pool. {{node}} is the server's name in the cluster."
+  },
+  "limits.nodePool.near": {
+    "text": "When it fills, new worker and preview volumes fail to mount.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the node's name, when its volume pool is past 80%."
+  },
+  "limits.nodePool.at": {
+    "text": "New worker and preview volumes are failing to mount.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the node's name, when its volume pool is full."
+  },
+  "limits.quota.figure": {
+    "text": "{{resource}}: {{used}} of {{hard}}.",
+    "description": "Start of the row text in the platform limits area (top of the notifications sheet, full admins only) for a cluster quota: its tightest resource. {{resource}} is that resource's name (such as \"CPU requested\"), {{used}} and {{hard}} how much is used and the quota's ceiling."
+  },
+  "limits.quota.resource.pods": {
+    "text": "Pods",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many pods (running containers) the namespace may hold."
+  },
+  "limits.quota.resource.cpu": {
+    "text": "CPU requested",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): CPU cores reserved by the namespace's pods."
+  },
+  "limits.quota.resource.cpu_limits": {
+    "text": "CPU limits",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): the CPU cores the namespace's pods may burst to, added up."
+  },
+  "limits.quota.resource.memory": {
+    "text": "Memory requested",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): memory reserved by the namespace's pods."
+  },
+  "limits.quota.resource.memory_limits": {
+    "text": "Memory limits",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): the memory the namespace's pods may use at most, added up."
+  },
+  "limits.quota.resource.scratch": {
+    "text": "Scratch disk requested",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): temporary disk reserved by the namespace's pods."
+  },
+  "limits.quota.resource.scratch_limits": {
+    "text": "Scratch disk limits",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): the temporary disk the namespace's pods may use at most, added up."
+  },
+  "limits.quota.resource.storage": {
+    "text": "Volume storage",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): disk requested by the namespace's volumes."
+  },
+  "limits.quota.resource.volumes": {
+    "text": "Volumes",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many volume claims the namespace may hold."
+  },
+  "limits.quota.resource.services": {
+    "text": "Services",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes Services the namespace may hold."
+  },
+  "limits.quota.resource.secrets": {
+    "text": "Secrets",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes Secrets the namespace may hold."
+  },
+  "limits.quota.resource.config_maps": {
+    "text": "ConfigMaps",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes ConfigMaps the namespace may hold."
+  },
+  "limits.quota.resource.jobs": {
+    "text": "Jobs",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many Kubernetes Jobs the namespace may hold."
+  },
+  "limits.quota.resource.builds": {
+    "text": "Builds",
+    "description": "Name of a cluster quota resource in the platform limits area (top of the notifications sheet, full admins only): how many image builds the namespace may hold."
+  },
+  "limits.quota.apps.title": {
+    "text": "Apps quota: {{percent}}% used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) for the cluster quota of the namespace apps and previews run in. {{percent}} is how full its tightest resource is."
+  },
+  "limits.quota.apps.titleUnknown": {
+    "text": "Apps quota",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the cluster quota of the namespace apps and previews run in could not be read."
+  },
+  "limits.quota.apps.near": {
+    "text": "When it fills, apps and previews can't start.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace apps and previews run in is past 80%."
+  },
+  "limits.quota.apps.at": {
+    "text": "Apps and previews can't start until some stop or the quota is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace apps and previews run in is used up."
+  },
+  "limits.quota.workers.title": {
+    "text": "Workers quota: {{percent}}% used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) for the cluster quota of the namespace coding sessions and checks run in. {{percent}} is how full its tightest resource is."
+  },
+  "limits.quota.workers.titleUnknown": {
+    "text": "Workers quota",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the cluster quota of the namespace coding sessions and checks run in could not be read."
+  },
+  "limits.quota.workers.near": {
+    "text": "When it fills, new coding sessions and checks wait.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace coding sessions and checks run in is past 80%."
+  },
+  "limits.quota.workers.at": {
+    "text": "New coding sessions and checks are waiting for room.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace coding sessions and checks run in is used up."
+  },
+  "limits.quota.builds.title": {
+    "text": "Builds quota: {{percent}}% used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) for the cluster quota of the namespace image builds run in. {{percent}} is how full its tightest resource is."
+  },
+  "limits.quota.builds.titleUnknown": {
+    "text": "Builds quota",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the cluster quota of the namespace image builds run in could not be read."
+  },
+  "limits.quota.builds.near": {
+    "text": "When it fills, new image builds fail.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace image builds run in is past 80%."
+  },
+  "limits.quota.builds.at": {
+    "text": "New image builds are failing until old ones are cleared or the quota is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace image builds run in is used up."
+  },
+  "limits.kicker.usedUp": {
+    "text": "Used up",
+    "description": "Small coloured word over the Homeroom bot weekly budget row of the platform limits area (top of the notifications sheet, full admins only): the week's budget is all spent, so the bot has stopped building."
+  },
+  "limits.budget.title": {
+    "text": "Homeroom bot's weekly budget: {{used}} of {{cap}} used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is what Homeroom bot has spent on AI models this week and {{cap}} its weekly budget, both dollar amounts."
+  },
+  "limits.budget.titleUnknown": {
+    "text": "Homeroom bot's weekly budget",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly spending could not be read."
+  },
+  "limits.budget.near": {
+    "text": "At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until {{day}} or until the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used. {{cap}} is the budget as a dollar amount, {{day}} the name of the day it starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.budget.nearNoDay": {
+    "text": "At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used and the day it starts again is not known. {{cap}} is the budget as a dollar amount. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.budget.at": {
+    "text": "The bot has stopped building, and screenshots, sync with main and apps' AI features have stopped with it. They start again on {{day}}, or as soon as the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent. {{day}} is the name of the day the budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.budget.atNoDay": {
+    "text": "The bot has stopped building, and screenshots, sync with main and apps' AI features have stopped with it. They start again as soon as the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent and the day it starts again is not known. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.action.budget": {
+    "text": "Raise the budget",
+    "description": "Button on the Homeroom bot weekly budget row of the platform limits area (top of the notifications sheet, full admins only): opens Admin, Homeroom bot, Settings, where the weekly budget is set."
+  },
+  "row.limit.connections.full.label": {
+    "text": "Database connections used up",
+    "description": "First line of a notification to an administrator: the shared database has no connections left for apps."
+  },
+  "row.limit.connections.warn.label": {
+    "text": "Database connections running low",
+    "description": "First line of a notification to an administrator: the shared database is past 80% of the connections apps may open."
+  },
+  "row.limit.connections.full.body_one": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> Apps can't open new ones, so their pages fail until some close.",
+    "description": "Second line of the \"Database connections used up\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.connections.full.body_other": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> Apps can't open new ones, so their pages fail until some close.",
+    "description": "Second line of the \"Database connections used up\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.connections.warn.body_one": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> At the limit, apps can't open new ones.",
+    "description": "Second line of the \"Database connections running low\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.connections.warn.body_other": {
+    "text": "<0>{{used}} of {{count}} database connections open.</0> At the limit, apps can't open new ones.",
+    "description": "Second line of the \"Database connections running low\" notification to an administrator. {{used}} is how many are open and {{count}} the line where apps are refused. The part in <0> is shown bold."
+  },
+  "row.limit.dbDisk.warn.label": {
+    "text": "Database disk filling up",
+    "description": "First line of a notification to an administrator: the shared database's disk is past 80% full."
+  },
+  "row.limit.dbDisk.warn.body": {
+    "text": "<0>{{used}} of {{cap}} GiB used.</0> When it fills, Postgres stops writing.",
+    "description": "Second line of the \"Database disk filling up\" notification to an administrator. {{used}} and {{cap}} are GiB used and the disk's size."
+  },
+  "row.limit.dbDisk.full.label": {
+    "text": "Database disk full",
+    "description": "First line of a notification to an administrator: the shared database's disk is full."
+  },
+  "row.limit.dbDisk.full.body": {
+    "text": "<0>{{used}} of {{cap}} GiB used.</0> Postgres stops writing, so saves fail until the volume grows.",
+    "description": "Second line of the \"Database disk full\" notification to an administrator. {{used}} and {{cap}} are GiB used and the disk's size."
+  },
+  "row.limit.nodePool.warn.label": {
+    "text": "Node volume pool filling up",
+    "description": "First line of a notification to an administrator: a server's local volume pool is past 80% full."
+  },
+  "row.limit.nodePool.warn.body": {
+    "text": "<0>{{used}} of {{cap}} GiB taken.</0> When it fills, new volumes fail to mount.",
+    "description": "Second line of the \"Node volume pool filling up\" notification to an administrator. {{used}} and {{cap}} are GiB taken and the pool's size."
+  },
+  "row.limit.nodePool.full.label": {
+    "text": "Node volume pool full",
+    "description": "First line of a notification to an administrator: a server's local volume pool is full."
+  },
+  "row.limit.nodePool.full.body": {
+    "text": "<0>{{used}} of {{cap}} GiB taken.</0> New worker and preview volumes fail to mount.",
+    "description": "Second line of the \"Node volume pool full\" notification to an administrator. {{used}} and {{cap}} are GiB taken and the pool's size."
+  },
+  "row.limit.quota.apps.warn.label": {
+    "text": "Apps quota running low",
+    "description": "First line of a notification to an administrator: the cluster quota for apps and previews is past 80% used."
+  },
+  "row.limit.quota.apps.warn.body": {
+    "text": "<0>{{percent}}% used.</0> When it fills, apps and previews can't start.",
+    "description": "Second line of the \"Apps quota running low\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.apps.full.label": {
+    "text": "Apps quota used up",
+    "description": "First line of a notification to an administrator: the cluster quota for apps and previews is used up."
+  },
+  "row.limit.quota.apps.full.body": {
+    "text": "<0>{{percent}}% used.</0> Apps and previews can't start until the quota is raised.",
+    "description": "Second line of the \"Apps quota used up\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.workers.warn.label": {
+    "text": "Workers quota running low",
+    "description": "First line of a notification to an administrator: the cluster quota for coding sessions and checks is past 80% used."
+  },
+  "row.limit.quota.workers.warn.body": {
+    "text": "<0>{{percent}}% used.</0> When it fills, new coding sessions and checks wait.",
+    "description": "Second line of the \"Workers quota running low\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.workers.full.label": {
+    "text": "Workers quota used up",
+    "description": "First line of a notification to an administrator: the cluster quota for coding sessions and checks is used up."
+  },
+  "row.limit.quota.workers.full.body": {
+    "text": "<0>{{percent}}% used.</0> New coding sessions and checks wait until the quota is raised.",
+    "description": "Second line of the \"Workers quota used up\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.builds.warn.label": {
+    "text": "Builds quota running low",
+    "description": "First line of a notification to an administrator: the cluster quota for image builds is past 80% used."
+  },
+  "row.limit.quota.builds.warn.body": {
+    "text": "<0>{{percent}}% used.</0> When it fills, new image builds fail.",
+    "description": "Second line of the \"Builds quota running low\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.quota.builds.full.label": {
+    "text": "Builds quota used up",
+    "description": "First line of a notification to an administrator: the cluster quota for image builds is used up."
+  },
+  "row.limit.quota.builds.full.body": {
+    "text": "<0>{{percent}}% used.</0> New image builds fail until the quota is raised.",
+    "description": "Second line of the \"Builds quota used up\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.botBudget.warn.label": {
+    "text": "Homeroom bot's weekly budget is {{percent}}% used",
+    "description": "First line of a notification to an administrator: Homeroom bot has used most of the money it may spend on AI models this week. {{percent}} is how much of the week's budget is used, from 80 to 99."
+  },
+  "row.limit.botBudget.warn.body": {
+    "text": "<0>{{used}} of {{cap}} used.</0> At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until {{day}}.",
+    "description": "Second line of the \"weekly budget is … used\" notification to an administrator. {{used}} and {{cap}} are dollar amounts: what Homeroom bot's key has spent this week and its weekly budget. {{day}} is the name of the day the budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "row.limit.botBudget.full.label": {
+    "text": "Homeroom bot's weekly budget is used up",
+    "description": "First line of a notification to an administrator: Homeroom bot has spent all the money it may spend on AI models this week."
+  },
+  "row.limit.botBudget.full.body": {
+    "text": "The bot stopped building, and screenshots, sync with main and apps' AI features stopped with it. They start again on {{day}}, or once the budget is raised.",
+    "description": "Second line of the \"weekly budget is used up\" notification to an administrator. {{day}} is the name of the day the weekly budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   }
 }

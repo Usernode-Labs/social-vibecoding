@@ -732,3 +732,40 @@ test('saveChecksFor checks a dark screen against its light one and an element ag
     media.bytes = original;
   }
 });
+
+test('an element shot keeps the box its browser measured when it lies inside its screen shot, and saves as before without one', async () => {
+  const run = control();
+  const slot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
+  const element = (extra, shade = 0) => run.saveShot({ ...slot, kind: 'element', ...extra }, fixtures.png({ width: 1280, height: 52, shade }));
+  const stored = () => [...run.saved.values()].find((file) => file.variant === 'focus');
+  // Before its screen shot is saved there is nothing to check the box against.
+  element({ focus: '0,0,1280,52' });
+  assert.equal(stored().focusRect, null);
+  run.saveShot(slot, fixtures.png({ width: 1280, height: 800 }));
+  const answer = element({ focus: '0,0,1280,52', focusPage: '0,0,1280,52' }, 1);
+  assert.equal(answer.saved, true);
+  assert.deepEqual(stored().focusRect, { x: 0, y: 0, w: 1280, h: 52 });
+  // A box off its screen shot is dropped; the shot itself is still saved.
+  assert.equal(element({ focus: '0,790,1280,52' }, 2).saved, true);
+  assert.equal(stored().focusRect, null);
+  assert.equal(element({}, 3).saved, true);
+  assert.equal(stored().focusRect, null, 'no box: saved as it always was');
+  // A screen shot never carries one.
+  run.saveShot({ ...slot, focus: '0,0,10,10' }, fixtures.png({ width: 1280, height: 800, shade: 4 }));
+  assert.equal([...run.saved.values()].find((file) => file.variant === 'context').focusRect, null);
+  // Read back from the database, an element shot's box comes with it, and a
+  // malformed one does not.
+  const rows = [
+    { slot: 'x', story_id: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'focus', media: 'png', theme: 'light',
+      content_type: 'image/png', width: 1280, height: 52, bytes: 10, sha256: 'a'.repeat(64), density: 1, part: 0,
+      focus_rect: { x: 0, y: 0, w: 1280, h: 52 } },
+    { slot: 'y', story_id: 'invite-suggestions', viewport: 'desktop', side: 'base', variant: 'focus', media: 'png', theme: 'light',
+      content_type: 'image/png', width: 1280, height: 52, bytes: 10, sha256: 'b'.repeat(64), density: 1, part: 0,
+      focus_rect: { x: -1, y: 0, w: 1280, h: 52 } },
+    { slot: 'z', story_id: 'invite-suggestions', viewport: 'desktop', side: 'base', variant: 'context', media: 'png', theme: 'light',
+      content_type: 'image/png', width: 1280, height: 800, bytes: 10, sha256: 'c'.repeat(64), density: 1, part: 0,
+      focus_rect: { x: 0, y: 0, w: 10, h: 10 } },
+  ];
+  const files = await controlPlane.filesFor({ query: async () => ({ rows }) }, 'a'.repeat(32), null, { withData: false });
+  assert.deepEqual(files.map((file) => file.focusRect), [{ x: 0, y: 0, w: 1280, h: 52 }, null, null]);
+});

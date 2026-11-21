@@ -25,7 +25,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { kanbanHtml, workshopHtml } = require('./lib/dev-card-html');
+const { kanbanHtml, workshopHtml, legacyLook } = require('./lib/dev-card-html');
+// These rows are the board as every look but the kit's draws it; tests/home-needs-you-card.test.js holds the kit's.
+legacyLook();
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 

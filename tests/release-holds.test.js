@@ -32,9 +32,9 @@ test('each rule reads only what a change adds', () => {
   assert.deepEqual(holds.tripped({ diff: file('config.json', ['+    { "key": "X", "private": true }']) }), [],
     'only dapp.json declares a secret');
   assert.deepEqual(holds.tripped({ diff: file('dapp.json', ['+  "permissions": ["geolocation"]']) }), ['capability']);
-  assert.deepEqual(holds.tripped({ diff: file('public/index.html', ['+<script src="https://cdn.example.com/x.js"></script>']) }), ['script']);
-  assert.deepEqual(holds.tripped({ diff: file('public/index.html', ['+<script src="/usernode-bridge/v1/bridge.js"></script>']) }), [],
-    'the centrally hosted files are relative paths');
+  // A <script> from another site is no rule here (20 Nov 2026): it fails the
+  // checks instead (tests/release-notices-and-script-check.test.js).
+  assert.deepEqual(holds.tripped({ diff: file('public/index.html', ['+<script src="https://cdn.example.com/x.js"></script>']) }), []);
   assert.deepEqual(holds.tripped({ diff: '', contentFlagged: true }), ['content']);
 });
 
@@ -392,10 +392,16 @@ test('the bell row is an admin\'s only, settles with the change, and wears the w
   assert.equal(message('notifications:row.releaseHold.label'), 'Needs your approval');
   assert.equal(message('push:releaseHold.title'), 'A change needs your approval');
   // A change that is only told about: no warning sign, and no ask.
-  const notice = /if \(\/\^notice:\/\.test\(String\(n\.detail \|\| ''\)\)\) \{\s+return \{([\s\S]*?)\};/.exec(client);
-  assert.ok(notice, 'the row reads the detail the server wrote');
-  assert.doesNotMatch(notice[1], /needsYou|26A0/);
-  assert.match(notice[1], /notifications:row\.releaseHold\.noticeLabel/);
+  // (20 Nov 2026: the notice row has its own function, which also names a
+  // device capability and says what the change now keeps or uses;
+  // tests/device-permissions-ask.test.js and
+  // tests/release-notices-and-script-check.test.js render it.)
+  assert.match(client, /if \(\/\^notice:\/\.test\(String\(n\.detail \|\| ''\)\)\) return releaseHoldNoticeRow\(n, base, prLabel\);/,
+    'the row reads the detail the server wrote');
+  const notice = client.slice(client.indexOf('function releaseHoldNoticeRow('), client.indexOf('function rowView('));
+  assert.ok(notice.length > 0);
+  assert.doesNotMatch(notice, /needsYou|26A0/);
+  assert.match(notice, /notifications:row\.releaseHold\.noticeLabel/);
   assert.equal(message('notifications:row.releaseHold.noticeLabel'), 'Not read in full');
   assert.match(read('src', 'services', 'mobile-push-policy.js'), /\/\^notice:\/\.test\(String\(detail \|\| ''\)\)[\s\S]{0,200}push:releaseHold\.notice\.title/);
   assert.equal(message('push:releaseHold.notice.title'), 'A change was not read in full');

@@ -556,9 +556,12 @@ export interface RequestView {
   /**
    * #6680: the viewer's own private Homeroom bot thread that filed this
    * request, or posted its plan there: the head links back to it. Only ever
-   * the thread owner's; another member's read carries null.
+   * the thread owner's; another member's read carries null. Artifacts,
+   * stage 4: `designVersion`, when the owner's plan here was made from the
+   * design that thread holds: the version it shows, which the head opens.
    */
-  fromThread?: { rootId: number } | null;
+  /** K (20 Nov 2026): `artifactId` names one of the thread's artifacts after its first. */
+  fromThread?: { rootId: number; designVersion?: number; artifactId?: number } | null;
   number: number;
   /** The category's name, as plain words under "Request #N"; null when unset. */
   category: string | null;

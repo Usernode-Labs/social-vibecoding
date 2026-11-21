@@ -1304,8 +1304,11 @@ function agentErrorOf(error) {
 function followedErrorOf(result) {
   if (!shotsAgent.failedResult(result)) return null;
   const exitCause = shotsAgent.EXIT_CAUSES.has(result?.markerlessCause) ? result.markerlessCause : null;
+  // A turn whose provider refused the key says so (shots-agent.js does the
+  // same for a turn it watched end).
+  const refused = require('./bot-pause-words').platformTurnRefused(result, 'shots');
   const error = Object.assign(new ShotsOrchestrationError('shots_agent_failed',
-    'The shots agent stopped with an error before it finished.'), { shotsExitCause: exitCause });
+    refused || 'The shots agent stopped with an error before it finished.'), { shotsExitCause: exitCause });
   return agentErrorOf(error);
 }
 
@@ -1531,7 +1534,13 @@ async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
       }
       if (folded.size) stories = shotsFiles.markFolded(stories, folded);
     }
-    return { ...verdict, screens, stories };
+    // A screen on which something sizeable changed outside every change's
+    // frame says so beside the agent's own notices (shots-diff
+    // elsewhereChanged). Injected comparers may not have it.
+    const notices = typeof diff.elsewhereNotices === 'function'
+      ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
+      : (verdict.notices || []);
+    return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
   } catch (error) {
     if (signal?.aborted) throw error;
     log.warn('shots', 'Could not compare the before and after screens', {

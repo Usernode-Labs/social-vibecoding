@@ -59,7 +59,11 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
+import { useDetail } from '../ai/detail';
+import { DetailPicker } from '../detail/detail-card';
 import { useStoreState } from '../../lib/use-store-state';
+import { LiveDraftControls, useDraftForSession } from '../messages/live-draft-bar';
+import { PreviewPinLayer, togglePreviewPins, usePreviewPins } from './preview-pin';
 
 /**
  * The first visit's line. A project that is just yours goes live when you
@@ -146,6 +150,7 @@ export function StagingOverlay(): ReactNode {
   const t = useMessages('devchat');
   const state = useStoreState(stagingStore);
   const overlayRef = useRef<HTMLDivElement | null>(null);
+  const headRef = useRef<HTMLDivElement | null>(null);
   const loaderRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const testBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -213,6 +218,17 @@ export function StagingOverlay(): ReactNode {
   const settled = previewVoteSettled(state.vote);
   const exitLabel = docked ? t('devchat:staging.close') : t('core:common.back');
   const sizeLabel = state.expanded ? t('devchat:staging.dock') : t('devchat:staging.fullWindow');
+  // 20 Nov 2026: standing in the column beside a private thread, this bar is
+  // the column's one head, so its title is the column's picker: everything
+  // the thread can show there (../detail/detail-card.tsx).
+  const detail = useDetail();
+  const pickHere = placement === 'column' && detail?.kind === 'preview' && !!detail.owner;
+  // 20 Nov 2026 (live-draft review, G and J): a live draft's preview carries
+  // the draft's own controls in this header (its Propose, Update proposal and
+  // Close draft, and where it stands), and its Comment pins a comment in the
+  // app that goes to the draft's thread. Any other preview is as it was.
+  const liveDraft = useDraftForSession(state.open ? state.sessionId : null);
+  const pinning = usePreviewPins();
 
   return (
     <div
@@ -233,7 +249,7 @@ export function StagingOverlay(): ReactNode {
           safe-area inset to this bar. Docked in a column or the panel it
           starts below the shell's header and adds nothing.
       */}
-      <div className="staging-chrome-bar staging-head shrink-0">
+      <div ref={headRef} className="staging-chrome-bar staging-head shrink-0">
         {/*
             The way out, always rendered and wired (#1443,
             tests/staging-preview-has-an-exit.test.js): Back at the start of
@@ -260,19 +276,29 @@ export function StagingOverlay(): ReactNode {
         >
           {state.appTileImage ? '' : state.appTile}
         </span>
-        <div className="staging-titles">
-          {/*
-              The change's name, else "Flat 4B Chores · Preview"
-              (AppView._stagingTitle). The id is the old name: it showed the
-              raw staging address once, which told a newcomer nothing.
-          */}
-          <span id="staging-url-label" className="staging-title" data-pending={pending ? '' : undefined}>{title}</span>
-          <span id="staging-facts" className="staging-facts">
-            {facts.map((part, i) => (
-              <span key={i} className="staging-fact" data-kind={part.ask ? 'ask' : part.app ? 'app' : undefined}>{part.text}</span>
-            ))}
-          </span>
-        </div>
+        {(() => {
+          const titles = (
+            <>
+              {/*
+                  The change's name, else "Flat 4B Chores · Preview"
+                  (AppView._stagingTitle). The id is the old name: it showed the
+                  raw staging address once, which told a newcomer nothing.
+              */}
+              <span id="staging-url-label" className="staging-title" data-pending={pending ? '' : undefined}>{title}</span>
+              <span id="staging-facts" className="staging-facts">
+                {facts.map((part, i) => (
+                  <span key={i} className="staging-fact" data-kind={part.ask ? 'ask' : part.app ? 'app' : undefined}>{part.text}</span>
+                ))}
+              </span>
+            </>
+          );
+          return pickHere && detail ? (
+            <DetailPicker entry={detail} label={{ title: title || fallback, line: state.appName || null }} className="staging-titles staging-pick" anchor={headRef}>
+              {titles}
+              <ChevronDownIcon className="staging-pick-chevron h-4 w-4 shrink-0" aria-hidden="true" />
+            </DetailPicker>
+          ) : <div className="staging-titles">{titles}</div>;
+        })()}
         {/*
             The two ways to check a change before voting on it: the running
             preview, or its before-and-after shots. Drawn like the Light / Dark
@@ -321,6 +347,9 @@ export function StagingOverlay(): ReactNode {
         >
           {previewVoteLabel(state.vote)}
         </button>
+        {/* G: a live draft's own controls; nothing for any other preview.
+            Always rendered, so the head's children keep their shape. */}
+        <LiveDraftControls draft={liveDraft} />
         <div className="staging-tools">
           <button
             id="staging-comment-btn"
@@ -328,7 +357,9 @@ export function StagingOverlay(): ReactNode {
             className="staging-disc"
             aria-label={t('devchat:staging.comment')}
             title={t('devchat:staging.comment')}
-            onClick={() => stagingHandlers.onComment?.()}
+            aria-pressed={liveDraft ? pinning : undefined}
+            data-on={liveDraft && pinning ? '' : undefined}
+            onClick={() => (liveDraft ? togglePreviewPins() : stagingHandlers.onComment?.())}
           >
             <ChatBubbleTailIcon className="w-4 h-4" aria-hidden="true" />
           </button>
@@ -481,6 +512,10 @@ export function StagingOverlay(): ReactNode {
           dangerouslySetInnerHTML={{ __html: state.shotsHtml }}
         >
         </div>
+        {/* J: a live draft's pinned comment, over the app's frame only.
+            Always rendered (it draws nothing until Comment is pressed), so
+            the frame's siblings keep their shape. */}
+        <PreviewPinLayer draft={showingShots ? null : liveDraft} />
         {/*
             Shown over the iframe while a preview is being opened, so the load
             never reads as a blank. app-view.js owns the copy: a neutral

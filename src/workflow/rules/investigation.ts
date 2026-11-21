@@ -77,6 +77,10 @@ export interface Ledger { spentCents: number; budgetCents: number; everyMs: numb
 export interface CheckInResult {
   costCents?: number; answered?: boolean; ran?: boolean; failed?: boolean;
   stop?: string | null; busy?: boolean; skipped?: string | null;
+  // The look did not finish, and it was OpenRouter's credit ('credit') or
+  // the platform failing under it ('platform'): neither a failure of the
+  // investigation's nor a look that ran clean (services/bot-turn-failure.js).
+  held?: string | null;
 }
 export type Next =
   | { end: EndedReason; spentCents: number; ran: boolean; failures: number }
@@ -92,13 +96,17 @@ const STOPS: ReadonlySet<string> = new Set(['bot_off', 'paused', 'gone', 'budget
 export function afterCheckIn(l: Ledger, r: CheckInResult, now: Date): Next {
   const spentCents = l.spentCents + Math.max(0, Math.ceil(Number(r.costCents) || 0));
   const ran = r.ran === true;
-  const failures = r.failed ? l.failures + 1 : (ran ? 0 : l.failures);
+  // A held look leaves the count as it was: it neither adds a failure nor
+  // clears the ones before it.
+  const held = r.held === 'credit' || r.held === 'platform';
+  const failures = r.failed ? l.failures + 1 : (ran && !held ? 0 : l.failures);
   if (r.stop && STOPS.has(r.stop)) return { end: r.stop as EndedReason, spentCents, ran, failures };
   if (r.busy) return { at: new Date(now.getTime() + BUSY_RETRY_MS), spentCents, ran, failures };
   if (ran && r.answered && !r.failed) return { end: 'answered', spentCents, ran, failures };
   if (spentCents >= l.budgetCents) return { end: 'budget', spentCents, ran, failures };
   if (failures >= MAX_FAILURES) return { end: 'failed', spentCents, ran, failures };
-  const every = r.failed ? Math.min(l.everyMs, FAILED_RETRY_MS) : l.everyMs;
+  // Asked again sooner after a look that did not finish, whoever's it was.
+  const every = r.failed || held ? Math.min(l.everyMs, FAILED_RETRY_MS) : l.everyMs;
   const at = new Date(now.getTime() + every);
   if (at.getTime() >= new Date(l.endsAt).getTime()) return { end: 'days', spentCents, ran, failures };
   return { at, spentCents, ran, failures };

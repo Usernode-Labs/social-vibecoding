@@ -43,12 +43,22 @@ export type ReviewScreen = {
   density?: number;
   /** Denser stills of parts of the after side, `rect` in CSS px of this screen. */
   closeups?: Closeup[];
-  before: { url: string; height: number; srcSet?: string; placeholder?: string | null };
-  after: { url: string; height: number; srcSet?: string; placeholder?: string | null };
+  // `thumb` is the thumbnail copy's address (lib/shot-img.ts): the middle
+  // layer a slot draws before the sharp picture, and what a tile loads.
+  before: { url: string; height: number; srcSet?: string; placeholder?: string | null; thumb?: string | null };
+  after: { url: string; height: number; srcSet?: string; placeholder?: string | null; thumb?: string | null };
   regions: Region[];
+  /**
+   * What each declared change on this screen is about: the element its shots
+   * agent shot, on each side (services/shots-diff.js screensFor), numbered as
+   * the regions are. Every framing below frames on these first; they are
+   * never drawn as an outline of a change.
+   */
+  frames?: Frame[];
   /** The declared changes this screen shows, by number (1 is the first claim). */
   changes?: number[];
 };
+export type Frame = { n: number; b: number[] | null; a: number[] | null };
 /** What a card's picture is drawn from, best first. */
 export type Picture =
   /** The change's own before & after screens (the slider). */
@@ -415,11 +425,37 @@ export function changedRegions(screen: ReviewScreen): Region[] {
   return named.length ? named : real;
 }
 
-/** Everything that differs, on the given sides, with room around it, kept on the screen. */
+/**
+ * Each declared change's frame on one side of a screen: the element it is
+ * about. A frame with only the other side (nothing there before, say)
+ * stands for this one, where the change appears.
+ */
+export function frameBoxes(screen: ReviewScreen, side: 'before' | 'after'): Box[] {
+  const of = (v: number[] | null | undefined): Box | null => (v && v.length === 4 && v[2] > 0 && v[3] > 0
+    ? { x: v[0], y: v[1], w: v[2], h: v[3] } : null);
+  return (screen.frames || []).filter((f) => f && f.n > 0)
+    .map((f) => of(side === 'before' ? f.b : f.a) || of(side === 'before' ? f.a : f.b))
+    .filter((b): b is Box => !!b);
+}
+
+/** The screen's declared changes' frames on the given sides, as one box; null when it has none. */
+export function frameBox(screen: ReviewScreen, sides: Array<'before' | 'after'>): Box | null {
+  const boxes = sides.flatMap((s) => frameBoxes(screen, s));
+  return boxes.length ? boxes.reduce(union2) : null;
+}
+
+/**
+ * Where a picture of the screen frames, on the given sides, with room
+ * around it, kept on the screen. Best first: the frame of the change the
+ * screen shows (the element it is about), the declared areas, any area that
+ * differs, the screen's top.
+ */
 export function focusBox(screen: ReviewScreen, sides: Array<'before' | 'after'>, pad: number): Box {
   const W = screen.width;
   const H = Math.max(screen.before.height, screen.after.height);
-  const boxes = screen.regions.flatMap((r) => sides.map((s) => regionBox(r, s))).filter((b): b is Box => !!b);
+  const frame = frameBox(screen, sides);
+  const boxes = frame ? [frame]
+    : changedRegions(screen).flatMap((r) => sides.map((s) => regionBox(r, s))).filter((b): b is Box => !!b);
   if (!boxes.length) return { x: 0, y: 0, w: W, h: Math.min(H, W * 0.75) };
   const x0 = Math.max(0, Math.min(...boxes.map((b) => b.x)) - pad);
   const y0 = Math.max(0, Math.min(...boxes.map((b) => b.y)) - pad);
@@ -456,9 +492,10 @@ export function placeBox(
  * Returns the plate's size and where the screen sits inside it.
  */
 export function titleCrop(screen: ReviewScreen, room: { w: number; h: number }): { w: number; h: number; place: Placement } {
-  // The biggest thing that changed, with room around it: a union of every
-  // change on a busy screen came out as the whole screen, shrunk.
-  const big = largestRegion(screen);
+  // What the change is about (its frame), else the biggest declared thing
+  // that changed, with room around it: a union of every change on a busy
+  // screen came out as the whole screen, shrunk.
+  const big = frameBox(screen, ['after']) || largestRegion({ ...screen, regions: changedRegions(screen) });
   const W = screen.width;
   const H = screen.after.height;
   const pad = 24;
@@ -607,6 +644,24 @@ export function nextIndex(items: ReviewItem[], index: number, votes: Record<stri
   return -1;
 }
 
+/**
+ * The change a trail of keys leads back to: `keys` is the run's changes in
+ * the order they were shown, and the last of them that is still in `run`
+ * (and is not a group decision) is the one. Returns its index in `run`, and
+ * the keys that were not used, so going on again passes over what it
+ * skipped. Nothing left gives -1.
+ */
+export function trailIndex(run: ReviewItem[], keys: string[]): { index: number; rest: string[] } {
+  let rest = keys.slice();
+  while (rest.length) {
+    const key = rest[rest.length - 1];
+    rest = rest.slice(0, -1);
+    const i = run.findIndex((it) => it.key === key);
+    if (i >= 0 && run[i].kind !== 'governance') return { index: i, rest };
+  }
+  return { index: -1, rest: [] };
+}
+
 /* ── The title shot's composition (the factory prototype's rules) ─────────
  *
  * Ported from the title-shots factory (research 2026-10-15/16), on what
@@ -636,7 +691,7 @@ export type Closeup = { url: string; rect: Box; density: number };
 export type TitlePlate = {
   x: number; y: number; w: number; h: number; r: number;
   /** The still, placed so the piece shows inside the plate; null for a deck's back plate. */
-  img: { url: string; left: number; top: number; width: number; height: number } | null;
+  img: { url: string; srcSet?: string; sizes?: string; left: number; top: number; width: number; height: number } | null;
   /** A deck's back plate: one plain tone. */
   fill?: string;
   z: number;
@@ -670,7 +725,10 @@ export function piecesOf(screens: ReviewScreen[], max = 6): TitlePiece[] {
     const kept = screen.regions.filter((r) => !onlyMoved(r));
     const all = (kept.length ? kept : screen.regions).map((r) => ({ r, b: afterBox(r) })).filter((x) => x.b && x.b.w > 2) as Array<{ r: Region; b: Box }>;
     const named = all.filter((x) => x.r.n > 0);
-    let boxes = (named.length ? named : all).map((x) => x.b);
+    // What each change is about (its frame) when the screen has one; else
+    // its declared areas, else any.
+    const framed = frameBoxes(screen, 'after').filter((b) => b.w > 2);
+    let boxes = framed.length ? framed : (named.length ? named : all).map((x) => x.b);
     // Near areas are one piece; a speck beside a real change is not a piece.
     const merged: Box[] = [];
     for (const b of boxes.sort((p, q) => boxArea(q) - boxArea(p))) {
@@ -733,7 +791,14 @@ function plateFor(p: TitlePiece, b: Box, s: number, cx: number, cy: number, z: n
     x, y, w, h, r: Math.min(COVER.radius, h / 2), z,
     img: c
       ? { url: c.url, left: (c.rect.x - b.x) * s, top: (c.rect.y - b.y) * s, width: c.rect.w * s, height: c.rect.h * s }
-      : { url: p.screen.after.url, left: -b.x * s, top: -b.y * s, width: p.screen.width * s, height: p.screen.after.height * s },
+      // The whole screen at its drawn width: the browser takes the smallest
+      // copy sharp for it (the thumbnail at a sheet's usual sizes), not the
+      // full PNG it used to load for every plate.
+      : {
+        url: p.screen.after.url,
+        ...(p.screen.after.srcSet ? { srcSet: p.screen.after.srcSet, sizes: `${Math.max(1, Math.round(p.screen.width * s))}px` } : {}),
+        left: -b.x * s, top: -b.y * s, width: p.screen.width * s, height: p.screen.after.height * s,
+      },
   };
 }
 
@@ -998,8 +1063,14 @@ export function composeSheet(screens: ReviewScreen[], card: { w: number; h: numb
   return plates;
 }
 
-/** The declared change a screen shows (its main piece's own area, unwidened), else its largest area. */
+/**
+ * What a screen's declared change is about on its after side: its frame
+ * (the element its shots agent shot), else its own area (unwidened), else
+ * the screen's largest area.
+ */
 function changeOf(screen: ReviewScreen): Box | null {
+  const framed = frameBoxes(screen, 'after');
+  if (framed.length) return framed.reduce((a, b) => (boxArea(b) > boxArea(a) ? b : a));
   const boxes = changedRegions(screen).map(afterBox).filter((b): b is Box => !!b && b.w > 2);
   if (!boxes.length) return largestRegion(screen);
   return boxes.reduce((a, b) => (boxArea(b) > boxArea(a) ? b : a));
@@ -1007,19 +1078,23 @@ function changeOf(screen: ReviewScreen): Box | null {
 
 /**
  * A screen that declares nothing and differs only by a speck (a clock that
- * ticked): what it is about is the screen itself, from its top.
+ * ticked): what it is about is the screen itself, from its top. A screen
+ * with a frame is about that frame, whatever differs.
  */
 function onlySpeck(screen: ReviewScreen): boolean {
+  if (frameBoxes(screen, 'after').length) return false;
   if (screen.regions.some((r) => r.n > 0 && !onlyMoved(r))) return false;
   const speck = changeOf(screen);
   return !speck || speck.w * Math.max(speck.h, 2) < 4000;
 }
 
-/** The declared change on both sides, with room round it: what an opened screen is framed on. */
+/** The declared change on both sides, with room round it: what an opened screen is framed on (its frame first). */
 function changeFocus(screen: ReviewScreen, pad: number): Box {
   const W = screen.width;
   const H = Math.max(screen.before.height, screen.after.height);
-  const boxes = changedRegions(screen).flatMap((r) => [regionBox(r, 'before'), regionBox(r, 'after')]).filter((b): b is Box => !!b);
+  const frame = frameBox(screen, ['before', 'after']);
+  const boxes = frame ? [frame]
+    : changedRegions(screen).flatMap((r) => [regionBox(r, 'before'), regionBox(r, 'after')]).filter((b): b is Box => !!b);
   if (!boxes.length) return focusBox(screen, ['before', 'after'], pad);
   const x0 = Math.max(0, Math.min(...boxes.map((b) => b.x)) - pad);
   const y0 = Math.max(0, Math.min(...boxes.map((b) => b.y)) - pad);
@@ -1033,14 +1108,17 @@ function changeFocus(screen: ReviewScreen, pad: number): Box {
  * phone's proportions, `w` by `h`, and a bar on every place it changed, so
  * each pictogram points at where on that screen to look. The outline stands
  * for the screen's first phone-height, stretched down to take in the lowest
- * change. Marks that touch at this size are one mark; at most three, the
- * largest, top to bottom. A removed part (a line, no height) still gets a
+ * change. A mark goes on what each change is about (its frame) when the run
+ * recorded one, else on each place that changed. Marks that touch at this
+ * size are one mark; at most three, the largest, top to bottom. A removed part (a line, no height) still gets a
  * bar; a screen with no place recorded is the outline alone, rather than a
  * mark that points somewhere nothing changed.
  */
 export function pictoMarks(screen: ReviewScreen, w: number, h: number): Box[] {
   const W = screen.width;
-  const boxes = changedRegions(screen).map(afterBox).filter((b): b is Box => !!b && b.w > 0);
+  // Where to look: what each change is about (its frame) when there is one.
+  const framed = frameBoxes(screen, 'after');
+  const boxes = framed.length ? framed : changedRegions(screen).map(afterBox).filter((b): b is Box => !!b && b.w > 0);
   if (!boxes.length) return [];
   const lowest = Math.max(...boxes.map((b) => b.y + Math.max(b.h, 2)));
   const H = Math.max(1, Math.min(screen.after.height, Math.max(W * 2.17, lowest)));

@@ -409,6 +409,9 @@ export function WhoDecidesDialog() {
             <p className={`mt-2 ${NOTE}`}>
               {buildLimited && !vis ? t('dialogs:whoDecides.see.limitedNote') : t('dialogs:whoDecides.see.note')}
             </p>
+            {visChanged && pickedVis === 'public' && community?.repo_visibility_follows_project ? (
+              <p className={`mt-2 ${NOTE}`}>{t('dialogs:whoDecides.see.publicSource')}</p>
+            ) : null}
           </>
         ) : null}
 

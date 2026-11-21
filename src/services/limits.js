@@ -303,8 +303,7 @@ function identityCreditPolicy() {
 // exactly the Layer-1 amount and an unverified account gets zero.
 //
 // Tiered reads fail closed: inability to prove eligibility must never turn
-// into the old default allowance. BYOK remains available through
-// resolveBillingPath(), which resolves it after this platform-funded gate.
+// into the old default allowance.
 async function getUserCreditEntitlement(pool, userId) {
   const policy = identityCreditPolicy();
   if (policy === CREDIT_POLICY_LEGACY) {
@@ -606,8 +605,7 @@ async function checkBudget(pool, userId) {
   }
 
   // No cap applies. Not "unlimited" — an account with no ceiling has no
-  // allowance to draw on, so it fails closed. BYOK still works:
-  // resolveBillingPath resolves the user's own key after this gate.
+  // allowance to draw on, so it fails closed.
   if (!caps.weeklyApplies) {
     return {
       error: 'No AI allowance is configured for this account. An admin can set a weekly cap in the admin console.',
@@ -652,23 +650,22 @@ async function checkBudget(pool, userId) {
 // the full figures and never decides anything.
 //
 // byokCents is reported but is NOT subtracted from the allowance: that
-// spend went to the user's own key and no cap has ever counted it (#119).
-// Since #2571 it covers the same week the allowance does.
+// spend went to the user's own key (an Anthropic key before task 2275, an
+// app's spend on their own OpenRouter key since) and no cap has ever
+// counted it (#119). Since #2571 it covers the same week the allowance does.
 async function getBudgetSnapshot(pool, userId) {
   const entitlement = await getUserCreditEntitlement(pool, userId);
   const caps = resolveCaps(entitlement);
   const limitCents = entitlement.limitCents;
   let spentCents = 0;
   let byokCents = 0;
-  let hasByokKey = false;
   let weeklySpentCents = 0;
   try {
     const { rows } = await pool.query(
       `SELECT COALESCE(lu.total_cost_cents, 0)
               + COALESCE((SELECT SUM(cents) FROM turn_spend
                            WHERE user_id = u.id AND settled_at IS NULL AND NOT byok AND created_at >= CURRENT_DATE), 0) AS total_cost_cents,
-              COALESCE(lu.byok_cost_cents, 0)  AS byok_cost_cents,
-              (u.anthropic_key_enc IS NOT NULL) AS has_byok_key
+              COALESCE(lu.byok_cost_cents, 0)  AS byok_cost_cents
          FROM users u
          LEFT JOIN llm_usage lu ON lu.user_id = u.id AND lu.date = CURRENT_DATE
         WHERE u.id = $1`,
@@ -677,7 +674,6 @@ async function getBudgetSnapshot(pool, userId) {
     if (rows[0]) {
       spentCents = parseFloat(rows[0].total_cost_cents || 0);
       byokCents = parseFloat(rows[0].byok_cost_cents || 0);
-      hasByokKey = !!rows[0].has_byok_key;
     }
   } catch (err) {
     // A display read must never 500 the drawer. Fall back to "nothing
@@ -721,7 +717,6 @@ async function getBudgetSnapshot(pool, userId) {
     spentCents: weeklySpentCents,
     remainingCents: weeklyBinds ? weeklyRemaining : 0,
     byokCents,
-    hasByokKey,
     // The boundary the binding cap actually resets on, matching the
     // sentence checkBudget's message promises for that same cap.
     resetsAt: weeklyResetAt(),
@@ -742,55 +737,19 @@ async function getBudgetSnapshot(pool, userId) {
   };
 }
 
-// Shared BYOK key lookup + decrypt (#30/#212). Previously duplicated in
-// routes/sessions.js (loadUserApiKey + an inline copy in the chat route)
-// and services/sync-main.js — now the single home, used by
-// resolveBillingPath below. Returns the decrypted key string or null
-// (missing key, decrypt failure — both mean "no key on file").
-async function loadUserApiKey(pool, userId, dataKey) {
-  try {
-    const { rows } = await pool.query(
-      'SELECT anthropic_key_enc FROM users WHERE id = $1',
-      [userId]
-    );
-    if (rows[0]?.anthropic_key_enc) {
-      const secrets = require('./secrets');
-      const key = secrets.decrypt(rows[0].anthropic_key_enc, dataKey);
-      if (!key) {
-        log.warn('limits', 'BYOK key decryption failed; treating as no key', { userId });
-      }
-      return key || null;
-    }
-  } catch (err) {
-    log.warn('limits', 'Failed to load user API key', { userId, err: err.message });
-  }
-  return null;
-}
-
-// #212: decide who pays for the next billable unit (a chat turn, a sync
-// run). LIMIT-FIRST: the shared daily allowance
-// is consumed while it has headroom; the user's own BYOK key (#30)
-// takes over only once the budget — their per-user cap OR the global
-// cap — is exhausted. Returns exactly one of:
-//   { apiKey: null, byok: false }   — budget headroom: bill the
-//     platform key (counts against the daily caps via recordSpend).
-//   { apiKey: '<key>', byok: true } — budget exhausted and a BYOK key
-//     is on file: bill the user's own key (display-only bucket).
-//   { error: '...' }                — budget exhausted, no usable key:
-//     the same user-facing message checkBudget produces today.
-// Key decryption failures keep the existing tolerance (warn + treat as
-// "no key") — which now means a 429 once the cap is hit, instead of
-// the old silent payer switch.
+// #212: decide whether the platform pays for the next billable unit (a chat
+// turn, a sync run). People's own Anthropic keys are gone (task 2275), so the
+// platform's allowance is the only payer. Returns exactly one of:
+//   { apiKey: null, byok: false } — budget headroom: the platform pays
+//     (counts against the caps via recordSpend).
+//   { error: '...' }              — budget exhausted: the same user-facing
+//     message checkBudget produces.
+// The `apiKey` / `byok` pair is kept so the callers' shape is unchanged.
 async function resolveBillingPath(pool, dataKey, userId) {
   const budget = await checkBudget(pool, userId);
   if (!budget.error) return { apiKey: null, byok: false };
-  const apiKey = await loadUserApiKey(pool, userId, dataKey);
-  if (apiKey) return { apiKey, byok: true };
-  // #463: this branch is only reachable with NO usable key on file, so
-  // the BYOK hint is always accurate here. checkBudget itself stays
-  // hint-free — it also runs on paths where the caller has a key.
   return {
-    error: `${budget.error} Add your own Anthropic API key in Settings to keep going.`,
+    error: budget.error,
     reason: budget.reason || null,
     verificationRequired: !!budget.verificationRequired,
   };
@@ -924,9 +883,10 @@ async function settleOpenTurnSpend(pool, { olderThanMinutes = 120 } = {}) {
 // Code dispatches, PR-metadata Haiku calls, feedback titles). Routes
 // the cost into the bucket matching who paid Anthropic (#119):
 //   byok: false → total_cost_cents (counts against the daily caps)
-//   byok: true  → byok_cost_cents  (billed to the user's own key once
-//                 the daily allowance ran out — see resolveBillingPath;
-//                 display only, checkBudget never reads it)
+//   byok: true  → byok_cost_cents  (billed to the user's own key: an app
+//                 call on their own OpenRouter key under an allow_byok
+//                 grant, routes/app-llm-proxy.js; display only,
+//                 checkBudget never reads it)
 // No-ops on a missing user or non-positive cost, and swallows+logs DB
 // errors — billing bookkeeping must never fail the request that
 // incurred the spend (same tolerance the call sites had inline).
@@ -961,37 +921,6 @@ async function recordSpendRequired(client, userId, costCents, { byok = false } =
   );
 }
 
-// #1088: claim the once-per-UTC-day right to TELL this user that their own
-// Anthropic key took over. Returns true for the caller that won the claim and
-// false for everyone after it, until llm_usage rolls to the next `date` — which
-// is exactly when the free allowance resets, so the marker expires by
-// construction and needs no sweeper.
-//
-// It has to be an upsert, not a bare UPDATE: a *global* cap crossing can switch
-// a user who has spent nothing today and so has no llm_usage row yet. The
-// conditional DO UPDATE ... WHERE byok_notice_at IS NULL makes the whole thing
-// one statement, so concurrent proxy calls (or processes) can't both win.
-//
-// Unlike recordSpend, a DB error here fails QUIET rather than open: suppressing
-// a notice is the fix this issue asked for, and the always-visible credit meter
-// still tells the story.
-async function claimByokSwitchNotice(pool, userId) {
-  if (!userId) return false;
-  try {
-    const { rowCount } = await pool.query(
-      `INSERT INTO llm_usage (user_id, date, byok_notice_at) VALUES ($1, CURRENT_DATE, NOW())
-       ON CONFLICT (user_id, date) DO UPDATE SET byok_notice_at = NOW()
-         WHERE llm_usage.byok_notice_at IS NULL
-       RETURNING id`,
-      [userId]
-    );
-    return rowCount === 1;
-  } catch (err) {
-    log.warn('limits', 'Failed to claim BYOK switch notice', { userId, err: err.message });
-    return false;
-  }
-}
-
 function splitTurnSpend(totalCents, { turnByok = false, byokObservedCents = 0 } = {}) {
   const total = Number(totalCents);
   if (!Number.isFinite(total) || !(total > 0)) {
@@ -1004,9 +933,10 @@ function splitTurnSpend(totalCents, { turnByok = false, byokObservedCents = 0 } 
 }
 
 // #664: turn-end settlement for a CC turn that may have SWITCHED payers
-// mid-flight. The worker Anthropic proxy falls back to the user's own
-// key per-call once the daily allowance is exhausted, so a single turn
-// can carry both platform-billed and BYOK-billed calls. Attributing the
+// mid-flight. Before task 2275 the worker relay fell back to the user's
+// own Anthropic key per-call once the daily allowance was exhausted, so a
+// single turn could carry both platform-billed and BYOK-billed calls; a
+// turn recovered from that time still can, so the split stays. Attributing the
 // whole turn to one bucket would either leak pre-switch platform spend
 // out of the capped bucket (ledger never reaches the cap → every turn
 // burns platform money before switching) or over-count the user's
@@ -1157,7 +1087,6 @@ module.exports = {
   WEEKLY_RESET_LABEL,
   LOW_BALANCE_PCT,
   checkBudget,
-  loadUserApiKey,
   resolveBillingPath,
   recordSpend,
   noteTurnSpend,
@@ -1165,7 +1094,6 @@ module.exports = {
   settleOpenTurnSpend,
   TODAY_USER_SPEND_SQL,
   TODAY_GLOBAL_SPEND_SQL,
-  claimByokSwitchNotice,
   splitTurnSpend,
   settleTurnSpend,
   invalidate,

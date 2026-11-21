@@ -234,7 +234,7 @@ test('#6307: a second pass replaces the first pass\'s words, so one reply is sen
 
 // ── 3. The design, drawn in the chat's own turn ──────────────────────────
 //
-// Step 6 (#6864): there is no designer. A thread that holds a design, or a
+// Step 6 (#6864): there is no designer. A thread that holds an artifact, or a
 // turn that starts one with start_design, has the design capability
 // (design-bot.js openSession) in the chat's own turn (tests/lib/
 // design-chat-turn.js). Its rounds count from the round it opened: reading in
@@ -306,7 +306,7 @@ test('a turn that started a design goes on after Evan\'s "Drawing it now…" wit
   assert.equal(turn.seen.length, 4);
   assert.deepEqual(turn.seen[2].slice(-2), [{ role: 'assistant', content: EVANS_SECOND }, { role: 'user', content: mayor.PREAMBLE_NOTE }],
     'words that only say what comes next go back with the note to do it');
-  assert.equal(designBot.DRAW_NOTE, '[Homeroom check, not from them: you have not drawn anything yet. Call write_screen (or edit_design) now, then reply.]');
+  assert.equal(designBot.DRAW_NOTE, '[Homeroom check, not from them: you have not drawn anything yet. Call write_artifact (or edit_artifact) now, then reply.]');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'Here it is, in the app\'s own style.\n\nVersion 1: Main screen.');
   assert.equal(turn.sent[0].metadata.kind, 'design_version');
@@ -343,7 +343,7 @@ test('a real question back ends the turn; words that still claim a drawing are n
   assert.equal(question.seen.length, 2, 'started, then asked once');
   assert.equal(question.sent[0].content, 'Which screen do you mean: the keys, or the score page?');
 
-  // In a thread that holds a design, an answer that draws nothing is fine.
+  // In a thread that holds an artifact, an answer that draws nothing is fine.
   const answer = editTurn([{ calls: [call('reply', { text: 'The keys use the kit\'s grid, 4 across.' })] }]);
   await answer.run;
   assert.equal(answer.seen.length, 1);
@@ -380,11 +380,11 @@ test('#6144: a design reads in its first 7 rounds, and a first drawing draws by 
   assert.equal(designBot.READ_UNTIL, 7);
   assert.equal(designBot.DRAW_BY_ROUND, 8);
   assert.deepEqual(designBot.ACT_TOOLS.map((tool) => tool.function.name), ACT_NAMES);
-  assert.ok(ACT_NAMES.includes('write_screen') && ACT_NAMES.includes('edit_design') && !ACT_NAMES.includes('reply'),
+  assert.ok(ACT_NAMES.includes('write_artifact') && ACT_NAMES.includes('edit_artifact') && !ACT_NAMES.includes('reply'),
     'the chat\'s own reply ends a design turn');
   assert.equal(designBot.READING_OVER_NOTE, '[Homeroom check, not from them: reading is over for this turn. Draw or change the '
-    + 'screen now with write_screen or edit_design, or reply.]');
-  // Step 6: its turn has the chat's sixteen rounds, which the design's
+    + 'screen now with write_artifact or edit_artifact, or reply.]');
+  // Step 6: its turn has the chat's sixteen rounds, which the artifact's
   // twelve, counted from where it opened, never shorten.
   assert.equal(require('../src/services/bot-profiles').turnLimits(['design']).rounds, 16);
 });
@@ -392,8 +392,8 @@ test('#6144: a design reads in its first 7 rounds, and a first drawing draws by 
 test('#6141: a turn that started a design and only read never posts its last words as the answer', async () => {
   const turn = startTurn([...times(11, READ), reply('placeholder')], { thread: SPOKEN });
   await turn.run;
-  assert.deepEqual(turn.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_screen'), 'auto'],
-    'the design\'s round 8 (the turn\'s 9th) draws');
+  assert.deepEqual(turn.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_artifact'), 'auto'],
+    'the artifact\'s round 8 (the turn\'s 9th) draws');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, designBot.NOT_DRAWN_TEXT, 'never "placeholder"');
   assert.equal(turn.sent[0].metadata.kind, 'chat', 'no version');
@@ -418,7 +418,7 @@ test('#6142: a first drawing that reads long is made to draw in its round 8, and
     edit('<main class="keys">', '<main class="keys"><h1>Ear Trainer</h1>'),
     reply('Here it is, with the score.', 'The main screen, with the score')], { thread: SPOKEN });
   await turn.run;
-  assert.deepEqual(turn.choices.slice(0, 13), [...times(8, 'auto'), FORCED('write_screen'), ...times(4, 'auto')]);
+  assert.deepEqual(turn.choices.slice(0, 13), [...times(8, 'auto'), FORCED('write_artifact'), ...times(4, 'auto')]);
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'Here it is, with the score.\n\nVersion 1: The main screen, with the score.');
   assert.equal(turn.sent[0].metadata.kind, 'design_version');
@@ -430,7 +430,7 @@ test('#6142: a first drawing that reads long is made to draw in its round 8, and
 
   const short = startTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, reply('Here it is.')], { thread: SPOKEN });
   await short.run;
-  assert.deepEqual(short.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_screen'), 'auto']);
+  assert.deepEqual(short.choices.slice(0, 10), [...times(8, 'auto'), FORCED('write_artifact'), 'auto']);
   assert.equal(short.sent[0].content, 'Here it is.\n\nVersion 1: Main screen.');
 });
 
@@ -686,14 +686,14 @@ const filedTurn = (steps, extra = {}) => designChatTurn(steps, {
 test('#6151: asked "will you build this now?" on a filed design, the reply sent never says it can\'t be built', async () => {
   const turn = filedTurn([reply(CANT_BUILD), reply('Yes: Homeroom bot is building it from version 4 now, and its checks come next.')]);
   await turn.run;
-  assert.match(designSection(turn.seen[0]), /\nFILED: this design is request #14 on Ear Trainer\. Homeroom bot: building \(its next step: checks\)\.\n/,
+  assert.match(designSection(turn.seen[0]), /\nFILED: this artifact is request #14 on Ear Trainer\. Homeroom bot: building \(its next step: checks\)\.\n/,
     'the turn is told where the request stands');
   assert.equal(turn.seen[0].at(-1).content, 'will you build this now?');
   const note = turn.seen[1].at(-1);
   assert.equal(note.role, 'user');
-  assert.match(note.content, /This design is filed, and Homeroom bot builds it from its plan\. Say so, and where it stands from the FILED line\./,
+  assert.match(note.content, /This artifact is filed, and Homeroom bot builds it from its plan\. Say so, and where it stands from the FILED line\./,
     'its words go back once, with the one reply check\'s note');
-  assert.equal(designBot.BUILT_NOTE, '[Homeroom check, not from them: this design is filed, and Homeroom bot builds it from its plan. '
+  assert.equal(designBot.BUILT_NOTE, '[Homeroom check, not from them: this artifact is filed, and Homeroom bot builds it from its plan. '
     + 'Say so, and where it stands from the FILED line. Never say it cannot be built or that someone else has to start it.]');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, 'Yes: Homeroom bot is building it from version 4 now, and its checks come next.');
@@ -713,7 +713,7 @@ test('#6151: asked "will you build this now?" on a filed design, the reply sent 
   const person = 'Homeroom bot isn\'t building on Ear Trainer right now, so someone on the project has to start it.';
   const paused = filedTurn([reply(person)], { filedTrack: null, settings: { mode: 'live', pausedApps: ['ear'] } });
   await paused.run;
-  assert.match(designSection(paused.seen[0]), /FILED: this design is request #14 on Ear Trainer\. Homeroom bot does not build on this project now: a person must decide who builds it\./);
+  assert.match(designSection(paused.seen[0]), /FILED: this artifact is request #14 on Ear Trainer\. Homeroom bot does not build on this project now: a person must decide who builds it\./);
   assert.equal(paused.sent[0].content, person);
   assert.deepEqual(paused.recorded[0].failures, []);
 
@@ -759,15 +759,23 @@ test('each tool says what the bot is doing, in kinds the screen words', () => {
   // Step 6 (#6864): "Drawing version 4", the version the turn saves.
   assert.deepEqual(mayor.doingFor('write_screen', {}, { version: 4 }), { kind: 'drawing', version: 4 });
   assert.deepEqual(mayor.doingFor('edit_design', {}, { version: 4 }), { kind: 'drawing', version: 4 });
+  // Stage 3: the generic names draw a design, and write a plain page.
+  assert.deepEqual(mayor.doingFor('write_artifact', {}, { version: 4, kind: 'design' }), { kind: 'drawing', version: 4 });
+  assert.deepEqual(mayor.doingFor('edit_artifact', {}, { kind: 'design' }), { kind: 'designing' });
+  assert.deepEqual(mayor.doingFor('write_artifact', {}, { version: 4, kind: 'page' }), { kind: 'writing' });
   // A live draft's code, read and changed in the chat's own turn.
   assert.deepEqual(mayor.doingFor('read_file', { path: 'a.js' }, { project: 'Gym Tracker' }), { kind: 'code', project: 'Gym Tracker' });
   assert.deepEqual(mayor.doingFor('edit_file', {}), { kind: 'changing_draft' });
   assert.deepEqual(mayor.doingFor('apply_changes', {}), { kind: 'changing_draft' });
+  // 20 Nov 2026 (live-draft review, A): its preview, looked at.
+  assert.deepEqual(mayor.doingFor('look_at_preview', { path: '/' }), { kind: 'looking_preview' });
   assert.deepEqual(mayor.doingFor('offer_request', {}), { kind: 'drafting' });
+  // 20 Nov 2026 (live-draft review, E): a web search.
+  assert.deepEqual(mayor.doingFor('web_search', { query: 'ios list layout' }), { kind: 'searching' });
   assert.equal(mayor.doingFor('comment_on_request', {}), null, 'thinking');
   assert.equal(mayor.doingFor('reply', {}), undefined, 'the end changes nothing');
   for (const what of [{ kind: 'progress' }, { kind: 'request', number: 1 }, { kind: 'code' }, { kind: 'drawing' }, { kind: 'designing' },
-    { kind: 'drafting' }, { kind: 'changing_draft' }]) {
+    { kind: 'drafting' }, { kind: 'changing_draft' }, { kind: 'searching' }, { kind: 'looking_preview' }]) {
     assert.ok(realDm.DOING_KINDS.includes(what.kind), what.kind);
   }
   assert.deepEqual(realDm.typingDoing({ kind: 'drawing', version: 4 }), { kind: 'drawing', version: 4 });
@@ -879,7 +887,7 @@ test('in a thread, "status?" is about that thread; a screen asked for is drawn i
   assert.doesNotMatch(main, /never link to this request or its page/, 'a chat outside a request thread keeps neither line');
   for (const prompt of [plus, bare, main, request]) {
     // Step 6 (#6864): the turn draws it itself, and nothing hands it over.
-    assert.match(prompt, /\(start_design\): it gives you the design tools for the rest of this turn, and you draw it yourself from/);
+    assert.match(prompt, /\(start_design\): it gives you the artifact tools for the rest of this turn, and you draw it yourself from/);
     assert.ok(prompt.includes('When they have asked you to draw, render, show or mock up a screen, call start_design in that turn:\n'
       + '  never answer with what you are about to do, and never ask whether to start it.'));
     assert.doesNotMatch(prompt, /draw_screen|the designer answers them/);
@@ -933,13 +941,16 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   // #6864: the version the drawing is saved as, and a live draft's change.
   assert.equal(card.botDoingLine(t, { kind: 'drawing', version: 4 }), 'Drawing version 4');
   assert.equal(card.botDoingLine(t, { kind: 'changing_draft' }), 'Changing the draft');
+  // 20 Nov 2026 (live-draft review, E): one web search.
+  assert.equal(card.botDoingLine(t, { kind: 'searching' }), 'Searching the web');
+  assert.equal(card.botDoingLine(t, { kind: 'looking_preview' }), 'Looking at the preview');
   // #6354: Homeroom opening one of its own pages to copy for a design.
   assert.equal(card.botDoingLine(t, { kind: 'capturing', page: 'Homeroom bot page' }), 'Opening Homeroom bot page as it is now');
   assert.equal(card.botDoingLine(t, { kind: 'capturing' }), 'Opening the page as it is now');
   const capturing = renderToHtml(createElement(card.BotWorkingCard, { typist: { ...bot, doing: { kind: 'capturing', page: 'Homeroom bot page' } } }));
   assert.match(capturing, /data-bot-working="capturing"/);
   assert.match(capturing, />Opening Homeroom bot page as it is now</);
-  assert.equal(card.botDoingLine(t, { kind: 'designing' }), 'Changing the design');
+  assert.equal(card.botDoingLine(t, { kind: 'designing' }), 'Changing the artifact');
   assert.equal(card.botDoingLine(t, { kind: 'drafting' }), 'Drafting the request');
   assert.equal(card.botDoingLine(t, { kind: 'something_new' }), 'Thinking', 'a kind this screen does not know yet');
 
@@ -968,7 +979,7 @@ test('the card ends the transcript where the answer lands, in Main Chat and in a
   // An island's first render is the empty transcript: the card waits for the store.
   const card = read('frontend/src/features/messages/bot-working.tsx');
   assert.doesNotMatch(card, /useEffect|fetch\(/);
-  for (const key of ['thinking', 'progress', 'request', 'code', 'codeUnnamed', 'drawing', 'drawingVersion', 'designing', 'drafting', 'changingDraft']) {
+  for (const key of ['thinking', 'progress', 'request', 'code', 'codeUnnamed', 'drawing', 'drawingVersion', 'designing', 'drafting', 'changingDraft', 'lookingPreview']) {
     assert.doesNotMatch(catalog(`messages:thread.botWorking.${key}`, { number: 1, project: 'P' }), /—|…/, key);
   }
 });

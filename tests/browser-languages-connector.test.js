@@ -82,6 +82,7 @@ test('the translation step\'s status names its batch, its last pass and each lan
   assert.deepEqual(await runner.status(pool, { deps: { cache: { live: async () => ({ coverage }) } } }), {
     enabled: true,
     batch: { submittedAt: '2026-10-10T00:00:00Z', messages: 9000 },
+    droppedBatch: null,
     lastPass: null,
     coverage,
   });

@@ -33,7 +33,6 @@ const checksQueue = require('../src/services/checks-queue');
 const stagingRecovery = require('../src/services/staging-recovery');
 const mergeRequirements = require('../src/services/merge-requirements');
 const tools = require('../src/services/mcp-tools');
-const botProgress = require('../src/services/homeroom-bot-progress');
 const visuals = require('../src/services/visuals');
 
 const ROOT = path.join(__dirname, '..');
@@ -329,10 +328,7 @@ test('the connector tells an agent it is waiting and not to push again', () => {
   assert.match(change, /are waiting for a checks slot; they start on their own\. Call get_change again for the verdict\./);
 });
 
-test('the bot says where a waiting run is in line', () => {
-  assert.equal(botProgress.checksWords(QUEUED), 'waiting for a checks slot (2 ahead)');
-  assert.equal(botProgress.checksWords({ ...QUEUED, checks_progress: null }), 'waiting for a checks slot');
-});
+
 
 function makeAppView() {
   const sandbox = {

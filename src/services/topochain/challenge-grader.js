@@ -127,18 +127,17 @@ function clampScore(raw, max) {
 
 // One unit. Returns { score, reason, model } or throws — the caller treats a
 // throw as "leave it for the next tick", never as a zero.
-async function grade({ measure, input, max, apiKey, llm }) {
+async function grade({ measure, input, max, llm }) {
   const rubric = RUBRICS[measure];
   if (!rubric) throw new Error(`No rubric for ${measure}`);
   const ceiling = Math.max(1, Math.round(Number(max) || 0));
   const engine = llm || require('../llm');
-  if (!engine.isEnabled() && !apiKey) throw new Error('LLM not configured');
+  if (!engine.isEnabled()) throw new Error('LLM not configured');
 
   const { score, reason, model } = await engine.gradeChallengeUnit({
     system: rubric.system(ceiling),
     user: rubric.user(input || {}),
     schema: GRADE_SCHEMA,
-    apiKey,
     model: GRADE_MODEL,
     telemetryContext: { component: rubric.component },
   });
@@ -155,12 +154,12 @@ async function grade({ measure, input, max, apiKey, llm }) {
 // Grade a batch, one at a time. A single failure stops the batch rather than
 // burning through every remaining unit against an outage — the rest are
 // picked up by the next tick, which is minutes away.
-async function gradeAll(units, { apiKey, llm, onError } = {}) {
+async function gradeAll(units, { llm, onError } = {}) {
   const out = [];
   for (const unit of units) {
     try {
       const result = await grade({
-        measure: unit.measure, input: unit.gradeInput, max: unit.points, apiKey, llm,
+        measure: unit.measure, input: unit.gradeInput, max: unit.points, llm,
       });
       out.push({ ...unit, points: result.score, grade: result });
     } catch (err) {

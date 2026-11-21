@@ -228,7 +228,7 @@ function platformFaultError(error, kind) {
 }
 
 async function cloneWithRetry(cloneUrl, checkoutDir, {
-  attempts = CLONE_ATTEMPTS, backoffMs = CLONE_BACKOFF_MS, wait = sleep,
+  attempts = CLONE_ATTEMPTS, backoffMs = CLONE_BACKOFF_MS, wait = sleep, checkoutGit = git,
 } = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -237,7 +237,7 @@ async function cloneWithRetry(cloneUrl, checkoutDir, {
       // updates them for the exact revision afterwards: that update is
       // best-effort (a pinned commit a depth-1 fetch cannot reach fails
       // it), and then this copy is the only one the build has.
-      await git(['clone', '--depth', '1', '--no-tags', '--recurse-submodules', '--shallow-submodules', cloneUrl, checkoutDir]);
+      await checkoutGit(['clone', '--depth', '1', '--no-tags', '--recurse-submodules', '--shallow-submodules', cloneUrl, checkoutDir]);
       return;
     } catch (error) {
       lastError = error;
@@ -259,7 +259,8 @@ async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
   const { owner, repo } = repoParts(app.repo_url);
   const cloneUrl = await github.getCloneUrl(owner, repo);
   const checkoutDir = path.join(parentDir, side);
-  await cloneWithRetry(cloneUrl, checkoutDir);
+  const checkoutGit = require('./project-source').checkoutGit(app.repo_url, cloneUrl, git);
+  await cloneWithRetry(cloneUrl, checkoutDir, { checkoutGit });
 
   const refs = [];
   // GitHub's pull ref first; a repository on Homeroom's git host has none,
@@ -271,22 +272,22 @@ async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
   let checkedOut = false;
   let lastError = null;
   try {
-    await git(['-C', checkoutDir, 'checkout', '--detach', revision], { timeout: 30_000 });
+    await checkoutGit(['-C', checkoutDir, 'checkout', '--detach', revision], { timeout: 30_000 });
     checkedOut = true;
   } catch (err) { lastError = err; }
   for (const ref of refs) {
     if (checkedOut) break;
     try {
-      await git(['-C', checkoutDir, 'fetch', '--depth', '1', '--no-tags', 'origin', ref]);
-      await git(['-C', checkoutDir, 'checkout', '--detach', revision], { timeout: 30_000 });
+      await checkoutGit(['-C', checkoutDir, 'fetch', '--depth', '1', '--no-tags', 'origin', ref]);
+      await checkoutGit(['-C', checkoutDir, 'checkout', '--detach', revision], { timeout: 30_000 });
       checkedOut = true;
     } catch (err) { lastError = err; }
   }
   if (!checkedOut) {
     throw new ShotsEnvironmentError('shots_revision_unreachable', `Could not check out the exact ${side} revision.`, lastError?.message || null);
   }
-  await git(['-C', checkoutDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1']).catch(() => {});
-  const { stdout } = await git(['-C', checkoutDir, 'rev-parse', 'HEAD'], { timeout: 5_000 });
+  await checkoutGit(['-C', checkoutDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1']).catch(() => {});
+  const { stdout } = await checkoutGit(['-C', checkoutDir, 'rev-parse', 'HEAD'], { timeout: 5_000 });
   const resolved = String(stdout || '').trim().toLowerCase();
   if (resolved !== revision) {
     throw new ShotsEnvironmentError('shots_revision_mismatch', `${side} checkout resolved to a different commit.`);

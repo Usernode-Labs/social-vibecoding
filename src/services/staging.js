@@ -230,6 +230,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     if (!owner || !repo) throw new Error('Could not parse repo URL');
 
     const cloneUrl = await github.getCloneUrl(owner, repo);
+    const checkoutGit = require('./project-source').checkoutGit(
+      app.repo_url, cloneUrl, (args, options) => docker.execFileAsync('git', args, options),
+    );
     // One checkout per claim of an attempt: a claim that lost its lease may
     // still be using its own when the next one starts.
     const cloneDir = `/tmp/usernode-preview-${session.id}-a${attempt.n}-c${attempt.claim || 0}`;
@@ -290,7 +293,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // upstream sources via submodules (e.g. falling-sands → sandspiel)
     // get a complete tree at build time. No-op for dapps without
     // submodules. Timeout bumped to absorb worst-case submodule fetch.
-    await docker.execFileAsync('git', [
+    await checkoutGit([
       'clone', '--depth', '1',
       ...(rootOnly
         ? ['--filter=blob:none', '--sparse']
@@ -312,7 +315,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     if (pinnedSha) {
       // The root-only checkout fetches the commit's root files as it detaches,
       // so it gets a network timeout.
-      const detach = () => docker.execFileAsync('git', [
+      const detach = () => checkoutGit([
         '-C', cloneDir, 'checkout', '--detach', pinnedSha,
       ], { timeout: rootOnly ? 120000 : 30000 });
       // A whole-tree clone fails to detach at a commit it lacks, and that
@@ -324,7 +327,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       // commit per fetch, and asking what that one is costs nothing.
       const holdsPinned = async (ref) => {
         if (!rootOnly) return true;
-        const { stdout } = await docker.execFileAsync('git', [
+        const { stdout } = await checkoutGit([
           '-C', cloneDir, 'rev-parse', ref,
         ], { timeout: 5000 });
         return String(stdout || '').trim().toLowerCase().startsWith(pinnedSha.toLowerCase());
@@ -349,7 +352,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       for (const ref of fetchRefs) {
         if (checkedOut) break;
         try {
-          await docker.execFileAsync('git', [
+          await checkoutGit([
             '-C', cloneDir, 'fetch', '--depth', '1', 'origin', ref,
           ], { timeout: 120000 });
           if (!await holdsPinned('FETCH_HEAD')) throw new Error(`${ref} is not at ${pinnedSha}`);
@@ -359,7 +362,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       }
       if (!checkedOut) throw lastErr || new Error(`Could not check out ${pinnedSha}`);
       if (!rootOnly) {
-        await docker.execFileAsync('git', [
+        await checkoutGit([
           '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
         ], { timeout: 120000 }).catch(() => {});
       }
@@ -375,10 +378,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // secrets it requires. A submodule that cannot be fetched fails the
     // build here, as it fails the whole clone.
     if (rootOnly && rootHasDanglingLink(cloneDir)) {
-      await docker.execFileAsync('git', [
+      await checkoutGit([
         '-C', cloneDir, 'sparse-checkout', 'disable',
       ], { timeout: 120000 });
-      await docker.execFileAsync('git', [
+      await checkoutGit([
         '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
       ], { timeout: 120000 });
     }
@@ -939,13 +942,16 @@ async function rebuildProductionInner(config, app, options = {}) {
       if (!owner || !repo) throw new Error('Could not parse repo URL');
 
       const cloneUrl = await github.getCloneUrl(owner, repo);
+      const checkoutGit = require('./project-source').checkoutGit(
+        app.repo_url, cloneUrl, (args, options) => docker.execFileAsync('git', args, options),
+      );
 
       // --recurse-submodules + --shallow-submodules so dapps that vendor
       // upstream sources via submodules (e.g. falling-sands → sandspiel)
       // get a complete tree at build time. No-op for dapps without
       // submodules. Timeout bumped to absorb worst-case submodule fetch.
       try {
-        await docker.execFileAsync('git', [
+        await checkoutGit([
           'clone', '--depth', '1',
           '--recurse-submodules', '--shallow-submodules',
           cloneUrl, cloneDir,

@@ -86,8 +86,10 @@ import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type Invi
 import { hubShot, hubShotPayload } from './hub-shot';
 import { useHubDismissed } from './hub-dismissed';
 import { changeHref } from '../../../lib/change-href';
-import { useLiveSkin } from '../../../lib/skin';
+import { communityScene } from '../../home/pinned-communities';
+import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import type { ApprovalPayload } from '../../who-decides/model';
+import { CardPreview } from '../../guest/card-preview';
 import { CARD_JOIN_SIZE, CARD_OPEN_BTN, PeopleCard, ProjectCard, type ProjectCover } from '../../guest/project-card';
 import type { GuestApp } from '../../guest/guest-data';
 
@@ -258,6 +260,7 @@ export type CommunityPayload = {
   approval: ApprovalPayload;
   /** #4666: who can see and build it, as the two columns say. */
   visibility?: { build: 'public' | 'private'; view: 'public' | 'private' } | null;
+  repo_visibility_follows_project?: boolean;
   /** #4666: a change to who can see and change it already up for a vote. */
   who_decides_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
   /**
@@ -723,7 +726,7 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
   const t = useMessages('project');
   // Standard (WIP): who it is for and who is in it are two things on the
   // line, each with its own mark, in place of one run of words.
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   return (
     <div className="dev-ws-hero-id" data-ws-community-id="">
       <span className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
@@ -1002,8 +1005,10 @@ export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef
   );
 }
 
-export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false }: {
+export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false, platform = false }: {
   slug: string;
+  /** Homeroom's own community: its hero wears the brand's own page (cream, the people, the three-colour rule). */
+  platform?: boolean;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
   name?: string;
@@ -1028,7 +1033,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   const t = useMessages('project');
   const data = useCommunity(slug);
   // Standard (WIP) draws the hero as a poster, with the project's picture at its side.
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   // The invite link this page was opened from, if it was (#3700).
   const offer = useInviteOffer(slug);
   // The Invite card's ✕ (InviteHeroCard): once closed, the row's small
@@ -1329,9 +1334,14 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
     );
   }
 
+  // The project's picture (its moving loop plays over it while it is pointed at) stands beside the hero, in its
+  // row, where the look is the kit's and there is one (asked 20 Nov 2026).
+  const previewBeside = wipLook && !platform && !!data.cover?.illustration_url;
   return (
+    <>
     <section
       ref={cardRef}
+      data-has-preview={previewBeside ? '' : undefined}
       // THE HUB'S HEAD (the hub as the project's summary): the hero leads
       // with what it is, then who is around, and on a wide window what you
       // can do sits across from the name (app.css `.dev-ws-hero-summary`).
@@ -1348,12 +1358,14 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           when it has one, and its icon again, large, in front of it. */}
       {wipLook ? (
         <>
-          <span className="wip-hero-wash" aria-hidden="true" />
+          {/* The brand kit's background this community wears on its pinned card (asked 20 Nov 2026), fading into the card toward the words. */}
+          <span className="wip-hero-wash" data-scene={platform ? 'home' : String(communityScene(slug))} aria-hidden="true" />
           <span className="wip-hero-art" aria-hidden="true">
             <span className="wip-hero-rings" />
             <span className="wip-hero-stage">
-              {data.cover?.illustration_url ? <img className="wip-hero-art-pic" src={data.cover.illustration_url} alt="" loading="lazy" /> : null}
-              <span className="app-icon-tile wip-hero-art-icon" data-icon={appIconKind({ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null })}>
+              {platform ? <img className="wip-hero-people" src="/brand/people.png" alt="" /> : null}
+              {!platform && data.cover?.illustration_url ? <img className="wip-hero-art-pic" src={data.cover.illustration_url} alt="" loading="lazy" /> : null}
+              <span className="app-icon-tile wip-hero-art-icon" hidden={platform} data-icon={appIconKind({ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null })}>
                 <AppIconContent app={{ slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null }} />
               </span>
             </span>
@@ -1419,6 +1431,20 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
         </a>
       ) : null}
     </section>
+    {previewBeside ? (
+      // The picture at rest; pointing at it plays the project's loop over it, as a featured card on Home does
+      // (../../guest/card-preview.tsx: after a moment's hover, one at a time, never on a phone or under reduced motion).
+      <div className="wip-hero-preview" data-ws-hero-preview="">
+        {data.cover?.illustration_url ? (
+          <img className={data.cover.illustration_dark_url ? 'wip-hero-preview-pic dark:hidden' : 'wip-hero-preview-pic'} src={data.cover.illustration_url} alt="" draggable={false} />
+        ) : null}
+        {data.cover?.illustration_url && data.cover.illustration_dark_url ? (
+          <img className="wip-hero-preview-pic hidden dark:block" src={data.cover.illustration_dark_url} alt="" draggable={false} />
+        ) : null}
+        {data.cover?.preview_url ? <CardPreview src={data.cover.preview_url} /> : null}
+      </div>
+    ) : null}
+    </>
   );
 }
 
@@ -1580,7 +1606,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
   // Standard (WIP) has both of its actions in the hero (CommunityCard).
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   const [closed, close] = useHubDismissed(slug, 'share');
   if (!data || data.audience !== 'solo' || closed) return null;
   if (wipLook) return null;

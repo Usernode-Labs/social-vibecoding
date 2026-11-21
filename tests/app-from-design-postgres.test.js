@@ -8,10 +8,10 @@
 //
 // What this pins:
 //   1. Only the person's own design with no project yet makes one; its
-//      brief is the design's title and notes, its early plan is ready from
+//      brief is the artifact's title and notes, its early plan is ready from
 //      the design and asks nothing, and its thread is the new project's.
 //   2. The design's Make the project card gives way to what it made.
-//   3. Its first request is filed with the design as its plan, one screen,
+//   3. Its first request is filed with the artifact as its plan, one screen,
 //      as its maker, so the bot builds the first version from it.
 
 const test = require('node:test');
@@ -108,7 +108,7 @@ test('a project made from a design', { timeout: 180000 }, async (t) => {
   await designs.addVersion(pool, { threadId: row.id, html: DRAWN, author: 'bot', note: 'A list of plants' });
   await designs.addVersion(pool, { threadId: row.id, html: DRAWN.replace('Water now', 'Watered'), author: 'bot', note: 'A clearer button' });
   const card = await dm.sendDm(pool, {
-    bot, userId: ada.id, content: 'Want to make Watering can from this design?', threadRootId: line.messageId, moment: null,
+    bot, userId: ada.id, content: 'Want to make Watering can from this artifact?', threadRootId: line.messageId, moment: null,
     metadata: {
       kind: 'make_offer', question: 'Make Watering can?', makeProject: { name: 'Watering can', rootId: line.messageId, version: 2 },
       actions: [{ id: 'make', label: 'Make the project', style: 'primary', type: 'make' }], status: 'open',
@@ -141,11 +141,31 @@ test('a project made from a design', { timeout: 180000 }, async (t) => {
     assert.equal(again.status, 409, 'a design makes one project');
   });
 
-  await t.test('its first version is the design\'s: the brief, a ready plan that asks nothing, the thread', async () => {
+  await t.test('artifacts: a plain page is never made into a project, through the same route', async () => {
+    // A new person: the create limiter's bucket is per person.
+    const pia = await person('ad_pia');
+    const store = require('../src/services/artifacts');
+    const page = await dm.sendDm(pool, { bot, userId: pia.id, content: 'Lay my trip budget out as a page.', moment: null, thread: { kind: 'idea' } });
+    const held = await store.ensureArtifact(pool, {
+      user: pia, thread: { rootId: page.messageId, conversationId: page.conversationId }, kind: 'page', title: 'Trip budget', viewport: 'desktop',
+    });
+    await store.addVersion(pool, { threadId: held.threadId, html: '<h1>Trip budget</h1>', author: 'bot', note: 'Flights and hotel' });
+    const { rows: [{ n: before }] } = await pool.query('SELECT COUNT(*)::int AS n FROM apps');
+    const res = await post({ name: 'Trip budget', audience: 'solo', brief: 'Trip budget', design: { rootId: page.messageId, version: 1 } }, pia);
+    assert.deepEqual([res.status, res.data.error], [409, 'not_a_design']);
+    const { rows: [{ n: after }] } = await pool.query('SELECT COUNT(*)::int AS n FROM apps');
+    assert.equal(after, before, 'nothing was made');
+    const { rows: fv } = await pool.query('SELECT 1 FROM homeroom_bot_first_versions WHERE design_thread_id = $1', [held.threadId]);
+    assert.equal(fv.length, 0);
+    const { rows: [thread] } = await pool.query('SELECT app_id, state FROM private_threads WHERE id = $1', [held.threadId]);
+    assert.deepEqual(thread, { app_id: null, state: 'open' }, 'its thread is as it was');
+  });
+
+  await t.test('its first version is the artifact\'s: the brief, a ready plan that asks nothing, the thread', async () => {
     const { rows: [fv] } = await pool.query('SELECT * FROM homeroom_bot_first_versions WHERE app_id = $1', [made.id]);
     assert.equal(Number(fv.design_thread_id), Number(row.id));
     assert.equal(fv.design_version, 2);
-    assert.match(fv.brief, /^Watering can\n\nIts first screen is "Watering", designed with Homeroom bot in a private thread \(version 2\)\./);
+    assert.match(fv.brief, /^Watering can\n\nIts first screen is "Watering", drawn with Homeroom bot in a private thread \(version 2\)\./);
     assert.match(fv.brief, /- A list of plants\n- A clearer button$/);
     assert.equal(fv.early_plan_status, 'ready');
     assert.equal(fvPlan.planStatus(fv), 'ready');
@@ -202,7 +222,7 @@ test('a project made from a design', { timeout: 180000 }, async (t) => {
     assert.equal((await cardMeta(otherCard.messageId)).status, 'open');
   });
 
-  await t.test('its first request is filed with the design as its plan, as its maker', async () => {
+  await t.test('its first request is filed with the artifact as its plan, as its maker', async () => {
     await pool.query(`UPDATE apps SET repo_url = $2, status = 'running' WHERE id = $1`, [made.id, `https://github.com/usernode-bot/${made.slug}`]);
     const filed = new Map();
     const github = {

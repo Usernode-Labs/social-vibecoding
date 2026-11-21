@@ -124,3 +124,48 @@ test('close-up generation falls back to no requests when its comparison cannot f
     intent: { stories: [{ id: 'badge', viewports: [{ name: 'desktop' }] }] } };
   assert.deepEqual(await control.wantedCloseups({ query: async () => ({ rows: [] }) }, run), []);
 });
+
+test('publishing adds "something else changed too" after the agent\'s own notices, and judges unchanged by the frame', async (t) => {
+  const control = require('../src/services/shots-control');
+  const orchestrator = require('../src/services/shots-orchestrator');
+  const own = { text: 'The table is cut off.', change: 'bar', screen: 'desktop', shot: 'screen', alsoBefore: false };
+  const verdict = { stories: [{ id: 'bar', status: 'ready' }], notices: [own] };
+  t.mock.method(control, 'read', async () => ({ intent: { stories: [{ id: 'bar', viewports: [{ name: 'desktop' }] }] } }));
+  t.mock.method(control, 'filesFor', async () => []);
+  const frame = { story: 'bar', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] };
+  const card = { story: null, b: [40, 300, 400, 120], a: [40, 300, 400, 120], bMark: null, aMark: null };
+  t.mock.method(comparison, 'screensFor', async () => [{ viewport: 'desktop', shot: 'bar', stories: ['bar'], regions: [card], frames: [frame] }]);
+  const out = await orchestrator.compareScreens(null, { runId: 'run', verdict });
+  assert.deepEqual(out.notices, [own, { text: diff.ELSEWHERE_TEXT, change: 'bar', screen: 'desktop', shot: 'screen', alsoBefore: 'unknown' }]);
+  assert.equal(out.stories[0].unchanged, true, 'nothing differs inside its frame');
+});
+
+test('an element shot\'s recorded place reaches the comparison in its worker', async () => {
+  // Two identical buttons; the element shot is of the second, and its
+  // browser recorded that. Searched for by its pixels it would be the first.
+  const W = 240; const H = 200;
+  const paint = (rects) => {
+    const image = new PNG({ width: W, height: H });
+    for (let i = 0; i < W * H; i += 1) image.data.set([245, 245, 247, 255], i * 4);
+    for (const [x, y, w, h, c] of rects) {
+      for (let yy = y; yy < y + h; yy += 1) for (let xx = x; xx < x + w; xx += 1) image.data.set([...c, 255], (yy * W + xx) * 4);
+    }
+    return image;
+  };
+  const button = (y) => [[20, y, 80, 24, [37, 99, 235]], ...Array.from({ length: 9 }, (_, i) => [26 + i * 7, y + 7, 4, 9, [255, 255, 255]])];
+  const page = [...button(40), ...button(140)];
+  const before = paint(page);
+  const after = paint([...page, [104, 44, 20, 16, [220, 40, 40]]]);
+  const element = new PNG({ width: 80, height: 24 });
+  PNG.bitblt(after, element, 20, 140, 80, 24, 0, 0);
+  const file = (side, variant, png, extra = {}) => {
+    const data = PNG.sync.write(png);
+    return { storyId: 'second', viewport: 'desktop', side, variant, media: 'png', data,
+      sha256: require('node:crypto').createHash('sha256').update(data).digest('hex'), ...extra };
+  };
+  const [shown] = await comparison.screensFor([{ id: 'second', viewports: [{ name: 'desktop', width: W, height: H }] }], [
+    file('base', 'context', before), file('head', 'context', after),
+    file('head', 'focus', element, { focusRect: { x: 20, y: 140, w: 80, h: 24 } }),
+  ]);
+  assert.deepEqual(shown.frames, [{ story: 'second', b: null, a: [20, 140, 80, 24] }]);
+});

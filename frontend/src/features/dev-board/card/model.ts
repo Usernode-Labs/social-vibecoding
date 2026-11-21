@@ -88,6 +88,19 @@ export interface StatusPillState {
 }
 
 /**
+ * The pill a card, a row or a facts line draws: the change's stored row's
+ * words while that row is not up for a vote, else the live vote's own pill.
+ * The one rule (lib/work-state.ts): the stored row gives the word and the
+ * tone; the live vote's counts (`yes`, `majority`, which the row's pill
+ * carries too) are the detail. What reads the vote itself (who may vote,
+ * how many more it needs) keeps `pill.state`.
+ */
+export function shownPill(card: { pill?: { state: StatusPillState; row?: StatusPillState | null } | null } | null | undefined): StatusPillState | null {
+  const pill = card && card.pill;
+  return pill ? pill.row || pill.state || null : null;
+}
+
+/**
  * A named call back into AppView, with its arguments.
  *
  * The cards used to carry `onclick="AppView.castVote(12, 'yes', '<sha>')"` in
@@ -352,8 +365,13 @@ export interface DevCardModel {
   icon: CardIconSpec | null;
   title: TitleSpec;
   meta: MetaPart[];
-  /** The composite pill. `inline` is the detail head's capsule variant. */
-  pill?: { state: StatusPillState; inline: boolean } | null;
+  /**
+   * The composite pill. `inline` is the detail head's capsule variant.
+   * `state` is the live vote's reading (AppView.statusPillState). `row` is
+   * the change's stored row's words while that row is not up for a vote
+   * (AppView._workPill): what is DRAWN in `state`'s place (`shownPill`).
+   */
+  pill?: { state: StatusPillState; inline: boolean; row?: StatusPillState | null } | null;
   /** Closes-#N pills — their own opt because they lead the band, outside the cap. */
   linked: BadgeSpec[];
   badges: BadgeSpec[];
@@ -720,6 +738,12 @@ export interface DevWorkshopView {
           bMark: number[] | null;
           aMark: number[] | null;
         }[];
+        /**
+         * What each declared change on the screen is about: the element its
+         * shots agent shot, on each side, numbered as the regions are. The
+         * picture is cropped to these when there are any; never outlined.
+         */
+        frames?: { n: number; b: number[] | null; a: number[] | null }[];
         /** The changes this screen shows, by number. */
         changes: number[];
       }[];

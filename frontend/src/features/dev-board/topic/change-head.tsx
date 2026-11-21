@@ -58,14 +58,15 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, TitleEditButton, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel, StatusPillState, TitleSpec } from '../card/model';
-import { useThreadHeadFit } from './thread-head-fit';
+import { ThreadHeadCard } from './thread-head';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { shortDate } from '../../../lib/timestamp';
-import { changeRail, type RailOpen } from './rail-model';
+import { changeRail, leadRow, type RailOpen } from './rail-model';
+import type { Standing } from '../../../lib/work-state';
 import { changeFoot, changePhase, fixStanding, type ChangePhase } from './card-model';
 import { closeStep, isGates, openStep, useOpenStep } from './step-store';
 import { NoPicture, PlanWords, StepLayer, ThreadBarTile, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy, threadProjectName } from './thread-card';
-import { ThreadExits } from './thread-exits';
+import { ThreadExits, ThreadShowList } from './thread-exits';
 import { askFix, useChecksExplanation } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { openRequestSpec } from './request-model';
@@ -133,9 +134,6 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
   // s34): what it is in a small line over the change's title, with this menu.
   const frame = isFrameSkin(useLiveSkin());
-  // The head card is measured and tightens as the thread scrolls (./thread-head-fit.ts).
-  const head = useRef<HTMLElement>(null);
-  useThreadHeadFit(head, !frame);
   if (frame) return <TopicFrameHead title={name || title} over={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
   // 18 Nov 2026: the bar is the thread's head (app.css), on its own page and
   // in either panel alike. Its project and topic are what the card's kicker
@@ -149,10 +147,13 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
       {own ? <TitleContent t={{ ...own, edit: undefined, editing: undefined }} /> : title}
     </span>
   );
+  // 20 Nov 2026: the card every thread page leads with (./thread-head.tsx),
+  // measured and tightened as the thread scrolls.
   return (
-    <header ref={head} className="messages-thread-header">
-      <ThreadBarTile />
-      <div className="min-w-0 flex-1 dev-thread-bar-text">
+    <ThreadHeadCard
+      lead={<ThreadShowList />}
+      tile={<ThreadBarTile />}
+      line={(
         <div className="flex min-w-0 items-center gap-2">
           <div className="messages-thread-kicker min-w-0" data-change-kicker="">{title}</div>
           {pill ? (
@@ -161,6 +162,8 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
             </span>
           ) : null}
         </div>
+      )}
+      title={(
         <div className="messages-thread-name min-w-0">
           {detailsId ? (
             <button
@@ -176,11 +179,11 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
           ) : heading}
           {own?.edit ? <TitleEditButton edit={own.edit} /> : null}
         </div>
-        {v.category
-          ? <div className="messages-thread-sub" data-change-category="">{where}</div>
-          : where ? <div className="messages-thread-sub">{where}</div> : null}
-      </div>
-      {menuKey ? (
+      )}
+      sub={v.category
+        ? <div className="messages-thread-sub" data-change-category="">{where}</div>
+        : where ? <div className="messages-thread-sub">{where}</div> : null}
+      menu={menuKey ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
@@ -192,8 +195,8 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
           <EllipsisHorizontalIcon aria-hidden="true" />
         </button>
       ) : null}
-      <ThreadExits />
-    </header>
+      exits={<ThreadExits />}
+    />
   );
 }
 
@@ -982,8 +985,14 @@ export function phaseOf(v: ChangeThreadView): ChangePhase {
   return changePhase({ status: v.status ? { key: v.status.key, label: v.status.label } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
 }
 
-export function ChangeFoot({ id, card, v, page, ballot = false, tail = null, float = false }: {
+export function ChangeFoot({ id, card, v, page, ballot = false, tail = null, float = false, row = null }: {
   id: number | null; card: DevCardModel; v: ChangeThreadView; page: string; ballot?: boolean;
+  /**
+   * On a request's page with one change: the REQUEST's stored row, which
+   * words the foot's headline and line in place of the change's own row
+   * (./card-model.ts ChangeFootInput.work). The buttons stay the change's.
+   */
+  row?: Standing | null;
   /** A quiet row at the foot's end, inside its band (the private suggestion). */
   tail?: ReactNode;
   /**
@@ -994,7 +1003,15 @@ export function ChangeFoot({ id, card, v, page, ballot = false, tail = null, flo
   float?: boolean;
 }): ReactNode {
   const t = useMessages('project');
-  const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null, votes: v.votes, testing: v.testing, merge: v.merge || null, work: v.work || null });
+  // The request's row words it on a request's page, as it words the
+  // timeline's last step (./rail-model.ts leadRow).
+  const lead = leadRow<Standing>(row, v.work || null, id);
+  const foot = changeFoot({
+    status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null,
+    votes: v.votes, testing: v.testing, merge: v.merge || null,
+    work: lead,
+    yours: lead === row && row ? row.mine !== false : true,
+  });
   const { voteAction, testAction, testingActions } = gateActions(card, v);
   const now = useReleaseNow(v.votes.release);
   const release = v.votes.release ? releaseSentence(v.votes.release, now) : null;

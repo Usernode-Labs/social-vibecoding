@@ -173,7 +173,7 @@ test('every card opens its project\'s page, no card is locked, and each project 
     const card = cardOf(html, slug);
     assert.equal((card.match(/<a /g) || []).length, 1, `${slug}: one link`);
     assert.match(card, new RegExp(`<a href="/app/${slug}" data-guest-card-link=""`));
-    assert.match(card, /after:absolute after:inset-0 after:z-\[1\] after:rounded-\[20px\] after:content-\[(?:''|&#x27;&#x27;)\]/);
+    assert.match(card, /after:absolute after:inset-0 after:z-\[1\] after:content-\[(?:''|&#x27;&#x27;)\]/);
   }
   assert.doesNotMatch(html, /href="#app\//, 'no card links by fragment');
   // A plain click on Discover stays in the page, at the fragment signing in
@@ -188,12 +188,12 @@ test('every card opens its project\'s page, no card is locked, and each project 
   assert.ok(words.includes('Classic games, fresh every day.'));
   assert.ok(!words.some((w) => /^Latest change/.test(w)), 'what changed lately is the project page\'s');
   assert.ok(!words.some((w) => /^0 /.test(w)), 'no zero is printed');
-  // What a card says about itself stops at two lines: a display utility
-  // beside line-clamp-2 undoes the clamp (#5851).
-  const about = html.match(/data-guest-card-about="" class="([^"]+)"/);
+  // What a card says about itself stops at two lines (#5851): the card's
+  // own sentence, clamped by app.css, with no utility class to undo it.
+  const about = html.match(/<span class="([^"]+)" data-cm-desc="" data-guest-card-about="">/);
   assert.ok(about, 'a card shows what it is');
-  assert.ok(about[1].split(' ').includes('line-clamp-2'));
-  assert.ok(!about[1].split(' ').some((c) => /^(block|inline|inline-block|flex|grid)$/.test(c)), about[1]);
+  assert.equal(about[1], 'cm-card-desc');
+  assert.match(read('public/css/app.css'), /\.cm-card-desc \{\s*display: -webkit-box;\s*-webkit-box-orient: vertical;\s*-webkit-line-clamp: 2;/);
 });
 
 // What a card says, by its numbers (the 21 Oct 2026 review: the median
@@ -212,66 +212,76 @@ function cardOf(html, slug) {
   return html.slice(at, html.indexOf('</article>', at));
 }
 
-test('a card is its picture, its name and its own sentence; how many used it lately is a pill from five, in words for a screen reader', () => {
+test('a card is the community card: its picture, its icon, its name over the members, its sentence and this week; no pill on the picture', () => {
   const { MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE } = loadTsx(DATA);
   assert.deepEqual([MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE], [25, 10, 5, 5]);
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: FACT_APPS }));
-  // From five: a profile glyph and the number on the picture, hidden from a
-  // screen reader, which hears it in words with the name.
   const busy = cardOf(html, 'busy');
-  assert.match(busy, /<span data-guest-card-people="" aria-hidden="true"[^>]*><svg[^>]*>.*?<\/svg>43<\/span>/);
-  assert.match(busy, new RegExp(`data-guest-card-link="" aria-label="${message('auth:guest.card.peopleLabel', { name: 'Busy', count: 43 })}"`));
-  assert.match(cardOf(html, 'some'), /data-guest-card-people=""[^>]*>.*?5<\/span>/);
-  // Under it, nothing: no pill and the link is the name alone.
-  const quiet = cardOf(html, 'quiet');
-  assert.doesNotMatch(quiet, /data-guest-card-people/);
-  assert.doesNotMatch(quiet, /data-guest-card-link="" aria-label=/, 'the link is the name alone');
-  // Members, votes and what changed lately are the project page's, not a card's.
+  // The picture first, a direct child, which the card-to-page morph grows from.
+  assert.match(busy, /^<article data-guest-(?:card|featured)="busy"[^>]*><span class="cm-card-pic" data-cm-scene="[1-6]" data-guest-card-cover="">/);
+  // Its own icon beside the name and the members, in words.
+  assert.match(busy, /<span class="cm-card-icon" data-icon="letter" aria-hidden="true">B<\/span><\/span><span class="cm-card-id"><a href="\/app\/busy" data-guest-card-link="" class="cm-card-name [^"]*">Busy<\/a><span class="cm-card-members" data-cm-members="">87 members<\/span>/);
+  // This week: how many were active (the directory's active_users) and how many changes went live.
+  assert.match(busy, /<span class="cm-week-in"><span>43 active<\/span><span class="cm-week-live">6 changes live this week<\/span><\/span>/);
+  assert.match(cardOf(html, 'quiet'), /<span class="cm-week-in"><span>4 active this week<\/span><\/span>/, 'nothing went live: the active alone, with its week');
+  // No pill on the picture: the count is in words beside the icon, and the link is the name alone.
+  assert.doesNotMatch(html, /data-guest-card-people/);
+  assert.doesNotMatch(html, /data-guest-card-link="" aria-label=/, 'the link is the name alone');
+  // Votes and what changed lately are the project page's, not a card's.
   for (const slug of ['busy', 'some', 'quiet']) {
     const words = text(cardOf(html, slug));
-    assert.ok(!words.some((w) => /member|people active|up for a vote|voted in|Updated|Latest change/.test(w)), `${slug}: ${words}`);
+    assert.ok(!words.some((w) => /up for a vote|voted in|Updated|Latest change/.test(w)), `${slug}: ${words}`);
     assert.doesNotMatch(cardOf(html, slug), /data-guest-card-(?:fact|activity|votes)=/);
   }
-  assert.deepEqual(text(quiet).slice(1), ['Quiet'],
-    'the letter tile, then the name: a visitor\'s card carries no Pin or Join (#6433)');
+  assert.deepEqual(text(cardOf(html, 'quiet')).slice(0, 3), ['Q', 'Quiet', '3 members'],
+    'the letter tile, then the name and the members: a visitor\'s card carries no Pin or Join (#6433)');
 });
 
-test('the cards are one grid that reflows, two columns at least, and the cards look worth tapping', () => {
+test('the cards are one grid that reflows, four across where four fit and two on a phone, and the cards look worth tapping', () => {
   const src = read(DISCOVER);
-  assert.match(src, /export const CARD_GRID = 'grid grid-cols-\[repeat\(auto-fill,minmax\(min\(190px,calc\(50%_-_6px\)\),1fr\)\)\] gap-3';/);
+  assert.doesNotMatch(src, /CARD_GRID/, 'the grid is the community card\'s');
   // One Home (#6361): Home's Communities to join draws them, signed in or out.
-  assert.match(read(JOIN), /<div className=\{`\$\{CARD_GRID\} px-1`\}>\s*\{list\.slice\(0, shown\)\.map\(\(app, i\) => \(\s*<Card/);
+  assert.match(read(JOIN), /<div className=\{GRID\} data-cm-grid="join">\s*\{list\.slice\(0, shown\)\.map\(\(app, i\) => \(\s*<Card/);
+  assert.match(read(JOIN), /const GRID = 'cm-grid px-1';/);
+  const css = read('public/css/app.css');
+  assert.match(css, /@media \(max-width: 639\.98px\) \{\s*\.cm-grid:is\(\[data-cm-grid="join"\], \[data-cm-grid="lead"\]\) \{ gap: 12px; \}[\s\S]*?\.cm-grid\[data-cm-grid="join"\] \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/, 'two across on a phone, 12px apart');
+  assert.match(css, /@media \(min-width: 1024px\) \{ :root \{ --cm-cols: 4; \} \}/, 'four across from 1024px');
   assert.doesNotMatch(src, /snap-x|overflow-x-auto/, 'nothing scrolls sideways');
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   const card = cardOf(html, 'todo-list');
   const cls = card.match(/^<article[^>]* class="([^"]+)"/)[1].split(' ');
-  // Raised at rest, rising under a pointer (hoverOnlyWhenSupported: not on a
-  // touch screen), giving under a press, ringed for the keyboard, still for
-  // anyone who asks for less motion.
-  for (const c of ['group', 'rounded-[20px]', 'hover:-translate-y-1', 'active:scale-[0.97]', 'has-[a:focus-visible]:outline', 'motion-reduce:hover:translate-y-0', 'motion-reduce:active:scale-100']) {
+  // Rising under a pointer (hoverOnlyWhenSupported: not on a touch screen),
+  // giving under a press, ringed for the keyboard, still for anyone who asks
+  // for less motion; its shadow under the pointer and its picture's growth
+  // are the card's own CSS.
+  for (const c of ['cm-card', 'group', 'hover:-translate-y-1', 'active:scale-[0.97]', 'has-[a:focus-visible]:outline', 'motion-reduce:hover:translate-y-0', 'motion-reduce:active:scale-100']) {
     assert.ok(cls.includes(c), c);
   }
-  assert.ok(cls.some((c) => c.startsWith('shadow-[inset_0_0_0_1px_var(--app-sheet-line),')), 'a shadow under the hairline');
-  // An icon cover: lit from the top left, the icon glowing behind itself,
-  // and an arrow that only shows under a pointer or keyboard focus.
+  assert.match(card, /^<article [^>]*data-cm-lift=""/);
+  assert.match(css, /\.cm-card\[data-cm-lift\]:hover \{ box-shadow: var\(--cm-edge-lift\); \}/);
+  assert.match(css, /\.cm-card\[data-cm-lift\]:hover \.cm-card-img \{ transform: scale\(1\.04\); \}/);
+  // A community with no picture wears one of the brand kit's backgrounds:
+  // no colour block, no glow, no large icon in the middle.
   const fresh = cardOf(html, 'fresh-one');
-  assert.match(fresh, /bg-\[radial-gradient\(120%_90%_at_22%_12%,rgba\(255,255,255,0\.28\),rgba\(255,255,255,0\)_58%\)\]/);
+  assert.match(fresh, /<span class="cm-card-pic" data-cm-scene="[1-6]" data-guest-card-cover="">/);
+  assert.doesNotMatch(html, /radial-gradient|blur-\[|style="background/);
+  // The arrow only shows under a pointer or keyboard focus.
   assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 end-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
-test('a project\'s picture that cannot load falls back to its icon on its colour, never a broken image', () => {
+test('a project\'s picture that cannot load falls back to its brand background, never a broken image', () => {
   // #6784 review: the Home card showed a broken image when a project's
-  // picture file was missing. The cover hears the browser's error, stops
-  // drawing the picture, and takes the icon-on-its-colour branch a project
-  // with no picture uses.
-  const src = read(DISCOVER);
-  const at = src.indexOf('function CardCover(');
-  const body = src.slice(at, src.indexOf('\nfunction ', at + 10));
-  assert.ok(at > 0 && body, 'CardCover is found');
-  assert.equal(body.match(/onError=\{\(\) => setPictureFailed\(true\)\}/g)?.length, 2, 'both pictures say when they cannot load');
-  assert.match(body, /const picture = !!app\.illustration_url && !pictureFailed;/, 'a failed picture is not drawn');
-  assert.match(body, /style=\{picture \? undefined : \{ background: color \}\}/, 'the icon sits on the project\'s colour');
-  assert.match(body, /\{picture \? \(/, 'the cover picks the picture or the icon');
+  // picture file was missing. The picture hears the browser's error, stops
+  // drawing it, and shows the background a project with no picture wears.
+  const src = read('frontend/src/features/communities/card.tsx');
+  const at = src.indexOf('export function CommunityPicture(');
+  const body = src.slice(at, src.indexOf('\nexport function ', at + 10));
+  assert.ok(at > 0 && body, 'CommunityPicture is found');
+  assert.equal(body.match(/onError=\{\(\) => setFailed\(true\)\}/g)?.length, 2, 'both pictures say when they cannot load');
+  assert.match(body, /const picture = !!url && !failed;/, 'a failed picture is not drawn');
+  assert.match(body, /data-cm-scene=\{picture \? undefined : String\(cardScene\(community\.slug\)\)\}/, 'its background shows instead');
+  // A preview loop plays only over a picture that is shown.
+  assert.match(read(DISCOVER), /\{shown && app\.preview_url \? <CardPreview src=\{app\.preview_url\} \/> : null\}/);
 });
 
 test('a visitor\'s card has no buttons at all: Try it, Join and Pin are the project page\'s (#6433), and a waitlisted account still sees every project', () => {
@@ -339,16 +349,13 @@ test('a card is the same signed in or out: no Pin, no Join, no footer, one count
     assert.doesNotMatch(html, /up for a vote/, 'no votes line on a card');
   }
   // One code path: the same community's card is drawn identically on the
-  // signed-out page and on the signed-in Home (#6609).
-  // The one difference (17 Nov 2026): a visitor's first featured communities
-  // are drawn large, so their cards carry the mark for it and a line of
-  // members and changes. Take those two away and the card is the same.
-  const plain = (card) => card.replace(' data-guest-lead=""', '').replace(/<span data-guest-card-stats=""[^>]*>[^<]*<\/span>/, '');
+  // signed-out page and on the signed-in Home (#6609), Featured's larger
+  // first row included (20 Nov 2026: larger everywhere).
   for (const slug of ['game-corner', 'todo-list', 'fresh-one']) {
-    assert.equal(plain(cardOf(guest, slug)), cardOf(signedIn, slug), slug);
+    assert.equal(cardOf(guest, slug), cardOf(signedIn, slug), slug);
   }
-  assert.equal(cardOf(guest, 'fresh-one'), cardOf(signedIn, 'fresh-one'), 'a card outside the large row is identical');
-  assert.doesNotMatch(signedIn, /data-guest-lead|data-guest-card-stats/);
+  assert.match(signedIn, /<article data-guest-featured="todo-list" data-guest-lead="" data-cm-size="lead"/, 'the larger row signed in too');
+  assert.doesNotMatch(guest + signedIn, /data-guest-card-stats/);
   // The card has no footer prop at all, so a later change cannot branch it.
   assert.doesNotMatch(read(DISCOVER), /footer=\{footerFor|data-guest-card-footer/);
   assert.doesNotMatch(read(JOIN), /footerFor|home:join\.votes|home:join\.button/);
@@ -382,7 +389,10 @@ const MANY = Array.from({ length: 20 }, (_, i) => ({
 }));
 
 test('Featured is the first strip of Communities to join, signed in or out: the chosen kind of it, none while searching, and the rest under a More communities heading', () => {
-  const { CommunitiesToJoin } = loadTsx(JOIN);
+  // As every drawing but the kit's signed-in Home has it (the visitor's landing,
+  // the Communities page, "Paper, simplified"): the standard look's own Home
+  // names Featured its own way since 20 Nov 2026 (lib/skin.ts isKitHome).
+  const { CommunitiesToJoin } = loadTsx(JOIN, { stubs: { '../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } });
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
     apps: APPS, exclude: new Set(), signedIn: true, query: '', ...over,
@@ -394,38 +404,39 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // #6584, #6597: the rest is every community of the kind, most used first,
   // the featured ones left out: a Featured row, then what it does not show.
   assert.deepEqual(cardsOf(html), ['fresh-one']);
-  // #6434: Featured wraps in the same grid as the rest, at the same size,
-  // and the rest get their own heading.
-  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" data-home-join-featured-rest="" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1">/);
-  assert.doesNotMatch(html.slice(html.indexOf('data-home-join-featured=""')), /snap-x|overflow-x-auto/, 'signed in, no row of cards scrolls sideways');
-  // A VISITOR'S FEATURED IS TWO ROWS THAT SCROLL SIDEWAYS (17 Nov 2026,
-  // Drea's review): the first four drawn large, each with its members and
-  // changes, then the rest of Featured as a smaller row, both above More
-  // communities. Signed in, Featured keeps the grid above.
-  const visitor = draw({ signedIn: false });
-  assert.deepEqual(featuredOf(visitor), ['todo-list', 'game-corner'], 'the same communities in the same order');
-  // #6804: both rows scroll on the kit's FadeRail (the kind chips above are
-  // on it too), which fades an edge only where more cards are hidden. The
-  // rail never measured a row that fits, so the first render fades nothing.
-  const leadRow = visitor.match(/<div[^>]*data-home-join-lead="2"[^>]*>/)[0];
-  assert.match(leadRow, /role="list"/);
-  assert.match(leadRow, /aria-labelledby="guest-join-featured-label"/);
-  const leadClasses = leadRow.match(/class="([^"]*)"/)[1].split(' ');
-  // `scroll-px-1` makes the first card's snap point sit past the row's own
-  // left padding, so a row at rest is at scrollLeft 0 and its left edge
-  // does not fade before anyone has scrolled it.
-  for (const cls of ['snap-x', 'snap-mandatory', 'scroll-px-1', 'overflow-x-auto', 'gap-3.5', 'px-1', 'pt-0', 'pb-3.5', '[scrollbar-width:none]']) {
-    assert.ok(leadClasses.includes(cls), `the large row keeps ${cls}`);
+  // FEATURED'S FIRST ROW IS LARGER, SIGNED IN OR OUT (20 Nov 2026), as a
+  // grid and not a sideways row: as many as useLeadCount reads off an empty
+  // grid of the rest's kind (one on a phone, and in a prerender, which knows
+  // no width; ../communities/card.tsx), then the rest of Featured in the
+  // grid under it, then the rest under their own heading.
+  for (const [who, page, label] of [['signed in', html, 'home-join-featured-label'], ['a visitor', draw({ signedIn: false }), 'guest-join-featured-label']]) {
+    const at = page.indexOf('<div data-home-join-featured=""');
+    const featuredBlock = page.slice(at, page.indexOf('data-home-join-rest=', at));
+    assert.match(featuredBlock, new RegExp(`^<div data-home-join-featured="" class="pb-4"><h3 id="${label}" class="text-xs font-bold uppercase tracking-\\[0\\.06em\\][^"]*">Featured</h3><div class="cm-grid px-1" data-cm-grid="join" data-cm-probe="" aria-hidden="true"></div><div role="list" aria-labelledby="${label}" data-home-join-lead="1" data-cm-grid="lead" class="cm-grid px-1" style="--cm-lead-cols:1"><div role="listitem" class="flex min-w-0 \\[&amp;&gt;article\\]:flex-1"><article data-guest-featured="todo-list" data-guest-lead="" data-cm-size="lead"`), who);
+    assert.match(featuredBlock, new RegExp(`<div role="list" aria-labelledby="${label}" data-home-join-featured-rest="" data-cm-grid="join" class="cm-grid px-1"><div role="listitem" class="flex min-w-0 \\[&amp;&gt;article\\]:flex-1"><article data-guest-featured="game-corner" data-cm-lift=""`), `${who}: the rest of Featured is the grid under it`);
+    assert.doesNotMatch(featuredBlock, /snap-x|overflow-x-auto|mask-image/, `${who}: no row of cards scrolls sideways`);
   }
-  assert.doesNotMatch(leadRow, /mask-image/, 'a row that fits, or is not measured yet, fades nothing');
-  assert.match(read(JOIN), /<FadeRail\s+role="list"\s+aria-labelledby="guest-join-featured-label"\s+data-home-join-lead=\{lead\.length\}/, 'the large row is the fading rail');
-  assert.equal([...visitor.matchAll(/<article data-guest-featured="[^"]+" data-guest-lead=""/g)].length, 2, 'both are in the large row: there are fewer than four');
-  assert.doesNotMatch(visitor, /data-home-join-featured-rest/, 'and no second row with nothing left for it');
   const join = read(JOIN);
-  assert.match(join, /const LEAD_FEATURED = 4;/);
-  assert.match(join, /const lead = useMemo\(\(\) => \(signedIn \? \[\] : featured\.slice\(0, LEAD_FEATURED\)\), \[signedIn, featured\]\);/);
-  assert.match(join, /className="snap-x snap-mandatory scroll-px-1 gap-3 overscroll-x-contain px-1 pt-0 pb-1"/, 'the rest of a visitor\'s Featured scrolls sideways too');
-  assert.match(join, /<FadeRail\s+role="list"\s+aria-labelledby="guest-join-featured-label"\s+data-home-join-featured-rest=""/, 'and on the same fading rail as the large row');
+  assert.doesNotMatch(join, /LEAD_FEATURED|<FadeRail\s+role="list"/, 'no sideways rail of cards');
+  assert.match(join, /const leadCount = useLeadCount\(probe\);/);
+  assert.match(join, /const lead = useMemo\(\(\) => featured\.slice\(0, leadCount\), \[featured, leadCount\]\);/);
+  const card = read('frontend/src/features/communities/card.tsx');
+  assert.match(card, /return wide \? Math\.max\(2, Math\.min\(LEAD_MAX, cols - 1\)\) : 1;/, 'one fewer than a row of the rest, two to three; one on a phone');
+  assert.match(card, /export const LEAD_MAX = 3;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.cm-grid\[data-cm-grid="lead"\] \{ grid-template-columns: repeat\(var\(--cm-lead-cols, 3\), minmax\(0, 1fr\)\); \}/);
+  // The larger card: a 68px icon 18px over the picture's edge, an 18px name, 14px words, 16px sides.
+  assert.match(css, /\.cm-card\[data-cm-size="lead"\] \.cm-card-icon \{\s*width: 68px;\s*height: 68px;\s*border-radius: 17px;/);
+  assert.match(css, /\.cm-card\[data-cm-size="lead"\] \.cm-card-face \{ margin-top: -18px; \}/);
+  assert.match(css, /\.cm-card\[data-cm-size="lead"\] \.cm-card-name \{ font-size: 18px; line-height: 22px; \}/);
+  assert.match(css, /\.cm-card\[data-cm-size="lead"\] :is\(\.cm-card-members, \.cm-card-desc, \.cm-card-week\) \{ font-size: 14px; line-height: 20px; \}/);
+  assert.match(css, /\.cm-card\[data-cm-size="lead"\] \.cm-card-body \{ padding: 0 16px 18px; \}/);
+  // On a phone: the larger card's icon 60px; the rest two across, icon 44px, name 14px, sides 10px.
+  assert.match(css, /\.cm-card\[data-cm-size="lead"\] \.cm-card-icon \{\s*width: 60px;\s*height: 60px;\s*border-radius: 15px;/);
+  assert.match(css, /\.cm-grid\[data-cm-grid="join"\] \.cm-card-icon \{\s*width: 44px;\s*height: 44px;\s*border-radius: 11px;/);
+  assert.match(css, /\.cm-grid\[data-cm-grid="join"\] \.cm-card-face \{ margin-top: -11px; \}/);
+  assert.match(css, /\.cm-grid\[data-cm-grid="join"\] \.cm-card-name \{ font-size: 14px; line-height: 17px; \}/);
+  assert.match(css, /\.cm-grid\[data-cm-grid="join"\] \.cm-card-body \{ padding: 0 10px 12px; \}/);
   assert.equal(message('auth:guest.card.changes', { count: 34 }), '34 changes');
   assert.equal(message('auth:guest.card.changes', { count: 1 }), '1 change');
   assert.equal(message('home:join.featured'), 'Featured');
@@ -1177,7 +1188,9 @@ test('the list wears the website\'s look signed out only: repainted by its own h
   assert.match(block, /\[data-home-join-section\] > \.home-area-label > span:first-child \{\s+font-family: var\(--site-serif\);/);
   assert.match(block, /:is\(\[data-guest-search-open\], \[data-home-join-kind\]\) \{\s+background-color: var\(--site-panel\);\s+color: var\(--site-ink\);\s+box-shadow: inset 0 0 0 1px var\(--site-line\);/);
   assert.match(block, /\[data-home-join-kind\]\[aria-pressed="true"\] \{\s+background-color: var\(--site-chosen\);\s+color: var\(--site-chosen-ink\);/);
-  assert.match(block, /:is\(\[data-guest-card\], \[data-guest-featured\]\) \{\s+border: 1px solid var\(--site-line\);\s+border-radius: 14px;/);
+  // The card is the community card in the site's colours: its tokens, an ink outline, the name in the serif.
+  assert.match(block, /#auth-landing-screen \[data-guest-discover\] \{\s+--cm-bg: var\(--site-panel\);\s+--cm-radius: 14px;\s+--cm-edge: 0 2px 0 var\(--site-line\);/);
+  assert.match(block, /#auth-landing-screen \[data-guest-discover\] \.cm-card \{\s+border: 1px solid var\(--site-line\);/);
   assert.match(block, /\[data-guest-card-link\] \{\s+font-family: var\(--site-serif\);/);
   // The bar's button is a sun pill with ink words on every signed-out page.
   assert.match(block, /#auth-landing-screen #landing-header \[data-landing-sign-up\] \{\s+background-color: var\(--site-sun\);\s+color: var\(--site-on-sun\);/);

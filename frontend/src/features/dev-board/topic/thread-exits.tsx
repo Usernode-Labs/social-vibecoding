@@ -22,13 +22,13 @@
 
 import type { MouseEvent, ReactNode } from 'react';
 
-import { ExpandIcon, XIcon } from '@/components/ui/icons';
+import { ExpandIcon, ListBulletIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { workshopSideActions } from '../workshop/side-actions';
 
-type TopPanel = { close?: () => void; expand?: () => void };
+type TopPanel = { close?: () => void; expand?: () => void; showList?: () => void };
 
 function topPanel(): TopPanel | null {
   if (typeof window === 'undefined' || !isEmbeddedPanel()) return null;
@@ -51,6 +51,27 @@ export function act(event: Pick<MouseEvent<HTMLButtonElement>, 'currentTarget'>,
   const top = topPanel();
   if (which === 'expand') top?.expand?.();
   else top?.close?.();
+}
+
+/**
+ * The way back to the bot's thread list while the list is hidden (#6973).
+ * Drawn first in the head, as a private thread draws it, on every surface
+ * and shown by app.css only beside the bot page's hidden list.
+ */
+export function ThreadShowList(): ReactNode {
+  const t = useMessages('project');
+  return (
+    <button
+      type="button"
+      className="messages-thread-action messages-thread-back dev-thread-show-list"
+      data-thread-show-list=""
+      aria-label={t('project:sidePanel.showList')}
+      title={t('project:sidePanel.showList')}
+      onClick={() => topPanel()?.showList?.()}
+    >
+      <ListBulletIcon aria-hidden="true" />
+    </button>
+  );
 }
 
 export function ThreadExits(): ReactNode {

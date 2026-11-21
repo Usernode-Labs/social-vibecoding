@@ -1,0 +1,133 @@
+name: Kubernetes database checks
+
+on:
+  workflow_call:
+    inputs:
+      full_suite:
+        description: Also run single-server workflow and access regressions
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  preview-schema-compatibility:
+    name: PostgreSQL 17 and 18
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    services:
+      postgres17:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres18:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Record the pull request tree before tests
+        id: tree
+        if: inputs.full_suite && github.event_name == 'pull_request'
+        run: |
+          tree="$(git rev-parse HEAD^{tree})"
+          printf 'tree=%s\n' "$tree" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$tree" > "$RUNNER_TEMP/postgres-verified-tree"
+      - uses: actions/setup-node@v6
+        id: node
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate database initialization SQL
+        run: node scripts/build-schema.js
+      # The preview boot uses bcrypt. npm ci skips its install hook, so
+      # restore a compatible binding or compile one locally. Only main
+      # pushes can save a binding for later runs.
+      - name: Restore the compiled bcrypt binding
+        id: bcrypt_binding
+        uses: actions/cache/restore@v6
+        with:
+          path: node_modules/bcrypt/lib/binding
+          key: bcrypt-binding-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json') }}
+      - name: Compile bcrypt unless the restored binding works
+        id: bcrypt_build
+        run: |
+          if node -e "try { const b = require('bcrypt'); process.exit(b.compareSync('probe', b.hashSync('probe', 4)) ? 0 : 1); } catch (err) { console.log('No usable bcrypt binding: ' + (err.code || err.message)); process.exit(1); }"; then
+            echo "compiled=false" >> "$GITHUB_OUTPUT"
+          else
+            npm rebuild bcrypt --build-from-source
+            echo "compiled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Keep the compiled bcrypt binding
+        if: steps.bcrypt_build.outputs.compiled == 'true' && steps.bcrypt_binding.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: node_modules/bcrypt/lib/binding
+          key: ${{ steps.bcrypt_binding.outputs.cache-primary-key }}
+      - name: Verify workflow and worker behavior
+        if: inputs.full_suite
+        run: |
+          node --test --test-timeout=60000 tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
+          node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
+          node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js tests/platform-preview-startup-postgres.test.js
+          node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/platform-signals.test.js tests/platform-signals-postgres.test.js
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports['5432'] }}/postgres
+          TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports['5432'] }}/postgres
+
+      # Use matching PG18 client tools against the two disposable services.
+      # Container wrappers forward PG* through the environment, never argv.
+      # Platform previews start from an empty database on every path, and no
+      # copy path takes the platform's (SEC-06): the same two servers.
+      - name: Verify database identities and tenant copies
+        timeout-minutes: 5
+        run: |
+          tool_dir="$RUNNER_TEMP/database-role-tools"
+          mkdir -p "$tool_dir" "$RUNNER_TEMP/database-role-tmp"
+          for tool in psql pg_dump pg_restore; do
+            cat > "$tool_dir/$tool" <<'SH'
+          #!/bin/sh
+          exec docker run --rm --network host -i \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGAPPNAME -e PGOPTIONS -e PGSSLMODE -e PGCONNECT_TIMEOUT \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" -v "$PWD:$PWD:ro" -w "$PWD" \
+            postgres:18-alpine "$(basename "$0")" "$@"
+          SH
+            chmod +x "$tool_dir/$tool"
+          done
+          PATH="$tool_dir:$PATH" TMPDIR="$RUNNER_TEMP/database-role-tmp" \
+            node --test --test-timeout=180000 tests/database-role-split-postgres.test.js
+          PATH="$tool_dir:$PATH" TMPDIR="$RUNNER_TEMP/database-role-tmp" \
+            TEST_DATABASE_URL="$DATABASE_ROLES_TEST_URL" TEST_PREVIEW_DATABASE_URL="$DATABASE_ROLES_TEST_PREVIEW_URL" \
+            node --test --test-timeout=180000 tests/platform-preview-data-policy-postgres.test.js
+        env:
+          DATABASE_ROLES_TEST_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports['5432'] }}/postgres
+          DATABASE_ROLES_TEST_PREVIEW_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports['5432'] }}/postgres
+
+      - name: Verify private stream and notification access
+        if: inputs.full_suite
+        run: node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports['5432'] }}/postgres
+
+      - name: Publish PostgreSQL check result
+        if: inputs.full_suite && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-17-18-v1-pr${{ github.event.pull_request.number }}-attempt${{ github.run_attempt }}-${{ steps.tree.outputs.tree }}
+          path: ${{ runner.temp }}/postgres-verified-tree
+          if-no-files-found: error
+          retention-days: 14

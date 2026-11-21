@@ -252,7 +252,7 @@ function reusableBuildEnv(env, { includeRevision = false } = {}) {
 
 async function compatibleCompletedBuilds(config, body, repository) {
   // Mutable builder tags cannot establish that two builds used the same recipe.
-  if (!/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return [];
+  if (!body.spec.source.git || !/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return [];
   const appId = body.metadata.labels['social.usernode.io/app-id'];
   if (!appId) return [];
   try {
@@ -388,6 +388,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
     .digest('hex').slice(0, 12);
   const buildName = dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
   const tag = `${repository}:git-${revision}-${recipe}`;
+  const privateSource = require('./project-source').buildArchiveUrl(app.repo_url, revision, 7200);
   const body = {
     apiVersion: 'kpack.io/v1alpha2',
     kind: 'Build',
@@ -399,7 +400,9 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
       cache: { registry: { tag: cacheTag } },
       // A repository on Homeroom's git host is cloned from its clone address
       // (GIT_HOST_INTERNAL_URL, else the public one); GitHub's as before.
-      source: { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
+      source: privateSource
+        ? { blob: { url: privateSource } }
+        : { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
       ...batchWorkPlacement(cfg),
       env: buildEnv,
@@ -3096,6 +3099,26 @@ async function listNamespaceCapacity(config) {
   }));
 }
 
+// The nodes' local volume pools: OpenEBS LVM's LVMNode objects in `openebs`,
+// one per node, each with its volume groups' size and free space
+// (services/platform-capacity.js node_pool). Read-only; the grant is its own
+// Role in `openebs` (Usernode-Labs/infra#103), and a 403 before it exists is
+// the caller's to read.
+async function listVolumePools() {
+  const items = [];
+  let next;
+  do {
+    const page = await getClients().custom.listNamespacedCustomObject({
+      group: 'local.openebs.io', version: 'v1alpha1', namespace: 'openebs', plural: 'lvmnodes',
+      limit: 200, _continue: next,
+    });
+    if (!Array.isArray(page?.items)) throw new Error('Invalid LVMNode list');
+    items.push(...page.items);
+    next = page.metadata?.continue;
+  } while (next);
+  return items;
+}
+
 // `onStdoutLine(line)`: the same observer contract as docker.runOneShot —
 // complete stdout lines as the run progresses, on top of the final log the
 // verdict is read from. A Job has no stdout to listen to, so while polling
@@ -4277,7 +4300,7 @@ module.exports = {
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
   workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers,
   listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listPreviewResources, deletePreviewRoutingResource, listShotsRuntimes, isQuotaExceeded,
-  listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
+  listStatusResources, listNamespaceCapacity, listVolumePools, inspectWorkerTermination, getPlatformDeployStatus,
   readPlatformPod, stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,
   _packageRunsScriptForTest: packageRunsScript,

@@ -58,18 +58,23 @@ const union = (a, b) => {
   return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
 };
 
-// model.ts piecesOf, for one screen of shots-diff.screensFor: the areas
-// that belong to a declared change, near ones merged, specks dropped, a thin
+// model.ts piecesOf, for one screen of shots-diff.screensFor: the claims'
+// frames on the after side when the screen has any, else the areas that
+// belong to a declared change, near ones merged, specks dropped, a thin
 // strip widened to the lines around it.
 function piecesOf(screen) {
   const W = screen.width;
   const H = screen.heightAfter;
+  const framed = (screen.frames || []).map((f) => (Array.isArray(f?.a) ? f.a : Array.isArray(f?.b) ? f.b : null))
+    .filter((b) => b && b.length === 4 && b[2] > 2 && b[3] > 0)
+    .map((b) => ({ named: true, b: { x: b[0], y: b[1], w: b[2], h: b[3] } }));
   const all = (screen.regions || []).filter((r) => Array.isArray(r.a))
     .map((r) => ({ named: r.story !== null && r.story !== undefined, b: { x: r.a[0], y: r.a[1], w: r.a[2], h: r.a[3] } }))
     .filter((x) => x.b.w > 2);
   const named = all.filter((x) => x.named);
   const merged = [];
-  for (const b of (named.length ? named : all).map((x) => x.b).sort((p, q) => area(q) - area(p))) {
+  const chosen = framed.length ? framed : named.length ? named : all;
+  for (const b of chosen.map((x) => x.b).sort((p, q) => area(q) - area(p))) {
     const hit = merged.findIndex((m) => near(m, b, 24));
     if (hit >= 0) merged[hit] = union(merged[hit], b);
     else merged.push(b);

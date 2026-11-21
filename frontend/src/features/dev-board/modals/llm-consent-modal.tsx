@@ -57,7 +57,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
                 id="project:modals.aiConsent.noPayer"
                 components={[
                   <a className="underline font-medium" href="#settings/linked-accounts" />,
-                  <a className="underline font-medium" href="#settings/api-key" />,
+                  <a className="underline font-medium" href="#settings/openrouter" />,
                 ]}
               />
             )}

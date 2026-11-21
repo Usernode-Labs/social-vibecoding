@@ -587,6 +587,14 @@
     "text": "Drag to resize · double-click to reset",
     "description": "Tooltip of the draggable edge of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page). Keep the middle dot between the two hints."
   },
+  "sidePanel.listHidden": {
+    "text": "Thread list hidden",
+    "description": "The Homeroom bot tab on a wide screen: what a screen reader hears on the draggable edge beside the open thread while the thread list is hidden, instead of the pane's width."
+  },
+  "sidePanel.showList": {
+    "text": "Show thread list",
+    "description": "Accessible name and tooltip of the small round list button first in the header row beside the Homeroom bot tab's page while the thread list is hidden and a decision is open in the column: brings the list back."
+  },
   "sidePanel.title.workshop": {
     "text": "Community",
     "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows a project's community page, its board of changes and requests. A noun."

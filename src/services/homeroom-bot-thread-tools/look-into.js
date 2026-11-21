@@ -53,8 +53,22 @@ const MAX_NOTES_CHARS = 6000;
 const MAX_SUMMARY_CHARS = 2400;
 const MAX_LINE_CHARS = 200;
 const MAX_FILES_KEPT = 40;
-// T1.3: what a look that met OpenRouter's 402 for credit says (the bot's words).
-const CREDIT_ERROR = 'I\'m out of building credit right now, so the look didn\'t run. Ask me again once it\'s back.';
+// T1.3/#6920: what a look that met OpenRouter's 402 for credit says. It is
+// kept (bot-look `held`) and runs once credit is back, posting its findings
+// in the chat it was asked in.
+const LOOK_HELD = 'OpenRouter\'s credit ran out';
+const LOOK_HELD_TEXT = (project) => `OpenRouter's credit ran out, so I couldn't look into it in ${project} yet. `
+  + 'I\'ll run the look and post what I find here as soon as it\'s back.';
+// The same when it was the bot's weekly budget that ran out (the outage's
+// cause, bot-pause-words.js): another opening, and a held look all the same.
+const pauseWords = require('../bot-pause-words');
+const isHeldLook = (row) => row?.state === 'failed'
+  && [LOOK_HELD, pauseWords.LOOK_HELD].some((opening) => String(row.error || '').startsWith(opening));
+// Whether a held look's stored words are the budget's.
+const heldForBudget = (row) => String(row?.error || '').startsWith(pauseWords.LOOK_HELD);
+// Review A2: what a look says when Homeroom or its provider failed under it:
+// whose failure it was, and nothing about their question.
+const PLATFORM_ERROR = 'The look did not finish because Homeroom had a problem on its side. Ask me again in a few minutes.';
 const FILES_SHOWN = 5;
 const MAX_PROGRESS_LINES = 600;
 // The words a look's reply ends with, which this module reads.
@@ -278,6 +292,17 @@ async function gate(pool, { user, app, settings, bot = null, deps = {}, doing = 
     const budget = await limits.checkBudget(pool, bot.id).catch(() => ({ error: 'unreadable' }));
     if (budget?.error) return { code: 'bot_budget', error: `Homeroom bot has used its own time for this week, so it cannot ${what} just now.` };
   }
+  // Review B1: asked before the model is. While the one stored outage stands
+  // (openrouter-credit.js creditState) no turn is started to meet the 402.
+  const credit = deps.credit?.creditState ? deps.credit : require('../openrouter-credit');
+  const outage = await credit.creditState(pool);
+  if (outage.out) {
+    // `budget`: it was the bot's weekly budget (the outage's cause), which
+    // starts again on a day the refusal can name.
+    return pauseWords.isBudget(outage)
+      ? { code: 'credit', budget: true, error: pauseWords.lookRefused(what, pauseWords.resetDay()) }
+      : { code: 'credit', error: `Homeroom bot is out of building credit just now, so it cannot ${what}. Ask again once credit is back.` };
+  }
   return null;
 }
 
@@ -478,20 +503,32 @@ async function lookInto(pool, config, { user, app, question, notes = null, since
   // T1.3: OpenRouter's credit ran out under the look (its error, or what the
   // worker read of how it ended): an outage, noted once (the admins hear at
   // once), and said as one, never as findings.
-  const credit = require('../openrouter-credit');
-  if (routed && (credit.creditOut({ error: routed.error || null }) || credit.creditOut(result))) {
-    await credit.noteOutage(pool, { words: 'a look met OpenRouter\'s 402 for credit' }).catch(() => null);
-    return { ok: false, code: 'credit', error: CREDIT_ERROR, costUsd, ms, model };
+  // One sort (bot-turn-failure.js): the routed code and the worker's own
+  // account of the turn, never free text. `failure` rides on every failed
+  // result, so what counts a failure (an investigation's three in a row)
+  // can leave out the ones that were credit's or the platform's.
+  const turnFailure = require('../bot-turn-failure');
+  const credit = deps.credit?.noteOutage ? deps.credit : require('../openrouter-credit');
+  const sorted = routed ? turnFailure.sort({ code: routed.error || null, turn: result }) : { class: 'platform', cause: 'no_result' };
+  if (sorted.class === 'credit') {
+    const noted = await credit.noteOutage(pool, { words: 'a look met OpenRouter\'s 402 for credit' }).catch(() => null);
+    const project = app.name || app.slug || 'the project';
+    return {
+      ok: false, code: 'credit', failure: 'credit',
+      error: pauseWords.isBudget(noted) ? pauseWords.lookHeldText(project, pauseWords.resetDay()) : LOOK_HELD_TEXT(project),
+      costUsd, ms, model,
+    };
   }
   if (!routed || routed.error) {
     log.warn('homeroom-bot-look', 'A look\'s turn failed', { app: app.slug, err: clip(routed?.error || 'no result', 300) });
-    return { ok: false, code: 'failed', error: 'The look did not finish just now.', costUsd, ms, model };
+    return { ok: false, code: 'failed', failure: 'platform', error: PLATFORM_ERROR, costUsd, ms, model };
   }
   // T1.3: a reply that IS the runtime's provider error ("API Error: …") is
-  // a turn that failed, never what the look found.
-  if (require('../agent-result-text').agentApiFailure(result.lastResultText)) {
-    log.warn('homeroom-bot-look', 'A look\'s turn ended on a provider error', { app: app.slug });
-    return { ok: false, code: 'failed', error: 'The look did not finish just now.', costUsd, ms, model };
+  // a turn that failed, never what the look found; and a worker that went
+  // from under it (out of memory, its container gone) found nothing either.
+  if (sorted.class === 'platform') {
+    log.warn('homeroom-bot-look', 'A look\'s turn failed on the platform', { app: app.slug, cause: sorted.cause });
+    return { ok: false, code: 'failed', failure: 'platform', error: PLATFORM_ERROR, costUsd, ms, model };
   }
   const text = [result.lastResultText, ...(Array.isArray(result.answerParts) ? result.answerParts : [])]
     .filter((p) => typeof p === 'string' && p.trim()).find((p) => /```json/.test(p)) || result.lastResultText || '';
@@ -575,6 +612,28 @@ async function postFindings(pool, config, row, { deps = {} } = {}) {
 }
 
 /**
+ * #6920: the held line, said once in the chat that stopped waiting, under the
+ * look's own held key, so a retry says nothing twice.
+ */
+async function postHeldLine(pool, config, row, { deps = {} } = {}) {
+  if (!row) return null;
+  const dm = deps.dm || require('../homeroom-bot-dm');
+  const bot = deps.bot || await (deps.botSvc || require('../homeroom-bot')).ensureBotUser(pool, config);
+  const app = await appOf(pool, row.app_id);
+  const name = app?.name || app?.slug || 'the project';
+  const sent = await dm.sendDm(pool, {
+    bot, userId: Number(row.user_id),
+    content: withoutEmDashes(String(row.error || LOOK_HELD_TEXT(name))),
+    idempotencyKey: `hrbot-look:${row.id}:held`,
+    replyToId: row.message_id ? Number(row.message_id) : null,
+    ...(row.thread_root_id ? { threadRootId: Number(row.thread_root_id) } : {}),
+    moment: 'reply',
+    metadata: { kind: 'chat', ...(app?.slug ? { appSlug: app.slug } : {}) },
+  });
+  return sent?.messageId ?? null;
+}
+
+/**
  * The bot-look machine's `look.run` (src/workflow/bot-look/services.ts): the
  * look on the work item's steps, its end recorded, and its findings posted
  * when the chat stopped waiting. A retry after a restart follows the turn
@@ -590,7 +649,17 @@ async function runLookWork(ctx, { pool, config, deps = {} }) {
   // #6537: an update of a change its author asked for is a look of its own
   // kind, run by the same machine (homeroom-bot-takeover.js).
   if (row.kind === 'update') return require('../homeroom-bot-takeover').runUpdateWork(ctx, { pool, config, deps }, row, steps);
+  // #6920: a look credit's return resumed (`run:r<n>`). Its row is set back
+  // to running here, not in the event: if another look of theirs is running,
+  // the unique index refuses it and this work retries on its own back-off.
+  if (isHeldLook(row) && /^run:r\d+$/.test(String(ctx.key || ''))) {
+    await pool.query(
+      `UPDATE homeroom_bot_looks SET state = 'running', error = NULL, ended_at = NULL
+        WHERE id = $1 AND state = 'failed'`, [id]);
+    row = await loadLook(pool, id);
+  }
   if (row.state === 'running') {
+    const stoppedWaiting = row.deliver === 'post';
     const out = await steps.once('look', async () => {
       const [user, app] = await Promise.all([personOf(pool, row.user_id), appOf(pool, row.app_id)]);
       const botSvc = deps.botSvc || require('../homeroom-bot');
@@ -606,6 +675,15 @@ async function runLookWork(ctx, { pool, config, deps = {} }) {
       return looked(pool, config, { user, app, question: row.question, deps: { ...deps, steps, settings, bot } });
     });
     row = await finishLook(pool, id, out);
+    if (out && out.failure === 'credit') {
+      // #6920: held for credit. The row is failed (its one-running-look slot
+      // is free), and the findings go here when the look runs on credit's
+      // return. The chat stopped waiting: it hears the held line once.
+      await pool.query("UPDATE homeroom_bot_looks SET deliver = 'post' WHERE id = $1", [Number(id)]);
+      row = await loadLook(pool, id);
+      if (stoppedWaiting) await steps.once('held', () => postHeldLine(pool, config, row, { deps }));
+      return { state: row?.state || 'gone', credit: true };
+    }
   }
   if (row && row.state !== 'running' && row.deliver === 'post' && !row.posted_message_id) {
     await steps.once('post', () => postFindings(pool, config, row, { deps }));
@@ -669,6 +747,15 @@ async function requestLook(pool, { id, appId, userId }) {
   return ask(pool, { lookId: id, appId, userId });
 }
 
+// #6920: a look held for credit, as the chat model reads it: no result, and
+// the one promise it may make (the claims check allows it: ctx.lookRunning).
+const heldNote = (project, { budget = false } = {}) => (budget ? {
+  ok: false, held: true, error: pauseWords.lookHeldText(project, pauseWords.resetDay()), note: pauseWords.LOOK_NOTE,
+} : {
+  ok: false, held: true, error: LOOK_HELD_TEXT(project),
+  note: 'say in one short line that the look runs once credit is back and is posted here',
+});
+
 async function runTool(pool, ctx, args) {
   const a = lookArgs(args);
   if (!a.ok) return { ok: false, error: a.error };
@@ -698,6 +785,10 @@ async function runTool(pool, ctx, args) {
   // look posts its findings itself, so this one does not wait again.
   const before = started.existing ? await loadLook(pool, started.id) : null;
   if (before && before.deliver === 'post') {
+    if (isHeldLook(before)) {
+      ctx.lookRunning = true;
+      return heldNote(name, { budget: heldForBudget(before) });
+    }
     if (before.state === 'running') {
       ctx.lookRunning = true;
       return { ok: true, running: true, project: name, note: 'The look is still running; its findings will be posted in this chat. Say so in one short line.' };
@@ -739,6 +830,10 @@ async function runTool(pool, ctx, args) {
     row = await loadLook(pool, started.id);
   }
   if (!row) return { ok: false, error: 'The look did not start just now.' };
+  if (isHeldLook(row)) {
+    ctx.lookRunning = true;
+    return heldNote(name, { budget: heldForBudget(row) });
+  }
   const out = compactResult(row, name);
   if (row.state === 'done') {
     ctx.looked = Array.isArray(ctx.looked) ? ctx.looked : [];
@@ -773,6 +868,10 @@ module.exports = {
   runLookWork,
   lookFailed,
   postFindings,
+  postHeldLine,
+  LOOK_HELD_TEXT,
+  isHeldLook,
+  heldNote,
   // Pure, for tests.
   lookArgs,
   lookPrompt,

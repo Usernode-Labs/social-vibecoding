@@ -234,16 +234,21 @@ class RunControl {
               + 'scrolled to the same place as the light shot, or leave it out.', 400);
         }
       }
-      shots.checkElementSize(
-        this.declaredChange(target.storyId), target, info,
-        this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
-        { deviceDensity, density },
-      );
+      const declared = this.declaredChange(target.storyId);
+      const screenFile = this.saved.get(shots.slotKey({ ...target, variant: 'context' }));
+      shots.checkElementSize(declared, target, info, screenFile, { deviceDensity, density });
       const slot = shots.slotKey(target);
       const entry = flat
         ? shots.stored(target, flatBuffer, flat, { density, data: buffer, ...info })
         : shots.stored(target, buffer, info);
       entry.publicSafe = publicSafeOf(rawTarget?.showsPrivate);
+      // An element shot's place on its screen shot, as its browser measured
+      // it: what the card frames the change on (shots-diff.screensFor). One
+      // that cannot be checked against a saved screen shot is left out.
+      if (target.variant === 'focus') {
+        entry.focusRect = shots.elementFrame(rawTarget, screenFile,
+          declared.viewports.find((viewport) => viewport.name === target.viewport));
+      }
       // A light screen taken again in another state leaves its dark shot
       // showing the old one: it goes, and is taken again with the new one.
       const previous = this.saved.get(slot);
@@ -464,6 +469,13 @@ function publicSafeOf(showsPrivate) {
 
 // A saved file as RunControl keeps it: everything but its bytes. The store
 // holds those (the old byte column until backfill); publication copies keys.
+// An element shot's stored place: whole CSS px with a size, else none.
+function focusRectOf(value) {
+  const ok = value && typeof value === 'object' && ['x', 'y', 'w', 'h']
+    .every((key) => Number.isSafeInteger(value[key]) && value[key] >= 0 && value[key] <= 20000);
+  return ok && value.w > 0 && value.h > 0 ? { x: value.x, y: value.y, w: value.w, h: value.h } : null;
+}
+
 function fileEntry(row) {
   return {
     storyId: row.story_id, viewport: row.viewport, side: row.side, variant: row.variant, media: row.media,
@@ -476,17 +488,20 @@ function fileEntry(row) {
     dense: Number.isInteger(row.density) && row.density > 1 ? {
       width: row.dense_width, height: row.dense_height, bytes: row.dense_bytes, sha256: row.dense_sha256,
     } : null,
-    // A close-up's number on its screen, region and density (shots-closeups.js).
+    // A close-up's number on its screen, region and density (shots-closeups.js);
+    // an element shot's place on its screen shot, when its browser measured it.
     ...(row.variant === 'closeup' ? { part: Number(row.part) || 1, scale: Number(row.scale), focusRect: row.focus_rect || null }
-      : { focusRect: null }),
+      : { focusRect: row.variant === 'focus' ? focusRectOf(row.focus_rect) : null }),
     // A still's smaller copies and its preview (#6825); null for a clip, a
     // close-up, and every still saved before they existed.
     sized: row.thumb_sha256 || row.screen_sha256 || row.placeholder ? {
       thumb: row.thumb_sha256 ? {
         width: row.thumb_width, height: row.thumb_height, bytes: row.thumb_bytes, sha256: row.thumb_sha256,
+        contentType: row.thumb_content_type || WEBP,
       } : null,
       screen: row.screen_sha256 ? {
         width: row.screen_width, height: row.screen_height, bytes: row.screen_bytes, sha256: row.screen_sha256,
+        contentType: row.screen_content_type || WEBP,
       } : null,
       placeholder: row.placeholder || null,
     } : null,
@@ -546,8 +561,8 @@ async function load(db, runId, { lock = false } = {}) {
   const { rows: files } = await db.query(
     `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256,
             density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe,
-            thumb_width, thumb_height, thumb_bytes, thumb_sha256,
-            screen_width, screen_height, screen_bytes, screen_sha256, placeholder
+            thumb_width, thumb_height, thumb_bytes, thumb_sha256, thumb_content_type,
+            screen_width, screen_height, screen_bytes, screen_sha256, screen_content_type, placeholder
        FROM shot_run_files WHERE run_id = $1`, [runId]);
   return { row, control: fromRow(row, files) };
 }
@@ -575,8 +590,8 @@ async function persist(db, control, store) {
     'SELECT slot FROM shot_run_files WHERE run_id = $1 AND slot = ANY($2::text[]) ORDER BY slot FOR UPDATE',
     [control.runId, dirty.map(dbSlot)]);
   const copies = (file) => [
-    ...(file.sized?.thumb?.data ? [{ data: file.sized.thumb.data, contentType: WEBP }] : []),
-    ...(file.sized?.screen?.data ? [{ data: file.sized.screen.data, contentType: WEBP }] : []),
+    ...(file.sized?.thumb?.data ? [{ data: file.sized.thumb.data, contentType: file.sized.thumb.contentType || WEBP }] : []),
+    ...(file.sized?.screen?.data ? [{ data: file.sized.screen.data, contentType: file.sized.screen.contentType || WEBP }] : []),
   ];
   const uploads = dirty.flatMap((file) => [{ data: file.data, contentType: file.contentType },
     ...(file.dense?.data ? [{ data: file.dense.data, contentType: file.contentType }] : []), ...copies(file)]);
@@ -604,9 +619,10 @@ async function persist(db, control, store) {
           density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe,
           object_key, dense_object_key,
           thumb_object_key, thumb_width, thumb_height, thumb_bytes, thumb_sha256,
-          screen_object_key, screen_width, screen_height, screen_bytes, screen_sha256, placeholder)
+          screen_object_key, screen_width, screen_height, screen_bytes, screen_sha256, placeholder,
+          thumb_content_type, screen_content_type)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22, $23, $24,
-               $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+               $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
        ON CONFLICT (run_id, slot) DO UPDATE
          SET object_key = EXCLUDED.object_key, dense_object_key = EXCLUDED.dense_object_key,
              content_type = EXCLUDED.content_type, media = EXCLUDED.media,
@@ -621,18 +637,22 @@ async function persist(db, control, store) {
              screen_object_key = EXCLUDED.screen_object_key, screen_width = EXCLUDED.screen_width,
              screen_height = EXCLUDED.screen_height, screen_bytes = EXCLUDED.screen_bytes,
              screen_sha256 = EXCLUDED.screen_sha256, placeholder = EXCLUDED.placeholder,
+             thumb_content_type = EXCLUDED.thumb_content_type, screen_content_type = EXCLUDED.screen_content_type,
              public_safe = EXCLUDED.public_safe, saved_at = NOW()`,
       [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType,
         f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1,
         f.dense?.width || null, f.dense?.height || null, f.dense?.bytes ?? null, f.dense?.sha256 || null,
         f.variant === 'closeup' ? f.part : 0, f.variant === 'closeup' ? f.scale : null,
-        f.variant === 'closeup' && f.focusRect ? JSON.stringify(f.focusRect) : null, f.publicSafe === true ? true : null,
+        (f.variant === 'closeup' || f.variant === 'focus') && f.focusRect ? JSON.stringify(f.focusRect) : null,
+        f.publicSafe === true ? true : null,
         objectKey, denseObjectKey,
         thumbObjectKey, f.sized?.thumb?.width || null, f.sized?.thumb?.height || null,
         f.sized?.thumb?.bytes ?? null, f.sized?.thumb?.sha256 || null,
         screenObjectKey, f.sized?.screen?.width || null, f.sized?.screen?.height || null,
         f.sized?.screen?.bytes ?? null, f.sized?.screen?.sha256 || null,
-        f.sized?.placeholder || null]);
+        f.sized?.placeholder || null,
+        thumbObjectKey ? f.sized.thumb.contentType || WEBP : null,
+        screenObjectKey ? f.sized.screen.contentType || WEBP : null]);
   }
   control.dirty.clear();
 }

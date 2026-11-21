@@ -78,8 +78,24 @@ test('home pins: join pins the community, so does making one, an app pin joins n
 
     assert.equal((await call('GET', '/api/me/home-pins', '')).status, 401, 'signed out has no account list');
     let r = await call('GET', '/api/me/home-pins');
-    assert.deepEqual(r.body.pins, [{ slug: 'tide', name: 'tide', iconUrl: null, iconEmoji: '🌊', iconColor: null, member: true }],
-      'the joined community, as the grid draws it');
+    assert.deepEqual(r.body.pins, [{
+      slug: 'tide', name: 'tide', iconUrl: null, iconEmoji: '🌊', iconColor: null, member: true,
+      illustrationUrl: null, illustrationDarkUrl: null,
+    }], 'the joined community, as the grid draws it');
+
+    // Its card's picture: the featured illustration, once its group voted
+    // one in, and its dark twin (the public directory's two).
+    const picture = (app, light, dark = null) => pool.query(
+      `INSERT INTO app_illustrations (app_id, id, content_type, data, dark_id, dark_content_type, dark_data)
+       VALUES ($1, $2, 'image/png', '\\x00', $3, $4, $5)`,
+      [app.id, light, dark, dark ? 'image/png' : null, dark ? Buffer.from([0]) : null]);
+    await picture(tide, 'a'.repeat(32), 'b'.repeat(32));
+    r = await call('GET', '/api/me/home-pins');
+    assert.equal(r.body.pins[0].illustrationUrl, null, 'stored, but not the one its group chose: no picture');
+    await pool.query(`UPDATE apps SET featured_illustration = '{"zoom":1,"x":0,"y":0}'::jsonb WHERE id = $1`, [tide.id]);
+    r = await call('GET', '/api/me/home-pins');
+    assert.equal(r.body.pins[0].illustrationUrl, `/app-illustrations/${'a'.repeat(32)}`);
+    assert.equal(r.body.pins[0].illustrationDarkUrl, `/app-illustrations/${'b'.repeat(32)}`, 'and its dark twin');
 
     // A community can be pinned without joining, and stays unjoined.
     r = await call('PUT', '/api/me/home-pins/garden');
@@ -96,6 +112,25 @@ test('home pins: join pins the community, so does making one, an app pin joins n
     assert.deepEqual(slugs(await call('GET', '/api/me/home-pins')), ['tide']);
     await pool.query("UPDATE apps SET view_visibility = 'public', collab_visibility = 'public' WHERE id = $1", [garden.id]);
     assert.deepEqual(slugs(await call('GET', '/api/me/home-pins')), ['tide', 'garden']);
+    // A picture with no dark twin is the same picture in the dark.
+    await picture(garden, 'c'.repeat(32));
+    await pool.query(`UPDATE apps SET featured_illustration = '{"zoom":1,"x":0,"y":0}'::jsonb WHERE id = $1`, [garden.id]);
+    r = await call('GET', '/api/me/home-pins');
+    assert.deepEqual([r.body.pins[1].illustrationUrl, r.body.pins[1].illustrationDarkUrl], [`/app-illustrations/${'c'.repeat(32)}`, null]);
+
+    // A private community's picture reaches only the people who can see it:
+    // a pin row for one she is not in lists nothing, and no picture with it.
+    await picture(secret, 'd'.repeat(32));
+    await pool.query(`UPDATE apps SET featured_illustration = '{"zoom":1,"x":0,"y":0}'::jsonb WHERE id = $1`, [secret.id]);
+    await pool.query('INSERT INTO home_community_pins (community_id, user_id, position) VALUES ($1, $2, 9)', [secret.community_id, alice.id]);
+    r = await call('GET', '/api/me/home-pins');
+    assert.deepEqual(slugs(r), ['tide', 'garden']);
+    assert.doesNotMatch(JSON.stringify(r.body), /d{32}/, 'its picture is not in the answer');
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2)', [secret.community_id, alice.id]);
+    r = await call('GET', '/api/me/home-pins');
+    assert.equal(r.body.pins.find((p) => p.slug === 'secret').illustrationUrl, `/app-illustrations/${'d'.repeat(32)}`, 'a member sees it');
+    await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [secret.community_id, alice.id]);
+    await pool.query('DELETE FROM home_community_pins WHERE community_id = $1 AND user_id = $2', [secret.community_id, alice.id]);
 
     // Order is the person's.
     assert.deepEqual(slugs(await call('PUT', '/api/me/home-pins', 'alice', { slugs: ['garden', 'tide'] })), ['garden', 'tide']);

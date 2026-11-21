@@ -275,6 +275,9 @@ config:
     user: ""
     # Non-admin account with repository read access (defaults to user).
     readUser: ""
+    # See docs/private-project-repositories.md.
+    privateProjects: ""
+    privateProjectsWrite: false
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
   # numeric addresses use HTTP, matching the platform's existing proxy logic.
@@ -407,8 +410,6 @@ secrets:
   waitlistGithubClientSecret: ""
   waitlistXClientId: ""
   waitlistXClientSecret: ""
-  anthropicApiKey: ""
-  anthropicAdminKey: ""
   # Optional OpenRouter management credential, supplied through encrypted external values.
   # With the conductor on it is the conductor's alone (its own Secret, see
   # templates/secret.yaml): the web Pods ask it for every managed key.
@@ -498,6 +499,10 @@ networkPolicy:
     - monitoring
   # Generated applications connect directly to their dedicated PostgreSQL
   # databases using per-database roles. Workers do not require database access.
+  # The kpack and BuildKit namespaces reach the source relay during the pilot.
+  projectSourceCallerNamespaces:
+    - social-builds
+    - social-buildkit
   databaseCallerNamespaces:
     - social-apps
 

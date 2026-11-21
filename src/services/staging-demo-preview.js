@@ -40,7 +40,7 @@ const ARTIFACT_IDS = Object.freeze({
   head: '9000013b'.padEnd(32, '0'),
 });
 
-const CLAIM_ID = 'sample-preview';
+const CLAIM_ID = 'top-bar-line';
 const VIEWPORT = 'desktop';
 const WIDTH = 1280;
 const HEIGHT = 800;
@@ -97,9 +97,15 @@ function sampleAppHtml() {
     + '</div>\n</main>\n</body>\n</html>\n';
 }
 
-// ── A small solid-colour PNG ─────────────────────────────────────────────
-// The placeholder before and after pictures, drawn here so the demo needs no
-// stored image: grey for the before side, the accent blue for the after.
+// ── The demo's before and after pictures ─────────────────────────────────
+// Drawn here so the demo needs no stored image: an obviously fake page of
+// plain bars, the shape PR 6958's shots had (21 Nov 2026). A top bar; on the
+// after side a 1 px line under it, a tenth darker than the bar (under the
+// comparison's ordinary tolerance, a hairline it finds on its own); and two
+// strips of card text far below that differ between the sides for reasons
+// unrelated to the claim. The run says the change is about the top bar (its
+// frame, as its shots agent's element shot would record it), so the card
+// frames there, and outlines the strips only as something else.
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -128,22 +134,48 @@ function pngChunk(type, data) {
 
 const pngCache = new Map();
 
-// A WIDTH×HEIGHT solid PNG: `base` grey, anything else the accent blue.
+const CREAM = [246, 241, 228];
+const BAR = [252, 250, 244];
+const BAR_LINE = BAR.map((c) => Math.round(c * 0.9));
+const INK = [60, 60, 70];
+const SOFT = [205, 205, 210];
+const CARD = [255, 255, 255];
+// The top bar, the claim's frame on both sides: [x, y, w, h] in CSS px.
+const TOP_BAR = Object.freeze([0, 0, WIDTH, 52]);
+
+// The page's rectangles on one side, painted in order: [x, y, w, h, rgb].
+function demoRects(side) {
+  const after = side !== 'base';
+  return [
+    [0, 0, WIDTH, 52, BAR], [24, 20, 160, 12, INK], [1120, 18, 136, 16, SOFT],
+    ...(after ? [[0, 51, WIDTH, 1, BAR_LINE]] : []),
+    [40, 120, 560, 620, CARD],
+    ...[0, 1, 2, 3, 4, 5].map((i) => [64, 152 + i * 36, 480 - (i % 3) * 60, 12, SOFT]),
+    // Two strips of card text the comparison finds different, which the
+    // claim is not about.
+    [64, 615, after ? 340 : 300, 12, INK],
+    [64, 671, after ? 220 : 260, 12, INK],
+    [640, 120, 600, 300, CARD], [664, 152, 400, 12, SOFT], [664, 188, 320, 12, SOFT],
+  ];
+}
+
+// A WIDTH×HEIGHT PNG of one side's page (`base` the before, else the after).
 function shotPng(side) {
   const key = side === 'base' ? 'base' : 'head';
   if (pngCache.has(key)) return pngCache.get(key);
-  const [r, g, b] = key === 'base' ? [228, 228, 231] : [37, 99, 235];
   const rowLength = WIDTH * 3 + 1;
   const raw = Buffer.alloc(rowLength * HEIGHT);
-  for (let y = 0; y < HEIGHT; y++) {
-    const offset = y * rowLength;
-    raw[offset] = 0; // filter: none
-    for (let x = 0; x < WIDTH; x++) {
-      raw[offset + 1 + x * 3] = r;
-      raw[offset + 2 + x * 3] = g;
-      raw[offset + 3 + x * 3] = b;
+  const fill = (x0, y0, w, h, [r, g, b]) => {
+    for (let y = y0; y < y0 + h; y++) {
+      for (let x = x0; x < x0 + w; x++) {
+        const at = y * rowLength + 1 + x * 3;
+        raw[at] = r; raw[at + 1] = g; raw[at + 2] = b;
+      }
     }
-  }
+  };
+  fill(0, 0, WIDTH, HEIGHT, CREAM);
+  for (const [x, y, w, h, rgb] of demoRects(key)) fill(x, y, w, h, rgb);
+  // Each row's filter byte (0, none) is already zero.
   const header = Buffer.alloc(13);
   header.writeUInt32BE(WIDTH, 0);
   header.writeUInt32BE(HEIGHT, 4);
@@ -158,6 +190,21 @@ function shotPng(side) {
   pngCache.set(key, png);
   return png;
 }
+
+// What the comparison (services/shots-diff.js screensFor) makes of the two
+// pictures, with the top bar recorded as the element the claim is about:
+// the line, outlined as the bar it runs under and tied to the claim; the two
+// strips, outlined as something else; and the claim's frame, the top bar.
+// tests/staging-demo-preview.test.js runs the comparison on the pictures and
+// holds this to what it finds.
+const DEMO_SCREEN = Object.freeze({
+  regions: [
+    { story: CLAIM_ID, b: [...TOP_BAR], a: [...TOP_BAR], bMark: null, aMark: null },
+    { story: null, b: [360, 615, 48, 12], a: [360, 615, 48, 12], bMark: null, aMark: null },
+    { story: null, b: [280, 671, 48, 12], a: [280, 671, 48, 12], bMark: null, aMark: null },
+  ],
+  frames: [{ story: CLAIM_ID, b: [...TOP_BAR], a: [...TOP_BAR] }],
+});
 
 // The demo change's before & after, as a published run's view. Built by
 // `shotsView.serialize` so the shape is exactly what a real verified run
@@ -174,10 +221,10 @@ function demoShots(mock, slug = require('../config').SELF_APP_SLUG) {
     required: false,
     claims: [{
       id: CLAIM_ID,
-      claim: 'Try it opens the change in a preview',
+      claim: 'Staging demo: a thin line runs under the top bar',
       persona: 'member',
       viewports: [VIEWPORT],
-      steps: ['Press Try it'],
+      steps: ['Open the demo page'],
       baseState: 'present',
       animation: 'none',
     }],
@@ -192,6 +239,7 @@ function demoShots(mock, slug = require('../config').SELF_APP_SLUG) {
       width: WIDTH,
       heightBefore: HEIGHT,
       heightAfter: HEIGHT,
+      ...DEMO_SCREEN,
     }],
     updatedAt: new Date(0).toISOString(),
   };
@@ -211,4 +259,7 @@ module.exports = {
   sampleAppHtml,
   shotPng,
   demoShots,
+  TOP_BAR,
+  DEMO_SCREEN,
+  CLAIM_ID,
 };

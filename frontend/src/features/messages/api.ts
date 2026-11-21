@@ -1,8 +1,10 @@
-import { normalizeWorkState } from '../../lib/work-state';
+import { normalizeWorkState, wordsOf } from '../../lib/work-state';
 import type {
   BotLiveWork,
   BotOutcome,
   DesignPin,
+  PreviewPin,
+  ShowingRef,
   ConversationDetail,
   ConversationMember,
   ConversationMessage,
@@ -18,6 +20,7 @@ import type {
   HomeroomBotPlan,
   HomeroomBotPlanQuestion,
   HomeroomBotReadyNow,
+  HomeroomBotWaits,
   HomeroomBotWork,
   BotFiledLimit,
   BotFiledNext,
@@ -221,13 +224,31 @@ export function normalizeGoesLive(input: unknown): HomeroomBotGoesLive | null {
   if (pick(row, 'soon') === true) return { soon: true, at: null, missing: 0, waitingOn: [], more: 0 };
   if (pick(row, 'soon') !== false) return null;
   const at = text(pick(row, 'at'));
+  const waits = waitsOf(pick(row, 'waits'));
   return {
     soon: false,
     at: at && Number.isFinite(Date.parse(at)) ? at : null,
     missing: Math.max(Math.floor(Number(pick(row, 'missing')) || 0), 0),
     waitingOn: array(pick(row, 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Math.floor(Number(pick(row, 'more')) || 0), 0),
+    ...(waits ? { waits } : {}),
   };
+}
+
+/**
+ * Review A3: what an approved change's stored work state says it still
+ * waits on (services/homeroom-bot-dm.js waitsBeforeLive): its stage, its
+ * line's code and the row's own words. Null without a stage and words.
+ */
+function waitsOf(input: unknown): HomeroomBotWaits | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  const stage = text(pick(row, 'stage'));
+  const words = wordsOf(pick(row, 'words'));
+  if (!stage || !words) return null;
+  const lineRow = pick(row, 'line');
+  const code = lineRow && typeof lineRow === 'object' && !Array.isArray(lineRow) ? text(pick(record(lineRow), 'code')) : '';
+  return { stage, line: code ? { code } : null, words };
 }
 
 /**
@@ -278,6 +299,8 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
     ? {
       name: makeName, rootId: makeRoot, version: strictId(pick(makeRow, 'version')),
       ...(makeBrief ? { brief: makeBrief } : {}),
+      // K (20 Nov 2026): one of the thread's artifacts after its first; none is the first.
+      ...(strictId(pick(makeRow, 'artifactId')) ? { artifactId: strictId(pick(makeRow, 'artifactId'))! } : {}),
     } : null;
   return {
     homeroomBot: {
@@ -285,6 +308,8 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       appSlug: optional('appSlug'),
       appName: optional('appName'),
       ...(strictId(pick(bot, 'designVersion')) ? { designVersion: strictId(pick(bot, 'designVersion'))! } : {}),
+      // 20 Nov 2026 (live-draft review, K): which of the thread's artifacts the version is of; none means its first.
+      ...(strictId(pick(bot, 'artifactId')) ? { artifactId: strictId(pick(bot, 'artifactId'))! } : {}),
       designTitle: optional('designTitle'),
       // 1 Nov 2026: a thread about a request or a change is named by it.
       ...(['request', 'change'].includes(String(pick(bot, 'aboutKind'))) && strictId(pick(bot, 'aboutNumber'))
@@ -628,6 +653,8 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
   const replyId = strictId(pick(replyRow, 'id', 'messageId', 'message_id'));
   const botMeta = normalizeBotMeta(pick(row, 'metadata'));
   const designPin = normalizeDesignPin(pick(record(pick(row, 'metadata')), 'designPin'));
+  // 20 Nov 2026 (live-draft review, J): a comment pinned on a live draft's preview.
+  const previewPin = normalizePreviewPin(pick(record(pick(row, 'metadata')), 'previewPin'));
   return {
     id: strictId(pick(row, 'id', 'messageId', 'message_id')) || 0,
     conversationId,
@@ -655,7 +682,9 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
     saved: pick(row, 'saved', 'bookmarked') === true,
     // #3624: the Homeroom bot's question and its answers, when it has one.
     // #6071: a person's comment pinned on a design carries its point.
-    ...(botMeta || designPin ? { metadata: { ...(botMeta || {}), ...(designPin ? { designPin } : {}) } } : {}),
+    ...(botMeta || designPin || previewPin
+      ? { metadata: { ...(botMeta || {}), ...(designPin ? { designPin } : {}), ...(previewPin ? { previewPin } : {}) } }
+      : {}),
   };
 }
 
@@ -668,7 +697,30 @@ export function normalizeDesignPin(input: unknown): DesignPin | null {
   if (!version || !(x >= 0 && x <= 1) || !(y >= 0 && y <= 1)) return null;
   const el = record(pick(row, 'element'));
   const element = { tag: text(pick(el, 'tag')).slice(0, 30), id: text(pick(el, 'id')).slice(0, 60), text: text(pick(el, 'text')).slice(0, 80) };
-  return { version, x, y, ...(element.tag || element.text ? { element } : {}) };
+  // K: the artifact it was pinned on; none means the thread's first.
+  const artifactId = strictId(pick(row, 'artifactId'));
+  return { version, x, y, ...(artifactId ? { artifactId } : {}), ...(element.tag || element.text ? { element } : {}) };
+}
+
+/** 20 Nov 2026 (live-draft review, J): a pin on a live draft's preview as the server sends it, or null. */
+export function normalizePreviewPin(input: unknown): PreviewPin | null {
+  const row = record(input);
+  const draftId = strictId(pick(row, 'draftId'));
+  const x = Number(pick(row, 'x'));
+  const y = Number(pick(row, 'y'));
+  if (!draftId || !(x >= 0 && x <= 1) || !(y >= 0 && y <= 1)) return null;
+  const route = text(pick(row, 'route')).slice(0, 300);
+  const view = record(pick(row, 'viewport'));
+  const width = Number(pick(view, 'width'));
+  const height = Number(pick(view, 'height'));
+  const el = record(pick(row, 'element'));
+  const element = { tag: text(pick(el, 'tag')).slice(0, 30), id: text(pick(el, 'id')).slice(0, 60), text: text(pick(el, 'text')).slice(0, 80) };
+  return {
+    draftId, x, y,
+    ...(route.startsWith('/') ? { route } : {}),
+    ...(width > 0 && height > 0 ? { viewport: { width, height } } : {}),
+    ...(element.tag || element.text ? { element } : {}),
+  };
 }
 
 export function normalizeConversation(input: unknown): ConversationDetail {
@@ -949,9 +1001,17 @@ export class MessagesTimeoutError extends Error {
  * is what makes that safe: a message the server did store is returned, not
  * stored again, when it is sent again under the same key.
  */
-export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string; designPin?: DesignPin }, options: { timeoutMs?: number } = {}): Promise<ConversationMessage> {
+export async function sendMessage(id: number, input: {
+  content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string;
+  designPin?: DesignPin; previewPin?: PreviewPin; showing?: ShowingRef | null;
+}, options: { timeoutMs?: number } = {}): Promise<ConversationMessage> {
   const payload: JsonRecord = { content: input.content, idempotency_key: input.idempotencyKey };
   if (input.designPin) payload.design_pin = input.designPin as unknown as JsonRecord;
+  // 20 Nov 2026 (live-draft review, J; C and I): a pin on a live draft's
+  // preview, and what the column beside the thread shows, so the bot reads
+  // "this" as that one.
+  if (input.previewPin) payload.preview_pin = input.previewPin as unknown as JsonRecord;
+  if (input.showing) payload.showing = input.showing as unknown as JsonRecord;
   if (input.replyToId) payload.reply_to_id = input.replyToId;
   if (input.threadRootId) payload.thread_root_id = input.threadRootId;
   if (input.attachmentIds?.length) payload.attachment_ids = input.attachmentIds;
@@ -981,7 +1041,30 @@ export async function sendMessage(id: number, input: { content: string; replyToI
 // ── #6071: design threads ─────────────────────────────────────────────────
 
 /** A design thread as its pane reads it (routes/conversations.js). */
+/**
+ * 20 Nov 2026 (live-draft review, K): one of the artifacts a thread holds, as
+ * the column's picker lists them (creation order; the first is the one a
+ * message from before means).
+ */
+export interface ArtifactSummary {
+  artifactId: number;
+  title: string;
+  kind: 'design' | 'page';
+  latest: number;
+  viewport: 'phone' | 'desktop' | null;
+}
+
 export interface DesignThread {
+  /** K: this artifact's own id (null from a server from before, which holds one per thread). */
+  artifactId: number | null;
+  /** K: every artifact the thread holds, this one among them. */
+  artifacts: ArtifactSummary[];
+  /**
+   * Artifacts (docs/plans/artifacts.md): what the thread's artifact is. A
+   * design is drawn with its project's stylesheets and can be requested as a
+   * plan; a plain page is self-contained and stays in its thread.
+   */
+  kind: 'design' | 'page';
   rootId: number;
   conversationId: number;
   state: string;
@@ -1053,10 +1136,29 @@ export async function startDesign(capture: DesignCapture): Promise<{ conversatio
   };
 }
 
-export async function getDesign(rootId: number): Promise<DesignThread> {
-  const data = record(await request<unknown>(`${DESIGNS}/${rootId}`));
+/** K: an artifact's own address under its thread, or the thread's first (the address from before). */
+function artifactPath(rootId: number, artifactId?: number | null): string {
+  return artifactId ? `${DESIGNS}/${rootId}/artifacts/${artifactId}` : `${DESIGNS}/${rootId}`;
+}
+
+export async function getDesign(rootId: number, artifactId: number | null = null): Promise<DesignThread> {
+  const data = record(await request<unknown>(artifactPath(rootId, artifactId)));
   const app = record(pick(data, 'app'));
+  const listed = array(pick(data, 'artifacts')).map((a): ArtifactSummary => {
+    const row = record(a);
+    const viewport = text(pick(row, 'viewport'));
+    return {
+      artifactId: strictId(pick(row, 'artifactId')) || 0,
+      title: text(pick(row, 'title')),
+      kind: pick(row, 'artifactKind') === 'page' ? 'page' as const : 'design' as const,
+      latest: Number(pick(row, 'latest')) || 0,
+      viewport: viewport === 'phone' || viewport === 'desktop' ? viewport : null,
+    };
+  }).filter((a) => a.artifactId > 0);
   return {
+    artifactId: strictId(pick(data, 'artifactId')),
+    artifacts: listed,
+    kind: pick(data, 'artifactKind') === 'page' ? 'page' : 'design',
     rootId: strictId(pick(data, 'rootId')) || rootId,
     conversationId: strictId(pick(data, 'conversationId')) || 0,
     state: text(pick(data, 'state')) || 'open',
@@ -1081,13 +1183,13 @@ export async function getDesign(rootId: number): Promise<DesignThread> {
   };
 }
 
-export async function getDesignVersion(rootId: number, version: number): Promise<{ version: number; html: string }> {
-  const data = record(await request<unknown>(`${DESIGNS}/${rootId}/versions/${version}`));
+export async function getDesignVersion(rootId: number, version: number, artifactId: number | null = null): Promise<{ version: number; html: string }> {
+  const data = record(await request<unknown>(`${artifactPath(rootId, artifactId)}/versions/${version}`));
   return { version: Number(pick(data, 'version')) || version, html: typeof pick(data, 'html') === 'string' ? String(pick(data, 'html')) : '' };
 }
 
-export async function proposeDesign(rootId: number, input: { version: number; title: string; notes: string }): Promise<{ number: number | null; href: string; plan: boolean }> {
-  const data = record(await request<unknown>(`${DESIGNS}/${rootId}/propose`, { method: 'POST', body: JSON.stringify(input) }));
+export async function proposeDesign(rootId: number, input: { version: number; title: string; notes: string }, artifactId: number | null = null): Promise<{ number: number | null; href: string; plan: boolean }> {
+  const data = record(await request<unknown>(`${artifactPath(rootId, artifactId)}/propose`, { method: 'POST', body: JSON.stringify(input) }));
   return { number: strictId(pick(data, 'number')), href: text(pick(data, 'href')), plan: pick(data, 'plan') !== false };
 }
 
@@ -1553,7 +1655,10 @@ export async function listBlocks(): Promise<ConversationUser[]> {
   }).filter((user) => user.id);
 }
 
-const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
+// What an activity card can come to: the server's endings
+// (services/homeroom-bot-activity.js OUTCOME_LABELS, which
+// tests/work-stages-client.test.js holds this to). Any other reads as stopped.
+export const ACTIVITY_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
   'checking', 'needs_look', 'going_live',
@@ -1618,9 +1723,13 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
 const ASK_KINDS = new Set([
   'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
 ]);
-// T2.9: every cause the one decoder names a stop by (services/bot-stop-cause.js).
-const JOB_STOP_CAUSES = new Set([
+// T2.9: every cause the one decoder names a stop by (services/bot-stop-cause.js
+// BUILD_CAUSES, which tests/work-stages-client.test.js holds this to). A
+// stop for building credit was dropped here, and its card said only that
+// the build didn't finish.
+export const JOB_STOP_CAUSES: ReadonlySet<string> = new Set([
   'time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other', 'plan', 'push', 'push_permanent', 'push_gave_up', 'stopped',
+  'credit',
 ]);
 
 /**

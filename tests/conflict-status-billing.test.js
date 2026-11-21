@@ -144,8 +144,9 @@ test('runSyncMain records the turn cost to system_token_usage, never llm_usage',
     const sys = sysSpendInserts(pool);
     assert.equal(sys.length, 1, 'one system_token_usage upsert');
     assert.equal(sys[0].params[0], 20, '$0.20 → 20 cents');
-    // platform key forced: execInWorker called with no anthropic key.
-    assert.equal(execCalls[0].opts.anthropicApiKey, null);
+    // The platform pays: execInWorker is handed no key at all, the relay
+    // brings the platform's OpenRouter key (task 2275).
+    assert.equal('anthropicApiKey' in execCalls[0].opts, false);
   } finally {
     restore();
   }

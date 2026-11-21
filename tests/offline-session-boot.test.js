@@ -472,10 +472,10 @@ test('where the boot read never landed, refresh() and the CLI gate share one req
   const gate = s.Settings._cliAuthAvailable();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(s.calls, ['/api/auth/me'], 'one request on its way serves both');
-  answer({ ok: true, json: () => Promise.resolve({ user: { hasApiKey: true, cliAuthEnabled: false } }) });
+  answer({ ok: true, json: () => Promise.resolve({ user: { walletLinkEnabled: true, cliAuthEnabled: false } }) });
   await refreshed;
   assert.equal(await gate, false);
-  assert.equal(s.Settings.state.hasApiKey, true);
+  assert.equal(s.Settings.state.walletLinkEnabled, true);
 
   // In flight only: nothing is kept, so a read after it landed asks again.
   const later = s.Settings._readMe('');

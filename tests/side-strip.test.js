@@ -22,6 +22,7 @@ const {
   stripSide, stripShotSide, applyStrip, watchSideStrip,
   topBand, topBandShot, applyTopBand,
   sideCorner, cornerShot, applyCorner,
+  stripWidth, cornerWidth, panelEdge,
 } = loadTsx('frontend/src/lib/side-strip.ts');
 
 test('stripSide: only a wide inset on one side is a strip', () => {
@@ -543,7 +544,9 @@ test('every rule in the block is keyed on the strip, but the off switch', () => 
   assert.ok(selectors.length > 10);
   for (const sel of selectors) {
     if (/^\.platform-side-strip-top,\s*\.platform-side-strip-ground,\s*\.platform-side-strip-frost,\s*\.platform-side-apps$/.test(sel)) continue;
-    assert.match(sel, /html\[data-side-strip/, `${sel} applies only with the strip`);
+    // The standard look keys its ink on the strip too, with its look prefix
+    // before the attribute.
+    assert.match(sel, /html(?::not\(\[data-skin\]\))?\[data-side-strip/, `${sel} applies only with the strip`);
   }
   assert.match(block, /\.platform-side-strip-top,\n\.platform-side-strip-ground,\n\.platform-side-strip-frost,\n\.platform-side-apps \{\s*display: none;/, 'no strip, no strip pieces');
 });
@@ -665,6 +668,45 @@ test('Messages\' drawer runs under the strip the same way', () => {
   const root = (attr, w) => ({ documentElement: { hasAttribute: () => attr, style: { getPropertyValue: () => w } } });
   assert.equal(stripWidth(root(true, '84px')), 84);
   assert.equal(stripWidth(root(false, '84px')), 0, 'no strip, nothing taken off');
+});
+
+// ── #6970: the edge the side panel's own document must clear ────────────
+
+function fakeRoot({ side = null, corner = null, width = 0, dir = '' } = {}) {
+  const attrs = {};
+  if (side) attrs['data-side-strip'] = side;
+  if (corner) attrs['data-side-corner'] = corner;
+  const values = {
+    '--platform-strip-w': side ? `${width}px` : '',
+    '--platform-corner-w': corner ? `${width}px` : '',
+  };
+  return { documentElement: {
+    dir,
+    hasAttribute: (n) => Object.prototype.hasOwnProperty.call(attrs, n),
+    getAttribute: (n) => (Object.prototype.hasOwnProperty.call(attrs, n) ? attrs[n] : null),
+    style: { getPropertyValue: (n) => values[n] || '' },
+  } };
+}
+
+test('cornerWidth reads the corner\'s own property, and only with the corner', () => {
+  assert.equal(cornerWidth(fakeRoot({ corner: 'right', width: 52 })), 52);
+  assert.equal(cornerWidth(fakeRoot({ corner: 'left', width: 52 })), 52);
+  assert.equal(cornerWidth(fakeRoot({ width: 52 })), 0, 'no corner attribute: nothing published');
+  assert.equal(cornerWidth(null), 0);
+});
+
+test('panelEdge is the strip or corner on the column\'s inline end, and nothing else', () => {
+  assert.equal(panelEdge(fakeRoot({ side: 'right', width: 84 })), 84, 'the Duo held sideways, LTR');
+  assert.equal(panelEdge(fakeRoot({ side: 'right', width: 84, dir: 'rtl' })), 0,
+    'in Arabic the panel is against the left edge, so the right column is behind the list');
+  assert.equal(panelEdge(fakeRoot({ side: 'left', width: 84, dir: 'rtl' })), 84,
+    'Split View with the app against the left edge, in Arabic');
+  assert.equal(panelEdge(fakeRoot({ side: 'left', width: 84 })), 0, 'a left column in LTR is not beside the panel');
+  assert.equal(panelEdge(fakeRoot({ corner: 'right', width: 52 })), 52, 'folded: the corner\'s width');
+  assert.equal(panelEdge(fakeRoot({ corner: 'left', width: 52 })), 0);
+  assert.equal(panelEdge(fakeRoot({ width: 84 })), 0, 'nothing published: no edge to clear');
+  assert.equal(panelEdge(null), 0);
+  assert.equal(panelEdge({ documentElement: {} }), 0, 'a root that cannot answer reads as no edge');
 });
 
 test('the strip\'s tabs: one capsule at the foot, the apps above it', () => {

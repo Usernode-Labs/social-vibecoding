@@ -10,7 +10,10 @@
  * The tile is 62px with 18px corners and the blue votes-waiting number, in
  * a ring of the community's colour (lib/community-color.ts) so it never
  * reads as an app. A community's tile opens its hub; an app's tile (Home's
- * Pinned apps) opens the app. Beside the tiles, the page's own:
+ * Pinned apps) opens the app. Where the page draws a community as a card
+ * (the standard look from 768px, the brand look from 1280px), the card is
+ * ../communities/card.tsx, which takes this module's votes number, its edit
+ * discs and its door (`openHub`). Beside the tiles, the page's own:
  *
  *   New community    the create flow: present for every signed-in account
  *                    but a private member, locked (muted, and its name says
@@ -35,19 +38,18 @@
  * Signed in only. Signed out, the guest Home draws its device's pins with
  * the same tile (features/guest).
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
 
-import { CheckIcon, PlusIcon, SpeechCheckIcon, UserGroupIcon } from '@/components/ui/icons';
+import { PlusIcon, SpeechCheckIcon } from '@/components/ui/icons';
 
 import { useCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { swatchFor } from '../messages/format';
 import { SectionHeading } from './panels/ui';
 import {
   homePinsStore, importDevicePins, loadHomePins, loadHomePinsForSession,
-  wireHomePins, type HomePin, type PinActivity,
+  wireHomePins, type HomePin,
 } from './home-pins-store';
 import { matchesQuery, useSettledHomeQuery } from './use-home-query';
 
@@ -56,11 +58,11 @@ const TILE = 'flex min-w-0 flex-col items-center gap-1.5 rounded-2xl py-1 text-c
 const FACE = 'app-icon-tile w-14 h-14 shrink-0 rounded-[16px] overflow-hidden flex items-center justify-center font-bold text-2xl';
 const RING = 'rounded-[21px] p-[3px] shadow-[inset_0_0_0_2px_var(--ring)]';
 const NAME = 'max-w-full line-clamp-2 break-words text-[12.5px] font-semibold leading-[15px] text-zinc-800 dark:text-zinc-200';
-const VOTES = 'absolute -top-1.5 -end-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-violet-600 text-white text-xs font-extrabold tabular-nums flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
+export const VOTES = 'absolute -top-1.5 -end-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-violet-600 text-white text-xs font-extrabold tabular-nums flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
 // The corner discs the grid's edit mode draws (app-grid.tsx .app-card-remove):
 // a dark − to unpin; a white + in the accent ink to pin (Discover's add pill's
 // treatment), never a primary button's fill on a 24px badge.
-const CORNER = 'absolute -top-1.5 w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
+export const CORNER = 'absolute -top-1.5 w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_0_2px_var(--dc-sheet-solid)]';
 export const CORNER_UNPIN = 'bg-zinc-700 text-white dark:bg-zinc-500';
 export const CORNER_PIN = 'bg-white text-violet-700 dark:bg-zinc-800 dark:text-violet-400';
 /** No MinusIcon in the kit's set: the glyph is the minus itself, as app-grid.tsx draws it. */
@@ -68,11 +70,11 @@ export function MinusGlyph() {
   return <span aria-hidden="true" className="text-[15px] leading-none font-semibold">&minus;</span>;
 }
 const FACE_WRAP = 'relative z-[1] inline-flex';
-const WIGGLE = 'animate-[home-wiggle_260ms_ease-in-out_infinite_alternate] motion-reduce:animate-none';
+export const WIGGLE = 'animate-[home-wiggle_260ms_ease-in-out_infinite_alternate] motion-reduce:animate-none';
 const ACTION_FACE = 'flex h-[62px] w-[62px] shrink-0 items-center justify-center rounded-[18px]';
 
 /** Open a community's hub, as the Communities tab's tile did (the door rule). */
-function openHub(event: React.MouseEvent<HTMLAnchorElement>, slug: string) {
+export function openHub(event: React.MouseEvent<HTMLAnchorElement>, slug: string) {
   const win = window as any;
   if (win.NavLink?.isNativeClick?.(event)) return;
   event.preventDefault();
@@ -94,10 +96,14 @@ export function CommunityTileFace({ slug, name, iconUrl, iconEmoji, iconColor }:
   );
 }
 
-/** How many brand backgrounds a community's own logo is drawn from (app.css `--wip-scene-1` to `-6`). */
+/** How many of the brand kit's backgrounds a community is given one of (app.css `--wip-scene-1` to `-6`). */
 const LOGO_SCENES = 6;
 
-/** A community's scene, 1 to LOGO_SCENES: always the same one for the same community. */
+/**
+ * A community's scene, 1 to LOGO_SCENES: always the same one for the same
+ * community. Its kit tile's band (app.css) and its card's background where
+ * it has no picture (../communities/card.tsx `cardScene`) are drawn from it.
+ */
 export function communityScene(slug: string): number {
   // FNV-1a, so slugs that differ by a letter land on different scenes.
   let h = 0x811c9dc5;
@@ -105,77 +111,48 @@ export function communityScene(slug: string): number {
   return ((h >>> 3) % LOGO_SCENES) + 1;
 }
 
-/** A small repeatable generator: the same numbers for the same seed. */
-function logoRandom(slug: string): () => number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < slug.length; i += 1) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return () => {
-    h = (h + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(h ^ (h >>> 15), 1 | h);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** How many glows a community's logo is drawn from (app.css `--wip-logo-orb-1` to `-4`). */
-const LOGO_ORBS = 4;
-
 /**
- * A COMMUNITY'S OWN LOGO (19 Nov 2026, third drawing, from the picture the
- * product owner supplied), where a look tells a community from the apps it
- * holds: a square of one soft glow, a deep colour at its heart opening to a
- * light one at its edge. Four glows (violet to cyan, green, pink to orange,
- * amber to yellow), and the heart sits a little off the middle, one of nine
- * places. Which glow and where come from the community's slug, so a
- * community always has the same one. It is a drawing, not a stored picture:
- * a community has no logo of its own yet, and its app's icon is the app's
- * (`CommunityApps` draws that one, small).
+ * A COMMUNITY'S FACE ON ITS SMALL TILE, where the page draws the kit's tiles
+ * (the standard look under 768px): its own icon (its image, else its emoji
+ * or initial on a white tile) at the tile's size, on a thin light outline,
+ * over the picture its band shows. Until 20 Nov 2026 this was a drawn emblem
+ * of the kit's colours; the community card took the real icon, and so did
+ * the tile. `.home-community-logo` stays its hook (app.css).
  */
-export function CommunityLogo({ slug }: { slug: string; name?: string }) {
-  const next = logoRandom(slug);
-  const orb = Math.floor(next() * LOGO_ORBS) + 1;
-  const at = (n: number) => `${30 + Math.floor(n * 3) * 20}%`;
-  return (
-    <span
-      className={`${FACE} home-community-logo`}
-      data-scene={String(communityScene(slug))}
-      data-orb={String(orb)}
-      style={{ ['--logo-x' as string]: at(next()), ['--logo-y' as string]: at(next()) }}
-      aria-hidden="true"
-    />
-  );
-}
-
-/**
- * THE APPS A COMMUNITY HOLDS, as small icons in a row: one today (a community
- * and its app are one-to-one), then two places for the ones to come, each a
- * small square of one of the logo's glows.
- * Hidden unless a look places it (Standard (WIP)'s cards, app.css).
- */
-export function CommunityApps({ slug, name, iconUrl, iconEmoji }: {
+function CommunityTileIcon({ slug, name, iconUrl, iconEmoji }: {
   slug: string; name: string; iconUrl?: string | null; iconEmoji?: string | null;
 }) {
   const app = { slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
-  const orb = Math.floor(logoRandom(slug)() * LOGO_ORBS) + 1;
   return (
-    <span className="hidden home-community-apps" data-home-community-apps="" aria-hidden="true">
-      <span className="app-icon-tile home-community-app" data-icon={appIconKind(app as any)}>
-        <AppIconContent app={app as any} />
-      </span>
-      {/* The places for the apps to come wear the two glows after the community's own (CommunityLogo), so the three differ. */}
-      <span className="home-community-app-slot" data-orb={String((orb % LOGO_ORBS) + 1)} />
-      <span className="home-community-app-slot" data-orb={String(((orb + 1) % LOGO_ORBS) + 1)} />
+    <span className={`${FACE} home-community-logo`} data-icon={appIconKind(app as any)} aria-hidden="true">
+      <AppIconContent app={app as any} />
     </span>
   );
 }
 
-export function PinTile({ pin, votes, editing, faded = false, detail, community = false, onUnpin, onPin }: {
+/** A picture's address as a CSS `url()`, for a band drawn by app.css; null for anything but a plain path of this origin. */
+function cssUrl(url?: string | null): string | null {
+  return url && /^\/[\w\-./]+$/.test(url) ? `url("${url}")` : null;
+}
+
+/**
+ * The band's picture on a kit tile: the community's own (its dark twin in
+ * the dark theme), as custom properties app.css lays over the tile's brand
+ * background, which shows where there is none or it does not load.
+ */
+function bandStyle(pin: { illustrationUrl?: string | null; illustrationDarkUrl?: string | null }): CSSProperties | undefined {
+  const light = cssUrl(pin.illustrationUrl);
+  if (!light) return undefined;
+  const dark = cssUrl(pin.illustrationDarkUrl);
+  return { ['--cm-pic' as string]: light, ...(dark ? { ['--cm-pic-dark' as string]: dark } : {}) };
+}
+
+export function PinTile({ pin, votes, editing, faded = false, community = false, onUnpin, onPin }: {
   pin: Omit<HomePin, 'member'>;
   votes: number;
   editing: boolean;
   faded?: boolean;
-  detail?: PinActivity;
-  /** Draw the community's own logo as the tile's face, and its app's icon small in a row of apps. */
+  /** Draw the kit's tile: the community's picture on its band (a brand background where it has none) and its own icon over it. */
   community?: boolean;
   onUnpin?: () => void;
   onPin?: () => void;
@@ -189,6 +166,8 @@ export function PinTile({ pin, votes, editing, faded = false, detail, community 
       data-home-community={pin.slug}
       data-home-community-pinned={faded ? undefined : ''}
       data-home-community-scene={community ? String(communityScene(pin.slug)) : undefined}
+      data-home-community-picture={community && bandStyle(pin) ? '' : undefined}
+      style={community ? bandStyle(pin) : undefined}
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, pin.slug); }}
     >
       {/* z-[1] (#6372): the tile's own hit area (un-touch-target's ::after)
@@ -198,7 +177,7 @@ export function PinTile({ pin, votes, editing, faded = false, detail, community 
           stacking context a disc's own z-index cannot leave. */}
       <span className={editing ? `${FACE_WRAP} ${WIGGLE}` : FACE_WRAP}>
         {community
-          ? <CommunityLogo slug={pin.slug} name={pin.name} />
+          ? <CommunityTileIcon slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} />
           : <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />}
         {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
         {editing && onUnpin ? (
@@ -223,101 +202,9 @@ export function PinTile({ pin, votes, editing, faded = false, detail, community 
         ) : null}
       </span>
       <span className={NAME}>{pin.name}</span>
-      {community ? <CommunityApps slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} /> : null}
-      {detail ? <CommunityDetail detail={detail} /> : null}
       {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
   );
-}
-
-/** How many faces a card shows (services/home-pins.js ACTIVITY_FACES). */
-const CARD_FACES = 3;
-
-/**
- * WHAT IS GOING ON THERE (Drea's review of #6699): what a community's card
- * says beside its icon and name, in two parts drawn in one order on every
- * card, so the cards of a row line up:
- *
- *   under the name   how many members, the subtitle the name sits over
- *                    (15 over 13, as a list row's title and words are).
- *   at the foot      this week: the faces of a few of the people who were
- *                    there with how many there were, then how many changes
- *                    went live, each one line of the same 13px words, led by
- *                    its faces or its check. No pill: the card is the link,
- *                    and the foot is news, not a button.
- *
- * A zero says nothing on either line: each is drawn only when it has
- * something to say. But every card has a foot, so a row of cards reads as one
- * set: a week with neither says "Quiet this week", in the muted ink, where a
- * card with no foot was a blank lower half beside its busier neighbours. The
- * activity read (GET /api/me/home-pins/activity) answers for every community
- * you have pinned or joined, so a card with `detail` knows its week. The
- * cards are the brand look's, from 1280px, on the Communities page (app.css,
- * "COMMUNITIES AS PEOPLE PLACES"); everywhere else both parts stay hidden and
- * the tile is the icon and name it always was.
- */
-function CommunityDetail({ detail }: { detail: PinActivity }) {
-  const t = useMessages('home');
-  const members = Math.max(0, Number(detail.members) || 0);
-  const live = Math.max(0, Number(detail.liveWeek) || 0);
-  const active = Math.max(0, Number(detail.activeWeek) || 0);
-  const people = (detail.people || []).filter((p) => p && p.username).slice(0, CARD_FACES);
-  const quiet = !live && !active;
-  return (
-    <>
-      {members ? (
-        <span className="hidden home-community-line" data-home-community-meta="">
-          {t('home:communities.members', { count: members, formatted: members.toLocaleString() })}
-        </span>
-      ) : null}
-      {/* What it is, in its own words: drawn where a look's card has room for it (Standard (WIP), app.css). */}
-      {detail.description ? (
-        <span className="hidden home-community-desc" data-home-community-desc="">{detail.description}</span>
-      ) : null}
-      <span className="hidden" data-home-community-detail="" data-quiet={quiet ? '' : undefined}>
-        {quiet ? (
-          <span className="home-community-quiet">
-            <UserGroupIcon className="home-community-glyph" aria-hidden="true" />
-            <span className="home-community-words">{t('home:communities.quietWeek')}</span>
-          </span>
-        ) : null}
-        {active ? (
-          <span className="home-community-people">
-            {people.length ? (
-              <span className="dev-ws-hero-faces" aria-hidden="true">
-                {people.map((p) => (
-                  <span key={p.username} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
-                    {p.avatarUrl ? <img src={p.avatarUrl} alt="" loading="lazy" draggable={false} /> : (p.username.charAt(0) || '?').toUpperCase()}
-                  </span>
-                ))}
-              </span>
-            ) : <UserGroupIcon className="home-community-glyph" aria-hidden="true" />}
-            <span className="home-community-words">{t('home:communities.activeWeek', { count: active, formatted: active.toLocaleString() })}</span>
-          </span>
-        ) : null}
-        {live ? (
-          <span className="home-community-news">
-            <CheckIcon className="home-community-glyph" aria-hidden="true" />
-            <span className="home-community-words">{t('home:communities.liveWeek', { count: live })}</span>
-          </span>
-        ) : null}
-      </span>
-    </>
-  );
-}
-
-/** True on a window at least 1280px wide, where the cards are drawn; false in the prerender. */
-export function useWide(): boolean {
-  const [wide, setWide] = useState(false);
-  useEffect(() => {
-    let query: MediaQueryList | null = null;
-    try { query = window.matchMedia('(min-width: 1280px)'); } catch { return undefined; }
-    const update = () => setWide(!!query?.matches);
-    update();
-    query.addEventListener?.('change', update);
-    return () => query?.removeEventListener?.('change', update);
-  }, []);
-  return wide;
 }
 
 /**

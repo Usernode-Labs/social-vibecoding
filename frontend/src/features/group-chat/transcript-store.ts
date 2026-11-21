@@ -447,6 +447,8 @@ export interface TranscriptMessage {
   botSuggest?: BotSuggestView | null;
   /** #6533: the pictures under Homeroom bot's reply in a change's thread. */
   botGallery?: Record<string, unknown> | null;
+  /** 20 Nov 2026: the HTML comparison under Homeroom bot's reply in a project thread. */
+  botComparison?: { title: string; html: string } | null;
   /** #6684: the build note card under Homeroom bot's reply on a request. */
   botBuildNote?: Record<string, unknown> | null;
   /**

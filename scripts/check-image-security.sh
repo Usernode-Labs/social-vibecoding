@@ -7,12 +7,14 @@ mkdir -p "$out"
 phase='image inventory'
 assessment_done=0
 archive_dir=
+db_pid=
 finish() {
   result=$?
   if [ "$assessment_done" != 1 ]; then
     node scripts/security-findings.js --unavailable "$out" "$component" "$phase failed; retry or review this assessment" || true
     [ "$result" != 0 ] || result=1
   fi
+  [ -z "$db_pid" ] || wait "$db_pid" || true
   [ -z "$archive_dir" ] || rm -rf "$archive_dir"
   exit "$result"
 }
@@ -49,6 +51,12 @@ if [ -n "${BASELINE_IMAGE:-}" ] && [ -n "$(digest_of "$image")" ] \
   live=1
 fi
 
+# Fetch the public database without project files while the runner pulls
+# and probes the exact image. Wait before any offline scanner opens the DB.
+docker run --rm -v social-security-trivy-db:/root/.cache/trivy \
+  aquasec/trivy:0.76.1 image --download-db-only &
+db_pid=$!
+
 if [ -z "$live" ]; then
   phase='runtime probes'
   # No app command, network or production credentials are used by these probes.
@@ -61,11 +69,9 @@ if [ -z "$live" ]; then
   docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
     --entrypoint node "$image" < scripts/playwright-browsers-inventory.js > "$out/playwright-browsers.json"
 fi
-# Download the public database in a container that sees no project files.
-# Scanners that receive the SBOM or image archive have networking disabled.
 phase='vulnerability database download'
-docker run --rm -v social-security-trivy-db:/root/.cache/trivy \
-  aquasec/trivy:0.76.1 image --download-db-only
+wait "$db_pid"
+db_pid=
 # Keep complete reports, including unfixed and lower-severity findings.
 phase='SBOM scan'
 docker run --rm --network none -v "$(cd "$(dirname "$sbom")" && pwd):/input:ro" \
@@ -75,16 +81,21 @@ docker run --rm --network none -v "$(cd "$(dirname "$sbom")" && pwd):/input:ro" 
   "/input/$(basename "$sbom")"
 test -s "$out/vulnerabilities.json"
 if [ -z "$live" ]; then
-  phase='full-image scan'
+  phase='image archive'
   # A third-party SPDX document can lose distro metadata. Scan the actual
   # image too, independently of the complete global-npm SBOM inventory.
   archive_dir=$(mktemp -d)
+  started=$(date +%s)
   docker image save -o "$archive_dir/image.tar" "$image"
+  echo "Image archive saved in $(( $(date +%s) - started ))s"
+  phase='full-image scan'
+  started=$(date +%s)
   docker run --rm --network none -v "$archive_dir/image.tar:/image.tar:ro" \
     -v "$(cd "$out" && pwd):/output" -v social-security-trivy-db:/root/.cache/trivy \
     aquasec/trivy:0.76.1 image --skip-db-update --offline-scan --cache-backend memory \
     --input /image.tar --scanners vuln --format json --output /output/image-vulnerabilities.json
   test -s "$out/image-vulnerabilities.json"
+  echo "Full-image scan completed in $(( $(date +%s) - started ))s"
   rm -rf "$archive_dir"
   archive_dir=
 fi

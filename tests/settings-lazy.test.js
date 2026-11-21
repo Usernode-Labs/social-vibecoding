@@ -72,14 +72,15 @@ function assignedFields(src, header, target) {
 test('the façade\'s state has the same fields and defaults as settings.js', () => {
   const facade = literalKeys(facadeJs, facadeJs.indexOf('const state = '));
   const real = literalKeys(settingsJs, settingsJs.indexOf('    state: {'));
-  assert.ok(real.length >= 6, `settings.js state literal parsed (${real.length} fields)`);
+  // Four since task 2275 took the two own-Anthropic-key fields out.
+  assert.ok(real.length >= 4, `settings.js state literal parsed (${real.length} fields)`);
   assert.deepEqual(facade, real, 'facade.js `state` must mirror settings.js `state` field for field');
 });
 
 test('the façade\'s refresh() assigns exactly the fields settings.js\'s refresh() assigns', () => {
   const facade = assignedFields(facadeJs, '  async refresh() {', 'state');
   const real = assignedFields(settingsJs, '    async refresh() {', 'this\\.state');
-  assert.ok(real.length >= 6, `settings.js refresh parsed (${real.length} assignments)`);
+  assert.ok(real.length >= 4, `settings.js refresh parsed (${real.length} assignments)`);
   assert.deepEqual(facade, real);
   // And primes the CLI-auth memo from the same payload, like the original.
   assert.match(facadeJs, /Promise\.resolve\(u\.cliAuthEnabled !== false\)/);
@@ -87,13 +88,13 @@ test('the façade\'s refresh() assigns exactly the fields settings.js\'s refresh
   // Joining the boot read, not repeating it — and ?demo=1 reading for itself.
   assert.match(facadeJs, /window\.App\.bootSession\(\)/);
   assert.match(facadeJs, /fetch\(`\/api\/auth\/me\$\{meDemoQ\}`, \{ credentials: 'same-origin' \}\)/);
-  // The byok dot is published from here, so it does not wait for the chunk.
-  assert.match(facadeJs, /publish\?\.\('switcher-byok-dot', !!state\.hasApiKey\)/);
+  // The byok dot went with people's own Anthropic keys (task 2275).
+  assert.doesNotMatch(facadeJs, /switcher-byok-dot|hasApiKey/);
 });
 
-test('the façade reads /api/auth/me into state and publishes the dot, without loading anything', async () => {
+test('the façade reads /api/auth/me into state, without loading anything', async () => {
   const published = [];
-  const boot = { user: { hasApiKey: true, keyLast4: '4242', walletLinkEnabled: true, locale: 'fr', cliAuthEnabled: false } };
+  const boot = { user: { walletLinkEnabled: true, locale: 'fr', cliAuthEnabled: false } };
   const win = {
     location: { search: '' },
     App: { bootSession: async () => boot, Visibility: { publish: (k, v) => published.push([k, v]) } },
@@ -113,14 +114,13 @@ test('the façade reads /api/auth/me into state and publishes the dot, without l
     assert.equal(S.close(), undefined);
     assert.equal(S.syncChrome(), undefined);
     assert.equal(S._cliTokensDemo(), false);
-    assert.equal(S.state.hasApiKey, false, 'defaults until the read lands');
+    assert.equal(S.state.walletLinkEnabled, false, 'defaults until the read lands');
     await S.refresh();
-    assert.equal(S.state.hasApiKey, true);
-    assert.equal(S.state.keyLast4, '4242');
+    assert.equal('hasApiKey' in S.state, false);
     assert.equal(S.state.walletLinkEnabled, true);
     assert.equal(S.state.locale, 'fr');
     assert.equal(await S._cliAuthPromise, false, 'the CLI-auth memo is primed from the same payload');
-    assert.deepEqual(published, [['switcher-byok-dot', true]]);
+    assert.deepEqual(published, [], 'nothing is published from the boot read any more');
     assert.equal(mod.settingsChunkStore.get().Sections, null, 'no chunk was loaded for any of this');
   } finally {
     globalThis.window = prevWindow;

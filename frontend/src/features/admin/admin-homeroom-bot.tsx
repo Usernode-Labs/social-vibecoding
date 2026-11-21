@@ -257,11 +257,36 @@ export function modelsInUse(p: Pick<Payload, 'bot' | 'configurations'> | null | 
 // The server's own rule (MODEL_ID_RE in services/homeroom-bot.js).
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
 
-interface Bot {
+// services/openrouter-credit.js status(). `creditCents` is the ACCOUNT's
+// credit (a prepaid key's remaining standing in, `creditSource: 'key'`, only
+// when the account cannot be read), never what is left of the bot's weekly
+// budget; `keyUsedCents` is OpenRouter's own count of the bot key's week.
+export interface Credit {
+  creditCents: number | null;
+  creditSource?: 'account' | 'key' | null;
+  creditRead?: boolean;
+  management?: boolean;
+  accountCents?: number | null;
+  keyCents?: number | null;
+  keyLimitCents?: number | null;
+  keyReset?: string | null;
+  keyUsedCents?: number | null;
+  daysLeft: number | null;
+  burnDays?: number | null;
+  at: string | null;
+  warnCents: number;
+  urgentCents: number;
+  outage?: { since: string; words?: string | null; cause?: 'credit' | 'budget' } | null;
+}
+
+export interface Bot {
   id: number;
   username: string;
   weeklyLimitCents: number;
   weeklySpentCents: number;
+  // When the bot's week turns (services/limits.js weeklyResetAt: Monday
+  // 00:00 UTC, which is also its key's weekly reset at OpenRouter).
+  weeklyResetsAt?: string | null;
   hasIncludedKey: boolean;
   model: string | null;
   // #3654: what each stage runs on now, the default filled in.
@@ -438,13 +463,10 @@ interface Payload {
   // currentConfigurations), over the stage settings; a scope with none is null.
   configurations?: Configurations | null;
   bot: Bot | null;
-  // #6867: OpenRouter's building credit, as the last read left it, with the
-  // two levels admins are warned at (services/openrouter-credit.js status).
-  credit?: {
-    balanceCents: number | null; accountCents?: number | null; keyCents?: number | null;
-    daysLeft: number | null; at: string | null; warnCents: number; urgentCents: number;
-    outage?: { since: string; words?: string | null } | null;
-  } | null;
+  // #6867: the OpenRouter account's credit, as the last read left it, with
+  // the two levels admins are warned at, and beside it what OpenRouter counts
+  // of the bot key's week (services/openrouter-credit.js status).
+  credit?: Credit | null;
   loop: LastPass | null;
   totals: Totals;
   // `buildsWaiting`: live builds waiting their turn, which wait on their
@@ -514,6 +536,76 @@ function money(usd: number | null | undefined): string {
 function dollarsFromCents(cents: number | null | undefined): string {
   if (cents == null || !Number.isFinite(Number(cents))) return '–';
   return `$${(Number(cents) / 100).toFixed(2)}`;
+}
+
+// A sum of money on the two money tiles: cents as dollars, grouped.
+function tileMoney(cents: number | null | undefined): string {
+  if (cents == null || !Number.isFinite(Number(cents))) return '–';
+  return `$${(Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** The day an instant falls on, by name, in UTC: the day the bot's week turns. Pure. */
+function dayName(iso: string | null | undefined): string | null {
+  const at = Date.parse(String(iso || ''));
+  return Number.isFinite(at)
+    ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(at))
+    : null;
+}
+
+/**
+ * The "Spent this week" tile's words. Pure. Homeroom's own count of what the
+ * bot's turns cost, against its weekly budget and the day that week turns.
+ * `counts` is OpenRouter's count of the same week on the bot's key, said
+ * only when it differs: it runs ahead of Homeroom's, because the same key
+ * pays for the platform's own model calls, and it is the one OpenRouter
+ * refuses on.
+ */
+export function spendTile(bot: Bot | null | undefined, credit: Credit | null | undefined): { value: string; sub?: string; counts?: string } {
+  if (!bot) return { value: '–' };
+  const day = dayName(bot.weeklyResetsAt);
+  const theirs = credit && credit.keyReset && credit.keyUsedCents != null ? Math.round(credit.keyUsedCents) : null;
+  const ours = Math.round(bot.weeklySpentCents);
+  // Higher, as it usually is, because the bot's key also pays for before
+  // and after screenshots, Sync with main and the platform's helper calls
+  // (titles, summaries, translation), which Homeroom charges to nobody.
+  const counts = theirs == null || theirs === ours ? null
+    : theirs > ours ? `OpenRouter counts ${tileMoney(theirs)}, which includes screenshots, sync and helpers.`
+      : `OpenRouter counts ${tileMoney(theirs)}.`;
+  return {
+    value: tileMoney(bot.weeklySpentCents),
+    sub: `of ${tileMoney(bot.weeklyLimitCents)}, the weekly budget.${day ? ` It resets on ${day}.` : ''}`,
+    ...(counts ? { counts } : {}),
+  };
+}
+
+/**
+ * The "OpenRouter credit" tile's words. Pure. The ACCOUNT's credit, the two
+ * levels admins are warned at, and how long it lasts at the rate the account
+ * itself has been going down (never the bot's own spend: the account pays
+ * for more than the bot). Without a management key the account's credit
+ * cannot be read, which is said here, once, rather than as a standing row in
+ * the limits area.
+ */
+export function creditTile(credit: Credit | null | undefined): { value: string; sub?: string } {
+  if (!credit) return { value: '–' };
+  const warns = `Warns at ${tileMoney(credit.warnCents)} and ${tileMoney(credit.urgentCents)}.`;
+  if (credit.creditCents == null) {
+    return {
+      value: '–',
+      sub: credit.management === false
+        ? 'The account\'s credit can\'t be read: no OpenRouter management key is set (OPENROUTER_MANAGEMENT_API_KEY).'
+        : `The account's credit hasn't been read yet. ${warns}`,
+    };
+  }
+  const days = credit.daysLeft != null && credit.burnDays
+    ? ` About ${credit.daysLeft} day${credit.daysLeft === 1 ? '' : 's'} at the rate of the last ${credit.burnDays === 1 ? 'day' : `${credit.burnDays} days`}.`
+    : '';
+  return {
+    value: tileMoney(credit.creditCents),
+    sub: `${credit.creditSource === 'key'
+      ? 'What is left on the bot\'s key (the account\'s credit can\'t be read).'
+      : 'The account\'s credit.'}${days} ${warns}`,
+  };
 }
 
 function when(iso: string | null | undefined): string {
@@ -1692,15 +1784,23 @@ export function modeLabel(settings: Settings | undefined): string {
 }
 
 /** Whether the bot's loop is working, as a chip a fault cannot hide in. Pure. */
-export function health(settings: Settings | undefined, loop: LastPass | null | undefined): { tone: 'ok' | 'warn' | 'bad' | 'off'; text: string } {
+export function health(
+  settings: Settings | undefined, loop: LastPass | null | undefined, credit?: Credit | null,
+): { tone: 'ok' | 'warn' | 'bad' | 'off'; text: string } {
   if (!settings) return { tone: 'off', text: '' };
   if (settings.mode === 'off') return { tone: 'off', text: 'Not running' };
   if (!loop) return { tone: 'warn', text: 'No pass since the platform started' };
   if (loop.paused === 'budget') return { tone: 'warn', text: 'Paused: the weekly budget is spent' };
   if (loop.paused === 'infra') return { tone: 'bad', text: `Platform fault${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
   if (loop.paused === 'github') return { tone: 'warn', text: `Waiting for GitHub's hourly limit${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
-  // #6867: nothing the bot does with its key can succeed until credit is added.
-  if (loop.paused === 'credit') return { tone: 'bad', text: 'Paused: OpenRouter credit ran out' };
+  // #6867: nothing the bot does with its key can succeed until credit is
+  // added, or, when it was its weekly budget OpenRouter refused on (the
+  // stored outage's cause), until the week turns or the budget is raised.
+  if (loop.paused === 'credit') {
+    return credit?.outage?.cause === 'budget'
+      ? { tone: 'bad', text: 'Paused: the weekly budget is used up at OpenRouter' }
+      : { tone: 'bad', text: 'Paused: OpenRouter credit ran out' };
+  }
   if (loop.refusals?.length) return { tone: 'warn', text: `${loop.refusals.length} app${loop.refusals.length === 1 ? '' : 's'} backing off` };
   return { tone: 'ok', text: `Working, last pass ${when(loop.at)}` };
 }
@@ -1906,11 +2006,14 @@ function HomeroomBotSection() {
     setStatus({ text: `${name} on ${id}: a new side version of the later changes' configuration is drafted in Configurations. Nothing changes until it is saved there.`, tone: 'ok' });
   };
 
-  const chip = health(settings, payload?.loop);
+  const chip = health(settings, payload?.loop, payload?.credit);
   const working = payload?.workingNow || [];
   const pairsLine = pairsWaitingLine(payload?.pairsWaiting);
   const movesLine = moveOffersLine(payload?.moveOffers);
 
+  // The two money tiles' words (spendTile, creditTile above).
+  const spend = spendTile(bot, payload?.credit);
+  const creditWords = creditTile(payload?.credit);
   const tile = (label: string, value: string, id: string, sub?: string, extra?: ReactNode) => (
     <div className="rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3" id={id}>
       <div className={AdminUI.muted}>{label}</div>
@@ -1967,14 +2070,11 @@ function HomeroomBotSection() {
             {tile('Waiting in the queue',
               payload ? String(payload.queue.depth + (payload.queue.buildsWaiting || 0)) : '–', 'admin-homeroom-bot-tile-queue',
               payload ? waitingFor(payload.queue.depth, payload.queue.buildsWaiting || 0) || undefined : undefined)}
-            {tile('Spent this week', bot ? dollarsFromCents(bot.weeklySpentCents) : '–', 'admin-homeroom-bot-tile-spend',
-              bot ? `of ${dollarsFromCents(bot.weeklyLimitCents)}` : undefined)}
-            {tile('OpenRouter credit',
-              payload?.credit && payload.credit.balanceCents != null ? dollarsFromCents(payload.credit.balanceCents) : '–',
-              'admin-homeroom-bot-tile-credit',
-              payload?.credit
-                ? `${payload.credit.daysLeft != null ? `About ${payload.credit.daysLeft} days at this week's rate. ` : ''}Warns at ${dollarsFromCents(payload.credit.warnCents)} and ${dollarsFromCents(payload.credit.urgentCents)}.`
-                : undefined,
+            {tile('Spent this week', spend.value, 'admin-homeroom-bot-tile-spend', spend.sub,
+              spend.counts
+                ? <div key="counts" id="admin-homeroom-bot-spend-openrouter" className={AdminUI.muted}>{spend.counts}</div>
+                : null)}
+            {tile('OpenRouter credit', creditWords.value, 'admin-homeroom-bot-tile-credit', creditWords.sub,
               <a key="add" id="admin-homeroom-bot-credit-add" className={`${AdminUI.btn.link} text-xs`}
                 href="https://openrouter.ai/settings/credits">Add credit</a>)}
             {tile('You agree with it', agreement == null ? '–' : `${agreement}%`, 'admin-homeroom-bot-tile-agreement',

@@ -1429,3 +1429,41 @@ test('the browser observer takes a dark shot where the page stands and always sw
   assert.match(branch, /onCloseup\?\.\(file\)/, 'stamped with the page it shows, as a close-up is');
   assert.match(branch, /const file = `dark-\$\{crypto\.randomBytes\(8\)\.toString\('hex'\)\}\.png`/);
 });
+
+// PR 6958: the card frames a change on the element its agent shot. The
+// observer measures where that element is as it is shot, into the shot's
+// stamp (shots-browser-observer.js measureElement); save_shot sends that box
+// with an element shot, and waits a little for a measurement still under way.
+test('save_shot sends an element shot\'s measured box, waits for one under way, and saves one without it as before', async (t) => {
+  const bridge = bridgeFixture(t);
+  const outputDir = path.join(bridge.shotsDir, 'admin');
+  const write = (name) => {
+    fs.writeFileSync(path.join(outputDir, name), Buffer.from(name));
+    return boundary.stampScreenshot(outputDir, path.join(outputDir, name), `${HEAD}/#bar`, { boxPending: true });
+  };
+  const shot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
+  const box = { view: [0, 0, 1280, 52], page: [0, 0, 1280, 52] };
+
+  // Measured already.
+  boundary.stampElementBox(outputDir, 'bar.png', write('bar.png'), box);
+  // Still being measured when save_shot reads it; settled a moment later.
+  const lateSha = write('late.png');
+  setTimeout(() => boundary.stampElementBox(outputDir, 'late.png', lateSha, { view: [20, 700, 400, 60], page: [20, 1300, 400, 60] }), 150);
+  // Measured, but nothing could be read.
+  boundary.stampElementBox(outputDir, 'none.png', write('none.png'), null);
+  const saved = await bridge.call('save_shot', { shots: [
+    { ...shot, kind: 'element', file: 'bar.png' },
+    { ...shot, kind: 'element', file: 'late.png' },
+    { ...shot, kind: 'element', file: 'none.png' },
+    { ...shot, file: 'bar.png' },
+  ] });
+  assert.equal(saved.isError, false);
+  const sent = Object.fromEntries(uploads(bridge).map((up) => [`${up.query.kind}:${Buffer.from(up.body).toString()}`, up.query]));
+  assert.equal(sent['element:bar.png'].focus, '0,0,1280,52');
+  assert.equal(sent['element:bar.png'].focusPage, '0,0,1280,52');
+  assert.equal(sent['element:late.png'].focus, '20,700,400,60');
+  assert.equal(sent['element:late.png'].focusPage, '20,1300,400,60');
+  assert.equal('focus' in sent['element:none.png'], false, 'no box: saved as it always was');
+  assert.equal('focus' in sent['screen:bar.png'], false, 'a screen shot never carries one');
+  assert.match(read('shots-mcp.js'), /const ELEMENT_BOX_WAIT_MS = 3000;/);
+});

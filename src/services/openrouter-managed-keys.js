@@ -52,6 +52,27 @@ async function resolveAllowance(pool, userId) {
 // `source: 'usernode_managed'` on the credential's metadata (see
 // provisionKey below), which is the authority; a read failure answers false,
 // the non-punitive direction (no gate, no debit).
+// Whether this person has an OpenRouter key of their OWN on file: a valid
+// one they added themselves, not the included key the platform funds. It is
+// what an app grant's "use my own key" (allow_byok) spends since task 2275,
+// when people's own Anthropic keys went. A failed read is "no".
+async function ownKeyOnFile(pool, userId) {
+  if (!userId) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT metadata->>'source' AS source
+         FROM credentials.user_ai_credentials
+        WHERE user_id = $1 AND provider = 'openrouter' AND purpose = 'coding_agent'
+          AND status = 'valid'`,
+      [userId],
+    );
+    return !!rows[0] && rows[0].source !== MANAGED_SOURCE;
+  } catch (err) {
+    log.warn('openrouter-managed', 'own-key check failed; treating as none', { userId, err: err.message });
+    return false;
+  }
+}
+
 async function usesIncludedKey(pool, userId) {
   if (!userId) return false;
   try {
@@ -630,6 +651,7 @@ module.exports = {
   resolveAllowance,
   ensureIncludedKey,
   usesIncludedKey,
+  ownKeyOnFile,
   MANAGED_SOURCE,
   syncAllowance,
   setDisabled,

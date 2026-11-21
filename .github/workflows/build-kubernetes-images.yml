@@ -1,13 +1,8 @@
 name: Build Kubernetes images
 
 on:
-  pull_request:
-    branches: [main]
   push:
-    branches: [main, feat/k8s]
-  schedule:
-    # Pick up a new Claude Code release even on a day with no source change.
-    - cron: '23 5 * * *'
+    branches: [main]
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -18,400 +13,35 @@ on:
 
 permissions:
   contents: read
-  packages: write
-
-concurrency:
-  group: kubernetes-images-${{ github.ref }}
-  cancel-in-progress: false
-  # The default single pending slot cancels an earlier merge's release.
-  queue: max
 
 jobs:
-  security-lockfiles:
-    name: Audit all three lockfiles
-    # Findings block PR merges. After merge they are advisory; a broken audit
-    # still fails. Runs that will not release skip this job.
-    needs: plan
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || needs.plan.outputs.should_release == 'true') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22.23.4'
-      - run: |
-          npm install --global npm@11.21.1 undici@6.29.1
-          image_npm_root="$(npm root --global)"
-          rm -rf "$image_npm_root/npm/node_modules/undici"
-          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
-      # Main has required pre-merge scans. Other release branches keep their
-      # existing baseline gate until they have the same merge protection.
-      - uses: azure/setup-helm@v4
-        if: github.event_name != 'pull_request' && github.ref != 'refs/heads/main'
-        with:
-          version: v3.19.0
-      - name: Read the live release
-        id: live
-        if: github.event_name != 'pull_request' && github.ref != 'refs/heads/main'
-        run: node scripts/live-release.js
-      - name: Fetch the baseline commit
-        id: baseline
-        if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          LIVE_SHA: ${{ steps.live.outputs.revision }}
-        run: |
-          revision="${BASE_SHA:-$LIVE_SHA}"
-          if [ -n "$BASE_SHA" ]; then name="the pull request's base"; else name="the live release"; fi
-          if [[ "$revision" =~ ^[a-f0-9]{40}$ ]] && git fetch --no-tags --depth=1 origin "$revision"; then
-            echo "revision=$revision" >> "$GITHUB_OUTPUT"
-            echo "name=$name (${revision:0:9})" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=Security baseline::No baseline commit could be read; findings require retry or review of the unavailable comparison."
-          fi
-      - run: node scripts/security-audit.js
-        env:
-          SECURITY_BASELINE_REVISION: ${{ steps.baseline.outputs.revision }}
-          SECURITY_BASELINE_NAME: ${{ steps.baseline.outputs.name }}
-          SECURITY_AUDIT_ONLY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && '1' || '0' }}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: dependency-security
-          path: security-reports/
-          if-no-files-found: error
-          retention-days: 30
-
-  security-merge-gate:
-    name: Security merge gate
-    needs: [security-lockfiles, security-images]
-    # A skipped dependency is not a successful scan. Run even after failure
-    # or cancellation so GitHub cannot treat a skipped gate as a pass.
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions: {}
-    steps:
-      - name: Require successful lockfile and image checks
-        env:
-          LOCKFILES_RESULT: ${{ needs.security-lockfiles.result }}
-          IMAGES_RESULT: ${{ needs.security-images.result }}
-        run: |
-          if [ "$LOCKFILES_RESULT" != success ] || [ "$IMAGES_RESULT" != success ]; then
-            echo "::error title=Security merge gate::Lockfiles: $LOCKFILES_RESULT; images: $IMAGES_RESULT. All security checks must succeed before merging."
-            exit 1
-          fi
-
-  security-regressions:
-    name: Security regressions (${{ matrix.os }})
-    # The same gate as the lockfile audit above.
-    needs: plan
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || needs.plan.outputs.should_release == 'true') }}
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22.23.4'
-          cache: npm
-      - run: |
-          npm install --global npm@11.21.1 undici@6.29.1
-          image_npm_root="$(npm root --global)"
-          rm -rf "$image_npm_root/npm/node_modules/undici"
-          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
-      - run: npm ci
-      # Deliberately no --test-force-exit: open handles must fail the check.
-      - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js tests/security-gate-baseline.test.js tests/security-audit-report.test.js tests/web-fetch.test.js tests/web-fetch-dns-pinning.test.js
-        timeout-minutes: 6
-
-      - run: node --require ./tests/lib/test-net.js --test --test-timeout=60000 tests/private-streams.test.js
-        timeout-minutes: 2
-
-  preview-schema-compatibility:
-    name: Preview schema compatibility (PostgreSQL 17/18)
-    # The same gate as the lockfile audit above.
-    needs: plan
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || needs.plan.outputs.should_release == 'true') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    permissions:
-      contents: read
-    services:
-      postgres17:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: [5432/tcp]
-        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
-      postgres18:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: [5432/tcp]
-        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22.23.4'
-          cache: npm
-      - run: |
-          npm install --global npm@11.21.1 undici@6.29.1
-          image_npm_root="$(npm root --global)"
-          rm -rf "$image_npm_root/npm/node_modules/undici"
-          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Generate database initialization SQL
-        run: node scripts/build-schema.js
-      # Authority fixtures load real workflow handlers that depend on bcrypt.
-      - run: |
-          npm rebuild bcrypt --build-from-source
-          node --test --test-timeout=60000 tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
-          node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
-          node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js tests/platform-preview-startup-postgres.test.js
-          node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/platform-signals.test.js tests/platform-signals-postgres.test.js
-        env:
-          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
-          TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
-
-      # Use matching PG18 client tools against the two disposable services.
-      # Container wrappers forward PG* through the environment, never argv.
-      # Platform previews start from an empty database on every path, and no
-      # copy path takes the platform's (SEC-06): the same two servers.
-      - name: Verify database identities and tenant copies
-        timeout-minutes: 5
-        run: |
-          tool_dir="$RUNNER_TEMP/database-role-tools"
-          mkdir -p "$tool_dir" "$RUNNER_TEMP/database-role-tmp"
-          for tool in psql pg_dump pg_restore; do
-            cat > "$tool_dir/$tool" <<'SH'
-          #!/bin/sh
-          exec docker run --rm --network host -i \
-            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
-            -e PGAPPNAME -e PGOPTIONS -e PGSSLMODE -e PGCONNECT_TIMEOUT \
-            -v "$RUNNER_TEMP:$RUNNER_TEMP" -v "$PWD:$PWD:ro" -w "$PWD" \
-            postgres:18-alpine "$(basename "$0")" "$@"
-          SH
-            chmod +x "$tool_dir/$tool"
-          done
-          PATH="$tool_dir:$PATH" TMPDIR="$RUNNER_TEMP/database-role-tmp" \
-            node --test --test-timeout=180000 tests/database-role-split-postgres.test.js
-          PATH="$tool_dir:$PATH" TMPDIR="$RUNNER_TEMP/database-role-tmp" \
-            TEST_DATABASE_URL="$DATABASE_ROLES_TEST_URL" TEST_PREVIEW_DATABASE_URL="$DATABASE_ROLES_TEST_PREVIEW_URL" \
-            node --test --test-timeout=180000 tests/platform-preview-data-policy-postgres.test.js
-        env:
-          DATABASE_ROLES_TEST_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
-          DATABASE_ROLES_TEST_PREVIEW_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
-
-      # A preceding database regression may already have built authentication.
-      - run: |
-          node -e "require('bcrypt')" || npm rebuild bcrypt --build-from-source
-          node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js
-        env:
-          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
-
-  security-images:
-    name: Build and scan ${{ matrix.component }}
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { component: platform, dockerfile: Dockerfile.kubernetes, context: '.' }
-          - { component: standalone, dockerfile: Dockerfile, context: '.' }
-          - { component: worker, dockerfile: worker/Dockerfile, context: worker }
-          - { component: capture, dockerfile: capture/Dockerfile, context: '.' }
-          - { component: starter, dockerfile: '', context: '' }
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22.23.4'
-      - run: |
-          npm install --global npm@11.21.1 undici@6.29.1
-          image_npm_root="$(npm root --global)"
-          rm -rf "$image_npm_root/npm/node_modules/undici"
-          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
-      - uses: docker/setup-buildx-action@v4
-        with:
-          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-      # Baselines are built lazily from the exact PR base. Never restore an
-      # inventory cache that an earlier PR revision could have written.
-      - name: Build and scan the finished image
-        shell: bash
-        env:
-          COMPONENT: ${{ matrix.component }}
-          DOCKERFILE: ${{ matrix.dockerfile }}
-          CONTEXT: ${{ matrix.context }}
-          SECURITY_BASELINE_REVISION: ${{ github.event.pull_request.base.sha }}
-          SECURITY_SCAN_PLATFORM: linux/amd64
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/security-$COMPONENT"
-          mkdir -p "$out"
-          trap 'if [ ! -s "$out/assessment.json" ]; then node scripts/security-findings.js --unavailable "$out" "$COMPONENT" "Image build or inventory generation failed"; fi' ERR
-          if [ "$COMPONENT" = starter ]; then
-            node scripts/security-starter.js "$RUNNER_TEMP/starter-source"
-            CONTEXT="$RUNNER_TEMP/starter-source"
-            DOCKERFILE="$CONTEXT/Dockerfile"
-          fi
-          docker buildx build --load --pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE" "$CONTEXT"
-          sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"
-          sh scripts/check-image-security.sh "security-$COMPONENT" "$out" "$out/sbom.spdx.json" "$COMPONENT"
-      - name: Verify capture browser and media
-        if: matrix.component == 'capture'
-        timeout-minutes: 2
-        run: |
-          docker run --rm -i --network none --cap-drop ALL --security-opt no-new-privileges \
-            --entrypoint node security-capture < scripts/verify-capture-image.js
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pr-image-security-${{ matrix.component }}
-          path: ${{ runner.temp }}/security-${{ matrix.component }}/
-          if-no-files-found: error
-          retention-days: 30
-
   plan:
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     name: Plan image release
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
+      build_lane: ${{ steps.release.outputs.build_lane }}
       claude_code_version: ${{ steps.claude.outputs.version }}
-      matrix: ${{ steps.release.outputs.matrix }}
       should_release: ${{ steps.release.outputs.should_release }}
+      postgres_verified: ${{ steps.postgres.outputs.verified }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      - run: |
-          npm install --global npm@11.21.1 undici@6.29.1
-          image_npm_root="$(npm root --global)"
-          rm -rf "$image_npm_root/npm/node_modules/undici"
-          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
 
-      - name: Resolve Claude Code version
-        id: claude
-        shell: bash
-        run: |
-          version="$(npm view @anthropic-ai/claude-code@latest version)"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid Claude Code version from npm: $version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - uses: docker/login-action@v4
-        if: github.event_name == 'schedule'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # The BuildKit daemon from Google's Docker Hub mirror, as the build
-      # job's: see the note there.
-      - uses: docker/setup-buildx-action@v4
-        if: github.event_name == 'schedule'
-        with:
-          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
-
-      - name: Check scheduled worker image
-        id: scheduled_worker
-        if: github.event_name == 'schedule'
-        env:
-          COMPONENT: worker
-          FORCE_REBUILD: none
-          CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
-        run: node scripts/resolve-kubernetes-image.js
-
-      # A dependency-only refresh must not rebuild or silently change either
-      # non-worker image. Reuse the platform artifact published for this exact
-      # main revision and the capture artifact for its tracked build inputs.
-      - name: Resolve current platform image
-        id: current_platform
-        if: github.event_name == 'schedule' && steps.scheduled_worker.outputs.digest == ''
-        env:
-          COMPONENT: platform
-          FORCE_REBUILD: none
-          REUSE_CURRENT_PLATFORM: 'true'
-        run: node scripts/resolve-kubernetes-image.js
-
-      - name: Resolve current capture image
-        id: current_capture
-        if: github.event_name == 'schedule' && steps.scheduled_worker.outputs.digest == ''
-        env:
-          COMPONENT: capture
-          FORCE_REBUILD: none
-        run: node scripts/resolve-kubernetes-image.js
-
-      - name: Record scheduled base digests
-        if: github.event_name == 'schedule' && steps.scheduled_worker.outputs.digest == ''
-        env:
-          PLATFORM_DIGEST: ${{ steps.current_platform.outputs.digest }}
-          CAPTURE_DIGEST: ${{ steps.current_capture.outputs.digest }}
-        shell: bash
-        run: |
-          if [ -z "$CAPTURE_DIGEST" ]; then
-            echo "The current capture artifact is missing; run the normal main workflow first." >&2
-            exit 1
-          fi
-          for digest in "$PLATFORM_DIGEST" "$CAPTURE_DIGEST"; do
-            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
-              echo "Invalid scheduled base image digest: $digest" >&2
-              exit 1
-            }
-          done
-          mkdir -p "$RUNNER_TEMP/image-digest"
-          printf '%s\n' "$PLATFORM_DIGEST" > "$RUNNER_TEMP/image-digest/platform.txt"
-          printf '%s\n' "$CAPTURE_DIGEST" > "$RUNNER_TEMP/image-digest/capture.txt"
-
-      - name: Upload scheduled base digests
-        if: github.event_name == 'schedule' && steps.scheduled_worker.outputs.digest == ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-digest-scheduled-bases
-          path: ${{ runner.temp }}/image-digest/*.txt
-          if-no-files-found: error
-          retention-days: 7
-
-      - uses: azure/setup-helm@v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          version: v3.19.0
-
-      # Runs on main are queued one at a time, and a run whose commit is no
-      # longer main's tip builds all three images and then, in "Check branch
-      # tip before publishing", almost always skips: in a burst of merges the
-      # run that will release waits behind builds nobody uses. So a run that
-      # is already behind the tip when it starts, and that the publish step
-      # could not let release ahead of the tip, builds nothing. That is when
-      # the newest release already contains it, or when that release's
-      # revision was merged less than RELEASE_EVERY_MINUTES before it. Runs
-      # are queued one at a time, so the newest release cannot change between
-      # here and the publish step, and main's tip only moves on. Anything that
-      # cannot be read builds, as before; the tip always builds.
+      # Skip revisions already carried by the promoted chart. A newer
+      # build may fail, so every unpublished revision is a fallback.
       - name: Check whether this run can release
         id: behind
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_EVERY_MINUTES: '15'
         run: |
           set -uo pipefail
           build() { echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; }
@@ -423,63 +53,72 @@ jobs:
           tip="$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)"
           [[ "$tip" =~ ^[a-f0-9]{40}$ ]] || build
           [ "$tip" != "$GITHUB_SHA" ] || build
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          chart="$(helm show chart "oci://ghcr.io/$owner/charts/social-vibecoding-platform" --version '0.1.*' 2>/dev/null || true)"
-          published_sha="$(printf '%s\n' "$chart" | sed -n 's/^appVersion: *//p' | tr -d '"' | head -n 1)"
+          read -r published_sha _ <<< "$(node scripts/live-release.js --metadata)" || build
           [[ "$published_sha" =~ ^[a-f0-9]{40}$ ]] || build
           status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$published_sha...$GITHUB_SHA" --jq .status 2>/dev/null || echo unknown)"
           case "$status" in
-            behind|identical) skip "No build: main is at $tip, and the newest release ($published_sha) already contains $GITHUB_SHA." ;;
-            ahead) ;;
+            behind|identical) skip "No build: main is at $tip, and the promoted release ($published_sha) already contains $GITHUB_SHA." ;;
             *) build ;;
           esac
-          merged_at() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq '.commit.committer.date | fromdateiso8601' 2>/dev/null || echo; }
-          this_at="$(merged_at "$GITHUB_SHA")"
-          published_at="$(merged_at "$published_sha")"
-          [[ "$this_at" =~ ^[0-9]+$ && "$published_at" =~ ^[0-9]+$ ]] || build
-          [ $(( this_at - published_at )) -lt $(( RELEASE_EVERY_MINUTES * 60 )) ] || build
-          skip "No build: main is at $tip, whose run releases $GITHUB_SHA, and the newest release ($published_sha) is under $RELEASE_EVERY_MINUTES minutes older, so this run could not release ahead of the tip."
 
       - name: Select release work
         id: release
         env:
-          SCHEDULED_WORKER_DIGEST: ${{ steps.scheduled_worker.outputs.digest }}
-          CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
           BEHIND_SKIP: ${{ steps.behind.outputs.skip }}
           BEHIND_REASON: ${{ steps.behind.outputs.reason }}
+        run: |
+          echo "build_lane=$(( GITHUB_RUN_NUMBER % 2 ))" >> "$GITHUB_OUTPUT"
+          if [ "$BEHIND_SKIP" = true ]; then
+            echo 'should_release=false' >> "$GITHUB_OUTPUT"
+            echo "$BEHIND_REASON" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'should_release=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.release.outputs.should_release == 'true'
+        run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+
+      - name: Resolve Claude Code version
+        if: steps.release.outputs.should_release == 'true'
+        id: claude
         shell: bash
         run: |
-          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
-            echo 'matrix={"include":[{"component":"worker","context":"worker","dockerfile":"worker/Dockerfile"}]}' >> "$GITHUB_OUTPUT"
-            if [ -n "$SCHEDULED_WORKER_DIGEST" ]; then
-              echo 'should_release=false' >> "$GITHUB_OUTPUT"
-              reason="No release: worker image already contains Claude Code $CLAUDE_CODE_VERSION."
-            else
-              echo 'should_release=true' >> "$GITHUB_OUTPUT"
-              reason="Release required: Claude Code $CLAUDE_CODE_VERSION has no matching worker image."
-            fi
-          else
-            echo 'matrix={"include":[{"component":"platform","context":".","dockerfile":"Dockerfile.kubernetes"},{"component":"worker","context":"worker","dockerfile":"worker/Dockerfile"},{"component":"capture","context":".","dockerfile":"capture/Dockerfile"}]}' >> "$GITHUB_OUTPUT"
-            if [ "${BEHIND_SKIP:-}" = true ]; then
-              echo 'should_release=false' >> "$GITHUB_OUTPUT"
-              reason="$BEHIND_REASON"
-            else
-              echo 'should_release=true' >> "$GITHUB_OUTPUT"
-              reason="Normal source release."
-            fi
+          version="$(npm view @anthropic-ai/claude-code@latest version)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid Claude Code version from npm: $version" >&2
+            exit 1
           fi
-          printf '### Kubernetes image plan\n\n- Claude Code: `%s`\n- %s\n' \
-            "$CLAUDE_CODE_VERSION" "$reason" >> "$GITHUB_STEP_SUMMARY"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          printf '### Kubernetes image plan\n\n- Claude Code: `%s`\n' "$version" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Find a PostgreSQL pass for the release tree
+        id: postgres
+        if: steps.release.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/reuse-kubernetes-postgres-check.js
 
   build:
     name: Resolve ${{ matrix.component }} image
-    # The gates run beside the builds; the release job waits for them.
     needs: [plan]
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    # One running job per component in each of the two lanes.
+    concurrency:
+      group: kubernetes-build-${{ github.ref }}-${{ matrix.component }}-${{ needs.plan.outputs.build_lane }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix:
+        component: [platform, worker, capture]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -487,86 +126,19 @@ jobs:
           node-version: '22.23.4'
       # No npm here: these steps run node scripts and Docker, never npm.
 
-      - name: Normalize GHCR owner
-        id: registry
-        shell: bash
-        run: |
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          test -n "$owner"
-          echo "owner=$owner" >> "$GITHUB_OUTPUT"
-
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Nothing in the build comes from Docker Hub directly. Pulls from Docker
-      # Hub here are anonymous, and Docker Hub limits those per IP address,
-      # which GitHub's runners share with everybody else's builds: on 9 Oct
-      # 2026 four releases in a row (20:52 to 21:15) failed in under a minute
-      # on "429 Too Many Requests" for node:22-alpine, and the re-runs failed
-      # on Docker Hub's token service answering 504. mirror.gcr.io, Google's
-      # Docker Hub mirror, serves the same images without that limit.
-      #
-      #   driver-opts image   the BuildKit daemon itself (moby/buildkit),
-      #                       which the runner's Docker pulls before any
-      #                       build starts, so the config below cannot reach
-      #                       it: the capture job failed right here at 21:41.
-      #   buildkitd config    every docker.io image a build pulls: the base
-      #                       images (node:22-alpine, node:22-trixie-slim)
-      #                       and the SBOM scanner `sbom: true` runs
-      #                       (docker/buildkit-syft-scanner). BuildKit tries
-      #                       the mirror first and falls back to Docker Hub.
-      - uses: docker/setup-buildx-action@v4
+      - name: Build or reuse ${{ matrix.component }} image
+        id: image
+        uses: ./.github/actions/build-kubernetes-image
         with:
-          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
-
-      - name: Resolve Claude Code version
-        id: claude
-        if: matrix.component == 'worker'
-        env:
-          CLAUDE_CODE_VERSION: ${{ needs.plan.outputs.claude_code_version }}
-        shell: bash
-        run: |
-          echo "version=$CLAUDE_CODE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "build_arg=CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve reusable ${{ matrix.component }} image
-        id: reuse
-        env:
-          COMPONENT: ${{ matrix.component }}
-          FORCE_REBUILD: ${{ inputs.force_rebuild || 'none' }}
-          CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
-        run: node scripts/resolve-kubernetes-image.js
-
-      - name: Build and push ${{ matrix.component }}
-        id: build
-        if: steps.reuse.outputs.digest == ''
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ghcr.io/${{ steps.registry.outputs.owner }}/social-vibecoding-${{ matrix.component }}:sha-${{ github.sha }}
-            ${{ steps.reuse.outputs.reuse_tag }}
-          pull: true
-          no-cache: ${{ steps.reuse.outputs.refresh == 'true' }}
-          build-args: |
-            GIT_SHA=${{ github.sha }}
-            ${{ steps.claude.outputs.build_arg }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=social-vibecoding-${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=social-vibecoding-${{ matrix.component }}
-          provenance: mode=max
-          sbom: true
+          component: ${{ matrix.component }}
+          force-rebuild: ${{ inputs.force_rebuild || 'none' }}
+          claude-code-version: ${{ needs.plan.outputs.claude_code_version }}
 
       # After merge, findings warn instead of holding delivery. Runtime,
       # inventory and scanner failures still fail this job.
@@ -578,14 +150,17 @@ jobs:
         run: node scripts/live-release.js
       - name: Verify runtime and scan the exact image SBOM
         env:
-          IMAGE: ${{ steps.reuse.outputs.image }}@${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
+          IMAGE: ${{ steps.image.outputs.image }}@${{ steps.image.outputs.digest }}
           REPORT: ${{ runner.temp }}/security-${{ matrix.component }}
           LIVE_DIGEST: ${{ steps.live.outputs[matrix.component] }}
-          REGISTRY_OWNER: ${{ steps.registry.outputs.owner }}
-          SECURITY_AUDIT_ONLY: ${{ github.ref == 'refs/heads/main' && '1' || '0' }}
+          SECURITY_AUDIT_ONLY: '1'
         run: |
-          if [ -n "$LIVE_DIGEST" ]; then
-            export BASELINE_IMAGE="ghcr.io/$REGISTRY_OWNER/social-vibecoding-${{ matrix.component }}@$LIVE_DIGEST"
+          if [ -n "$LIVE_DIGEST" ] && [ "${IMAGE##*@}" = "$LIVE_DIGEST" ]; then
+            # The daily audit scans the live images. Record reuse without a new verdict.
+            mkdir -p "$REPORT"
+            printf '%s\n' "$IMAGE" > "$REPORT/image-reference.txt"
+            printf 'Already in the stable chart: %s\n' "$IMAGE" > "$REPORT/live-image.txt"
+            exit 0
           fi
           sh scripts/check-published-image.sh "$IMAGE" "$REPORT" "${{ matrix.component }}"
 
@@ -598,13 +173,30 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Validate platform shell release
+        if: matrix.component == 'platform'
+        timeout-minutes: 5
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}@${{ steps.image.outputs.digest }}
+        run: |
+          [[ "${IMAGE##*@}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          docker run --rm -i --network none --read-only \
+            --env NODE_ENV=production --env GIT_SHA="$GITHUB_SHA" \
+            --entrypoint node "$IMAGE" - <<'NODE'
+          const { loadShellRelease } = require('./src/services/shell-release');
+          const release = loadShellRelease('/app/public');
+          console.log(`Verified platform shell release ${release.revision}: ${release.id}`);
+          NODE
+
       - name: Record immutable reference
         env:
-          IMAGE_DIGEST: ${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
-          IMAGE_REPOSITORY: ${{ steps.reuse.outputs.image }}
-          RESOLUTION: ${{ steps.reuse.outputs.reason }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.image }}
+          RESOLUTION: ${{ steps.image.outputs.reason }}
           COMPONENT: ${{ matrix.component }}
-          CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
+          CLAUDE_CODE_VERSION: ${{ needs.plan.outputs.claude_code_version }}
         run: |
           case "$IMAGE_DIGEST" in
             sha256:[0-9a-f][0-9a-f]*) ;;
@@ -629,37 +221,41 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  preview-schema-compatibility:
+    name: Preview schema compatibility (PostgreSQL 17/18)
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true' && needs.plan.outputs.postgres_verified != 'true'
+    concurrency:
+      group: kubernetes-build-${{ github.ref }}-postgres-${{ needs.plan.outputs.build_lane }}
+      cancel-in-progress: false
+      queue: max
+    uses: ./.github/workflows/kubernetes-database-checks.yml
+
   release:
     name: Publish atomic Helm release
-    needs: [build, security-lockfiles, security-regressions, preview-schema-compatibility]
-    # Full daily audits maintain alerts in security-audit.yml. Publishing
-    # depends on candidate regression checks, not existing audit findings.
+    needs: [plan, build, preview-schema-compatibility]
     if: >-
-      ${{ !cancelled() && needs.build.result == 'success'
-          && needs['security-lockfiles'].result == 'success'
-          && needs['security-regressions'].result == 'success'
-          && needs['preview-schema-compatibility'].result == 'success' }}
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.build.result == 'success'
+          && (needs['preview-schema-compatibility'].result == 'success'
+              || (needs['preview-schema-compatibility'].result == 'skipped' && needs.plan.outputs.postgres_verified == 'true')) }}
     runs-on: ubuntu-latest
+    # Keep the old group so a run already queued on the previous workflow
+    # still holds the same lock as a publisher using this workflow.
+    concurrency:
+      group: kubernetes-images-${{ github.ref }}
+      cancel-in-progress: false
+      queue: max
     permissions:
-      # Reads this workflow's own runs: when the newest release went out, and
-      # whether a dispatched run is queued (see "Check branch tip before
-      # publishing").
+      # Reads sibling builds to find newer verified releases.
       actions: read
       contents: read
       packages: write
-    env:
-      # An Argo CD project-role token that may `get` (and so refresh) the
-      # platform Application — provisioned by the infra repository, see
-      # "Ask Argo CD to pick up the release now" below. Unset, it is the empty
-      # string and that step skips. It lives here rather than on the step
-      # because a step-level `if:` cannot read `secrets`; it can read `env`.
-      ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      # No npm here: these steps run node, Helm and Docker, never npm.
+      # No npm here: these steps run node and Helm, never npm.
 
       - uses: azure/setup-helm@v4
         with:
@@ -672,43 +268,13 @@ jobs:
           path: ${{ runner.temp }}/image-digests
           merge-multiple: true
 
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Check the actual packaged image, including the platform image reused
-      # by scheduled worker refreshes, before a chart can reach Argo CD.
-      - name: Validate platform shell release
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          digest="$(cat "$RUNNER_TEMP/image-digests/platform.txt")"
-          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-platform@$digest"
-          docker run --rm -i --network none --read-only \
-            --env NODE_ENV=production --env GIT_SHA="$GITHUB_SHA" \
-            --entrypoint node "$image" - <<'NODE'
-          const { loadShellRelease } = require('./src/services/shell-release');
-          const release = loadShellRelease('/app/public');
-          console.log(`Verified platform shell release ${release.revision}: ${release.id}`);
-          NODE
-
       - name: Prepare and validate release chart
         id: chart
         env:
           REGISTRY_OWNER: ${{ github.repository_owner }}
         run: |
           release_patch=$((GITHUB_RUN_NUMBER * 1000 + GITHUB_RUN_ATTEMPT))
-          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            chart_version="0.1.${release_patch}"
-            release_channel=stable
-          else
-            chart_version="0.0.${release_patch}-feat-k8s"
-            release_channel=candidate
-          fi
+          chart_version="0.1.${release_patch}"
 
           registry_owner=$(printf '%s' "$REGISTRY_OWNER" | tr '[:upper:]' '[:lower:]')
           chart_dir="$RUNNER_TEMP/social-vibecoding-platform-chart"
@@ -801,169 +367,17 @@ jobs:
           test -f "$package_path"
           echo "package_path=$package_path" >> "$GITHUB_OUTPUT"
           echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
-          echo "release_channel=$release_channel" >> "$GITHUB_OUTPUT"
           echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
 
-      # Push events can be queued out of order, and Argo CD runs the highest
-      # 0.1.* chart: an older source revision must never publish a higher
-      # chart version than a newer one. The branch tip always publishes.
-      #
-      # Requiring the exact tip guaranteed that, but runs are queued one at a
-      # time (concurrency above), so while merges land faster than a run
-      # finishes every run found a newer tip and nothing was released. On 5
-      # October nothing deployed from 16:12 to about 17:50 UTC while twelve
-      # merges built. So a stable run that is no longer the tip still
-      # publishes when the branch contains its revision, the newest release in
-      # the registry is older than it and numbered below it, and that release's
-      # revision was merged at least RELEASE_EVERY_MINUTES before this one: a
-      # burst of merges ships a release about that often instead of none, and
-      # not one per merge, since every release restarts the platform. Anything
-      # that cannot be read falls back to the exact tip.
-      #
-      # The tip itself still published every time. On 7 October approved
-      # proposals merged one after another, each run took two to four
-      # minutes, and most runs were the tip when they finished: the platform
-      # rolled out at 21:41:57, 21:50:46, 21:53:44 and 21:57:49 UTC, four
-      # times in sixteen minutes, and more than sixty times that day. Each
-      # rollout restarts the platform, which re-runs every proposal's checks
-      # in flight (slowing the queue further) and interrupts the bot's builds.
-      # So a stable release now goes out no sooner than
-      # RELEASE_MIN_GAP_MINUTES after the one before it, timed from the end of
-      # the run that published it (when Argo CD was asked to roll it out):
-      #   - The tip waits in this step until the gap has passed (so at most
-      #     that long), then re-reads the branch: still the tip, it publishes.
-      #     A newer merge landing meanwhile ends the wait and this run skips;
-      #     that merge's run is queued behind this one and publishes once it
-      #     has built. The last merge's run is always the tip, so the newest
-      #     merge is never left unreleased.
-      #   - A run behind the tip also skips inside the gap; the tip's run,
-      #     queued behind it, releases its revision.
-      # The gap only spaces restarts; it never decides which revision wins.
-      # So when the newest release's run cannot be read, this publishes as
-      # it did before. Feature-branch candidates and dispatched runs never
-      # wait.
-      #
-      # Ten minutes became four on 10 October. A merge read "Going live" for
-      # a median of 5.6 minutes and up to 16 that day, most of it this wait,
-      # while what a restart cost had shrunk since 7 October: a checks run in
-      # flight is collected by the harvest rather than run again (none was in
-      # that day's eight restarts), and a bot turn resumes. What was left, a
-      # boot rebuilding every preview that keeps failing, now waits out each
-      # preview's own retry backoff (server.js recoverSessions).
-      #
-      # To release at once (an urgent fix), run this workflow on main by hand:
-      #   gh workflow run build-kubernetes-images.yml --ref main
-      # A dispatched run never waits, and a run waiting here when one is
-      # queued behind it skips in its favour, so main goes out as soon as
-      # the dispatched run has built, with a single restart.
+      # Decide under the publication lock, after image and database checks.
       - name: Check branch tip before publishing
         id: current_head
-        shell: bash
-        # The wait is at most RELEASE_MIN_GAP_MINUTES; this only stops a hung
-        # read from holding the release queue.
-        timeout-minutes: 20
+        timeout-minutes: 8
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_CHANNEL: ${{ steps.chart.outputs.release_channel }}
           CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
-          CHART_REF: oci://ghcr.io/${{ steps.chart.outputs.registry_owner }}/charts/social-vibecoding-platform
-          RELEASE_EVERY_MINUTES: '15'
-          RELEASE_MIN_GAP_MINUTES: '4'
-        run: |
-          set -euo pipefail
-          branch_tip() { git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1; }
-          current_sha="$(branch_tip)"
-          test -n "$current_sha"
-          decide() {
-            echo "publish=$1" >> "$GITHUB_OUTPUT"
-            echo "$2" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          }
-          # base...head: "ahead" when head contains base and more.
-          compare() { gh api "repos/$GITHUB_REPOSITORY/compare/$1...$2" --jq .status 2>/dev/null || echo unknown; }
-          merged_at() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq '.commit.committer.date | fromdateiso8601' 2>/dev/null || echo; }
-          runs="repos/$GITHUB_REPOSITORY/actions/workflows/build-kubernetes-images.yml/runs"
-          gap=$(( RELEASE_MIN_GAP_MINUTES * 60 ))
-
-          # The newest stable release in the registry, the one Argo CD runs.
-          newest_release() {
-            local chart
-            chart="$(helm show chart "$CHART_REF" --version '0.1.*' 2>/dev/null || true)"
-            published_sha="$(printf '%s\n' "$chart" | sed -n 's/^appVersion: *//p' | tr -d '"' | head -n 1)"
-            published_version="$(printf '%s\n' "$chart" | sed -n 's/^version: *//p' | tr -d '"' | head -n 1)"
-            [[ "$published_sha" =~ ^[a-f0-9]{40}$ && "$published_version" =~ ^0\.1\.[0-9]+$ ]]
-          }
-          # Seconds since the run that published the newest release finished,
-          # or nothing when that cannot be read. Its chart is 0.1.<run number
-          # * 1000 + attempt>; a later attempt of the same run only makes the
-          # release look newer, so the wait errs long, never short.
-          release_age() {
-            local at
-            at="$(gh api "$runs?head_sha=$published_sha&per_page=100" \
-              --jq "[.workflow_runs[] | select(.run_number == $(( ${published_version##*.} / 1000 )) and .status == \"completed\") | .updated_at | fromdateiso8601][0] // empty" \
-              2>/dev/null || true)"
-            [[ "$at" =~ ^[0-9]+$ ]] || return 0
-            at=$(( $(date +%s) - at ))
-            echo $(( at < 0 ? 0 : at ))
-          }
-          # Dispatched runs of this workflow on this branch, queued after this
-          # one. Unreadable counts as none.
-          dispatched() {
-            gh api "$runs?event=workflow_dispatch&per_page=20" \
-              --jq "[.workflow_runs[] | select(.head_branch == \"${GITHUB_REF#refs/heads/}\" and .status != \"completed\" and .run_number > $GITHUB_RUN_NUMBER)] | length" \
-              2>/dev/null || echo 0
-          }
-
-          if [ "$current_sha" = "$GITHUB_SHA" ]; then
-            publishing="Publishing $GITHUB_SHA, the tip of $GITHUB_REF"
-            [ "$RELEASE_CHANNEL" = stable ] || decide true "$publishing."
-            [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] \
-              || decide true "$publishing, at once: it was dispatched by hand."
-            newest_release || decide true "$publishing; the newest release could not be read."
-            age="$(release_age)"
-            [ -n "$age" ] \
-              || decide true "$publishing; when the newest release ($published_version) went out could not be read."
-            [ "$age" -lt "$gap" ] \
-              || decide true "$publishing: the newest release ($published_version) went out $(( age / 60 )) minutes ago."
-
-            waited_from="$(date +%s)"
-            wait_until=$(( waited_from + gap - age ))
-            echo "The newest release ($published_version) went out $(( age / 60 )) minutes ago. Waiting up to $(( (gap - age + 59) / 60 )) more minutes, until it is $RELEASE_MIN_GAP_MINUTES minutes old. To release now, run this workflow on $GITHUB_REF by hand."
-            while :; do
-              [ "$(dispatched)" = 0 ] \
-                || decide false "Skipping $GITHUB_SHA: a run of this workflow dispatched by hand is queued behind this one, and it publishes $GITHUB_REF without waiting."
-              now="$(date +%s)"
-              [ "$now" -lt "$wait_until" ] || break
-              sleep $(( wait_until - now < 30 ? wait_until - now : 30 ))
-              current_sha="$(branch_tip)" && [ -n "$current_sha" ] || current_sha="$GITHUB_SHA"
-              [ "$current_sha" = "$GITHUB_SHA" ] \
-                || decide false "Skipping $GITHUB_SHA: $GITHUB_REF moved to $current_sha while this run waited for the newest release ($published_version) to be $RELEASE_MIN_GAP_MINUTES minutes old. That commit's run is queued behind this one and publishes once it has built."
-            done
-            decide true "$publishing, after waiting $(( ($(date +%s) - waited_from + 30) / 60 )) minutes for the newest release ($published_version) to be $RELEASE_MIN_GAP_MINUTES minutes old."
-          fi
-          skipping="Skipping $GITHUB_SHA: $GITHUB_REF is now $current_sha"
-          [ "$RELEASE_CHANNEL" = stable ] || decide false "$skipping."
-          [ "$(compare "$GITHUB_SHA" "$current_sha")" = ahead ] \
-            || decide false "$skipping, which does not contain it."
-
-          newest_release || decide false "$skipping, and the newest release could not be read."
-          [ "$(compare "$published_sha" "$GITHUB_SHA")" = ahead ] \
-            || decide false "$skipping, and the newest release ($published_version, $published_sha) is not older than it."
-          [ "${published_version##*.}" -lt "${CHART_VERSION##*.}" ] \
-            || decide false "$skipping, and the newest release ($published_version) is numbered at or above $CHART_VERSION."
-
-          this_at="$(merged_at "$GITHUB_SHA")"
-          published_at="$(merged_at "$published_sha")"
-          [[ "$this_at" =~ ^[0-9]+$ && "$published_at" =~ ^[0-9]+$ ]] \
-            || decide false "$skipping, and when its revisions were merged could not be read."
-          [ $(( this_at - published_at )) -ge $(( RELEASE_EVERY_MINUTES * 60 )) ] \
-            || decide false "$skipping, and the newest release ($published_version) is less than $RELEASE_EVERY_MINUTES minutes older; a later run releases it."
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
-            age="$(release_age)"
-            [ -z "$age" ] || [ "$age" -ge "$gap" ] \
-              || decide false "$skipping, and the newest release ($published_version) went out $(( age / 60 )) minutes ago, under $RELEASE_MIN_GAP_MINUTES; the tip's run releases it."
-          fi
-          decide true "Publishing $GITHUB_SHA ahead of $GITHUB_REF's tip ($current_sha): the newest release ($published_version, $published_sha) is $(( (this_at - published_at) / 60 )) minutes older."
+          ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
+        run: node scripts/choose-kubernetes-release.js
 
       - name: Log in to GHCR for Helm
         if: steps.current_head.outputs.publish == 'true'
@@ -999,49 +413,22 @@ jobs:
             sleep "$delay"
           done
 
-      # Argo CD learns of a new chart by re-reading the registry's tag list on
-      # its reconcile interval — up to three minutes after the push, and the
-      # single largest piece of the merge-to-running gap. A hard refresh makes
-      # it re-read the registry now; automated sync takes it from there.
-      #
-      # Best effort, and that is load-bearing: services/release-watch.js reads
-      # this run's conclusion, so a step that could fail the run would report a
-      # release as stalled while the rollout proceeds on the periodic reconcile
-      # exactly as before. An unconfigured token skips; a bad token, an Argo
-      # outage or a timeout warn on the run and fall back to that reconcile.
-      #
-      # `refresh=hard` rather than `normal`: the repo-server caches the
-      # resolved tag for the `0.1.*` range, and only a hard refresh bypasses it.
-      # The request returns once Argo has compared the fresh manifests, so a
-      # 200 means the sync is already underway. Only stable releases: Argo
-      # tracks `0.1.*`, so a `feat-k8s` candidate has nothing to refresh.
-      - name: Ask Argo CD to pick up the release now
-        if: steps.current_head.outputs.publish == 'true' && steps.chart.outputs.release_channel == 'stable' && env.ARGOCD_REFRESH_TOKEN != ''
-        continue-on-error: true
+      # The numeric chart remains available for audits and pinned rollbacks.
+      # Only this serialized job advances the tag Argo follows.
+      - name: Promote OCI release tag
+        if: steps.current_head.outputs.publish == 'true'
+        timeout-minutes: 2
         env:
-          ARGOCD_SERVER: argocd.platform.beta.usernodelabs.org
-          ARGOCD_APPLICATION: social-vibecoding-platform
-        run: |
-          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-            --max-time 120 \
-            --header "Authorization: Bearer ${ARGOCD_REFRESH_TOKEN}" \
-            "https://${ARGOCD_SERVER}/api/v1/applications/${ARGOCD_APPLICATION}?refresh=hard")" \
-            || status="curl exit $?"
-          if [ "$status" = "200" ]; then
-            echo "Argo CD re-read the chart registry and compared ${ARGOCD_APPLICATION}."
-            echo '- Argo CD: refreshed `'"${ARGOCD_APPLICATION}"'` on publish; no reconcile wait' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "::warning title=Argo CD refresh not confirmed::${ARGOCD_APPLICATION} refresh returned '${status}'. The release still lands on Argo CD's periodic reconcile (up to three minutes). 401 means ARGOCD_REFRESH_TOKEN expired or was revoked; 403 means the project role changed — see the infra runbook."
-          echo '- Argo CD: refresh not confirmed (`'"${status}"'`); landing on the periodic reconcile' >> "$GITHUB_STEP_SUMMARY"
-          exit 1
+          REGISTRY_OWNER: ${{ steps.chart.outputs.registry_owner }}
+          CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: node scripts/promote-kubernetes-chart.js
 
       - name: Record atomic release
         if: steps.current_head.outputs.publish == 'true'
         run: |
           echo '## Atomic Kubernetes release' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Channel: `${{ steps.chart.outputs.release_channel }}`' >> "$GITHUB_STEP_SUMMARY"
           echo '- Source: `${{ github.sha }}`' >> "$GITHUB_STEP_SUMMARY"
           echo '- Chart: `oci://ghcr.io/${{ steps.chart.outputs.registry_owner }}/charts/social-vibecoding-platform:${{ steps.chart.outputs.chart_version }}`' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Argo tracks only stable `0.1.*` releases; feature builds publish `0.0.*-feat-k8s` candidates.' >> "$GITHUB_STEP_SUMMARY"

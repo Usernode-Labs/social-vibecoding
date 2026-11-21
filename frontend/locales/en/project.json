@@ -1015,6 +1015,10 @@
     "text": "Open as a page",
     "description": "Button at the top of the panel beside a project's Workshop lists: closes the panel and opens the same request, change or vote as a full page. Open is a verb."
   },
+  "sidePanel.showList": {
+    "text": "Show thread list",
+    "description": "Accessible name and tooltip of the small round list button first in the header of a request's or change's page opened in the column beside the Homeroom bot tab's thread list while that list is hidden: brings the list back."
+  },
   "workRow.name.change": {
     "text": "Change",
     "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"Change · evan · for #4455\". A noun: one proposed change to the project that has no number yet."
@@ -5168,8 +5172,8 @@
     "description": "Notice in the 'Allow app to use AI' dialog when Homeroom could not find out whether the person has free AI credit."
   },
   "modals.aiConsent.noPayer": {
-    "text": "No AI payer is available yet. <0>Connect GitHub or X</0> to unlock $10/day, or <1>add your own Anthropic API key</1>.",
-    "description": "Notice in the 'Allow app to use AI' dialog when nothing can pay for the app's AI requests. The first tagged phrase links to Settings, linked accounts; the second to Settings, API key. GitHub, X and Anthropic are names; keep $10/day as written."
+    "text": "No AI payer is available yet. <0>Connect GitHub or X</0> to unlock $10/day, or <1>add your own OpenRouter key</1>.",
+    "description": "Notice in the 'Allow app to use AI' dialog when nothing can pay for the app's AI requests. The first tagged phrase links to Settings to connect an account, the second to the OpenRouter key in Settings. OpenRouter is a company name."
   },
   "modals.aiConsent.capLabel": {
     "text": "Daily cap for this app ($ per day)",
@@ -6521,7 +6525,11 @@
   },
   "topic.request.fromThread": {
     "text": "Open the thread it came from",
-    "description": "Link under a request's words, shown only to the person whose private Homeroom bot design thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
+    "description": "Link under a request's words, shown only to the person whose private Homeroom bot artifact thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
+  },
+  "topic.request.openDesign": {
+    "text": "Open the artifact, version {{version}}",
+    "description": "Link beside \"Open the thread it came from\" under a request's words, shown only to the person whose plan on the request was made from a screen in their private Homeroom bot thread. Opens that artifact itself, at the version the plan shows, beside the thread. {{version}} is the version's number."
   },
   "frame.hub.people": {
     "text": "People",

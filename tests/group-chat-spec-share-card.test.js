@@ -218,7 +218,7 @@ test('the topic frame carries the detail slot, as the general chat pane does', (
     assert.equal(html.split('id="gc-spec-resizer"').length, 2, 'one divider per frame');
     assert.match(html, /data-detail-surface="(?:chat|topic)"/, 'with its surface for the layout rule');
   }
-  assert.match(topic, /^<div class="flex flex-col h-full min-h-0 dc-lift dc-lift-strip"><div class="gc-tab-body flex-1 flex min-h-0"><div id="dev-topic-thread" class="flex-1 min-w-0 min-h-0">/);
+  assert.match(topic, /^<div class="flex flex-col h-full min-h-0 dc-lift dc-lift-strip"><h2 class="dev-thread-place-title">Workshop<\/h2><div class="gc-tab-body flex-1 flex min-h-0"><div id="dev-topic-thread" class="flex-1 min-w-0 min-h-0">/);
   assert.match(chat, /<div class="gc-tab-body flex-1 flex min-h-0">/);
 });
 

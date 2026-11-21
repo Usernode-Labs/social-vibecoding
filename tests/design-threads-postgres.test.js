@@ -92,9 +92,9 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
   const mayorTurn = require('../src/services/homeroom-bot-mayor');
   // Step 6 (#6864): every message in a design thread is the chat's own turn,
   // which holds the design as a capability; its section is a system message
-  // of its own (THIS THREAD'S DESIGN).
+  // of its own (THIS THREAD'S ARTIFACT).
   const section = (messages) => (messages || [])
-    .filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S DESIGN'))
+    .filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S ARTIFACT'))
     .map((m) => m.content).join('\n');
   const designTurn = (message, {
     design: held, conversationId, threadRootId, chat, settings: given = { mode: 'on', perPerson: 2 }, extra = {},
@@ -158,7 +158,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.equal(line.sender_id, bot.id);
     assert.equal(line.thread_root_id, null, 'in Main');
     assert.equal(line.metadata.homeroomBot.kind, 'opened_design');
-    assert.match(line.content, /^I opened a design thread for Plant list, in a thread only you can see\./);
+    assert.match(line.content, /^I opened a thread for Plant list that only you can see\./);
     const { rows: [row] } = await pool.query('SELECT kind, state, app_id FROM private_threads WHERE root_message_id = $1', [opened.rootId]);
     assert.deepEqual(row, { kind: 'design', state: 'open', app_id: app.id });
     design = await designs.designFor(pool, { userId: ada.id, rootId: opened.rootId });
@@ -301,10 +301,12 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     const number = nextIssue;
     const root = design.rootId;
     const sql = (state) => pool.query('UPDATE private_threads SET state = $2 WHERE root_message_id = $1', [root, state]);
+    // Artifacts, stage 4: Propose it above posted version 2 as the request's
+    // plan, so the owner's link carries the version it shows, which opens the design.
     await sql('filed');
-    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root });
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root, designVersion: 2 });
     await sql('posted');
-    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root },
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root, designVersion: 2 },
       'a plan posted on the request links it too');
     assert.equal(await designs.threadForRequest(pool, { userId: sam.id, appId: app.id, number }), null,
       'another person reads nothing of a private thread');
@@ -387,7 +389,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
         ], seen),
       },
     });
-    // Step 6: the chat's round starts it; the design's section is added to
+    // Step 6: the chat's round starts it; the artifact's section is added to
     // the same turn from the next round.
     assert.equal(seen[0][0].role, 'system');
     assert.equal(section(seen[0]), '', 'not before it starts');
@@ -395,7 +397,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.match(section(seen[1]), /WHAT YOU WERE ASKED TO DRAW\nThe seeds they can swap, as cards/);
     // #6257: the first drawing may ask first, so its last line says so; the
     // clear brief here still draws in the turn (the next scripted call).
-    assert.match(section(seen[1]), /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
+    assert.match(section(seen[1]), /THERE IS NO SCREEN YET: draw it with write_artifact, or ask first as FIRST SCREEN says\.$/);
     // The third request also carries start_design's own result (round one):
     // the reads are the last three tool results, from round two.
     const results = seen[2].filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content)).slice(-3);
@@ -409,7 +411,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.equal(answer.metadata.homeroomBot.designTitle, 'Swap list');
     const drawn = await designs.designFor(pool, { userId: ada.id, rootId: started.rootId });
     assert.deepEqual([drawn.kind, drawn.surface, drawn.title, drawn.width, drawn.height, drawn.latest, drawn.app.slug],
-      ['ask', 'app', 'Swap list', 390, 844, 1, 'dt-seed-swap'], 'a "+" thread\'s design: its own kind, the project\'s app');
+      ['ask', 'app', 'Swap list', 390, 844, 1, 'dt-seed-swap'], 'a "+" thread\'s artifact: its own kind, the project\'s app');
     assert.equal(drawn.versions[0].author, 'bot');
     const v1 = await designs.versionOf(pool, { userId: ada.id, rootId: started.rootId });
     assert.match(v1.html, /^<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="\/usernode-native\/v1\/native\.css"><style data-design-sheet="public\/styles\.css">\.seeds \{ color: #166534; \}/,
@@ -567,7 +569,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.deepEqual([room.threadId, room.kind, room.app], [null, 'idea', null]);
     assert.equal(await designs.draftingThread(pool, { userId: sam.id, botId: bot.id, rootId: root.id }), null, 'nobody else\'s');
     const seen = [];
-    // Step 6: the turn starts the design (start_design) in her thread, and
+    // Step 6: the turn starts the artifact (start_design) in her thread, and
     // the design says her picture in words for a model that reads text.
     await mayor.runDmTurn(pool, config, {
       bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: asked,
@@ -632,7 +634,7 @@ test('#6407: a plan made from a design says which of its versions is chosen', ()
   const chosen = designs.planHtml({
     design: { width: 1280, height: 800, title: 'History', route: null }, title: 'History by day', notes: '', before: null, after, version: 3,
   });
-  assert.match(chosen, /This design draws 2 versions side by side/);
+  assert.match(chosen, /This artifact draws 2 versions side by side/);
   assert.match(chosen, /Build &quot;With date headings&quot;, the chosen one/);
 
   const none = designs.planHtml({

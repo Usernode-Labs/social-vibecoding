@@ -2340,11 +2340,89 @@ function conversationNotificationHref(n) {
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|bot_budget|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parsePlatformLimitDetail(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
+}
+
+// The capacity limits' volumes are whole MiB (services/platform-capacity.js):
+// said as GiB, one decimal under ten.
+function limitGib(mib) {
+  const n = Number(mib) / 1024;
+  return n < 10 ? String(Math.round(n * 10) / 10) : String(Math.round(n));
+}
+
+// The capacity limits' messages, by limit key and level: the label, and the
+// body (volumes take { used, cap } in GiB, quotas { percent }).
+const CAPACITY_LIMIT_MESSAGES = {
+  db_disk: {
+    warn: ['notifications:row.limit.dbDisk.warn.label', 'notifications:row.limit.dbDisk.warn.body'],
+    full: ['notifications:row.limit.dbDisk.full.label', 'notifications:row.limit.dbDisk.full.body'],
+  },
+  node_pool: {
+    warn: ['notifications:row.limit.nodePool.warn.label', 'notifications:row.limit.nodePool.warn.body'],
+    full: ['notifications:row.limit.nodePool.full.label', 'notifications:row.limit.nodePool.full.body'],
+  },
+  quota_apps: {
+    warn: ['notifications:row.limit.quota.apps.warn.label', 'notifications:row.limit.quota.apps.warn.body'],
+    full: ['notifications:row.limit.quota.apps.full.label', 'notifications:row.limit.quota.apps.full.body'],
+  },
+  quota_workers: {
+    warn: ['notifications:row.limit.quota.workers.warn.label', 'notifications:row.limit.quota.workers.warn.body'],
+    full: ['notifications:row.limit.quota.workers.full.label', 'notifications:row.limit.quota.workers.full.body'],
+  },
+  quota_builds: {
+    warn: ['notifications:row.limit.quota.builds.warn.label', 'notifications:row.limit.quota.builds.warn.body'],
+    full: ['notifications:row.limit.quota.builds.full.label', 'notifications:row.limit.quota.builds.full.body'],
+  },
+};
+
+// #6901: services/platform-limit-alerts.js refusalToken():
+// "apps_away:<people>:<cap>:<ago>", ago in minutes from the run's start (0
+// means someone was just turned away).
+const PLATFORM_REFUSAL_DETAIL_RE = /^apps_away:(\d{1,5}):(\d{1,7}):(\d{1,4})$/;
+
+function parsePlatformRefusalDetail(detail) {
+  const m = PLATFORM_REFUSAL_DETAIL_RE.exec(String(detail || ''));
+  return m ? { people: Number(m[1]), cap: Number(m[2]), agoMinutes: Number(m[3]) } : null;
+}
+
+// #6901: the clock time a run of refusals began, in the reader's own zone and
+// language: "9:00 AM", with the day in front when it was not today ("13 Nov,
+// 9:00 AM"), the shape lib/timestamp.ts's messageStamp prints. Spelled here
+// rather than importing that second helper: the bell's suites evaluate this
+// file as a classic script in a vm and strip its one import, so a second one
+// would be left in the source they run. The zone is the account's pick,
+// published on PlatformI18n (#6479); the vm harness has none, which is the
+// device's zone, the same fallback as Auto.
+function clockStamp(at) {
+  if (!at || Number.isNaN(at.getTime())) return '';
+  const zone = typeof PlatformI18n.timeZone === 'function' ? PlatformI18n.timeZone() : undefined;
+  const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
+  const inZone = (options) => (zone ? { ...options, timeZone: zone } : options);
+  const time = new Intl.DateTimeFormat(locale, inZone({ hour: 'numeric', minute: '2-digit' })).format(at);
+  const day = (date) => new Intl.DateTimeFormat(locale,
+    inZone({ year: 'numeric', month: 'numeric', day: 'numeric' })).format(date);
+  if (day(at) === day(new Date())) return time;
+  const date = new Intl.DateTimeFormat(locale,
+    inZone({ month: 'short', day: 'numeric' })).format(at);
+  return `${date}, ${time}`;
+}
+
+// The day Homeroom bot's budget week turns, by name, for a notice sent at
+// `at`: the next week boundary after it. Weeks start on Monday 00:00 UTC
+// (services/limits.js weeklyResetAt, and a managed key's weekly reset), and
+// the day is named in UTC, as the push and the text name it, in the reader's
+// language.
+function weekTurnDay(at) {
+  const from = at && !Number.isNaN(at.getTime()) ? at : new Date();
+  const day = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const ahead = (8 - day.getUTCDay()) % 7;
+  day.setUTCDate(day.getUTCDate() + (ahead === 0 ? 7 : ahead));
+  const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
+  return new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' }).format(day);
 }
 
 // services/platform-incident-alerts.js tokens (#4296): "digest:<total>:<kind>=<n>,..."
@@ -2548,6 +2626,13 @@ function inviteView(inv) {
 // The read state has to match too. A run is entirely unread or entirely read,
 // which is what lets the sheet's Unread tab filter whole rows without ever
 // hiding an unread message inside a row it counted as read.
+//
+// And so does whether the bell counts it (#18). A plain message is the
+// Messages tab's; a reaction, a reply or a mention in the same conversation
+// is the bell's. The run's row takes its newest member's view, plainMessage
+// included, so a reaction folded under a newer plain message was hidden from
+// Unread while the bell still counted it: "Unread (1)" over "You're all
+// caught up" (20 Nov 2026). A run is all plain or all counted.
 function collapseConversationRuns(items) {
   const runs = [];
   for (const n of items) {
@@ -2558,12 +2643,14 @@ function collapseConversationRuns(items) {
     // ("hrbot:<said>:<app>" on a row from before "one story", "hrbot2:{…}"
     // now; kept to the shape here so the function stands on its own.)
     const moment = !!(n && /^hrbot(?::[a-z_]{1,20}:|2:\{)/.test(String(n.detail || '')));
+    // isPlainMessageNotification's rule, spelled here for the same reason.
+    const plain = !!n && ((n.kind === 'conversation_message' && n.appId == null) || n.kind === 'channel_message');
     if (prev && id !== null && prev.conversationId === id
-        && prev.read === !!n.readAt && !moment && !prev.moment) {
+        && prev.read === !!n.readAt && prev.plain === plain && !moment && !prev.moment) {
       prev.count += 1;
       continue;
     }
-    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1, moment });
+    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1, moment, plain });
   }
   return runs;
 }
@@ -2973,6 +3060,109 @@ function rowTone(n, view) {
   return bot && bot.moment === 'on_hold' && bot.said !== 'low' ? 'hold' : null;
 }
 
+// A release_hold notice's detail ("notice:<rules>|<rule>:<value>,…",
+// src/services/release-holds.js notifyIfDue) as { rules, tags, capabilities }.
+// Each capability's words, by its id, in the catalogue's order.
+const RELEASE_HOLD_CAPABILITY_WHAT = Object.freeze({
+  geolocation: 'notifications:row.releaseHold.capability.geolocation',
+  microphone: 'notifications:row.releaseHold.capability.microphone',
+  camera: 'notifications:row.releaseHold.capability.camera',
+  'display-capture': 'notifications:row.releaseHold.capability.display-capture',
+  usb: 'notifications:row.releaseHold.capability.usb',
+  serial: 'notifications:row.releaseHold.capability.serial',
+  hid: 'notifications:row.releaseHold.capability.hid',
+  bluetooth: 'notifications:row.releaseHold.capability.bluetooth',
+  midi: 'notifications:row.releaseHold.capability.midi',
+});
+const RELEASE_HOLD_CAPABILITIES = Object.keys(RELEASE_HOLD_CAPABILITY_WHAT);
+function releaseHoldNotice(detail) {
+  const body = String(detail || '').replace(/^notice:/, '');
+  const [rulesPart, tagsPart] = body.split('|');
+  const rules = String(rulesPart || '').split(',').map((r) => r.trim()).filter(Boolean);
+  const tags = String(tagsPart || '').split(',').map((r) => r.trim()).filter(Boolean);
+  const named = new Set(tags.filter((tag) => tag.startsWith('capability:')).map((tag) => tag.slice('capability:'.length)));
+  return { rules, tags, capabilities: RELEASE_HOLD_CAPABILITIES.filter((c) => named.has(c)) };
+}
+
+// The kinds of personal detail a change's new tables keep, by their id, in the
+// order a sentence lists them (release-holds.js PEOPLE_KINDS).
+const RELEASE_HOLD_PEOPLE_WHAT = Object.freeze({
+  email: 'notifications:row.releaseHold.people.email',
+  phone: 'notifications:row.releaseHold.people.phone',
+  birth: 'notifications:row.releaseHold.people.birth',
+  address: 'notifications:row.releaseHold.people.address',
+  name: 'notifications:row.releaseHold.people.name',
+});
+
+// Words joined the way the reader's language joins a list.
+function joinWords(words) {
+  if (!words.length) return '';
+  try {
+    const locale = typeof PlatformI18n.dateLocale === 'function' ? PlatformI18n.dateLocale() : undefined;
+    return new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(words);
+  } catch {
+    return words.join(', ');
+  }
+}
+
+// "the camera", "the microphone and the camera": each capability in the
+// catalogue's words.
+function capabilityPhrase(capabilities) {
+  return joinWords((capabilities || []).map((c) => t(RELEASE_HOLD_CAPABILITY_WHAT[c])).filter(Boolean));
+}
+
+// "email addresses", "email addresses and phone numbers".
+function peoplePhrase(tags) {
+  const kinds = new Set((tags || []).filter((tag) => tag.startsWith('people:')).map((tag) => tag.slice('people:'.length)));
+  return joinWords(Object.keys(RELEASE_HOLD_PEOPLE_WHAT).filter((k) => kinds.has(k))
+    .map((k) => t(RELEASE_HOLD_PEOPLE_WHAT[k])).filter(Boolean));
+}
+
+// A release_hold row that only tells (detail "notice:…"). 20 Nov 2026: a
+// change that asks for a device capability, starts keeping data about
+// people, or adds a private key for an outside service is told about rather
+// than held, and the row says what the project now does ("Stylist now asks
+// for the camera", "Stylist now keeps people's email addresses", "Stylist now
+// uses a private key for an outside service"), from the names the detail
+// carries after a `|`. A row from before the names says it in general words.
+// Otherwise it is a change the rules could not read in full. The first rule
+// of RULES' order names the row; the mail lists every reason. None asks
+// anything of the reader, so none wears the warning sign.
+function releaseHoldNoticeRow(n, base, prLabel) {
+  const notice = releaseHoldNotice(n.detail);
+  const app = n.appName || '';
+  let label = null;
+  let fallback = 'notifications:row.releaseHold.toldBody';
+  if (notice.rules.includes('capability')) {
+    const what = capabilityPhrase(notice.capabilities);
+    label = what
+      ? t(app ? 'notifications:row.releaseHold.capabilityLabel' : 'notifications:row.releaseHold.capabilityLabelUnnamed', { app, what })
+      : t(app ? 'notifications:row.releaseHold.capabilityLabelAny' : 'notifications:row.releaseHold.capabilityLabelAnyUnnamed', { app });
+    fallback = 'notifications:row.releaseHold.capabilityBody';
+  } else if (notice.rules.includes('people')) {
+    const what = peoplePhrase(notice.tags);
+    label = what
+      ? t(app ? 'notifications:row.releaseHold.peopleLabel' : 'notifications:row.releaseHold.peopleLabelUnnamed', { app, what })
+      : t(app ? 'notifications:row.releaseHold.peopleLabelAny' : 'notifications:row.releaseHold.peopleLabelAnyUnnamed', { app });
+  } else if (notice.rules.includes('secret')) {
+    label = t(app ? 'notifications:row.releaseHold.secretLabel' : 'notifications:row.releaseHold.secretLabelUnnamed', { app });
+  }
+  if (label) {
+    return {
+      ...base,
+      icon: '\u2139\uFE0F',
+      by: n.sourceUsername || null,
+      ...headline(label, prLabel || n.sessionTitle || t(fallback)),
+    };
+  }
+  return {
+    ...base,
+    icon: '\u2139\uFE0F',
+    by: n.sourceUsername || null,
+    ...headline(t('notifications:row.releaseHold.noticeLabel'), prLabel || n.sessionTitle || t('notifications:row.releaseHold.noticeBody')),
+  };
+}
+
 function rowView(n) {
   const view = rowWords(n);
   const tone = rowTone(n, view);
@@ -3290,6 +3480,27 @@ function rowWords(n) {
   // two kinds above. `detail` is "<limit>_<level>:<used>:<cap>"; a token this
   // build cannot read still says which kind of alert it is.
   if (n.kind === 'platform_limit') {
+    // #6901: somebody was turned away at the app limit, told at once for the
+    // first and then as a count every few hours. ago is minutes back from
+    // the row's own stamp; 0 is the "just now" notice.
+    const refusal = parsePlatformRefusalDetail(n.detail);
+    if (refusal) {
+      const at = new Date(new Date(n.createdAt).getTime() - refusal.agoMinutes * 60000);
+      const since = clockStamp(at);
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F6A8}',
+        label: refusal.agoMinutes === 0
+          ? t('notifications:row.limit.appsAway.just.label')
+          : t('notifications:row.limit.appsAway.count.label'),
+        // One message each: the figures, strong, then what follows from them.
+        segments: refusal.agoMinutes === 0
+          ? messageSegments('notifications:row.limit.appsAway.just.body', { count: refusal.cap })
+          : messageSegments('notifications:row.limit.appsAway.count.body', { count: refusal.people, time: since }),
+      };
+    }
     const limit = parsePlatformLimitDetail(n.detail);
     if (!limit) {
       return { ...base, appLine: t('notifications:row.source.admin'), wrap: true, icon: '\u26A0\uFE0F',
@@ -3315,7 +3526,56 @@ function rowWords(n) {
             : messageSegments('notifications:row.limit.github.warn.body', figures)),
       };
     }
+    // The cluster's own ceilings (services/platform-capacity.js): the
+    // database's disk and a node's volume pool in GiB, a namespace's quota
+    // as a percentage of its tightest resource.
+    const capacity = CAPACITY_LIMIT_MESSAGES[limit.limit];
+    if (capacity) {
+      const [labelId, bodyId] = capacity[full ? 'full' : 'warn'];
+      const values = limit.limit.startsWith('quota_')
+        ? { percent: Math.floor(limit.used / 10) }
+        : { used: limitGib(limit.used), cap: limitGib(limit.cap) };
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+        label: t(labelId),
+        segments: messageSegments(bodyId, values),
+      };
+    }
+    // Homeroom bot's weekly budget, in cents (services/openrouter-credit.js
+    // budget): how much of it is used, and the day its week turns.
+    if (limit.limit === 'bot_budget') {
+      const money = (cents) => `$${Math.round(cents / 100).toLocaleString('en-US')}`;
+      const day = weekTurnDay(new Date(n.createdAt));
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '⚠️',
+        label: full
+          ? t('notifications:row.limit.botBudget.full.label')
+          : t('notifications:row.limit.botBudget.warn.label', { percent: Math.floor((limit.used / Math.max(1, limit.cap)) * 100) }),
+        segments: full
+          ? messageSegments('notifications:row.limit.botBudget.full.body', { day })
+          : messageSegments('notifications:row.limit.botBudget.warn.body', { used: money(limit.used), cap: money(limit.cap), day }),
+      };
+    }
     const figures = { used: limit.used, count: limit.cap };
+    // The shared database's connections (services/platform-limit-alerts.js):
+    // the admin limits area at the top of the sheet has the figures too.
+    if (limit.limit === 'connections') {
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+        label: full ? t('notifications:row.limit.connections.full.label') : t('notifications:row.limit.connections.warn.label'),
+        segments: full ? messageSegments('notifications:row.limit.connections.full.body', figures)
+          : messageSegments('notifications:row.limit.connections.warn.body', figures),
+      };
+    }
     return {
       ...base,
       appLine: t('notifications:row.source.admin'),
@@ -3359,7 +3619,14 @@ function rowWords(n) {
         wrap: true,
         icon: hearts,
         label: t('notifications:row.credit.low.label', { threshold: dollars(alert.thresholdCents) }),
-        segments: [{ t: 'text', v: t('notifications:row.credit.low.body', { balance: dollars(alert.balanceCents), days: alert.days }) }],
+        // The account's credit, and how long it lasts at the rate it has
+        // been going down; a notice sent before there was a rate says none.
+        segments: [{
+          t: 'text',
+          v: alert.days > 0
+            ? t('notifications:row.credit.low.body', { balance: dollars(alert.balanceCents), count: alert.days })
+            : t('notifications:row.credit.low.bodyNoDays', { balance: dollars(alert.balanceCents) }),
+        }],
       };
     }
     if (alert && alert.type === 'private') {
@@ -3485,17 +3752,11 @@ function rowWords(n) {
   // holds.js), for full admins. The warning sign is the point of the row: it
   // is the one ask in the bell that something risky waits on this reader.
   if (n.kind === 'release_hold') {
-    // A detail that starts "notice:" is a change the rules could not read
-    // in full: the admins are told, and it is not held, so the row asks for
-    // nothing and carries no warning sign.
-    if (/^notice:/.test(String(n.detail || ''))) {
-      return {
-        ...base,
-        icon: '\u2139\uFE0F',
-        by: n.sourceUsername || null,
-        ...headline(t('notifications:row.releaseHold.noticeLabel'), prLabel || n.sessionTitle || t('notifications:row.releaseHold.noticeBody')),
-      };
-    }
+    // A detail that starts "notice:" is a change the admins are only told
+    // about (it asks for a device capability, keeps data about people, adds a
+    // private key, or could not be read in full): it is not held, so the row
+    // asks for nothing and carries no warning sign.
+    if (/^notice:/.test(String(n.detail || ''))) return releaseHoldNoticeRow(n, base, prLabel);
     return {
       ...base,
       needsYou: true,
@@ -4135,6 +4396,8 @@ function stampFields(ts) {
 // is what keeps ./notifications-list.tsx presentational, and it is what let the
 // list be lifted wholesale into the hamburger without this module noticing.
 Notifications._rowView = rowView;
+Notifications._releaseHoldNotice = releaseHoldNotice;
+Notifications._capabilityPhrase = capabilityPhrase;
 // B4: the sheet's rows, folded, for tests (a bot moment never folds).
 Notifications._screenViews = screenViews;
 // "One story": where a conversation row (and its push) opens, for tests.

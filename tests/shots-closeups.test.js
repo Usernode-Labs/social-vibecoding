@@ -121,3 +121,16 @@ test('a close-up of the before state is refused even when the change is a speck 
   assert.equal(closeups.matches(after, ofBefore, rect, { beforeStill: before }), false);
   assert.equal(closeups.matches(after, ofAfter, rect, { beforeStill: before }), true);
 });
+
+// PR 6958: like the card, a screen with a frame (what its change is about)
+// is pieced from the frame, never from what differs elsewhere on it.
+test('a screen with a frame asks for a close-up of the frame, not of what else differs', () => {
+  const framed = {
+    ...screen([[200, 600, 40, 12]]),
+    regions: [{ story: null, a: [200, 600, 40, 12], b: [200, 600, 40, 12] }],
+    frames: [{ story: 'invite', a: [60, 100, 40, 40], b: [60, 100, 40, 40] }],
+  };
+  const asked = closeups.wanted([framed], () => 3);
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0].rect, { x: 44, y: 76, w: 72, h: 88 }, 'the frame, widened to readable context and framed');
+});

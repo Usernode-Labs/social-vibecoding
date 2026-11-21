@@ -17,7 +17,7 @@ const YAML = require('yaml');
 const { npmGate, npmFindings, imageGate, imageFindings, lockPackages, sbomPackages, report, imageAssessment } = require('../scripts/security-findings');
 const { buildBaseline } = require('../scripts/security-image-baseline');
 const { baselineLock } = require('../scripts/security-audit');
-const { parseReleaseValues, liveRelease } = require('../scripts/live-release');
+const { parseReleaseValues, liveRelease, liveReleaseMetadata } = require('../scripts/live-release');
 
 const ROOT = path.join(__dirname, '..');
 const NOW = Date.parse('2026-10-29T19:00:00Z');
@@ -204,7 +204,7 @@ const VALUES = [
   '',
 ].join('\n');
 
-test('what is live comes off the newest stable chart, and an unreadable chart is no baseline', () => {
+test('the release baseline follows the promoted chart digest and is unavailable when the tag cannot be read', async () => {
   const live = {
     revision: 'a5f91bc5ff8ebc2c255754663d48e62b699bcbea',
     platform: `sha256:${'f'.repeat(64)}`, worker: `sha256:${'7'.repeat(64)}`, capture: `sha256:${'4'.repeat(64)}`,
@@ -214,6 +214,15 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
   assert.equal(parseReleaseValues(VALUES.replace(/sourceRevision: .*/, 'sourceRevision: "main"')), null);
 
   const calls = [];
+  const digest = `sha256:${'d'.repeat(64)}`;
+  const repository = 'usernode-labs/charts/social-vibecoding-platform';
+  const connect = async (...args) => {
+    assert.deepEqual(args, [repository], 'the public release lookup requests read access');
+    return { manifest: async ref => {
+      assert.equal(ref, 'release');
+      return { digest };
+    } };
+  };
   const helm = (file, args) => {
     calls.push([file, ...args]);
     const dir = args[args.indexOf('--untardir') + 1];
@@ -221,52 +230,102 @@ test('what is live comes off the newest stable chart, and an unreadable chart is
     fs.writeFileSync(path.join(dir, 'social-vibecoding-platform', 'values.release.yaml'), VALUES);
     return { status: 0 };
   };
-  assert.deepEqual(liveRelease('usernode-labs', { run: helm }), live);
-  assert.deepEqual(calls[0].slice(0, 5), ['helm', 'pull', 'oci://ghcr.io/usernode-labs/charts/social-vibecoding-platform', '--version', '0.1.*'],
-    'the newest stable chart: the one the plan job reads as published');
-  assert.equal(liveRelease('usernode-labs', { run: () => ({ status: 1 }) }), null);
+  assert.deepEqual(await liveRelease('usernode-labs', { connect, run: helm }), live);
+  assert.deepEqual(calls[0].slice(0, 4), ['helm', 'pull', `oci://ghcr.io/${repository}@${digest}`, '--untar']);
+  assert.equal(await liveRelease('usernode-labs', { connect, run: () => ({ status: 1 }) }), null);
+
+  const missing = async () => ({ manifest: async () => null });
+  const unreadable = async () => ({ manifest: async () => { throw new Error('registry unavailable'); } });
+  const invalid = async () => ({ manifest: async () => ({ digest: 'not-a-digest' }) });
+  for (const resolve of [missing, unreadable, invalid]) {
+    assert.equal(await liveRelease('usernode-labs', { connect: resolve, run: helm }), null);
+  }
+  assert.equal(calls.length, 1, 'a failed lookup must never try a numeric tag or version range');
+});
+
+test('release pacing reads the verified config of the promoted chart without pulling chart contents', async () => {
+  const digest = `sha256:${'d'.repeat(64)}`;
+  const configDigest = `sha256:${'e'.repeat(64)}`;
+  const revision = 'a'.repeat(40);
+  const version = '0.1.1550001';
+  const lookup = config => ({
+    connect: async repository => ({
+      manifest: async ref => {
+        assert.equal(repository, 'usernode-labs/charts/social-vibecoding-platform');
+        assert.equal(ref, 'release');
+        return { digest, configDigest, version };
+      },
+      config: async ref => {
+        assert.equal(ref, configDigest);
+        return config;
+      },
+    }),
+  });
+  const config = { appVersion: revision, version, name: 'social-vibecoding-platform' };
+  assert.deepEqual(await liveReleaseMetadata('usernode-labs', lookup(config)), { revision, version, digest });
+  for (const corrupt of [{ version: '0.1.1550002' }, { appVersion: 'main' }, { name: 'other' }]) {
+    assert.equal(await liveReleaseMetadata('usernode-labs', lookup({ ...config, ...corrupt })), null);
+  }
 });
 
 test('PR findings block against the exact base; post-merge findings are advisory', () => {
   const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
-  const step = (job, name) => workflow.jobs[job].steps.find((s) => s.name === name);
-  // PRs and other release branches retain a lockfile baseline. Only protected
-  // main can use advisory findings after its required pre-merge scans.
-  const lockfiles = workflow.jobs['security-lockfiles'];
-  const baseline = step('security-lockfiles', 'Fetch the baseline commit');
-  assert.equal(baseline.if, "github.event_name == 'pull_request' || github.ref != 'refs/heads/main'");
-  assert.equal(step('security-lockfiles', 'Read the live release').if, "github.event_name != 'pull_request' && github.ref != 'refs/heads/main'");
+  const pr = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
+  const lockfiles = pr.jobs['security-lockfiles'];
+  const baseline = lockfiles.steps.find((step) => step.name === 'Fetch the baseline commit');
   assert.equal(baseline.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
-  assert.equal(baseline.env.LIVE_SHA, '${{ steps.live.outputs.revision }}');
   assert.match(baseline.run, /git fetch --no-tags --depth=1 origin "\$revision"/);
   const auditStep = lockfiles.steps.find((s) => s.run === 'node scripts/security-audit.js');
   assert.deepEqual(auditStep.env, {
     SECURITY_BASELINE_REVISION: '${{ steps.baseline.outputs.revision }}',
     SECURITY_BASELINE_NAME: '${{ steps.baseline.outputs.name }}',
-    SECURITY_AUDIT_ONLY: "${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && '1' || '0' }}",
   });
   // PR images use the exact PR base, including standalone and starter.
-  const prScan = step('security-images', 'Build and scan the finished image');
+  const prScan = pr.jobs['security-images'].steps.find((step) => step.name === 'Build and scan the finished image');
   assert.equal(prScan.env.SECURITY_BASELINE_REVISION, '${{ github.event.pull_request.base.sha }}');
   assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
   assert.equal(prScan.env.SECURITY_AUDIT_ONLY, undefined, 'PRs retain the blocking scanner default');
-  assert.equal(workflow.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
+  assert.equal(prScan.env.LIVE_WORKER_DIGEST, '${{ steps.live.outputs.worker }}');
+  assert.match(prScan.run, /--cache-from "type=registry,ref=ghcr\.io\/.*social-vibecoding-worker@\$LIVE_WORKER_DIGEST"/);
+  assert.doesNotMatch(prScan.run, /type=gha|--cache-to/,
+    'PRs can import layers from the promoted image and publish no cache');
+  assert.equal(pr.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
-  const releaseScan = step('build', 'Verify runtime and scan the exact image SBOM');
-  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, "${{ github.ref == 'refs/heads/main' && '1' || '0' }}");
+  const releaseScan = workflow.jobs.build.steps.find((step) => step.name === 'Verify runtime and scan the exact image SBOM');
+  assert.equal(releaseScan.env.SECURITY_AUDIT_ONLY, '1');
   assert.equal(releaseScan.env.LIVE_DIGEST, '${{ steps.live.outputs[matrix.component] }}');
-  assert.match(releaseScan.run, /export BASELINE_IMAGE="ghcr\.io\/\$REGISTRY_OWNER\/social-vibecoding-\$\{\{ matrix\.component \}\}@\$LIVE_DIGEST"/);
+  assert.match(releaseScan.run, /\[ -n "\$LIVE_DIGEST" \] && \[ "\$\{IMAGE##\*@\}" = "\$LIVE_DIGEST" \]/);
   assert.match(releaseScan.run, /sh scripts\/check-published-image\.sh "\$IMAGE" "\$REPORT" "\$\{\{ matrix\.component \}\}"/);
   // Releases retain the immutable released-image comparison.
-  for (const job of ['build']) {
-    const names = workflow.jobs[job].steps.map((s) => s.name || s.uses);
-    assert.ok(names.indexOf('Read the live release') > names.indexOf('azure/setup-helm@v4'), `${job}: helm is set up first`);
-  }
+  const names = workflow.jobs.build.steps.map((s) => s.name || s.uses);
+  assert.ok(names.indexOf('Read the live release') > names.indexOf('azure/setup-helm@v4'));
   // The image check passes the baseline SBOM to the findings, and only when read.
   const check = fs.readFileSync(path.join(ROOT, 'scripts/check-image-security.sh'), 'utf8');
   assert.match(check, /docker buildx imagetools inspect "\$BASELINE_IMAGE" --format '\{\{json \.SBOM\}\}'/);
   assert.match(check, /node scripts\/security-findings\.js --assess "\$out" "\$component" "\$baseline"/);
   assert.match(check, /elif \[ -n "\$\{SECURITY_BASELINE_REVISION:-\}" \]/);
+});
+
+test('only a digest already in the stable chart can skip the release scan', (t) => {
+  const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
+  const scan = workflow.jobs.build.steps.find((step) => step.name === 'Verify runtime and scan the exact image SBOM');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-scan-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'scripts'));
+  fs.writeFileSync(path.join(dir, 'scripts', 'check-published-image.sh'), 'exit 9\n');
+  const digest = 'sha256:' + 'a'.repeat(64);
+  const image = 'ghcr.io/usernode-labs/social-vibecoding-worker@' + digest;
+  const report = path.join(dir, 'report');
+  const run = (live) => spawnSync('bash', ['-ec', scan.run.replace('${{ matrix.component }}', 'worker')], {
+    cwd: dir,
+    env: { ...process.env, LIVE_DIGEST: live, IMAGE: image, REPORT: report },
+  });
+
+  assert.equal(run(digest).status, 0);
+  assert.equal(fs.readFileSync(path.join(report, 'image-reference.txt'), 'utf8').trim(), image);
+  assert.equal(fs.existsSync(path.join(report, 'assessment.json')), false, 'reuse is not a clean scan verdict');
+  assert.equal(run('sha256:' + 'b'.repeat(64)).status, 9);
+  assert.equal(run('').status, 9);
 });
 
 // A fake `docker` that records each call and writes what the scan steps read:
@@ -287,6 +346,7 @@ case "$*" in
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
   *"--entrypoint node"*) input=$(cat); [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8
     case "$input" in *ms-playwright*) if [ -n "\${FAKE_BROWSERS:-}" ]; then cat "$FAKE_BROWSERS"; else echo '{}'; fi ;; *) echo '{}' ;; esac ;;
+  *" image --download-db-only"*) [ "\${FAKE_DB_FAILURE:-}" != 1 ] || exit 7 ;;
   *" image --skip-db-update"*) [ "\${FAKE_IMAGE_SCAN_FAILURE:-}" != 1 ] || exit 9; cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
   *" sbom "*) if [ "$report" = playwright-browser-advisories.json ]; then cp "$FAKE_BROWSER_ADVISORIES" "$out/$report"; else cp "${path.join(dir, 'report.json')}" "$out/$report"; fi ;;
 esac
@@ -386,6 +446,23 @@ test('a failed full-image scan invalidates an earlier clean assessment and canno
   assert.equal(data.complete, false);
   assert.equal(data.status, 'unavailable');
   assert.match(data.reason, /full-image scan/);
+});
+
+test('a failed database download cannot open the offline scanner or complete an assessment', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-db-failure-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const out = path.join(dir, 'out');
+  const sbom = path.join(dir, 'sbom.json');
+  fs.writeFileSync(sbom, '{}');
+  const result = spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', out, sbom, 'standalone'], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${fakeDocker(dir)}:${process.env.PATH}`, FAKE_DB_FAILURE: '1', SECURITY_AUDIT_ONLY: '1' },
+  });
+  assert.equal(result.status, 7, result.stderr);
+  const data = JSON.parse(fs.readFileSync(path.join(out, 'assessment.json')));
+  assert.equal(data.complete, false);
+  assert.equal(data.status, 'unavailable');
+  assert.match(data.reason, /vulnerability database download/);
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, 'calls.log'), 'utf8'), /--skip-db-update/);
 });
 
 test('a clean candidate skips baseline builds; a potential finding generates a fresh exact-base inventory', (t) => {

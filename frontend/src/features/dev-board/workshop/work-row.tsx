@@ -62,7 +62,7 @@ import {
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
-import { useLiveSkin } from '../../../lib/skin';
+import { isKitHome, useLiveSkin } from '../../../lib/skin';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
 import { callAppView, itemHooks, LiveTally, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
 import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag, StatusPillState } from '../card/model';
@@ -247,7 +247,7 @@ export function WorkRow({
   // The line in words is read with `translate` (rowWords); subscribe the row.
   useMessages('project');
   // Standard (WIP) says who and when first, then the item's number as a code.
-  const wipLook = useLiveSkin() === 'wip';
+  const wipLook = isKitHome(useLiveSkin());
   // The line row's title link, which a click on its tags line opens (#4716).
   const b = row.brief;
   if (!b) return null;

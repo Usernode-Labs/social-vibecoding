@@ -531,7 +531,23 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   //   GET  /api/conversations/homeroom-bot/designs/:rootId                  → the thread and its versions (no HTML)
   //   GET  /api/conversations/homeroom-bot/designs/:rootId/versions/:version → { version, html }
   //   POST /api/conversations/homeroom-bot/designs/:rootId/propose          { version?, title?, notes? }
+  //
+  // 20 Nov 2026 (live-draft review, K): a thread holds several artifacts,
+  // numbered in the order they were made. Each read carries `artifactId` and
+  // the thread's list (`artifacts`); the addresses above answer with the
+  // thread's first, for clients and shells from before.
+  //
+  //   GET  .../designs/:rootId/artifacts/:artifactId                         → that artifact, as above
+  //   GET  .../designs/:rootId/artifacts/:artifactId/versions/:version       → { version, html }
+  //   POST .../designs/:rootId/artifacts/:artifactId/propose                 { version?, title?, notes? }
   const designThreads = () => require('../services/design-threads');
+  // The artifact a /artifacts/ address names, or null for an old address
+  // (the thread's first); false when the number is not one.
+  const artifactParam = (req) => {
+    if (req.params.artifactId == null) return null;
+    const n = Number(req.params.artifactId);
+    return Number.isSafeInteger(n) && n > 0 ? n : false;
+  };
   router.post('/api/conversations/homeroom-bot/designs', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
@@ -551,12 +567,13 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
-  router.get('/api/conversations/homeroom-bot/designs/:rootId', async (req, res) => {
+  const readDesign = async (req, res) => {
     try {
       const rootId = threadRoot(req);
-      if (!rootId) return res.status(404).json({ error: 'No such design' });
+      const artifactId = artifactParam(req);
+      if (!rootId || artifactId === false) return res.status(404).json({ error: 'No such design' });
       if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
-      const design = await designThreads().designFor(pool, { userId: req.user.id, rootId });
+      const design = await designThreads().designFor(pool, { userId: req.user.id, rootId, artifactId });
       if (!design) return res.status(404).json({ error: 'No such design' });
       const { threadId: _threadId, ...shown } = design;
       // 1 Nov 2026 (C2.2): the request Propose it posts the plan on, when
@@ -567,14 +584,17 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       log.error('conversations', 'design thread read failed', { err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
-  });
-  router.get('/api/conversations/homeroom-bot/designs/:rootId/versions/:version', async (req, res) => {
+  };
+  const readDesignVersion = async (req, res) => {
     try {
       const rootId = threadRoot(req);
+      const artifactId = artifactParam(req);
       const version = Number(req.params.version);
-      if (!rootId || !Number.isInteger(version) || version <= 0) return res.status(404).json({ error: 'No such version' });
+      if (!rootId || artifactId === false || !Number.isInteger(version) || version <= 0) {
+        return res.status(404).json({ error: 'No such version' });
+      }
       if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
-      const found = await designThreads().versionOf(pool, { userId: req.user.id, rootId, version });
+      const found = await designThreads().versionOf(pool, { userId: req.user.id, rootId, artifactId, version });
       if (!found) return res.status(404).json({ error: 'No such version' });
       res.set('Cache-Control', 'private, no-store');
       return res.json({ version: found.version, html: found.html });
@@ -582,16 +602,17 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       log.error('conversations', 'design version read failed', { err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
-  });
-  router.post('/api/conversations/homeroom-bot/designs/:rootId/propose', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+  };
+  const proposeDesign = async (req, res) => {
     try {
       const rootId = threadRoot(req);
-      if (!rootId) return res.status(404).json({ error: 'No such design' });
+      const artifactId = artifactParam(req);
+      if (!rootId || artifactId === false) return res.status(404).json({ error: 'No such design' });
       if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
       const body = req.body || {};
       const version = body.version == null ? null : Number(body.version);
       return answerDoor(res, await designThreads().proposeDesign(pool, config, {
-        user: req.user, rootId,
+        user: req.user, rootId, artifactId,
         version: Number.isInteger(version) && version > 0 ? version : null,
         title: typeof body.title === 'string' ? body.title : null,
         notes: typeof body.notes === 'string' ? body.notes : null,
@@ -600,7 +621,14 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       log.error('conversations', 'design propose failed', { err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
-  });
+  };
+  router.get('/api/conversations/homeroom-bot/designs/:rootId', readDesign);
+  router.get('/api/conversations/homeroom-bot/designs/:rootId/versions/:version', readDesignVersion);
+  router.post('/api/conversations/homeroom-bot/designs/:rootId/propose', conversationActionLimiter, sameOriginBrowserOnly, proposeDesign);
+  router.get('/api/conversations/homeroom-bot/designs/:rootId/artifacts/:artifactId', readDesign);
+  router.get('/api/conversations/homeroom-bot/designs/:rootId/artifacts/:artifactId/versions/:version', readDesignVersion);
+  router.post('/api/conversations/homeroom-bot/designs/:rootId/artifacts/:artifactId/propose', conversationActionLimiter,
+    sameOriginBrowserOnly, proposeDesign);
 
   // Run six (14 Oct 2026): "We'll tell you when it's live" under a first
   // version's plan (frontend/src/features/messages/notify-me.tsx): whether
@@ -882,6 +910,28 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         metadata = { designPin: pin };
       }
       delete input.design_pin;
+      // 20 Nov 2026 (live-draft review, J): a comment pinned on a live
+      // draft's preview carries its point, checked against the draft of the
+      // thread it is written in (live-drafts.js pinFor).
+      if (input.preview_pin != null) {
+        const pin = await require('../services/live-drafts').pinFor(pool, {
+          user: req.user, threadRootId: input.thread_root_id, pin: input.preview_pin,
+        });
+        if (!pin) return res.status(400).json({ error: 'That comment\'s point is not on this preview.' });
+        metadata = { ...(metadata || {}), previewPin: pin };
+      }
+      delete input.preview_pin;
+      // 20 Nov 2026 (C, I): what the screen had open beside the thread (an
+      // artifact, or the live draft), so the bot reads "this" as that one.
+      // A hint only: the turn compares it with the thread's own.
+      if (input.showing != null && typeof input.showing === 'object' && !Array.isArray(input.showing)) {
+        const artifactId = Number(input.showing.artifactId);
+        const liveDraftId = Number(input.showing.liveDraftId);
+        const showing = Number.isSafeInteger(liveDraftId) && liveDraftId > 0 ? { liveDraftId }
+          : Number.isSafeInteger(artifactId) && artifactId > 0 ? { artifactId } : null;
+        if (showing) metadata = { ...(metadata || {}), showing };
+      }
+      delete input.showing;
       // 14 Nov 2026: Main Chat is gone, so a message to Homeroom bot is
       // always in a thread. One posted with none named (an older client, the
       // connector) gets one before it is sent: the thread of what it quotes,
@@ -1457,7 +1507,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       const row = await loadAttachment(req, res, { htmlOnly: true });
       if (!row) return res.status(404).end();
       res.set('Content-Type', 'text/html; charset=utf-8');
-      res.set('Content-Security-Policy', 'sandbox allow-scripts');
+      res.set('Content-Security-Policy', require('../services/artifact-policy').ATTACHMENT_VIEW_CSP);
       res.set('Referrer-Policy', 'no-referrer');
       res.set('Content-Disposition', attachments.attachmentDisposition('inline', row.filename || 'file.html'));
       return res.send(row.data);
@@ -1573,7 +1623,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         const row = await loadReportedAttachment(req, { htmlOnly: true });
         if (!row) return res.status(404).end();
         res.set('Content-Type', 'text/html; charset=utf-8');
-        res.set('Content-Security-Policy', 'sandbox allow-scripts');
+        res.set('Content-Security-Policy', require('../services/artifact-policy').ATTACHMENT_VIEW_CSP);
         res.set('Referrer-Policy', 'no-referrer');
         res.set('Content-Disposition', attachments.attachmentDisposition('inline', row.filename || 'evidence.html'));
         return res.send(row.data);

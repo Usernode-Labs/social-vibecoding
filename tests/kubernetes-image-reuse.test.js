@@ -21,10 +21,12 @@ function repository(t) {
     fs.mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
     fs.writeFileSync(path.join(cwd, file), contents);
   };
-  for (const file of ['worker/Dockerfile', 'worker/worker-run.sh', 'capture/Dockerfile',
+  for (const file of ['.dockerignore', 'worker/Dockerfile', 'worker/worker-run.sh',
+    'worker/session-bootstrap.js', 'worker/shots-hosted-origins.js', 'worker/shots-hosted-app-contract.js', 'capture/Dockerfile',
     'capture/capture.js', 'shots/hosted-app-fixture.js', 'src/services/visible-changes.js',
-    '.github/workflows/build-kubernetes-images.yml',
+    '.github/workflows/build-kubernetes-images.yml', '.github/actions/build-kubernetes-image/action.yml',
     'scripts/resolve-kubernetes-image.js', 'frontend/ui.js']) write(file, `original ${file}\n`);
+  write('capture/Dockerfile.dockerignore', fs.readFileSync(path.join(__dirname, '../capture/Dockerfile.dockerignore')));
   // Real Git trees, without commits or user Git signing hooks/configuration.
   const revision = () => { git('add', '.'); return git('write-tree'); };
   return { cwd, git, write, revision };
@@ -129,14 +131,81 @@ test('the resolved Claude Code version invalidates only the worker image', t => 
   }).reuse_tag, capture);
 });
 
-test('workflow and resolver changes invalidate both reusable components', t => {
+test('release scheduling and database workflow edits preserve the reusable build keys', t => {
   const repo = repository(t);
-  for (const file of ['.github/workflows/build-kubernetes-images.yml', 'scripts/resolve-kubernetes-image.js']) {
+  const components = ['worker', 'capture'];
+  const before = components.map(component => resolve(repo, { component }).reuse_tag);
+  repo.write('.github/workflows/build-kubernetes-images.yml', 'changed release lock and PostgreSQL check\n');
+  assert.deepEqual(components.map(component => resolve(repo, { component }).reuse_tag), before);
+});
+
+test('build action and context assembler changes invalidate both keys', t => {
+  const repo = repository(t);
+  for (const file of ['.github/actions/build-kubernetes-image/action.yml', 'scripts/resolve-kubernetes-image.js']) {
     const before = ['worker', 'capture'].map(component => resolve(repo, { component }).reuse_tag);
     repo.write(file, 'changed build recipe\n');
     for (const [index, component] of ['worker', 'capture'].entries()) {
       assert.notEqual(resolve(repo, { component }).reuse_tag, before[index]);
     }
+  }
+});
+
+test('capture keys change with its Docker ignore rules and every shared source it copies', t => {
+  const repo = repository(t);
+  const capture = () => resolve(repo, { component: 'capture' }).reuse_tag;
+  let previous = capture();
+  for (const file of ['capture/Dockerfile',
+    'worker/session-bootstrap.js', 'worker/shots-hosted-origins.js', 'worker/shots-hosted-app-contract.js']) {
+    repo.write(file, `changed ${file}\n`);
+    const next = capture();
+    assert.notEqual(next, previous, file);
+    previous = next;
+  }
+  fs.chmodSync(path.join(repo.cwd, 'worker/session-bootstrap.js'), 0o755);
+  assert.notEqual(capture(), previous, 'shared file modes also affect the image');
+  previous = capture();
+  repo.write('.dockerignore', 'root rules that apply to other Dockerfiles\n');
+  repo.write('worker/worker-run.sh', 'worker-only runtime change\n');
+  repo.write('shots/some-unrelated-tool.js', 'shots-only runtime change\n');
+  assert.equal(capture(), previous);
+});
+
+test('adding a capture context path enables it and makes its changes affect reuse', t => {
+  const repo = repository(t);
+  const capture = () => resolve(repo, { component: 'capture' }).reuse_tag;
+  const file = 'capture/Dockerfile.dockerignore';
+  const rules = fs.readFileSync(path.join(repo.cwd, file), 'utf8');
+  repo.write('worker/new-capture-helper.js', 'new helper\n');
+  const before = capture();
+  repo.write(file, `${rules}!worker/new-capture-helper.js\n`);
+  const included = capture();
+  assert.notEqual(included, before);
+  repo.write('worker/new-capture-helper.js', 'revised helper\n');
+  assert.notEqual(capture(), included);
+
+  repo.write(file, '**\n!worker/*.js\n');
+  assert.throws(capture, /allow only literal paths/, 'an unkeyed glob cannot broaden the context');
+  repo.write(file, '!capture\n');
+  assert.throws(capture, /must exclude \*\*/, 'the context is closed by default');
+});
+
+test('a published input key can only reuse the build it names', t => {
+  for (const [component, file] of [
+    ['worker', 'worker/Dockerfile'],
+    ['capture', 'worker/shots-hosted-app-contract.js'],
+  ]) {
+    const repo = repository(t);
+    const published = resolve(repo, { component }).reuse_tag;
+    const inspect = tag => {
+      if (tag === published) return JSON.stringify(manifest);
+      throw registryError('manifest unknown');
+    };
+    repo.write('.github/workflows/build-kubernetes-images.yml', 'new release scheduler\n');
+    assert.equal(resolve(repo, { component }, inspect).digest, digest);
+    repo.write(file, 'changed build input\n');
+    const next = resolve(repo, { component }, inspect);
+    assert.equal(next.digest, '');
+    assert.equal(next.reason, 'image-not-found');
   }
 });
 
@@ -153,35 +222,6 @@ test('platform always builds without consulting the reuse registry', t => {
     assert.equal(result.reuse_tag, '');
     assert.equal(result.refresh, String(forceRebuild === 'all'));
   }
-});
-
-test('a scheduled dependency refresh reuses the platform image for the exact source revision', t => {
-  const repo = repository(t);
-  let inspectedTag;
-  const result = resolve(repo, {
-    component: 'platform', reuseCurrentPlatform: true,
-  }, tag => {
-    inspectedTag = tag;
-    return JSON.stringify(manifest);
-  });
-  assert.match(inspectedTag,
-    /^ghcr\.io\/usernode-labs\/social-vibecoding-platform:sha-[a-f0-9]{40}$/);
-  assert.equal(result.reuse_tag, inspectedTag);
-  assert.equal(result.digest, digest);
-  assert.equal(result.refresh, 'false');
-  assert.equal(result.reason, 'current-source-release');
-});
-
-test('a scheduled dependency refresh fails closed when its platform release is missing', t => {
-  const repo = repository(t);
-  assert.throws(() => resolve(repo, {
-    component: 'platform', reuseCurrentPlatform: true,
-  }, () => {
-    throw Object.assign(new Error('missing'), { stderr: 'manifest unknown' });
-  }), /Current platform image is missing/);
-  assert.throws(() => resolve(repo, {
-    component: 'platform', reuseCurrentPlatform: true, forceRebuild: 'all',
-  }), /cannot force-rebuild the platform/);
 });
 
 test('manual refresh bypasses reuse only for selected components', t => {
@@ -313,8 +353,7 @@ test('invalid workflow inputs fail before consulting the registry', t => {
   for (const options of [{ component: '../worker' }, { revision: 'main' }, { owner: 'owner\ninjected=x' },
     { ref: 'refs/tags/v1' }, { forceRebuild: 'yes' }, { claudeCodeVersion: undefined },
     { claudeCodeVersion: '' },
-    { claudeCodeVersion: 'latest' }, { claudeCodeVersion: '2.1.251; echo unsafe' },
-    { reuseCurrentPlatform: true }]) {
+    { claudeCodeVersion: 'latest' }, { claudeCodeVersion: '2.1.251; echo unsafe' }]) {
     assert.throws(() => resolve(repo, options, () => assert.fail('unexpected lookup')));
   }
 });

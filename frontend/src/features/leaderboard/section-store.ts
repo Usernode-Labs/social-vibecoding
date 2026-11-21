@@ -48,7 +48,7 @@ export const DEFAULT_SECTION = 'challenges';
 export interface LeaderboardSectionStore {
   /** False until the screen has been opened once — see the header. */
   mounted: boolean;
-  /** 'topochain' | 'kudos' | 'challenges'. */
+  /** 'topochain' | 'kudos' | 'challenges' | 'challenge-history'. */
   section: string;
   listeners: Set<() => void>;
 }
