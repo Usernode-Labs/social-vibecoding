@@ -51,8 +51,10 @@ const changeView = (patch = {}) => ({
 
 test('a change\'s bar is the head: the project\'s tile first, "Change #N", its title, the project and topic, ⋯, then ↗ and ×', () => {
   const html = withProject(() => renderToHtml(createElement(ChangeBar, { v: changeView(), menuKey: 'change:17' })));
-  assert.match(html, /^<header class="messages-thread-header"><span class="app-icon-tile dev-thread-bar-tile"[^>]*aria-hidden="true">/,
-    'the tile leads the header');
+  // #6973: the way back to the bot's list comes first (shown only beside the
+  // hidden list), then the project's tile.
+  assert.match(html, /^<header class="messages-thread-header"><button type="button" class="messages-thread-action messages-thread-back dev-thread-show-list" data-thread-show-list=""[^]*?<\/button><span class="app-icon-tile dev-thread-bar-tile"[^>]*aria-hidden="true">/,
+    'the list button, then the tile');
   // 19 Nov 2026: "Change #N" is the small line's; the title is the change's
   // own, its number until it has one.
   assert.match(html, /<div class="min-w-0 flex-1 dev-thread-bar-text"><div class="flex min-w-0 items-center gap-2"><div class="messages-thread-kicker min-w-0" data-change-kicker="">Change #9200<\/div><\/div>/);
@@ -76,7 +78,7 @@ test('a request\'s bar is the same head, its name kept beside its category for t
     status: { closed: false, stage: 'asked' },
   };
   const html = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: null, threadMenu: true })));
-  assert.match(html, /^<header class="messages-thread-header"><span class="app-icon-tile dev-thread-bar-tile"/);
+  assert.match(html, /^<header class="messages-thread-header"><button type="button" class="messages-thread-action messages-thread-back dev-thread-show-list" data-thread-show-list=""[^]*?<\/button><span class="app-icon-tile dev-thread-bar-tile"/);
   assert.match(html, /<div class="min-w-0 flex-1 dev-thread-bar-text"><div class="messages-thread-kicker" data-request-kicker="">/);
   // #6081: the title the page shows, translated when the reader asked.
   const shown = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: null, title: 'Demo de staging : une demande' })));
@@ -328,7 +330,8 @@ test('the head measures itself while full and tightens once the thread scrolls (
   for (const file of [CHANGE, REQUEST]) {
     const src = read(file);
     assert.match(src, /if \(frame\) return <TopicFrameHead /);
-    assert.match(src, /<ThreadHeadCard\s+tile=\{<ThreadBarTile \/>\}/);
+    assert.match(src, /<ThreadHeadCard\s+lead=\{<ThreadShowList \/>\}\s+tile=\{<ThreadBarTile \/>\}/,
+      'the way back to the list leads, then the tile (#6973)');
     assert.doesNotMatch(src, /useThreadHeadFit\(/, 'the card fits itself');
   }
   assert.match(read('frontend/src/features/messages/index.tsx'), /<ThreadHeadCard\s+attrs=\{\{ 'data-reply-head': 'alone' \}\}/);

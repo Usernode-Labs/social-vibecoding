@@ -557,6 +557,18 @@ export function AiScreen(): ReactNode {
     });
     return () => { panelEdgeStore.set({ slot: null }); };
   }, [visible, threeUp, pageInColumn, threadProbe]);
+  // AND THE SAME EDGE HIDES THE LIST (#6973): while a request, change or
+  // decision page is the column, the divider people drag is the side panel's
+  // own, not Main's, so it is handed the one-pane wiring too. It never
+  // overwrites the slot above: the store merges the patch.
+  useEffect(() => {
+    panelEdgeStore.set({
+      snap: visible && pageInColumn && snaps && !phone
+        ? { collapsed: oneUp, onCollapse: () => setListClosed(true), onRestore: () => setListClosed(false) }
+        : null,
+    });
+    return () => { panelEdgeStore.set({ snap: null }); };
+  }, [visible, pageInColumn, snaps, oneUp, phone]);
   const detailSlot: ColumnDetail | undefined = !detailHere || !detail ? undefined
     : detail.kind === 'design' ? { kind: 'design', version: detail.version }
       : detail.kind === 'plan' && detail.ref.sessionId ? { kind: 'plan', sessionId: detail.ref.sessionId, version: detail.version }

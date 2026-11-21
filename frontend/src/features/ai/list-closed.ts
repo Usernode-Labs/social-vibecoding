@@ -41,6 +41,12 @@ function subscribe(listener: () => void): () => void {
   return () => { listeners.delete(listener); };
 }
 
+/** Listen for the choice changing, from outside React (the panel's controller
+ *  marks the page in its frame when the list hides or comes back). */
+export function subscribeListClosed(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
 /** Hide the list, or bring it back, and keep that on this device. */
 export function setListClosed(closed: boolean): void {
   const now = read();

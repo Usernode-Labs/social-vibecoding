@@ -66,7 +66,7 @@ import type { Standing } from '../../../lib/work-state';
 import { changeFoot, changePhase, fixStanding, type ChangePhase } from './card-model';
 import { closeStep, isGates, openStep, useOpenStep } from './step-store';
 import { NoPicture, PlanWords, StepLayer, ThreadBarTile, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy, threadProjectName } from './thread-card';
-import { ThreadExits } from './thread-exits';
+import { ThreadExits, ThreadShowList } from './thread-exits';
 import { askFix, useChecksExplanation } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { openRequestSpec } from './request-model';
@@ -151,6 +151,7 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
   // measured and tightened as the thread scrolls.
   return (
     <ThreadHeadCard
+      lead={<ThreadShowList />}
       tile={<ThreadBarTile />}
       line={(
         <div className="flex min-w-0 items-center gap-2">
