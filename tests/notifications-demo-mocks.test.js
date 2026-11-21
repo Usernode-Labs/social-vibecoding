@@ -98,7 +98,7 @@ const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_fai
 // the mark-read scoping test below sends as a request body.
 const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: twenty-six mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: twenty-seven mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -108,15 +108,15 @@ test('staging + ?demo=1: twenty-six mock rows prepend, and only the unread ones 
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 26, 'exactly twenty-six mock rows injected');
+    assert.equal(mocks.length, 27, 'exactly twenty-seven mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
-      [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed', 'build_live', 'build_ready',
+      [...DEMO_KINDS, 'conversation_message', 'conversation_reaction', 'platform_limit', 'app_quota_changed', 'build_live', 'build_ready',
         'pr_proposed', 'issue_opened', 'issue_mention', 'vote_digest', 'build_stopped', 'voted_digest', 'release_hold',
         // #6665: two votes on a change, so the row that names the voter is
         // reviewable in a preview (a real one needs two people).
         'proposal_vote'].sort(),
-      'every session-related kind is covered, plus the message row, a platform limit alert, '
+      'every session-related kind is covered, plus the message rows and a reaction beside them, a platform limit alert, '
       + 'an app allowance change (#3233), the bot\'s story (#5580), the older rows\' changes and '
       + 'a row in each of the status chips\' states (#5929); '
       + 'no kudos row while kudos is parked (#5249)'
@@ -157,6 +157,15 @@ test('staging + ?demo=1: twenty-six mock rows prepend, and only the unread ones 
       Date.parse(conversationMocks[0].createdAt) > Date.parse(conversationMocks[1].createdAt),
       'newest first, like the feed they are prepended to',
     );
+    // 20 Nov 2026: a reaction right after the pair, in the same
+    // conversation. The bell counts it and not them, so it is its own row on
+    // Unread rather than a third member of their run.
+    const reaction = mocks[2];
+    assert.equal(reaction.kind, 'conversation_reaction');
+    assert.equal(reaction.conversationId, conversationMocks[0].conversationId, 'in the same conversation');
+    assert.equal(reaction.readAt, null, 'unread, like the pair');
+    assert.equal(reaction.appSlug, null, 'a conversation row, with no app');
+    assert.match(reaction.messageContent, /^\[Mock\]/);
     assert.equal(conversationMock.appSlug, null,
       'a conversation row carries no app attribution — serialize fails that shape closed');
     assert.match(conversationMock.conversationTitle, /^\[Mock\]/);
@@ -167,8 +176,8 @@ test('staging + ?demo=1: twenty-six mock rows prepend, and only the unread ones 
     // older notifications" button: without one the button does not render at
     // all and the caught-up state is unreachable, so the two things a
     // reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 20,
-      'twenty unread rows feed the badges');
+    assert.equal(mocks.filter((n) => !n.readAt).length, 21,
+      'twenty-one unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
     assert.equal(readMocks.length, 6, 'six already-read rows');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
@@ -190,7 +199,7 @@ test('staging + ?demo=1: twenty-six mock rows prepend, and only the unread ones 
       assert.equal(n.appId, 0, 'in the demo project');
     }
     assert.ok(
-      mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed', 'vote_digest', 'voted_digest'].includes(n.kind))
+      mocks.filter((n) => !['conversation_message', 'conversation_reaction', 'platform_limit', 'app_quota_changed', 'vote_digest', 'voted_digest'].includes(n.kind))
         .every((n) => /^staging-demo(?:-|$)/.test(n.appSlug) && /^Staging demo /.test(n.appName)),
       'obviously-fake app attribution on every APP-scoped row',
     );
@@ -218,10 +227,10 @@ test('staging + ?demo=1: twenty-six mock rows prepend, and only the unread ones 
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // twenty-six would claim the read rows as unread — inflating the badge by one
+    // twenty-seven would claim the read rows as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 20);
+    assert.equal(body.unread, 2 + 21);
     // #18: the unread mock messages are counted apart too, for the bell to
     // leave out (the real row is a mention, which the bell keeps).
     const mockMessages = body.notifications.filter((n) => n.id !== 1 && !n.readAt
@@ -271,7 +280,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 26);
+  assert.equal(rows.length, 27);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -285,7 +294,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
     // shape closed when they are both set, so a mock carrying them would be
     // describing something the real pipeline never emits.
     assert.equal(r.appName,
-      ['conversation_message', 'platform_limit', 'app_quota_changed', 'vote_digest', 'voted_digest'].includes(r.kind)
+      ['conversation_message', 'conversation_reaction', 'platform_limit', 'app_quota_changed', 'vote_digest', 'voted_digest'].includes(r.kind)
         ? null : ({ 990209: 'Staging demo archive', 990221: 'Staging demo merges', 990222: 'Staging demo builds', 990240: 'Staging demo votes', 990241: 'Staging demo votes' })[r.id] || 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }
