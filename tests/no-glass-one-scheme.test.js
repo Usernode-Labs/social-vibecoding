@@ -29,9 +29,13 @@ function token(block, name) {
   assert.ok(m, `--${name} is declared`);
   return m[1].trim();
 }
-// The block that declares the light plane tokens, and the dark one.
+// The block that declares the light plane tokens, and the dark one: `:root`
+// and `.dark`. The standard look points the planes at the kit's card in a
+// block of its own (app.css "WHITE CARDS"; tests/dev-chat-ground.test.js),
+// so only these two are the glass composited over the wallpaper.
 function themeBlocks() {
-  const starts = [...css.matchAll(/--dc-sheet-fill:/g)].map((m) => m.index);
+  const starts = [...css.matchAll(/--dc-sheet-fill:/g)].map((m) => m.index)
+    .filter((at) => /\n(:root|\.dark) \{$/.test(css.slice(0, css.lastIndexOf('{', at) + 1)));
   assert.equal(starts.length, 2, 'the plane fill is declared once per theme');
   return starts.map((at) => css.slice(css.lastIndexOf('{', at), css.indexOf('\n}', at)));
 }

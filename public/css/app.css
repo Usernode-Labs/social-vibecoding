@@ -102,6 +102,12 @@
   --dc-raised: #f5f5f7;
 
   /* ── …and the two PLANES, which are not the same thing ───
+     NOT IN THE STANDARD LOOK SINCE 20 NOV 2026. There (html:not([data-skin]),
+     and Standard (WIP)) the strip is the page itself and a sheet is the
+     kit's white card: see WHITE CARDS, after the BUTTONS block, which points
+     --dc-strip-fill, --dc-sheet-fill and --dc-sheet-solid there. What follows
+     describes these base values, which the other looks start from.
+
      The three tokens above are SURFACE VALUES: what a card, an inset or a
      chip paints. The two below are what the strip and the session sheet —
      the ladder's two full-screen planes — actually fill with, and they are
@@ -561,7 +567,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 
    The same construction at both widths: on a phone the list screen IS the
    strip and a thread is the strip's shoulder showing above the sheet; from
-   768px up both panes sit on one strip with the sheet beside the list. */
+   768px up both panes sit on one strip with the sheet beside the list.
+   (In the standard look the strip is the page and the sheet a white card,
+   and the white things on it take an edge: WHITE CARDS, after BUTTONS.) */
 /* The tokens are the project page's Discussion tab's too (#3653): an app
    channel's reply thread opens there, in the same pane as here, with no
    `.messages-layout` around it (project-discussion.tsx). */
@@ -8868,6 +8876,111 @@ html:not([data-skin]) .rf-switch[data-view="before"] .rf-knob { inset-inline-sta
 html:not([data-skin]) .rf-switch.rf-switch-pressed .rf-knob { inset-inline-start: 27px; width: 48px; }
 html:not([data-skin]) .rf-switch.rf-switch-pressed[data-view="before"] .rf-knob { inset-inline-start: 3px; }
 /* END OF BUTTONS. */
+/* ── WHITE CARDS (20 Nov 2026): in the standard look a screen stands on the
+   page, and a sheet is the kit's card.
+   Home and Communities already drew white cards straight on the page (the
+   kit: `.wip-card`, `--wip-card-bg` and its one hairline). Every other
+   screen still stood on the two older materials the top of this file
+   describes: a tinted PANE the whole screen stood on (`.dc-lift-strip`) and
+   off-white SHEETS on it (`.dc-lift-session`), glass over the wallpaper.
+   "Paper, simplified, with brand styling" has neither (its block, "The
+   planes over the page"), and that one idea is the standard look's now, as
+   the product owner approved it on Messages, Homeroom bot, Settings and a
+   project's Workshop: the pane is the page itself, with no fill, no edge
+   and no shadow, and a sheet is the kit's card, its ground and its
+   hairline. Only the cards: that look's top bar, typeface, selected rows
+   and outlined buttons stay its own.
+
+   IT IS DONE AT THE TOKENS the screens already read, so they follow
+   without a rule each: `--dc-strip-fill` (what a pane fills with) is clear,
+   and `--dc-sheet-fill` and `--dc-sheet-solid` (a sheet, and the same
+   colour opaque, for what content passes behind or what floats) are the
+   kit's card. The base values at the top of this file are not edited: they
+   are what the other looks start from, and this block outranks them for
+   the standard look and Standard (WIP) (html:not([data-skin])), whatever
+   cream the page is.
+
+   DARK IS THE SAME IDEA: no pane, and a sheet is the kit's dark card
+   (#171715 with its cream hairline), a few levels from the dark sheet it
+   replaces, so in the dark it is mostly the panes' edges and the lift's
+   shadow that go.
+
+   EVERY VALUE IS A TOKEN: colours are written in the two token rules, light
+   then dark, and the rules after them read tokens. */
+html:not([data-skin]) {
+  /* The planes. --wip-card-bg is a colour in the kit's own token rules, in
+     light and in dark, never a reference back to these, so the two cannot
+     loop (tests/dev-chat-ground.test.js holds that). */
+  --dc-strip-fill: transparent;
+  --dc-sheet-fill: var(--wip-card-bg);
+  --dc-sheet-solid: var(--wip-card-bg);
+  /* Somebody else's words in a conversation: a cream bubble, so they read
+     on the white card whatever cream the page is (on the design's own
+     #fffeea, a white bubble on an off-white sheet nearly vanished). The
+     brand look's page cream. Your own keep their blue tint (--accent-tint). */
+  --wip-bubble-bg: #f6f2d8;
+  /* The phone's top bar is not a sheet (nor is the parked app's strip): it
+     keeps the glass it wore over the washes, exactly: the sheet's surface
+     value at the plane's alpha, which is what --dc-sheet-fill is in the base
+     (white at 0.50 here). */
+  --wip-bar-glass: color-mix(in srgb, var(--dc-sheet) 50%, transparent);
+}
+html:not([data-skin]).dark {
+  /* In the dark the other side's bubble stays the raised step it was, which
+     reads on the dark card already; the bar's glass is dark's own (#1c1c1e
+     at 0.72). */
+  --wip-bubble-bg: var(--dc-raised);
+  --wip-bar-glass: color-mix(in srgb, var(--dc-sheet) 72%, transparent);
+}
+/* The pane is the page: no fill (the token), no top edge, no lift. The edge
+   is made clear rather than taken away, so nothing moves by its pixel. */
+html:not([data-skin]) .dc-lift-strip {
+  border-top-color: transparent;
+  box-shadow: none;
+}
+/* A sheet is the kit's card: its ground (the token) and its one hairline
+   all round, in place of the lift's top edge and shadow. Its corners are
+   still the lift's, so it tucks under the bar's notch as it did. */
+html:not([data-skin]) .dc-lift-session {
+  border-top-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+/* The bars keep their glass: the top bar, the parked app's strip over the
+   phone's tab bar and the phone drawer's untint all paint the sheet fill
+   over the washes (see "THE ONE FAKED LAYER"), and none of them is a sheet. */
+html:not([data-skin]) :is(#platform-header, .platform-parked, .nav-drawer-untint) {
+  --dc-sheet-fill: var(--wip-bar-glass);
+}
+/* MESSAGES ON A PHONE (the drawer, features/messages/phone-drawer.tsx, below
+   768px) lays its list flush on the pane, with no card round the rows: with
+   the pane gone that was the bare page, the one Messages without a white
+   surface, while a conversation opened over it is the card. The drawer's
+   pane is the card instead, as the brand look's is, with the rows flush on
+   it; the search field keeps its own hairline. */
+html:not([data-skin]) .messages-layout.messages-drawer {
+  background-color: var(--wip-card-bg);
+}
+/* In a conversation the other side's bubble is cream; yours keeps its tint. */
+html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,
+html:not([data-skin]) .gc-bubble:not(.gc-bubble-self) {
+  background-color: var(--wip-bubble-bg);
+}
+/* ON A WHITE CARD the white things drawn on the old off-white sheets need
+   an edge of their own. The reply box and the discs (New, ⋯, expand) take
+   the kit card's hairline; a row under the pointer, and the open
+   conversation's, take the kit's soft row ground (the white veil they wore
+   is the card's own colour now); and a white card inside Settings' sheet
+   (your profile's row, the usage cards) takes the hairline its neighbours
+   already have. */
+html:not([data-skin]) :is(.messages-layout, .dev-ws-discussion, .side-panel-head, #ai-screen .ai-askbar) {
+  --messages-selected: var(--wip-item-hover);
+  --messages-disc-shadow: inset 0 0 0 1px var(--wip-card-line);
+}
+html:not([data-skin]) .gc-composer-card,
+html:not([data-skin]) #settings-root .ui-card.bg-white {
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+}
+/* END OF WHITE CARDS. */
 /* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's
    whole width from the page's own gutter, not a column of its own in the middle of the window. The thread's card
    takes the room there is and "How it got here" keeps its width beside it. A side panel, and the page while the
@@ -12466,7 +12579,12 @@ html.un-kb #settings-content-col > .settings-sheet {
    `backdrop-filter` needs a transparent ancestor chain to have anything to
    filter. It has one — #app-content carries `position: relative` and no
    background, and the body's wallpaper rule is on for every #app-view route
-   — so the backdrop here is the wallpaper itself. */
+   — so the backdrop here is the wallpaper itself.
+
+   THE STANDARD LOOK DRAWS NEITHER PLANE (20 Nov 2026): its strip is the
+   page and its sheet the kit's white card, with no lift (WHITE CARDS, after
+   the BUTTONS block). These rules still give both their fills, and the
+   other looks their glass. */
 .dc-lift-strip {
   background-color: var(--dc-strip-fill);
   backdrop-filter: var(--dc-frost);
