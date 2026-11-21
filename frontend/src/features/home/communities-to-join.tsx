@@ -8,10 +8,18 @@
  * the community is about; joining there takes the community off this list
  * (sv:membership-changed).
  *
+ * Every card is the community card (../communities/card.tsx, approved 20
+ * Nov 2026: "use this style everywhere"), on its grid: four across where
+ * four fit (`.cm-grid`, the Communities page's Pinned columns), two across
+ * on a phone.
+ *
  * Kind chips over the cards, fading at whichever edge has more chips past it
  * so the row is never just cut off (the same rail as the AI page's project
  * chips). Then FEATURED, the communities an admin featured, in their order
- * (featured_order), in the same wrapping grid as the rest (#6434): the first
+ * (featured_order), its first row LARGER, signed in or out ("first row of
+ * featured larger everywhere"): one fewer than a row of the rest holds,
+ * three on a laptop, the whole width on a phone (`useLeadCount`), and the
+ * rest of Featured in the grid under it. Featured is the first
  * group of the section, of the chosen kind, and left out while a search is
  * typed (its matches are the grid, featured first). Its heading names the
  * chosen kind ("Featured in Games") so the group reads as that kind's. Then
@@ -29,16 +37,16 @@
  * GET /api/public/apps, which answers every public project at once today,
  * so "more" pages through it here.
  */
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Chip, FadeRail } from '@/components/ui/chip';
 import { Select } from '@/components/ui/select';
 
-import { WipSkel } from './wip-kit';
 import { useLiveSkin, isKitHome } from '../../lib/skin';
 import { useMessages } from '../../lib/i18n/react';
-import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
+import { CommunityCardSkeleton, LEAD_MAX, useLeadCount } from '../communities/card';
+import { Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
 import { featuredApps, presentCategories, sortApps, type GuestApp, type GuestSort } from '../guest/guest-data';
 import { SectionHeading } from './panels/ui';
 import { matchesQuery } from './use-home-query';
@@ -50,8 +58,8 @@ export const JOIN_PAGE = 8;
 export const JOIN_SORTS = ['new', 'popular', 'trending'] as const;
 export type JoinSort = (typeof JOIN_SORTS)[number];
 
-/** How many featured communities a visitor's landing draws large, in the sideways row. */
-const LEAD_FEATURED = 4;
+/** The cards' grid (app.css `.cm-grid`), and the larger first row's. */
+const GRID = 'cm-grid px-1';
 
 export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending'): GuestApp[] {
   const featured = featuredApps(apps);
@@ -93,8 +101,14 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const pool = useMemo(() => (apps || []).filter((a) => !exclude.has(a.slug)), [apps, exclude]);
   const kinds = useMemo(() => presentCategories(pool), [pool]);
   const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
-  // The visitor's landing leads Featured with its first few, drawn large.
-  const lead = useMemo(() => (signedIn ? [] : featured.slice(0, LEAD_FEATURED)), [signedIn, featured]);
+  // Featured's first row is larger, signed in or out: as many as
+  // useLeadCount reads off an empty grid of the rest's kind (`probe`).
+  const [probe, setProbe] = useState<HTMLDivElement | null>(null);
+  // Standard (WIP) holds Featured's place while the directory is read (below).
+  const holdFeatured = wip && !apps && !failed && !query;
+  const leadCount = useLeadCount(probe);
+  const lead = useMemo(() => featured.slice(0, leadCount), [featured, leadCount]);
+  const leadStyle = { ['--cm-lead-cols' as string]: String(leadCount) } as CSSProperties;
   const list = useMemo(() => {
     // Searching keeps the join order (featured first); otherwise this is the
     // rest, in the chosen sort, the featured ones left out because Featured
@@ -154,13 +168,9 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   // Nothing drawn on a card depends on being signed in (#6609): a member and
   // a visitor get the same card, and Join is the project page's.
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
-  // The rest of Featured, drawn once in whichever container the reader gets:
-  // the visitor's smaller sideways row, or the member's wrapping grid.
-  const restCards = featured.slice(lead.length).map((app, i) => (
-    <div key={app.slug} role="listitem" className={signedIn ? 'flex [&>article]:flex-1' : 'flex w-[min(44vw,208px)] shrink-0 snap-start [&>article]:flex-1'}>
-      <Card app={app} eager={!lead.length && i < 3} featured />
-    </div>
-  ));
+  const featuredId = ids ? ids.featured : signedIn ? 'home-join-featured-label' : 'guest-join-featured-label';
+  // An empty grid of the rest's kind, which useLeadCount reads.
+  const probeGrid = <div ref={setProbe} className={GRID} data-cm-grid="join" data-cm-probe="" aria-hidden="true" />;
   return (
     // The id is the signed-in Home's (the tours and the declared checks find
     // it); the landing draws the same section signed out, in the same
@@ -182,68 +192,58 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
         {oneLine && list.length > 1 ? sortMenu : null}
         </div>
       ) : null}
-      {wip && !apps && !failed && !query ? (
+      {holdFeatured ? (
         // Standard (WIP) draws Featured as a row of Home's own, above this
-        // list: its place is held while the directory is read, so the rows
-        // under it do not move when the cards land.
+        // list: its place is held while the directory is read, by its larger
+        // first row's cards, so the rows under it do not move when they land.
         <div data-home-join-featured="" data-loading="" className="pb-4 animate-pulse" aria-hidden="true">
           <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featuredAppsCommunities')}</h3>
-          <div className={`${CARD_GRID} px-1`}>
-            {[0, 1].map((i) => <WipSkel key={i} shape="card" />)}
+          {probeGrid}
+          <div className={GRID} data-cm-grid="lead" style={leadStyle}>
+            {Array.from({ length: leadCount }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
           </div>
         </div>
       ) : null}
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
-          <h3 id={ids ? ids.featured : signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
+          <h3 id={featuredId} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
             {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) })
               : wip ? t('home:join.featuredAppsCommunities') : t('home:join.featured')}
           </h3>
-          {/* A visitor's first few featured communities are drawn large, in
-              a row that scrolls sideways, so Featured reads as a feature and
-              not as the first rows of the same grid (Drea, 17 Nov 2026). The
-              rest of Featured keeps the grid under it. Each sideways row is
-              a FadeRail (#6804), which fades an edge only where more cards
-              are hidden, so the row is not cut off against the edge.
-              scroll-px-1 keeps the snap from landing the row 4px in, which
-              would fade its left edge before anyone scrolled it. */}
-          {lead.length ? (
-            <FadeRail
+          {probeGrid}
+          {/* The first few featured communities are drawn larger, a row of
+              their own, so Featured reads as a feature and not as the first
+              row of the same grid (Drea, 17 Nov 2026), signed in or out
+              (20 Nov 2026; until then a visitor's sideways rail). The rest
+              of Featured is the grid under it. */}
+          <div
+            role="list"
+            aria-labelledby={featuredId}
+            data-home-join-lead={lead.length}
+            data-cm-grid="lead"
+            className={GRID}
+            style={leadStyle}
+          >
+            {lead.map((app, i) => (
+              <div key={app.slug} role="listitem" className="flex min-w-0 [&>article]:flex-1">
+                <Card app={app} eager={i < LEAD_MAX} featured lead />
+              </div>
+            ))}
+          </div>
+          {featured.length > lead.length ? (
+            <div
               role="list"
-              aria-labelledby="guest-join-featured-label"
-              data-home-join-lead={lead.length}
-              className="snap-x snap-mandatory scroll-px-1 gap-3.5 overscroll-x-contain px-1 pt-0 pb-3.5"
+              aria-labelledby={featuredId}
+              data-home-join-featured-rest=""
+              data-cm-grid="join"
+              className={GRID}
             >
-              {lead.map((app, i) => (
-                <div key={app.slug} role="listitem" className="flex w-[min(80vw,340px)] shrink-0 snap-start [&>article]:flex-1">
-                  <Card app={app} eager={i < 3} featured lead />
+              {featured.slice(lead.length).map((app) => (
+                <div key={app.slug} role="listitem" className="flex min-w-0 [&>article]:flex-1">
+                  <Card app={app} eager={false} featured />
                 </div>
               ))}
-            </FadeRail>
-          ) : null}
-          {featured.length > lead.length ? (
-            signedIn ? (
-              <div
-                role="list"
-                aria-labelledby="home-join-featured-label"
-                data-home-join-featured-rest=""
-                className={`${CARD_GRID} px-1`}
-              >
-                {restCards}
-              </div>
-            ) : (
-              // A visitor's second row of Featured scrolls sideways too, under
-              // the large one, on the same fading rail; signed in, Featured
-              // keeps its wrapping grid.
-              <FadeRail
-                role="list"
-                aria-labelledby="guest-join-featured-label"
-                data-home-join-featured-rest=""
-                className="snap-x snap-mandatory scroll-px-1 gap-3 overscroll-x-contain px-1 pt-0 pb-1"
-              >
-                {restCards}
-              </FadeRail>
-            )
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -260,8 +260,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
           ) : null}
         </div>
       ) : !apps ? (
-        <div className={`${CARD_GRID} px-1`} aria-label={ta('auth:guest.loading')}>
-          {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
+        <div className={GRID} data-cm-grid="join" aria-label={ta('auth:guest.loading')}>
+          {[0, 1, 2, 3].map((i) => <CommunityCardSkeleton key={i} />)}
         </div>
       ) : list.length ? (
         <>
@@ -279,7 +279,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
         ) : restLabel ? (
           <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3>
         ) : null}
-        <div className={`${CARD_GRID} px-1`}>
+        <div className={GRID} data-cm-grid="join">
           {list.slice(0, shown).map((app, i) => (
             <Card
               key={app.slug}
@@ -297,8 +297,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       {more ? (
         <>
           {loadingMore ? (
-            <div className={`${CARD_GRID} px-1 pt-3`} aria-label={t('home:join.loadingMore')}>
-              {[0, 1].map((i) => <span key={i} className="aspect-[16/10] animate-pulse rounded-[20px] bg-black/5 dark:bg-white/10" />)}
+            <div className={`${GRID} pt-3 animate-pulse`} data-cm-grid="join" aria-label={t('home:join.loadingMore')}>
+              {[0, 1].map((i) => <CommunityCardSkeleton key={i} />)}
             </div>
           ) : null}
           <div ref={sentinel} className="h-px" data-home-join-more="" />
