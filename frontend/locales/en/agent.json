@@ -519,6 +519,10 @@
     "text": "About {{app}}",
     "description": "Row in the app menu (the sheet opened from the app's name in the header): opens the About pane, with the app's description, contributors and version. {{app}} is the app's name."
   },
+  "appContext.row.guide": {
+    "text": "User guide",
+    "description": "Row in the app menu (the sheet opened from the Homeroom mark in the header), under the About row: opens the User guide page of Settings, which explains the places in Homeroom and how a change gets voted in. Use the same words as that Settings page's name."
+  },
   "appContext.row.aboutThisApp": {
     "text": "About this app",
     "description": "Row in the app menu (the sheet opened from the app's name in the header) when the app's name is not known: opens the About pane."
