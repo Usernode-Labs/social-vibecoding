@@ -45,7 +45,7 @@ test('the head declares color-scheme for both grounds', () => {
   // stylesheet loaded at all.
   assert.match(
     src,
-    /html\s*\{[^}]*background-color:\s*#f4f2e4[^}]*color-scheme:\s*light[^}]*\}/,
+    /html\s*\{[^}]*background-color:\s*#fffeea[^}]*color-scheme:\s*light[^}]*\}/,
     'the light ground rule must also declare color-scheme: light'
   );
   assert.match(
@@ -99,7 +99,7 @@ test('theme-color survives, because it still owns other chrome', () => {
   // so the pair is a starting point, never the final answer.
   assert.match(
     headSrc(),
-    /<meta name="theme-color" content="#f4f2e4" media="\(prefers-color-scheme: light\)">/,
+    /<meta name="theme-color" content="#fffeea" media="\(prefers-color-scheme: light\)">/,
     'the light half of the starting pair'
   );
   assert.match(
@@ -133,7 +133,7 @@ test('color-scheme is keyed off .dark, never delegated to the OS', () => {
   // shell's Light/Dark override is a CLASS on <html> that no OS preference
   // can see, so the bare two-value form would give a viewer who picks
   // Light on a dark phone dark scrollbars and dark <select> menus on a
-  // #f4f2e4 page. This is the regression the rule above prevents.
+  // #fffeea page. This is the regression the rule above prevents.
   assert.doesNotMatch(
     src,
     /color-scheme:\s*(light\s+dark|dark\s+light|normal)\b/,
@@ -266,15 +266,15 @@ test('the resolved appearance is read back off the document', async () => {
   // Reading the ground back off the rendered document — rather than
   // repeating the two hex literals a third time — is what keeps this in
   // step with the head's critical <style> when either colour changes.
-  const light = loadNativeChrome({ dark: false, background: 'rgb(244, 242, 228)' });
+  const light = loadNativeChrome({ dark: false, background: 'rgb(255, 254, 234)' });
   await light.ready;
   assert.deepEqual(plain(light.calls.setAppearance), [
-    { scheme: 'light', background: '#f4f2e4' },
+    { scheme: 'light', background: '#fffeea' },
   ]);
 });
 
 test('it publishes on boot and on every theme change', async () => {
-  const harness = loadNativeChrome({ dark: false, background: 'rgb(244, 242, 228)' });
+  const harness = loadNativeChrome({ dark: false, background: 'rgb(255, 254, 234)' });
   // The boot publish IS the first one — nothing else has to call it.
   await harness.ready;
   assert.equal(harness.calls.setAppearance.length, 1);

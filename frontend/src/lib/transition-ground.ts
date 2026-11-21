@@ -5,7 +5,7 @@
  * outgoing root snapshot goes to opacity 0 over the first 35% of the
  * transition, and only then does the incoming one arrive. Whatever is painted
  * UNDER ::view-transition shows for those frames — and that is the canvas,
- * flat #f4f2e4, because the wallpaper is the BODY's background and so rides
+ * flat #fffeea, because the wallpaper is the BODY's background and so rides
  * inside the root snapshot that is fading.
  *
  * The page going briefly flat is part of the fade. The bars are what made it a

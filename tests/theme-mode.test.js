@@ -88,7 +88,7 @@ test('the ground is painted before any stylesheet, and the chrome follows the th
   // that it is keyed off `.dark` rather than delegated to the OS; these two
   // assertions still own the ground colours themselves.
   const src = themeSrc();
-  assert.match(src, /html \{ background-color: #f4f2e4; color-scheme: light; \}/,
+  assert.match(src, /html \{ background-color: #fffeea; color-scheme: light; \}/,
     'the light ground is painted with no stylesheet loaded');
   assert.match(src, /html\.dark \{ background-color: #0b0d1b; color-scheme: dark; \}/,
     'and the dark one, keyed off the class apply() has just written');
@@ -99,7 +99,7 @@ test('the ground is painted before any stylesheet, and the chrome follows the th
   // own Light/Dark override is a class on <html> that no media query can
   // see. A viewer who picks Light on a dark OS gets the light chrome on
   // both, with no stale dark value left behind (#6130).
-  assert.match(src, /const GROUND = \{ light: '#f4f2e4', dark: '#0b0d1b' \};/);
+  assert.match(src, /const GROUND = \{ light: '#fffeea', dark: '#0b0d1b' \};/);
   const apply = src.slice(src.indexOf('function apply()'), src.indexOf('function set('));
   assert.match(apply, /querySelectorAll\('meta\[name="theme-color"\]'\)/,
     'apply() owns every theme-color meta, not just the first');
@@ -128,7 +128,7 @@ function themeScript() {
 function runTheme({ osDark, stored }) {
   const classes = new Set();
   const metas = [
-    { attrs: new Map([['content', '#f4f2e4']]) },
+    { attrs: new Map([['content', '#fffeea']]) },
     { attrs: new Map([['content', '#0b0d1b']]) },
   ];
   const store = new Map();
@@ -171,7 +171,7 @@ test('an explicit Light choice overwrites both media-keyed metas on a dark OS', 
   // matches, so a stale value there is exactly the dark band this fixes.
   const light = runTheme({ osDark: true, stored: 'light' });
   assert.equal(light.classes.has('dark'), false);
-  assert.deepEqual(light.metas, ['#f4f2e4', '#f4f2e4'],
+  assert.deepEqual(light.metas, ['#fffeea', '#fffeea'],
     'no stale dark value for the dark half of the pair');
 
   const dark = runTheme({ osDark: false, stored: 'dark' });

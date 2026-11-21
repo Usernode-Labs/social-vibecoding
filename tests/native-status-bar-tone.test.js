@@ -105,7 +105,7 @@ function boot(opts = {}) {
     usernode,
     MutationObserver: FakeMutationObserver,
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
-    getComputedStyle: () => ({ backgroundColor: 'rgb(244, 242, 228)' }),
+    getComputedStyle: () => ({ backgroundColor: 'rgb(255, 254, 234)' }),
     document: {
       documentElement: html,
       visibilityState: 'visible',

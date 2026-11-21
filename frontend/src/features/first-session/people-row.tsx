@@ -40,7 +40,7 @@ const SEAT: Record<number, { bg: string; ink: string }> = {
   4: { bg: '#f5e9e5', ink: '#e8cacc' },
 };
 
-const GROUND = 'var(--home-ground, #f4f2e4)';
+const GROUND = 'var(--home-ground, #fffeea)';
 
 function nameOf(person: Person): string {
   return String(person.username || person.display_name || '').trim();

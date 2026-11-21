@@ -263,7 +263,7 @@ export function WelcomePage({ account, beforeFinish }: {
       aria-labelledby="welcome-page-title"
       data-welcome-page=""
       className={WELCOME_ROOT}
-      style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
+      style={{ background: 'var(--home-wallpaper, #fffeea)' }}
     >
       <div className={`${WELCOME_BAR} ${motion}`}>
         <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />
