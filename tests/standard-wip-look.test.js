@@ -379,6 +379,29 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
 });
 
+test('New community wears the Communities page\'s typeface, not the buttons\' serif (21 Nov 2026)', () => {
+  const all = rules(wipBlock());
+  // Its own rule gives it the page's font, which is Geist in this look.
+  const rule = all.find((r) => r.selector === 'html:not([data-skin]) #communities-screen #communities-new-top');
+  assert.ok(rule, 'the page action\'s family is a rule of the look\'s own block');
+  assert.equal(rule.body.trim(), 'font-family: var(--wip-font);');
+  const token = all.find((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-font: 'Geist'/.test(r.body));
+  assert.ok(token, 'the page\'s font is the one the rest of the page reads');
+  // Two ids, so it outranks the BUTTONS block's shape (its classes are inside :where()).
+  assert.equal((rule.selector.match(/#/g) || []).length, 2, 'it beats the class rules and the one-id page top action rule');
+  // The buttons' serif is untouched, and the shared page top action rule names
+  // no family, so Home's New project keeps it.
+  const css = read('public', 'css', 'app.css');
+  const start = css.indexOf('── BUTTONS (20 Nov 2026)');
+  const end = css.indexOf('END OF BUTTONS.');
+  const buttons = rules(css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, ''));
+  const serif = buttons.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body))[0];
+  assert.match(serif.body, /--wip-btn-font: 'Source Serif 4',/);
+  const top = buttons.find((r) => r.selector === 'html:not([data-skin]) :is(#home-new-project-top, #communities-new-top)');
+  assert.ok(top, 'the page top action rule is still the buttons block\'s');
+  assert.doesNotMatch(top.body, /font-family/, 'Home\'s New project keeps the serif');
+});
+
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {
   const hidden = rules(wipBlock())
     .filter((r) => /display:\s*none|visibility:\s*hidden/.test(r.body))
