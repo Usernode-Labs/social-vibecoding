@@ -147,7 +147,9 @@ const RAIL_ROW = 'flex min-w-0 items-center gap-2';
 // The three state marks. The board draws an empty ring, a dashed ring and a
 // ringed check; the first two are borders rather than glyphs, so the icon
 // set gains nothing it would have to keep out of the prerender.
-function StateMark({ state }: { state: ChallengeState }): ReactNode {
+// Exported so the History tab (./challenge-history.tsx) draws the same
+// finished mark its cards do rather than a second copy of the ring.
+export function StateMark({ state }: { state: ChallengeState }): ReactNode {
   if (state === 'done') {
     return (
       <span aria-hidden="true" className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 border-current">
@@ -318,9 +320,19 @@ const CARD = CHALLENGE_CARD_FACE
 // 20px corners of a card this short (Home's one-line note uses them too).
 // `h-fit` keeps it one line tall when the Challenges tab's grid would stretch
 // it to a full card beside it; in Home's column it changes nothing.
-const CARD_DONE = 'flex h-fit min-w-0 items-center gap-2.5 bg-white dark:bg-zinc-900 rounded-[1.25rem] '
-  + 'border border-zinc-200 dark:border-zinc-800 px-3.5 py-3 '
-  + 'cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
+// The FACE alone (no cursor, no hover) is exported for the History tab's
+// cards (./challenge-history.tsx), which hold their credits and so are read,
+// not pressed — the same reason CHALLENGE_CARD_FACE is exported above.
+// The FACE's ground, hairline and corners, shared by the finished card and
+// the History tab's cards (./challenge-history.tsx).
+const DONE_GROUND = 'bg-white dark:bg-zinc-900 rounded-[1.25rem] border border-zinc-200 '
+  + 'dark:border-zinc-800 px-3.5 py-3';
+export const CHALLENGE_DONE_FACE = `flex h-fit min-w-0 items-center gap-2.5 ${DONE_GROUND}`;
+// The same face holding a challenge's credits under its name: a column, and
+// no cursor or hover, because it is read rather than pressed.
+export const CHALLENGE_HISTORY_FACE = `flex min-w-0 flex-col gap-2 ${DONE_GROUND}`;
+const CARD_DONE = CHALLENGE_DONE_FACE
+  + ' cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
 const DONE_MARK = 'shrink-0 text-emerald-700 dark:text-emerald-400';
 const DONE_POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400';
 

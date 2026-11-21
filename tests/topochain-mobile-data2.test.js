@@ -306,12 +306,12 @@ function handleQuery(rawSql, params = []) {
   }
 
   // ── GET /challenges: the user's own activities on the in-scope ids ──────
-  if (sql.startsWith('SELECT challenge_id, points, description, activity_at, metadata FROM user_activities')) {
+  if (sql.startsWith('SELECT challenge_id, points, description, activity_at, created_at, metadata FROM user_activities')) {
     const [userId, ids] = params;
     const rows = userActivities
       .filter((a) => a.user_id === userId && ids.includes(a.challenge_id))
       .map((a) => ({ challenge_id: a.challenge_id, points: a.points, description: a.description || null,
-        activity_at: a.activity_at, metadata: a.metadata }));
+        activity_at: a.activity_at, created_at: a.created_at, metadata: a.metadata }));
     return { rows };
   }
 
@@ -531,6 +531,12 @@ test('GET /challenges: event scope — effective merge, category uppercase, cta_
     assert.equal(item.activities.length, 1);
     assert.equal(item.activities[0].points, 10);
     assert.equal(item.activities[0].activity_time_precision, 'instant');
+    // #6967: every activity says when it was credited and why it did not
+    // count (null while it does).
+    assert.equal(Date.parse(item.activities[0].credited_at),
+      Date.parse(item.activities[0].activity_at), 'credited when it was written');
+    assert.equal(item.activities[0].not_counted_reason, null);
+    assert.equal(item.activities[0].grade_reason, null, 'ungraded');
     assert.equal(item.activities_total, 10);
   });
 });
@@ -579,14 +585,45 @@ test('GET /challenges: no proposal credit, no lookup; only this week\'s credits 
     await withServer({}, async (base) => {
       const res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
       const body = await res.json();
-      const counts = Object.fromEntries(body.data.find((c) => c.id === 7).activities
-        .map((a) => [a.description, a.counts]));
+      const activities = body.data.find((c) => c.id === 7).activities;
+      const counts = Object.fromEntries(activities.map((a) => [a.description, a.counts]));
       assert.deepEqual(counts, { Now: true, Before: false });
+      // #6967: a credit that does not count says why, and a counting one says
+      // nothing; both carry when they were credited.
+      const reasons = Object.fromEntries(activities.map((a) => [a.description, a.not_counted_reason]));
+      assert.deepEqual(reasons, { Now: null, Before: 'earlier_week' });
+      assert.equal(Date.parse(activities.find((a) => a.description === 'Now').credited_at),
+        Date.parse(THIS_WEEK), 'when the points were written');
       assert.deepEqual(creditLookups, []);
     });
   } finally {
     template.category = category;
   }
+});
+
+test('GET /challenges: a graded credit carries the grader\'s reason, trimmed (#3200, #6967)', async () => {
+  userActivities.push(
+    { id: 62, user_id: 3, challenge_id: 7, points: '250', description: 'Graded', activity_at: T(0), created_at: T(0),
+      metadata: { grade: { reason: '  Specific and actionable.  ' } } },
+    { id: 63, user_id: 3, challenge_id: 7, points: '250', description: 'Blank', activity_at: T(0), created_at: T(0),
+      metadata: { grade: { reason: '   ' } } },
+    // A challenge counted on a schedule: the action happened days before the
+    // points were written, and History says `credited_at`, not the action's day.
+    { id: 64, user_id: 3, challenge_id: 7, points: '250', description: 'Scheduled', activity_at: T(-9), created_at: T(-1),
+      metadata: null },
+  );
+  await withServer({}, async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+    const body = await res.json();
+    const activities = body.data.find((c) => c.id === 7).activities;
+    const reasons = Object.fromEntries(activities
+      .map((a) => [a.description, a.grade_reason]));
+    assert.equal(reasons.Graded, 'Specific and actionable.');
+    assert.equal(reasons.Blank, null, 'a blank reason is no reason');
+    const scheduled = activities.find((a) => a.description === 'Scheduled');
+    assert.ok(Date.parse(scheduled.credited_at) > Date.parse(scheduled.activity_at),
+      'credited_at is when the points were written, not when it happened');
+  });
 });
 
 test('GET /challenges: a First challenge also returns the earlier season\'s credits its count holds (#3247)', async () => {

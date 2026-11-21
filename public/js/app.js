@@ -7519,6 +7519,7 @@ const App = {
 
   LEADERBOARD_TITLES: {
     challenges: 'shell:title.leaderboard.challenges',
+    'challenge-history': 'shell:title.leaderboard.history',
     kudos: 'shell:title.leaderboard.kudos',
     prs: 'shell:title.leaderboard.kudos',
     users: 'shell:title.leaderboard.kudos',
@@ -7541,7 +7542,8 @@ const App = {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
       Leaderboard._setSection('challenges');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
+                || sub === 'challenge-history')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is

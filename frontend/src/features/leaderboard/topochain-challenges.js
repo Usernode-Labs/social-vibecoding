@@ -483,7 +483,11 @@ const TopochainChallenges = {
       open && row && Number(row.id) === Number(open.id) ? Object.assign(open, row) : row
     ));
     TopochainChallenges._onboarding = res.data.onboarding || null;
-    TopochainChallenges._store?.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
+    const rereadOrdered = TopochainChallenges._ordered();
+    TopochainChallenges._store?.set({
+      grid: TopochainChallenges.gridView(rereadOrdered),
+      history: TopochainChallenges.historyView(rereadOrdered),
+    });
     if (open) TopochainChallenges._renderDetailOverlay();
     await TopochainChallenges._loadMine(eventId, TopochainChallenges.FRESH);
   },
@@ -588,7 +592,7 @@ const TopochainChallenges = {
     const store = TopochainChallenges._store;
 
     if (TopochainChallenges._challengesLoading && !TopochainChallenges._challenges.length) {
-      store?.set({ grid: { kind: 'loading' } });
+      store?.set({ grid: { kind: 'loading' }, history: { kind: 'loading' } });
       return;
     }
     // Both terminal empty states retire a pending deep link (#982) on the
@@ -598,22 +602,24 @@ const TopochainChallenges = {
     // picks next.
     if (TopochainChallenges._challengesError) {
       TopochainChallenges._maybeDeepLink([]);
+      const message = TopochainChallenges.str(TopochainChallenges._challengesError);
       store?.set({
-        grid: {
-          kind: 'error',
-          message: TopochainChallenges.str(TopochainChallenges._challengesError),
-        },
+        grid: { kind: 'error', message },
+        history: { kind: 'error', message },
       });
       return;
     }
     if (!TopochainChallenges._challenges.length && !TopochainChallenges._onboarding) {
       TopochainChallenges._maybeDeepLink([]);
-      store?.set({ grid: { kind: 'empty' } });
+      store?.set({ grid: { kind: 'empty' }, history: { kind: 'empty' } });
       return;
     }
 
     const ordered = TopochainChallenges._ordered();
-    store?.set({ grid: TopochainChallenges.gridView(ordered) });
+    store?.set({
+      grid: TopochainChallenges.gridView(ordered),
+      history: TopochainChallenges.historyView(ordered),
+    });
     TopochainChallenges._maybeShot(ordered);
     TopochainChallenges._maybeDeepLink(ordered);
   },
@@ -674,6 +680,84 @@ const TopochainChallenges = {
       done: list.filter((c) => TopochainChallenges._isDone(c)).length,
       total: list.length,
       points: TopochainChallenges._earnedPoints(list),
+    };
+  },
+
+  // #6967: what earned the viewer's challenge points, and when. Every
+  // challenge they have points on or have finished, grouped Done then In
+  // progress, each with every credit behind it — the ones that do not count
+  // toward progress included, with a plain reason why. Built from the same
+  // `_mine` rows the grid and the detail page read, so History lists exactly
+  // the credits "What counted" does and no second read is made.
+  historyView(ordered) {
+    const str = TopochainChallenges.str;
+    const list = Array.isArray(ordered) ? ordered : [];
+    const groups = { done: [], progress: [] };
+    for (const c of list) {
+      const mine = TopochainChallenges._mine.get(Number(c.id)) || null;
+      const own = mine && Array.isArray(mine.activities) ? mine.activities : [];
+      const earlier = mine && Array.isArray(mine.earlier_activities) ? mine.earlier_activities : [];
+      const done = TopochainChallenges._isDone(c);
+      if (!done && !own.length && !earlier.length) continue;
+      const state = TopochainChallenges._stateOf(c);
+      const pointsSoFar = mine && Number(mine.activities_total) > 0 ? Number(mine.activities_total) : 0;
+      const points = done
+        ? state.earned
+        : pointsSoFar
+          ? PlatformI18n.t('leaderboard:challenges.soFar', {
+            count: pointsSoFar, points: pointsSoFar.toLocaleString('en-US'),
+          })
+          : null;
+      const credits = [
+        ...own.map((a) => TopochainChallenges._historyCredit(a, false)),
+        ...earlier.map((a) => TopochainChallenges._historyCredit(a, true)),
+      ].sort((a, b) => Date.parse(b.at || '') - Date.parse(a.at || ''));
+      groups[done ? 'done' : 'progress'].push({
+        key: `${c.id}`,
+        goal: str((c.card_preview || {}).goal || ''),
+        done,
+        points,
+        credits,
+      });
+    }
+    const newest = (g) => (g.credits.length ? Date.parse(g.credits[0].at || '') || 0 : 0);
+    const byNewest = (a, b) => newest(b) - newest(a);
+    const rows = [...groups.done.sort(byNewest), ...groups.progress.sort(byNewest)];
+    if (!rows.length) return { kind: 'empty', progress: TopochainChallenges._summaryView(list) };
+    return {
+      kind: 'list',
+      progress: TopochainChallenges._summaryView(list),
+      done: groups.done,
+      progressGroup: groups.progress,
+    };
+  },
+
+  // One credit on the History tab. `earlier` marks a First challenge's
+  // credit from an earlier season: its points count, but this season's count
+  // started fresh. A credit that did not count toward this challenge's
+  // progress carries the reason the server gave, or the earlier-week note it
+  // has always meant (an older server sends `counts: false` alone).
+  _historyCredit(a, earlier) {
+    const str = TopochainChallenges.str;
+    const c = a.change;
+    const linked = c && typeof c.app_slug === 'string' && c.app_slug
+      && Number.isInteger(c.session_id) && c.session_id > 0;
+    const reason = typeof a.grade_reason === 'string' ? a.grade_reason.trim() : '';
+    let note = null;
+    if (earlier) note = PlatformI18n.t('leaderboard:history.reason.earlierSeason');
+    else if (a.not_counted_reason === 'earlier_week'
+      || (a.counts === false && !a.not_counted_reason)) {
+      note = PlatformI18n.t('leaderboard:history.reason.earlierWeek');
+    }
+    return {
+      text: str((linked && c.title) || a.description),
+      points: Number(a.points) || 0,
+      at: a.activity_at,
+      precision: a.activity_time_precision,
+      creditedAt: a.credited_at || null,
+      change: linked ? { slug: c.app_slug, sessionId: c.session_id, prNumber: c.pr_number } : null,
+      reason: reason || null,
+      note,
     };
   },
 
