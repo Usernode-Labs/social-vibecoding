@@ -116,6 +116,43 @@ function topLevel(selector) {
   return out.map((s) => s.trim()).filter(Boolean);
 }
 
+/**
+ * Arithmetic on the menu's tokens, so a rule's measures can be held as what
+ * they come to, with the tokens as they are and with others (`given`, in px).
+ */
+function menuMath(all) {
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-row-h:/.test(r.body)).body;
+  const decl = (body, prop) => {
+    const m = body.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+);`));
+    assert.ok(m, `it sets ${prop}`);
+    return m[1].trim();
+  };
+  const parts = (value) => {
+    const out = [];
+    let depth = 0;
+    let from = 0;
+    for (let i = 0; i <= value.length; i += 1) {
+      const ch = value[i];
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+      else if ((ch === ' ' || ch === undefined) && depth === 0) { if (i > from) out.push(value.slice(from, i)); from = i + 1; }
+    }
+    return out;
+  };
+  const token = (name, given) => {
+    if (given && name in given) return given[name];
+    const m = tokens.match(new RegExp(`${name}:\\s*([0-9.]+)(px|rem);`));
+    assert.ok(m, `${name} is a length in the token rule`);
+    return Number(m[1]) * (m[2] === 'rem' ? 16 : 1);
+  };
+  const px = (expr, given) => {
+    const js = expr.replace(/var\((--wip-nav-[a-z0-9-]+)\)/g, (_, name) => `(${token(name, given)})`).replace(/calc\(/g, '(').replace(/(\d)px/g, '$1');
+    assert.match(js, /^[-+*/(). 0-9]+$/, `${expr} is arithmetic on the menu's tokens`);
+    return Function(`return (${js});`)();
+  };
+  return { decl, parts, token, px };
+}
+
 test('it is the standard look: the head sets data-skin-wip and no data-skin', () => {
   const head = read('frontend', 'src', 'head.html');
   assert.match(head, /if \(skin === 'wip'\) root\.setAttribute\('data-skin-wip', ''\);/);
@@ -320,35 +357,7 @@ test('open, Settings is a square at the end of You\'s row, centred on its line, 
   const COG = 'html:not([data-skin]) #platform-tabs .platform-rail-settings';
   const cog = all.find((r) => r.selector === COG && /width:/.test(r.body));
   assert.ok(cog, 'Settings has a box of its own in the menu block');
-  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-row-h:/.test(r.body)).body;
-  const decl = (body, prop) => {
-    const m = body.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+);`));
-    assert.ok(m, `it sets ${prop}`);
-    return m[1].trim();
-  };
-  const parts = (value) => {
-    const out = [];
-    let depth = 0;
-    let from = 0;
-    for (let i = 0; i <= value.length; i += 1) {
-      const ch = value[i];
-      if (ch === '(') depth += 1;
-      else if (ch === ')') depth -= 1;
-      else if ((ch === ' ' || ch === undefined) && depth === 0) { if (i > from) out.push(value.slice(from, i)); from = i + 1; }
-    }
-    return out;
-  };
-  const token = (name, given) => {
-    if (given && name in given) return given[name];
-    const m = tokens.match(new RegExp(`${name}:\\s*([0-9.]+)(px|rem);`));
-    assert.ok(m, `${name} is a length in the token rule`);
-    return Number(m[1]) * (m[2] === 'rem' ? 16 : 1);
-  };
-  const px = (expr, given) => {
-    const js = expr.replace(/var\((--wip-nav-[a-z0-9-]+)\)/g, (_, name) => `(${token(name, given)})`).replace(/calc\(/g, '(').replace(/(\d)px/g, '$1');
-    assert.match(js, /^[-+*/(). 0-9]+$/, `${expr} is arithmetic on the menu's tokens`);
-    return Function(`return (${js});`)();
-  };
+  const { decl, parts, token, px } = menuMath(all);
   assert.equal(decl(cog.body, 'width'), 'var(--wip-nav-settings)');
   assert.equal(decl(cog.body, 'height'), 'var(--wip-nav-settings)');
   assert.equal(token('--wip-nav-settings'), 32, 'a 32px square');
@@ -369,6 +378,67 @@ test('open, Settings is a square at the end of You\'s row, centred on its line, 
   }
   // Folded, the strip still puts it on a line of its own above You.
   assert.ok(block.includes(`${MENU_SCOPE} #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-rail-settings { align-self: center; margin: 0 0 2px; }`));
+});
+
+test('open, You\'s row ends short of Settings, and on Settings only Settings is lit', () => {
+  const block = menuBlock();
+  const all = rules(block);
+  const { decl, parts, px } = menuMath(all);
+  // You's row ran on under Settings, so its lit, hover and focus grounds lay
+  // under the button; and on Settings, which lights You's tab too, two things
+  // were lit (20 Nov 2026).
+  const OPEN = `${MENU_SCOPE} #platform-tabs:not(.platform-tabs-folded)`;
+  const me = all.find((r) => r.selector === `${OPEN} #platform-tab-me`);
+  assert.ok(me, 'the open menu ends You\'s row before Settings');
+  const cog = all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs .platform-rail-settings` && /width:/.test(r.body));
+  assert.ok(cog, 'Settings\' own box');
+  // Both are measured in from the row's end: Settings' box starts its width and
+  // its end margin in, and You's ground stops at its own end margin. Between
+  // them is the menu's space between rows, as the tokens are and as they might be.
+  for (const given of [{}, { '--wip-nav-row-h': 48 }, { '--wip-nav-settings': 28 }, { '--wip-nav-row-space': 4 }]) {
+    const youEnd = px(decl(me.body, 'margin-inline-end'), given);
+    const width = px(decl(cog.body, 'width'), given);
+    const [start, cogEnd] = parts(decl(cog.body, 'margin-inline')).map((v) => px(v, given));
+    assert.equal(start, 0);
+    assert.equal(youEnd - (width + cogEnd), px('var(--wip-nav-row-space)', given),
+      `${JSON.stringify(given)}: the space between rows parts You's ground from Settings, and no more is left unpressable`);
+  }
+  // The open menu's rule, beside Settings' box; the folded strip keeps its own.
+  const at = block.indexOf(`${OPEN} #platform-tab-me {`);
+  const group = block.lastIndexOf('@media (min-width: 768px) {', at);
+  assert.ok(group > 0 && block.indexOf('\n}', group) > at, 'a wide display\'s rule');
+  assert.ok(group < block.indexOf(`${MENU_SCOPE} #platform-tabs .platform-rail-settings {\n    width:`), 'in the group that draws Settings\' box');
+  assert.ok(block.includes(`${MENU_SCOPE} #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) #platform-tab-me { padding-inline-end: 0; }`));
+
+  // On Settings, You's tab keeps `aria-current` (it is Settings' section), and
+  // its row steps back to rest: no ground, a resting row's ink and weight.
+  const GIVE = `${OPEN}:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]`;
+  const rest = all.find((r) => r.selector === GIVE);
+  assert.ok(rest, 'You\'s row gives up its light while Settings is current');
+  assert.equal(decl(rest.body, 'background'), 'transparent', 'the lit-row rule would otherwise paint it');
+  assert.equal(decl(rest.body, 'font-weight'), '600');
+  assert.match(block, /:is\(\.platform-tab, \.platform-rail-community\) \{ min-height: var\(--wip-nav-row-h\);[^}]*font-weight: 600; \}/, 'a resting row\'s weight');
+  assert.equal(decl(rest.body, 'color'), 'var(--text-primary)');
+  assert.match(read('public', 'css', 'app.css'), /\n {2}\.platform-tab \{\n {4}flex: none;\n {4}flex-direction: row;[^}]*color: var\(--text-primary\);/,
+    'the ink the shell\'s own row rule gives a resting row');
+  assert.match(all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs` && /--text-primary:/.test(r.body)).body, /--text-primary: var\(--wip-nav-ink-strong\);/);
+  const words = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-glyph, .platform-tab-label)`);
+  assert.ok(words, 'the glyph and the word stop wearing the lit row\'s on-ink');
+  assert.equal(decl(words.body, 'color'), 'inherit');
+  // It answers the pointer with a resting row's ground.
+  const hover = all.find((r) => r.selector === `${GIVE}:hover`);
+  assert.ok(hover, 'under the pointer it is a row at rest under the pointer');
+  const rowHover = all.find((r) => /\.platform-rail-settings, [^)]*\):not\(\[aria-current="page"\]\):hover$/.test(r.selector));
+  assert.ok(rowHover, 'the menu\'s hover rule');
+  assert.equal(decl(hover.body, 'background'), decl(rowHover.body, 'background'));
+  // Settings keeps the lit row's own rule, so it is the one thing lit.
+  const lit = all.find((r) => /^html:not\(\[data-skin\]\) #platform-tabs :is\(\.platform-tab, \.platform-rail-settings, .*\)\[aria-current="page"\]$/.test(r.selector) && /background:/.test(r.body));
+  assert.ok(lit, 'the lit-row rule lights Settings');
+  assert.equal(decl(lit.body, 'background'), 'var(--wip-nav-on-bg)');
+  assert.ok(block.indexOf(GIVE) > block.indexOf(lit.selector), 'after the lit-row rule, which it out-ranks');
+  // A wide display's rules, for the open menu: folded, the strip keeps its own
+  // drawing, and the phone's bar has no Settings.
+  assert.ok(block.includes(`@media (min-width: 768px) {\n  ${GIVE} {`), 'the give-way rules sit in a wide-display group of the menu block');
 });
 
 test('buttons: the Sticker drawing, one block for the standard look and this one, every value a token', () => {
