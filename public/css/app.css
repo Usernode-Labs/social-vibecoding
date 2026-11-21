@@ -25123,6 +25123,21 @@ html[data-side-strip="left"] #notifications-sheet {
   html[data-side-strip] .platform-tab[aria-current="page"] .platform-tab-mark {
     color: var(--lit-ink);
   }
+  /* THE STANDARD LOOK'S DUO STRIP IS NOT ITS BLUE BAR: the capsule is the
+     page's plane, so the white ink chosen for the blue goes, and the glyphs
+     read the page's own ink, as the brand look's strip does. The lit place
+     keeps the standard look's sun pill, and the open app's ring with it. */
+  html:not([data-skin])[data-side-strip] #platform-tabs {
+    --text-primary: inherit;
+    --text-secondary: inherit;
+    --text-muted: inherit;
+    --text-faint: inherit;
+    --lit-tint: var(--wip-nav-on-bg);
+    --lit-ink: var(--wip-nav-on-ink);
+  }
+  html:not([data-skin])[data-side-strip] .platform-tab:not([aria-current="page"]) {
+    color: var(--text-muted);
+  }
   /* The words are not drawn (the system's own side tabs have none), but the
      tab is still named by them: clipped to nothing rather than removed, so a
      screen reader reads "Home" and the declared checks still find it. */

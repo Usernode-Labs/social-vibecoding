@@ -137,3 +137,19 @@ test('U02: the Duo strip\'s ✕ is pressed as 32px, and no word is drawn to over
   assert.doesNotMatch(APP_CSS, /html\[data-side-strip\] #platform-tab-workshop \.platform-tab-label \{/);
   assert.match(APP_CSS, /html\[data-side-strip\] :is\(\.platform-tab, \.platform-side-app\) \.platform-tab-label \{[^}]*clip-path: inset\(50%\);/);
 });
+
+test('U04: the standard look\'s Duo strip reads the page\'s ink, not the blue bar\'s white', () => {
+  // The capsule is the page's own plane, so the white ink chosen for the
+  // phone's blue bar nearly disappeared on it in light mode. The strip inherits
+  // the page's ink and keeps the standard look's sun pill for the lit place.
+  const rule = /html:not\(\[data-skin\]\)\[data-side-strip\] #platform-tabs \{\n    --text-primary: inherit;\n    --text-secondary: inherit;\n    --text-muted: inherit;\n    --text-faint: inherit;\n    --lit-tint: var\(--wip-nav-on-bg\);\n    --lit-ink: var\(--wip-nav-on-ink\);\n  \}/;
+  assert.match(APP_CSS, rule);
+  // The unlit tab reads the page's own ink; the lit pill is left to the
+  // standard look's own sun rule.
+  assert.match(APP_CSS, /html:not\(\[data-skin\]\)\[data-side-strip\] \.platform-tab:not\(\[aria-current="page"\]\) \{\n    color: var\(--text-muted\);\n  \}/);
+  // It is the Duo strip's rule, inside that block's phone media query.
+  const at = APP_CSS.search(rule);
+  const media = APP_CSS.lastIndexOf('@media (max-width: 767px) {', at);
+  assert.ok(media !== -1 && media < at, 'inside the Duo strip phone media query');
+  assert.doesNotMatch(APP_CSS.slice(media, at), /\n@media /, 'not a media query of its own');
+});
