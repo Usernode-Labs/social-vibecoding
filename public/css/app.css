@@ -8072,6 +8072,10 @@ html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; 
   html:not([data-skin]) #communities-screen .communities-search { flex: 0 1 var(--wip-search-w); }
   html:not([data-skin]) #communities-screen .communities-top > .wip-cta { margin-inline-start: auto; }
 }
+/* The page's action wears the page's typeface, not the buttons' serif: New
+   community is of this page, whose heading and labels are the look's own font
+   (asked 21 Nov 2026). Two ids, so it outranks the BUTTONS block's shape. */
+html:not([data-skin]) #communities-screen #communities-new-top { font-family: var(--wip-font); }
 html:not([data-skin]) #communities-search-input { border-radius: var(--wip-radius-inner); }
 /* A group's label is Home's: one row gap above every group after the first, the config's label tokens. */
 html:not([data-skin]) #communities-screen section ~ section > .home-area-label { padding-top: var(--wip-row-gap); }
