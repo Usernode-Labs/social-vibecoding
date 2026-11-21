@@ -12,11 +12,12 @@
  * move to the account at sign-in. The Featured and All apps sections, their
  * sort and Show more went with it.
  *
- * A card is its picture, its name and one sentence, the project's own
- * description, at most two lines. On the picture a pill says how many
- * people used it lately, as a profile glyph and a number, from MIN_PEOPLE
- * (a zero says nothing; a screen reader hears it in words with the name).
- * Member counts, votes and the last change stay on the project's page.
+ * A card is the community card (../communities/card.tsx, approved 20 Nov
+ * 2026): its picture, its own icon standing on the picture's edge, its
+ * name over how many members, one sentence (the project's own description,
+ * at most two lines) and this week on one line, how many were active and
+ * how many changes went live. Votes and the last change stay on the
+ * project's page.
  *
  * THE WHOLE CARD IS ONE LINK to the project's read-only page
  * (./guest-project.tsx), whose band leads with Try it, then Join, then the
@@ -33,14 +34,13 @@
  * (docs/superpowers/specs/2026-09-18-logged-out-screens-design.md); a page
  * to read behind every card is what makes a grid worth having again.
  *
- * WHAT MAKES A TAP LOOK WORTH MAKING: the cards sit up off the page on a
- * soft shadow; a cover with no illustration is the project's icon, larger,
- * on its colour lit from the top left, with a blurred copy of the icon
- * glowing behind it; under a pointer the card rises, the glow brightens and
- * an arrow slides in (the arrow only there and under keyboard focus, so a
- * screen of cards at rest carries no repeated marker); a press gives under
- * the finger; and the picture grows into the project page's band as it
- * opens (./card-morph.ts).
+ * WHAT MAKES A TAP LOOK WORTH MAKING: under a pointer the card rises off
+ * the page onto a shadow, its picture grows a little and an arrow slides in
+ * (the arrow only there and under keyboard focus, so a screen of cards at
+ * rest carries no repeated marker); a press gives under the finger; and the
+ * picture grows into the project page's band as it opens (./card-morph.ts).
+ * A community with no picture of its own wears one of the brand kit's
+ * backgrounds, always the same one (../communities/card.tsx `cardScene`).
  *
  * Above the grid: the kinds of app the directory has. What an account adds
  * is the hero's to say
@@ -54,7 +54,7 @@ import { useHomeSearchPlaceholder } from '../home/search-hint';
 import { guestSearchFrom, withGuestSearch } from './search-history';
 import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ArrowRightShortIcon, SearchIcon, UserIcon, XIcon } from '@/components/ui/icons';
+import { ArrowRightShortIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -64,11 +64,11 @@ import { CORNER_UNPIN, CommunityTileFace, MinusGlyph } from '../home/pinned-comm
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins';
 import { useCommunityColor } from '../../lib/community-color';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { CommunityCardContent, communityFromDirectory } from '../communities/card';
 import { cardCover, morph, projectHero } from './card-morph';
 import { CardPreview } from './card-preview';
 import {
   type GuestApp,
-  MIN_PEOPLE,
   isNew,
   projectHash,
   projectPath,
@@ -76,13 +76,6 @@ import {
 
 
 export const SMALL_CAPS_LABEL = 'text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
-
-/**
- * The grid of picture cards (Home's Communities to join, signed in or out):
- * as many 190px columns as fit, never fewer than two (half the width, less
- * half the gap, is the floor).
- */
-export const CARD_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(min(190px,calc(50%_-_6px)),1fr))] gap-3';
 
 /** The app's icon, in the tile Discover's rows draw (app-card-view.tsx). `className` overrides the size's radius or shadow. */
 export function GuestIcon({ app, size = 'md', eager = false, className }: { app: GuestApp; size?: 'sm' | 'md' | 'lg' | 'xl'; eager?: boolean; className?: string }) {
@@ -159,144 +152,71 @@ export function ProjectLink({ slug, children, ...rest }: { slug: string; childre
 }
 
 /**
- * A card's picture: the illustration its group chose, else its icon larger
- * on its colour, lit from the top left, with a blurred copy of the icon
- * glowing behind it in its own colours. The people pill sits in its lower
- * left and, under a pointer or keyboard focus, an arrow in its lower right.
- * A picture may carry an animated preview (`preview_url`), which plays over
- * it under the rules in ./card-preview.tsx; the pills stay on top.
+ * How a card answers a pointer, a press and the keyboard: it rises under a
+ * pointer (hoverOnlyWhenSupported: not on a touch screen), gives under a
+ * press, is ringed when its link has the keyboard's focus, and holds still
+ * for anyone who asks for less motion. Its shadow under the pointer and its
+ * picture's growth are app.css's (`.cm-card[data-cm-lift]`).
  */
-function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
-  const t = useMessages('auth');
-  const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
-  const people = app.active_users || 0;
-  // A picture whose file is gone falls back to the icon on its colour, as a
-  // project with no picture shows, rather than leaving a broken image.
-  const [pictureFailed, setPictureFailed] = useState(false);
-  useEffect(() => { setPictureFailed(false); }, [app.illustration_url, app.illustration_dark_url]);
-  const picture = !!app.illustration_url && !pictureFailed;
-  return (
-    <span
-      data-guest-card-cover=""
-      className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-zinc-200 shadow-[inset_0_-1px_0_var(--app-sheet-line)] dark:bg-zinc-800"
-      style={picture ? undefined : { background: color }}
-    >
-      {picture ? (
-        <>
-          <img
-            src={app.illustration_url}
-            alt=""
-            loading={eager ? 'eager' : 'lazy'}
-            draggable={false}
-            onError={() => setPictureFailed(true)}
-            className={cn('absolute inset-0 h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100', app.illustration_dark_url ? 'dark:hidden' : '')}
-          />
-          {app.illustration_dark_url ? (
-            <img
-              src={app.illustration_dark_url}
-              alt=""
-              loading={eager ? 'eager' : 'lazy'}
-              draggable={false}
-              onError={() => setPictureFailed(true)}
-              className="absolute inset-0 hidden h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100 dark:block"
-            />
-          ) : null}
-          {app.preview_url ? <CardPreview src={app.preview_url} /> : null}
-        </>
-      ) : (
-        <>
-          <span aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(120%_90%_at_22%_12%,rgba(255,255,255,0.28),rgba(255,255,255,0)_58%)]" />
-          {app.icon_url ? (
-            <img
-              src={app.icon_url}
-              alt=""
-              aria-hidden="true"
-              loading={eager ? 'eager' : 'lazy'}
-              draggable={false}
-              className="pointer-events-none absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 scale-[1.6] rounded-full object-cover opacity-70 blur-[26px] saturate-[1.6] transition duration-300 ease-out group-hover:scale-[2] group-hover:opacity-95 motion-reduce:transition-none"
-            />
-          ) : null}
-          <span className="relative transition-transform duration-300 ease-out group-hover:-translate-y-[3px] group-hover:scale-[1.07] motion-reduce:transition-none motion-reduce:group-hover:translate-y-0 motion-reduce:group-hover:scale-100">
-            <GuestIcon app={app} size="lg" eager={eager} className="rounded-[18px] shadow-[0_12px_26px_rgba(0,0,0,0.3),0_0_0_1px_rgba(255,255,255,0.28)]" />
-          </span>
-        </>
-      )}
-      {isNew(app) ? (
-        <span className="absolute start-2 top-2 rounded-full bg-white px-2 py-0.5 text-xs font-bold text-zinc-950 dark:bg-zinc-900 dark:text-white">
-          {t('auth:guest.card.new')}
-        </span>
-      ) : null}
-      {people >= MIN_PEOPLE ? (
-        <span
-          data-guest-card-people=""
-          aria-hidden="true"
-          className="absolute bottom-2 start-2 inline-flex h-6 items-center gap-1 rounded-full bg-white/90 ps-1.5 pe-2 text-xs font-[650] tabular-nums text-zinc-800 shadow-[0_1px_3px_rgba(0,0,0,0.14)]"
-        >
-          <UserIcon className="h-3.5 w-3.5" />
-          {people.toLocaleString()}
-        </span>
-      ) : null}
-      <span
-        aria-hidden="true"
-        className="absolute bottom-2 end-2 flex h-8 w-8 translate-x-[calc(-0.5rem*var(--rtl-sign,1))] items-center justify-center rounded-full bg-white/95 text-zinc-900 opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.2)] transition duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-has-[a:focus-visible]:translate-x-0 group-has-[a:focus-visible]:opacity-100 motion-reduce:transition-none"
-      >
-        <ArrowRightShortIcon className="h-[18px] w-[18px]" />
-      </span>
-    </span>
-  );
-}
+const CARD_MOTION = 'cm-card group transition-[transform,box-shadow] duration-150 ease-out hover:-translate-y-1 active:scale-[0.97] active:duration-75 has-[a:focus-visible]:outline has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-[3px] has-[a:focus-visible]:outline-violet-600 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100 dark:has-[a:focus-visible]:outline-violet-400';
 
 /**
- * A card. Its name is its one link, stretched over the whole card, so the
- * picture, the sentence and the gaps between them all open the project's
- * page, and nothing is a link inside a link. The name's own box is 44px
- * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
- * finger has a real target while the card looks exactly as it did.
+ * A card: the community card (../communities/card.tsx). Its name is its one
+ * link, stretched over the whole card, so the picture, the words and the
+ * gaps between them all open the project's page, and nothing is a link
+ * inside a link. Over the picture: "New" for a community made lately, the
+ * arrow a pointer or the keyboard brings in, and a preview loop where its
+ * group made one (./card-preview.tsx), only over a picture that is shown.
+ * `lead` is one of Featured's first row, drawn larger.
  */
 export function Card({ app, eager, featured = false, lead = false }: {
   app: GuestApp;
   eager: boolean;
   featured?: boolean;
-  /** One of the first featured communities on a visitor's landing: drawn large, with its members and changes. */
+  /** One of Featured's larger first row. */
   lead?: boolean;
 }) {
   const t = useMessages('auth');
-  const th = useMessages('home');
-  const people = app.active_users || 0;
-  const members = app.member_count || 0;
-  const changes = app.merged_count || 0;
-  const stats = [members > 0 ? th('home:join.members', { count: members }) : null, changes > 0 ? t('auth:guest.card.changes', { count: changes }) : null].filter(Boolean).join(' · ');
   return (
     <article
       data-guest-card={featured ? undefined : app.slug}
       data-guest-featured={featured ? app.slug : undefined}
       data-guest-lead={lead ? '' : undefined}
-      className="group relative flex min-w-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_1px_2px_rgba(0,0,0,0.05),0_10px_22px_-12px_rgba(0,0,0,0.22)] transition-[transform,box-shadow] duration-150 ease-out hover:-translate-y-1 hover:shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_2px_4px_rgba(0,0,0,0.05),0_22px_36px_-14px_rgba(0,0,0,0.34)] active:scale-[0.97] active:duration-75 has-[a:focus-visible]:outline has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-[3px] has-[a:focus-visible]:outline-violet-600 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100 dark:bg-zinc-900 dark:has-[a:focus-visible]:outline-violet-400"
+      data-cm-size={lead ? 'lead' : undefined}
+      data-cm-lift=""
+      className={CARD_MOTION}
     >
-      <CardCover app={app} eager={eager} />
-      <span className="flex flex-1 flex-col px-3 pb-3.5 pt-2.5">
-        {/* The pill on the picture is hidden from a screen reader, which
-            hears its number in words with the name instead. */}
-        <ProjectLink
-          slug={app.slug}
-          data-guest-card-link=""
-          aria-label={people >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people }) : undefined}
-          className="line-clamp-2 break-words text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
-        >
-          {app.name}
-        </ProjectLink>
-        {app.description ? (
-          // No `block` beside line-clamp-2: it comes later in the stylesheet,
-          // undid the clamp's display and let the text run to four lines
-          // (#5851), so cards in a row grew apart.
-          <span data-guest-card-about="" className="mt-0.5 line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
-            {app.description}
-          </span>
-        ) : null}
-        {lead && stats ? (
-          <span data-guest-card-stats="" className="mt-auto pt-2 text-[13px] leading-[18px] font-medium text-zinc-600 dark:text-zinc-300">{stats}</span>
-        ) : null}
-      </span>
+      <CommunityCardContent
+        community={communityFromDirectory(app)}
+        eager={eager}
+        pictureAttrs={{ 'data-guest-card-cover': '' }}
+        aboutAttrs={{ 'data-guest-card-about': '' }}
+        picture={(shown) => (
+          <>
+            {shown && app.preview_url ? <CardPreview src={app.preview_url} /> : null}
+            {isNew(app) ? (
+              <span className="absolute start-2 top-2 rounded-full bg-white px-2 py-0.5 text-xs font-bold text-zinc-950 dark:bg-zinc-900 dark:text-white">
+                {t('auth:guest.card.new')}
+              </span>
+            ) : null}
+            <span
+              aria-hidden="true"
+              className="absolute bottom-2 end-2 flex h-8 w-8 translate-x-[calc(-0.5rem*var(--rtl-sign,1))] items-center justify-center rounded-full bg-white/95 text-zinc-900 opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.2)] transition duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-has-[a:focus-visible]:translate-x-0 group-has-[a:focus-visible]:opacity-100 motion-reduce:transition-none"
+            >
+              <ArrowRightShortIcon className="h-[18px] w-[18px]" />
+            </span>
+          </>
+        )}
+        name={(
+          <ProjectLink
+            slug={app.slug}
+            data-guest-card-link=""
+            className="cm-card-name outline-none after:absolute after:inset-0 after:z-[1] after:content-['']"
+          >
+            {app.name}
+          </ProjectLink>
+        )}
+      />
     </article>
   );
 }

@@ -4569,35 +4569,28 @@ html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-h
   color: var(--site-label);
   font-weight: 500;
 }
-#auth-landing-screen [data-guest-discover] :is([data-guest-card], [data-guest-featured]) {
+/* A community's card is the community card (A COMMUNITY'S CARD, approved
+   20 Nov 2026) in the site's own colours: its white panel on an ink outline
+   with a hard edge under it, 14px corners, its ink and muted words, and its
+   name in the serif at the card's own size. The larger first row of
+   Featured is the card's own larger size. */
+#auth-landing-screen [data-guest-discover] {
+  --cm-bg: var(--site-panel);
+  --cm-radius: 14px;
+  --cm-edge: 0 2px 0 var(--site-line);
+  --cm-edge-on: 0 2px 0 var(--site-line);
+  --cm-edge-lift: 0 2px 0 var(--site-line), 0 22px 36px -14px rgb(0 0 0 / 0.34);
+  --cm-ink: var(--site-ink);
+  --cm-muted: var(--site-muted);
+  --cm-body: var(--site-muted);
+}
+#auth-landing-screen [data-guest-discover] .cm-card {
   border: 1px solid var(--site-line);
-  border-radius: 14px;
-  background-color: var(--site-panel);
-  box-shadow: 0 2px 0 var(--site-line);
 }
-#auth-landing-screen [data-guest-discover] :is([data-guest-card], [data-guest-featured]) > span:last-child {
-  border-top: 1px solid var(--site-line);
-}
-/* The first featured communities, large: a taller picture, the name a size
-   up, two lines of what it is, and how many members and changes. */
-#auth-landing-screen [data-guest-discover] [data-guest-lead] > span:first-child { aspect-ratio: 16 / 9; }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] > span:last-child { padding: 14px 16px 16px; min-height: 132px; }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-link] { font-size: 24px; line-height: 29px; }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-about] { margin-top: 4px; font-size: 15px; line-height: 21px; color: var(--site-muted); }
-#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-stats] { color: var(--site-label); }
 #auth-landing-screen [data-guest-discover] [data-guest-card-link] {
   font-family: var(--site-serif);
-  font-size: 19px;
-  line-height: 23px;
   font-weight: 400;
   letter-spacing: -0.005em;
-  color: var(--site-ink);
-}
-#auth-landing-screen [data-guest-discover] [data-guest-card-link]::after {
-  border-radius: 14px;
-}
-#auth-landing-screen [data-guest-discover] [data-guest-card-about] {
-  color: var(--site-muted);
 }
 /* the website's look on the signed-out pages: end */
 
@@ -5924,33 +5917,18 @@ html:not([data-skin]) {
      open, not something asked of the viewer; a shade deeper while pressed. */
   --wip-item-hover: color-mix(in srgb, var(--wip-ink) 5%, transparent);
   --wip-item-press: color-mix(in srgb, var(--wip-ink) 9%, transparent);
-  /* A pinned card's scene: the band's height, how far the icon rises onto it, and the brand kit's six backgrounds it takes in turn. */
+  /* A pinned tile's scene: the band's height, and the brand kit's six backgrounds it takes in turn. */
   --wip-scene-band: 4.75rem;
-  --wip-scene-icon-rise: -2.25rem;
   --wip-scene-1: url('/brand/bg/sky.webp');
   --wip-scene-2: url('/brand/bg/halftone.webp');
   --wip-scene-3: url('/brand/bg/dream.webp');
   --wip-scene-4: url('/brand/bg/stars.webp');
   --wip-scene-5: url('/brand/bg/collage.webp');
   --wip-scene-6: url('/brand/bg/stripes.webp');
-  /* A community's logo: the four glows, each from its heart's colour to its edge's (the product owner's picture, 19 Nov 2026). */
-  --wip-logo-orb-1: rgb(100 28 246) 0%, rgb(34 166 253) 65%, rgb(12 219 249) 90%;
-  --wip-logo-orb-2: rgb(70 178 73) 0%, rgb(160 226 115) 65%, rgb(196 242 129) 90%;
-  --wip-logo-orb-3: rgb(251 25 152) 0%, rgb(251 108 52) 65%, rgb(250 137 16) 90%;
-  --wip-logo-orb-4: rgb(254 176 43) 0%, rgb(253 215 87) 65%, rgb(255 231 103) 90%;
-  /* The same four, soft: each colour two thirds of the way to white, for a community's own logo. */
-  --wip-logo-soft-1: rgb(203 185 252) 0%, rgb(181 225 254) 65%, rgb(174 243 253) 100%;
-  --wip-logo-soft-2: rgb(193 229 194) 0%, rgb(223 245 208) 65%, rgb(235 251 213) 100%;
-  --wip-logo-soft-3: rgb(254 178 221) 0%, rgb(254 206 187) 65%, rgb(253 216 175) 100%;
-  --wip-logo-soft-4: rgb(255 228 184) 0%, rgb(254 241 199) 65%, rgb(255 247 204) 100%;
-  /* One of a community's apps, small, in the row of them. */
-  --wip-app-chip: 1.5rem;
-  --wip-app-chip-radius: 0.375rem;
   /* A pinned community's card on the Communities page: the least width a row
-     of them gives each, and under 1024px, where it is the small tile. */
+     of them gives each, and under 768px, where it is the small tile. */
   --wip-pin-card: 16.5rem;
   --wip-pin-tile: 6.25rem;
-  --wip-face: 1.375rem;        /* a person's face on a card's foot */
   --wip-item-icon: 2.25rem;
   --wip-item-icon-radius: 0.5625rem; /* 9px, the same quarter of a small icon's side */
   --wip-ink: var(--text-primary);
@@ -5959,8 +5937,6 @@ html:not([data-skin]) {
   --wip-pill-ink: var(--wip-cta-ink);
   --wip-count-bg: var(--accent-tint);
   --wip-count-ink: var(--accent-tint-ink);
-  /* A community card's own colour, lifted: lighter and fuller, so a row of them is not a row of dark blocks */
-  --wip-cover-lift: brightness(1.5) saturate(1.35);
   /* A challenge picture's band: how much of its pale tone it wears and, under
      that, how much of the tone's deeper line colour over the card. The light
      is all pale tone; the dark is none of it and a third of the deep one,
@@ -6097,10 +6073,9 @@ html:not([data-skin]) { --wip-cols: 1; }
 @media (min-width: 640px) { html:not([data-skin]) { --wip-cols: 2; } }
 @media (min-width: 1024px) { html:not([data-skin]) { --wip-cols: 4; } }
 /* In the dark (either config): an icon's tile is a step lighter than the
-   card and edged, so a dark picture stays a shape; a community's colour is
-   lifted less; a challenge's band wears a third of its tone's deep colour. */
+   card and edged, so a dark picture stays a shape; a challenge's band wears
+   a third of its tone's deep colour. */
 html:not([data-skin]).dark {
-  --wip-cover-lift: brightness(1.2) saturate(1.25);
   --wip-poster-tone: 0%;
   --wip-poster-deep: 34%;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 14px -4px rgb(0 0 0 / 0.55);
@@ -6686,21 +6661,6 @@ html:not([data-skin]) .home-row > #home-challenges-section { margin-top: calc(va
 html:not([data-skin]) #app-list > .app-card,
 html:not([data-skin]) .wip-search > input,
 html:not([data-skin]) #home-join-section select { border-radius: var(--wip-radius-inner); }
-/* A community's card, and the placeholders that stand for one while it
-   loads, are cards on the page. */
-html:not([data-skin]) #home-join-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
-/* A community's card with no picture of its own wears its colour, which is
-   picked to carry white text elsewhere and is dark for a field this size.
-   Here a copy of that colour lies on it, lifted (lighter and fuller, not
-   washed toward grey), under the glow and the icon, which keep their own
-   strength. (A card with a picture has no colour laid on it, and no lift.) */
-html:not([data-skin]) #home-join-section [data-guest-card-cover][style]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: inherit;
-  filter: var(--wip-cover-lift);
-}
 /* Under a token config, Home's section labels are drawn from the config's
    label tokens (the shell's own label's values unless the config names
    others): the three label lines and Featured's. */
@@ -8088,11 +8048,39 @@ html:not([data-skin]) #communities-screen .home-area-label > span:first-child {
   text-underline-offset: -0.16em;
   text-decoration-skip-ink: none;
 }
-/* A GROUP IS ONE CARD WITH EVERY COMMUNITY IN IT (asked 19 Nov 2026, after
-   a round with a card for each): the look's card, the same air on its four
-   sides as Pinned projects has, and each community a very soft card inside it:
-   a faint tint and no edge. The pointer on it deepens the tint a step;
-   nothing moves. */
+/* THE COMMUNITY CARD IN THIS LOOK (approved 20 Nov 2026; the card is drawn
+   by "A COMMUNITY'S CARD", further down this file): the look's white card on
+   one soft hairline that firms under the pointer, its inks, the link's blue
+   for what went live, and the grid of #6947 (a card at least --wip-pin-card,
+   no more than --wip-cols to a row, a card gap apart). A pinned community is
+   the big card from 768px and a joined one the compact card at every width
+   (features/communities/index.tsx); under 768px a pin is the small tile
+   below. */
+html:not([data-skin]) {
+  --cm-bg: var(--wip-card-bg);
+  --cm-radius: var(--wip-card-radius);
+  --cm-edge: inset 0 0 0 1px var(--wip-soft-line);
+  --cm-edge-on: inset 0 0 0 1px var(--wip-card-line);
+  --cm-edge-lift: inset 0 0 0 1px var(--wip-card-line), 0 2px 4px rgb(0 0 0 / 0.05), 0 22px 36px -14px rgb(0 0 0 / 0.34);
+  --cm-ink: var(--wip-ink);
+  --cm-muted: var(--wip-ink-muted);
+  --cm-body: var(--wip-ink-soft);
+  --cm-link: var(--wip-mark-2-ink);
+  --cm-card-min: var(--wip-pin-card);
+  --cm-gap: var(--wip-card-gap);
+  --cm-cols: var(--wip-cols);
+}
+/* The votes waiting there, on a card's icon as on a tile's: the look's count, ringed in the card's own colour. */
+html:not([data-skin]) #communities-screen .cm-card [data-home-community-votes] {
+  background-color: var(--wip-count-bg);
+  color: var(--wip-count-ink);
+  box-shadow: 0 0 0 2px var(--cm-bg);
+}
+/* A PINNED COMMUNITY'S SMALL TILE, under 768px (asked 19 Nov 2026): a card
+   on the page, one of a grid as many to a row as are at least --wip-pin-tile
+   wide (three on a phone), its picture on a band across its top, its icon
+   half on the band and its name under it. Each a white card on a soft
+   hairline; the pointer on it firms the hairline, and nothing moves. */
 html:not([data-skin]) #communities-screen .communities-grid { padding: var(--wip-cell-pad); gap: var(--wip-col-gap); }
 html:not([data-skin]) #communities-screen .communities-grid > :is(a, button) {
   padding: var(--wip-cell-pad) 0.25rem;
@@ -8100,7 +8088,7 @@ html:not([data-skin]) #communities-screen .communities-grid > :is(a, button) {
   background-color: var(--wip-soft-bg);
   transition: background-color 150ms ease;
 }
-/* On a phone four stand across: the side padding is given to the name, and two lines are held for it so a row's cells are one height. */
+/* On a phone the side padding is given to the name, and two lines are held for it so a row's cells are one height. */
 @media (max-width: 639.98px) {
   html:not([data-skin]) #communities-screen .communities-grid > :is(a, button) { padding-inline: 2px; }
   html:not([data-skin]) #communities-screen .communities-grid > :is(a, button) > .line-clamp-2 { min-height: 2.4em; }
@@ -8135,228 +8123,13 @@ html:not([data-skin]) #communities-screen .communities-grid [data-home-community
   color: var(--wip-count-ink);
   box-shadow: 0 0 0 2px var(--wip-card-bg);
 }
-/* FROM 1024px A CELL SAYS WHAT IS GOING ON THERE, as the brand look's cards
-   do (asked 19 Nov 2026): the icon beside the name and how many members,
-   what it says it is, then, under a hairline, this week: the faces of a few who were there with
-   how many, how many changes went live, or that it was quiet. */
-@media (min-width: 1024px) {
-  html:not([data-skin]) #communities-screen .communities-grid {
-    grid-template-columns: repeat(var(--wip-cols), minmax(0, 1fr));
-    gap: var(--wip-col-gap);
-  }
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto auto auto 1fr;
-    column-gap: var(--wip-tile-gap);
-    row-gap: 0.125rem;
-    align-items: start;
-    padding: var(--wip-cell-pad);
-    text-align: start;
-  }
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .app-icon-tile {
-    /* Home's own icon: its size, its corner and its glyph (asked 19 Nov 2026). */
-    width: var(--wip-icon);
-    height: var(--wip-icon);
-    font-size: var(--wip-icon-glyph);
-  }
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > .line-clamp-2 {
-    grid-area: 1 / 2;
-    align-self: end;
-    font-size: var(--wip-title-size);
-  }
-  /* With no line of facts yet, the name stands beside the icon's middle. */
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community-meta] {
-    display: block;
-    grid-area: 2 / 2;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--wip-body-size);
-    line-height: 1.0625rem;
-    font-variant-numeric: tabular-nums;
-    color: var(--wip-ink-muted);
-  }
-  /* What it is, in its own words, under the head: two lines at most (asked 19 Nov 2026). */
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community-desc] {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-    grid-area: 3 / 1 / auto / -1;
-    min-width: 0;
-    margin-top: 0.625rem;
-    font-size: var(--wip-body-size);
-    line-height: 1.0625rem;
-    color: var(--wip-ink-soft);
-    overflow-wrap: anywhere;
-  }
-  html:not([data-skin]) #communities-screen .communities-grid [data-home-community-detail] {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-    grid-area: 4 / 1 / auto / -1;
-    align-self: end;
-    min-width: 0;
-    margin-top: var(--wip-cell-pad);
-    padding-top: var(--wip-cell-pad);
-    border-top: 1px solid var(--wip-soft-line);
-  }
-  html:not([data-skin]) #communities-screen .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-    min-height: var(--wip-face);
-    font-size: var(--wip-body-size);
-    line-height: 1.0625rem;
-    font-variant-numeric: tabular-nums;
-    color: var(--wip-ink-soft);
-  }
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-words {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-glyph {
-    flex: none;
-    width: var(--wip-face);
-    height: 0.9375rem;
-    color: var(--wip-ink-muted);
-  }
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-quiet { color: var(--wip-ink-muted); }
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-news,
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-news > .home-community-glyph { font-weight: 600; color: var(--wip-mark-2-ink); }
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-people .dev-ws-hero-face {
-    width: var(--wip-face);
-    height: var(--wip-face);
-    margin-inline-end: -0.375rem;
-    overflow: hidden;
-    font-size: 0.625rem;
-    box-shadow: 0 0 0 2px var(--wip-card-bg);
-  }
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
-  html:not([data-skin]) #communities-screen .communities-grid .home-community-people .dev-ws-hero-face > img { width: 100%; height: 100%; object-fit: cover; }
-}
-/* JOINED IS A LIST (19 Nov 2026), as Home's Recent threads are. One
-   community a line: its logo small, its name, how many members (or what it
-   says it is, with the members at the row's end) and this week at the end.
-   A hairline between two rows, two columns from 1024px and three from
-   1280px, and no card or tint of its own. */
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0 var(--wip-row-gap);
-  padding: 0.25rem var(--wip-card-pad);
-}
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid > [data-home-community] {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: var(--wip-tile-gap);
-  row-gap: 0.125rem;
-  min-height: 0;
-  padding: var(--wip-cell-pad) 0.25rem;
-  border-radius: 0;
-  background-color: transparent;
-  box-shadow: inset 0 -1px 0 var(--wip-soft-line);
-  text-align: start;
-}
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child > span:first-child { border-radius: var(--wip-item-icon-radius); }
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] .app-icon-tile {
-  width: var(--wip-item-icon);
-  height: var(--wip-item-icon);
-  border-radius: var(--wip-item-icon-radius);
-  font-size: 1.125rem;
-}
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community] > .line-clamp-2 {
-  grid-area: 1 / 2;
-  align-self: end;
-  min-height: 0;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
-  font-size: var(--wip-title-size);
-  line-height: 1.25;
-}
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> :is([data-home-community-meta], [data-home-community-desc]))) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community-desc],
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community-meta] {
-  display: block;
-  grid-area: 2 / 2;
-  align-self: start;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--wip-body-size);
-  line-height: 1.0625rem;
-  color: var(--wip-ink-muted);
-}
-/* With a sentence of its own, the members go to the row's end, over the week. */
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community]:has(> [data-home-community-desc]) > [data-home-community-meta] { grid-area: 1 / 3; align-self: end; text-align: end; }
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community-detail] {
-  display: flex;
-  flex-direction: row;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  grid-area: 2 / 3;
-  align-self: start;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> [data-home-community-desc])) > [data-home-community-detail] { grid-row: 1 / span 2; align-self: center; }
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-height: 0;
-  font-size: var(--wip-body-size);
-  line-height: 1.0625rem;
-  white-space: nowrap;
-  color: var(--wip-ink-muted);
-}
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-news { font-weight: 600; color: var(--wip-mark-2-ink); }
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-glyph { flex: none; width: 0.9375rem; height: 0.9375rem; }
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face {
-  width: var(--wip-face);
-  height: var(--wip-face);
-  margin-inline-end: -0.375rem;
-  overflow: hidden;
-  font-size: 0.625rem;
-  box-shadow: 0 0 0 2px var(--wip-card-bg);
-}
-html:not([data-skin]) #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
-@media (hover: hover) {
-  html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) #communities-joined-section .communities-grid > [data-home-community]:hover { background-color: var(--wip-soft-bg); }
-}
-@media (min-width: 1024px) {
-  html:not([data-skin]) #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-/* PINNED IS A GRID OF CARDS (20 Nov 2026; until then one row that moved
-   sideways, where a fifth pin was cut off at the edge): each a card on the
-   page with the cell described above inside it (the logo, the name, the
-   members, what it says it is and this week). So the few you chose are large
-   and the many you are in are a list. The cards wrap onto rows, so every pin
-   is in sight and the sections under them move down. A row gives each card
-   at least --wip-pin-card and holds no more than the look's columns
-   (--wip-cols, four from 1024px): four where four fit, fewer as it narrows.
-   Every row is as tall as the tallest, so the cards stay one set, as they
-   were in one row. */
 html:not([data-skin]) #communities-body #communities-pinned-section > .wip-card {
   background-color: transparent;
   box-shadow: none;
 }
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(max(var(--wip-pin-card), (100% - (var(--wip-cols) - 1) * var(--wip-card-gap)) / var(--wip-cols)), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--wip-pin-tile), 1fr));
   grid-auto-rows: 1fr;
   gap: var(--wip-card-gap);
   padding: 0;
@@ -8367,17 +8140,19 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-soft-line);
 }
-/* A PINNED CARD OPENS ON A PICTURE FROM THE BRAND KIT (asked 19 Nov 2026):
-   a band across its top with one of the kit's six backgrounds (the sky, the
-   halftone sun, the dream, the stars, the ruled paper, the torn collage;
-   public/brand/bg, whose README says where they came from), each
-   community its own. The icon stands half on the band, and the words are on
-   the card's own ground under it, so nothing is read over a picture. */
+/* THE BAND: the community's own picture (pinned-communities.tsx `bandStyle`,
+   its dark twin in the dark), over one of the brand kit's six backgrounds
+   (the sky, the halftone sun, the dream, the stars, the ruled paper, the
+   torn collage; public/brand/bg, whose README says where they came from),
+   which shows where it has none or the picture does not load. Each
+   community has its own background (`communityScene`, three on), so a
+   reordered grid keeps every tile's. */
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community] {
   position: relative;
   isolation: isolate;
   overflow: hidden;
   padding-top: calc(var(--wip-scene-band) + var(--wip-cell-pad));
+  --cm-scene: var(--wip-scene-1);
 }
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community]::before {
   content: "";
@@ -8386,90 +8161,40 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
   z-index: -1;
   height: var(--wip-scene-band);
   pointer-events: none;
-  background: var(--wip-scene-1) center / cover no-repeat;
+  background: var(--cm-pic, none) center / cover no-repeat, var(--cm-scene) center / cover no-repeat;
 }
-/* Which one is the community's own (pinned-communities.tsx `communityScene`), three on from its logo's, so the logo stands out on it and a reordered grid keeps every card's picture. */
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="1"]::before { background-image: var(--wip-scene-4); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="2"]::before { background-image: var(--wip-scene-5); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="3"]::before { background-image: var(--wip-scene-6); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="4"]::before { background-image: var(--wip-scene-1); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="5"]::before { background-image: var(--wip-scene-2); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="6"]::before { background-image: var(--wip-scene-3); }
-@media (min-width: 1024px) {
-  html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community] > span:first-child { margin-top: var(--wip-scene-icon-rise); }
+html:not([data-skin]).dark #communities-body #communities-pinned-section .communities-grid > [data-home-community]::before {
+  background-image: var(--cm-pic-dark, var(--cm-pic, none)), var(--cm-scene);
 }
-/* Under 1024px a card is the small tile (its picture, its logo and its name),
-   so a row holds as many as are at least --wip-pin-tile wide: three on a
-   phone, five or more on a tablet. */
-@media (max-width: 1023.98px) {
-  html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid { grid-template-columns: repeat(auto-fill, minmax(var(--wip-pin-tile), 1fr)); }
-}
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="1"] { --cm-scene: var(--wip-scene-4); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="2"] { --cm-scene: var(--wip-scene-5); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="3"] { --cm-scene: var(--wip-scene-6); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="4"] { --cm-scene: var(--wip-scene-1); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="5"] { --cm-scene: var(--wip-scene-2); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="6"] { --cm-scene: var(--wip-scene-3); }
 @media (hover: hover) {
   html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) #communities-pinned-section .communities-grid > :is(a, button):hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
 }
-@media (min-width: 1280px) {
-  html:not([data-skin]) #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-/* A COMMUNITY'S OWN LOGO, AND ITS APPS (asked 19 Nov 2026). A community is
-   not its app: its face on this page is a logo of its own (a square of one
-   soft glow, deep at its heart and light at its edge, always the same one
-   for the same community; pinned-communities.tsx `CommunityLogo`),
-   and the app's icon is one small icon in a row of the community's apps,
-   with two places after it for the apps to come. */
-/* THE EMBLEMS (asked 20 Nov 2026): the logo is one of ten drawings in the kit's four colours, on the card's own quiet
-   ground; the soft glow it replaced is gone. Only these two looks draw a community's own logo (the page's `community`). */
-html:not([data-skin]) {
-  --wip-emblem-1: #ffee6f;
-  --wip-emblem-2: #3090e1;
-  --wip-emblem-3: #a9cf97;
-  --wip-emblem-4: #ff9c8a;
-  --wip-emblem-ground: #fffeea;
-}
-html:not([data-skin]).dark { --wip-emblem-ground: #1d1e1a; }
+/* THE TILE'S ICON is the community's own (asked 20 Nov 2026; until then a
+   drawn emblem): its picture with no ground, or its emoji or initial on a
+   white tile, on the thin light outline the card's icon wears. */
 html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo {
   border-color: transparent;
-  background-color: var(--wip-emblem-ground);
-  background-image: none;
-  box-shadow: inset 0 0 0 1px var(--wip-soft-line);
+  background-color: transparent;
+  box-shadow: 0 0 0 1.5px var(--cm-icon-outline);
   overflow: hidden;
 }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo > .home-community-emblem { display: block; width: 100%; height: 100%; }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app,
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot {
-  flex: none;
-  width: var(--wip-app-chip);
-  height: var(--wip-app-chip);
-  border-radius: var(--wip-app-chip-radius);
+/* An emoji or an initial is on a white tile, which a white card would hide: it takes the compact card's dark hairline. */
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo:not([data-icon="image"]) {
+  background-color: var(--cm-icon-tile);
+  box-shadow: 0 0 0 1px var(--cm-icon-edge);
 }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  font-size: 0.875rem;
-  box-shadow: inset 0 0 0 1px var(--wip-icon-edge);
-}
-/* The places for the apps to come are small squares of the logo's glows (asked 19 Nov 2026). */
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-1)); }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="2"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-2)); }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="3"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-3)); }
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="4"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-4)); }
-/* Where a community is a card (from 1024px), its apps end the card's foot, on this week's line. */
-@media (min-width: 1024px) {
-  html:not([data-skin]) #communities-screen #communities-pinned-section .communities-grid [data-home-community] > .home-community-apps {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    grid-area: 4 / 1 / auto / -1;
-    justify-self: end;
-    align-self: end;
-  }
-  /* That line stops short of the apps (the one app and the two places for
-     those to come), so in a card as narrow as four across makes it a long
-     count is cut short instead of running under them. */
-  html:not([data-skin]) #communities-screen #communities-pinned-section .communities-grid [data-home-community-detail] > :last-child {
-    padding-inline-end: calc(3 * var(--wip-app-chip) + 2 * 0.375rem + 0.5rem);
-  }
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
 }
 /* EVERY COMMUNITY THERE IS TO JOIN, under Joined, as Home lists them (asked
    19 Nov 2026): the same section (features/home/communities-to-join.tsx)
@@ -8483,14 +8208,6 @@ html:not([data-skin]) #communities-all-section > [data-home-join-featured] {
 }
 html:not([data-skin]) #communities-screen #communities-all-section > .home-area-label { padding-top: var(--wip-row-gap); }
 html:not([data-skin]) #communities-all-section select { border-radius: var(--wip-radius-inner); }
-html:not([data-skin]) #communities-all-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
-html:not([data-skin]) #communities-all-section [data-guest-card-cover][style]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: inherit;
-  filter: var(--wip-cover-lift);
-}
 html:not([data-skin]) #communities-all-section [data-home-join-featured] > h3 {
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
@@ -9264,6 +8981,333 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
 .home-main {
   min-width: 0;
 }
+
+/* ── A COMMUNITY'S CARD ("New, lighter", approved 20 Nov 2026) ────────────
+   frontend/src/features/communities/card.tsx draws it wherever a community
+   is a card. The big card: its picture first, edge to edge and 16:9 (one of
+   the brand kit's six backgrounds where it has none, `data-cm-scene`), the
+   icon standing mostly below the picture's lower edge on a thin light
+   outline, the name over how many members beside it, what it says it is in
+   two lines at most, then this week on one line, which follows the words.
+   The compact card (`data-cm-size="compact"`) is the same card with the
+   picture taken off. Every value a look may draw its own way is a --cm-*
+   token set on <html>: these are the shell's own, and the standard look and
+   the brand look each set theirs. */
+:root {
+  --cm-bg: var(--dc-sheet-solid);
+  --cm-radius: 16px;
+  /* At rest, under the pointer on a card that opens a place (a hairline a
+     step firmer), and under the pointer on one that lifts off the page. */
+  --cm-edge: inset 0 0 0 1px var(--app-sheet-line);
+  --cm-edge-on: inset 0 0 0 1px var(--border);
+  --cm-edge-lift: inset 0 0 0 1px var(--app-sheet-line), 0 2px 4px rgb(0 0 0 / 0.05), 0 22px 36px -14px rgb(0 0 0 / 0.34);
+  --cm-ink: var(--text-primary);
+  --cm-muted: var(--text-muted);
+  --cm-body: var(--text-secondary);
+  --cm-link: var(--accent);
+  /* The small words: members, what it is, this week. */
+  --cm-small: 12px;
+  --cm-small-line: 17px;
+  /* The grid: the least a card is given, the gap, and the most to a row. */
+  --cm-card-min: 264px;
+  --cm-gap: 16px;
+  --cm-cols: 1;
+  /* The icon: the outline round it on a picture, its edge on a white card, and the tile under an emoji. */
+  --cm-icon-outline: rgb(255 255 255 / 0.85);
+  --cm-icon-edge: rgb(0 0 0 / 0.08);
+  --cm-icon-tile: #ffffff;
+  /* What a picture stands on while it loads. */
+  --cm-pic-ground: rgb(0 0 0 / 0.05);
+}
+@media (min-width: 640px) { :root { --cm-cols: 2; } }
+@media (min-width: 1024px) { :root { --cm-cols: 4; } }
+.dark {
+  --cm-icon-edge: rgb(255 255 255 / 0.14);
+  --cm-icon-tile: #2a2a2d;
+  --cm-pic-ground: rgb(255 255 255 / 0.08);
+}
+/* A row gives each card at least --cm-card-min and holds no more than
+   --cm-cols: four where four fit, fewer as it narrows. The cards of a row
+   share its height, each with its words at the top; a row is as tall as
+   its own tallest card, so one long name does not stretch every row. */
+.cm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(var(--cm-card-min), (100% - (var(--cm-cols) - 1) * var(--cm-gap)) / var(--cm-cols)), 1fr));
+  gap: var(--cm-gap);
+}
+/* Joined on a phone: one compact card to a line, close together. */
+@media (max-width: 767.98px) {
+  .cm-grid[data-cm-grid="joined"] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+.cm-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--cm-radius);
+  background-color: var(--cm-bg);
+  box-shadow: var(--cm-edge);
+  color: var(--cm-ink);
+  text-align: start;
+  text-decoration: none;
+  transition: box-shadow 150ms ease;
+}
+/* A card that opens a place: its edge a step firmer under the pointer, but
+   not while the page is being edited. */
+@media (hover: hover) {
+  a.cm-card:hover { box-shadow: var(--cm-edge-on); }
+  [data-editing] a.cm-card:hover { box-shadow: var(--cm-edge); }
+}
+.cm-card-pic {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--cm-pic-ground) center / cover no-repeat;
+}
+.cm-card-pic[data-cm-scene="1"] { background-image: url('/brand/bg/sky.webp'); }
+.cm-card-pic[data-cm-scene="2"] { background-image: url('/brand/bg/halftone.webp'); }
+.cm-card-pic[data-cm-scene="3"] { background-image: url('/brand/bg/dream.webp'); }
+.cm-card-pic[data-cm-scene="4"] { background-image: url('/brand/bg/stars.webp'); }
+.cm-card-pic[data-cm-scene="5"] { background-image: url('/brand/bg/collage.webp'); }
+.cm-card-pic[data-cm-scene="6"] { background-image: url('/brand/bg/stripes.webp'); }
+.cm-card-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+.cm-card-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0 12px 14px;
+}
+.cm-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+/* The icon and what is drawn on it (the votes waiting, the edit discs). It
+   rises 14px over the picture's lower edge and stands above it. */
+.cm-card-face {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  margin-top: -14px;
+}
+.cm-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border-radius: 14px;
+  box-shadow: 0 0 0 1.5px var(--cm-icon-outline);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cm-muted);
+}
+/* No ground under a picture: an emoji or an initial is on a white tile. */
+.cm-card-icon:not([data-icon="image"]) { background-color: var(--cm-icon-tile); }
+.cm-card-icon > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
+}
+.cm-card-icon > span:not(.app-icon-wait) { font-size: inherit; }
+.cm-card-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 6px;
+}
+.cm-card-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--cm-ink);
+}
+.cm-card-members {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--cm-small);
+  line-height: var(--cm-small-line);
+  font-variant-numeric: tabular-nums;
+  color: var(--cm-muted);
+}
+.cm-card-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 9px;
+  font-size: var(--cm-small);
+  line-height: var(--cm-small-line);
+  color: var(--cm-body);
+}
+/* This week, 12px under the words. The dot between its two parts is drawn
+   before each, in the 14px before it; the line starts 14px early and its
+   box cuts that off, so a line (the first, or one that wraps) never starts
+   with a dot. */
+.cm-card-week {
+  display: block;
+  overflow: hidden;
+  margin-top: 12px;
+  font-size: var(--cm-small);
+  line-height: var(--cm-small-line);
+  font-variant-numeric: tabular-nums;
+  color: var(--cm-body);
+}
+.cm-week-in {
+  display: flex;
+  flex-wrap: wrap;
+  margin-inline-start: -14px;
+}
+.cm-week-in > span {
+  position: relative;
+  padding-inline-start: 14px;
+}
+.cm-week-in > span::before {
+  content: "\00B7";
+  content: "\00B7" / "";
+  position: absolute;
+  inset-inline-start: 5px;
+  font-weight: 400;
+  color: var(--cm-muted);
+}
+.cm-week-live {
+  font-weight: 600;
+  color: var(--cm-link);
+}
+/* Under 640px: two glyphs and their numbers, 12px apart, always one line. */
+.cm-week-glyphs {
+  display: none;
+  align-items: center;
+  gap: 12px;
+}
+.cm-week-glyphs > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cm-week-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+@media (max-width: 639.98px) {
+  .cm-card .cm-week-words { display: none; }
+  .cm-card .cm-week-glyphs { display: flex; }
+}
+@media (min-width: 640px) {
+  .cm-week-sr { display: none; }
+}
+/* FEATURED'S FIRST ROW, LARGER (asked 20 Nov 2026), signed in or out:
+   features/communities/card.tsx `useLeadCount` decides how many (one fewer
+   than a row of the rest, three at most; the whole width on a phone) and
+   sets --cm-lead-cols; the rest of Featured is the grid under it. */
+.cm-grid[data-cm-grid="lead"] { grid-template-columns: repeat(var(--cm-lead-cols, 3), minmax(0, 1fr)); }
+.cm-grid[data-cm-grid="lead"] + .cm-grid { margin-top: var(--cm-gap); }
+.cm-card[data-cm-size="lead"] .cm-card-body { padding: 0 16px 18px; }
+.cm-card[data-cm-size="lead"] .cm-card-head { gap: 14px; }
+.cm-card[data-cm-size="lead"] .cm-card-face { margin-top: -18px; }
+.cm-card[data-cm-size="lead"] .cm-card-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 17px;
+  font-size: 36px;
+}
+.cm-card[data-cm-size="lead"] .cm-card-id { padding-top: 8px; }
+.cm-card[data-cm-size="lead"] .cm-card-name { font-size: 18px; line-height: 22px; }
+.cm-card[data-cm-size="lead"] :is(.cm-card-members, .cm-card-desc, .cm-card-week) { font-size: 14px; line-height: 20px; }
+.cm-card[data-cm-size="lead"] .cm-card-desc { margin-top: 10px; }
+/* A PHONE (under 640px): two cards to a row, 12px apart, each a size down
+   (the icon 44px, 11px over the picture's edge, the name 14px); Featured's
+   first card the whole width, its icon 60px. */
+@media (max-width: 639.98px) {
+  .cm-grid:is([data-cm-grid="join"], [data-cm-grid="lead"]) { gap: 12px; }
+  .cm-grid[data-cm-grid="lead"] + .cm-grid { margin-top: 12px; }
+  .cm-grid[data-cm-grid="join"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cm-grid[data-cm-grid="join"] .cm-card-body { padding: 0 10px 12px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-head { gap: 9px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-face { margin-top: -11px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 11px;
+    font-size: 24px;
+  }
+  .cm-grid[data-cm-grid="join"] .cm-card-id { gap: 1px; padding-top: 5px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-name { font-size: 14px; line-height: 17px; }
+  .cm-card[data-cm-size="lead"] .cm-card-face { margin-top: -15px; }
+  .cm-card[data-cm-size="lead"] .cm-card-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 15px;
+  }
+  .cm-card[data-cm-size="lead"] .cm-card-name { font-size: 17px; line-height: 21px; }
+}
+/* A card that lifts off the page under the pointer (Discover's: the card
+   rises by its own classes, ../guest/guest-discover.tsx), onto a shadow,
+   its picture growing a little; still for anyone who asks for less motion. */
+@media (hover: hover) {
+  .cm-card[data-cm-lift]:hover { box-shadow: var(--cm-edge-lift); }
+  .cm-card[data-cm-lift] .cm-card-img { transition: transform 300ms ease-out; }
+  .cm-card[data-cm-lift]:hover .cm-card-img { transform: scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-card[data-cm-lift] .cm-card-img { transition: none; }
+  .cm-card[data-cm-lift]:hover .cm-card-img { transform: none; }
+}
+:where(html[data-motion="reduce"]) .cm-card[data-cm-lift] .cm-card-img { transition: none; }
+:where(html[data-motion="reduce"]) .cm-card[data-cm-lift]:hover .cm-card-img { transform: none; }
+/* A card held in place while the list is read: the card's ground, its
+   picture's shape, and about as tall as a card's words. */
+.cm-card-skel .cm-card-pic { background-color: var(--cm-pic-ground); }
+.cm-card-skel-body { display: block; height: 130px; }
+.cm-card-skel[data-cm-size="lead"] .cm-card-skel-body { height: 150px; }
+@media (max-width: 639.98px) {
+  .cm-grid[data-cm-grid="join"] .cm-card-skel-body { height: 110px; }
+}
+/* The compact card: the icon smaller, on a dark hairline (it sits on the
+   card's own white), beside the name and the members, centred. */
+.cm-card[data-cm-size="compact"] { padding: 12px; }
+.cm-card[data-cm-size="compact"] .cm-card-head { align-items: center; }
+.cm-card[data-cm-size="compact"] .cm-card-face { margin-top: 0; }
+.cm-card[data-cm-size="compact"] .cm-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  box-shadow: 0 0 0 1px var(--cm-icon-edge);
+  font-size: 24px;
+}
+.cm-card[data-cm-size="compact"] .cm-card-id { padding-top: 0; }
 
 /* THE COMMUNITIES TAB'S PAGE (features/communities/index.tsx, `#communities`).
    The communities you pinned and the others you are in, as the tiles Home's
@@ -31720,27 +31764,8 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .app-icon-tile,
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .home-discover-card { border-color: var(--bl-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-discover { background: var(--bl-card); box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home); }
-@media (min-width: 1280px) {
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community] { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto 1fr; column-gap: 14px; row-gap: 2px; align-items: start; padding: 14px; border-radius: 18px; text-align: start; background-color: var(--bl-card); box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift); transition: box-shadow 150ms ease; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community]:hover { box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community] > :first-child { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community] > :first-child > span:first-child { border-radius: 17px; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community] .app-icon-tile { width: 44px; height: 44px; border-radius: 13px; font-size: 20px; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community-votes] { top: -7px; inset-inline-end: -5px; min-width: 20px; height: 20px; padding: 0 5px; font-size: 11px; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community] > .line-clamp-2 { grid-column: 2; grid-row: 1; align-self: end; font-size: 15px; font-weight: 650; line-height: 19px; color: var(--text-primary); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community-meta] { display: block; grid-column: 2; grid-row: 2; align-self: start; min-width: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid [data-home-community-detail] { display: flex; flex-direction: column; gap: 6px; grid-column: 1 / -1; grid-row: 3; align-self: end; min-width: 0; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--app-sheet-line); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 22px; font-size: 13px; line-height: 18px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-words { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-glyph { flex: none; width: 22px; height: 15px; color: var(--text-muted); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-news { font-weight: 600; color: var(--bl-sky); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-quiet { color: var(--text-muted); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-news > .home-community-glyph { color: var(--bl-sky); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-people .dev-ws-hero-face { width: 22px; height: 22px; margin-inline-end: -6px; overflow: hidden; font-size: 10px; box-shadow: 0 0 0 2px var(--bl-card); }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
-  html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .communities-grid .home-community-people .dev-ws-hero-face > img { width: 100%; height: 100%; object-fit: cover; }
-}
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #dev-topic-thread { --cm-bg: var(--bl-card); --cm-radius: 18px; --cm-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift); --cm-edge-on: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home); --cm-edge-lift: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home); --cm-ink: var(--text-primary); --cm-muted: var(--text-muted); --cm-body: var(--text-secondary); --cm-link: var(--bl-sky); --cm-small: 13px; --cm-small-line: 18px; --cm-card-min: 212px; --cm-gap: 14px; }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .cm-card [data-home-community-votes] { top: -7px; inset-inline-end: -5px; min-width: 20px; height: 20px; padding: 0 5px; font-size: 11px; }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.messages-composer-card, .gc-composer-card) { background: var(--bl-raise); box-shadow: var(--bl-field-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card:focus-within { box-shadow: var(--bl-field-edge), 0 0 0 2px var(--accent); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .platform-tab-badge { background: var(--thread-ff8a78); color: var(--thread-121a0e); font-variant-numeric: tabular-nums; }
@@ -34024,163 +34049,43 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen .home-main > #home-join-section {
   order: 6;
 }
+/* THE COMMUNITY CARD IN THIS LOOK (approved 20 Nov 2026; the card itself is
+   "A COMMUNITY'S CARD", earlier in this file): the look's own card, white
+   on the cream, 18px corners, its inset hairline and its lift (a stronger
+   lift under the pointer), its green-black inks, the sky for what went
+   live, its 13px small words and a 14px gap. On the Communities page a
+   pinned community is the big card and a joined one the compact card from
+   1280px (features/communities/index.tsx); under that the page keeps its
+   tiles on the group's card. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) {
+  --cm-bg: var(--bl-card);
+  --cm-radius: 18px;
+  --cm-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+  --cm-edge-on: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  --cm-edge-lift: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  --cm-ink: var(--text-primary);
+  --cm-muted: var(--text-muted);
+  --cm-body: var(--text-secondary);
+  --cm-link: var(--bl-sky);
+  --cm-small: 13px;
+  --cm-small-line: 18px;
+  --cm-card-min: 212px;
+  --cm-gap: 14px;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #communities-screen .cm-grid {
+  padding: 6px 0 4px;
+}
+/* The votes waiting sit on the icon's corner, clear of the name beside it
+   (a wider count grows over the icon, not toward the words). */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .cm-card [data-home-community-votes] {
+  top: -7px;
+  inset-inline-end: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  font-size: 11px;
+}
 @media (min-width: 1280px) {
-  /* COMMUNITIES AS PEOPLE PLACES. From 1280px each community on the
-     Communities page is a card of its own on the page, with what
-     pinned-communities.tsx gives it (CommunityDetail; hidden everywhere
-     else). Its head is the icon with the name beside it over how many
-     members (data-home-community-meta), a list row's 15 over 13. Its foot,
-     under a hairline and held to the card's bottom edge so the feet of a
-     row of cards line up, is this week (data-home-community-detail): the
-     faces and how many were active, then how many changes went live, one
-     line each in the same 13px words. A quiet week has no foot.
-     The group's card the tiles sat on is not drawn here: a card on a card
-     was two edges round every community. The cards are the look's own,
-     white on the cream with its lift, and four to a row in Home's column so
-     a foot's words fit on one line beside its faces. (The page's id: the
-     rule that paints the groups' card names one too.) */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #communities-screen .communities-grid {
-    grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
-    gap: 14px;
-    padding: 6px 0 4px;
-    background-color: transparent;
-    box-shadow: none;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto auto 1fr;
-    column-gap: 14px;
-    row-gap: 2px;
-    align-items: start;
-    padding: 14px;
-    border-radius: 18px;
-    text-align: start;
-    background-color: var(--bl-card);
-    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
-    transition: box-shadow 150ms ease;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community]:hover {
-    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
-  }
-  /* The icon, a size down, beside the two lines of the head. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > :first-child {
-    grid-column: 1;
-    grid-row: 1 / span 2;
-    align-self: center;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > :first-child > span:first-child {
-    border-radius: 17px;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] .app-icon-tile {
-    width: 44px;
-    height: 44px;
-    border-radius: 13px;
-    font-size: 20px;
-  }
-  /* The votes waiting sit on the icon's corner, clear of the name beside it
-     (a wider count grows over the icon, not toward the words). */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-votes] {
-    top: -7px;
-    inset-inline-end: -5px;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 5px;
-    font-size: 11px;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > .line-clamp-2 {
-    grid-column: 2;
-    grid-row: 1;
-    align-self: end;
-    font-size: 15px;
-    font-weight: 650;
-    line-height: 19px;
-    color: var(--text-primary);
-  }
-  /* With no members line the name is the head's one line, centred on the icon. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 {
-    grid-row: 1 / span 2;
-    align-self: center;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-meta] {
-    display: block;
-    grid-column: 2;
-    grid-row: 2;
-    align-self: start;
-    min-width: 0;
-    font-size: 13px;
-    line-height: 18px;
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-detail] {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    grid-column: 1 / -1;
-    grid-row: 3;
-    align-self: end;
-    min-width: 0;
-    margin-top: 12px;
-    padding-top: 11px;
-    border-top: 1px solid var(--app-sheet-line);
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    min-height: 22px;
-    font-size: 13px;
-    line-height: 18px;
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-words {
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  /* A glyph leads a line that has no faces, in a 22px box so the words of
-     both lines start on the same edge as the faces' line would. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-glyph {
-    flex: none;
-    width: 22px;
-    height: 15px;
-    color: var(--text-muted);
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news {
-    font-weight: 600;
-    color: var(--bl-sky);
-  }
-  /* A quiet week: the same foot, in the muted ink. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-quiet {
-    color: var(--text-muted);
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news > .home-community-glyph {
-    color: var(--bl-sky);
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face {
-    width: 22px;
-    height: 22px;
-    margin-inline-end: -6px;
-    overflow: hidden;
-    font-size: 10px;
-    box-shadow: 0 0 0 2px var(--bl-card);
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face:last-child {
-    margin-inline-end: 0;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face > img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
   /* RECENT THREADS BESIDE PINNED APPS. From 1280px, while there are recent
      threads to list, the card is a column at Pinned apps' side rather than a
      row under it: the two start on the same line, the column lists as many

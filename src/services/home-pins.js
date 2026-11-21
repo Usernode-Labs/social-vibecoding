@@ -22,16 +22,26 @@ const PINS_MAX = 200;
 
 const fail = (status, body) => { throw Object.assign(new Error(body.error), { status, body }); };
 
-/** The pins, in order, as the Communities page draws them. */
+/**
+ * The pins, in order, as the Communities page draws them. Each carries its
+ * card's picture: the featured illustration its group voted in and its dark
+ * twin, the same two the public directory serves
+ * (public-app-directory.js shapeApp), or null for none. The filters below
+ * are what decide who reads a pin at all, so a private community's picture
+ * reaches its members and nobody else.
+ */
 async function list(db, userId) {
   const { rows } = await db.query(
-    `SELECT slug, name, icon_image_id, icon_emoji, icon_color, is_member FROM (
+    `SELECT slug, name, icon_image_id, icon_emoji, icon_color, is_member, illustration_id, illustration_dark_id FROM (
        SELECT DISTINCT ON (p.community_id) p.position, p.pinned_at,
               a.slug, a.name, a.icon_image_id, a.icon_emoji, a.icon_color,
+              CASE WHEN a.featured_illustration IS NOT NULL THEN ill.id END AS illustration_id,
+              CASE WHEN a.featured_illustration IS NOT NULL THEN ill.dark_id END AS illustration_dark_id,
               EXISTS (SELECT 1 FROM community_members m
                        WHERE m.community_id = p.community_id AND m.user_id = p.user_id) AS is_member
          FROM home_community_pins p
          JOIN apps a ON a.community_id = p.community_id
+         LEFT JOIN app_illustrations ill ON ill.app_id = a.id
         WHERE p.user_id = $1
           AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = p.user_id AND b.app_id = a.id)
           -- A pin made while a project was public says nothing of it once it
@@ -53,6 +63,8 @@ async function list(db, userId) {
     iconEmoji: r.icon_emoji || null,
     iconColor: r.icon_color || null,
     member: !!r.is_member,
+    illustrationUrl: r.illustration_id ? `/app-illustrations/${r.illustration_id}` : null,
+    illustrationDarkUrl: r.illustration_id && r.illustration_dark_id ? `/app-illustrations/${r.illustration_dark_id}` : null,
   }));
 }
 

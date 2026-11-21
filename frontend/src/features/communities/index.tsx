@@ -35,10 +35,17 @@
  *                        else, and on a phone, the last tile of Joined.
  *   Discover             the way to Home's Communities to join.
  *
- * On a wide screen in the brand look each community is a card that says how
- * many members it has, what went live this week and who was active
- * (GET /api/me/home-pins/activity; ../home/pinned-communities.tsx
- * `CommunityDetail`).
+ * THE COMMUNITY CARD (./card.tsx, approved 20 Nov 2026). A community you
+ * pinned is the big card: its picture, its icon, its name over how many
+ * members, what it says it is and this week on one line (the pins' own
+ * picture, GET /api/me/home-pins; the rest from GET
+ * /api/me/home-pins/activity). One you joined is the compact card, its icon
+ * beside its name and members (the joined list's own count), on the same
+ * columns. The standard look (and Standard (WIP)) draws the big cards from
+ * 768px and the compact ones at every width; under 768px a pin is the small
+ * tile, its picture on its band and its own icon on it. The brand look draws
+ * both cards from 1280px, as it drew its cards before, and keeps its tiles
+ * under that. Every other look keeps the tiles.
  *
  * ── The island rules it keeps ──────────────────────────────────────────
  *
@@ -57,6 +64,7 @@ import { PlusIcon, SearchIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useSkin, isKitHome } from '../../lib/skin';
+import { useMinWidth } from '../../lib/use-min-width';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
@@ -66,12 +74,15 @@ import {
 import { CommunitiesToJoin, readDirectory } from '../home/communities-to-join';
 import type { GuestApp } from '../guest/guest-data';
 import { SectionHeading } from '../home/panels/ui';
-import { ActionTile, HEAD_ACTION, NeedsTile, PinTile, useWide } from '../home/pinned-communities';
+import { ActionTile, HEAD_ACTION, NeedsTile, PinTile } from '../home/pinned-communities';
 import { matchesQuery } from '../home/use-home-query';
 import { WipCard, WipCta, WipHeadMore } from '../home/wip-kit';
 import { communityScopeStore } from '../workshop/community-scope';
+import { CommunityPageCard, type CardCommunity } from './card';
 
 const GRID = 'communities-grid grid grid-cols-4 gap-x-1 gap-y-4 px-1 pt-2 pb-2';
+/** A group drawn as community cards (./card.tsx): app.css `.cm-grid` lays them out. */
+const CARDS = 'cm-grid';
 
 /**
  * How many communities a group shows folded under Standard (WIP): three rows
@@ -121,16 +132,38 @@ export function CommunitiesScreen() {
   // their Home has the Needs you card and New project as a filled button, so
   // this page takes the same button and leaves the Needs you tile out.
   const kit = wip || brand;
-  const wide = useWide();
-  // THE CARDS (Drea's review of #6699): in the brand look on a wide screen
-  // each community says what is going on there. Read only where it is drawn.
-  // Standard (WIP) says how many members on each tile, at every width it draws a row (app.css).
-  const cards = (brand && wide) || wip;
+  // THE COMMUNITY CARD (see the header): a pin is the big card from 768px
+  // under the standard look and from 1280px under the brand look, and a
+  // joined community the compact card wherever its look draws cards. Read
+  // after mount only (useMinWidth), as the look is.
+  const wideCards = useMinWidth(768);
+  const brandCards = useMinWidth(1280);
+  const pinCards = wip ? wideCards : brand && brandCards;
+  const joinCards = wip || (brand && brandCards);
+  // What a pinned card says beyond its name, read only where one is drawn.
   const activity = useStoreState(homePinsActivityStore);
-  const listKey = `${state.pins.map((p) => p.slug).join(',')}|${state.joined.map((c) => c.slug).join(',')}`;
+  const pinKey = state.pins.map((p) => p.slug).join(',');
   useEffect(() => {
-    if (cards && shown && state.ready && listKey !== '|') void loadHomePinsActivity();
-  }, [cards, shown, state.ready, listKey]);
+    if (pinCards && shown && state.ready && pinKey) void loadHomePinsActivity();
+  }, [pinCards, shown, state.ready, pinKey]);
+  // The joined list's member counts: the compact card's second line, and a
+  // pinned card's while its activity is on its way.
+  const joinedMembers = useMemo(() => new Map(state.joined.map((c) => [c.slug, c.member_count])), [state.joined]);
+  const pinCard = (pin: HomePin): CardCommunity => {
+    const week = activity.bySlug[pin.slug];
+    return {
+      slug: pin.slug,
+      name: pin.name,
+      iconUrl: pin.iconUrl,
+      iconEmoji: pin.iconEmoji,
+      pictureUrl: pin.illustrationUrl,
+      pictureDarkUrl: pin.illustrationDarkUrl,
+      members: week ? week.members : joinedMembers.get(pin.slug),
+      description: week?.description,
+      activeWeek: week?.activeWeek,
+      liveWeek: week?.liveWeek,
+    };
+  };
   // Leaving the page ends an edit and a search: it opens as it was first seen.
   useEffect(() => { if (!shown) { setEditing(false); setQuery(''); setOpen({ pinned: false, joined: false }); } }, [shown]);
   const q = query.trim();
@@ -160,9 +193,14 @@ export function CommunitiesScreen() {
     const on = new Set(state.pins.map((p) => p.slug));
     return state.joined
       .filter((c) => !on.has(c.slug))
-      .map((c) => ({ slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null, iconColor: c.icon_color || null }))
+      .map((c) => ({
+        slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null, iconColor: c.icon_color || null,
+        members: c.member_count,
+      }))
       .filter((c) => matchesQuery(q, c.name, c.slug));
   }, [state.joined, state.pins, q]);
+  /** A joined community as the pin a + makes of it. */
+  const pinOf = ({ members: _members, ...c }: (typeof joined)[number]) => ({ ...c, member: true } as HomePin);
   const say = (name: string) => ({
     pinned: th('home:communities.pinned', { community: name }),
     unpinned: th('home:communities.unpinned', { community: name }),
@@ -260,19 +298,26 @@ export function CommunitiesScreen() {
             {groupLabel('pinned', t('communities:page.pinned'), pinned.length)}
           </SectionHeading>
           <WipCard on={wip}>
-            <div className={GRID}>
+            <div className={pinCards ? CARDS : GRID} data-cm-grid={pinCards ? 'pinned' : undefined}>
               {needsTile ? <NeedsTile count={needs} /> : null}
-              {pinnedShown.map((pin) => (
+              {pinnedShown.map((pin) => (pinCards ? (
+                <CommunityPageCard
+                  key={pin.slug}
+                  community={pinCard(pin)}
+                  votes={state.owed[pin.slug] || 0}
+                  editing={editing}
+                  onUnpin={() => { void setHomePin(pin, false, say(pin.name)); }}
+                />
+              ) : (
                 <PinTile
                   key={pin.slug}
                   pin={pin}
                   votes={state.owed[pin.slug] || 0}
                   editing={editing}
                   community={wip}
-                  detail={cards ? activity.bySlug[pin.slug] : undefined}
                   onUnpin={() => { void setHomePin(pin, false, say(pin.name)); }}
                 />
-              ))}
+              )))}
             </div>
           </WipCard>
         </section>
@@ -281,20 +326,29 @@ export function CommunitiesScreen() {
           <SectionHeading action={editOn === 'joined' ? edit : null}>
             {groupLabel('joined', t('communities:page.joined'), joined.length)}
           </SectionHeading>
-          <WipCard on={wip}>
-            <div className={GRID}>
-              {joinedShown.map((c) => (
+          {/* Compact cards stand on the page, as the pinned ones do: no group card round them. */}
+          <WipCard on={wip && !joinCards}>
+            <div className={joinCards ? CARDS : GRID} data-cm-grid={joinCards ? 'joined' : undefined}>
+              {joinedShown.map((c) => (joinCards ? (
+                <CommunityPageCard
+                  key={c.slug}
+                  community={c}
+                  votes={state.owed[c.slug] || 0}
+                  editing={false}
+                  compact
+                  onPin={editing ? () => { void setHomePin(pinOf(c), true, say(c.name)); } : undefined}
+                />
+              ) : (
                 <PinTile
                   key={c.slug}
                   pin={c}
                   votes={state.owed[c.slug] || 0}
                   editing={false}
-                  /* Joined rows wear the app's own icon (asked 20 Nov 2026); the drawn emblem is the pinned cards'. */
+                  /* Joined tiles wear the app's own icon in its ring. */
                   community={false}
-                  detail={cards ? activity.bySlug[c.slug] : undefined}
-                  onPin={editing ? () => { void setHomePin({ ...c, member: true } as HomePin, true, say(c.name)); } : undefined}
+                  onPin={editing ? () => { void setHomePin(pinOf(c), true, say(c.name)); } : undefined}
                 />
-              ))}
+              )))}
               {createTile ? (
                 <ActionTile
                   id="communities-new-community"
