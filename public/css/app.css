@@ -31519,11 +31519,19 @@ html:is(:not([data-skin]), [data-skin="brand"]) .side-panel-divider::after { dis
 @media (hover: hover) {
   :is(.split-handle[data-armed], .side-panel-divider):hover::before { opacity: .5; }
 }
-/* A finger never hovers: on a touch screen the grip is drawn at rest, as
-   the side panel's own divider already drew it (its coarse-pointer rule
-   above, which this block's opacity would otherwise put out). */
-@media (pointer: coarse) {
-  :is(.split-handle, .side-panel-divider)::before { opacity: .5; }
+/* A finger never hovers: on a touch screen the grip is drawn at rest (a
+   tablet or phone shows no mark otherwise, and a finger cannot discover a
+   hover). A device that reports no hover as well as a coarse pointer counts
+   (hover: none), so a hybrid touch screen with a fine pointer gets it too.
+   THE SELECTOR MATCHES THE HIDE RULE'S SHAPE ON PURPOSE: :is() takes its
+   most specific argument's weight, so the short `.split-handle` branch is
+   (0,2,2) there, and a plain `:is(.split-handle, .side-panel-divider)`
+   here is only (0,1,1) and lost to it. Same weight, later in the file: the
+   grip wins. This is the one rule that shows the grip at rest on touch; the
+   held rule below is the same weight and comes after, so dragging still
+   darkens it. */
+@media (hover: none), (pointer: coarse) {
+  :is(.split-handle, html:is(:not([data-skin]), [data-skin="brand"]) .side-panel-divider)::before { opacity: .5; }
 }
 :is(.split-handle, .side-panel-divider):focus-visible::before,
 html.side-panel-resizing :is(.split-handle, .side-panel-divider)::before { opacity: .9; background: var(--accent); }
