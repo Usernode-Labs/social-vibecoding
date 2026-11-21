@@ -457,6 +457,19 @@ export function openInviteLinks(): void {
   void ctx.openInvite?.();
 }
 
+/**
+ * The same, for the community whose hub the person is on: the full-width
+ * Invite people card records its own community with the opening, so the
+ * pane's Copy, Share and Your links act on that community's link however the
+ * header's chip and Improve are named (request 6896: the invite card is the
+ * place to invite from).
+ */
+export function openInviteFor(slug: string, name?: string): void {
+  const ctx = (window as any).AppContext;
+  if (!ctx) return;
+  void ctx.openInvite?.({ slug, name });
+}
+
 export function reloadCommunity(slug: string): Promise<void> {
   if (!slug) return Promise.resolve();
   const pending = readCommunity(slug).then((next) => {
@@ -1490,7 +1503,7 @@ export function InviteHeroCard({ slug, data }: { slug: string; data: CommunityPa
         className="dev-ws-invite-hero-btn"
         data-ws-community-invite=""
         title={t('project:communityCard.invite.title')}
-        onClick={openInviteLinks}
+        onClick={() => openInviteFor(slug, data.name || slug)}
       >
         <UserPlusIcon className="w-[18px] h-[18px]" aria-hidden="true" />
         {t('project:hub.invite.button')}

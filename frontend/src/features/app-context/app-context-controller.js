@@ -76,10 +76,26 @@ export const AppContext = Object.assign(
      * From About's Invite the sheet is already open, and `back: 'about'`
      * makes its back disc return there.
      *
-     * @param {{ back?: 'about' }} [opts]
+     * A `slug` names the community the pane is for: the hub's Invite card
+     * passes its own, so Copy, Share and Your links act on that community's
+     * link while the header's chip and what Improve targets stay as the page
+     * made them. The pane reads the name once, at mount (./invite-pane.tsx
+     * `useInviteSubject`), so it cannot change subject under itself.
+     *
+     * @param {{ back?: 'about', slug?: string, name?: string }} [opts]
      */
     openInvite(opts = {}) {
-      const { slug } = improveStore.get();
+      const { slug: contextSlug } = improveStore.get();
+      const override = typeof opts.slug === 'string' && opts.slug !== ''
+        ? { slug: opts.slug, name: opts.name || opts.slug }
+        : null;
+      const slug = override ? override.slug : contextSlug;
+      // Every opening of this pane names its subject here, so a community's
+      // Invite cannot outlive the sheet it was opened for: the next opening
+      // from the mark or a hub writes null and shows the app in context.
+      appContextStore.set({ inviteFor: override });
+      // The address the sheet is opening over, for the guard below.
+      const hrefAtStart = typeof location !== 'undefined' ? location.href : null;
       const ready = slug
         ? Promise.race([
           prepareInvite(slug),
@@ -87,11 +103,22 @@ export const AppContext = Object.assign(
         ])
         : Promise.resolve();
       return ready.then(() => {
-        // Somewhere else by now (a tab, Back): its project is not in context.
-        if (improveStore.get().slug !== slug) return;
+        if (override) {
+          // Somewhere else by now: the sheet closed, another community took
+          // this one's place, or the page navigated during the wait.
+          const { inviteFor } = appContextStore.get();
+          if (!inviteFor || inviteFor.slug !== override.slug) return;
+          if (hrefAtStart != null && typeof location !== 'undefined' && location.href !== hrefAtStart) {
+            appContextStore.set({ inviteFor: null });
+            return;
+          }
+        } else if (improveStore.get().slug !== slug) {
+          // Somewhere else by now (a tab, Back): its project is not in context.
+          return;
+        }
         // Audit D07: from About, Back retraces the step. From anywhere else
-        // (the hub's Invite, the Share dialog) the sheet opened on this pane,
-        // so there is no menu behind it to go back to: only the close.
+        // (the hub's Invite card, the Share dialog) the sheet opened on this
+        // pane, so there is no menu behind it to go back to: only the close.
         appContextStore.set({ back: opts.back === 'about' ? 'about' : 'none' });
         openAt('invite');
       });
@@ -121,7 +148,9 @@ export const AppContext = Object.assign(
 function openAt(view) {
   appContextStore.set({ view });
   AppContext.open();
-  if (!AppContext.isOpen()) appContextStore.set({ view: 'menu' });
+  // The inviteFor reset matters as much: an open the sheet refused must not
+  // leave a community named for the next opening's pane.
+  if (!AppContext.isOpen()) appContextStore.set({ view: 'menu', inviteFor: null });
 }
 
 // ── The two panes (#2718) ──────────────────────────────────────────────

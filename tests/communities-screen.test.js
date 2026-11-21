@@ -65,6 +65,7 @@ test('the page ships hidden, with both groups hidden and empty', () => {
   assert.match(html, /<section id="communities-joined-section" class="px-3" hidden="">/);
   assert.doesNotMatch(html, /data-home-community=/, 'the pins are client data: none of them in the first render');
   assert.doesNotMatch(html, /communities-new-community|communities-needs-tile|communities-new-top/);
+  assert.doesNotMatch(html, /communities-invite/, 'Invite needs the pins read: it is not in the first render');
   // Discover needs no data, so it is in the first render.
   assert.match(section(html, 'communities-discover-section'), new RegExp(message('communities:page.discover.button')));
   // The header names the page, so it has no heading of its own.
@@ -99,6 +100,36 @@ test('#communities routes to the page, which is its tab\'s root; #workshop is re
   const scope = read('frontend/src/features/workshop/community-scope.ts');
   assert.match(scope, /if \(!slug\) \{\s*setScope\(null\);\s*openCommunitiesPage\(\);\s*return;\s*\}/);
   assert.match(scope, /export function openCommunitiesPage\(\): void \{[\s\S]*?_forgetWorkshopView[\s\S]*?if \(window\.location\.hash !== '#communities'\) window\.location\.hash = '#communities';\s*\}/);
+});
+
+test('Invite people beside Edit lists the communities you are in, and a row opens that one\'s invite sheet', () => {
+  const html = withStores(
+    { ready: true, pins: PINS, joined: JOINED, owed: {} },
+    { badgeNeeds: 0 },
+    (mod) => renderToHtml(createElement(mod.CommunitiesScreen, {})),
+  );
+  const pinned = section(html, 'communities-pinned-section');
+  // One action for the page, beside Edit: no community grows a button of its own.
+  assert.match(pinned, new RegExp(`id="communities-invite"[^>]*aria-label="${message('communities:page.inviteLabel')}"`));
+  assert.match(pinned, new RegExp(`>${message('communities:page.invite')}<`));
+  assert.ok(pinned.indexOf('id="communities-invite"') < pinned.indexOf('id="communities-edit"'), 'beside Edit');
+  assert.doesNotMatch(pinned, /data-home-community-invite/, 'no disc on a tile (Evan, #6894)');
+  // The list opens on the press, so the page ships without it.
+  assert.doesNotMatch(html, /communities-invite-picker/);
+  const page = read(PAGE);
+  assert.match(page, /for \(const c of \[\.\.\.state\.pins\.filter\(\(p\) => p\.member\), \.\.\.state\.joined\]\)/,
+    'the communities you are in: a pin you have not joined is not one');
+  assert.match(page, /if \(!c\.slug \|\| seen\.has\(c\.slug\)\) continue;/, 'once each');
+  assert.match(page, /data-invite-community=\{row\.slug\}/, 'a row is the community it invites to');
+  assert.match(page, /void ctx\.openInvite\?\.\(\{ slug, name \}\);/, 'and it opens that community\'s invite sheet');
+  // With nothing you are in, there is nobody to invite to: the action steps aside.
+  const none = withStores(
+    { ready: true, pins: [], joined: [], owed: {} },
+    { badgeNeeds: 0 },
+    (mod) => renderToHtml(createElement(mod.CommunitiesScreen, {})),
+  );
+  assert.doesNotMatch(none, /communities-invite/);
+  assert.equal(message('communities:page.invite'), 'Invite people');
 });
 
 test('the page draws Pinned, led by Needs you while a vote waits, then Joined, then Discover', () => {

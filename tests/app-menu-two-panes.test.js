@@ -18,6 +18,7 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const PANE = read('frontend/src/features/app-context/invite-pane.tsx');
 const CONTROLLER = read('frontend/src/features/app-context/app-context-controller.js');
 
 // ONE bundle for the component and the store it reads: render-tsx bundles
@@ -109,6 +110,21 @@ test('two panes of ONE sheet, not two sheets', () => {
   // just as true of the menu pane.
   assert.ok(!SHEET.includes('id="apps-switcher-create"'), 'no Create entry');
   assert.ok(!SHEET.includes('id="apps-switcher-list"'), 'no app strip');
+});
+
+test('the invite pane can be opened for the community its hub belongs to', () => {
+  // The hub's Invite card records that community with the opening
+  // (app-context-controller `openInvite`). The pane takes `inviteFor` as its
+  // subject for that opening; the header and the menu keep naming the app in
+  // context, and the sheet still hands the pane the app it is on.
+  assert.match(PANE, /const openedFor = appContextStore\.get\(\)\.inviteFor;/);
+  assert.match(PANE, /if \(!openedFor\) return \{ slug, label, unnamed \};/,
+    'the app in context is the subject only when no community was named');
+  assert.match(PANE, /return \{ slug: openedFor\.slug, label: openedFor\.name \|\| label, unnamed: false \};/);
+  assert.match(CONTROLLER, /appContextStore\.set\(\{ inviteFor: override \}\);/,
+    'and every opening names its subject, so none is left behind');
+  assert.match(CONTROLLER, /if \(!inviteFor \|\| inviteFor\.slug !== override\.slug\) return;/,
+    'a close or another community during the wait drops the opening');
 });
 
 test('closing resets the pane, by any route', () => {

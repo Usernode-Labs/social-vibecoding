@@ -71,7 +71,7 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
 
-  const store = makeStoreStub({ open: false, view: 'menu', adopted: false });
+  const store = makeStoreStub({ open: false, view: 'menu', adopted: false, inviteFor: null });
   const improve = makeStoreStub({ slug });
   const presents = [];
   runModules(sandbox, [['sheet-controller.js', SHEET_CONTROLLER]], {
@@ -111,6 +111,7 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
   return {
     AppContext: sandbox.AppContext,
     wait: sandbox.__wait,
+    location: sandbox.location,
     store,
     improve,
     presents,
@@ -188,12 +189,89 @@ test('an open the sheet refuses leaves the menu on its first pane', async () => 
     'or the next open from the Homeroom mark would land on Invite');
 });
 
+// ── a community's Invite, from its hub ───────────────────────────────────
+//
+// The hub's Invite card names its own community, so the pane reads that
+// community's links even while `improveStore` names something else (or
+// nothing at all): `openInvite({ slug, name })` records the subject without
+// making it the app in context, and the header chip and Improve keep
+// pointing where they did.
+
+test('a community\'s Invite reads that community first and presents once, on it', async () => {
+  const o = loadOpener();
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  assert.deepEqual(o.reads, ['garden-cd34'], 'the pane reads the community it was asked for');
+  assert.equal(o.improve.get().slug, 'notes-ab12', 'the app in context is not touched');
+  await flush();
+  assert.equal(o.presents.length, 0, 'nothing goes up while the read is on its way');
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.presents.length, 1, 'one present');
+  assert.equal(o.presents[0].view, 'invite');
+  assert.equal(o.store.state.inviteFor.slug, 'garden-cd34');
+  assert.equal(o.store.state.inviteFor.name, 'Garden Club');
+  assert.equal(o.store.state.back, 'none', 'there is no menu behind it to go back to');
+});
+
+test('an opening with no community in front of it forgets the last one', async () => {
+  // The pane takes `inviteFor` once, at mount, so an opening that names a
+  // community must not leave it for the next opening from the mark or a hub.
+  const o = loadOpener();
+  const first = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await first;
+  assert.equal(o.store.state.inviteFor.slug, 'garden-cd34');
+  const second = o.AppContext.openInvite();
+  assert.equal(o.store.state.inviteFor, null, 'the app in context is the subject again');
+  assert.deepEqual(o.reads.slice(-1), ['notes-ab12'], 'and the read is the app in context\'s');
+  await second;
+});
+
+test('with no app in context, a community is named by its slug', async () => {
+  const o = loadOpener({ slug: null });
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34' });
+  assert.deepEqual(o.reads, ['garden-cd34']);
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.store.state.inviteFor.slug, 'garden-cd34');
+  assert.equal(o.store.state.inviteFor.name, 'garden-cd34');
+  assert.equal(o.presents.length, 1, 'the sheet still opens');
+});
+
+test('a navigation during the wait drops a community\'s Invite, and forgets it', async () => {
+  const o = loadOpener();
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  o.location.href = 'https://homeroom.test/#home';
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.presents.length, 0);
+  assert.equal(o.store.state.inviteFor, null, 'nothing is left named for the next opening');
+});
+
+test('an open the sheet refuses forgets the community too', async () => {
+  const o = loadOpener({ panel: false });
+  const done = o.AppContext.openInvite({ slug: 'garden-cd34', name: 'Garden Club' });
+  o.land({ slug: 'garden-cd34', state: { links: [] }, error: null });
+  await done;
+  assert.equal(o.store.state.open, false);
+  assert.equal(o.store.state.inviteFor, null);
+  assert.equal(o.store.state.view, 'menu');
+});
+
 test('the hub and the Share dialog open it with one call, not open() then a pane switch', () => {
   const hub = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   const body = hub.slice(hub.indexOf('export function openInviteLinks(): void {'));
   const fn = body.slice(0, body.indexOf('\n}\n') + 2);
   assert.match(fn, /void ctx\.openInvite\?\.\(\);/);
   assert.doesNotMatch(fn, /ctx\.open\?\.\(\)|showInvite/, 'no menu present before the pane');
+  // The full-width Invite people card names the community it sits on, so
+  // Copy, Share and Your links act on that community's link.
+  const forBody = hub.slice(hub.indexOf('export function openInviteFor('));
+  const forFn = forBody.slice(0, forBody.indexOf('\n}\n') + 2);
+  assert.match(forFn, /void ctx\.openInvite\?\.\(\{ slug, name \}\);/,
+    'the community is recorded with the opening');
+  const card = hub.slice(hub.indexOf('export function InviteHeroCard('));
+  assert.match(card, /onClick=\{\(\) => openInviteFor\(slug, data\.name \|\| slug\)\}/);
 
   const share = read('frontend/src/features/dialogs/share.tsx');
   const at = share.indexOf('function openInvitePane(): void {');

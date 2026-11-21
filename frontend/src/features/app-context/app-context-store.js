@@ -40,6 +40,20 @@ export const appContextStore = createStore({
    */
   back: 'menu',
   /**
+   * The community the invite pane is opened for: `{ slug, name }`, or null
+   * when the opener named none and the app in context is the subject. The
+   * hub's Invite card records its own community here, so the pane reads that
+   * community's links whoever the header and the Improve target happen to
+   * name (app-context-controller.js `openInvite`).
+   *
+   * Write it only from `openInvite`, which does so on EVERY opening: the
+   * community it was given, null when it was given none. The pane takes it
+   * once, at mount (./invite-pane.tsx `useInviteSubject`), which is why a
+   * value left behind by an opening that closed is never shown to the next
+   * one.
+   */
+  inviteFor: /** @type {{ slug: string, name?: string } | null} */ (null),
+  /**
    * Whether the presentation is a KIT sheet (touch) rather than the CSS
    * slide-over. The kit brings its own backdrop, so the web overlay only
    * raises when this is false — see lib/sheet-controller.js.
