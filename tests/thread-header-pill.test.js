@@ -14,7 +14,8 @@
 //   - the bot column puts its own header row away for those pages
 //     (`data-thread-pill`) and the page in it paints no ground;
 //   - the line between two columns is a grip that drags (lib/split-drag.ts),
-//     shown only for a pointer that moved onto it.
+//     shown only for a pointer that moved onto it, and at rest on touch,
+//     where a finger has no hover to discover it with.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -211,7 +212,10 @@ test('app.css: the halves layout draws its edge only while the detail is open', 
 
 test('the grip shows for a pointer that moved onto the line, never one the line arrived under, and at rest on touch', () => {
   assert.match(CSS, /@media \(hover: hover\) \{\s+:is\(\.split-handle\[data-armed\], \.side-panel-divider\):hover::before \{ opacity: \.5; \}/);
-  assert.match(CSS, /@media \(pointer: coarse\) \{\s+:is\(\.split-handle, \.side-panel-divider\)::before \{ opacity: \.5; \}/);
+  assert.match(CSS, /@media \(hover: none\), \(pointer: coarse\) \{\s+:is\(\.split-handle, html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) \.side-panel-divider\)::before \{ opacity: \.5; \}/,
+    'the at-rest grip on touch matches the hide rule\'s selector weight, or it is out-specified');
+  assert.doesNotMatch(CSS, /@media \(pointer: coarse\) \{\s+:is\(\.split-handle, \.side-panel-divider\)::before \{ opacity: \.5; \}/,
+    'the lighter selector never beat the hide rule, so it must not come back');
   const { armOnMove } = loadTsx('frontend/src/lib/split-drag.ts');
   const listeners = {};
   const attrs = new Set();
