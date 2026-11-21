@@ -47,6 +47,78 @@ test('rootOf reads the thread a message is in, else the message is its own root'
   assert.equal(liveDrafts.rootOf({ id: 9 }), 9);
 });
 
+// #6961: the one rule open() and the thread's GET share.
+test('draftableFor: every project, and Homeroom itself only to its admins', () => {
+  const member = { id: 1 };
+  const admin = { id: 2, isAdmin: true };
+  assert.deepEqual(liveDrafts.draftableFor(CONFIG, { slug: 'gym', self_hosted: false }, member), { ok: true });
+  assert.deepEqual(liveDrafts.draftableFor(CONFIG, { slug: 'gym', self_hosted: false }, admin), { ok: true });
+  const refused = liveDrafts.draftableFor(CONFIG, { slug: 'usernode-self', self_hosted: true }, member);
+  assert.deepEqual([refused.ok, refused.status, refused.code], [false, 403, 'admins_only']);
+  assert.equal(refused.message, "Only Homeroom's admins can open a live draft of Homeroom itself. You can file a request for it instead.");
+  assert.deepEqual(liveDrafts.draftableFor(CONFIG, { slug: 'usernode-self', self_hosted: true }, admin), { ok: true });
+  // The platform is known by its slug, whether or not the row says self_hosted.
+  assert.deepEqual(liveDrafts.draftableFor(CONFIG, { slug: 'usernode-self', self_hosted: false }, admin), { ok: true });
+  assert.equal(liveDrafts.draftableFor(CONFIG, { slug: 'usernode-self' }, member).code, 'admins_only');
+  // Any other self-hosted app keeps its refusal, admins included.
+  assert.equal(liveDrafts.draftableFor(CONFIG, { slug: 'another-self', self_hosted: true }, admin).code, 'not_supported');
+  // With no platform named, nothing is the self app.
+  assert.equal(liveDrafts.draftableFor({}, { slug: 'usernode-self', self_hosted: true }, admin).code, 'not_supported');
+  assert.equal(liveDrafts.draftableFor(CONFIG, null, admin).code, 'no_project');
+});
+
+// #6961: the platform's image runs some of its files from source and some
+// only as their built result.
+test('platformRunsInPlace: Homeroom\'s server code runs in place; its built screens do not', () => {
+  assert.equal(liveDrafts.platformRunsInPlace(['src/services/x.js']), true);
+  assert.equal(liveDrafts.platformRunsInPlace(['server.js', 'worker/run.js', 'app-templates/a/x.js', 'dapp.json']), true);
+  assert.equal(liveDrafts.platformRunsInPlace(['src/db/migrations/a.sql']), false);
+  assert.equal(liveDrafts.platformRunsInPlace(['frontend/src/x.tsx']), false);
+  assert.equal(liveDrafts.platformRunsInPlace(['public/css/app.css']), false);
+  assert.equal(liveDrafts.platformRunsInPlace(['styles/tailwind-input.css']), false);
+  assert.equal(liveDrafts.platformRunsInPlace(['src/services/x.js', 'frontend/src/x.tsx']), false, 'one built file means one build');
+  assert.equal(liveDrafts.platformRunsInPlace([]), true);
+});
+
+test('sendToPreview: a built file on Homeroom itself builds the preview again, never writes it in place (#6961)', async () => {
+  const head = SHA('a');
+  const at = SHA('b');
+  const asked = [];
+  const sent = [];
+  const draft = {
+    id: 7, session_id: 70, app_slug: 'usernode-self', head_sha: at, staging_commit_sha: at,
+    staging_runtime_kind: 'docker', staging_runtime_name: 'usernode-staging-s70',
+  };
+  const pool = {
+    async query(sql) {
+      if (/SELECT \* FROM chat_sessions/.test(sql)) return { rows: [{ id: 70 }] };
+      return { rows: [] };
+    },
+  };
+  const deps = {
+    previewWorkflow: { async request(args) { asked.push(args); return { status: 'accepted' }; } },
+    fetch: async (href, init = {}) => {
+      sent.push({ href, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+      return { status: 200, json: async () => ({ ok: true, head: at }) };
+    },
+  };
+  const out = await liveDrafts.sendToPreview(pool, CONFIG, {
+    draft, files: [{ path: 'frontend/src/App.tsx', content: 'x' }], since: at, head, deps,
+  });
+  assert.deepEqual([out.ok, out.rebuilding, out.why], [true, true, 'built_files']);
+  assert.equal(asked.length, 1, 'the preview machine builds it again');
+  assert.ok(!sent.some((c) => c.method === 'POST'), 'nothing is written into the running preview');
+  // Its server code still restarts in place, in seconds.
+  const live = await liveDrafts.sendToPreview(pool, CONFIG, {
+    draft, files: [{ path: 'src/services/x.js', content: 'x' }], since: at, head, deps,
+  });
+  assert.equal(live.ok, true);
+  assert.equal(asked.length, 1);
+  const written = sent.find((c) => c.method === 'POST');
+  assert.ok(written, 'written in place');
+  assert.deepEqual(written.body.files, [{ path: 'src/services/x.js', content: 'x' }]);
+});
+
 test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
@@ -148,6 +220,13 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
 
   const person = await user();
   const project = await app();
+  // #6961: Homeroom itself, and public to collaborate on, so only the admin
+  // gate can refuse a non-admin (the stand-in app-access says yes to all).
+  const selfApp = await app({ slug: 'usernode-self' });
+  await pool.query("UPDATE apps SET collab_visibility = 'public' WHERE id = $1", [selfApp.id]);
+  const adminUser = async () => (await pool.query(
+    `INSERT INTO users (username, password, is_admin) VALUES ($1, 'x', TRUE)
+     RETURNING id, username, is_admin AS "isAdmin"`, [`ld_admin_${++seq}`])).rows[0];
 
   await t.test('opening a draft makes its own change, branch and no-checks preview', async () => {
     const root = await thread(person, project);
@@ -175,9 +254,9 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
   await t.test('a draft needs a thread about a project, drafts switched on, and room for one more', async () => {
     const loose = await thread(person, null);
     assert.equal((await liveDrafts.open(pool, CONFIG, { user: person, rootId: loose, deps })).body.error, 'no_project');
-    const self = await app({ slug: 'usernode-self' });
-    const selfRoot = await thread(person, self);
-    assert.equal((await liveDrafts.open(pool, CONFIG, { user: person, rootId: selfRoot, deps })).body.error, 'not_supported');
+    const selfRoot = await thread(person, selfApp);
+    // #6961: Homeroom's own app, so a non-admin is refused for that alone.
+    assert.equal((await liveDrafts.open(pool, CONFIG, { user: person, rootId: selfRoot, deps })).body.error, 'admins_only');
     const second = await liveDrafts.open(pool, CONFIG, { user: person, rootId: await thread(person, project), deps });
     assert.equal(second.status, 200);
     const third = await liveDrafts.open(pool, CONFIG, { user: person, rootId: await thread(person, project), deps });
@@ -562,5 +641,39 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     assert.equal(build.preview, 'crashed', JSON.stringify(build));
     assert.match(build.log, /npm ERR! build failed/);
     assert.match(build.note, /its build/);
+  });
+
+  // #6961: a live draft of Homeroom itself, for an admin who can change it.
+  await t.test('Homeroom itself is draftable by its admins only, and holds a slot like any project', async () => {
+    const counts = async () => ({
+      sessions: (await pool.query('SELECT COUNT(*)::int AS n FROM chat_sessions')).rows[0].n,
+      drafts: (await pool.query('SELECT COUNT(*)::int AS n FROM live_drafts')).rows[0].n,
+    });
+    // A non-admin is refused, and nothing is written for them.
+    const before = await counts();
+    const refused = await liveDrafts.open(pool, CONFIG, { user: person, rootId: await thread(person, selfApp), deps });
+    assert.deepEqual([refused.status, refused.body.error], [403, 'admins_only']);
+    assert.match(refused.body.message, /Only Homeroom's admins can open a live draft of Homeroom itself/);
+    assert.deepEqual(await counts(), before, 'no change and no draft for them');
+
+    // An admin gets one, as any project's.
+    const admin = await adminUser();
+    const first = await liveDrafts.open(pool, CONFIG, { user: admin, rootId: await thread(admin, selfApp), deps });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.draft.app.slug, 'usernode-self');
+
+    // Another self-hosted app is still refused, admins included.
+    const otherSelf = await app({ slug: 'another-self' });
+    await pool.query('UPDATE apps SET self_hosted = TRUE WHERE id = $1', [otherSelf.id]);
+    const notSupported = await liveDrafts.open(pool, CONFIG, { user: admin, rootId: await thread(admin, otherSelf), deps });
+    assert.deepEqual([notSupported.status, notSupported.body.error], [409, 'not_supported']);
+
+    // Two open at once, as across all projects: the Homeroom draft counts.
+    const second = await liveDrafts.open(pool, CONFIG, { user: admin, rootId: await thread(admin, project), deps });
+    assert.equal(second.status, 200);
+    const third = await liveDrafts.open(pool, CONFIG, { user: admin, rootId: await thread(admin, selfApp), deps });
+    assert.deepEqual([third.status, third.body.error], [409, 'too_many']);
+    await liveDrafts.close(pool, { user: admin, draftId: first.body.draft.id, deps });
+    await liveDrafts.close(pool, { user: admin, draftId: second.body.draft.id, deps });
   });
 });
