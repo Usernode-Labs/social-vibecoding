@@ -23,6 +23,7 @@ export {
   embeddedApi,
   sideRouteFrom,
   BESIDE_AI_QUERY,
+  EDGE_PROP,
   _resetForTests,
 } from '../../frontend/src/features/side-panel/controller';
 export { installEmbeddedRuntime } from '../../frontend/src/features/side-panel/embedded';

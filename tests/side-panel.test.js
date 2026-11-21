@@ -406,6 +406,101 @@ test('Back walks the pages opened in the panel, and a piece of work climbs no fu
   cleanup();
 });
 
+// ── #6970: the edge the frame's head card keeps clear of ────────────────
+
+/** A frame whose document root takes the published edge. */
+function fakeEdgeFrame() {
+  const props = new Map();
+  const root = {
+    style: {
+      getPropertyValue: (n) => (props.has(n) ? props.get(n) : ''),
+      setProperty: (n, v) => props.set(n, v),
+      removeProperty: (n) => props.delete(n),
+    },
+  };
+  api.sidePanelRefs.frame = { contentDocument: { documentElement: root } };
+  return props;
+}
+
+/** The top window's <html>, as the strip publishes it. */
+function topDocument({ side = null, corner = null, width = 0, dir = '' } = {}) {
+  const attrs = {};
+  if (side) attrs['data-side-strip'] = side;
+  if (corner) attrs['data-side-corner'] = corner;
+  const values = {
+    '--platform-strip-w': side ? `${width}px` : '',
+    '--platform-corner-w': corner ? `${width}px` : '',
+  };
+  globalThis.document = { documentElement: {
+    dir,
+    hasAttribute: (n) => Object.prototype.hasOwnProperty.call(attrs, n),
+    getAttribute: (n) => (Object.prototype.hasOwnProperty.call(attrs, n) ? attrs[n] : null),
+    style: { getPropertyValue: (n) => values[n] || '', setProperty() {}, removeProperty() {} },
+  } };
+}
+
+test('the panel document is handed the edge it must keep clear of (#6970)', () => {
+  topWindow();
+  api.take('app/notes-ab12/dev/issues/7');
+  const props = fakeEdgeFrame();
+  topDocument();
+  api.embeddedApi.ready('app/notes-ab12/dev/issues/7', 'Notes');
+  assert.equal(props.has(api.EDGE_PROP), false, 'a browser tab has no system column: nothing written');
+
+  topDocument({ side: 'right', width: 84 });
+  api.appPresence(true);
+  assert.equal(props.get(api.EDGE_PROP), '84px', 'the Duo held sideways: the column\'s width');
+
+  topDocument({ corner: 'right', width: 52 });
+  api.appPresence(true);
+  assert.equal(props.get(api.EDGE_PROP), '52px', 'folded: the corner\'s width');
+
+  topDocument({ side: 'right', width: 84, dir: 'rtl' });
+  api.appPresence(true);
+  assert.equal(props.has(api.EDGE_PROP), false,
+    'in Arabic the column is left of the panel: the head card already clears it');
+  cleanup();
+});
+
+test('the edge is on the frame before its page is shown, and follows the top root (#6970)', () => {
+  // One observer per top document, started as the first frame opens.
+  const callbacks = [];
+  globalThis.MutationObserver = class {
+    constructor(cb) { callbacks.push(cb); }
+    observe() {}
+    disconnect() {}
+  };
+  topWindow();
+  const props = fakeEdgeFrame();
+  api.take('app/notes-ab12/dev/issues/7');
+  assert.equal(callbacks.length, 1, 'a frame opening starts the one observer');
+  topDocument({ side: 'right', width: 84 });
+  // A page that arrives while the phone is already folded: the edge is
+  // written before the store says the panel is ready, never after.
+  let atReady = null;
+  const unsubscribe = api.sidePanelStore.subscribe(() => {
+    if (!api.sidePanelStore.get().loading && atReady === null) {
+      atReady = props.get(api.EDGE_PROP) || null;
+    }
+  });
+  api.embeddedApi.ready('app/notes-ab12/dev/issues/7', 'Notes');
+  unsubscribe();
+  assert.equal(atReady, '84px', 'shown with the edge already on it');
+
+  // Folded: `watchSideStrip` rewrites the top root, and the observer follows.
+  topDocument({ corner: 'right', width: 52 });
+  callbacks[0]();
+  assert.equal(props.get(api.EDGE_PROP), '52px');
+
+  // Unfolded, held upright: the band is a top inset, which the column's top
+  // already sits below, so the frame clears nothing.
+  topDocument();
+  callbacks[0]();
+  assert.equal(props.has(api.EDGE_PROP), false);
+  delete globalThis.MutationObserver;
+  cleanup();
+});
+
 test('Back never lands on a `#name` channel reference, which would only send it on again', () => {
   topWindow();
   api.take('app/notes-ab12/dev/proposals/12');

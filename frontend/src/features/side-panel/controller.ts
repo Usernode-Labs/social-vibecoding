@@ -56,6 +56,7 @@
  *     it closes or goes with the page. */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
+import { CORNER_ATTR, panelEdge, STRIP_ATTR } from '../../lib/side-strip';
 import { isBotChatRoute } from '../ai/door';
 import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
 import {
@@ -223,6 +224,54 @@ function markBeside(): void {
   } catch {
     /* a frame that is going away: the next one is marked when it reports */
   }
+  markEdge();
+}
+
+/**
+ * The width the top window must keep clear of iPhone Duo's column of system
+ * chrome, published onto the panel document's root (#6970). The panel's own
+ * document reads no insets (side-strip.ts NO_INSETS), so without this its
+ * head card's ⋯, open as page and close sat under the clock while the top
+ * window's headers padded themselves by `--ai-edge`. app.css pads the head
+ * card by this property.
+ */
+export const EDGE_PROP = '--side-panel-edge';
+
+/** The observer that keeps the frame's edge in step with the top root. */
+let edgeObserver: MutationObserver | null = null;
+
+function markEdge(): void {
+  try {
+    const root = sidePanelRefs.frame?.contentDocument?.documentElement;
+    if (!root) return;
+    const px = typeof document === 'undefined' ? 0 : Math.round(panelEdge(document));
+    const value = px > 0 ? `${px}px` : '';
+    if ((root.style.getPropertyValue(EDGE_PROP) || '') === value) return;
+    if (value) root.style.setProperty(EDGE_PROP, value);
+    else root.style.removeProperty(EDGE_PROP);
+  } catch {
+    /* a frame that is going away: the next one is marked when it reports */
+  }
+}
+
+/**
+ * Follow the top root, so folding, turning, Split View and a resume move the
+ * frame's edge too. `watchSideStrip` already rewrites these attributes on
+ * every read (a resize, an inset change, RESUME_SETTLE_MS), so observing them
+ * is the same information without a second set of device listeners. Started
+ * once, the first time a frame is opened.
+ */
+function watchEdge(): void {
+  if (edgeObserver || typeof MutationObserver === 'undefined') return;
+  try {
+    edgeObserver = new MutationObserver(() => markEdge());
+    edgeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: [STRIP_ATTR, CORNER_ATTR, 'style', 'dir'],
+    });
+  } catch {
+    edgeObserver = null;
+  }
 }
 
 // ── The panel in the top window's address ───────────────────────────────
@@ -358,6 +407,7 @@ export function take(route: string, hint?: PanelHint | null): boolean {
 
 /** Put `route` in the panel, starting its document if there is none yet. */
 export function open(route: string, given?: PanelHint | null): void {
+  watchEdge();
   const s = sidePanelStore.get();
   const { place = null, label = null } = given || {};
   if (!s.frameSrc) {
@@ -791,6 +841,8 @@ export function _resetForTests(): void {
   head = null;
   bypass = false;
   restoring = false;
+  edgeObserver?.disconnect();
+  edgeObserver = null;
   sidePanelStore.set({ ...INITIAL });
   sidePanelRefs.frame = null;
 }
