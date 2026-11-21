@@ -5195,6 +5195,10 @@
     "text": "Back to the list",
     "description": "The Homeroom bot tab on a phone: the back arrow over a private thread with Homeroom bot that is open in place of the list, which slides the list back in. Its accessible name and tooltip."
   },
+  "ai.list.show": {
+    "text": "Show thread list",
+    "description": "The Homeroom bot tab on a wide screen: the button first in a thread's or a new chat's head while the thread list is hidden, which brings the list back. Its accessible name and tooltip."
+  },
   "ai.filter.label": {
     "text": "Show the work of",
     "description": "The AI tab's main view: accessible name of the row of project chips over the lists, which narrows them to the projects picked; also the title of the More projects panel those chips end with (a sheet on a phone)."

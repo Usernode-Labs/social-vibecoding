@@ -108,6 +108,7 @@ import {
   probeLayout,
 } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
+import { setDocked, setListClosed, useListClosed } from './list-closed';
 import { columnAddress, columnKey, pageProject, routeOf, type Column, type ColumnDetail } from './column';
 import {
   BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botNewAddress, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
@@ -512,6 +513,18 @@ export function AiScreen(): ReactNode {
   // floor and the thread's. In halves the list has stepped aside, so the
   // thread's edge is no handle and the preview's keeps only the thread's floor.
   const threeUp = detailHere && layout === 'three';
+  // THE LIST HIDDEN (#6963): dragging the divider past the list's floor puts
+  // the page in one pane, and the choice holds across threads and reloads
+  // (./list-closed). A preview beside the thread keeps today's layout; the
+  // choice waits for it to close.
+  const listClosed = useListClosed();
+  const oneUp = listClosed && columnOpen && !detailHere && !phone;
+  // With a preview beside the thread the preview layout wins, and the edge
+  // is the preview's business, not the list's.
+  const snaps = !threeUp && !detailHere;
+  useEffect(() => {
+    setDocked(docked && !detailHere && !phone);
+  }, [docked, detailHere, phone]);
   const pageInColumn = column?.at === 'page';
   const threadProbe = useCallback(() => {
     const probe = probeLayout();
@@ -1135,6 +1148,7 @@ export function AiScreen(): ReactNode {
       data-ai-open={columnOpen ? '' : undefined}
       data-ai-drawer={phone ? level : undefined}
       data-ai-preview={detailHere ? layout : undefined}
+      data-ai-list-closed={oneUp ? '' : undefined}
       data-frame-list={frame ? '' : undefined}
       style={{ position: 'relative' }}
     >
@@ -1169,6 +1183,9 @@ export function AiScreen(): ReactNode {
             widthKey={threeUp ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
             probe={threeUp ? threadProbe : undefined}
             watch={threeUp ? previewRef : undefined}
+            collapsed={oneUp}
+            onCollapse={snaps ? () => setListClosed(true) : undefined}
+            onRestore={snaps ? () => setListClosed(false) : undefined}
           />
           {/* A thread is alone under its own head (ReplyThreadPanel `alone`),
               and a new chat under its own: the column draws no bar over them. */}

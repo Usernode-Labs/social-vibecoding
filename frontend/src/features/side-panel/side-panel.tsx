@@ -79,6 +79,7 @@ import { panelPage, samePage, titleFor, workshopItemOf } from './routes';
 import {
   AI_MAIN_WIDTH_KEY,
   KEY_STEP,
+  SNAP_PX,
   WIDTH_KEY,
   aiPageUp,
   applyWidth,
@@ -87,6 +88,7 @@ import {
   clearStoredWidth,
   probeLayout,
   readStoredWidth,
+  reopenWidth,
   inlineStartOf,
   shownWidth,
   writeStoredWidth,
@@ -440,6 +442,9 @@ export function SidePanelDivider({
   widthKey,
   probe: measure = probeLayout,
   watch,
+  collapsed = false,
+  onCollapse,
+  onRestore,
 }: {
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
@@ -455,10 +460,21 @@ export function SidePanelDivider({
   /** A neighbour whose width this edge's bound is read from: its range is
    *  read again whenever that one is resized (the preview beside the thread). */
   watch?: RefObject<HTMLElement | null>;
+  /** The neighbour this edge gives room to is hidden (#6963): the pane has
+   *  the whole room, and the edge is how it comes back. */
+  collapsed?: boolean;
+  /** Dragging or arrow-keying past the neighbour's floor hides it. */
+  onCollapse?(): void;
+  /** Dragging or arrow-keying back out — or a double-click — brings it back. */
+  onRestore?(): void;
 }): ReactNode {
   const t = useMessages('agent');
   const [range, setRange] = useState<WidthRange | null>(null);
-  const drag = useRef<{ id: number; startX: number; startW: number; width: number | null } | null>(null);
+  const drag = useRef<{
+    id: number; startX: number; startW: number; width: number | null;
+    /** True once this drag has hidden the neighbour, and where it did. */
+    collapsed: boolean; collapseX: number | null;
+  } | null>(null);
 
   // Resolved at each use, not at mount: the side panel is a single element
   // mounted once, and it is the bot page's own column whenever that page is
@@ -525,6 +541,8 @@ export function SidePanelDivider({
       startX: e.clientX,
       startW: shownWidth(inlineStartOf(panel.getBoundingClientRect()), measure()),
       width: null,
+      collapsed: collapsed && !!onRestore,
+      collapseX: null,
     };
     // Frames swallow pointer events that cross them; while a drag is on, the
     // app's and the panel's both stand aside (app.css).
@@ -536,7 +554,44 @@ export function SidePanelDivider({
     if (!d || d.id !== e.pointerId) return;
     // The panel is pinned to the inline-end edge, so moving toward inline-start
     // widens it: left in English, right in Arabic.
-    d.width = set(d.startW + (d.startX - e.clientX) * dirSign(), false);
+    const raw = d.startW + (d.startX - e.clientX) * dirSign();
+    if (!onCollapse && !onRestore) {
+      d.width = set(raw, false);
+      return;
+    }
+    const b = bounds(measure());
+    if (d.collapsed) {
+      // Back out from the hidden neighbour: the pointer has come SNAP_PX the
+      // other way from where it was hidden, and the pane opens again at the
+      // width last chosen.
+      const base = d.collapseX ?? d.startX;
+      if ((e.clientX - base) * dirSign() <= SNAP_PX) return;
+      onRestore?.();
+      const key = resolveKey();
+      const next = reopenWidth(readStoredWidth(undefined, key), b);
+      if (next == null) {
+        applyWidth(null, undefined, key);
+        settle();
+      } else {
+        applyWidth(next, undefined, key);
+        setRange({ now: next, ...b });
+      }
+      // The drag carries on from here as an ordinary one.
+      d.collapsed = false;
+      d.collapseX = null;
+      d.startX = e.clientX;
+      d.startW = next ?? set(raw, false);
+      d.width = d.startW;
+      return;
+    }
+    if (raw > b.max + SNAP_PX) {
+      onCollapse?.();
+      d.collapsed = true;
+      d.collapseX = e.clientX;
+      d.width = null;
+      return;
+    }
+    d.width = set(raw, false);
   };
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -545,11 +600,14 @@ export function SidePanelDivider({
     drag.current = null;
     document.documentElement.classList.remove('side-panel-resizing');
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* already released */ }
-    // A press that never moved is half of a double-click, not a choice.
-    if (d.width != null) writeStoredWidth(d.width, undefined, resolveKey());
+    // A press that never moved is half of a double-click, not a choice, and a
+    // drag that hid the neighbour chose no width.
+    if (d.width != null && !d.collapsed) writeStoredWidth(d.width, undefined, resolveKey());
   };
 
   const onDoubleClick = () => {
+    // The default split is two panes: it brings a hidden neighbour back too.
+    if (collapsed) onRestore?.();
     clearStoredWidth(undefined, resolveKey());
     settle();
   };
@@ -559,6 +617,24 @@ export function SidePanelDivider({
     if (!panel) return;
     const now = shownWidth(inlineStartOf(panel.getBoundingClientRect()), measure());
     const step = e.shiftKey ? KEY_STEP * 4 : KEY_STEP;
+    // One more press the way the pane widens, at the neighbour's floor, hides
+    // the neighbour; the opposite arrow brings it back (#6963).
+    if (onCollapse || onRestore) {
+      const widen = dirSign() > 0 ? 'ArrowLeft' : 'ArrowRight';
+      const narrow = dirSign() > 0 ? 'ArrowRight' : 'ArrowLeft';
+      if (collapsed) {
+        if (e.key === narrow) {
+          e.preventDefault();
+          onRestore?.();
+        }
+        return;
+      }
+      if (e.key === widen && now >= bounds(measure()).max - 1) {
+        e.preventDefault();
+        onCollapse?.();
+        return;
+      }
+    }
     let next: number | null = null;
     if (e.key === 'ArrowLeft') next = now + step * dirSign();
     else if (e.key === 'ArrowRight') next = now - step * dirSign();
@@ -580,6 +656,7 @@ export function SidePanelDivider({
       aria-valuenow={range ? range.now : undefined}
       aria-valuemin={range ? range.min : undefined}
       aria-valuemax={range ? range.max : undefined}
+      aria-valuetext={collapsed ? t('agent:sidePanel.listHidden') : undefined}
       title={t('agent:sidePanel.resizeTitle')}
       tabIndex={0}
       onPointerDown={onPointerDown}
