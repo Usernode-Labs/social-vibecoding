@@ -246,6 +246,13 @@ test('with nothing earned the tab says so, and offers the hint', () => {
   assert.doesNotMatch(html, /tc-se-history-how/);
 });
 
+test('while it loads the tab draws a placeholder where the How points work card lands', () => {
+  const html = render({ kind: 'loading' });
+  assert.match(html, /data-history-how-skeleton=""/, 'the How points work card has its own placeholder');
+  assert.doesNotMatch(html, /id="tc-se-history-how"/, 'the card itself is not drawn yet');
+  assert.doesNotMatch(html, /id="tc-se-history-done"/, 'no group is drawn yet');
+});
+
 test('a challenge with no credits still lists under Done, with its points', () => {
   const html = render({
     kind: 'list',

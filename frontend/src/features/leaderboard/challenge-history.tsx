@@ -117,6 +117,17 @@ function HistorySkeleton(): ReactNode {
         <Skeleton className="w-40" />
         <Skeleton shape="muted" className="h-[5px] w-full rounded-full" />
       </div>
+      {/*
+          The How points work card's own place, so the tab does not jump when
+          it lands: a title line and its three sentences, in the standard
+          card's geometry.
+      */}
+      <div className={`${CHALLENGE_HISTORY_FACE} mb-3`} data-history-how-skeleton="">
+        <Skeleton className="w-32" />
+        <Skeleton shape="muted" className="w-full" />
+        <Skeleton shape="muted" className="w-full" />
+        <Skeleton shape="muted" className="w-2/3" />
+      </div>
       <div className={GRID}>
         {Array.from({ length: 2 }, (_, i) => (
           <div key={i} className={CHALLENGE_HISTORY_FACE}>
