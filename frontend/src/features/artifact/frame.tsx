@@ -81,7 +81,7 @@ export interface ArtifactFrameProps {
   nonce?: string;
   /** Nothing in it can be tapped or focused: a picture of the page. */
   inert?: boolean;
-  /** Marked so a comment's picture can ask the frame to draw itself (running pages only). */
+  /** Marked so a comment's picture can ask the frame to draw itself (running and helper pages). */
   pictured?: boolean;
   lazy?: boolean;
   scrolling?: 'no';
@@ -123,7 +123,7 @@ export function ArtifactFrame({
       {...(lazy ? { loading: 'lazy' as const } : {})}
       {...(scrolling ? { scrolling } : {})}
       {...{ [ARTIFACT_FRAME_ATTR]: drawn }}
-      {...(pictured && drawn === 'run' ? { [ARTIFACT_PICTURED_ATTR]: '' } : {})}
+      {...(pictured && (drawn === 'run' || drawn === 'helper') ? { [ARTIFACT_PICTURED_ATTR]: '' } : {})}
       tabIndex={inert ? -1 : tabIndex}
       aria-hidden={inert || ariaHidden ? 'true' : undefined}
       onLoad={onLoad}

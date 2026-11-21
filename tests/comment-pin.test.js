@@ -1044,6 +1044,8 @@ test('takeBase asks each design frame for its own picture and lays it in on the 
   // pictured (frontend/src/features/artifact/frame.tsx `pictured`).
   assert.match(read('frontend/src/features/messages/design-pane.tsx'), /<ArtifactFrame[\s\S]{0,260}?\bpictured\b/);
   assert.match(read('frontend/src/features/messages/design-card.tsx'), /<ArtifactFrame[\s\S]{0,260}?\bpictured\b/);
+  // #6972: a bot's laid-out reply is a marked frame too, so the same leg draws it.
+  assert.match(read('frontend/src/features/messages/bot-html.tsx'), /<ArtifactFrame[\s\S]{0,400}?\bpictured=\{measured\}/);
   assert.match(src, /iframe\[\$\{ARTIFACT_PICTURED_ATTR\}\]/);
   // Asked beside the shell, the app and the panel, bounded like the panel: a
   // design that misses its bound draws nothing, holding no longer than it.

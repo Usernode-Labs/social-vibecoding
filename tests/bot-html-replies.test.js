@@ -207,6 +207,12 @@ test('the frame runs nothing and loads nothing, and is in the bubble\'s own toke
   const source = read('frontend/src/features/messages/bot-html.tsx');
   assert.doesNotMatch(source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ''), /allow-same-origin|contentDocument|<iframe/,
     'nothing reaches into the frame, and the frame is the shared one');
+  // #6972: the reply's frame asks to be pictured once it has its size, so a
+  // comment taken on it shows the reply instead of an empty gap.
+  const oneFrame = /<ArtifactFrame\b[\s\S]*?\/>/.exec(source);
+  assert.ok(oneFrame, 'the frame is the shared one');
+  assert.match(oneFrame[0], /mode="helper"/);
+  assert.match(oneFrame[0], /\bpictured=\{measured\}/, 'a comment\'s picture asks the reply to draw itself');
 
   for (const tag of ['script', 'form', 'input', 'button', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'video', 'audio', 'animate', 'set']) {
     assert.ok(frame.REPLY_PURIFY.FORBID_TAGS.includes(tag), tag);
