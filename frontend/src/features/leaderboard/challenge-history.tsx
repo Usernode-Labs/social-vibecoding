@@ -164,8 +164,9 @@ export function ChallengeHistory({ view }: { view: HistoryView | null }): ReactN
   useEffect(() => { void MyStanding.load(); }, []);
   const standing = standingView(useStoreState(myStandingStore)) as { pending: string | null } | null;
   // Before the first load there is nothing to say; the pane opens, the fetch
-  // starts and the placeholders arrive on the next render.
-  if (!view) return null;
+  // starts and the placeholders arrive on the next render. Until then the
+  // tab shows its skeleton, so opening History is never a blank pane.
+  if (!view) return <HistorySkeleton />;
   if (view.kind === 'loading') return <HistorySkeleton />;
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
