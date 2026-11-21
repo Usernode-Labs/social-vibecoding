@@ -69,8 +69,8 @@ test('an app with a PNG icon gets a manifest keyed to its own clean path', () =>
     start_url: '/app/recipe-box/full',
     scope: '/app/recipe-box/',
     display: 'standalone',
-    background_color: '#f4f2e4',
-    theme_color: '#f4f2e4',
+    background_color: '#fffeea',
+    theme_color: '#fffeea',
     icons: [
       { src: `/app-icons/${ICON_ID}`, sizes: '256x256', type: 'image/png', purpose: 'any' },
     ],
@@ -214,7 +214,7 @@ test('the install page carries its own manifest link, icons and instructions', (
   );
   assert.ok(html.includes('<main id="app-install"'));
   assert.ok(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
-  assert.ok(html.includes('<meta name="theme-color" content="#f4f2e4">'));
+  assert.ok(html.includes('<meta name="theme-color" content="#fffeea">'));
   assert.ok(html.includes('<meta name="apple-mobile-web-app-capable" content="yes">'));
   assert.ok(html.includes('<link rel="manifest" href="/app/recipe-box/manifest.webmanifest" crossorigin="use-credentials">'));
   assert.ok(html.includes(`<link rel="apple-touch-icon" href="/app-icons/${ICON_ID}">`));

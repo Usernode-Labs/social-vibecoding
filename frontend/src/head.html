@@ -13,7 +13,7 @@
        The bare two-value form delegates to the OS on purpose, for these first
        bytes only. The class-keyed `color-scheme` rules below override it the
        moment they apply, so a viewer who picked Light on a dark device still
-       gets light scrollbars and controls on the #f4f2e4 page. Do not fold
+       gets light scrollbars and controls on the #fffeea page. Do not fold
        them into one: a meta cannot see the class, and the rules must stay
        class-keyed (tests/native-appearance.test.js pins that). -->
   <meta name="color-scheme" content="light dark">
@@ -81,7 +81,7 @@
        head-blocking pass that adds `.dark`, so the viewer's own Light/Dark
        choice wins and an explicit Light pick on a dark OS leaves no stale
        dark value in either. -->
-  <meta name="theme-color" content="#f4f2e4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#fffeea" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0d1b" media="(prefers-color-scheme: dark)">
   <style>
     /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
@@ -114,7 +114,7 @@
        #eaeaea page. Keyed off `.dark` it tracks the resolved theme instead,
        and Theme.apply() below adds that class in the same head-blocking pass
        that fixes the background. */
-    html { background-color: #f4f2e4; color-scheme: light; }
+    html { background-color: #fffeea; color-scheme: light; }
     html.dark { background-color: #0b0d1b; color-scheme: dark; }
     /* Held while this device's language loads (the script after the theme
        block). The ground above still paints, so the wait reads as the page
@@ -227,8 +227,10 @@
         }
       }
 
-      // The two page grounds: THE WALLPAPER'S CREAM, and that cream
-      // inverted — the homescreen design's page and its dark derivation,
+      // The two page grounds: THE WALLPAPER'S CREAM (the export's own), and
+      // the near-black derived from it (the inverse of the cream as it was
+      // dimmed, kept when the light ground went back to the export's) — the
+      // homescreen design's page and its dark derivation,
       // which app.css paints (with its washes and star, re-tuned for dark)
       // on the launcher, the app view and their peer screens; messages and
       // the admin console keep the body's zinc-100 / zinc-950 on top of it.
@@ -236,7 +238,7 @@
       // BEFORE any stylesheet has loaded, which is the whole point.
       // public/manifest.webmanifest carries the light one too, for the
       // standalone install's splash.
-      const GROUND = { light: '#f4f2e4', dark: '#0b0d1b' };
+      const GROUND = { light: '#fffeea', dark: '#0b0d1b' };
 
       function apply() {
         const mode = get();

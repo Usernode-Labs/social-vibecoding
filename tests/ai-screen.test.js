@@ -1951,7 +1951,7 @@ test('beside the bot page a request or a change lies on Main Chat\'s surface (#6
     'and the phone browser\'s fixed wallpaper layer is gone behind it');
   // The claim that the colour matches Main in both themes: the token is the
   // one composite, and Main's pane is the ground the thread pane sits over.
-  assert.match(css, /--dc-sheet-solid: #faf9f2;/, 'light: the list\'s card colour');
+  assert.match(css, /--dc-sheet-solid: #fffff5;/, 'light: the list\'s card colour');
   assert.match(css, /--dc-sheet-solid: #17181d;/, 'dark: the same composite over the dark ground');
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*background: var\(--home-ground\);/,
     'the surface it must match is Main\'s pane');

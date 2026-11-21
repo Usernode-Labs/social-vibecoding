@@ -3347,7 +3347,7 @@ const AppView = {
     // select it and what gives the tone a before/after to photograph.
     // Nothing reveals it away: this shot never calls _revealLaunch.
     frame.mount({ slug, cover: AppView._coverDescriptor(AppView.appData), faded: false });
-    frame.setBackground?.(dark ? '#0b0d1b' : '#f4f2e4');
+    frame.setBackground?.(dark ? '#0b0d1b' : '#fffeea');
     AppView._setSurface('app');
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
