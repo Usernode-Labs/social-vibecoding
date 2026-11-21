@@ -41,7 +41,7 @@
   },
   "grid.loading": {
     "text": "Loading your apps",
-    "description": "Read by screen readers while the grid of app tiles on Home is still loading."
+    "description": "Shown over the grey placeholder tiles in the middle of the grid of apps on Home while they load, and read by screen readers as that grid's one loading message."
   },
   "grid.noMatches": {
     "text": "None of your apps match “{{query}}”.",
@@ -731,6 +731,10 @@
     "text": "Challenges",
     "description": "Heading of the section of Home about challenges (tasks that earn points), while it loads and when it shows one line because no challenge is open."
   },
+  "challenges.loading": {
+    "text": "Loading challenges",
+    "description": "Shown over the grey placeholder cards of Home's Challenges section while they load, and read by screen readers as that section's one loading message."
+  },
   "challenges.headingFirst": {
     "text": "First challenges",
     "description": "Heading of Home's Challenges section while the viewer still has a first challenge to finish: the section then lists those first challenges."
@@ -1070,6 +1074,10 @@
   "join.loadingMore": {
     "text": "Loading more communities",
     "description": "Accessible name of the placeholder cards shown while the next communities load at the end of the list."
+  },
+  "join.loading": {
+    "text": "Loading communities",
+    "description": "Shown over the grey placeholder cards of Communities to join, on Home and on the Communities page, while the directory loads, and read by screen readers as that section's one loading message."
   },
   "join.end": {
     "text": "That's every public community.",

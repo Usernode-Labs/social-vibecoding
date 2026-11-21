@@ -1030,6 +1030,12 @@ test('the heading is the prerender\'s own until the data lands', () => {
   assert.match(headingOf(before), /><span class="invisible">Challenges<\/span><\/span><\/h2>$/,
     'the constant label, its words held, and no link');
   assert.doesNotMatch(before, /home-panel-see-all|<article/);
+  assert.match(before, /data-loading-caption=""/, 'the placeholders name what they are waiting for (#6894)');
+  const { HP } = makeHomePanels();
+  const painted = renderToHtml(createElement(mod.ChallengesSectionView, {
+    painted: true, challenges: HP.challengesView(panel({ challenges: [challenge()] })),
+  }));
+  assert.doesNotMatch(painted, /data-loading-caption/, 'and the caption goes with the skeleton once the cards land');
   const [, sections] = PANEL_SOURCES.find(([n]) => n.endsWith('sections.tsx'));
   assert.match(sections,
     /\) : challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}\s*action=\{challenges\?\.seeAll && !wip \? <SeeAllLink \/> : null\}/,

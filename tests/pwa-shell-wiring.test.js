@@ -251,8 +251,10 @@ test('the precached document names the platform, and does not guess a theme', ()
   //    it still holds the height for the states that draw no tiles — a notice,
   //    or a document whose bundle never arrives — and it never pads a loaded
   //    grid, including the empty one a brand new account has.
-  assert.match(readPublic('index.html'), /id="app-list"[^>]*>\s*<div class="sr-only" role="status">Loading your apps<\/div>/,
+  assert.match(readPublic('index.html'), /id="app-list"[^>]*>\s*<div class="col-span-full grid grid-cols-4 gap-1\.5 sm:gap-2 animate-pulse"/,
     'the prerendered grid ships the placeholders, not a blank');
+  assert.match(readPublic('index.html'), /<p role="status" data-loading-caption=""[^>]*><span[^>]*>Loading your apps<\/span><\/p>/,
+    'and the visible line that says what the grid is waiting for (#6894)');
   assert.match(readPublic('index.html'), /id="app-list"[\s\S]{0,400}?animate-pulse/,
     'and they pulse, so the first painted frame says the grid is coming');
   assert.doesNotMatch(readPublic('index.html'), /id="app-list"[^>]*data-view=/,

@@ -326,6 +326,25 @@ test('signed out with an app pinned on this device: Pinned apps draws its tile a
   assert.doesNotMatch(html, /data-guest-suggested-app|Tap \+ to pin/);
 });
 
+test('while the directory loads, a member\'s placeholders name what is coming; the visitor\'s are left alone (#6894)', () => {
+  const { CommunitiesToJoin } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: null, exclude: new Set(), signedIn: true, query: '', ...over,
+  }));
+  const member = draw();
+  assert.match(member, /<p role="status" data-loading-caption=""[^>]*><span[^>]*>Loading communities<\/span><\/p>/,
+    'the grey cards say what they are waiting for, visibly and to a screen reader');
+  assert.equal((member.match(/<span aria-hidden="true" class="aspect-\[16\/10\]/g) || []).length, 4, 'the four grey cards are decorative');
+  assert.doesNotMatch(member, /aria-label="Loading apps"/, 'not an aria-label on a generic div, which is not announced');
+  // The signed-out landing draws its own look and keeps the markup it shipped with.
+  const guest = draw({ signedIn: false });
+  assert.match(guest, /aria-label="Loading apps"/);
+  assert.doesNotMatch(guest, /data-loading-caption/);
+  // Once the cards land there is no caption left behind.
+  assert.doesNotMatch(draw({ apps: APPS }), /data-loading-caption/);
+});
+
 test('a card is the same signed in or out: no Pin, no Join, no footer, one count (#6433, #6609)', () => {
   const { CommunitiesToJoin } = loadTsx(JOIN);
   const { renderToHtml, createElement } = require('./lib/render-tsx');

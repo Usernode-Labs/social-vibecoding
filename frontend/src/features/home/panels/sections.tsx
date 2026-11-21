@@ -38,6 +38,7 @@ import type { ReactNode } from 'react';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
+import { LoadingCaption } from '../../apps/tile-skeleton';
 import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-store';
 import { ChallengesPanel } from './challenges';
 import { useLiveSkin, isKitHome } from '../../../lib/skin';
@@ -103,18 +104,26 @@ function Section({
  * shared card is 104px, `gap-2.5` apart under a `pt-2`, as ./challenges.tsx
  * lays them out). A device that has drawn Home before holds each section at
  * the height it last drew instead (../../../lib/first-paint-reserve.ts and app.css), so these set
- * the shape only for a first visit. Decorative: the grid's skeleton already
- * says "Loading" to a screen reader once.
+ * the shape only for a first visit.
+ *
+ * The card stack is decorative — the `LoadingCaption` over it says what is
+ * coming, once, to sighted readers and screen readers alike (#6894). The
+ * caption is a `<p>`, so Standard (WIP)'s `> .home-panel-body > div` rules
+ * (app.css) still match the card stack alone.
  */
-const CHALLENGES_SKELETON = (
-  <div className="home-panel-body pt-2 animate-pulse" aria-hidden="true">
-    <div className="flex flex-col gap-2.5">
-      <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
-      <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
-      <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
+function ChallengesSkeleton() {
+  const t = useMessages('home');
+  return (
+    <div className="home-panel-body relative pt-2">
+      <div className="flex flex-col gap-2.5 animate-pulse" aria-hidden="true">
+        <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
+        <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
+        <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
+      </div>
+      <LoadingCaption text={t('home:challenges.loading')} />
     </div>
-  </div>
-);
+  );
+}
 
 /**
  * The sections as pure functions of the whole state, and the store-connected
@@ -165,7 +174,7 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       action={challenges?.seeAll && !wip ? <SeeAllLink /> : null}
       painted={painted}
       holdLabel
-      skeleton={CHALLENGES_SKELETON}
+      skeleton={<ChallengesSkeleton />}
     >
       {challenges ? <ChallengesPanel view={challenges} /> : null}
     </Section>

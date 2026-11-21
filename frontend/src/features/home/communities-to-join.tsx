@@ -36,6 +36,7 @@ import { Chip, FadeRail } from '@/components/ui/chip';
 import { Select } from '@/components/ui/select';
 
 import { WipSkel } from './wip-kit';
+import { LoadingCaption } from '../apps/tile-skeleton';
 import { useLiveSkin, isKitHome } from '../../lib/skin';
 import { useMessages } from '../../lib/i18n/react';
 import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
@@ -260,9 +261,20 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
           ) : null}
         </div>
       ) : !apps ? (
-        <div className={`${CARD_GRID} px-1`} aria-label={ta('auth:guest.loading')}>
-          {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
-        </div>
+        signedIn ? (
+          // #6894: the same words the rest of Home's placeholders use. The
+          // grey cards stay decorative; the caption says what is coming once.
+          <div className={`${CARD_GRID} relative px-1`}>
+            {[0, 1, 2, 3].map((i) => <span key={i} aria-hidden="true" className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
+            <LoadingCaption text={t('home:join.loading')} />
+          </div>
+        ) : (
+          // The signed-out landing draws its own look; its placeholders keep
+          // the markup they shipped with (#6894 leaves them alone).
+          <div className={`${CARD_GRID} px-1`} aria-label={ta('auth:guest.loading')}>
+            {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
+          </div>
+        )
       ) : list.length ? (
         <>
         {/* Featured above, so the rest gets a heading of its own: without it

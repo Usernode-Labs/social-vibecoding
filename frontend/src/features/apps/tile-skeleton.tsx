@@ -1,12 +1,9 @@
 /**
- * A launcher tile that has not arrived yet — the one copy, for both grids.
+ * A launcher tile that has not arrived yet.
  *
- * The authed launcher (`#app-list`, ../home/app-grid.tsx) and the signed-out
- * directory (`#landing-apps`, ../auth/landing.tsx) draw the SAME tile: a
- * 3.5rem `rounded-2xl` icon box over a fixed 26px title lane, in a
- * `rounded-xl p-3` cell. So they get the same placeholder, from here, rather
- * than the directory growing a second one that drifts the first time the tile
- * changes.
+ * The authed launcher (`#app-list`, ../home/app-grid.tsx) draws these. The
+ * signed-out directory (`../auth/landing.tsx`) has its own placeholder in the
+ * website's look, so it no longer uses this copy.
  *
  * `.app-card` is deliberately NOT on these. It carries the hover transition
  * and — more to the point — it is what the kit's placement recognizer and
@@ -29,14 +26,38 @@ export function SkeletonTile(): ReactNode {
 }
 
 /**
- * `n` of them, pulsing together, with one screen-reader label beside the
- * geometry — a reader should hear "loading" once, not a description of
- * however many decorative rectangles.
+ * What a placeholder block is waiting for, said in a few words over it
+ * (#6894): a small tag in the middle of the grey shapes, so a slow load names
+ * what is coming instead of only pulsing at the reader. The block its caller
+ * positions it against must be `relative`; the tag is taken out of flow so it
+ * adds no height and does not move the page when the real content lands.
  *
- * `className` is the GRID the caller draws into: the two callers have
- * different column counts (the launcher is a fixed 4, the directory ramps
- * 2→5 by breakpoint), and the placeholders have to sit in the same cells the
- * real tiles will.
+ * `role="status"` makes it the section's one announcement — screen readers
+ * hear the same words the sighted reader sees.
+ *
+ * It must never carry `animate-pulse`: the app's launch cover
+ * (public/js/native-chrome.js, `shellPainted`) waits for that class to be gone.
+ */
+export function LoadingCaption({ text }: { text: string }): ReactNode {
+  return (
+    <p role="status" data-loading-caption="" className="pointer-events-none absolute inset-0 z-[1] m-0 flex items-center justify-center">
+      <span className="rounded-full bg-white/90 px-3 py-1 text-[13px] font-medium leading-5 text-zinc-500 dark:bg-zinc-900/90 dark:text-zinc-400">{text}</span>
+    </p>
+  );
+}
+
+/**
+ * `n` of them, pulsing together, with one `LoadingCaption` over the geometry —
+ * a reader should hear the block's words once, not a description of however
+ * many decorative rectangles.
+ *
+ * The pulsing grid comes FIRST so `#app-list`, which is `position: relative`,
+ * is what the caption is positioned against — and so the app's launch cover
+ * still finds the pulse within its first characters.
+ *
+ * `className` is the GRID the caller draws into: the launcher is a fixed 4
+ * columns, and the placeholders have to sit in the same cells the real tiles
+ * will.
  */
 export function TileSkeleton({ n, label, className }: {
   n: number;
@@ -45,10 +66,10 @@ export function TileSkeleton({ n, label, className }: {
 }): ReactNode {
   return (
     <>
-      <div className="sr-only" role="status">{label}</div>
       <div className={`${className} animate-pulse`} aria-hidden="true">
         {Array.from({ length: n }, (_, i) => <SkeletonTile key={i} />)}
       </div>
+      <LoadingCaption text={label} />
     </>
   );
 }
