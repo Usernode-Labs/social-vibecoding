@@ -222,7 +222,7 @@ test('the demo change up for a vote carries verified before & after shots', () =
   }
 });
 
-test('the placeholder pictures are real PNGs, one grey and one blue', () => {
+test('the demo pictures are real PNGs of an obviously fake page, the after side with a line under its top bar', () => {
   const demo = require('../src/services/staging-demo-preview');
   const before = demo.shotPng('base');
   const after = demo.shotPng('head');
@@ -262,3 +262,39 @@ test('staging: the demo artifact route answers the picture; any other id goes th
   const other = await fetch(`${base}/api/apps/demo/proposals/9000013/shots/${'1'.repeat(32)}`);
   assert.equal(other.status, 404);
 }, t));
+
+// PR 6958's shape, on staging: the claim is a faint line under the top bar,
+// and two strips of card text far below differ too. The run the demo carries
+// is what the comparison makes of its two pictures with the top bar recorded
+// as the element the claim is about, so the card frames on the top bar.
+test('the demo run\'s areas and frame are what the comparison finds in its pictures', async () => {
+  const { PNG } = require('pngjs');
+  const diff = require('../src/services/shots-diff');
+  const crypto = require('node:crypto');
+  const demo = require('../src/services/staging-demo-preview');
+  const stillOf = (side) => PNG.sync.read(demo.shotPng(side));
+  const topBar = (side) => {
+    const element = new PNG({ width: 1280, height: 52 });
+    PNG.bitblt(stillOf(side), element, 0, 0, 1280, 52, 0, 0);
+    return PNG.sync.write(element);
+  };
+  const file = (side, variant, data, extra = {}) => ({
+    storyId: demo.CLAIM_ID, viewport: 'desktop', side, variant, media: 'png', data,
+    sha256: crypto.createHash('sha256').update(data).digest('hex'), ...extra,
+  });
+  const [x, y, w, h] = demo.TOP_BAR;
+  const [screen] = await diff.screensFor([{ id: demo.CLAIM_ID, viewports: [{ name: 'desktop', width: 1280, height: 800 }] }], [
+    file('base', 'context', demo.shotPng('base')), file('head', 'context', demo.shotPng('head')),
+    file('base', 'focus', topBar('base'), { focusRect: { x, y, w, h } }),
+    file('head', 'focus', topBar('head'), { focusRect: { x, y, w, h } }),
+  ]);
+  assert.deepEqual(screen.regions, demo.DEMO_SCREEN.regions);
+  assert.deepEqual(screen.frames, demo.DEMO_SCREEN.frames);
+  assert.deepEqual([...diff.unchangedStories([{ ...screen, shot: demo.CLAIM_ID }])], [], 'the line is the change');
+  // And the run's view carries both to the card.
+  const votes = require('../src/routes/votes');
+  const mock = votes.stagingMockProposalFor(9000013, { id: 1, username: 'alice' });
+  assert.deepEqual(mock.shots.screens[0].frames, demo.DEMO_SCREEN.frames);
+  assert.equal(mock.shots.screens[0].regions.length, 3);
+  assert.match(mock.shots.claims[0].claim, /^Staging demo: /);
+});

@@ -110,6 +110,17 @@ function cleanScreens(screens, claims) {
           aMark: box(region?.aMark, 3),
         }))
         .filter((region) => region.b || region.a),
+      // Where each change on the screen is about (shots-diff.screensFor): the
+      // card frames on these. At most one a change; never an outline.
+      frames: (Array.isArray(screen.frames) ? screen.frames : [])
+        .filter((frame) => frame && ids.has(frame.story))
+        .map((frame) => ({
+          story: frame.story,
+          b: box(frame.b, 4) && frame.b[2] > 0 && frame.b[3] > 0 ? frame.b.slice() : null,
+          a: box(frame.a, 4) && frame.a[2] > 0 && frame.a[3] > 0 ? frame.a.slice() : null,
+        }))
+        .filter((frame, index, all) => (frame.b || frame.a) && all.findIndex((other) => other.story === frame.story) === index)
+        .slice(0, 3),
     }));
 }
 
@@ -220,7 +231,9 @@ function cleanArtifacts(items, { slug, sessionId, verified, dense = false }) {
       height: sharp ? sharp.height : Number.isInteger(artifact.height) ? artifact.height : null,
       density: sharp ? sharp.density : 1,
       bytes: Number.isInteger(artifact.bytes) ? artifact.bytes : null,
-      focusRect: artifact.focusRect && typeof artifact.focusRect === 'object' ? artifact.focusRect : null,
+      focusRect: artifact.focusRect && typeof artifact.focusRect === 'object'
+        && ['x', 'y', 'w', 'h'].every((key) => wholePx(artifact.focusRect[key]))
+        ? { x: artifact.focusRect.x, y: artifact.focusRect.y, w: artifact.focusRect.w, h: artifact.focusRect.h } : null,
       stageLabels: Array.isArray(artifact.stageLabels)
         ? artifact.stageLabels.slice(0, 40).map((label) => String(label).slice(0, 100))
         : null,

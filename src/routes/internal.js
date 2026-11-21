@@ -183,6 +183,10 @@ function internalRoutes(_config) {
           // The agent's answer to whether the still shows anybody's private
           // things (shots-control.publicSafeOf).
           showsPrivate: req.query.showsPrivate,
+          // An element shot's place, as its browser measured it: on the
+          // visible screen and on the whole page (shots-files.elementFrame).
+          focus: req.query.focus,
+          focusPage: req.query.focusPage,
         };
         const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
         // A dark screen against its light one, an element shot against its

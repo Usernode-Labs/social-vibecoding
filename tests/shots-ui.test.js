@@ -1090,3 +1090,35 @@ test('a failed run’s description drops the Before & after block that links to 
     id: 7, shots: failedShots(), pr_body: '<!-- usernode:shots -->\n## Before & after\n<!-- /usernode:shots -->',
   }), null);
 });
+
+// PR 6958: the change page's side-by-side view crops to what the change is
+// about (its frame: the element its shots agent shot), even when every area
+// that differs is one no declared change accounts for, and never draws the
+// frame as an outline of a change.
+test('the side-by-side view crops to the change\'s frame, and outlines only what differs', () => {
+  const value = shots({
+    screens: [{
+      viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+      width: 1280, heightBefore: 800, heightAfter: 800,
+      regions: [
+        { story: null, b: [360, 615, 48, 12], a: [360, 615, 48, 12], bMark: null, aMark: null },
+        { story: null, b: [280, 671, 48, 12], a: [280, 671, 48, 12], bMark: null, aMark: null },
+      ],
+      frames: [{ story: 'dialog', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] }],
+    }],
+  });
+  const thread = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+  assert.match(thread, /<div class="shots-stage" data-shots-stack="1">/, 'a wide crop: before above after');
+  for (const which of ['after', 'before']) {
+    const style = new RegExp(`<span class="shots-flip-side shots-flip-${which}" data-shots-crop="1" style="([^"]*)"`).exec(thread)[1];
+    assert.equal(style,
+      '--shots-shape:1280 / 800;--shots-crop-shape:1280 / 256;--shots-crop-x:0.000%;--shots-crop-y:0.000%;--shots-crop-w:100.000%;--shots-crop-h:312.500%',
+      `${which}: the top of the screen, where the top bar is`);
+  }
+  const after = /<span class="shots-flip-side shots-flip-after" data-shots-crop="1"[^>]*>([\s\S]*?)<\/span>\s*<span class="shots-flip-side shots-flip-before"/.exec(thread)[1];
+  assert.equal((after.match(/class="shots-box[ "]/g) || []).length, 2, 'the two areas are outlined; the frame is not');
+  assert.doesNotMatch(after, /left:0\.000%;top:0\.000%;width:100\.000%;height:6\.500%/, 'no outline the size of the top bar');
+  // Without the frame, the same areas leave the whole screen, as before.
+  const unframed = AppView.shotsHtml(shots({ screens: [{ ...value.screens[0], frames: [] }] }), { sessionId: 42, thread: true });
+  assert.doesNotMatch(unframed, /shots-crop|data-shots-stack/);
+});

@@ -7,8 +7,12 @@
 // lines, so content that only moved (a sheet that grew upward and pushed
 // everything in it up) lines up instead of counting as changed. Runs of rows
 // that do not line up are then compared pixel by pixel to find how wide each
-// change is. Each area is tied to the declared change whose element shot sits
-// inside it; anything else that differs is kept as an undeclared area.
+// change is (a run one to three rows tall again at a lower tolerance, so a
+// hairline counts). Each change on a screen has a frame: the element it is
+// about, where its browser measured it as it was shot, else found by its
+// pixels. The card frames the change on that; the areas that differ are
+// outlined inside it, and tied to the change whose frame they touch. Anything
+// else that differs is kept as an undeclared area.
 //
 // Pure apart from PNG decoding. Everything it returns is integers and story
 // ids from the run's own declaration, in the screen's CSS pixels: a still
@@ -31,6 +35,30 @@ const MAX_LOCATE_MATCHES = 128;
 // Two channels closer than this are the same colour: antialiasing and image
 // compression move a pixel a little, a change moves it a lot.
 const TOLERANCE = 28;
+// A hairline: a line, border or divider a tenth darker than its ground
+// (PR 6958's line under the top bar, `--app-sheet-line` on cream, is about
+// 24 a channel) differs by less than TOLERANCE in every pixel, though the
+// rows' hashes differ. A run of at most HAIRLINE_MAX_ROWS differing rows in
+// which TOLERANCE finds nothing is measured again at HAIRLINE_TOLERANCE, and
+// kept only when what differs is at least HAIRLINE_MIN_WIDTH wide: lines,
+// borders and dividers, never a screen's general noise (a run that tall is
+// measured at TOLERANCE alone).
+const HAIRLINE_TOLERANCE = 10;
+const HAIRLINE_MAX_ROWS = 3;
+const HAIRLINE_MIN_WIDTH = 24;
+// An element shot whose recorded place (its focus_rect) shows pixels this
+// unlike the element shot is not believed: the page moved between the screen
+// shot and the element shot (a pane the element shot scrolled), and the
+// element is searched for instead. Looser than locate's 0.15, because the
+// place is known and only confirmed.
+const RECORDED_MAX_OFF = 0.25;
+// An undeclared area outside every claim's frame at least this tall and this
+// large, in CSS px, is "something else on this screen changed too" (a shot
+// notice). One line of text redrawn with other antialiasing is a strip about
+// 12 px tall: it never raises one.
+const ELSEWHERE_MIN_HEIGHT = 16;
+const ELSEWHERE_MIN_AREA = 4000;
+const ELSEWHERE_TEXT = 'Something else on this screen changed too, outside what this change is about.';
 // Equal rows this close together inside a change do not split it (the
 // identical middle row of a button, say).
 const JOIN_ROWS = 6;
@@ -130,19 +158,43 @@ function align(A, B) {
   return ops;
 }
 
-function differs(a, ia, b, ib) {
+function differs(a, ia, b, ib, tolerance = TOLERANCE) {
   return Math.max(Math.abs(a[ia] - b[ib]), Math.abs(a[ia + 1] - b[ib + 1]),
-    Math.abs(a[ia + 2] - b[ib + 2])) > TOLERANCE;
+    Math.abs(a[ia + 2] - b[ib + 2])) > tolerance;
 }
 
-function rowExtent(pa, ya, pb, yb, span) {
+function rowExtent(pa, ya, pb, yb, span, tolerance = TOLERANCE) {
   const w = Math.min(pa.w, pb.w);
   for (let x = 0; x < w; x += 1) {
-    if (differs(pa.d, (ya * pa.w + x) * 4, pb.d, (yb * pb.w + x) * 4)) {
+    if (differs(pa.d, (ya * pa.w + x) * 4, pb.d, (yb * pb.w + x) * 4, tolerance)) {
       if (x < span.min) span.min = x;
       if (x > span.max) span.max = x;
     }
   }
+}
+
+// How wide a run of rows differs, at `tolerance`: each row of a run on both
+// sides against its partner, and the rows only one side has against the row
+// above them (or below, at the top).
+function hunkSpan(before, after, h, tolerance) {
+  const hasB = h.b1 > h.b0;
+  const hasA = h.a1 > h.a0;
+  const span = { min: Infinity, max: -1 };
+  if (hasB && hasA) {
+    const len = Math.min(h.b1 - h.b0, h.a1 - h.a0);
+    for (let k = 0; k < len; k += 1) rowExtent(before, h.b0 + k, after, h.a0 + k, span, tolerance);
+    const refB = Math.max(0, h.b0 - 1);
+    const refA = Math.max(0, h.a0 - 1);
+    for (let y = h.b0 + len; y < h.b1; y += 1) rowExtent(before, y, before, refB, span, tolerance);
+    for (let y = h.a0 + len; y < h.a1; y += 1) rowExtent(after, y, after, refA, span, tolerance);
+  } else if (hasA) {
+    const ref = h.a0 > 0 ? h.a0 - 1 : Math.min(after.h - 1, h.a1);
+    for (let y = h.a0; y < h.a1; y += 1) rowExtent(after, y, after, ref, span, tolerance);
+  } else if (hasB) {
+    const ref = h.b0 > 0 ? h.b0 - 1 : Math.min(before.h - 1, h.b1);
+    for (let y = h.b0; y < h.b1; y += 1) rowExtent(before, y, before, ref, span, tolerance);
+  }
+  return span;
 }
 
 // Areas that differ, each with its box on the side it is on and, when it is
@@ -172,25 +224,17 @@ function regions(before, after) {
   for (const h of hunks) {
     const hasB = h.b1 > h.b0;
     const hasA = h.a1 > h.a0;
-    const span = { min: Infinity, max: -1 };
-    if (hasB && hasA) {
-      const len = Math.min(h.b1 - h.b0, h.a1 - h.a0);
-      for (let k = 0; k < len; k += 1) rowExtent(before, h.b0 + k, after, h.a0 + k, span);
-      const refB = Math.max(0, h.b0 - 1);
-      const refA = Math.max(0, h.a0 - 1);
-      for (let y = h.b0 + len; y < h.b1; y += 1) rowExtent(before, y, before, refB, span);
-      for (let y = h.a0 + len; y < h.a1; y += 1) rowExtent(after, y, after, refA, span);
-    } else if (hasA) {
-      const ref = h.a0 > 0 ? h.a0 - 1 : Math.min(after.h - 1, h.a1);
-      for (let y = h.a0; y < h.a1; y += 1) rowExtent(after, y, after, ref, span);
-    } else if (hasB) {
-      const ref = h.b0 > 0 ? h.b0 - 1 : Math.min(before.h - 1, h.b1);
-      for (let y = h.b0; y < h.b1; y += 1) rowExtent(before, y, before, ref, span);
+    const rows = Math.max(h.b1 - h.b0, h.a1 - h.a0);
+    let span = hunkSpan(before, after, h, TOLERANCE);
+    if (span.max < 0 && rows <= HAIRLINE_MAX_ROWS) {
+      // Nothing past the tolerance in a run this thin: a hairline, if what
+      // differs a little is wide enough to be a line.
+      span = hunkSpan(before, after, h, HAIRLINE_TOLERANCE);
+      if (span.max < 0 || span.max - span.min + 1 < HAIRLINE_MIN_WIDTH) continue;
     }
     if (span.max < 0) continue;
     const x = Math.max(0, span.min - 4);
     const w = Math.min(before.w, span.max + 5) - x;
-    const rows = Math.max(h.b1 - h.b0, h.a1 - h.a0);
     if (rows < 3 && w < 24) continue;
     out.push({
       b: hasB ? [x, h.b0, w, h.b1 - h.b0] : null,
@@ -399,6 +443,35 @@ function union(box, rect) {
   return [x, y, Math.max(box[0] + box[2], rect[0] + rect[2]) - x, Math.max(box[1] + box[3], rect[1] + rect[3]) - y];
 }
 
+// Whether `crop` is what `screen` shows at (x, y): its pixels on a 3 px grid,
+// at most RECORDED_MAX_OFF of them different.
+function matchesAt(screen, crop, x, y) {
+  let off = 0;
+  let all = 0;
+  for (let cy = 0; cy < crop.h && y + cy < screen.h; cy += 3) {
+    for (let cx = 0; cx < crop.w && x + cx < screen.w; cx += 3) {
+      all += 1;
+      if (differs(screen.d, ((y + cy) * screen.w + x + cx) * 4, crop.d, (cy * crop.w + cx) * 4)) off += 1;
+    }
+  }
+  return all > 0 && off / all <= RECORDED_MAX_OFF;
+}
+
+// An element shot's recorded place on its screen shot ([x, y, w, h]), from
+// the box its browser measured as it was taken (shots_run_files.focus_rect,
+// shots-files.elementFrame), or null: when there is none, when it is not on
+// the screen shot, when it is not the element shot's size (within rounding),
+// or when the screen shot does not show the element there (the page moved
+// between the two shots).
+function recordedPlace(rect, screen, crop) {
+  if (!rect || !screen || !crop) return null;
+  const box = [rect.x, rect.y, rect.w, rect.h];
+  if (!box.every(Number.isSafeInteger) || rect.x < 0 || rect.y < 0 || rect.w < 1 || rect.h < 1
+    || rect.x + rect.w > screen.w || rect.y + rect.h > screen.h) return null;
+  if (Math.abs(crop.w - rect.w) > 2 || Math.abs(crop.h - rect.h) > 2) return null;
+  return matchesAt(screen, crop, rect.x, rect.y) ? box : null;
+}
+
 // Two boxes overlap "a lot" when at least half of the smaller one lies inside
 // the other: whole-panel outlines stacked on the same panel read as one.
 function overlapsALot(p, q) {
@@ -534,20 +607,34 @@ async function screensFor(stories, files) {
       const before = pixelsOf(group.base, density);
       const after = pixelsOf(group.head, densityOf(group.head, group.stories[0], viewport));
       const found = regions(before, after).map((region) => ({ ...region, story: null }));
+      // Each change's frame: where the element it is about sits on each
+      // side, which the card frames the change on. The pixel comparison
+      // only outlines what differs inside it, and checks it.
+      const frames = [];
       for (const story of group.stories) {
-        // Each element shot is found in its change's own screen shot, which
-        // may differ from the one shown only by what the agent hovered.
+        // Each element shot is placed on its change's own screen shot, which
+        // may differ from the one shown only by what the agent hovered: where
+        // its browser measured it, when the screen shot shows it there, else
+        // wherever its pixels are found.
         const rects = {};
         for (const side of ['base', 'head']) {
           const crop = find(story.id, viewport, side, 'focus');
           const own = find(story.id, viewport, side, 'context');
-          if (crop && own) await new Promise((resolve) => setImmediate(resolve));
+          rects[side] = null;
+          if (!crop || !own) continue;
+          await new Promise((resolve) => setImmediate(resolve));
           const ownDensity = densityOf(own, story, viewport);
-          const places = crop && own
-            ? locateAll(pixelsOf(own, ownDensity), pixelsOf(crop, ownDensity)) : [];
+          const screenPx = pixelsOf(own, ownDensity);
+          const cropPx = pixelsOf(crop, ownDensity);
+          const recorded = recordedPlace(crop.focusRect, screenPx, cropPx);
+          if (recorded) { rects[side] = recorded; continue; }
+          const places = locateAll(screenPx, cropPx);
           const boxOf = (region) => (side === 'head' ? region.a : region.b);
           rects[side] = places.find((place) => found.some((region) => overlaps(boxOf(region), place)))
             || places[0] || null;
+        }
+        if (rects.base || rects.head) {
+          frames.push({ story: story.id, b: rects.base ? rects.base.slice() : null, a: rects.head ? rects.head.slice() : null });
         }
         for (const region of found) {
           if (region.story === null && (overlaps(region.a, rects.head) || overlaps(region.b, rects.base))) {
@@ -595,30 +682,93 @@ async function screensFor(stories, files) {
         // may zoom before it draws them soft.
         density,
         regions: kept,
+        // What each change on this screen is about (at most one frame a
+        // change): the card frames on these, and outlines only `regions`.
+        frames,
       });
     }
   }
   return screens;
 }
 
-// The changes whose every screen showed no difference at all between before
-// and after, within the comparison's tolerance: a byte-identical pair is the
-// obvious case, and a pair that differs only by antialiasing is the same to
-// a person looking at it. A change with any screen that differs is not here.
-// A screen's areas compare its before with the after of `shot`, the first
-// change on it, so they say nothing about the other changes folded onto that
-// screen: those are left out (counted as differing), even when their after
-// screens matched within the comparison's tolerance.
+// Whether an area that differs touches a change's frame: its box (or, for a
+// part one side has and the other does not, its mark line) overlaps the
+// frame on the same side. A frame with only one side (no before element
+// shot, for something new) stands for both.
+function touchesFrame(region, frame) {
+  if (!region || !frame) return false;
+  const fa = frame.a || frame.b;
+  const fb = frame.b || frame.a;
+  const line = (mark) => (Array.isArray(mark) && mark.length === 3 ? [mark[0], mark[1], mark[2], 1] : null);
+  return overlaps(region.a || line(region.aMark), fa) || overlaps(region.b || line(region.bMark), fb);
+}
+
+// The changes whose shots show no difference where they are about. A change
+// with a frame (the element it is about, shots-diff.screensFor) is unchanged
+// when no area that differs touches its frame on any of its screens, whatever
+// differs elsewhere on them (PR 6958: two strips of text far from its top bar
+// once passed for its change). A change with no frame keeps the rule that
+// came before frames: unchanged only when every screen showed no difference
+// at all, within the comparison's tolerance (a byte-identical pair, or one
+// that differs only by antialiasing). A screen's areas compare its before
+// with the after of `shot`, the first change on it, so they say nothing
+// about the other changes folded onto that screen: those are left out
+// (counted as differing), even when their after screens matched.
 function unchangedStories(screens) {
   const changed = new Set();
   const seen = new Set();
   for (const screen of screens || []) {
+    const areas = screen.regions || [];
     for (const id of screen.stories || []) {
       seen.add(id);
-      if (id !== screen.shot || (screen.regions || []).length) changed.add(id);
+      const frame = (screen.frames || []).find((entry) => entry && entry.story === id && (entry.a || entry.b));
+      if (id !== screen.shot) changed.add(id);
+      else if (frame ? areas.some((region) => touchesFrame(region, frame)) : areas.length) changed.add(id);
     }
   }
   return new Set([...seen].filter((id) => !changed.has(id)));
+}
+
+// An area that only moved: the same size on both sides, somewhere else
+// (review-flow model.ts onlyMoved). A row pushed along by a change is not
+// something else that changed.
+function onlyMoved(region) {
+  const { a, b } = region || {};
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  const same = Math.abs(a[2] - b[2]) <= 2 && Math.abs(a[3] - b[3]) <= 2;
+  return same && (Math.abs(a[0] - b[0]) >= 2 || Math.abs(a[1] - b[1]) >= 2);
+}
+
+// The screens on which something else changed too: a screen with at least
+// one change's frame, and an area no change accounts for, outside every
+// frame, at least ELSEWHERE_MIN_HEIGHT tall and ELSEWHERE_MIN_AREA large on
+// a side (so a line of text redrawn with other antialiasing never counts),
+// that did not only move. Each as `{ change, screen }`: the screen's shown
+// change and its size, as a shot notice names them.
+function elsewhereChanged(screens) {
+  const out = [];
+  for (const screen of screens || []) {
+    const frames = (screen?.frames || []).filter((frame) => frame && (frame.a || frame.b));
+    if (!frames.length) continue;
+    const sizeable = (box) => Array.isArray(box) && box[3] >= ELSEWHERE_MIN_HEIGHT && box[2] * box[3] >= ELSEWHERE_MIN_AREA;
+    const other = (screen.regions || []).some((region) => region && region.story == null && !onlyMoved(region)
+      && (sizeable(region.a) || sizeable(region.b)) && !frames.some((frame) => touchesFrame(region, frame)));
+    if (other) out.push({ change: screen.shot, screen: screen.viewport });
+  }
+  return out;
+}
+
+// The shot notices `screens` add to a run's verdict: one per screen on which
+// something else changed too (elsewhereChanged), said once, after the
+// agent's own (`notices`), while there is room under `max`.
+function elsewhereNotices(screens, notices = [], max = 5) {
+  const out = Array.isArray(notices) ? notices.slice() : [];
+  for (const { change, screen } of elsewhereChanged(screens)) {
+    if (out.length >= max) break;
+    if (out.some((entry) => entry && entry.change === change && entry.screen === screen && entry.text === ELSEWHERE_TEXT)) continue;
+    out.push({ text: ELSEWHERE_TEXT, change, screen, shot: 'screen', alsoBefore: 'unknown' });
+  }
+  return out;
 }
 
 module.exports = {
@@ -635,4 +785,9 @@ module.exports = {
   locateAll,
   screensFor,
   unchangedStories,
+  touchesFrame,
+  elsewhereChanged,
+  elsewhereNotices,
+  ELSEWHERE_TEXT,
+  HAIRLINE_TOLERANCE,
 };
