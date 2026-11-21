@@ -442,6 +442,7 @@ export function BotHtmlReply({ html, fallback, className = '', onSized }: {
           mode="helper"
           html={doc}
           site={false}
+          pictured={measured}
           title={t('messages:row.botHtml.frameTitle')}
           className={measured ? 'block w-full border-0 bg-transparent' : 'pointer-events-none absolute inset-x-0 top-0 block w-full border-0 bg-transparent opacity-0'}
           style={{ height: measured ? height : 1, pointerEvents: 'none', colorScheme: scheme }}

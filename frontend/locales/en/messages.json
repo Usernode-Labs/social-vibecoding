@@ -6153,7 +6153,7 @@
   },
   "liveDraft.propose": {
     "text": "Propose",
-    "description": "A button on a thread's live draft bar: puts the draft's changes up for the project's vote, as the person's own change."
+    "description": "A button on a thread's live draft bar: puts the draft's changes up for the project's vote, as the person's own change. Homeroom's own app is included when its admin opened the draft: Propose puts it to Homeroom's group like any other change."
   },
   "liveDraft.proposing": {
     "text": "Proposing…",
@@ -6173,7 +6173,7 @@
   },
   "newThread.starts.live.label": {
     "text": "I want to change an app live<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Homeroom's own app is included for its admins. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
   },
   "newThread.starts.live.text": {
     "text": "I want to change an app live",

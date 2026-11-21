@@ -66,7 +66,7 @@ import { newestPlan, requestRail, type RailOpen } from './rail-model';
 import { requestFoot } from './card-model';
 import { closeStep, openStep, useLead, useOpenStep } from './step-store';
 import { PlanWords, StepLayer, ThreadBarTile, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy, threadProjectName } from './thread-card';
-import { ThreadExits } from './thread-exits';
+import { ThreadExits, ThreadShowList } from './thread-exits';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
 import { ThreadChanges, ChangeSectionSkeleton, letterOf } from './thread-changes';
 import { ballotOf, requestPill, threadLayout, type ThreadHere } from './thread-model';
@@ -204,6 +204,7 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
   const where = dotLine([threadProjectName(), r.category]);
   return (
     <ThreadHeadCard
+      lead={<ThreadShowList />}
       tile={<ThreadBarTile />}
       line={pill ? (
         <div className="flex min-w-0 items-center gap-2">

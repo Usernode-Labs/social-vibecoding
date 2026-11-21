@@ -19974,8 +19974,12 @@ html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [
 html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-private-thread [data-thread-page-replies] .messages-message-image { max-width: min(240px, 100%); }
 /* Beside iPhone Duo's column of system chrome (`--ai-edge`) the page stops
    short of it, as the chat it replaced did (B25 below): its ground is the
-   column's, so nothing is left there but that ground. */
-html[data-side-strip]:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-reply-pane > .dev-private-thread { padding-inline-end: var(--ai-edge, 0px); }
+   column's, so nothing is left there but that ground. Only the docked column
+   needs this: it is fixed at the screen's edge and runs under the strip. The
+   phone's drawer is already inside the body, which THE SIDE STRIP pads by the
+   strip, so padding it again left a band of empty ground beside the column
+   on the folded Duo, whose cover stands the tabs in that column (#6974). */
+html[data-side-strip]:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-reply-pane > .dev-private-thread { padding-inline-end: var(--ai-edge, 0px); }
 /* #6970: the head card at the top of a request or a change opened in the
    column beside Homeroom bot's list keeps its ⋯, open as page and close out
    of Duo's column (or the folded corner) too. The panel's own document reads
@@ -31265,6 +31269,13 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 6px; }
 .dev-thread-exits { display: none; align-items: center; gap: 2px; flex: none; }
+/* #6973: the way back to the thread list beside a request, change or decision
+   page. The page is drawn in the panel's frame, whose <html> is marked while
+   the list is hidden (features/side-panel/controller.ts LIST_HIDDEN_CLASS),
+   so the button is shown from that class alone. Everywhere else it is not
+   drawn; a private thread draws its own (#6963). */
+.dev-thread-show-list { display: none; }
+html.in-side-panel.side-panel-beside-ai.side-panel-list-hidden .dev-thread-show-list { display: inline-flex; }
 .dev-thread-exit svg { width: 18px; height: 18px; }
 :is(.dev-ws-side, html.in-side-panel.side-panel-beside-ai) .dev-thread-exits,
 #ai-screen .dev-private-thread .dev-thread-exits { display: inline-flex; }
@@ -31531,11 +31542,19 @@ html:is(:not([data-skin]), [data-skin="brand"]) .side-panel-divider::after { dis
 @media (hover: hover) {
   :is(.split-handle[data-armed], .side-panel-divider):hover::before { opacity: .5; }
 }
-/* A finger never hovers: on a touch screen the grip is drawn at rest, as
-   the side panel's own divider already drew it (its coarse-pointer rule
-   above, which this block's opacity would otherwise put out). */
-@media (pointer: coarse) {
-  :is(.split-handle, .side-panel-divider)::before { opacity: .5; }
+/* A finger never hovers: on a touch screen the grip is drawn at rest (a
+   tablet or phone shows no mark otherwise, and a finger cannot discover a
+   hover). A device that reports no hover as well as a coarse pointer counts
+   (hover: none), so a hybrid touch screen with a fine pointer gets it too.
+   THE SELECTOR MATCHES THE HIDE RULE'S SHAPE ON PURPOSE: :is() takes its
+   most specific argument's weight, so the short `.split-handle` branch is
+   (0,2,2) there, and a plain `:is(.split-handle, .side-panel-divider)`
+   here is only (0,1,1) and lost to it. Same weight, later in the file: the
+   grip wins. This is the one rule that shows the grip at rest on touch; the
+   held rule below is the same weight and comes after, so dragging still
+   darkens it. */
+@media (hover: none), (pointer: coarse) {
+  :is(.split-handle, html:is(:not([data-skin]), [data-skin="brand"]) .side-panel-divider)::before { opacity: .5; }
 }
 :is(.split-handle, .side-panel-divider):focus-visible::before,
 html.side-panel-resizing :is(.split-handle, .side-panel-divider)::before { opacity: .9; background: var(--accent); }

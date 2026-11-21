@@ -1339,12 +1339,13 @@ test('with a detail beside the page it holds, the panel\'s edge is that column\'
   // three; the panel's own island reads it and hands the divider the
   // thread's width key, its probe and the preview to watch.
   assert.match(SRC, /import \{ panelEdgeStore \} from '\.\/edge-store';/);
-  assert.match(SRC, /const edge = useStoreState\(panelEdgeStore\)\.slot;/);
-  assert.match(SRC, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+\/>/,
+  assert.match(SRC, /const edges = useStoreState\(panelEdgeStore\);\s+const edge = edges\.slot;/);
+  assert.match(SRC, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+collapsed=\{snap\?\.collapsed\}\s+onCollapse=\{snap\?\.onCollapse\}\s+onRestore=\{snap\?\.onRestore\}\s+\/>/,
     'passing undefined leaves the divider on its own defaults');
   // The store starts empty, so the island\'s first render is the prerender.
   const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
   assert.equal(panelEdgeStore.get().slot, null);
+  assert.equal(panelEdgeStore.get().snap, null, '#6973: no one-pane wiring until a page is the column');
   // Its edge is drawn where the panel begins, as the thread\'s is in three.
   assert.match(CSS, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
   assert.match(CSS, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
@@ -2159,4 +2160,77 @@ test('the chart: a drag past the list\'s floor hides it, and back out brings it 
 
   delete globalThis.window;
   delete globalThis.document;
+});
+
+test('beside a request, change or decision page the same edge hides the list, and the frame is told (#6973)', () => {
+  // The page in the panel is another document: it cannot read the list store,
+  // so the controller marks its <html> (LIST_HIDDEN_CLASS) and app.css shows
+  // the page's own list button from that class. Its press comes back through
+  // the bridge as SidePanel.showList().
+  const classes = new Set();
+  const root = {
+    classList: {
+      toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); },
+      contains: (c) => classes.has(c),
+    },
+  };
+  topWindow();
+  api.sidePanelRefs.frame = { contentDocument: { documentElement: root } };
+  const { setListClosed, setDocked, isListClosed } = api.listClosed;
+
+  // Hidden, but no page docked: the frame is told nothing.
+  setDocked(false);
+  setListClosed(true);
+  api.appPresence(true);
+  assert.equal(isListClosed(), true);
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), false, 'no split, so no button on the page');
+
+  // A page is the column: the class follows the choice.
+  setDocked(true);
+  api.appPresence(true);
+  assert.equal(classes.has(api.BESIDE_AI_CLASS), true, 'the page knows it is beside the bot page');
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), true, 'and that the list is hidden');
+
+  // The page's button, through the bridge, brings the list back.
+  assert.equal(typeof api.SidePanel.showList, 'function');
+  api.SidePanel.showList();
+  assert.equal(isListClosed(), false);
+  api.appPresence(true);
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), false, 'the class goes with the list');
+
+  // The bot page leaves: nothing is marked, even with the choice still hidden.
+  setListClosed(true);
+  topWindow({ screen: null });
+  api.sidePanelRefs.frame = { contentDocument: { documentElement: root } };
+  api.appPresence(true);
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), false, 'not beside the bot page');
+
+  const controller = read('frontend/src/features/side-panel/controller.ts');
+  assert.match(controller, /export const LIST_HIDDEN_CLASS = 'side-panel-list-hidden';/);
+  assert.match(controller, /subscribeListClosed\(markBeside\)/, 'the frame is re-marked when the list hides or comes back');
+  assert.match(controller, /export function showList\(\): void \{\s+setListClosed\(false\);\s+\}/);
+  assert.match(controller, /showList,/);
+  cleanup();
+});
+
+test('the page\'s list button is the same one a private thread draws, and only a panel with the list hidden shows it (#6973)', () => {
+  const exits = read('frontend/src/features/dev-board/topic/thread-exits.tsx');
+  assert.match(exits, /export function ThreadShowList\(\): ReactNode \{/);
+  assert.match(exits, /className="messages-thread-action messages-thread-back dev-thread-show-list"\s+data-thread-show-list=""\s+aria-label=\{t\('project:sidePanel\.showList'\)\}/,
+    'the round list button, named by its tooltip');
+  assert.match(exits, /onClick=\{\(\) => topPanel\(\)\?\.showList\?\.\(\)\}/,
+    'pressing it asks the top document\'s panel controller');
+  for (const file of ['request-head.tsx', 'change-head.tsx']) {
+    const src = read(`frontend/src/features/dev-board/topic/${file}`);
+    assert.match(src, /import \{ ThreadExits, ThreadShowList \} from '\.\/thread-exits';/);
+    assert.match(src, /<ThreadHeadCard\s+lead=\{<ThreadShowList \/>\}/,
+      `${file}: first in the head, before the tile`);
+  }
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'),
+    /\{showList \? \(\s+<button\s+type="button"\s+className="messages-thread-action messages-thread-back side-panel-show-list"[\s\S]*?onClick=\{\(\) => controller\.showList\(\)\}/,
+    'a decision\'s page keeps the column\'s row, so the button is there too');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-thread-show-list \{ display: none; \}/);
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai\.side-panel-list-hidden \.dev-thread-show-list \{ display: inline-flex; \}/,
+    'shown only in the panel, with the list hidden');
 });

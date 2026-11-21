@@ -252,6 +252,30 @@ test('a laid-out answer is drawn in the one frame, in the helper mode, with no o
   assert.equal(reply.replyHits('nope').length, 0);
 });
 
+test('a helper page is marked for a comment\'s picture, and its helper carries its own nonce', () => {
+  // #6972: a bot's laid-out reply is a helper frame that draws its own
+  // picture, so the shell marks it as it marks a running page.
+  const helped = frameOf(renderToHtml(createElement(ArtifactFrame, {
+    mode: 'helper', html: VERSION, site: false, nonce: 'f00d', pictured: true, title: 'Homeroom bot\'s answer, laid out', origin: SITE,
+  })));
+  assert.equal(helped.attr('data-artifact-pictured'), '', 'a comment\'s picture asks it to draw itself');
+  // A static frame runs no helper, so it cannot answer: never marked.
+  for (const props of [
+    { mode: 'static', html: VERSION, site: false, nonce: 'f00d', pictured: true, title: 'x', origin: SITE },
+    { mode: 'run', viewer: 'other', html: VERSION, pictured: true, title: 'x', origin: SITE },
+  ]) {
+    const frame = frameOf(renderToHtml(createElement(ArtifactFrame, props)));
+    assert.equal(frame.attr('data-artifact-pictured'), null, `${props.mode} is never marked`);
+  }
+  // The helper's `script-src` is its nonce, so the SnapDOM source it injects
+  // for the picture must carry it too: without it the frame cannot answer.
+  const doc = docs.artifactFrameDoc('<p>Hi</p>', { mode: 'helper', origin: SITE, site: false, nonce: 'f00d' });
+  assert.match(doc, /currentScript\.nonce/);
+  assert.match(doc, /if\(N\)s\.nonce=N/);
+  assert.equal((doc.match(/<script\b/g) || []).length, 1, 'the helper, and no other script in the document');
+  assert.equal((doc.match(/<script nonce="f00d">/g) || []).length, 1, 'the helper, with the frame\'s nonce');
+});
+
 test('a first look\'s drawn screen is drawn in the one frame, static, from its route', () => {
   const { DrawnLook } = loadTsx('frontend/src/features/first-session/drawn-look.tsx');
   const frame = frameOf(renderToHtml(createElement(DrawnLook, { src: '/api/apps/club-votes/first-version/first-look/drawn?v=3', label: 'The first look at Club Votes', width: 50 })));

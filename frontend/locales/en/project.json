@@ -1015,6 +1015,10 @@
     "text": "Open as a page",
     "description": "Button at the top of the panel beside a project's Workshop lists: closes the panel and opens the same request, change or vote as a full page. Open is a verb."
   },
+  "sidePanel.showList": {
+    "text": "Show thread list",
+    "description": "Accessible name and tooltip of the small round list button first in the header of a request's or change's page opened in the column beside the Homeroom bot tab's thread list while that list is hidden: brings the list back."
+  },
   "workRow.name.change": {
     "text": "Change",
     "description": "What a row is, at the start of the line under its title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"Change · evan · for #4455\". A noun: one proposed change to the project that has no number yet."

@@ -58,6 +58,7 @@
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import { CORNER_ATTR, panelEdge, STRIP_ATTR } from '../../lib/side-strip';
 import { isBotChatRoute } from '../ai/door';
+import { setListClosed, showsListButton, subscribeListClosed } from '../ai/list-closed';
 import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
 import {
   embeddedAllows,
@@ -128,6 +129,14 @@ export interface PanelHint {
  * "‹ Workshop" chip), which would be a second one to somewhere else.
  */
 export const BESIDE_AI_CLASS = 'side-panel-beside-ai';
+
+/**
+ * The class on the panel DOCUMENT's <html> while the bot page's list is
+ * hidden and the page in the panel is the column that took its room (#6973).
+ * The page's head button reads it (app.css shows `.dev-thread-show-list`
+ * only under it), since the frame is a separate JS realm.
+ */
+export const LIST_HIDDEN_CLASS = 'side-panel-list-hidden';
 
 interface AppLike {
   user?: unknown;
@@ -220,7 +229,12 @@ export function isBesideAi(): boolean {
  */
 function markBeside(): void {
   try {
-    sidePanelRefs.frame?.contentDocument?.documentElement?.classList.toggle(BESIDE_AI_CLASS, isBesideAi());
+    const root = sidePanelRefs.frame?.contentDocument?.documentElement;
+    root?.classList.toggle(BESIDE_AI_CLASS, isBesideAi());
+    // #6973: the page in the panel shows its way back to the list only while
+    // the list is hidden and the split is up. Told by class, because the
+    // frame's own React tree cannot see this document's list store.
+    root?.classList.toggle(LIST_HIDDEN_CLASS, isBesideAi() && showsListButton());
   } catch {
     /* a frame that is going away: the next one is marked when it reports */
   }
@@ -442,6 +456,12 @@ export function close(): void {
   stack = [];
   if (sidePanelStore.get().open) sidePanelStore.set({ open: false });
   writeAddress(null);
+}
+
+/** Bring the bot page's thread list back (#6973). A press on the list button
+ *  in a page's head comes here from inside the frame, through the bridge. */
+export function showList(): void {
+  setListClosed(false);
 }
 
 /** Drop the panel and its document — the app it stood beside is gone. */
@@ -807,6 +827,9 @@ export function onNavigate(e: NavigateEventLike): void {
 export function installIntercepts(win: Window): void {
   if (isEmbeddedPanel()) return;
   win.addEventListener('click', onClickCapture, true);
+  // The list hiding or coming back is a re-mark of the page in the frame
+  // (#6973): it is how the frame's own button appears and goes.
+  subscribeListClosed(markBeside);
   const nav = (win as unknown as {
     navigation?: { addEventListener?: (type: string, fn: (e: NavigateEventLike) => void) => void };
   }).navigation;
@@ -821,6 +844,7 @@ export const SidePanel = {
   take,
   open,
   close,
+  showList,
   drop,
   back,
   expand,
