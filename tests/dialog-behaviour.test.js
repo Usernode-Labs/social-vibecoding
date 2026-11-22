@@ -421,6 +421,37 @@ test('the controller is published by name and withdrawn on unmount', () => {
   assert.match(USE_DIALOG, /isOpen: \(\) => !!rootRef\.current && !rootRef\.current\.classList\.contains\('hidden'\)/);
 });
 
+test('a dialog claims the one-open-panel slot, released on close (#6981)', () => {
+  // Opening a dialog closes whatever sheet or card was open, and opening one
+  // of those closes the dialog; dialogs spare each other so the existing
+  // close-then-open hand-offs keep working (lib/open-surfaces.ts).
+  assert.match(USE_DIALOG, /import \{ claimSurface \} from '\.\.\/\.\.\/lib\/open-surfaces';/);
+  assert.match(USE_DIALOG,
+    /releaseSurface\.current = claimSurface\(`dialog:\$\{name\}`, 'dialog', \(\) => \{[\s\S]*?releaseSurface\.current = null;\s*dismiss\(\);\s*\}\);/,
+    'open() claims under the dialog’s own name, and a claim that swept it away drops the reference');
+  // Released when the close is ACCEPTED, in both paths that dismiss it: the
+  // shared dismiss() and the back-press callback (which cannot call dismiss,
+  // because it answers whether the press was consumed).
+  const dismissAt = USE_DIALOG.indexOf('const dismiss = useCallback(');
+  const dismissBody = USE_DIALOG.slice(dismissAt, USE_DIALOG.indexOf('const open = useCallback(', dismissAt));
+  assert.match(dismissBody, /const surface = releaseSurface\.current;\s*releaseSurface\.current = null;\s*surface\?\.\(\);/,
+    'a dismissed dialog gives the slot back before its exit animation');
+  const openAt = USE_DIALOG.indexOf('const open = useCallback(');
+  const openBody = USE_DIALOG.slice(openAt, USE_DIALOG.indexOf('const close = useCallback(', openAt));
+  assert.match(openBody, /const surface = releaseSurface\.current;\s*releaseSurface\.current = null;\s*surface\?\.\(\);/,
+    'so does the back key’s path');
+  assert.doesNotMatch(openBody, /surface\?\.\(\);\s*setIsOpen\(true\)/,
+    'and the claim is not spent on the way in');
+  // A screenshot round trip is not a lifecycle event: suspend/resume keep the
+  // claim, so the restored dialog is still the open panel.
+  const suspendAt = USE_DIALOG.indexOf('const suspend = useCallback(');
+  const suspendBody = USE_DIALOG.slice(suspendAt, USE_DIALOG.indexOf('const resume = useCallback(', suspendAt));
+  assert.doesNotMatch(suspendBody, /releaseSurface/);
+  const resumeAt = USE_DIALOG.indexOf('const resume = useCallback(');
+  const resumeBody = USE_DIALOG.slice(resumeAt, USE_DIALOG.indexOf('// The live open state', resumeAt));
+  assert.doesNotMatch(resumeBody, /releaseSurface|claimSurface/);
+});
+
 // ── each dialog's own behaviour ──────────────────────────────────────────
 
 test('create: retired, and what it did has a home', () => {

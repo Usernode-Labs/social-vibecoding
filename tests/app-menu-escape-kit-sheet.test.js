@@ -114,6 +114,19 @@ test('nothing to close when the menu is not in a kit sheet', () => {
   assert.equal(kitSheetTakesEscape(key('Escape'), doc, 'no-such-sheet'), false);
 });
 
+test('the menu stands aside for a panel opened above it (#6981)', () => {
+  const ISLAND = read('frontend/src/features/app-context/index.tsx');
+  assert.match(ISLAND, /import \{ isTopSurface \} from '\.\.\/\.\.\/lib\/open-surfaces';/);
+  assert.match(ISLAND,
+    /if \(event\.key === 'Escape' && !isTopSurface\('apps-switcher-sheet'\)\) return;/,
+    'Escape is only the menu’s while the menu is the top surface');
+  // The check comes before both the kit branch and the web branch, so one
+  // press cannot close the menu and the panel above it.
+  const listener = ISLAND.slice(ISLAND.indexOf("if (event.key === 'Escape' && !isTopSurface"));
+  assert.ok(listener.indexOf('isTopSurface') < listener.indexOf('if (AppContext._sheet)'));
+  assert.ok(listener.indexOf('isTopSurface') < listener.indexOf("if (event.key === 'Escape') {"));
+});
+
 test('the island hands Escape on the adopted menu to the helper and closes it', () => {
   const ISLAND = read('frontend/src/features/app-context/index.tsx');
   assert.match(ISLAND, /import \{ kitSheetTakesEscape \} from '\.\/kit-escape';/);

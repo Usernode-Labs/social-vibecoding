@@ -49,6 +49,7 @@
 
 import { pushDismissible } from './back-stack';
 import { adoptKitSurface } from './kit-surface';
+import { claimSurface } from './open-surfaces';
 
 const REGISTRY = new Set();
 
@@ -134,6 +135,9 @@ export function createSheetController({
     // and the address it was claimed at.
     _releaseBack: null,
     _openedAt: null,
+    // This sheet's one-at-a-time claim (lib/open-surfaces.ts): opening another
+    // panel closes it, and it closes the panel that was open.
+    _releaseSurface: null,
 
     /** Matches the root's transition duration in app.css. */
     LEGACY_CLOSE_MS: legacyCloseMs,
@@ -155,6 +159,11 @@ export function createSheetController({
       const panel = document.getElementById(elementId);
       if (!panel) return;
       controller._closeSiblings();
+      // Claim the one-at-a-time slot after the sheet sweep, so the other
+      // sheets' own closes are already releasing their entries.
+      const releaseSurface = claimSurface(elementId, 'sheet', () => controller.dismissForNav());
+      controller._releaseSurface?.();
+      controller._releaseSurface = releaseSurface;
       blurFocusedFieldOutside(panel);
 
       if (!controller._sheet) {
@@ -163,7 +172,8 @@ export function createSheetController({
         const sheet = adoptSheet(panel, () => {
           controller._sheet = null;
           // A swipe or a tap on the kit's backdrop lands here without passing
-          // through close(); the claim goes back the same way.
+          // through close(); the claims go back the same way.
+          controller._releaseSurfaceClaim();
           controller._releaseBackClaim();
           store.set({ open: false, adopted: false });
           controller._resolveDismissWaiters();
@@ -191,6 +201,9 @@ export function createSheetController({
     },
 
     close() {
+      // At the START of the close, so a surface that is still animating out
+      // is never claimed again by another opening panel.
+      controller._releaseSurfaceClaim();
       controller._releaseBackClaim();
       if (controller._sheet) {
         const done = controller._afterDismiss();
@@ -227,6 +240,12 @@ export function createSheetController({
       const release = controller._releaseBack;
       controller._releaseBack = null;
       if (release) release({ navigating: true });
+    },
+
+    _releaseSurfaceClaim() {
+      const release = controller._releaseSurface;
+      controller._releaseSurface = null;
+      if (release) release();
     },
 
     _closeSiblings() {

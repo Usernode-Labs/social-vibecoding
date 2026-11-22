@@ -478,6 +478,43 @@ test('Finish ends on your communities, Skip stays on Home\'s top (#5528)', () =>
   assert.match(message('onboarding:tour.step.settings.body'), /Finish takes you to your communities/);
 });
 
+test('another panel opening ends the tour, without moving the page (#6981)', () => {
+  // Opening the Homeroom menu (except on the tour's own menu steps),
+  // Notifications, a dialog or "Your feedback" stops the tour instead of
+  // leaving it running behind the panel. The stop is Skip's bookkeeping,
+  // minus Skip's scroll back to the top of Home: the viewer stays on the
+  // screen the panel opened over.
+  assert.match(OVERLAY_SRC, /import \{ claimSurface \} from '\.\.\/\.\.\/\.\.\/lib\/open-surfaces';/);
+  assert.match(OVERLAY_SRC,
+    /const release = claimSurface\('tour', 'tour', stopTour\);\s*return \(\) => release\(\);/,
+    'the tour claims the slot while it is open and releases it when it closes');
+  const stopAt = OVERLAY_SRC.indexOf('const stopTour = useCallback(');
+  assert.ok(stopAt > 0, 'stopTour should be defined');
+  const stop = OVERLAY_SRC.slice(stopAt, OVERLAY_SRC.indexOf('}, [userId]);', stopAt));
+  assert.match(stop, /writeDone\(userId\)/, 'the browser records it as done');
+  assert.match(stop, /markDoneOnServer\(userId, \{ ended: 'skip', step: indexRef\.current \}\)/,
+    'and the account records a skip');
+  assert.match(stop, /clearStep\(userId\)/, 'nowhere to resume');
+  assert.match(stop, /setConfirming\(false\)/);
+  assert.match(stop, /setOpen\(false\)/);
+  assert.doesNotMatch(stop, /backToTopOfHome|goToCommunities|_renotifyNavigation/,
+    'stopping for another panel navigates nowhere');
+  // The screenshot route still writes nothing: there it only closes.
+  const shot = stop.slice(stop.indexOf('if (isTourShot()) {'), stop.indexOf('writeDone(userId);'));
+  assert.match(shot, /setOpen\(false\);/);
+  assert.doesNotMatch(shot, /writeDone|markDoneOnServer|clearStep/);
+});
+
+test('the tour and the menu claim keys the registry knows', () => {
+  const REGISTRY = read('frontend/src/lib/open-surfaces.ts');
+  assert.match(REGISTRY, /const MENU_KEY = 'apps-switcher-sheet';/);
+  assert.match(REGISTRY, /const TOUR_KEY = 'tour';/);
+  assert.match(REGISTRY, /key === MENU_KEY && other\.kind === 'tour'/);
+  assert.match(REGISTRY, /kind === 'tour' && other\.key === MENU_KEY/);
+  assert.match(REGISTRY, /kind === 'dialog' && other\.kind === 'dialog'/,
+    'dialogs spare each other for the close-then-open hand-offs');
+});
+
 test('a narrow viewport shrinks the card rather than overflowing', () => {
   assert.equal(spotlight.cardWidth(320), 296);
   assert.equal(spotlight.cardWidth(1280), 340);
