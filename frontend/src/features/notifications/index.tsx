@@ -8,6 +8,7 @@
 
 import { useEffect } from 'react';
 
+import { isTopSurface } from '../../lib/open-surfaces';
 import { useStoreState } from '../../lib/use-store-state';
 import { NotificationsSheetView } from './notifications-sheet';
 import { notificationsSheetStore, NotificationsSheet } from './mount';
@@ -23,6 +24,8 @@ export function NotificationsIsland() {
     if (!open) return undefined;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      // #6981: only the panel on top answers Escape.
+      if (!isTopSurface('notifications-sheet')) return;
       if (NotificationsSheet._sheet) return;
       NotificationsSheet.close();
     };

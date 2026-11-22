@@ -174,6 +174,7 @@ import { Button } from '@/components/ui/button';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
+import { claimSurface } from '../../../lib/open-surfaces';
 import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
 import { AppContext } from '../../app-context/app-context-controller.js';
@@ -985,6 +986,32 @@ export function OnboardingTour() {
     // Back on the screen under the tour: the next step of the path (#3369).
     (window as any).App?._renotifyNavigation?.();
   }, [userId]);
+
+  // Another panel opening ends the tour (#6981), as if Skip had been pressed:
+  // the account records a skip, the kept step goes, and the overlay closes.
+  // Unlike finish('skip') it does not scroll Home back to its top — the
+  // viewer stays exactly where they were when the panel opened. The
+  // screenshot route still writes nothing, as it writes nothing anywhere.
+  const stopTour = useCallback(() => {
+    if (isTourShot()) {
+      setConfirming(false);
+      setOpen(false);
+      return;
+    }
+    writeDone(userId);
+    void markDoneOnServer(userId, { ended: 'skip', step: indexRef.current });
+    clearStep(userId);
+    setConfirming(false);
+    setOpen(false);
+  }, [userId]);
+
+  // While the tour runs it holds the one-at-a-time slot. The menu is exempt
+  // (lib/open-surfaces.ts), because the tour's own steps open it.
+  useEffect(() => {
+    if (!open) return undefined;
+    const release = claimSurface('tour', 'tour', stopTour);
+    return () => release();
+  }, [open, stopTour]);
 
   const goBack = useCallback(() => setIndex(stepFrom(indexRef.current, -1)), []);
   const goNext = useCallback(() => {

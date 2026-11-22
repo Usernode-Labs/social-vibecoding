@@ -67,6 +67,7 @@ import {
   initialOf,
 } from './profile-store.js';
 import { pushDismissible } from '../../lib/back-stack';
+import { claimSurface } from '../../lib/open-surfaces';
 import { currentSkin, isFrameSkin } from '../../lib/skin';
 import { tabAddress, tabFromHash } from './frame/you-tabs';
 import { t } from '../../lib/i18n/runtime';
@@ -664,9 +665,15 @@ const Profile = {
   // soon as the viewer's own profile is on screen.
   _feedbackRequested: false,
   _releaseFeedback: null,
+  _releaseFeedbackSurface: null,
 
   showFeedback() {
     if (profileStore.get().feedbackOpen) return;
+    // #6981: it joins the one-open-panel rule. Opening it closes the Homeroom
+    // menu, Notifications, a dialog or the tour through their own close paths.
+    Profile._releaseFeedbackSurface = claimSurface(
+      'profile-feedback', 'profile-card', () => Profile._dismissFeedback(),
+    );
     profileStore.set({ feedbackOpen: true });
     Profile._releaseFeedback = pushDismissible(() => {
       Profile._releaseFeedback = null;
@@ -676,6 +683,11 @@ const Profile = {
   },
 
   _dismissFeedback() {
+    // The one-at-a-time slot goes first, as every surface's close does, so a
+    // panel opening in the same task cannot close this card twice.
+    const surface = Profile._releaseFeedbackSurface;
+    Profile._releaseFeedbackSurface = null;
+    if (surface) surface();
     // Navigating, as _dismissSheet is: a row of the list is a link to the
     // request it became, and leaving the screen closes it too.
     const release = Profile._releaseFeedback;

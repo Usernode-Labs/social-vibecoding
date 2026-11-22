@@ -35,6 +35,7 @@ import {
 import { afterBackSettles, pushDismissible, type Release, type ReleaseOptions } from '../../lib/back-stack';
 import { DISMISS_EDGE_TOLERANCE_PX, nearRect } from '../../lib/dismiss-edge';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { claimSurface } from '../../lib/open-surfaces';
 import { dialogCard, isDismissGuarded, useStaticModal } from '../../lib/static-modal';
 
 export interface DialogController<T = void> {
@@ -181,27 +182,19 @@ export function useDialog<T = void>(
   // dialog the viewer is looking at has not gone anywhere.
   const releaseBack = useRef<Release | null>(null);
 
-  const open = useCallback((payload?: T) => {
-    payloadRef.current = payload;
-    // An ordinary open ends any suspension: whatever the round trip was, this
-    // presentation is a fresh one and owns its own teardown.
-    suspended.current = false;
-    settleExitWaiters();
-    if (!releaseBack.current) {
-      releaseBack.current = pushDismissible(() => {
-        // Answering false leaves the claim in place, so a dialog guarding
-        // unsaved work keeps the NEXT press too rather than handing it on.
-        if (opts.current.canClose && !opts.current.canClose()) return false;
-        releaseBack.current = null;
-        setIsOpen(false);
-        return true;
-      });
-    }
-    setIsOpen(true);
-  }, [settleExitWaiters]);
+  // This dialog's claim on the one-at-a-time slot (lib/open-surfaces.ts):
+  // opening a sheet or a profile card closes it, and it closes whichever of
+  // those was open. Dialogs spare each other, so the close-then-open hand-offs
+  // (App settings to "Who can see & change it") keep working.
+  const releaseSurface = useRef<(() => void) | null>(null);
 
   const dismiss = useCallback((options?: ReleaseOptions): boolean => {
     if (opts.current.canClose && !opts.current.canClose()) return false;
+    // The slot is released as soon as the close is accepted, before the exit
+    // animation runs, so an opening panel cannot close this one a second time.
+    const surface = releaseSurface.current;
+    releaseSurface.current = null;
+    surface?.();
     // Dismissed by ✕, the backdrop or a caller rather than by back: hand the
     // claim back so the next press reaches whatever is underneath.
     const release = releaseBack.current;
@@ -210,6 +203,38 @@ export function useDialog<T = void>(
     setIsOpen(false);
     return true;
   }, []);
+
+  const open = useCallback((payload?: T) => {
+    payloadRef.current = payload;
+    // An ordinary open ends any suspension: whatever the round trip was, this
+    // presentation is a fresh one and owns its own teardown.
+    suspended.current = false;
+    settleExitWaiters();
+    if (!releaseSurface.current) {
+      releaseSurface.current = claimSurface(`dialog:${name}`, 'dialog', () => {
+        // The registry takes the entry out before it calls this, so the dialog
+        // is no longer the open panel whether or not canClose lets it go. Its
+        // reference goes either way, or a busy dialog that refused the close
+        // would stay out of the one-at-a-time rule for the rest of its life.
+        releaseSurface.current = null;
+        dismiss();
+      });
+    }
+    if (!releaseBack.current) {
+      releaseBack.current = pushDismissible(() => {
+        // Answering false leaves the claim in place, so a dialog guarding
+        // unsaved work keeps the NEXT press too rather than handing it on.
+        if (opts.current.canClose && !opts.current.canClose()) return false;
+        releaseBack.current = null;
+        const surface = releaseSurface.current;
+        releaseSurface.current = null;
+        surface?.();
+        setIsOpen(false);
+        return true;
+      });
+    }
+    setIsOpen(true);
+  }, [dismiss, name, settleExitWaiters]);
   const close = useCallback(() => dismiss(), [dismiss]);
   // The caller writes an address next — see DialogController.closeForNavigation.
   const closeForNavigation = useCallback(() => dismiss({ navigating: true }), [dismiss]);
@@ -246,8 +271,14 @@ export function useDialog<T = void>(
   const openRef = useRef(false);
   openRef.current = isOpen;
 
-  // Unmounted mid-suspension: no exit will ever be reported to this hook.
-  useEffect(() => settleExitWaiters, [settleExitWaiters]);
+  // Unmounted mid-suspension: no exit will ever be reported to this hook. A
+  // dialog that was still open also gives its one-at-a-time slot back.
+  useEffect(() => () => {
+    settleExitWaiters();
+    const surface = releaseSurface.current;
+    releaseSurface.current = null;
+    surface?.();
+  }, [settleExitWaiters]);
 
   useStaticModal(rootRef, isOpen, {
     phoneSheet: opts.current.phoneSheet,
