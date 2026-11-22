@@ -6335,6 +6335,10 @@
     "text": "No",
     "description": "Button on the Votes card of a proposal to close the request: vote no, keep it open."
   },
+  "topic.thread.close.sending": {
+    "text": "Sending…",
+    "description": "Label replacing Yes or No on the Votes card of a vote to close a request, or of a decision, while that vote is being sent."
+  },
   "topic.thread.close.note": {
     "text": "If it passes, every request here closes, and the changes up for a vote close with them.",
     "description": "Line under the Votes card of a proposal to close the request, before the person has voted: what happens if the vote passes."

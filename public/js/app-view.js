@@ -29050,6 +29050,13 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
+  // #6987: how long a vote waits for its "Add a line for the group?" box to
+  // be drawn before it gives up. A prompt that never appears (an interrupted
+  // kit, a card torn down mid-tap) used to leave the vote in flight forever,
+  // so the buttons stayed dim and every later tap returned at the guard.
+  VOTE_PROMPT_OPEN_MS: 1000,
+  // The sentinel `_awaitVoteReason` resolves when the box never came up.
+  _VOTE_PROMPT_UNOPENED: Object.freeze({ votePromptUnopened: true }),
   // #2782: votes sent but not yet read back, by session id → { vote, token }.
   // A dev-data load that was already in flight when the vote was cast answers
   // with the row as it stood before, and publishing that repainted the vote
@@ -29164,6 +29171,41 @@ const AppView = {
       return line || null;
     }
     return AppView._askVoteReason(vote);
+  },
+  // #6987: the line, but never an open-ended wait for the box that asks for
+  // it. A caller that passes `reason` (the ballot's close choice, a card's
+  // picker) answers on the spot, as `_resolveVoteReason` does. Otherwise the
+  // kit's prompt is raced against one check at VOTE_PROMPT_OPEN_MS: if no
+  // `.un-alert` is drawn by then, the box cannot be answered, so this
+  // resolves the sentinel rather than waiting forever. A box that IS drawn
+  // keeps the race pending and its own answer wins whenever it comes; a
+  // later answer from an abandoned prompt is ignored by Promise.race.
+  // The kit-missing `window.prompt` path settles synchronously, so it always
+  // wins the race.
+  async _awaitVoteReason(vote, opts) {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (Object.prototype.hasOwnProperty.call(o, 'reason')) {
+      return AppView._resolveVoteReason(vote, opts);
+    }
+    let timer = null;
+    const unopened = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        let drawn = false;
+        try {
+          const cards = typeof document !== 'undefined' ? document.querySelectorAll('.un-alert') : null;
+          for (let i = 0; cards && i < cards.length; i += 1) {
+            const card = cards[i];
+            if (card.getClientRects && card.getClientRects().length > 0) { drawn = true; break; }
+          }
+        } catch { drawn = false; }
+        if (!drawn) resolve(AppView._VOTE_PROMPT_UNOPENED);
+      }, AppView.VOTE_PROMPT_OPEN_MS);
+    });
+    try {
+      return await Promise.race([AppView._askVoteReason(vote), unopened]);
+    } finally {
+      clearTimeout(timer);
+    }
   },
   // QA 2026-09-24 Q3: resolves TRUE only when the server took the vote, and
   // false for everything else — a cancelled No, a refusal, a network
@@ -29624,20 +29666,26 @@ const AppView = {
   // ('up'/'down') is mapped to the roster's ('yes'/'no') for the wording.
   async castIssueVote(issueId, vote, opts = null) {
     const key = `issue:${issueId}`;
-    if (AppView._voteInFlight.has(key)) return;
+    if (AppView._voteInFlight.has(key)) return false;
     AppView._voteInFlight.add(key);
 
     // Asked BEFORE anything is painted, so a cancelled No leaves the card
-    // exactly as it was — the same ordering castVote uses.
+    // exactly as it was — the same ordering castVote uses. #6987: the wait is
+    // bounded, so a box that never opens cannot strand the vote.
     let reason = null;
     try {
-      reason = await AppView._resolveVoteReason(vote === 'down' ? 'no' : 'yes', opts);
+      reason = await AppView._awaitVoteReason(vote === 'down' ? 'no' : 'yes', opts);
     } catch {
       reason = null;
     }
+    if (reason === AppView._VOTE_PROMPT_UNOPENED) {
+      AppView._voteInFlight.delete(key);
+      PlatformUI.toast(PlatformI18n.t('changes:vote.toast.notSentRetry'));
+      return false;
+    }
     if (reason === false) {
       AppView._voteInFlight.delete(key);
-      return;
+      return false;
     }
     const issue = (AppView._govProposals || []).find((g) => g.id === issueId);
     const kind = issue ? issue.kind : null;
@@ -29672,12 +29720,12 @@ const AppView = {
         if (data.code === 'identity_required' && AppView._verifyThenVote(
           () => AppView.castIssueVote(issueId, vote, opts))) {
           AppView.refreshDevData('vote');
-          return;
+          return false;
         }
         // #2603: the server's own words when it refuses this vote.
         PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         AppView.refreshDevData('vote');
-        return;
+        return false;
       }
 
       // The roster under the card is now a version behind.
@@ -29732,6 +29780,8 @@ const AppView = {
       // As castVote (#5452): the vote reaches the Kudos history as soon as
       // the server saved it.
       window.Leaderboard?.invalidateHistory?.();
+      // #6987: true only once the server took the vote, as castVote answers.
+      return true;
     } catch (err) {
       // Network/abort: the server-side apply may well have completed, so
       // park on the failure copy rather than pretending nothing happened.
@@ -29739,6 +29789,7 @@ const AppView = {
       PlatformUI.toast((err && err.message)
         ? PlatformI18n.t('changes:vote.toast.failed', { error: err.message })
         : PlatformI18n.t('changes:vote.toast.failedConnection'));
+      return false;
     } finally {
       AppView._voteInFlight.delete(key);
       AppView._publishVoteSending(`castIssueVote:${issueId}`, null);

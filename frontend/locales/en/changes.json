@@ -7587,6 +7587,10 @@
     "text": "Your vote did not go through. Check your connection and try again.",
     "description": "Brief notice when a vote on a proposal could not reach the server."
   },
+  "vote.toast.notSentRetry": {
+    "text": "Vote not sent. Try again.",
+    "description": "Brief notice when a vote on a request or a decision was never sent because its line box did not open."
+  },
   "vote.toast.queued": {
     "text": "You're offline. Your vote will be sent when you're back online.",
     "description": "Brief notice when a vote on a proposal could not reach the server and is kept on the device, to be sent once the connection is back."
