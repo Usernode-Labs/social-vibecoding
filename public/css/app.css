@@ -19926,6 +19926,24 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   width: 100%;
   text-align: start;
 }
+/* THE BAR LIFTS OFF THE WHITE LIST (asked 21 Nov 2026): on a phone the Ask
+   Homeroom bot bar is a white pill over a mostly white list, so its thin
+   outline alone let it disappear. It keeps that outline (the first layer, the
+   Standard look's inset hairline) and takes the raised surfaces' own soft
+   shadow under it, in the app's colours. Spread all round rather than only
+   downward, because the bar sits right on the tab bar. The frame looks draw
+   this bar their own way and are left alone; the brand look wears the same
+   bar as the standard page. */
+html:where(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-askbar-card {
+  box-shadow: var(--messages-disc-shadow),
+    0 2px 6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+}
+html:where(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-askbar-card:focus-within {
+  box-shadow: var(--messages-disc-shadow), 0 0 0 2px var(--accent),
+    0 2px 6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+}
 #ai-screen .ai-askbar-text {
   flex: 1;
   min-width: 0;
