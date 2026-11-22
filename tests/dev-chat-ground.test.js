@@ -295,11 +295,40 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
   // the off-white sheet (the reply boxes, the discs, Settings' white cards)
   // takes the kit card's hairline; a row under the pointer or open takes the
   // kit's soft row ground, not the white veil it wore. And a phone's
-  // Messages list stands on the card, as the conversation over it does.
+  // Messages list is Home's page: the card holds the conversations, inset
+  // by the page's gutter, and the search field and the New disc are edged
+  // like it (#6976).
   const messages = ruleIn('html:not([data-skin]) :is(.messages-layout, .dev-ws-discussion, .side-panel-head, #ai-screen .ai-askbar)');
   assert.match(messages, /--messages-selected: var\(--wip-item-hover\);/);
   assert.match(messages, /--messages-disc-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
   assert.match(ruleIn('html:not([data-skin]) .gc-composer-card,\nhtml:not([data-skin]) #settings-root .ui-card.bg-white'),
     /box-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
-  assert.match(ruleIn('html:not([data-skin]) .messages-layout.messages-drawer'), /background-color: var\(--wip-card-bg\);/);
+
+  // Messages on a phone: not one white sheet but the page, the list's card
+  // on it. These sit in a media query, so they are found by their text.
+  const scoped = (sel) => {
+    const at = block.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `the block has ${sel}`);
+    return block.slice(at, block.indexOf('}', at));
+  };
+  const drawer = 'html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer';
+  const list = `${drawer} > .messages-list-pane`;
+  assert.match(scoped(drawer), /background-color: transparent;/, 'the page shows behind the phone drawer');
+  assert.match(scoped(`${drawer} > .messages-thread-pane`), /background-color: var\(--wip-card-bg\);/,
+    'an open conversation over it is still the white sheet');
+  assert.match(scoped(`${list} .messages-list-scroll`), /padding: 0 var\(--wip-gutter\) 12px;/);
+  const card = scoped(`${list} .messages-section-card`);
+  assert.match(card, /overflow: hidden;/);
+  assert.match(card, /border-radius: var\(--wip-card-radius\);/);
+  assert.match(card, /background-color: var\(--wip-card-bg\);/);
+  assert.match(card, /box-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
+  assert.match(scoped(`${list} .messages-section-card > .messages-conversation-row + .messages-conversation-row`),
+    /box-shadow: 0 -1px 0 var\(--wip-card-line\);/, 'a hairline between two conversations');
+  const search = scoped('html:not([data-skin]) #messages-screen .messages-search-input');
+  assert.match(search, /background: var\(--wip-card-bg\);/);
+  assert.match(search, /border-color: var\(--wip-card-line\);/);
+  const newBtn = scoped('html:not([data-skin]) #messages-screen .messages-new-btn:not([aria-expanded="true"])');
+  assert.match(newBtn, /background: var\(--wip-card-bg\);/);
+  assert.match(newBtn, /border-color: var\(--wip-card-line\);/);
+  assert.match(newBtn, /color: var\(--wip-ink\);/);
 });

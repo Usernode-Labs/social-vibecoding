@@ -8952,13 +8952,58 @@ html:not([data-skin]) :is(#platform-header, .platform-parked, .nav-drawer-untint
   --dc-sheet-fill: var(--wip-bar-glass);
 }
 /* MESSAGES ON A PHONE (the drawer, features/messages/phone-drawer.tsx, below
-   768px) lays its list flush on the pane, with no card round the rows: with
-   the pane gone that was the bare page, the one Messages without a white
-   surface, while a conversation opened over it is the card. The drawer's
-   pane is the card instead, as the brand look's is, with the rows flush on
-   it; the search field keeps its own hairline. */
-html:not([data-skin]) .messages-layout.messages-drawer {
-  background-color: var(--wip-card-bg);
+   768px) IS HOME'S PAGE (asked 22 Nov 2026, #6976). The drawer's pane used
+   to be a white sheet edge to edge; now the page shows through it and the
+   conversations sit in the kit's card, inset by the page's gutter, as
+   Home's and Communities' do, with the search field and the New disc on the
+   page edged like the card. A conversation opened over it is still the
+   white sheet that slides in. */
+html:not([data-skin]) #messages-screen .messages-search-input {
+  background: var(--wip-card-bg);
+  border-color: var(--wip-card-line);
+}
+/* Its focus says so in the accent's own edge, under the ring it already has. */
+html:not([data-skin]) #messages-screen .messages-search-input:focus {
+  border-color: var(--brand-line);
+}
+/* The New disc is a quiet secondary control here, not a tinted one; opened,
+   it keeps its filled state. */
+html:not([data-skin]) #messages-screen .messages-new-btn:not([aria-expanded="true"]) {
+  background: var(--wip-card-bg);
+  border-color: var(--wip-card-line);
+  color: var(--wip-ink);
+}
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer {
+    background-color: transparent;
+  }
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-thread-pane {
+    background-color: var(--wip-card-bg);
+  }
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-toolbar {
+    margin: 12px var(--wip-gutter) 4px;
+  }
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-list-scroll {
+    padding: 0 var(--wip-gutter) 12px;
+  }
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-section-head {
+    padding: 12px 10px 6px;
+  }
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-section-card {
+    gap: 0;
+    overflow: hidden;
+    border-radius: var(--wip-card-radius);
+    background-color: var(--wip-card-bg);
+    box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  }
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-section-card > .messages-conversation-row {
+    border-radius: 0;
+    padding: 6px 12px;
+  }
+  /* One hairline between two conversations, as the kit's rows have. */
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-section-card > .messages-conversation-row + .messages-conversation-row {
+    box-shadow: 0 -1px 0 var(--wip-card-line);
+  }
 }
 /* In a conversation the other side's bubble is cream; yours keeps its tint. */
 html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,
