@@ -18,6 +18,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { getTemplateFiles } = require('../src/services/template');
 
@@ -116,6 +118,25 @@ test('the Dockerfile compiles the stylesheet in a builder stage', () => {
 
   // Signal handling contract from the platform conventions is unchanged.
   assert.ok(dockerfile.includes('CMD ["node", "server.js"]'), 'CMD stays exec-form');
+});
+
+// The daily dependency audit reports the base image's own Alpine packages
+// (OpenSSL among them) as outdated until an `apk upgrade` runs in the stage
+// that ships. The Kubernetes image already does this; these two now match it.
+test('the runtime images upgrade the base image\'s own Alpine packages', () => {
+  const generated = file(files(), 'Dockerfile');
+  const runtime = generated.slice(generated.lastIndexOf('FROM node:22.23.4-alpine'));
+  assert.ok(runtime.includes('RUN apk upgrade --no-cache'),
+    'the generated app runtime stage should upgrade its base packages');
+  assert.ok(runtime.indexOf('RUN apk upgrade --no-cache') < runtime.indexOf('USER 1000:1000'),
+    'the upgrade must run as root, before the non-root USER switch');
+
+  const root = fs.readFileSync(path.join(__dirname, '..', 'Dockerfile'), 'utf8');
+  const platformRuntime = root.slice(root.lastIndexOf('FROM node:22.23.4-alpine'));
+  assert.ok(platformRuntime.includes('apk upgrade --no-cache'),
+    'the platform runtime stage should upgrade its base packages before installing git');
+  assert.ok(platformRuntime.indexOf('apk upgrade --no-cache') < platformRuntime.indexOf('apk add --no-cache'),
+    'the upgrade runs before the add, as Dockerfile.kubernetes does');
 });
 
 test('the build context carries what the builder stage needs', () => {

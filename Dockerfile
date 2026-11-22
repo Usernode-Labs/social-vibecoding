@@ -110,7 +110,10 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # git is for the import-existing flow's `git clone` of foreign repos.
 # postgresql-client lets DB administration work over the normal Postgres
 # Service/network connection in both Docker and Kubernetes modes.
-RUN apk add --no-cache git postgresql-client
+# The base image's own packages are upgraded first so the daily dependency
+# audit's fixed advisories (OpenSSL 3.5.9-r1) are applied.
+RUN apk upgrade --no-cache \
+  && apk add --no-cache git postgresql-client
 COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=buildx-tools /buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 COPY --from=buildx-tools /src/internal/namesgenerator/LICENSE /usr/local/share/doc/buildx/LICENSE.namesgenerator
