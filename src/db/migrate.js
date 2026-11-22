@@ -112,6 +112,10 @@ async function migrate(config) {
   // you says "Already works" with Propose to close and the request's page
   // says why. Staging has no model, so the bot's note is stored.
   await seedStagingBotAlreadyWorks(pool);
+  // #6988's shots: the already-works request's bot offer once it is gone, so
+  // its thread says so and carries Propose to close, which opens the close
+  // dialog with the bot's reason already in it.
+  await seedStagingBotGoneCloseOffer(pool);
   // #6752's shots: a request the bot read as filed on the wrong project, so
   // its page and the requester's chat say where it seems to belong and offer
   // the close vote. Staging has no model, so the bot's note is stored.
@@ -2747,23 +2751,41 @@ async function seedStagingBotAlreadyWorks(pool) {
         ]);
       }
     }
-    // #6988: the same request's bot offer once it is gone. Its line keeps
-    // saying so and carries Propose to close, which opens the close dialog
-    // with the bot's reason in the box. Stored because staging has no model;
-    // idempotent by its stagingDemo mark. Nothing here is a signal the bot
-    // reads.
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
+  }
+}
+
+// #6988's shots: the already-works request's bot offer once it is gone, so
+// its line keeps saying so and carries Propose to close, which opens the
+// close dialog with the bot's reason already in its box. Stored because
+// staging has no model. It rides the #6306 request the seed above stages
+// (that fixture's own test pins it at one note and one bell row, so this is
+// its own function, not a second note inside that one). Idempotent by its
+// stagingDemo mark; a no-op outside staging. Nothing here is a signal the bot
+// reads.
+async function seedStagingBotGoneCloseOffer(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!apps.rows.length || !bot.rows.length) return;
+    const appId = apps.rows[0].id;
+    const botId = bot.rows[0].id;
+    const number = 9110;
+    const reason = 'Staging demo: visitors can already get in and play without an account.';
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
        SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - INTERVAL '20 hours'
         WHERE NOT EXISTS (SELECT 1 FROM chat_messages
                            WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
-                             AND metadata->>'stagingDemo' = 'already-works-gone-offer')`,
+                             AND metadata->>'stagingDemo' = 'gone-close-offer-note')`,
       [
         appId, botId,
         `Already works: ${reason}`,
         number,
         JSON.stringify({
-          stagingDemo: 'already-works-gone-offer',
+          stagingDemo: 'gone-close-offer-note',
           homeroomBot: {
             kind: 'voice',
             offer: {
@@ -2776,7 +2798,7 @@ async function seedStagingBotAlreadyWorks(pool) {
       ],
     );
   } catch (err) {
-    log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
+    log.warn('db', 'Staging Homeroom bot gone-offer seeding failed', { message: err.message });
   }
 }
 
@@ -17407,6 +17429,9 @@ module.exports = {
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.
   seedStagingBotAlreadyWorks,
+  // #6988: the already-works request's gone close offer, with its line and
+  // Propose to close, the shots need.
+  seedStagingBotGoneCloseOffer,
   // #6752: the wrong-project request (run, note and offer) the shots need.
   seedStagingBotWrongProject,
   // #6399: the handed-back request whose reason a later release lifted.
