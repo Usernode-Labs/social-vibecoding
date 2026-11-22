@@ -324,6 +324,9 @@ test('the standard look: the pane is the page and a sheet is the kit\'s card (WH
   assert.match(card, /box-shadow: inset 0 0 0 1px var\(--wip-card-line\);/);
   assert.match(scoped(`${list} .messages-section-card > .messages-conversation-row + .messages-conversation-row`),
     /box-shadow: 0 -1px 0 var\(--wip-card-line\);/, 'a hairline between two conversations');
+  // A finger's target on a phone: the field and the disc reach 44px.
+  assert.match(scoped(`${list} .messages-search-input`), /height: 44px;/);
+  assert.match(scoped(`${list} .messages-new-btn`), /min-width: 44px;\n\s+min-height: 44px;/);
   const search = scoped('html:not([data-skin]) #messages-screen .messages-search-input');
   assert.match(search, /background: var\(--wip-card-bg\);/);
   assert.match(search, /border-color: var\(--wip-card-line\);/);

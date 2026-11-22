@@ -8983,6 +8983,16 @@ html:not([data-skin]) #messages-screen .messages-new-btn:not([aria-expanded="tru
   html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-toolbar {
     margin: 12px var(--wip-gutter) 4px;
   }
+  /* A finger's target is 44px on a phone (#6976 review): the search field and
+     the New disc keep their shape but fill a tap-sized box. The disc's glyph
+     stays 18px. */
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-search-input {
+    height: 44px;
+  }
+  html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-new-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
   html:not([data-skin]) #messages-screen > .messages-layout.messages-drawer > .messages-list-pane .messages-list-scroll {
     padding: 0 var(--wip-gutter) 12px;
   }
