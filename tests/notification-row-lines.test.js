@@ -435,13 +435,30 @@ test('#6901: a refusal at the app limit says someone was turned away, then the c
   assert.equal(just.meta, 'Admin · 4m ago');
 
   // A later count: how many, and since when, in the reader's own time zone.
+  // The rows are pinned to noon today, NOT the default four minutes ago: the
+  // run started 180 minutes before the row, and four minutes ago minus three
+  // hours falls on yesterday whenever this suite runs shortly after midnight.
+  // The start would then be stamped with its day ("Nov 21, 9:35 PM"), which
+  // is intended, so the sample times are what has to be fixed rather than the
+  // pattern below. Noon minus 180 minutes is about 9 AM today, at any hour.
+  const noon = new Date();
+  noon.setHours(12, 0, 0, 0);
   const count = await lines({ kind: 'platform_limit', detail: 'apps_away:3:210:180',
-    appName: null, sourceUsername: null });
+    appName: null, sourceUsername: null, createdAt: noon.toISOString() });
   assert.equal(count.label, 'People turned away at the app limit');
   assert.match(count.subject, /^3 people were turned away since \d{1,2}:\d{2}\s?(?:AM|PM)\. +Raise the app limit in Admin → Limits or remove an app\.$/);
   const one = await lines({ kind: 'platform_limit', detail: 'apps_away:1:210:180',
-    appName: null, sourceUsername: null });
+    appName: null, sourceUsername: null, createdAt: noon.toISOString() });
   assert.match(one.subject, /^1 person was turned away since \d{1,2}:\d{2}/);
+
+  // A run that started on the previous day: the day comes before the time,
+  // in the reader's own language. 00:30 today minus 180 minutes is 21:30
+  // yesterday, a case the old fixture only reached by accident after midnight.
+  const early = new Date();
+  early.setHours(0, 30, 0, 0);
+  const crossDay = await lines({ kind: 'platform_limit', detail: 'apps_away:3:210:180',
+    appName: null, sourceUsername: null, createdAt: early.toISOString() });
+  assert.match(crossDay.subject, /^3 people were turned away since [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s?(?:AM|PM)\. +Raise the app limit in Admin → Limits or remove an app\.$/);
 });
 
 test('unexpected events rows say how many, of what, and where to look (#4296)', async () => {
