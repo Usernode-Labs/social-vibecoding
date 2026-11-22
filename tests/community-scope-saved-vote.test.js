@@ -159,3 +159,31 @@ test('a stale read that lands after the vote stays stripped', async () => {
   assert.equal(st.totalNeeds, 1);
   assert.equal(st.badgeNeeds, 1);
 });
+// ── #6990: a group decision's saved vote ───────────────────────────────
+
+test('a saved group decision answers its governance key, and the count falls', () => {
+  fakeWindow(7);
+  const { cards, scope } = loadScope();
+  assert.deepEqual(
+    scope.owedLessSaved(['governance:4', 'proposal:9@2'], { 9: { epoch: 2 } }),
+    ['governance:4'],
+    'the session store does not answer a group decision',
+  );
+  cards.publishGovVoteSaved(4, 'yes');
+  assert.deepEqual(
+    scope.owedLessSaved(['governance:4', 'proposal:9@2'], { 9: { epoch: 2 } }),
+    [],
+    'its own saved vote does, by id',
+  );
+  assert.deepEqual(scope.owedLessSaved(['governance:5'], {}), ['governance:5'], 'another decision stays');
+
+  scope.communityScopeStore.set({ list: ['a'], totalNeeds: 0, badgeNeeds: 0 });
+  scope.describe('a', { owedCount: 2, owed: ['governance:4', 'proposal:9@2'] });
+  const st = () => scope.communityScopeStore.get();
+  assert.equal(st().info.a.needs, 1, 'the count drops by the decision the moment the vote lands');
+  assert.equal(st().totalNeeds, 1);
+  assert.equal(st().badgeNeeds, 1, 'the tab\'s badge falls with the list');
+
+  cards.publishGovVoteSaved(4, null);
+  assert.equal(st().info.a.needs, 2, 'a toggle-off asks again');
+});

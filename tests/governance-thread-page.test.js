@@ -128,7 +128,8 @@ test('the Votes card shows the tally, the votes needed and the viewer’s own vo
   assert.deepEqual(v.votes, { yes: 2, need: 3, mine: 'yes', open: true, outcome: 'open' });
   const head = renderComponent(HEAD, 'GovernanceHead', { row: row({ up_count: 2, votes_required: 3, my_vote: 'up' }), view: v });
   assert.match(head, /2 of 3 yes/, 'the tally and the votes the rule needs');
-  assert.match(head, /aria-pressed="true" data-close-vote="up"/, 'the viewer’s own Yes');
+  // #6990: the side already chosen is marked locked for screen readers too.
+  assert.match(head, /aria-pressed="true" aria-disabled="true" data-close-vote="up"/, 'the viewer’s own Yes, locked');
 });
 
 // #6987: the same "Sending…" state the close vote has, on a decision's own
@@ -155,4 +156,21 @@ test('a reopen vote and a thread move are drawn on the page they are about', () 
   // the router forwards there. The model still reads the vote's own words.
   assert.equal(reopen.content.kind, 'close');
   assert.equal(reopen.content.number, 12, 'the request it would bring back');
+});
+
+// #6990: a vote cast on a decision's Votes card used to leave the card
+// unchanged until a reload. Its re-read returned while `sent` was null, so
+// the FIRST vote never re-read at all; it now runs on every vote, asks for
+// the current answer, and the card shows the saved side meanwhile.
+test('#6990: a decision\'s Votes card shows the vote it just saved, then re-reads', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/topic/thread-changes.tsx'), 'utf8');
+  assert.match(src, /if \(revision <= 0\) return undefined;/, 'the first vote re-reads (the `if (!sent)` regression)');
+  assert.match(src, /const result = await av\.castIssueVote\(g\.id, side\);[\s\S]*?setApplied\(applyVote\(/,
+    'the saved vote is applied before the re-read lands');
+  assert.match(src, /const votes = applied \? \{ \.\.\.base, mine: applied\.mine, yes: applied\.yes \} : base;/,
+    'the figure, bar and said-yes line read the applied vote');
+  assert.match(src, /setApplied\(null\);/, 'and the re-read settles what the card shows');
+  assert.match(src, /cache: 'no-cache'/, 'the re-read asks for the current answer');
 });

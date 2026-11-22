@@ -2743,12 +2743,17 @@ test('#5466: the project deck and its publish drop a saved vote\'s row', () => {
   // The strip is one shared rule, used by the listener over the kept queue
   // (which fires whichever tab the viewer is on) and by the publish.
   assert.match(WORKSHOP, /export function withoutSavedVotes\(/);
+  // #6990: the same listener also hears a group decision's saved vote
+  // (govVoteSavedStore), so both stores go through the one strip.
   assert.match(WORKSHOP,
-    /voteSavedStore\.subscribe\(\(\) => \{[\s\S]*?withoutSavedVotes\(cur\.queue, voteSavedStore\.get\(\)\)/,
+    /voteSavedStore\.subscribe\(stripSavedQueue\);[\s\S]*?govVoteSavedStore\.subscribe\(stripSavedQueue\);/,
     'the kept queue hears a vote cast anywhere, through the same rule');
+  assert.match(WORKSHOP,
+    /withoutSavedVotes\(cur\.queue, voteSavedStore\.get\(\), govVoteSavedStore\.get\(\)\)/,
+    'the strip takes both saved-vote maps');
   const MOUNT = read('frontend/src/features/dev-board/mount.ts');
   assert.match(MOUNT, /import \{ DevWorkshop, withoutSavedVotes \} from '\.\/workshop\/workshop';/);
-  assert.match(MOUNT, /withoutSavedVotes\(view\.queue, voteSavedStore\.get\(\)\)/,
+  assert.match(MOUNT, /withoutSavedVotes\(view\.queue, voteSavedStore\.get\(\), govVoteSavedStore\.get\(\)\)/,
     'a publish runs the queue through the strip at the door');
 });
 
@@ -5787,7 +5792,8 @@ test('#6098: the request\'s ballot and its vote to close keep the button that wa
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
   assert.doesNotMatch(src, /disabled=\{busy\}/, 'neither the ballot nor the close vote is switched off mid-vote');
   assert.match(src, /data-ballot-option=\{c\.key\}\s*aria-disabled=\{busy \|\| undefined\}/);
-  assert.match(src, /aria-pressed=\{on\}\s*aria-disabled=\{busy \|\| undefined\}\s*data-close-vote=\{side\}\s*data-sending=\{sending \? 'true' : undefined\}/);
+  // #6990: the chosen side is locked too, so it is `busy || on`.
+  assert.match(src, /aria-pressed=\{on\}\s*aria-disabled=\{busy \|\| on \|\| undefined\}\s*data-close-vote=\{side\}\s*data-sending=\{sending \? 'true' : undefined\}/);
   assert.match(src, /onClick=\{\(e\) => \{ if \(!on\) void choose\(c\.pick, e\.currentTarget\); \}\}/, 'the pressed button is what comes back');
   assert.match(src, /onClick=\{\(e\) => \{ void vote\(side, e\.currentTarget\); \}\}/);
   assert.match(src, /if \(active && active !== document\.body\) return;/, 'only where focus was actually lost');
@@ -5815,9 +5821,11 @@ test('#6987: the Votes card shows "Sending…" on the side that is being sent', 
   assert.equal(message('project:topic.thread.close.sending'), 'Sending…');
 });
 
-test('#6987: castIssueVote answers true only when the server took the vote', async () => {
+test('#6987: castIssueVote answers only when the server took the vote', async () => {
   const ok = makeAppView({ globals: { PlatformUI: { toast: () => {} } } });
-  assert.equal(await ok.castIssueVote(5, 'up', { reason: null }), true);
+  // #6990: an ok answer now carries the side it saved, so the Votes card can
+  // show it before its re-read; it is still truthy for #6987's callers.
+  assert.deepEqual(plain(await ok.castIssueVote(5, 'up', { reason: null })), { ok: true, vote: 'yes' });
 
   const refused = makeAppView({
     fetch: async () => ({ ok: false, status: 409, json: async () => ({ code: 'issue_not_open' }) }),
@@ -5846,7 +5854,27 @@ test('#6987: castIssueVote answers true only when the server took the vote', asy
   assert.equal(await slow.castIssueVote(5, 'up', { reason: null }), false, 'the in-flight guard answers false');
   for (let i = 0; i < 20 && !release; i += 1) await new Promise((resolve) => setImmediate(resolve));
   release();
-  assert.equal(await first, true, 'and the vote that was out still resolves true');
+  assert.deepEqual(plain(await first), { ok: true, vote: 'yes' }, 'and the vote that was out still resolves its side');
+});
+
+// #6990: the vote the server saved is published before the page's reads, so
+// the Votes card shows it at once and Needs you lets go of the decision with
+// the sidebar badge. A same-side vote is the server's toggle-off: no side.
+test('#6990: castIssueVote publishes the side it saved, and none for a toggle-off', async () => {
+  const calls = [];
+  const bridge = { publishGovVoteSaved: (id, vote) => calls.push([id, vote]) };
+  const answered = (data) => makeAppView({
+    fetch: async () => ({ ok: true, json: async () => data }),
+    globals: { PlatformUI: { toast: () => {} }, UsernodeReact: { devBoard: bridge } },
+  });
+  assert.deepEqual(plain(await answered({}).castIssueVote(5, 'up', { reason: null })), { ok: true, vote: 'yes' });
+  assert.deepEqual(plain(await answered({ toggled: true }).castIssueVote(5, 'down', { reason: null })), { ok: true, vote: null });
+  const refused = makeAppView({
+    fetch: async () => ({ ok: false, status: 409, json: async () => ({ code: 'issue_not_open' }) }),
+    globals: { PlatformUI: { toast: () => {} }, UsernodeReact: { devBoard: bridge } },
+  });
+  assert.equal(await refused.castIssueVote(5, 'up', { reason: null }), false, 'a refusal publishes nothing');
+  assert.deepEqual(calls, [[5, 'yes'], [5, null]], 'only the answers the server took, with the side it saved');
 });
 
 test('#6987: a line box that never opens toasts "Vote not sent. Try again." and frees the next tap', async () => {
@@ -5860,7 +5888,7 @@ test('#6987: a line box that never opens toasts "Vote not sent. Try again." and 
   assert.equal(AppView._voteInFlight.has('issue:9'), false, 'the vote is not left in flight');
   // The next tap is accepted, and its box's answer is what sends it.
   const answered = makeAppView({ globals: { PlatformUI: { prompt: async () => 'because', toast: () => {} } }, fetch: async () => ({ ok: true, json: async () => ({}) }) });
-  assert.equal(await answered.castIssueVote(9, 'up'), true);
+  assert.deepEqual(plain(await answered.castIssueVote(9, 'up')), { ok: true, vote: 'yes' });
 });
 
 test('#6987: a line box that is open at the check is left alone to be answered', async () => {
@@ -5879,7 +5907,7 @@ test('#6987: a line box that is open at the check is left alone to be answered',
     },
   });
   AppView.VOTE_PROMPT_OPEN_MS = 5;
-  assert.equal(await AppView.castIssueVote(5, 'up'), true, 'the box\'s own answer sends the vote');
+  assert.deepEqual(plain(await AppView.castIssueVote(5, 'up')), { ok: true, vote: 'yes' }, 'the box\'s own answer sends the vote');
   assert.equal(toasts.length, 0, 'and no "not sent" notice: reading it longer is not a failure');
 });
 

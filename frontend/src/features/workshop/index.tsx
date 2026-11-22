@@ -48,6 +48,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { voteMoved, withoutClosedVote } from '../../lib/work-state';
 import { WORK_CHANGED_EVENT } from '../messages/bot-shared';
 import {
+  govVoteSavedStore,
   publishVoteSaved,
   voteSavedStore,
 } from '../dev-board/card/cards-store';
@@ -142,8 +143,16 @@ function answeredVoteKey(id: number, epoch: number | null): string {
   return `proposal:${id}@${epoch == null ? '' : epoch}`;
 }
 
+/** #6990: the key a group decision is answered by (no epoch to match). */
+function answeredGovKey(id: number): string {
+  return `governance:${id}`;
+}
+
 /** Whether this feed item is a vote answered here, at its own epoch. */
 function voteAnswered(item: NeedsFeedItem): boolean {
+  // #6990: a group decision is answered by its own key, the one a saved
+  // governance vote writes; it has no epoch to compare.
+  if (item.kind === 'governance') return answeredVotes.has(answeredGovKey(item.id));
   if (item.kind !== 'proposal') return false;
   for (const key of answeredVotes) {
     const at = key.indexOf('@');
@@ -290,6 +299,19 @@ export const workshopController = {
     void this.refreshNeeds();
   },
   /**
+   * #6990: a group decision's vote the server SAVED (a vote to close, a
+   * decision's Votes card). Its row leaves the feed at once, as a change
+   * vote does through `answered`, and the counts are read again — so the
+   * list and the sidebar badge stop asking together, instead of the badge
+   * leaving while the list still shows the item.
+   */
+  answeredGov(id: number) {
+    answeredVotes.add(answeredGovKey(id));
+    const state = workshopStore.get();
+    if (state.feed) workshopStore.set({ feed: stripAnswered(state.feed) });
+    void this.refreshNeeds();
+  },
+  /**
    * The quiet reload: the counts and the feed again. What is on screen stays
    * until the answers land, and a failed read leaves its half untouched. A
    * read that lands after the viewer left the page publishes nothing.
@@ -377,6 +399,22 @@ voteSavedStore.subscribe(() => {
     workshopController.answered(Number(id), entry.epoch);
   }
   savedVoteSeqSeen = seen;
+});
+
+// #6990: a group decision the server saved (cards-store.ts
+// govVoteSavedStore), shown or not — the same pattern as the change votes
+// above. Its row leaves the Communities Needs you feed and its counts are
+// read again, so the list and the sidebar badge drop it together.
+let govVoteSeqSeen = 0;
+govVoteSavedStore.subscribe(() => {
+  const saved = govVoteSavedStore.get();
+  let seen = govVoteSeqSeen;
+  for (const [id, entry] of Object.entries(saved)) {
+    if (!entry || entry.seq <= seen) continue;
+    seen = entry.seq;
+    workshopController.answeredGov(Number(id));
+  }
+  govVoteSeqSeen = seen;
 });
 
 // 11 Nov 2026 (one model): a change whose vote a `work_state` push says

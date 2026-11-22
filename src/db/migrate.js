@@ -97,6 +97,9 @@ async function migrate(config) {
   // take part in, with a vote waiting that the capture member can see and
   // cannot cast. Obviously fake, staging only.
   await seedStagingCollabOnlyVote(pool);
+  // #6990's shots: a request with an open vote to close it, so the Votes
+  // card that now shows a saved vote at once has a state to show.
+  await seedStagingCloseVote(pool);
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
@@ -1986,6 +1989,91 @@ async function seedStagingCollabOnlyVote(pool) {
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging collaborator-only vote seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+
+// #6990's shots: the Votes card a vote to close draws had no staging state
+// to show — a fresh copy has no request with an open close vote. This seeds
+// one, obviously fake, on a small demo project: a request filed by the
+// shots' member fixture (usernode-capture) and a proposal to close it by a
+// fake author, in the request's own thread. The project needs three Yes
+// votes and only its chosen approver (the member) is counted, so her first
+// Yes shows on the card as one of three and does not decide it. Nothing
+// here is a signal the code reads to decide anything, and a staging copy
+// never acts on the vote. Idempotent by slug and request number; strictly a
+// no-op outside staging.
+async function seedStagingCloseVote(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return; }
+    const author = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-close-author', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+    await tx.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility,
+                         approver_policy, approvals_required)
+       SELECT 'Staging demo: a vote to close', 'staging-demo-close-vote', 'running', $1,
+              'public', 'members', 'invited', 3
+        WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-close-vote')`,
+      [author.id]);
+    const app = (await tx.query(
+      "SELECT id, community_id FROM apps WHERE slug = 'staging-demo-close-vote'")).rows[0];
+    if (!app) { await tx.query('ROLLBACK'); return; }
+    // The member reads and takes part: community membership, and the one
+    // counted approver, so her Yes is a counted vote that does not decide.
+    if (app.community_id) {
+      await tx.query(
+        `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+         ON CONFLICT DO NOTHING`, [app.community_id, member.id]);
+    }
+    await tx.query(
+      `INSERT INTO app_approvers (app_id, user_id, status) VALUES ($1, $2, 'member')
+       ON CONFLICT (app_id, user_id) DO NOTHING`, [app.id, member.id]);
+    const number = 9160;
+    const title = 'Staging demo: a request with a vote to close';
+    await tx.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. Someone asked to close this request, and the vote is open.', $4, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [app.id, number, title, member.id],
+    );
+    const thread = (await tx.query(
+      `INSERT INTO threads (app_id, number)
+       SELECT $1, $2
+        WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1 AND number = $2)
+       RETURNING id`,
+      [app.id, number],
+    )).rows[0];
+    if (thread) {
+      await tx.query(
+        'UPDATE requests SET thread_id = $1 WHERE app_id = $2 AND number = $3 AND thread_id IS NULL',
+        [thread.id, app.id, number],
+      );
+    }
+    await tx.query(
+      `INSERT INTO issues (app_id, title, description, kind, payload, created_by, status, thread_id)
+       SELECT $1, 'Close this request', 'Staging demo: obviously fake.', 'close_issue', $2::jsonb, $3, 'open', t.id
+         FROM threads t
+        WHERE t.app_id = $1 AND t.number = $4
+          AND NOT EXISTS (
+            SELECT 1 FROM issues i
+             WHERE i.app_id = $1 AND i.kind = 'close_issue' AND i.payload->>'issueNumber' = $4::text)`,
+      [app.id, JSON.stringify({
+        issueNumber: number,
+        reason: 'This is already covered by the new search page.',
+      }), author.id, number],
+    );
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging close-vote seeding failed', { message: err.message });
   } finally { tx.release(); }
 }
 

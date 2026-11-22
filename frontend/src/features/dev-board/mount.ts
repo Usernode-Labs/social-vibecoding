@@ -56,9 +56,11 @@ import {
   cardNowStore,
   publishVoteSaved,
   publishVoteSending,
+  publishGovVoteSaved,
   devKanbanStore,
   devWorkshopStore,
   voteSavedStore,
+  govVoteSavedStore,
 } from './card/cards-store';
 import { DevKanban } from './card/dev-kanban';
 import type { DevKanbanView, DevWorkshopView } from './card/model';
@@ -133,6 +135,8 @@ export interface DevBoardBridge {
   publishVoteSending(key: string, side: 'yes' | 'no' | null): void;
   /** #5463: a vote the server saved, by session id and epoch (cards-store.ts). */
   publishVoteSaved(sessionId: number, vote: 'yes' | 'no' | null, epoch: number | null): void;
+  /** #6990: a group decision the server saved, by governance id (cards-store.ts). */
+  publishGovVoteSaved(issueId: number, vote: 'yes' | 'no' | null): void;
   /** Run four (13 Oct 2026): the next page of change `sessionId` opens at its Votes card (topic/votes-in-view.ts). */
   showVotes(sessionId: number): void;
   /** #6439: the next request's page opens at its vote to close it (topic/votes-in-view.ts). */
@@ -333,7 +337,10 @@ export const devBoardBridge: DevBoardBridge = {
     // that started before the vote; this keeps the store honest whatever
     // list the publish came from, so a later publish built from a pre-vote
     // list cannot bring the row back.
-    devWorkshopStore.set({ ...view, queue: withoutSavedVotes(view.queue, voteSavedStore.get()) });
+    devWorkshopStore.set({
+      ...view,
+      queue: withoutSavedVotes(view.queue, voteSavedStore.get(), govVoteSavedStore.get()),
+    });
   },
 
   mountKanban(host) {
@@ -395,6 +402,10 @@ export const devBoardBridge: DevBoardBridge = {
   // cast it — the Communities feed's kept copy and its counts, and a board
   // read from before the vote (cards-store.ts voteSavedStore).
   publishVoteSaved,
+
+  // #6990: a group decision the server took, so Needs you and its counts let
+  // go of it with the sidebar's badge (cards-store.ts govVoteSavedStore).
+  publishGovVoteSaved,
 
   // A door that sends someone to vote: the change's page opens at its Votes card.
   showVotes: (sessionId: number) => askVotesInView(sessionId),
