@@ -1328,6 +1328,22 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
   assert.match(read('public/css/app.css'), /#ai-screen \.ai-askbar \{\s+position: fixed;\s+(\/\*[^*]*\*+([^/*][^*]*\*+)*\/\s+)?inset-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter, 0px\)\);\s+inset-inline-end: var\(--platform-gutter, 0px\);/);
 });
 
+test('the phone\'s Ask bar lifts off the white list on a soft shadow', () => {
+  const css = read('public/css/app.css');
+  // Asked 21 Nov 2026: a white pill on a mostly white list was easy to miss.
+  // The bar keeps its hairline as the first layer, then takes the raised
+  // surfaces' soft shadow in the app's own colours. It is the standard page's
+  // and the brand look's; the frame looks draw this bar their own way.
+  const rule = css.match(/html:where\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-askbar-card \{([^}]*)\}/);
+  assert.ok(rule, 'the Ask bar\'s shadow rule exists');
+  assert.match(rule[1], /box-shadow: var\(--messages-disc-shadow\),/);
+  assert.match(rule[1], /0 2px 6px var\(--app-sheet-shadow-near\)/);
+  assert.match(rule[1], /0 8px 24px -4px var\(--app-sheet-shadow-far\)/);
+  const focus = css.match(/html:where\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-askbar-card:focus-within \{([^}]*)\}/);
+  assert.ok(focus, 'and a focused bar, with the same shadow');
+  assert.match(focus[1], /box-shadow: var\(--messages-disc-shadow\), 0 0 0 2px var\(--accent\),/);
+});
+
 test('#homeroom-bot is the page; /thread/<id> is a thread in its column; the old /main is resolved to one; #ai lands there', () => {
   const app = read('public/js/app.js');
   // 1 Nov 2026: every address is the page's, and says where in its chat.
