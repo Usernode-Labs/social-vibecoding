@@ -127,6 +127,10 @@ test('credits resolve through records the viewer may see, and the staging seed r
     const credited = new Map(forBuilt.map((c) => [Number(c.userId), c]));
     assert.equal(credited.get(bot).description, 'Accepted proposal on open-app');
     assert.equal(credited.get(viewer).description, 'Your request went live on open-app');
+    // #6986: the ledger row says which relationship earned it, so the page
+    // can print the request's sentence rather than the bot's change title.
+    assert.equal(credited.get(bot).via, 'author');
+    assert.equal(credited.get(viewer).via, 'request');
     const filerChange = await resolveCreditChanges(pool, { id: viewer, isAdmin: false },
       [{ metadata: { source_key: `merged:${botBuiltEvent}` } }]);
     assert.equal(filerChange.get(`merged:${botBuiltEvent}`).title, 'Change 30',
@@ -140,6 +144,7 @@ test('credits resolve through records the viewer may see, and the staging seed r
       .filter((c) => c.sourceKey === `merged:${ownEvent}`);
     assert.equal(own.length, 1, 'filed and authored: still one');
     assert.equal(own[0].description, 'Accepted proposal on open-app');
+    assert.equal(own[0].via, 'author', 'one credit, and it is the author\'s');
 
     // The request the change was started from, with nothing in linked_issues.
     await request(23, viewer);
@@ -211,6 +216,8 @@ test('credits resolve through records the viewer may see, and the staging seed r
     assert.deepEqual(credits.map((c) => seeded.get(c.metadata.source_key).pr_number), [9043, 9044],
       'each credit links to its change, through the request the bot built');
     assert.ok(credits.every((c) => seeded.get(c.metadata.source_key).app_slug === 'homeroom-self'));
+    assert.ok(credits.every((c) => c.metadata.via === 'request'),
+      'the fixture is the bot\'s change from the capture account\'s request');
 
     // A First challenge's credits, wherever on its template they landed.
     const first = await fetchFirstChallengeCredits(pool, capture, [900512]);

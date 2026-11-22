@@ -1464,6 +1464,10 @@ function topochainMobileRoutes(config) {
       const activityView = (a) => ({
         points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
         activity_time_precision: activityTimePrecision(a),
+        // #6986: which relationship to a merge earned the credit — its
+        // author, or the filer of a request it was built for — so the page
+        // can print the request's own wording instead of the change's title.
+        via: a.metadata && typeof a.metadata.via === 'string' ? a.metadata.via : null,
         // When the points were written to the ledger, which on a challenge
         // counted on a schedule can be later than the action itself.
         credited_at: iso(a.created_at),

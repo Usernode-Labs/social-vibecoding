@@ -1685,7 +1685,11 @@ const TopochainChallenges = {
       const linked = c && typeof c.app_slug === 'string' && c.app_slug
         && Number.isInteger(c.session_id) && c.session_id > 0;
       return {
-        text: str((linked && c.title) || a.description),
+        // #6986: a filer's credit says "Your request went live on ..." — the
+        // ledger's own sentence — even when it links to the change, whose
+        // title names work they did not do. The author's credit keeps the
+        // change's title, as it always has.
+        text: str((a.via === 'request' && a.description) || (linked && c.title) || a.description),
         points: Number(a.points) || 0,
         at: a.activity_at,
         precision: a.activity_time_precision,

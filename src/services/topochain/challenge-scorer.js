@@ -612,6 +612,10 @@ async function loadCandidates(pool, measure, window, { target, ownApps = false }
           userId: r.user_id,
           sourceKey: `merged:${r.event_id}`,
           activityAt: isoOf(r.created_at),
+          // Which relationship earned it, kept on the ledger row so the
+          // challenge page's "What counted this week" can say "Your request
+          // went live on ..." instead of the change's own title (#6986).
+          via: r.via,
           description: mine
             ? (r.app_name ? `Your request went live on ${r.app_name}` : 'Your request went live')
             : (r.app_name ? `Accepted proposal on ${r.app_name}` : 'Accepted proposal'),
@@ -748,6 +752,7 @@ async function writeCredits(pool, { challenge, activityType, credits }) {
         rule_id: credit.ruleId,
         measure: credit.measure,
         timestamp_precision: credit.timestampPrecision || 'instant',
+        ...(credit.via ? { via: credit.via } : {}),
         ...(credit.completion ? { kind: 'challenge_completion' } : {}),
         ...(credit.grade ? { grade: credit.grade } : {}),
       };

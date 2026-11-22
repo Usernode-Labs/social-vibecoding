@@ -16712,7 +16712,7 @@ async function seedStagingCountedCredit(pool, config) {
          ON CONFLICT (challenge_id, user_id, (metadata->>'source_key'))
            WHERE metadata->>'source_key' IS NOT NULL
          DO UPDATE SET activity_at = NOW()`,
-        [member, EVENT_SEASON_ID, JSON.stringify({ source_key: `merged:${event.id}` })]
+        [member, EVENT_SEASON_ID, JSON.stringify({ source_key: `merged:${event.id}`, via: 'request' })]
       );
     }
   } catch (err) {

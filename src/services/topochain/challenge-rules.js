@@ -555,6 +555,11 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
       activityAt: c.activityAt,
       timestampPrecision: c.timestampPrecision,
       description: c.description || null,
+      // How the person earned it, for a measure that credits more than one
+      // relationship to the same event (#6986's filer of a request beside the
+      // change's author). The ledger keeps it so a credit's row can say which
+      // one it is; null everywhere the candidate does not name one.
+      via: c.via || null,
       completion: !spec.counted && !weekly,
       needsGrade: spec.graded === true,
       gradeInput: c.gradeInput || null,
