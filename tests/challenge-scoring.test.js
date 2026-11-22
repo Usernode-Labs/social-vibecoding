@@ -1118,7 +1118,10 @@ test('the statement printed for a measure is the statement the scorer executes',
     // same statement token for token.
     assert.equal(read.sql, dedent(scorer.MEASURE_SQL[measure]));
     assert.equal(read.sql.replace(/\s+/g, ' '), scorer.MEASURE_SQL[measure].trim().replace(/\s+/g, ' '));
-    assert.match(read.sql, /^SELECT /, 'the first line is flush left, like the rest');
+    // #6986: PROPOSAL_ACCEPTED credits more than one person per merge, so its
+    // statement opens with a CTE (WITH) rather than SELECT. Either way the
+    // first line is flush left, like the rest.
+    assert.match(read.sql, /^(SELECT|WITH) /, 'the first line is flush left, like the rest');
     // Every table it names is really in the statement.
     for (const table of read.tables) assert.match(read.sql, new RegExp(`\\b${table}\\b`), `${measure} reads ${table}`);
   }
@@ -1600,6 +1603,39 @@ test('a weekly challenge is scored this week, and last week only while its grace
   // Clipped to the challenge: a start of 5 Oct means last week is never scored.
   const fromMonday = rules.weeklyWindows({ ...window, startMs: Date.parse('2026-10-05T00:00:00Z') }, { now: Date.parse('2026-10-05T03:00:00Z') });
   assert.deepEqual(fromMonday.map((w) => iso(w.startMs)), ['2026-10-05T00:00:00.000Z']);
+});
+
+// #6986: the one-time catch-up. The week of 16 Nov 2026 is scored again for
+// accepted proposals, so a merge credited to the bot before the fix reaches
+// the person who filed the request — and it is added once, whether or not
+// the run's own weeks already include it.
+test('a named catch-up week is added once, and only where the challenge covers it', () => {
+  const window = { startMs: Date.parse('2026-09-22T22:00:00Z'), endMs: Date.parse('2026-12-31T22:59:00Z'), open: true };
+  const now = Date.parse('2026-11-22T12:00:00Z');
+  const plain = rules.weeklyWindows(window, { now });
+  assert.deepEqual(plain.map((w) => iso(w.startMs)), ['2026-11-16T00:00:00.000Z'], 'this week alone');
+
+  const extra = rules.weeklyWindows(window, { now, extraWeekStarts: [Date.UTC(2026, 10, 16)] });
+  assert.deepEqual(extra.map((w) => iso(w.startMs)), ['2026-11-16T00:00:00.000Z'], 'already there: not twice');
+
+  const later = rules.weeklyWindows(window, { now: Date.parse('2026-12-02T12:00:00Z'), extraWeekStarts: [Date.UTC(2026, 10, 16)] });
+  assert.deepEqual(later.map((w) => iso(w.startMs)),
+    ['2026-11-30T00:00:00.000Z', '2026-11-16T00:00:00.000Z'], 'a week behind: added');
+
+  const outside = rules.weeklyWindows({ ...window, startMs: Date.parse('2026-11-23T00:00:00Z') },
+    { now: Date.parse('2026-12-02T12:00:00Z'), extraWeekStarts: [Date.UTC(2026, 10, 16)] });
+  assert.deepEqual(outside.map((w) => iso(w.startMs)), ['2026-11-30T00:00:00.000Z'],
+    'the challenge opens after the catch-up week: nothing to add');
+});
+
+// The scorer asks for that week only on the accepted-proposal measure, and
+// only until its own end date. A rule that keeps scoring other measures, or
+// an accepted one after the pass, runs exactly the weeks it always did.
+test('the catch-up is the accepted-proposal measure\'s, and it ends', () => {
+  const midPass = Date.parse('2026-12-02T12:00:00Z');
+  assert.deepEqual(scorer.catchUpWeekStarts('PROPOSAL_ACCEPTED', midPass), [Date.UTC(2026, 10, 16)]);
+  assert.deepEqual(scorer.catchUpWeekStarts('PROPOSAL_SENT', midPass), []);
+  assert.deepEqual(scorer.catchUpWeekStarts('PROPOSAL_ACCEPTED', Date.parse('2026-12-07T00:00:01Z')), []);
 });
 
 const weeklyRow = (extra = {}) => challengeRow({

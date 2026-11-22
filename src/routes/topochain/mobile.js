@@ -748,7 +748,17 @@ async function resolveCreditChanges(pool, user, activityRows) {
        FROM events e
        JOIN chat_sessions cs ON cs.id = e.session_id
        JOIN apps a ON a.id = cs.app_id
-      WHERE e.id = ANY($1::bigint[]) AND e.event_type = 'pr_merged' AND e.user_id = $3
+      WHERE e.id = ANY($1::bigint[]) AND e.event_type = 'pr_merged'
+        AND (e.user_id = $3
+             OR EXISTS (SELECT 1 FROM requests rq
+                          WHERE rq.app_id = cs.app_id
+                            AND (rq.number = ANY(COALESCE(cs.linked_issues, '{}'))
+                                 OR rq.number = cs.created_from_issue_number)
+                            AND (rq.created_by = $3
+                                 OR EXISTS (SELECT 1 FROM homeroom_bot_requesters hbr
+                                             WHERE hbr.app_id = rq.app_id
+                                               AND hbr.issue_number = rq.number
+                                               AND hbr.user_id = $3))))
      UNION ALL
      SELECT 'session:' || cs.id, cs.id, cs.pr_number, cs.pr_title,
             a.id, a.slug, a.view_visibility, a.collab_visibility, a.moderation_suspended_at
