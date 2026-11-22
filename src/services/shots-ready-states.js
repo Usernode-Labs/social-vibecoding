@@ -103,6 +103,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-approved-syncing-v1', 'an approved change catching up with main', ['member']],
   ['shots-demo-member-vote-after-update-v1', 'a change back up for a vote once its update has landed', ['member']],
+  ['shots-demo-member-close-vote-v1', 'a request with an open vote to close it, one yes and one no in, yours still owed',
+    ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when
@@ -192,6 +194,13 @@ const NEEDS = Object.freeze([
     needs: 'a change syncing with main',
     test: /\bsync(?:s|ed|ing)? (?:with|to) main\b|\bcatch(?:es|ing)? up with main\b|\bsyncing with main\b/i,
     states: ['shots-demo-member-approved-syncing-v1'],
+  },
+  {
+    // 22 Nov 2026 (#6989): a request's own vote to close it, not a change's
+    // vote, so the words name closing rather than "up for a vote".
+    needs: 'an open vote to close a request',
+    test: /\b(?:(?:open )?vote to close (?:a |the |this |its )?request|close[- ]vote|proposal to close (?:a |the |this )?request|proposed closing (?:it|a request|the request))\b/i,
+    states: ['shots-demo-member-close-vote-v1'],
   },
   { needs: 'a friend request', test: /\bfriend requests?\b/i, states: ['shots-demo-member-friend-request-v1'] },
   { needs: 'a remix', test: /\b(?:remix(?:ed|es)?|suggest (?:this|it) back)\b/i, states: ['shots-demo-member-remix-v1'] },
