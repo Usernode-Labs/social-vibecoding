@@ -427,6 +427,10 @@
     "text": "Proposal failed: {{reason}}",
     "description": "Error in the close-issue dialog when the request could not be sent. {{reason}} is the browser's own description of what went wrong."
   },
+  "closeIssue.error.noApp": {
+    "text": "Couldn’t tell which project this request belongs to. Reload and try again.",
+    "description": "Error in the close-issue dialog when it has neither a project from the page nor one from the request that opened it, so there is nowhere to file the vote."
+  },
   "allowance.title": {
     "text": "App allowance",
     "description": "Label at the left of the allowance box shown in the make, import and Make your own forms: how many apps this person may still create."

@@ -741,7 +741,20 @@ export function runPanelMenuRow(index: number, label: string, event?: Event | nu
     // `_menuActEvent`). The click here is the column's, which the frame's
     // document never sees, so the popover it opens stays up either way.
     av._menuActEvent = event || null;
-    it.act();
+    // #6988: run the row once the column's own menu has closed and focus has
+    // settled. Propose to close opens the frame's dialog, and opening it from
+    // inside the menu row's own click dispatch left the row looking like it
+    // only closed the menu.
+    const nextFrame = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (fn: () => void) => setTimeout(fn, 0);
+    nextFrame(() => {
+      try {
+        it.act();
+      } catch {
+        /* the row owns its errors */
+      }
+    });
   } catch {
     /* the row owns its errors */
   }

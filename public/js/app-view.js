@@ -23135,9 +23135,26 @@ const AppView = {
   // reading each other's ids out of the document. This entry point stays
   // because the issue rows in the Dev feed and the topic head both call
   // `AppView.promptCloseIssue(n)`; it forwards to the island's controller.
-  promptCloseIssue(issueNumber) {
-    if (!AppView.appData) return;
-    dialogIsland('closeIssue')?.open(issueNumber);
+  promptCloseIssue(issueNumber, reason) {
+    // The request's own page has appData; the side panel's column runs this
+    // in a page that may not have recorded the project yet, so fall back to
+    // the open app's slug rather than returning silently (#6988).
+    const slug = (AppView.appData && AppView.appData.slug)
+      || (typeof App !== 'undefined' ? App.currentApp : null) || null;
+    const controller = dialogIsland('closeIssue');
+    if (!controller) {
+      // A failed bundle is the one case the dialog cannot open at all. Say
+      // so instead of leaving the row looking like it did nothing.
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.closeFailed'), { error: true });
+      }
+      return;
+    }
+    controller.open({
+      issueNumber,
+      reason: typeof reason === 'string' ? reason : '',
+      ...(slug ? { slug } : {}),
+    });
   },
 
   // #6000: "Propose reopening", the mirror of promptCloseIssue. Forwards to

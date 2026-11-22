@@ -67,6 +67,25 @@ test('#6582: an offer that is gone, expired or retired is read, with no actions 
   assert.equal(gc._botOfferView(closeOffer('retired', { retired: 'close_vote' })).retired, 'close_vote');
 });
 
+test('#6988: a close offer carries its request number and why, falling back to the request thread', () => {
+  const gc = loadGroupChat(9);
+  const named = gc._botOfferView(closeOffer('gone', { issueNumber: 37, why: '  It already works.  ' }));
+  assert.equal(named.issueNumber, 37);
+  assert.equal(named.why, '  It already works.  ');
+  // An offer posted before the metadata existed has neither: the request's
+  // own thread supplies the number and the reason box opens empty.
+  gc.activeThread = { type: 'issue', ref: 37 };
+  const older = gc._botOfferView(closeOffer('expired'));
+  assert.equal(older.issueNumber, 37);
+  assert.equal(older.why, undefined);
+  // Any other thread has no request to name.
+  gc.activeThread = { type: 'session', ref: 37 };
+  assert.equal(gc._botOfferView(closeOffer('gone')).issueNumber, undefined);
+  // A close offer's why is clipped like the other offer fields.
+  const clipped = gc._botOfferView(closeOffer('gone', { issueNumber: 37, why: 'x'.repeat(900) }));
+  assert.equal(clipped.why.length, 500);
+});
+
 test('#6582, step 3: a tap sends its card\'s id, and a refusal is kept for its message, never toasted', async () => {
   const toasts = [];
   const messageId = 238255;
@@ -170,23 +189,57 @@ test('#6582: a gone close offer\'s row draws the line where its buttons were', (
   assert.match(html, /data-gc-bot-offer-gone=""/);
   assert.ok(html.includes(message('chat:group.botOffer.goneClose')), 'the close offer\'s own line');
   assert.doesNotMatch(html, /data-gc-bot-offer=""/, 'no live buttons');
-  assert.doesNotMatch(html, /Propose to close/);
+  // #6988: no request number in the view, so no dialog to open: the line alone.
+  assert.doesNotMatch(html, /data-gc-bot-offer-close/);
+
+  // With the request number, the line carries its own Propose to close.
+  const numbered = { ...gone, issueNumber: 37, why: 'It already works.' };
+  const propose = renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
+    view: { lead, messages: [{ ...rowBase, botOffer: numbered }] },
+  });
+  assert.match(propose, /data-gc-bot-offer-close=""/);
+  assert.ok(propose.includes(message('chat:group.botOffer.proposeClose')), 'the Propose to close button');
+  assert.ok(propose.indexOf('data-gc-bot-offer-close') > propose.indexOf('data-gc-bot-offer-status'), 'under the line');
+
+  // An expired close offer gets the same button; any other offer does not.
+  const expired = renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
+    view: { lead, messages: [{ ...rowBase, botOffer: { ...numbered, status: 'expired' } }] },
+  });
+  assert.match(expired, /data-gc-bot-offer-close=""/);
 
   // Any other offer says only that it is gone: no ⋯ menu to point at.
   const other = renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
-    view: { lead, messages: [{ ...rowBase, botOffer: { ...gone, kind: 'copy_request' } }] },
+    view: { lead, messages: [{ ...rowBase, botOffer: { ...numbered, kind: 'copy_request' } }] },
   });
   assert.ok(other.includes(message('chat:group.botOffer.gone')), 'the plain line');
   assert.ok(!other.includes(message('chat:group.botOffer.goneClose')), 'not the close offer\'s');
+  assert.doesNotMatch(other, /data-gc-bot-offer-close/, 'no close button on another offer');
+
+  // A retired close offer gets no button either.
+  const retired = renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
+    view: { lead, messages: [{ ...rowBase, botOffer: { ...numbered, status: 'retired', retired: 'close_vote' } }] },
+  });
+  assert.doesNotMatch(retired, /data-gc-bot-offer-close/, 'a close vote is already open');
 
   // Somebody else's gone offer draws nothing for this viewer.
   const theirs = renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
-    view: { lead, messages: [{ ...rowBase, botOffer: { ...gone, forMe: false } }] },
+    view: { lead, messages: [{ ...rowBase, botOffer: { ...numbered, forMe: false } }] },
   });
   assert.doesNotMatch(theirs, /data-gc-bot-offer-gone/);
+  assert.doesNotMatch(theirs, /data-gc-bot-offer-close/);
+});
+
+test('#6988: the offer line\'s button opens the dialog with the offer\'s number and reason', () => {
+  const src = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.match(src, /promptCloseIssue\?\.\(issueNumber, offer\.why \|\| ''\)/,
+    'the tap hands the bot\'s own reason to the close dialog');
+  assert.match(src, /offer\.kind === 'close_request' && goneOrExpired/,
+    'only a close offer that is gone or expired gets the button');
 });
 
 test('#6582: both lines exist in the English catalog', () => {
   assert.equal(message('chat:group.botOffer.gone'), 'This offer is no longer available.');
-  assert.match(message('chat:group.botOffer.goneClose'), /no longer available.*request’s ⋯ menu/);
+  assert.match(message('chat:group.botOffer.goneClose'), /no longer available.*propose closing this request/);
+  assert.equal(message('chat:group.botOffer.proposeClose'), 'Propose to close');
+  assert.match(message('chat:group.botOffer.closeFailed'), /Couldn’t open the close form.*Reload and try again/);
 });

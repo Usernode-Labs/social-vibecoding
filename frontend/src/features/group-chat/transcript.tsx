@@ -222,9 +222,19 @@ export function BotOfferStatus({ offer }: { offer: BotOfferView }) {
   const why = offer.status === 'gone' || offer.refused?.code === 'gone' ? 'gone'
     : offer.status === 'retired' || offer.refused?.code === 'retired' ? 'retired'
       : offer.status === 'expired' || offer.refused?.code === 'expired' ? 'expired' : (offer.refused?.code || '');
-  return (
+  // #6988: a close offer that is gone or expired still lets the requester
+  // propose the close. Its own buttons are gone, so this line carries one
+  // that opens the close-request dialog with the bot's reason in its box.
+  const goneOrExpired = offer.status === 'gone' || offer.status === 'expired'
+    || offer.refused?.code === 'gone' || offer.refused?.code === 'expired';
+  const issueNumber = Number(offer.issueNumber);
+  const canPropose = offer.kind === 'close_request' && goneOrExpired
+    && Number.isSafeInteger(issueNumber) && issueNumber > 0;
+  const statusLine = (
     <p
-      className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400"
+      className={canPropose
+        ? 'text-[12px] text-zinc-500 dark:text-zinc-400'
+        : 'mt-1 text-[12px] text-zinc-500 dark:text-zinc-400'}
       role="status"
       data-gc-bot-offer-status={why}
       data-gc-bot-offer-gone={why === 'gone' ? '' : undefined}
@@ -232,6 +242,30 @@ export function BotOfferStatus({ offer }: { offer: BotOfferView }) {
     >
       {t(line)}
     </p>
+  );
+  if (!canPropose) return statusLine;
+  return (
+    <div className="mt-1 flex flex-col gap-2">
+      {statusLine}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="pillNeutral"
+          ink="neutral"
+          size="sm"
+          className="font-semibold"
+          data-gc-bot-offer-close=""
+          onClick={() => {
+            // Its own document's entry point, as the page's ⋯ row is.
+            (window as unknown as {
+              AppView?: { promptCloseIssue?: (n: number, reason?: string) => void };
+            }).AppView?.promptCloseIssue?.(issueNumber, offer.why || '');
+          }}
+        >
+          {t('chat:group.botOffer.proposeClose')}
+        </Button>
+      </div>
+    </div>
   );
 }
 

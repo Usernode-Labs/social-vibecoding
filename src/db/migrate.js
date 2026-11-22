@@ -2747,6 +2747,34 @@ async function seedStagingBotAlreadyWorks(pool) {
         ]);
       }
     }
+    // #6988: the same request's bot offer once it is gone. Its line keeps
+    // saying so and carries Propose to close, which opens the close dialog
+    // with the bot's reason in the box. Stored because staging has no model;
+    // idempotent by its stagingDemo mark. Nothing here is a signal the bot
+    // reads.
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - INTERVAL '20 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                             AND metadata->>'stagingDemo' = 'already-works-gone-offer')`,
+      [
+        appId, botId,
+        `Already works: ${reason}`,
+        number,
+        JSON.stringify({
+          stagingDemo: 'already-works-gone-offer',
+          homeroomBot: {
+            kind: 'voice',
+            offer: {
+              kind: 'close_request', status: 'gone', forUserId: null,
+              issueNumber: number, why: reason,
+            },
+            actions: [],
+          },
+        }),
+      ],
+    );
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
   }

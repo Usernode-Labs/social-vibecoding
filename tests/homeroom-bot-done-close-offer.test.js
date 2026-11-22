@@ -95,6 +95,29 @@ const NOTE = `Already works: ${REASON} Anyone in the project can tap Propose to 
 // #6413: its requester or a decider asked to close it: same offer, no Go ahead.
 const WITHDRAWN_NOTE = `Asked to close: ${REASON} Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here to keep it going.`;
 
+// #6988: the offer's metadata carries its request and the bot's reason, so a
+// gone offer's own button can open the reason box filled. Any other kind of
+// offer carries neither, and a long reason is clipped.
+test('#6988: withThreadCard writes a close offer\'s issueNumber and why', () => {
+  const cards = require('../src/services/bot-cards');
+  const meta = cards.withThreadCard({}, {
+    id: 12, kind: 'close_request', user_id: null,
+    args: { issueNumber: 7, title: 'Open the library', why: REASON },
+  });
+  assert.equal(meta.homeroomBot.offer.issueNumber, 7);
+  assert.equal(meta.homeroomBot.offer.why, REASON);
+  assert.equal(meta.homeroomBot.offer.kind, 'close_request');
+  const clipped = cards.withThreadCard({}, {
+    id: 13, kind: 'close_request', user_id: null, args: { issueNumber: 7, why: 'x'.repeat(600) },
+  });
+  assert.equal(clipped.homeroomBot.offer.why.length, 500);
+  const other = cards.withThreadCard({}, {
+    id: 14, kind: 'copy_request', user_id: null, args: { issueNumber: 4, why: 'because' },
+  });
+  assert.equal(other.homeroomBot.offer.issueNumber, undefined);
+  assert.equal(other.homeroomBot.offer.why, undefined);
+});
+
 // ── The note, with its database stubbed ──────────────────────────────────
 
 async function noteFor(parsed, {

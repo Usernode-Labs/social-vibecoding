@@ -4927,6 +4927,19 @@
         "frontend/locales/en/weekly-digest.json",
         "src/routes/weekly-digest.js"
       ]
+    },
+    {
+      "name": "#6988: a bot close offer that has gone still offers Propose to close on the request",
+      "path": "/app/usernode-2d5619/dev/issues/9110",
+      "expectSelector": "[data-gc-bot-offer-close]",
+      "expectText": "This offer is no longer available. You can still propose closing this request.",
+      "id": "bot-gone-close-offer",
+      "impact": [
+        "frontend/src/features/group-chat/transcript.tsx",
+        "public/js/group-chat.js",
+        "src/services/bot-cards.js",
+        "src/db/migrate.js"
+      ]
     }
   ],
   "governance": {

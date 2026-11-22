@@ -1420,8 +1420,16 @@
     "description": "Where an offer's buttons were, under Homeroom bot's message in a chat, once the offer behind them no longer exists."
   },
   "group.botOffer.goneClose": {
-    "text": "This offer is no longer available. You can still propose closing it from the request’s ⋯ menu.",
-    "description": "Where an \"already works\" note's Propose to close buttons were, once the offer behind them no longer exists; the request's ⋯ menu still has its own Propose to close."
+    "text": "This offer is no longer available. You can still propose closing this request.",
+    "description": "Where an \"already works\" note's Propose to close buttons were, once the offer behind them no longer exists. A Propose to close button sits under this line."
+  },
+  "group.botOffer.proposeClose": {
+    "text": "Propose to close",
+    "description": "Button under the line that says a close offer has gone or expired: opens the close-request dialog with the bot's reason already in its reason box."
+  },
+  "group.botOffer.closeFailed": {
+    "text": "Couldn’t open the close form. Reload and try again.",
+    "description": "Brief message at the bottom of the screen when pressing Propose to close could not open the close-request dialog because the app's scripts did not load."
   },
   "group.botOffer.expired": {
     "text": "This offer has expired.",
