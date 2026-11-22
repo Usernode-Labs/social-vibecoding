@@ -131,6 +131,23 @@ test('the Votes card shows the tally, the votes needed and the viewer’s own vo
   assert.match(head, /aria-pressed="true" data-close-vote="up"/, 'the viewer’s own Yes');
 });
 
+// #6987: the same "Sending…" state the close vote has, on a decision's own
+// page, from the store castIssueVote publishes.
+test('#6987: a vote on its way reads "Sending…" on that side of the Votes card', () => {
+  const cards = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
+  const r = row({});
+  cards.voteSendingStore.set({ [`castIssueVote:${r.id}`]: 'yes' });
+  try {
+    const head = renderComponent(HEAD, 'GovernanceHead', { row: r, view: view(r) }, { stubs: { '../card/cards-store': cards } });
+    assert.match(head, /data-close-vote="up"[^>]*data-sending="true"[^>]*>Sending…<\/button>/, 'Yes says it is on its way');
+    assert.doesNotMatch(head, /data-close-vote="down"[^>]*data-sending="true"/, 'No is untouched');
+  } finally {
+    cards.voteSendingStore.set(() => ({}));
+  }
+  const plain = renderComponent(HEAD, 'GovernanceHead', { row: r, view: view(r) }, { stubs: { '../card/cards-store': cards } });
+  assert.doesNotMatch(plain, /Sending…/, 'nothing on its way: Yes and No as before');
+});
+
 test('a reopen vote and a thread move are drawn on the page they are about', () => {
   const { governanceView } = loadTsx(MODEL);
   const reopen = governanceView(row({ kind: 'reopen_issue', id: 5001, payload: { issueNumber: 12 } }), {});

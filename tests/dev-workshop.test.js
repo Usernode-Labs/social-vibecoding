@@ -5787,13 +5787,100 @@ test('#6098: the request\'s ballot and its vote to close keep the button that wa
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
   assert.doesNotMatch(src, /disabled=\{busy\}/, 'neither the ballot nor the close vote is switched off mid-vote');
   assert.match(src, /data-ballot-option=\{c\.key\}\s*aria-disabled=\{busy \|\| undefined\}/);
-  assert.match(src, /aria-pressed=\{on\}\s*aria-disabled=\{busy \|\| undefined\}\s*data-close-vote=\{side\}/);
+  assert.match(src, /aria-pressed=\{on\}\s*aria-disabled=\{busy \|\| undefined\}\s*data-close-vote=\{side\}\s*data-sending=\{sending \? 'true' : undefined\}/);
   assert.match(src, /onClick=\{\(e\) => \{ if \(!on\) void choose\(c\.pick, e\.currentTarget\); \}\}/, 'the pressed button is what comes back');
   assert.match(src, /onClick=\{\(e\) => \{ void vote\(side, e\.currentTarget\); \}\}/);
   assert.match(src, /if \(active && active !== document\.body\) return;/, 'only where focus was actually lost');
   assert.match(src, /focus\(\{ preventScroll: true \}\)/, 'and the page does not scroll under it');
   assert.match(src, /refocusAfterVote\(box\.current, 'ballot-option', from, wasFocused\)/);
   assert.match(src, /refocusAfterVote\(box\.current, 'close-vote', from, wasFocused\)/);
+});
+
+// ── #6987: a vote that never got sent says so ─────────────────────────
+//
+// The "Add a line for the group?" box is asked for before anything is
+// painted. When it never came up, the vote stayed in flight forever: both
+// buttons went dim, and every later tap returned at the guard without a
+// word. The prompt is raced against a watchdog now, and castIssueVote
+// answers true only when the server took the vote (as castVote does).
+
+test('#6987: the Votes card shows "Sending…" on the side that is being sent', () => {
+  const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
+  assert.match(src, /import \{ voteSendingStore \} from '\.\.\/card\/cards-store';/);
+  assert.match(src, /const sendingSide = sendingAll\[`castIssueVote:\$\{close\.id\}`\] \|\| null;/, 'a request\'s close vote reads its own key');
+  assert.match(src, /const sendingSide = sendingAll\[`castIssueVote:\$\{g\.id\}`\] \|\| null;/, 'and a decision\'s card reads its own');
+  assert.match(src, /const sending = sendingSide === \(side === 'up' \? 'yes' : 'no'\);/, 'only the side that was sent');
+  assert.match(src, /\{sending \? t\('project:topic\.thread\.close\.sending'\) :/, 'the label replaces Yes or No');
+  assert.doesNotMatch(src, /disabled=\{busy\}/, 'never switched off mid-vote, so focus stays');
+  assert.equal(message('project:topic.thread.close.sending'), 'Sending…');
+});
+
+test('#6987: castIssueVote answers true only when the server took the vote', async () => {
+  const ok = makeAppView({ globals: { PlatformUI: { toast: () => {} } } });
+  assert.equal(await ok.castIssueVote(5, 'up', { reason: null }), true);
+
+  const refused = makeAppView({
+    fetch: async () => ({ ok: false, status: 409, json: async () => ({ code: 'issue_not_open' }) }),
+    globals: { PlatformUI: { toast: () => {} } },
+  });
+  assert.equal(await refused.castIssueVote(5, 'up', { reason: null }), false, 'a refusal is not a recorded vote');
+
+  const failed = makeAppView({
+    fetch: async () => { throw new Error('offline'); },
+    globals: { PlatformUI: { toast: () => {} } },
+  });
+  assert.equal(await failed.castIssueVote(5, 'up', { reason: null }), false, 'nor is a lost connection');
+
+  const toasts = [];
+  const cancelled = makeAppView({ globals: { PlatformUI: { prompt: async () => null, toast: (m) => toasts.push(m) } } });
+  assert.equal(await cancelled.castIssueVote(5, 'down'), false, 'a cancelled No sends nothing');
+  assert.equal(toasts.length, 0, 'and stays silent: it was the person\'s choice');
+
+  // A second press while the first is still out is refused.
+  let release = null;
+  const slow = makeAppView({
+    fetch: () => new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({}) }); }),
+    globals: { PlatformUI: { toast: () => {} } },
+  });
+  const first = slow.castIssueVote(5, 'up', { reason: null });
+  assert.equal(await slow.castIssueVote(5, 'up', { reason: null }), false, 'the in-flight guard answers false');
+  for (let i = 0; i < 20 && !release; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  release();
+  assert.equal(await first, true, 'and the vote that was out still resolves true');
+});
+
+test('#6987: a line box that never opens toasts "Vote not sent. Try again." and frees the next tap', async () => {
+  const toasts = [];
+  const never = new Promise(() => {});
+  const AppView = makeAppView({ globals: { PlatformUI: { prompt: () => never, toast: (m) => toasts.push(m) } } });
+  // The real wait is a second; shortened here so the suite stays quick.
+  AppView.VOTE_PROMPT_OPEN_MS = 5;
+  assert.equal(await AppView.castIssueVote(9, 'up'), false, 'nothing was sent');
+  assert.deepEqual(toasts, [message('changes:vote.toast.notSentRetry')]);
+  assert.equal(AppView._voteInFlight.has('issue:9'), false, 'the vote is not left in flight');
+  // The next tap is accepted, and its box's answer is what sends it.
+  const answered = makeAppView({ globals: { PlatformUI: { prompt: async () => 'because', toast: () => {} } }, fetch: async () => ({ ok: true, json: async () => ({}) }) });
+  assert.equal(await answered.castIssueVote(9, 'up'), true);
+});
+
+test('#6987: a line box that is open at the check is left alone to be answered', async () => {
+  const toasts = [];
+  const AppView = makeAppView({
+    document: {
+      querySelectorAll: (sel) => (sel === '.un-alert' ? [{ getClientRects: () => [{ width: 10 }] }] : []),
+      getElementById: () => null,
+      addEventListener: () => {},
+    },
+    globals: {
+      PlatformUI: {
+        prompt: () => new Promise((resolve) => setTimeout(() => resolve('because'), 30)),
+        toast: (m) => toasts.push(m),
+      },
+    },
+  });
+  AppView.VOTE_PROMPT_OPEN_MS = 5;
+  assert.equal(await AppView.castIssueVote(5, 'up'), true, 'the box\'s own answer sends the vote');
+  assert.equal(toasts.length, 0, 'and no "not sent" notice: reading it longer is not a failure');
 });
 
 // T2.5 (19 Nov 2026): a change row on the Workshop's list wears its stored
