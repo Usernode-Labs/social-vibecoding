@@ -57,7 +57,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Chip } from '@/components/ui/chip';
+import { Chip, FadeRail as KindRail } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
@@ -950,19 +950,19 @@ export function AiLists({
                 </Chip>
               ) : null}
             </div>
-            <div role="group" aria-label={t('messages:ai.history.kind.label')} className="flex gap-1.5 overflow-x-auto px-4 pt-1.5 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-ai-history-kinds="">
-              <Chip size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={!historyKind} onClick={() => onHistoryKind?.(null)} data-ai-history-kind="all">
+            <KindRail role="group" aria-label={t('messages:ai.history.kind.label')} className="gap-1.5 px-4 pt-1.5 pb-0.5" data-ai-history-kinds="">
+              <Chip size="bar" className={`h-8 px-3 text-[13px] whitespace-nowrap ${CHIP_EDGE}`} selected={!historyKind} onClick={() => onHistoryKind?.(null)} data-ai-history-kind="all">
                 {t('messages:ai.history.kind.all')}
               </Chip>
               {HISTORY_KINDS.map((kind) => (
-                <Chip key={kind} size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={historyKind === kind} onClick={() => onHistoryKind?.(kind)} data-ai-history-kind={kind}>
+                <Chip key={kind} size="bar" className={`h-8 px-3 text-[13px] whitespace-nowrap ${CHIP_EDGE}`} selected={historyKind === kind} onClick={() => onHistoryKind?.(kind)} data-ai-history-kind={kind}>
                   {kind === 'change' ? t('messages:ai.history.kind.change')
                     : kind === 'request' ? t('messages:ai.history.kind.request')
                       : kind === 'vote' ? t('messages:ai.history.kind.vote')
                         : t('messages:ai.history.kind.solo')}
                 </Chip>
               ))}
-            </div>
+            </KindRail>
             <div className="px-4">
               {!history.ready ? (
                 <SkeletonGroup label={t('messages:ai.history.loading')} className="flex flex-col gap-8 py-4" data-ai-history-loading="">

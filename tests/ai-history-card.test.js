@@ -132,6 +132,15 @@ test('History: by month, then by project, quiet rows that say how each thing end
   assert.match(html, new RegExp(`· ${message('messages:ai.history.left')}`), 'a community you left says so');
   assert.match(html, /data-ai-history-more=""/, 'Earlier months while there is more');
   for (const kind of ['all', 'change', 'request', 'vote', 'solo']) assert.match(html, new RegExp(`data-ai-history-kind="${kind}"`));
+  // #7059: the kind chips ride the shared fading rail (chip.tsx's FadeRail,
+  // aliased beside the local one), and each stays on one line.
+  const src = fs.readFileSync(path.join(ROOT, LISTS), 'utf8');
+  assert.match(src, /import \{[^}]*FadeRail as KindRail[^}]*\} from '@\/components\/ui\/chip';/, 'the shared fading rail, under an alias');
+  assert.match(src, /<KindRail role="group" aria-label=\{t\('messages:ai\.history\.kind\.label'\)\} className="gap-1\.5 px-4 pt-1\.5 pb-0\.5" data-ai-history-kinds="">/);
+  assert.match(html, /role="group"[^>]*data-ai-history-kinds=""/, 'the rail still reads as the filters\' group');
+  for (const kind of ['all', 'change', 'request', 'vote', 'solo']) {
+    assert.match(html, new RegExp(`class="[^"]*whitespace-nowrap[^"]*"[^>]*data-ai-history-kind="${kind}"`), `${kind}'s chip never wraps`);
+  }
   // Narrowed by the chips above, as every list is.
   const narrowed = lists({ history: historyState(rows), picked: ['book-swap'], appFor: () => club });
   assert.match(narrowed, /Swap requests/);
