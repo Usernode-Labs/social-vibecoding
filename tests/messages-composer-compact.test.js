@@ -117,8 +117,10 @@ test('the Messages card is one 44px line on a phone: 4px round a 36px row', () =
   const field = decls(MESSAGES, '.messages-composer-input');
   const [fieldTop, , fieldBottom] = padding(field.padding);
   // The field's own height is its padding round one line of its 22px leading,
-  // which the base rule keeps on a phone; min-height holds it there.
-  const lineHeight = px(/line-height: (\d+px);/.exec(rule('.messages-composer-input'))[1]);
+  // which the base rule keeps on a phone; min-height holds it there. The
+  // leading is 1.375rem, so Text size scales it with the text it holds: 22px
+  // at the default size, the one this geometry is drawn for.
+  const lineHeight = 16 * Number(/line-height: (\d+(?:\.\d+)?)rem;/.exec(rule('.messages-composer-input'))[1]);
   assert.equal(fieldTop + lineHeight + fieldBottom, px(field['min-height']), 'one line fills the field exactly');
   const send = decls(MESSAGES, '.messages-send');
   const action = /\n\s*width: (\d+px);\s*\n\s*height: (\d+px);/.exec(rule('.messages-composer-action'));

@@ -85,6 +85,44 @@ test('app.css scales the root font for the two presets', () => {
     'Larger is 125%');
 });
 
+// The body of the first top-level rule whose selector list is exactly
+// `selector` (not the last line of a longer list).
+function cssRule(css, selector) {
+  for (let at = css.indexOf(`\n${selector} {`); at >= 0; at = css.indexOf(`\n${selector} {`, at + 1)) {
+    if (css[at - 1] !== ',') return css.slice(at, css.indexOf('}', at));
+  }
+  assert.fail(`app.css has a ${selector} rule of its own`);
+}
+
+test('Messages\' words are sized in rem, so Text size reaches them, at the same sizes by default', () => {
+  // Text size scales rem. These were fixed pixels, so at 150% the page's
+  // headings grew and the messages themselves did not.
+  const css = cssSrc();
+  const sizes = {
+    '.messages-row-name': 15,
+    '.messages-row-preview': 13,
+    '.messages-row-time': 13,
+    '.messages-unread': 13,
+    '.messages-message-head': 17,
+    '.messages-markdown.gc-msg-content': 17,
+    '.messages-bubble': 17,
+    '.messages-edit textarea': 17,
+    '.messages-composer-input': 17,
+  };
+  for (const [selector, px] of Object.entries(sizes)) {
+    const size = /font-size: ([\d.]+)rem;/.exec(cssRule(css, selector));
+    assert.ok(size, `${selector} is sized in rem`);
+    assert.equal(Number(size[1]) * 16, px, `${selector} is ${px}px at the default size`);
+  }
+  assert.match(css, /\n\.messages-message-head time,\n\.messages-message-head time ~ span \{[^}]*font-size: 0\.9375rem;/,
+    'a message\'s time is 15px at the default size');
+  // What you type is the size it will be drawn at, at every text size: the
+  // composer's leading scales with its text (22px at the default size).
+  assert.match(cssRule(css, '.messages-composer-input'), /line-height: 1\.375rem;/);
+  // A long name gives way before the time is pushed past the column's edge.
+  assert.match(cssRule(css, '.messages-message-head'), /max-width: 100%;/);
+});
+
 // ── The slider's steps (#6510) ───────────────────────────────────────────
 
 // The head's Display module, run alone against a fake page.
