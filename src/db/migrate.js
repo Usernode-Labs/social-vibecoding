@@ -2021,13 +2021,26 @@ async function seedStagingCloseVote(pool) {
        VALUES ('staging-demo-close-author', 'staging-demo-not-a-login', TRUE)
        ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
        RETURNING id`)).rows[0];
+    // The project carries a repository address even though nothing on it is
+    // real: the single-request read resolves the project BY that address
+    // (services/requests.js appFor, reached from GET .../github-issues/:number),
+    // so without one the request's own page answered 404 and bounced to the
+    // Workshop before its Votes card could render. The address is obviously
+    // fake and matches no app anywhere else.
+    const repoUrl = 'https://github.com/staging-demo/staging-demo-close-vote';
     await tx.query(
-      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility,
+      `INSERT INTO apps (name, slug, repo_url, status, created_by, view_visibility, collab_visibility,
                          approver_policy, approvals_required)
-       SELECT 'Staging demo: a vote to close', 'staging-demo-close-vote', 'running', $1,
+       SELECT 'Staging demo: a vote to close', 'staging-demo-close-vote', $2, 'running', $1,
               'public', 'members', 'invited', 3
         WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-close-vote')`,
-      [author.id]);
+      [author.id, repoUrl]);
+    // An earlier run of this seed (before the address was written) left the
+    // project without one; repair it so a re-run still reaches the page.
+    await tx.query(
+      `UPDATE apps SET repo_url = $1
+        WHERE slug = 'staging-demo-close-vote' AND repo_url IS NULL`,
+      [repoUrl]);
     const app = (await tx.query(
       "SELECT id, community_id FROM apps WHERE slug = 'staging-demo-close-vote'")).rows[0];
     if (!app) { await tx.query('ROLLBACK'); return; }
