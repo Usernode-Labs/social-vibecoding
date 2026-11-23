@@ -373,6 +373,22 @@ test('two processes grant the pilot slot once and hold only four proposal runs',
   assert.deepEqual((await readHolder()).manifest, { launched: true, proposalOverflow: true });
   assert.ok(await checksQueue.enqueue(other, { ...claimed, manifest: { launched: false } }));
   assert.deepEqual((await readHolder()).manifest, { launched: false, proposalOverflow: true });
+
+  // The cancelling workflow may still have Jobs until its cleanup settles.
+  const runKey = 'pilot-run-1';
+  assert.equal(await checkRuns.record(other, { ...claimed, manifest: { launched: true, workflow: true, runKey } }), true);
+  await work(pool, firstSession.id, runKey, { status: 'settled', result: { cancelled: true } });
+  await work(pool, firstSession.id, `cancel:${runKey}`, { kind: 'checks.cancel', status: 'queued' });
+  assert.deepEqual((await checksQueue.admit(pool)).admit, []);
+  assert.ok(await present(pool, first));
+
+  // In the same pass, reclaim the finished holder and grant the next one.
+  await work(pool, firstSession.id, `cancel:${runKey}`, { kind: 'checks.cancel', status: 'settled' });
+  const next = await checksQueue.admit(other);
+  assert.deepEqual(next.admit, [second]);
+  assert.equal(next.proposalOverflowRunId, second);
+  assert.deepEqual(next.swept, [{ runId: first, sessionId: firstSession.id, why: 'finished' }]);
+  assert.equal(await present(pool, first), false);
 });
 
 // ── The order ───────────────────────────────────────────────────────────
