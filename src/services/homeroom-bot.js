@@ -7526,6 +7526,11 @@ async function recordUnstageable(pool, config, { app, bot, session, head, reason
       app: app.slug, sessionId: session.id, err: err.message,
     });
   }
+  // Only Homeroom's own copies get the ready-made demo states (shots-ready-
+  // states.js), so a state missing for another app's change is nothing the
+  // platform's board can add (requests 6985 and 6991 were filed that way).
+  // Its reason stays on the change itself, recorded above.
+  if (!(await platformAppSlugs(pool)).includes(app.slug)) return;
   const feedback = require('./feedback-reports');
   const title = `Before & after shots: no demo state for "${clip(reason, 90)}"`;
   try {
