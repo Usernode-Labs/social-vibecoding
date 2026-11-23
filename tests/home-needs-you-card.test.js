@@ -318,9 +318,14 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
   assert.match(card, /\{wipLook \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
   assert.match(card, /function WipHeroPublic\([^)]*\): ReactNode \{\s*if \(data\.audience !== 'solo' \|\| !data\.can_manage \|\| data\.audience_change\) return null;\s*return <MakePublic /, 'Make it public is offered to exactly whom Share it offers it');
-  // Invite ends the line about who is here, for a member, and opens the same pane.
-  assert.match(card, /\{member \? \(\s*<button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title=\{t\('project:communityCard\.invite\.title'\)\} onClick=\{openInviteLinks\}>/);
-  assert.match(card, /\{wipLook \? null : \(\s*<>\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(/, 'one Invite on the page');
+  // Invite is a full-size button in the action row, right after Open app, for
+  // a member, and opens the same pane. The drawn arrow and the small pill on
+  // the line about who is here are gone: the arrow was left pointing at
+  // nothing once the pill wrapped (the visual audit's item 32).
+  assert.match(card, /\{appButton\}\s*\{\/\*[\s\S]*?\*\/\}\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}\s*>\s*\{wipLook \? <UserPlusIcon aria-hidden="true" \/> : null\}\s*\{t\('project:communityCard\.invite\.button'\)\}/);
+  assert.equal(card.slice(card.indexOf('function HeroIdentity('), card.indexOf('export async function proposeAudience(')).includes('data-ws-community-invite'), false, 'nothing to invite with on the line about who is here');
+  assert.doesNotMatch(card, /wip-hub-meta-invite|wip-hub-meta-arrow|SwooshArrowIcon/);
+  assert.equal(card.slice(card.indexOf('export function CommunityCard('), card.indexOf('export function showsInviteHero(')).split('data-ws-community-invite=""').length - 1, 1, 'one Invite on the page');
   // The hero's scenery is for show.
   assert.match(card, /<span className="wip-hero-wash" data-scene=\{platform \? 'home' : String\(communityScene\(slug\)\)\} aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
   // The standard look's hub too (20 Nov 2026), and a project's preview beside the hero where there is one.
@@ -332,6 +337,9 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   assert.match(hub, /if \(alone && !claims && !wipLook\) return null;/);
   assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
   const css = read('public/css/app.css');
+  // As tall and as round as Open app, in the plain pills' outline.
+  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws-hero-summary \.dev-ws-hero-actions \[data-ws-community-invite\] \{\s*display: inline-flex;[^}]*height: 2\.75rem;[^}]*font-size: 1rem;\s*font-weight: 700;/);
+  assert.doesNotMatch(css, /\.wip-hub-meta-(?:invite|arrow|seat)\b/);
   assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
   assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/, 'For you is three across from 768px');
 });

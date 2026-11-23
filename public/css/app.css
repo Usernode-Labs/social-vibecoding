@@ -7052,65 +7052,26 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .d
   color: var(--wip-ink-muted);
   box-shadow: none;
 }
-/* INVITE ends the line about who is here: after the faces and the count,
-   an open seat (a dashed disc, a person and a plus) and the word. It reads
-   as the next thing in that sentence, "…234 members, invite". The pointer
-   fills the seat with the look's action colours. */
-.wip-hub-meta-invite {
+/* INVITE is the row's second button, beside Open app: as tall and as round,
+   in Open app's type, in the plain pills' outline, with the invite glyph
+   before the word. On Homeroom's own hub, which has no Open app, it stands
+   alone in the row. The pointer darkens its edge, as it does the ⋯'s. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
-  min-height: 1.75rem;
-  padding: 0 0.625rem 0 0.1875rem;
-  border-radius: var(--wip-radius-pill);
-  font-size: var(--wip-link-size);
-  font-weight: 650;
-  color: var(--wip-ink-action);
-  box-shadow: inset 0 0 0 1px var(--wip-card-line);
-  background-color: var(--wip-card-bg);
-  cursor: pointer;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  padding-inline: 1.125rem 1.375rem;
+  border: 0;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: inherit;
+  white-space: nowrap;
 }
-/* The arrow before it: one brush stroke that swells from nothing at its tail
-   to a sharp head, from the people to the seat. It leans a little, and nudges toward the seat when the pointer
-   is on the line. Not on a phone, where the line has no room for it. */
-.wip-hub-meta-arrow {
-  flex: none;
-  width: 2.5rem;
-  height: 2.5rem;
-  margin-block: -0.75rem;
-  margin-inline: -0.125rem -0.25rem;
-  color: var(--wip-ink);
-  transform: rotate(-4deg);
-  transition: transform 0.25s ease;
-}
-.wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg) translateX(3px); }
-html:not([data-skin])[dir="rtl"] .wip-hub-meta-arrow { transform: scaleX(-1) rotate(-4deg); }
-@media (max-width: 639.98px) {
-  .wip-hub-meta-arrow { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) .wip-hub-meta-arrow { transition: none; }
-  html:not([data-skin]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
-}
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta-arrow { transition: none; }
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
-.wip-hub-meta-seat {
-  flex: none;
-  width: 1.375rem;
-  height: 1.375rem;
-  display: grid;
-  place-items: center;
-  border: 1.5px dashed var(--wip-ink-muted);
-  border-radius: 50%;
-  color: var(--wip-ink-muted);
-}
-.wip-invite-glyph { width: 0.8125rem; height: 0.8125rem; }
-.wip-hub-meta-invite:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
-.wip-hub-meta-invite:is(:hover, :focus-visible) > .wip-hub-meta-seat {
-  border-color: transparent;
-  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
-  color: var(--wip-cta-ink);
-}
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] > svg { flex: none; width: 1.125rem; height: 1.125rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite]:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
 /* With nothing on the hero's last line but the ⋯ (which is in the corner,
    out of the line), the line takes no room: no empty band under the words. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
