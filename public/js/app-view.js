@@ -32190,9 +32190,10 @@ const AppView = {
     const pan = keyboard > 0 ? AppView._viewportPan() : 0;
     const layout = keyboard > 0 ? (AppView._layoutViewportHeight() || window.innerHeight) : window.innerHeight;
     const viewport = { width: window.innerWidth, height: layout };
-    const seen = pan > 0 ? AppView._shiftRect(rect, -pan) : rect;
-    // The part of the frame the platform header does not cover (#74).
-    const visible = AppView._frameRectBelowHeader(seen, AppView._platformHeaderRect());
+    // The part of the frame the platform header does not cover (#74), read
+    // where both are laid out (the layout viewport), then moved into the band.
+    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
+    const seen = pan > 0 ? AppView._shiftRect(visible, -pan) : visible;
     const raw = AppView._readRootInsets();
     raw.bottom = AppView._rootBottomInset({
       bottom: raw.bottom,
@@ -32200,11 +32201,11 @@ const AppView = {
       androidStandalone: AppView._isAndroidStandalone(),
       keyboard,
     });
-    const insets = AppView._frameInsets(raw, visible, viewport);
+    const insets = AppView._frameInsets(raw, seen, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(visible, viewport, keyboard);
+    insets.keyboard = AppView._frameKeyboardInset(seen, viewport, keyboard);
     return insets;
   },
 

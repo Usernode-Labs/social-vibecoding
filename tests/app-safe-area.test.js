@@ -707,6 +707,10 @@ test('safeAreaForFrame measures the frame below the header', () => {
     APP_VIEW.indexOf('// Post the current insets into every owned frame')
   );
   assert.match(fn, /const visible = AppView\._frameRectBelowHeader\(rect, AppView\._platformHeaderRect\(\)\);/);
-  assert.match(fn, /AppView\._frameInsets\(raw, visible, viewport\)/);
-  assert.match(fn, /AppView\._frameKeyboardInset\(visible, viewport, keyboard\)/);
+  // With the keys up the part below the header is moved into the band iOS
+  // shows (phone review #1): the header and the frame are clipped where
+  // both are laid out, then shifted together.
+  assert.match(fn, /const seen = pan > 0 \? AppView\._shiftRect\(visible, -pan\) : visible;/);
+  assert.match(fn, /AppView\._frameInsets\(raw, seen, viewport\)/);
+  assert.match(fn, /AppView\._frameKeyboardInset\(seen, viewport, keyboard\)/);
 });
