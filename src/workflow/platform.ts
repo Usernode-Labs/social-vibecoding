@@ -245,6 +245,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
   // (and never while it serves: services.ts). A preview nobody has used for
   // STAGING_IDLE_TEARDOWN_MS is given back (its IdleDue deadline).
   const previews = preview({
+    readyAdmission: config.captureRuntime === 'kubernetes' && config.kubernetes?.checkNodePoolRequired === true
+      && legacy('services/checks-queue').isEnabled(),
     maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000,
     idleMs: Number(config.stagingIdleTeardownMs) > 0 ? Number(config.stagingIdleTeardownMs) : 0,
   });

@@ -192,6 +192,100 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
   const reply = async (id) => (await pool.query('SELECT reply FROM wf_events WHERE id = $1', [id])).rows[0].reply;
   const submit = (s, head, extra = {}) => send(s, 'RevisionSubmitted', { sessionId: s.id, head, source: 'test', trigger: 'commit-push', ...extra });
 
+  await t.test('ready admission survives handover, gates the lease and fences superseded and early Jobs', async (t) => {
+    const queue = require('../src/services/checks-queue');
+    const k = require('../src/services/kubernetes');
+    const { claim } = require('../src/workflow/kernel/services.ts');
+    const { unitEarlyRunId } = require('../src/workflow/preview/services.ts');
+    let capacity = { available: false, cap: 1 };
+    t.mock.method(k, 'checkPoolCapacity', async () => capacity);
+    const config = { kubernetes: { checkNodePoolRequired: true } };
+    const eligibleWork = () => queue.readyWork(pool, config, unitEarlyRunId);
+    const readyMachine = preview({ maxRetries: 6, retireAfterMs: 0, readyAdmission: true });
+    const builder = createRuntime({ pool, machines: [readyMachine], services: {
+      [WORK.prepare]: fake(WORK.prepare), [WORK.unitEarly]: fake(WORK.unitEarly),
+    } });
+    runtimes.push(builder);
+    const opts = { pool, handlers: new Map([[WORK.run, { eligibleWork, ...fake(WORK.run) }]]),
+      versions: new Map([[MACHINE, readyMachine.version]]), serviceId: 'test-admission', releaseKinds: [],
+      lockTimeoutMs: 5000, statementTimeoutMs: 10000 };
+    const prepare = async (s, head) => {
+      await submit(s, head);
+      await builder.drain();
+      await builder.runServices();
+      await builder.drain();
+      const [w] = (await workOf(s, WORK.run)).filter((w) => w.input.head === head);
+      assert.ok(w.input.admissionId);
+      assert.equal((await row(s.id)).check_phase, 'queued');
+      return w.input;
+    };
+    const a = await app();
+    const s = await proposal(a);
+    const old = await prepare(s, SHA('a'));
+    assert.deepEqual((await claim(opts, WORK.run, 10)).items, []);
+    const queued = await pool.query("SELECT status, attempt_count FROM wf_work WHERE input->>'admissionId' = $1",
+      [old.admissionId]);
+    assert.deepEqual(queued.rows, [{ status: 'queued', attempt_count: 0 }]);
+    // During rollout all ten old handlers can be waiting inside capture.
+    // Even a grant orphaned before claim gives back its place to launch,
+    // so an old handler can finish and make room for the new work.
+    const available = { available: true, cap: 1 };
+    assert.equal((await queue.admit(pool, { capacity: available })).byRun.get(old.admissionId).holding, true);
+    await pool.query("UPDATE check_runs SET admitted_at = now() - interval '1 minute' WHERE run_id = $1", [old.admissionId]);
+    await pool.query(`INSERT INTO wf_work (machine, key, kind, work_key, input, status, lease_until, claim_id)
+      SELECT 'preview', 'old-rollout', 'checks.run', i::text, '{}', 'running', now() + interval '1 minute',
+             gen_random_uuid() FROM generate_series(1,10) i`);
+    const legacy = crypto.randomUUID();
+    await queue.enqueue(pool, { runId: legacy, sessionId: s.id, commitSha: old.head });
+    const handover = await queue.admit(pool, { capacity: available });
+    assert.equal(handover.byRun.get(old.admissionId).admitted, false);
+    assert.equal(handover.byRun.get(legacy).admitted, true);
+    await pool.query("DELETE FROM wf_work WHERE key = 'old-rollout'");
+    await pool.query('DELETE FROM check_runs WHERE run_id = $1', [legacy]);
+    const input = await prepare(s, SHA('b'));
+    assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [old.admissionId])).rowCount, 0);
+    assert.equal(await queue.beginReadyClaim(pool, { admissionId: old.admissionId, runId: crypto.randomUUID(),
+      sessionId: s.id, commitSha: old.head, manifest: { runKey: old.runId } }), null);
+
+    // A full slot is already occupied by the build's early suite. A partial
+    // set of shards remains independently accounted until every Job exists.
+    const early = unitEarlyRunId(s.id, input.n);
+    await pool.query(`INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest)
+      VALUES ($1, $2, $3, 'early', '{"workflow":true,"earlyUnit":true}')`, [early, s.id, input.head]);
+    let shards = 1;
+    t.mock.method(k, 'findCheckJobs', async () => ({ unitSuites: Array(shards).fill({}), unitShards: 3 }));
+    capacity = { available: true, cap: 1 };
+    assert.deepEqual((await claim(opts, WORK.run, 10)).items, []);
+    assert.equal((await row(s.id)).checks_progress.queue.ahead, 0);
+    shards = 3;
+    const claims = await Promise.all([claim(opts, WORK.run, 10), claim(opts, WORK.run, 10)]);
+    assert.equal(claims.flatMap((c) => c.items).length, 1);
+    const [first] = claims.flatMap((c) => c.items);
+    assert.equal(first.input.admissionId, input.admissionId);
+    const child = crypto.randomUUID();
+    const start = await queue.beginReadyClaim(pool, { admissionId: input.admissionId, runId: child, workId: first.id, attempt: first.attempt_count,
+      sessionId: s.id, commitSha: input.head, manifest: { workflow: true, runKey: input.runId, launched: false } });
+    assert.equal(start.early_id, early);
+    assert.deepEqual((await queue.admit(pool, { capacity })).holding, { main: 0, proposal: 1 });
+
+    // A dead conductor does not lose the place, charge a second slot, or
+    // strand the work behind another proposal. Its retry gets a new claim.
+    await pool.query("UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE id = $1", [first.id]);
+    const [retry] = (await claim(opts, WORK.run, 10)).items;
+    assert.equal(retry.id, first.id);
+    assert.equal(retry.attempt_count, 2);
+    assert.equal(await queue.beginReadyClaim(pool, { admissionId: input.admissionId, runId: crypto.randomUUID(),
+      workId: first.id, attempt: 1, sessionId: s.id, commitSha: input.head, manifest: { runKey: input.runId } }), null);
+    assert.deepEqual((await queue.admit(pool, { capacity })).holding, { main: 0, proposal: 1 });
+    await submit(s, SHA('c'));
+    await builder.drain();
+    assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [input.admissionId])).rowCount, 0);
+    // The physical claim and early Jobs are still accounted after invalidation.
+    assert.ok((await queue.admit(pool, { capacity })).holding.proposal >= 1);
+    await pool.query('DELETE FROM check_runs WHERE session_id = $1', [s.id]);
+    await settle();
+  });
+
   await t.test('P1 a revision is built, published, checked and settled, with its history counted once', async () => {
     const s = await proposal(await app(), { pin: SHA('a'), bot: true });
     const id = await submit(s, SHA('a'));

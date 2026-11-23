@@ -18,7 +18,7 @@ const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
 
 test('the preview machine tells the shots machine its head the moment the preview serves, beside its checks run', () => {
   const machine = read('src/workflow/preview/machine.ts');
-  const published = machine.slice(machine.indexOf("return told(startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {"));
+  const published = machine.slice(machine.indexOf("return told(startRun({ name: 'preparing', data: d }, d0.trigger, ctx, deps, {"));
   assert.ok(published.length > 0, 'the publish that makes the preview serve starts the checks run');
   assert.match(published.slice(0, 600), /toShots\(d, 'HeadReady', \{ head: served\.head \}\)/);
   assert.doesNotMatch(machine, /\{ kind: WORK\.ready, key:/, 'no hand-off work starts the shots any more');

@@ -38,7 +38,8 @@
     "uses src/services/bench/taste.js:materialize": "the release's benchSuites step: the taste suite made from this build's checked-in briefs (rows only), claimed by its bench_materializations row (a running row left by a dead process taken again after ten minutes)",
     "state src/workflow/platform.ts#knownEvents": "each machine's event types in this build, and those web may append, set when the runtime starts: the machines' own declarations, the same in every process of a build (reaskRefused reads them)",
     "uses src/services/work-state.js:wants": "the afterAccepted hook's pure filter: whether an accepted event's machine (and, for a vote, its applied kind) can move a request or a change; reads only the event's own info, decides nothing of the machine's",
-    "uses src/services/work-state.js:afterTransition": "the afterAccepted hook: after an accepted event, in its own transaction behind a savepoint, the stored work state (work_states) of the request or change its instance is about is derived again from the rows the transition just wrote, and what changed is pushed with the event's pushes; it keeps nothing in the process and decides nothing the machine reads"
+    "uses src/services/work-state.js:afterTransition": "the afterAccepted hook: after an accepted event, in its own transaction behind a savepoint, the stored work state (work_states) of the request or change its instance is about is derived again from the rows the transition just wrote, and what changed is pushed with the event's pushes; it keeps nothing in the process and decides nothing the machine reads",
+    "uses src/services/checks-queue.js:isEnabled": "reads the checks queue configuration once as the workflow runtime is wired; previews on a required node pool register at readiness when admission is enabled"
   },
   "io": {
     "app-delivery": {
@@ -174,7 +175,9 @@
       "services | uses src/services/visuals.js:summarizeBootFailure": "the card's wording of a failed build or boot, from the error (pure)",
       "services | uses src/services/preview-sleep.js:wakeForRun": "wakes the preview a checks run is about to check if its row records it asleep (#6157): scales its Deployment back to one replica under the session's PREVIEW_SLEEP_LOCK (a session lock in Postgres, shared by every process), waits for the pod and the public address, and clears the row's sleep; a preview not asleep is one read; the in-process map only joins a second caller to the wake already going, keeps nothing between calls",
       "services | uses src/services/preview-sleep.js:wake": "the existing fenced scale, readiness and route-restoration I/O, now run as preview.wake conductor work for Preview clicks and direct links; request callers only append and read its durable receipt, while the transient map joins concurrent callers and holds no decision between wakes",
-      "services | uses src/services/visuals.js:databaseBusyResult": "the settlement a checks run that had no database connection reports where it cannot be handed back: blocked, the platform's fault, in words (pure)"
+      "services | uses src/services/visuals.js:databaseBusyResult": "the settlement a checks run that had no database connection reports where it cannot be handed back: blocked, the platform's fault, in words (pure)",
+      "services | uses src/services/checks-queue.js:readyWork": "reads shared admission and returns the exact workflow items eligible for a checks lease; queue positions and grants are kept in PostgreSQL",
+      "services | uses src/services/checks-queue.js:CHECKS_RUN_CONCURRENCY": "the fixed global handler limit shared by the work claim and admission, so grants cannot strand the live legacy handlers during rollout"
     },
     "proposal": {
       "services | uses src/config.js:usesMockGithubForImports": "whether this is a staging preview, whose imported pull requests are read from the mock GitHub (merge.observe), the client choice checkAndMerge made in the vote route before; pure, reads the environment",
