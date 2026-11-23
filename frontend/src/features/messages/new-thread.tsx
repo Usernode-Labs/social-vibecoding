@@ -189,6 +189,11 @@ export function startNewThread(conversationId: number, fresh?: NewThreadPreset |
   notify();
 }
 
+/** The chat a new chat is open in right now, else null: the live answer, for a caller that cannot wait for a render. */
+export function newThreadIn(): number | null {
+  return blankIn;
+}
+
 /** Close the new chat. */
 export function closeNewThread(): void {
   if (blankIn === null) return;
