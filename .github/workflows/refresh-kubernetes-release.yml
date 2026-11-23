@@ -82,14 +82,67 @@ jobs:
             fi
           fi
 
+          started="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "Hard refresh requested at ${started}."
           status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --max-time 120 \
             --header "Authorization: Bearer ${ARGOCD_REFRESH_TOKEN}" \
             "${application_url}?refresh=hard")" \
             || status="curl exit $?"
+          finished="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "Hard refresh from ${started} to ${finished} (${status})." | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$status" = "200" ]; then
             echo "Argo CD re-read the chart registry and compared ${ARGOCD_APPLICATION}." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "::warning title=Argo CD refresh not confirmed::${ARGOCD_APPLICATION} returned '${status}'. Periodic reconciliation will pick up the chart. See the infra runbook for token configuration."
           exit 1
+
+  # Keep polling off the refresh job as well as off the publication path.
+  observe:
+    name: Observe Kubernetes rollout timings
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_repository.full_name == github.repository
+          && github.event.workflow_run.path == '.github/workflows/build-kubernetes-images.yml'
+          && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Find the promotion time for this attempt
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          completed_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "Publish atomic Helm release" and .conclusion == "success") | .steps[] | select(.name == "Promote OCI release tag" and .conclusion == "success") | .completed_at // empty')"
+          echo "completed_at=$completed_at" >> "$GITHUB_OUTPUT"
+
+      # The observer is from the trusted workflow revision. It never
+      # executes code from the triggering run or consumes its artifacts.
+      - uses: actions/checkout@v6
+        if: steps.promotion.outputs.completed_at != ''
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/observe-kubernetes-rollout.js
+            scripts/promote-kubernetes-chart.js
+          sparse-checkout-cone-mode: false
+
+      - name: Measure Argo sync, migration and live traffic
+        if: steps.promotion.outputs.completed_at != ''
+        env:
+          ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RELEASE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PROMOTED_AT: ${{ steps.promotion.outputs.completed_at }}
+        run: node scripts/observe-kubernetes-rollout.js

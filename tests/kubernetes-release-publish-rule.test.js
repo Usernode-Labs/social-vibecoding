@@ -10,6 +10,9 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const YAML = require('yaml');
 const { promoteChart } = require('../scripts/promote-kubernetes-chart');
+const { observeRollout, renderTiming } = require('../scripts/observe-kubernetes-rollout');
+const { replayChecks, compareChecks } = require('../scripts/replay-kubernetes-build-queue');
+const queueSample = require('./fixtures/kubernetes-release-queue-sample.json');
 const { chooseRelease, argoHasRolledOut, BATCH_WAIT_MS, ARGO_WAIT_MS, MAX_UNRELEASED_MS } =
   require('../scripts/choose-kubernetes-release');
 
@@ -62,9 +65,13 @@ esac
         ARGOCD_APPLICATION: 'platform', GITHUB_STEP_SUMMARY: summary },
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.readFileSync(summary, 'utf8').trim(), skipped
-      ? `Argo CD already started syncing ${skipped}.`
-      : 'Argo CD re-read the chart registry and compared platform.', description);
+    const lines = fs.readFileSync(summary, 'utf8').trim().split('\n');
+    if (skipped) {
+      assert.deepEqual(lines, [`Argo CD already started syncing ${skipped}.`], description);
+    } else {
+      assert.match(lines[0], /^Hard refresh from [0-9TZ:-]+ to [0-9TZ:-]+ \(200\)\.$/, description);
+      assert.equal(lines[1], 'Argo CD re-read the chart registry and compared platform.', description);
+    }
   }
 });
 
@@ -274,4 +281,120 @@ test('a verified manual dispatch for the same SHA takes over when it reaches the
   });
   assert.equal((await fixture.decide(latest)).publish, false);
   assert.equal(fixture.clock(), 0);
+});
+
+test('replay the 36 production plans including the nine-merge #6952 burst', () => {
+  const comparisons = compareChecks(queueSample);
+  assert.equal(comparisons.length, 36);
+  assert.ok(comparisons.every(result => result.modelErrorSeconds !== null && Math.abs(result.modelErrorSeconds) <= 2));
+  const burst = comparisons.find(result => result.pr === 6952);
+  assert.equal(burst.sharedTwoSecondsSaved, 0, 'platform and PostgreSQL were both queued');
+  assert.equal(burst.sharedThreeSecondsSaved, 182);
+  assert.equal(comparisons.find(result => result.pr === 6987).fixedThreeSecondsSaved, -240);
+  assert.equal(comparisons.find(result => result.pr === 6954).sharedTwoSecondsSaved, -151);
+  assert.ok(comparisons.every(result => result.sharedThreeSecondsSaved >= 0));
+  const warmPromotions = queueSample.filter(run => run.promoted && run.pr !== 6960
+    && run.jobs.worker.reused && run.jobs.capture.reused);
+  assert.equal(warmPromotions.length, 12);
+  const sharedSavings = warmPromotions.map(run => comparisons.find(result => result.pr === run.pr).sharedThreeSecondsSaved)
+    .sort((a, b) => a - b);
+  assert.equal((sharedSavings[5] + sharedSavings[6]) / 2, 24.5);
+});
+
+test('shared slots keep the previous verified candidate when the newest build fails', async () => {
+  const previous = queueSample.find(run => run.pr === 6970);
+  const burst = queueSample.filter(run => run.number >= 5524 && run.number <= 5532);
+  const [fallback, newest] = burst.slice(-2);
+  for (const failed of [false, true]) {
+    const replayInput = structuredClone(burst);
+    replayInput.at(-1).jobs.platform.failed = failed;
+    // Make the failure arrive after the older candidate starts waiting.
+    if (failed) replayInput.at(-1).jobs.platform.seconds += 10;
+    const schedule = replayChecks(replayInput, { slots: 3, shared: true, bypassLiveImages: true });
+    const [fallbackChecks, newestChecks] = schedule.slice(-2);
+    assert.equal(newestChecks.verifiedAt === null, failed);
+    const start = earliestMerge + fallbackChecks.verifiedAt * 1000;
+    let now = start;
+
+    const decision = await chooseRelease({
+      sha: fallback.sha, number: fallback.number, version: `0.1.${fallback.number * 1000 + 1}`,
+    }, {
+      previous: async () => ({
+        version: `0.1.${previous.number * 1000 + 1}`, revision: previous.sha, digest: DIGEST,
+      }),
+      tip: async () => newest.sha,
+      compare: async () => ({ status: 'ahead', commits: [
+        { commit: { committer: { date: new Date(start - 240_000).toISOString() } } },
+      ] }),
+      peers: async () => [{ event: 'push', head_sha: newest.sha, run_number: newest.number, status: 'in_progress' }],
+      jobs: async () => checkedJobs.map(job => {
+        if (job.name !== 'Resolve platform image') return job;
+        const platformCheck = newestChecks.jobs.platform;
+        const finished = now >= earliestMerge + platformCheck.finish * 1000;
+        return { ...job, status: finished ? 'completed' : 'in_progress',
+          conclusion: finished ? (platformCheck.failed ? 'failure' : 'success') : null };
+      }),
+      healthy: async digest => argoHasRolledOut(argoStatus(), REPO, digest),
+      now: () => now,
+      wait: async milliseconds => { now += milliseconds; },
+      log: () => {},
+    });
+
+    assert.equal(decision.publish, failed, 'publish the verified older commit only on the failed-newest path');
+    assert.equal(now - start, failed ? 10_000 : 0);
+  }
+});
+
+test('rollout polling pins timings to the chart digest and public source revision', async () => {
+  const oldDigest = 'sha256:' + 'd'.repeat(64);
+  const times = at => new Date(at).toISOString();
+  let now = 0;
+  const timing = await observeRollout({
+    repository: REPO, digest: DIGEST, sha: LATEST, now: () => now,
+    wait: async ms => { now += ms; },
+    async readArgo() {
+      const application = argoStatus({
+        digest: now === 0 ? oldDigest : DIGEST,
+        result: now < 20_000 ? oldDigest : DIGEST,
+        phase: now < 30_000 ? 'Running' : 'Succeeded',
+      });
+      const operation = application.status.operationState;
+      operation.startedAt = times(8_000);
+      if (now >= 30_000) operation.finishedAt = times(28_000);
+      operation.operation = { sync: { revisions: [now === 0 ? oldDigest : DIGEST] } };
+      operation.syncResult.resources = [{ kind: 'Job', name: 'social-vibecoding-migrate',
+        syncPhase: 'Sync', hookPhase: 'Succeeded' }];
+      return application;
+    },
+    readVersion: async () => ({ sha: now >= 40_000 ? LATEST : EARLIER }),
+  });
+  assert.deepEqual(timing, {
+    comparison: times(10_000),
+    syncStarted: times(8_000),
+    migration: times(20_000),
+    syncFinished: times(28_000),
+    healthy: times(30_000),
+    serving: times(40_000),
+  });
+  const report = renderTiming({ version: latest.version, sha: LATEST, digest: DIGEST, promotedAt: times(0), timing });
+  assert.match(report, /Exact source SHA first served by Homeroom \| 1970-01-01T00:00:40.000Z \| 40/);
+});
+
+test('retained history recovers sync times without assigning another rollout’s hooks or traffic', async () => {
+  const oldDigest = 'sha256:' + 'd'.repeat(64);
+  const application = argoStatus({ digest: oldDigest, result: oldDigest });
+  application.status.history = [{
+    revisions: [DIGEST, 'values-sha'],
+    deployStartedAt: '2026-11-23T11:04:17Z',
+    deployedAt: '2026-11-23T11:05:43Z',
+  }];
+  let now = 0;
+  const timing = await observeRollout({
+    repository: REPO, digest: DIGEST, sha: LATEST, now: () => now,
+    wait: async ms => { now += ms; }, limit: 11_000,
+    readArgo: async () => application,
+    readVersion: async () => { throw new Error('unavailable'); },
+  });
+  assert.equal(now, 11_000);
+  assert.deepEqual(timing, { syncStarted: '2026-11-23T11:04:17Z', syncFinished: '2026-11-23T11:05:43Z' });
 });

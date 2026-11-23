@@ -363,7 +363,13 @@ test('Argo refresh runs separately and only for a published stable chart', () =>
   assert.match(refresh, /--max-time \d+/);
   assert.match(refresh, /ARGOCD_APPLICATION: social-vibecoding-platform/);
   assert.match(refresh, /::warning title=Argo CD refresh not confirmed::/);
-  assert.doesNotMatch(refresh, /actions\/checkout|\/sync\b/, 'the refresh uses only the trusted workflow and lets Argo own sync');
+  const [refreshJob, observer] = refresh.split('\n  observe:\n');
+  assert.doesNotMatch(refreshJob, /actions\/checkout/, 'refresh dispatch uses only the trusted workflow');
+  assert.doesNotMatch(refresh, /\/sync\b/, 'Argo owns sync');
+  assert.doesNotMatch(observer, /\bneeds:/, 'rollout observation samples independently of refresh dispatch');
+  assert.match(observer, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(observer, /persist-credentials: false/);
+  assert.match(observer, /\.name == "Promote OCI release tag" and \.conclusion == "success"/);
 });
 
 test('migration command validates the target database identifier', () => {
