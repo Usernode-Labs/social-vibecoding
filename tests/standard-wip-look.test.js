@@ -25,6 +25,8 @@ const WIP_HIDES = [
   'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
   'html:not([data-skin]) #app-list .app-card-people',
+  // So it is beside the open sidebar up to 1280px, where the tile stays stacked: as a row its name had about 75px.
+  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html:not([data-skin]) #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
@@ -350,7 +352,7 @@ test('the fold button leads the logo\'s line, on the same spot open and folded, 
   const RAIL = 'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden))';
   // ONE RULE PLACES IT, whatever the menu's state: its glyph in the rows' icon column, on the logo's line.
   assert.ok(block.includes(`${RAIL} #platform-header #sidebar-toggle {\n    position: absolute;\n`
-    + '    inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);\n'
+    + '    inset-block-start: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);\n'
     + '    inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) - (var(--wip-nav-fold) - var(--wip-nav-ic-size)) / 2);'));
   assert.deepEqual(all.filter((r) => r.selector.includes('#sidebar-toggle') && /folded|peek/.test(r.selector)).map((r) => r.selector), [],
     'no rule moves or repaints it for the folded menu (it jumped 240px to the top bar\'s start there)');
@@ -401,6 +403,47 @@ test('the page is a sheet tucked into the menu: its corners are rounded where it
   const at = css.indexOf('THE PAGE IS A SHEET TUCKED INTO THE MENU');
   assert.ok(at > 0);
   assert.match(css.slice(css.indexOf('*/', at) + 2, css.indexOf('*/', at) + 40), /^\n@media \(min-width: 768px\) \{/);
+});
+
+test('where the page scrolls under the top bar, the bar has a ground from the menu\'s edge and keeps the page\'s corner (audit, 23 Nov 2026)', () => {
+  const css = read('public', 'css', 'app.css');
+  const all = rules(menuBlock());
+  const DOCKED = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek))';
+  // A touch browser scrolls the document under the sticky bar (a project's
+  // Workshop ran under the logo and the bell on a tablet), and Safari's own
+  // ground covered the menu's top (its fold button was white on white).
+  const ltr = all.find((r) => r.selector.startsWith(`${MENU_SCOPE}[data-browser-scroller] ${DOCKED} #platform-header,`));
+  assert.ok(ltr, 'where the document scrolls, with the menu docked, the bar has a ground');
+  const [, safari] = topLevel(ltr.selector);
+  assert.ok(safari.startsWith(`${MENU_SCOPE}.un-ios.web-browser-chrome:not([data-community-tint]) ${DOCKED}:has(`), 'and on the screens Safari gives a ground of its own');
+  // …exactly those: the screens of Safari's own ground rule, and the platform's surface of #app-view.
+  const at = css.indexOf('html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen');
+  assert.ok(at > 0, 'Safari\'s own ground rule');
+  const screens = (s) => [...new Set(s.match(/#[a-z-]+-screen\b/g))].sort();
+  assert.deepEqual(screens(safari), screens(css.slice(at, css.indexOf('{', at))));
+  assert.ok(safari.includes('#app-view:not(.hidden)[data-app-surface="platform"]'));
+  // The page's plane from the menu's edge, so the menu still reaches the top…
+  assert.match(ltr.body, /background-color: transparent;/);
+  assert.match(ltr.body, /linear-gradient\(to right, transparent var\(--platform-rail-w, 0px\), var\(--dc-sheet-solid\) 0\)/);
+  // …and the page's top corner at that edge, drawn as the corner layer draws it, since the bar lies over that layer.
+  assert.match(ltr.body, /radial-gradient\(circle at 100% 100%, transparent calc\(var\(--wip-nav-page-radius\) - 0\.5px\), var\(--wip-nav-bg\) var\(--wip-nav-page-radius\)\),\s*linear-gradient/, 'the corner is the top layer');
+  assert.match(ltr.body, /background-position: var\(--platform-rail-w, 0px\) 0, 0 0;/);
+  assert.match(ltr.body, /background-size: var\(--wip-nav-page-radius\) var\(--wip-nav-page-radius\), auto;/);
+  assert.match(ltr.body, /background-repeat: no-repeat;/);
+  assert.doesNotMatch(ltr.body, /radius: 0/, 'no corner is squared off');
+  const rtl = all.find((r) => r.selector.startsWith(`${MENU_SCOPE}[dir="rtl"][data-browser-scroller] ${DOCKED} #platform-header,`));
+  assert.ok(rtl, 'right to left the menu is on the right');
+  assert.match(rtl.body, /radial-gradient\(circle at 0 100%,[\s\S]*linear-gradient\(to left, transparent var\(--platform-rail-w, 0px\), var\(--dc-sheet-solid\) 0\)/);
+  assert.match(rtl.body, /background-position: right var\(--platform-rail-w, 0px\) top 0, 0 0;/);
+  // The menu starts under the strips above the header, and its brand's band, the brand and the fold button under the status bar.
+  const menu = all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs` && /z-index: 9;/.test(r.body));
+  assert.match(menu.body, /top: var\(--browser-banner-h, 0px\);/);
+  assert.match(menu.body, /padding-top: calc\(var\(--platform-safe-top, 0px\) \+ var\(--wip-nav-brand-h\)\);/);
+  const brand = all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs::before` && /mask:/.test(r.body));
+  assert.match(brand.body, /inset-block-start: calc\(var\(--platform-safe-top, 0px\) \+ var\(--wip-nav-brand-top\)\);/);
+  // The project's pause pill stands in the bar's row from 900px; where the bar is sticky at 30 with a ground, it rises over it.
+  assert.match(css, /html:not\(\[data-skin\]\)\[data-browser-scroller\] body:has\(#platform-header \.header-place-name\) #dev-forum-scroll:has\([^{]*\) > #dev-code-pause-notice \{ z-index: 31; \}/);
+  assert.match(css, /html\[data-browser-scroller\] :is\(#platform-header, #landing-header\) \{\s*position: sticky;\s*top: var\(--browser-banner-h\);\s*z-index: 30;/, 'the bar it rises over');
 });
 
 test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {

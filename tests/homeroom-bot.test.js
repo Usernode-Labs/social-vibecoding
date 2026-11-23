@@ -357,6 +357,9 @@ test('settings default to off and clamp their numbers', () => {
     // are what start ticked then.
     worksFor: 'everyone', verifiedSignals: ['phone', 'github_x_age'], verifiedGrandfather: true, verifiedSince: null,
     verifiedMinAccountAgeDays: 365,
+    // The automatic switch to verified accounts only is not armed until an
+    // admin arms it: 500 people active in 30 days, or $5,000 of AI spend.
+    verifiedAuto: false, verifiedAutoUsers: 500, verifiedAutoSpendCents: 500000,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },

@@ -320,7 +320,7 @@
     "description": "Heading of the dialog for proposing a new display name for an app."
   },
   "rename.current": {
-    "text": "Current app name:<0>{{name}}</0>",
+    "text": "Current app name: <0>{{name}}</0>",
     "description": "Line under the rename dialog's heading. {{name}} is the app's present name; the numbered tag sets it in a different typeface and must stay around it."
   },
   "rename.newName": {
@@ -332,7 +332,7 @@
     "description": "Greyed example text inside the empty new-name field of the rename dialog."
   },
   "rename.hint": {
-    "text": "3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits<0>dapp.json</0>; the rename applies once the PR is voted in and merged.",
+    "text": "3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits <0>dapp.json</0>; the rename applies once the PR is voted in and merged.",
     "description": "Help text under the new-name field of the rename dialog. PR means a pull request on GitHub. dapp.json is a file name and stays as it is, inside its numbered tag."
   },
   "rename.submit": {
