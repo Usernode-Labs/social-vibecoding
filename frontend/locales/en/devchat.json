@@ -319,17 +319,33 @@
     "text": "Click where the next comment goes",
     "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) after the person chose to add another comment to the same request: their next click places it."
   },
+  "commentPin.hint.nextTouch": {
+    "text": "Tap where the next comment goes",
+    "description": "The same hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) on a touch screen, after the person chose to add another comment to the same request: their next tap places it."
+  },
   "commentPin.hint.writing": {
     "text": "Enter posts it. Esc discards it.",
     "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) while a comment is being written. Enter and Esc are keyboard keys; \"it\" is the request."
+  },
+  "commentPin.hint.writingTouch": {
+    "text": "Post sends it.",
+    "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) on a touch screen, while a comment is being written. Post is the button in the comment box; \"it\" is the request."
   },
   "commentPin.hint.carry": {
     "text": "Click where your words belong",
     "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) when the person switched from the form with words already written: their first click places those words on the page."
   },
+  "commentPin.hint.carryTouch": {
+    "text": "Tap where your words belong",
+    "description": "The same hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) on a touch screen, when the person switched from the form with words already written: their first tap places those words on the page."
+  },
   "commentPin.hint.another": {
     "text": "Click to leave another",
     "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) after at least one request was posted: a click leaves another comment."
+  },
+  "commentPin.hint.anotherTouch": {
+    "text": "Tap to leave another",
+    "description": "The same hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) on a touch screen, after at least one request was posted: a tap leaves another comment."
   },
   "commentPin.hint.start": {
     "text": "Tap anywhere to suggest an improvement",
@@ -443,6 +459,10 @@
     "text": "Click on the page where it goes",
     "description": "Row in the comment box in comment mode (the box beside a pin where the person writes their request) after the person chose to add another comment to the same request: their next click on the page places it. Beside it, a Cancel button."
   },
+  "commentPin.next.whereTouch": {
+    "text": "Tap on the page where it goes",
+    "description": "The same row in the comment box in comment mode on a touch screen, after the person chose to add another comment to the same request: their next tap on the page places it. Beside it, a Cancel button."
+  },
   "commentPin.view.chip": {
     "text": "Screenshot",
     "description": "Small label at the start of the comment-mode bar, above the picture of the page shown while comment mode is on: says the page below is a picture of the page, not the live page."
@@ -478,6 +498,10 @@
   "commentPin.box.discardLabel": {
     "text": "Discard this request",
     "description": "Accessible name of the ✕ button in the comment box in comment mode (the box beside a pin where the person writes their request): throws the request away without posting it."
+  },
+  "commentPin.box.confirmDiscard": {
+    "text": "Discard?",
+    "description": "Question in the comment box in comment mode, beside its close button, after the person pressed it on a request they have written words in. Nothing in the request is posted yet. Answered by Keep writing or Discard."
   },
   "commentPin.box.minimize": {
     "text": "Minimize",
@@ -631,10 +655,6 @@
     "text": "Drag to move the bar anywhere. Double-click to put it back at the bottom.",
     "description": "Tooltip of the handle at the left of the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot), when it floats over the page."
   },
-  "commentPin.bar.confirmDiscard": {
-    "text": "Discard this request? Nothing in it is posted yet.",
-    "description": "Question on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) after the person asked to throw away a request they have written words in. Answered by Keep writing or Discard."
-  },
   "commentPin.bar.confirmExit": {
     "text": "Discard the comments you haven't posted?",
     "description": "Question on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) when the person pressed Done with comments not posted yet. Answered by Keep writing or Discard (which leaves comment mode)."
@@ -684,7 +704,7 @@
     "description": "Key cap shown inside the Done button on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) on a computer: the Escape key does the same. Use the label this key has on keyboards in your language."
   },
   "commentPin.closeUp.pinchHint": {
-    "text": "Pinch to zoom",
-    "description": "Small hint over the zoomed picture at the top of the phone's comment sheet, until the person pinches it: two fingers zoom the picture."
+    "text": "Drag to move, pinch to zoom",
+    "description": "Small hint over the picture at the top of the phone's comment sheet, until the person moves it: one finger moves the picture, two fingers zoom it."
   }
 }

@@ -595,3 +595,43 @@ test('the password step walks on Return, and each field says what its Return doe
   assert.doesNotMatch(SHEET, /id="sign-in-sheet-username"[^>]*onKeyDown=/);
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
 });
+
+test('a field the keys leave under a sticky row is revealed in that same event (phone review #18)', () => {
+  // The sheet shrinks first, and for a beat its sticky Cancel / Post row sat
+  // over the very field being typed in, until the settled reveal came.
+  const r = rig();
+  r.field.form = null;
+  const row = fakeEl();
+  row.getBoundingClientRect = () => ({ top: 360, bottom: 377, width: 300, height: 17 });
+  r.rows.push(row);
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { foot: '.feedback-actions' });
+  r.tap();
+  r.vv.fire('resize');
+  assert.deepEqual(r.scrolls, [460 - (360 - 12)], 'at once, not after SETTLE_MS');
+  r.advance(surface.SETTLE_MS);
+  assert.equal(r.scrolls.length, 2, 'the settled reveal still follows');
+
+  // Nothing named, nothing early: today's timing.
+  const plain = rig();
+  surface.attachKeyboardSurface(plain.scroller, plain.win, plain.doc);
+  plain.tap();
+  plain.vv.fire('resize');
+  assert.deepEqual(plain.scrolls, []);
+});
+
+test('a sticky row at the sheet\'s head is the view\'s top (phone review #17)', () => {
+  // The feedback sheet keeps its heading at the top with the keys up; a
+  // field is revealed under it, not behind it.
+  const r = rig({ keysUp: true });
+  r.field.form = null;
+  const head = fakeEl();
+  head.getBoundingClientRect = () => ({ top: 52, bottom: 120, width: 300, height: 68 });
+  r.scroller.querySelectorAll = (sel) => (sel === '#feedback-form > h2' ? [head] : []);
+  r.scroller.scrollTop = 200;
+  r.field.rect = { top: 100, bottom: 160 }; // scrolled up behind the heading
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { head: '#feedback-form > h2' });
+  r.doc.activeElement = r.field;
+  r.scroller.fire('focusin', { target: r.field });
+  r.flush();
+  assert.deepEqual(r.scrolls, [200 - ((120 + 12) - 100)], 'the field\'s top 12px under the heading');
+});

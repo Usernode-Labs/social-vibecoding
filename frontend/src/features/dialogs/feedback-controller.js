@@ -674,9 +674,14 @@ export function init() {
       }
       if (!submitBusy) feedbackBtn.textContent = restingSubmitLabel();
     });
-    // The selected option uses a darker violet on hover so it keeps its
-    // active look; the unselected option uses the neutral zinc hover.
-    const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
+    // The selected option is LIT, as the place you are is (the lit tab, the
+    // rail's row): a tint, its ink and an inset ring. It was a filled
+    // violet block, which beside the dialog's yellow Post request read as a
+    // second primary button (phone review S5, 23 Nov 2026). The ring is a
+    // box-shadow, so it wins over the option's grey border in both themes
+    // without fighting `dark:border-zinc-700`. The unselected option keeps
+    // the neutral zinc hover.
+    const activeTargetClasses = ['bg-[var(--lit-tint)]', 'text-[var(--lit-ink)]', 'ring-2', 'ring-inset', 'ring-[var(--lit-ink)]'];
     const inactiveHoverClasses = ['hover:bg-zinc-100', 'dark:hover:bg-zinc-800'];
     const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
     // #2888: the refusal under the row when Post request is pressed with no

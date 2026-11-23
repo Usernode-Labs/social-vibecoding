@@ -172,8 +172,41 @@ test('the form takes the keyboard without panning the page', () => {
 test('the feedback dialog opts in and rides the keyboard on its card', () => {
   assert.match(FEEDBACK, /phoneSheet: true,/);
   assert.match(FEEDBACK, /<div aria-hidden="true" className="feedback-sheet-grabber" \/>/);
-  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions' \}\);/);
+  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions', head: '#feedback-form > h2' \}\);/);
   // The option travels through useDialog to useStaticModal.
   assert.match(USE_DIALOG, /phoneSheet\?: boolean;/);
   assert.match(USE_DIALOG, /phoneSheet: opts\.current\.phoneSheet,/);
+});
+// ── The phone review of 23 Nov 2026 (proposal 2) ──────────────────────
+
+test('with the keys up the sheet keeps its heading and sits on the keys (phone review #17, #18, #94)', () => {
+  // The row's foot is the home indicator's 48px, behind the keys: 12px with
+  // them up, and the heading, carrying the grabber, stays at the top.
+  assert.match(APP_CSS, /html\.platform-kb-open #feedback-modal\[data-dialog-sheet\] \.feedback-actions \{\s*padding-bottom: 12px;\s*\}/);
+  assert.match(APP_CSS, /html\.platform-kb-open #feedback-modal\[data-dialog-sheet\] #feedback-form > h2 \{\s*position: sticky;\s*top: -24px;/);
+  assert.match(APP_CSS, /html\.platform-kb-open #feedback-modal\[data-dialog-sheet\] \.feedback-sheet-grabber \{\s*display: none;\s*\}/);
+  // On a screen the keys leave short, the row is in the flow.
+  assert.match(APP_CSS, /html\.platform-kb-short #feedback-modal\[data-dialog-sheet\] \.feedback-actions \{\s*position: relative;/);
+  // A field is revealed between the heading and the row.
+  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions', head: '#feedback-form > h2' \}\);/);
+  // The keys going down put the sheet back where it was.
+  assert.match(FEEDBACK, /if \(now\) \{ before = card\.scrollTop; return; \}/);
+  assert.match(FEEDBACK, /requestAnimationFrame\(\(\) => \{ card\.scrollTop = top; \}\);/);
+  // A long suggested title ends in an ellipsis.
+  assert.match(FEEDBACK, /className="text-ellipsis"/);
+});
+
+test('every kit dialog and sheet stops at the Duo\'s column (phone review #8)', () => {
+  assert.match(APP_CSS, /html\[data-side-strip="right"\] :is\(\.un-sheet, \[data-dialog-sheet\] \[data-modal-backdrop\] > div\) \{\s*padding-right: calc\(var\(--platform-strip-w, 0px\) \+ 12px\);/);
+  assert.match(APP_CSS, /html\[data-side-strip="left"\] :is\(\.un-sheet, \[data-dialog-sheet\] \[data-modal-backdrop\] > div\) \{\s*padding-left: calc\(var\(--platform-strip-w, 0px\) \+ 12px\);/);
+  assert.match(APP_CSS, /html\[data-side-strip\] \.un-modal \{\s*left: calc\(var\(--platform-float-left\) \+ var\(--platform-float-w\) \/ 2\);/);
+});
+
+test('the form says Tap on a touch screen, lights its destination and sets its buttons in the sans (phone review #87, S5)', () => {
+  assert.match(FEEDBACK, /\{touch \? t\('dialogs:feedback\.mode\.hintTouch'\) : t\('dialogs:feedback\.mode\.hint'\)\}/);
+  assert.match(FEEDBACK, /useEffect\(\(\) => \{ setTouch\(onTouchScreen\(\)\); \}, \[\]\);/, 'read once live, never in the prerender');
+  const controller = read('frontend/src/features/dialogs/feedback-controller.js');
+  assert.match(controller, /const activeTargetClasses = \['bg-\[var\(--lit-tint\)\]', 'text-\[var\(--lit-ink\)\]', 'ring-2', 'ring-inset', 'ring-\[var\(--lit-ink\)\]'\];/);
+  assert.doesNotMatch(controller, /const activeTargetClasses = \[[^\]]*bg-violet-600/, 'no longer a filled block beside Post request');
+  assert.match(APP_CSS, /html:not\(\[data-skin\]\) #feedback-modal :is\(button, a, label, summary, \[role="button"\]\) \{\s*font-family: inherit;/);
 });

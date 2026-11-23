@@ -27,7 +27,7 @@
  * the prerendered public/index.html that the hand-written shell never had.
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
@@ -40,6 +40,7 @@ import { HostDropOverlay } from '../attachments/file-drag';
 import { FEEDBACK_DESCRIPTION_MAX } from '../../lib/issue-body-limit';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { formOffersComment, openCommentMode, prepareComment } from '../improve/suggest-shortcut';
@@ -85,6 +86,16 @@ interface OpenOptions {
   onEditSaved?: () => void;
 }
 
+/** A finger is the main pointer: a phone or a tablet without a mouse. */
+function onTouchScreen(): boolean {
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+
 /** The form the drop zone listens on; the controller's node, found by id. */
 function feedbackForm(): HTMLElement | null {
   return typeof document !== 'undefined' ? document.getElementById('feedback-form') : null;
@@ -104,6 +115,10 @@ export function FeedbackDialog() {
   // has not turned it off (not in the side panel). Read on every open,
   // since the setting lives on the device and can change between opens.
   const [offersComment, setOffersComment] = useState(false);
+  // Whether this is a touch screen, read after the first render (the
+  // prerendered shell says "Click"): the hint beside the switch says "Tap"
+  // there, as comment mode's own note does (phone review #87).
+  const [touch, setTouch] = useState(false);
   // #5687: the attached picture or clip a thumbnail asked to see full size.
   // Null until a tap, so the prerendered document never carries it.
   const [preview, setPreview] = useState<FeedbackPreviewItem | null>(null);
@@ -128,7 +143,35 @@ export function FeedbackDialog() {
       Feedback._reset();
     },
   });
-  useKeyboardSurface(cardRef, { ride: true, foot: '.feedback-actions' });
+  // With the keys up the heading stays at the sheet's top (app.css, phone
+  // review #17), so a field is revealed under it as well as above the row.
+  useKeyboardSurface(cardRef, { ride: true, foot: '.feedback-actions', head: '#feedback-form > h2' });
+  // Read once the island is live, never in the prerender (#87).
+  useEffect(() => { setTouch(onTouchScreen()); }, []);
+  // The keys going down put the sheet back where it was before they came up
+  // (phone review #94): it returned to full height still scrolled by the
+  // field's reveal, its heading cut off. Read off <html>'s class, which
+  // lib/keyboard-open.ts sets and clears in the viewport's own events.
+  useEffect(() => {
+    if (typeof MutationObserver !== 'function' || typeof document === 'undefined') return undefined;
+    const root = document.documentElement;
+    let up = root.classList.contains(KB_OPEN_CLASS);
+    let before: number | null = null;
+    const watch = new MutationObserver(() => {
+      const now = root.classList.contains(KB_OPEN_CLASS);
+      if (now === up) return;
+      up = now;
+      const card = cardRef.current;
+      if (!card || !card.closest('[data-dialog-sheet]')) { before = null; return; }
+      if (now) { before = card.scrollTop; return; }
+      const top = before ?? 0;
+      before = null;
+      // After the band has dropped and the sheet has grown back.
+      requestAnimationFrame(() => { card.scrollTop = top; });
+    });
+    watch.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => watch.disconnect();
+  }, []);
   // Comment mode instead, taking the form's draft: the words wait for the
   // first click on the page, and the pictures, title, Kudos and destination
   // go into that comment's box.
@@ -228,7 +271,7 @@ export function FeedbackDialog() {
               {t('dialogs:feedback.mode.comment')}
             </button>
           </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:feedback.mode.hint')}</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">{touch ? t('dialogs:feedback.mode.hintTouch') : t('dialogs:feedback.mode.hint')}</span>
         </div>
         {/*
             Target toggle: file this feedback against the app being viewed
@@ -324,6 +367,10 @@ export function FeedbackDialog() {
             maxLength={200}
             enterKeyHint="next"
             placeholder={t('dialogs:feedback.title.placeholder')}
+            // A suggested title longer than the field ends in an ellipsis
+            // while the field is not being typed in, not cut through a
+            // letter (phone review #94).
+            className="text-ellipsis"
           />
         </div>
         {/*

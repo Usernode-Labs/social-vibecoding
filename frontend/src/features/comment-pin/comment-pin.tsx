@@ -128,17 +128,27 @@ const HEADER_BAND = 60;
 const KEYBOARD_SETTLE_MS = 800;
 /** How long the mode takes to leave: the picture growing back over the page (app.css `.comment-mode-leaving`). */
 const LEAVE_MS = 200;
-/**
- * How long the bar waits for the first picture before it stands in its band
- * without one. The sheet the mode was opened from has left by then
- * (`overlaysGone`), and a picture drawn ahead has landed.
- */
-const BAR_WAIT_MS = 600;
 /** Whether this screen is a phone: the same narrow-touch test the shell's
  *  keyboard handling uses. A narrow desktop window keeps the desktop flow. */
 function isPhone(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   try { return !!window.matchMedia(PHONE_QUERY).matches; } catch { return false; }
+}
+
+/** Whether a finger is the main pointer (a phone, a tablet, the Duo's inner
+ *  screen): what the bar and the box say then is a tap's, not a key's. */
+function isTouch(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  try { return !!window.matchMedia('(pointer: coarse)').matches; } catch { return false; }
+}
+
+/** The visible page's foot, in layout px: where the keys (or the bottom of
+ *  the screen) begin. Read off the visual viewport, which the keys shrink in
+ *  a browser and in the app's resized web view alike. */
+function visibleFoot(): number {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  if (!vv || !(vv.height > 0)) return Infinity;
+  return Math.round(vv.offsetTop + vv.height);
 }
 
 /** The page shown as a picture of itself while the mode is up (#4554). */
@@ -628,6 +638,16 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // keeps above it.
   const safeBottomRef = useRef<HTMLDivElement>(null);
   const [safeBottom, setSafeBottom] = useState(0);
+  // What the system keeps of the screen's sides (the iPhone Duo's column of
+  // clock and camera): the shell's floating box, `--platform-float-left` and
+  // `-right` (app.css, THE USABLE BOX), measured off probes like the two
+  // above. The picture and the bar are laid out beside it (#135).
+  const floatLeftRef = useRef<HTMLDivElement>(null);
+  const floatRightRef = useRef<HTMLDivElement>(null);
+  const [side, setSide] = useState({ left: 0, right: 0 });
+  // Where the visible page ends: the keys' top while they are up. The
+  // popover beside a pin is kept above it (#10).
+  const [foot, setFoot] = useState<number>(visibleFoot);
   // Until when the keyboard is still arriving or leaving.
   const keyboardUntil = useRef(-Infinity);
   const draftRef = useRef(draft);
@@ -635,7 +655,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [intro, setIntro] = useState(() => !introSeen());
   // The phone's sheet rides the keyboard: its fields reveal inside it, and
   // it moves with the keys the way the shell's own bottom sheets do.
-  useKeyboardSurface(boxRef, { ride: true });
+  // Its head and its foot stay put while the rest scrolls (app.css), so the
+  // comment's field is revealed between the two (#19).
+  useKeyboardSurface(boxRef, { ride: true, foot: '.comment-sheet-actions', head: '.comment-sheet-head' });
 
   const update = useCallback((key: number, patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => {
     setDraft((d) => (d && d.key === key ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d));
@@ -666,7 +688,21 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (h !== safeTop) setSafeTop(h);
     const b = safeBottomRef.current?.offsetHeight || 0;
     if (b !== safeBottom) setSafeBottom(b);
+    const l = floatLeftRef.current?.offsetWidth || 0;
+    const r = floatRightRef.current?.offsetWidth || 0;
+    if (l !== side.left || r !== side.right) setSide({ left: l, right: r });
   });
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const read = () => setFoot(visibleFoot());
+    vv.addEventListener('resize', read);
+    vv.addEventListener('scroll', read);
+    return () => {
+      vv.removeEventListener('resize', read);
+      vv.removeEventListener('scroll', read);
+    };
+  }, []);
 
   // The pins move with the page: a scroll of the page, or a new page size,
   // redraws, and is a new view (a picture of the old one no longer shows
@@ -832,30 +868,34 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // part of the view instead of floating over the page. A failed picture
   // keeps the mode over the live page, untransformed, bar at the foot.
   const phone = isPhone();
+  const fingers = isTouch();
   // The band above the picture: under the status bar, then the bar's own 60px.
   const band = safeTop + HEADER_BAND;
   const inset = viewShot && viewShot.state !== 'failed'
-    ? insetFrame(size, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, band)
+    ? insetFrame(size, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, band, side)
     : null;
-  // The first picture, nothing drawn yet: the live page stays on show (the
-  // mode's layer above it already keeps every press off it) instead of a
-  // bare grey ground, and the picture shrinks into its frame once it lands
-  // (#4665). `intro` below is the note about the mode; this is the shot's.
+  // The middle of the screen the system leaves (the Duo's column off it):
+  // where the first-use note, the sent card and the live-page bar centre.
+  const midX = side.left + (size.width - side.left - side.right) / 2;
+  // The first picture, nothing drawn yet. `intro` below is the note about
+  // the mode; this is the shot's.
+  //
+  // The mode's frame is drawn at once, on its first render: the grey ground,
+  // the bar saying the screenshot is being taken, with Form and Done working,
+  // and the picture's place, which the picture fades into when it lands
+  // (phone review #110, 23 Nov 2026). It used to leave the live page on show
+  // until the picture landed and then shrink it in (#4665), with the bar
+  // held back 600ms (#5834). On a phone the picture takes one to two
+  // seconds, plain Home showed all that while, and the tap read as missed. A
+  // timer could not shorten it: the drawing holds the main thread, so a
+  // short wait fired seconds late (6x CPU throttle: 4.2s to the frame).
   const shotIntro = viewShot?.state === 'drawing' && !viewShot.url;
-  // A first picture that is slow to land (an app that does not answer holds
-  // it for APP_PICTURE_TIMEOUT_MS): the bar stops waiting for it, says the
-  // screenshot is being taken, and Form and Done work, so the wait is never
-  // a screen that shows nothing and takes no press (#5834).
-  const [introSlow, setIntroSlow] = useState(false);
-  useEffect(() => {
-    if (!shotIntro) return undefined;
-    const timer = setTimeout(() => setIntroSlow(true), BAR_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, [shotIntro]);
-  const barWaits = shotIntro && !introSlow;
   // The word that names the picture, "Screenshot", leads the bar in the band
   // above it whenever the picture is on show: in the bar, never over the
-  // picture, where it covered the page's own header (#4774).
+  // picture, where it covered the page's own header (#4774). On a touch
+  // screen wide enough for the bar's instruction it steps aside for it
+  // (`sm:hidden` below): beside the instruction neither fitted, "Scr…" and
+  // "Tap anywhere to s…" on the Duo's inner screen (phone review #78).
   const shotLabel = !!inset && !shotIntro;
   // Words lead the bar (that word, or "Taking a screenshot…" before it): on
   // a phone the bar's glyphs step aside for them.
@@ -865,7 +905,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // failed view keeps the mode over the live page, and the crop still works
   // on the picture it took.
   const cropFrame = cropping
-    ? (inset ?? insetFrame(size, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, band))
+    ? (inset ?? insetFrame(size, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, band, side))
     : null;
 
   // ── Leaving ─────────────────────────────────────────────────────────
@@ -1420,7 +1460,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // The box and an open marker's card sit beside their pins: clear of the
   // header at the top over the picture, clear of the bar at the foot over
   // the live page, and above the home indicator.
-  const viewport = () => ({ width: size.width, height: Math.max(200, size.height - (inset || barAt ? 0 : BAR_SPACE) - safeBottom) });
+  // The keys are allowed for too (#10): with them up on a wide touch screen
+  // (the Duo's inner screen sideways) the popover stood under them, its Post
+  // showing faintly through the keyboard. Its foot now stays above the
+  // visible page's, and the box scrolls inside itself when that is short.
+  const viewport = () => ({
+    width: size.width - side.right,
+    height: Math.max(200, Math.min(size.height - (inset || barAt ? 0 : BAR_SPACE) - safeBottom, foot - 8)),
+  });
   const boxComment = draft ? activeComment(draft) || draft.comments[draft.comments.length - 1] || null : null;
   // Where the box and card go, in screen coordinates: the anchor reads the
   // live element in page coordinates, so it follows scrolls, and the inset
@@ -1456,6 +1503,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       at = { x, y };
     }
     // The header owns the top of the view: the box and a card never slide under it.
+    if (side.left && at.x < side.left + 8) at = { x: side.left + 8, y: at.y };
     return inset ? { x: at.x, y: Math.max(at.y, band + 8) } : at;
   };
   useLayoutEffect(() => {
@@ -1603,10 +1651,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   };
 
   const postedCount = posted.length;
+  // On a touch screen the hints are a finger's: "Tap", and Post rather than
+  // the keys (phone review #10). Enter and Esc mean nothing without a keyboard.
   const hint = shotIntro ? t('devchat:commentPin.hint.taking') : draft
     ? (viewShot?.state === 'drawing' ? t('devchat:commentPin.hint.taking')
-      : draft.active == null ? t('devchat:commentPin.hint.next') : t('devchat:commentPin.hint.writing'))
-    : carry ? t('devchat:commentPin.hint.carry') : postedCount ? t('devchat:commentPin.hint.another') : t('devchat:commentPin.hint.start');
+      : draft.active == null
+        ? (fingers ? t('devchat:commentPin.hint.nextTouch') : t('devchat:commentPin.hint.next'))
+        : (fingers ? t('devchat:commentPin.hint.writingTouch') : t('devchat:commentPin.hint.writing')))
+    : carry
+      ? (fingers ? t('devchat:commentPin.hint.carryTouch') : t('devchat:commentPin.hint.carry'))
+      : postedCount
+        ? (fingers ? t('devchat:commentPin.hint.anotherTouch') : t('devchat:commentPin.hint.another'))
+        : t('devchat:commentPin.hint.start');
 
   const first = draft ? draft.comments[0] : null;
   const inPreview = !!(app && first?.inApp && first.preview);
@@ -1657,7 +1713,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const nextPinRow = draft && draft.active == null ? (
     <div className="flex items-center gap-2 rounded-[10px] bg-violet-600/10 px-2 py-1.5 ring-1 ring-inset ring-violet-600/30">
       <span aria-hidden="true" className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-white text-[11px] font-extrabold text-violet-600 ring-2 ring-inset ring-violet-600 dark:bg-zinc-900`}>{draft.comments.length + 1}</span>
-      <span className="min-w-0 flex-1 text-[13px] font-semibold text-violet-700 dark:text-violet-300">{t('devchat:commentPin.next.where')}</span>
+      <span className="min-w-0 flex-1 text-[13px] font-semibold text-violet-700 dark:text-violet-300">{fingers ? t('devchat:commentPin.next.whereTouch') : t('devchat:commentPin.next.where')}</span>
       <button
         type="button"
         onClick={() => openComment(draft.comments[draft.comments.length - 1].key)}
@@ -1674,8 +1730,32 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (draft && !draft.sending) update(draft.key, { chosen: value });
   });
 
+  // Discarding a request with words in it is asked in the box itself, where
+  // its ✕ was pressed, in a word (phone review #48, 23 Nov 2026). Asked on
+  // the bar, the question was cut to "Discard this re…" beside its two
+  // answers, at the top of the screen, far from the ✕.
+  const discardAsk = draft && confirm === 'discard' ? (
+    <div role="group" aria-label={t('devchat:commentPin.box.confirmDiscard')} className={phone ? 'flex min-h-[44px] items-center gap-1.5' : 'flex min-h-[30px] items-center gap-1.5'}>
+      <span className="min-w-0 flex-1 text-[15px] font-[650] text-zinc-900 dark:text-white">{t('devchat:commentPin.box.confirmDiscard')}</span>
+      <button
+        type="button"
+        onClick={() => { setConfirm(null); textRef.current?.focus({ preventScroll: true }); }}
+        className="h-[34px] shrink-0 rounded-full px-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 dark:text-white dark:hover:bg-zinc-800"
+      >
+        {t('devchat:commentPin.bar.keepWriting')}
+      </button>
+      <button
+        type="button"
+        onClick={discard}
+        className="h-[34px] shrink-0 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900"
+      >
+        {t('devchat:commentPin.bar.discard')}
+      </button>
+    </div>
+  ) : null;
+
   // The box's head: where the request goes, then its controls.
-  const head = draft && target ? (
+  const head = discardAsk ?? (draft && target ? (
     <div className={phone ? '-me-1.5 flex items-center gap-0.5' : 'flex min-h-[30px] items-center gap-1.5'}>
       {app ? (
         <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')} onKeyDown={targetKeys.onKeyDown}>
@@ -1755,7 +1835,150 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         </>
       )}
     </div>
+  ) : null);
+  // The pictures the request carries, removable and croppable, and the
+  // person's own images. On a phone this row is in the sheet's sticky foot
+  // with Post (phone review #19, 23 Nov 2026): scrolled under the foot with
+  // the keys up, it showed only the top of its remove badge, a dark half
+  // disc on the foot's divider, and the person could not see what they were
+  // sending. In the foot it is always in sight and nothing pokes out of it.
+  const attachRow = draft ? (
+    <div className="flex min-h-[44px] flex-wrap items-center gap-2.5">
+      {usedPictures(draft).map((pic) => {
+        // The preview is a crop of the picture around its pins (the
+        // middle of them), and the pins sit on the crop as it is drawn:
+        // a phone's tall picture in this wide box shows a third of its
+        // height at most, and a pin placed as a fraction of the box
+        // landed on another part of the page.
+        // A cropped picture is drawn whole, the part kept framed and
+        // the rest dimmed (#5020): the pins are fractions of the full
+        // picture and stay put on it — one the crop cut away is already
+        // gone from the request, so it is not drawn.
+        const shown = pic.size || size;
+        const pins = draft.comments
+          .filter((c) => c.picture === pic.key && (!pic.cut || pinInCrop(c.pin, pic.cut.rect) !== null))
+          .map((c) => ({ c, at: c.pin }));
+        const focus = pins.length
+          ? { x: pins.reduce((n, x) => n + x.at.x, 0) / pins.length, y: pins.reduce((n, x) => n + x.at.y, 0) / pins.length }
+          : pic.cut
+            ? { x: pic.cut.rect.x + pic.cut.rect.width / 2, y: pic.cut.rect.y + pic.cut.rect.height / 2 }
+            : { x: 0.5, y: 0 };
+        const crop = coverCrop({ width: 64, height: 42 }, shown, focus);
+        return (
+        <span key={pic.key} className="relative block h-[42px] w-[64px] shrink-0">
+          {pic.thumb ? (
+            <span className="block h-[42px] w-[64px] overflow-hidden rounded-lg ring-1 ring-black/10 dark:ring-white/10">
+              <img
+                src={pic.thumb}
+                alt=""
+                className="relative block max-w-none"
+                style={{ left: crop.x, top: crop.y, width: crop.width, height: crop.height }}
+              />
+              {pic.cut ? (
+                /* What was cropped away stays in sight, dimmed, the
+                   kept part framed in white. */
+                <span
+                  aria-hidden="true"
+                  className="absolute border border-white"
+                  style={{
+                    left: crop.x + pic.cut.rect.x * crop.width,
+                    top: crop.y + pic.cut.rect.y * crop.height,
+                    width: pic.cut.rect.width * crop.width,
+                    height: pic.cut.rect.height * crop.height,
+                    boxShadow: CROP_SHADE,
+                  }}
+                />
+              ) : null}
+            </span>
+          ) : (
+            <span className="block h-[42px] w-[64px] animate-pulse rounded-lg bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800" />
+          )}
+          {/* The pins over the preview: data beside the picture, as they are posted.
+              Only those inside it: two pins far apart on a phone's tall
+              picture do not both fit the preview's slice, and the one
+              outside was drawn over the Title and Kudos rows. */}
+          {pins.map(({ c, at }) => ({ c, left: crop.x + at.x * crop.width, top: crop.y + at.y * crop.height }))
+            .filter(({ left, top }) => left >= 0 && left <= 64 && top >= 0 && top <= 42)
+            .map(({ c, left, top }) => (
+              <span
+                key={c.key}
+                aria-hidden="true"
+                className={`absolute h-[10px] w-[10px] -translate-y-full ${PIN_SHAPE} bg-violet-600 shadow-[0_0_0_1.5px_#fff]`}
+                style={{ left, top }}
+              />
+            ))}
+          {pic.base ? (
+            <>
+              <button
+                type="button"
+                aria-label={t('devchat:commentPin.shot.removeLabel')}
+                title={t('devchat:commentPin.shot.remove')}
+                disabled={draft.sending}
+                onClick={() => update(draft.key, { keepShot: false })}
+                className="absolute -end-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+              >
+                <XIcon className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                aria-label={t('devchat:commentPin.shot.cropLabel')}
+                title={t('devchat:commentPin.shot.crop')}
+                disabled={draft.sending}
+                onClick={() => setCropping({ picture: pic.key, rect: pic.cut?.rect ?? FULL_CROP })}
+                className="absolute -bottom-2 -end-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+              >
+                <ArrowsPointingInIcon className="h-3 w-3" />
+              </button>
+            </>
+          ) : null}
+        </span>
+        );
+      })}
+      {draft.images.map((img) => (
+        <span key={img.url} className="relative block h-[42px] w-[64px] shrink-0">
+          <img src={img.url} alt={imageName(img)} className="h-[42px] w-[64px] rounded-lg object-cover ring-1 ring-black/10 dark:ring-white/10" />
+          <button
+            type="button"
+            aria-label={img.name
+              ? t('devchat:commentPin.image.remove', { name: img.name })
+              : img.n != null
+                ? t('devchat:commentPin.image.removeNumbered', { number: img.n })
+                : t('devchat:commentPin.image.removePasted')}
+            title={t('devchat:commentPin.image.removeTitle')}
+            disabled={draft.sending}
+            onClick={() => removeImage(draft.key, img.url)}
+            className="absolute -end-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+          >
+            <XIcon className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+      <span id="comment-pin-shot" className="min-w-[90px] flex-1 text-xs leading-tight text-zinc-500 dark:text-zinc-400">
+        {shotLine}
+        {!draft.keepShot ? (
+          <button
+            type="button"
+            disabled={draft.sending || draft.images.length >= MAX_PICTURES}
+            onClick={() => update(draft.key, { keepShot: true })}
+            className="ms-1 font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
+          >
+            {t('devchat:commentPin.shot.addBack')}
+          </button>
+        ) : null}
+      </span>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg"
+        multiple
+        className="hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(e) => { addImages(Array.from(e.target.files || [])); e.target.value = ''; }}
+      />
+    </div>
   ) : null;
+
   // The phone's small box: the open comment before the sheet.
   const small = phone && !expanded && !!draft && draft.active != null;
   const smallComment = small ? activeComment(draft) : null;
@@ -1775,6 +1998,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       {/* Measure the status bar's height and the home indicator's (see `safeTop`). */}
       <div ref={safeRef} aria-hidden="true" className="pointer-events-none invisible absolute start-0 top-0 w-px" style={{ height: 'var(--platform-safe-top, 0px)' }} />
       <div ref={safeBottomRef} aria-hidden="true" className="pointer-events-none invisible absolute start-0 top-0 w-px" style={{ height: 'var(--platform-safe-bottom, 0px)' }} />
+      {/* And what the system keeps of either side (the floating box's insets). */}
+      {/* Physical sides on purpose: the floating box's insets are the screen's left and right, in either direction. */}
+      <div ref={floatLeftRef} aria-hidden="true" className="pointer-events-none invisible absolute top-0 h-px" style={{ left: 0, width: 'var(--platform-float-left, 0px)' }} />
+      <div ref={floatRightRef} aria-hidden="true" className="pointer-events-none invisible absolute top-0 h-px" style={{ right: 0, width: 'var(--platform-float-right, 0px)' }} />
       {/* The layer: a press anywhere is a comment. Its mousedown is
           prevented, so the box's field keeps the keyboard through it
           (tests/keyboard-dismiss.test.js); a finger taps, and a drag does
@@ -1803,23 +2030,28 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           rounded corners, one hairline and a lift; the word that names it
           leads the bar above it, outside the picture (#4774). Clearly a
           picture, not the live page, so the blue edge goes.
-          While the first picture draws there is none of that: the live page
-          shows through and the layer above it keeps every press off, and the
-          picture, ground and that word mount together once it lands, shrinking
-          from the full page into the frame (#4665). When the picture could
-          not be taken, the mode renders as it always did, over the live
-          page with the blue edge (#4554). */}
+          While the first picture draws, the frame is up already (#110): the
+          ground, and the picture's place, which the picture fades into.
+          Leaving still grows the picture back over the page (#4665). When
+          the picture could not be taken, the mode renders as it always did,
+          over the live page with the blue edge (#4554). */}
       {inset && viewShot ? (
-        shotIntro ? null : (
           <>
             <div className="comment-shot-ground-in pointer-events-none absolute inset-0 bg-zinc-300 dark:bg-zinc-800" aria-hidden="true" />
-            {viewShot.url ? (
+            {shotIntro ? (
+              <div
+                aria-hidden="true"
+                data-comment-shot-waiting=""
+                className="pointer-events-none absolute animate-pulse rounded-2xl bg-white ring-1 ring-black/10 shadow-[0_8px_30px_rgba(0,0,0,0.18)] motion-reduce:animate-none dark:bg-zinc-900 dark:ring-white/10"
+                style={{ left: inset.x, top: inset.y, width: size.width * inset.scale, height: size.height * inset.scale }}
+              />
+            ) : viewShot.url ? (
               <img
                 src={viewShot.url}
                 alt=""
                 aria-hidden="true"
                 draggable={false}
-                className={`pointer-events-none absolute rounded-2xl bg-white ring-1 ring-black/10 shadow-[0_8px_30px_rgba(0,0,0,0.18)] dark:bg-zinc-900 dark:ring-white/10 ${viewShot.state === 'drawing' ? 'opacity-60' : ''} ${inset.scale > 0 ? 'comment-shot-in' : ''}`}
+                className={`pointer-events-none absolute rounded-2xl bg-white ring-1 ring-black/10 shadow-[0_8px_30px_rgba(0,0,0,0.18)] dark:bg-zinc-900 dark:ring-white/10 ${viewShot.state === 'drawing' ? 'opacity-60' : ''} ${inset.scale > 0 ? 'comment-shot-in comment-shot-fill' : ''}`}
                 style={{
                   left: inset.x, top: inset.y, width: size.width * inset.scale, height: size.height * inset.scale,
                   ...(inset.scale > 0 ? { ['--comment-shot-from' as string]: `translate(${-inset.x}px, ${-inset.y}px) scale(${1 / inset.scale})` } : {}),
@@ -1827,7 +2059,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               />
             ) : null}
           </>
-        )
       ) : (
         <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_0_3px_#0a6ee0]" aria-hidden="true" />
       )}
@@ -1913,6 +2144,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           onPointerUp={onPinDragUp}
           onPointerCancel={onPinDragCancel}
         >
+          {discardAsk ? <div className="min-w-0 flex-1 ps-2" onPointerDown={(e) => e.stopPropagation()}>{discardAsk}</div> : (<>
           <button
             type="button"
             id="comment-pin-write"
@@ -1941,6 +2173,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           >
             <span className={PHONE_DISC}><XIcon className="h-4 w-4" /></span>
           </button>
+          </>)}
         </div>
       ) : draft && target ? (
         <div
@@ -1954,7 +2187,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                  beside the pin (which the sheet would cover anyway). */
               `comment-sheet comment-sheet-in platform-kb-sheet absolute inset-x-0 bottom-0 flex flex-col gap-2 overflow-y-auto overscroll-contain rounded-t-[20px] ${PLANE_FILL} p-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]`
             : 'absolute flex w-[360px] max-w-[calc(var(--platform-float-w)-24px)] flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10'}
-          style={phone ? undefined : { left: boxAt.x, top: boxAt.y }}
+          style={phone ? undefined : {
+            left: boxAt.x,
+            top: boxAt.y,
+            // Never past the visible page's foot (the keys' top): taller than
+            // what is left, the box scrolls inside itself (#10).
+            maxHeight: Math.max(160, viewport().height - Math.max(8, inset ? band + 8 : 8)),
+            overflowY: 'auto',
+          }}
           onDragOver={(e) => { if (Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault(); }}
           onDrop={onDrop}
         >
@@ -2000,7 +2240,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   onKeyDown={onBoxKeyDown}
                   onPaste={onPaste}
                   placeholder={i ? t('devchat:commentPin.placeholderMore') : t('devchat:commentPin.placeholder')}
-                  className={`block max-h-[160px] w-full min-w-0 flex-1 resize-none bg-transparent text-[15px] leading-snug text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500 ${numbered ? 'min-h-[44px]' : 'min-h-[62px]'}`}
+                  // It grows with its words up to 160px, then scrolls
+                  // (phone review #111): a 7-line draft carried over from the
+                  // form showed two and a half lines in a fixed 62px window.
+                  className={`block max-h-[160px] w-full min-w-0 flex-1 resize-none bg-transparent text-[15px] leading-snug text-zinc-900 outline-none [field-sizing:content] placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500 ${numbered ? 'min-h-[44px]' : 'min-h-[62px]'}`}
                 />
               </div>
             ) : (
@@ -2084,140 +2327,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               </button>
             )}
           </div>
-          <div className="flex min-h-[44px] flex-wrap items-center gap-2.5">
-            {usedPictures(draft).map((pic) => {
-              // The preview is a crop of the picture around its pins (the
-              // middle of them), and the pins sit on the crop as it is drawn:
-              // a phone's tall picture in this wide box shows a third of its
-              // height at most, and a pin placed as a fraction of the box
-              // landed on another part of the page.
-              // A cropped picture is drawn whole, the part kept framed and
-              // the rest dimmed (#5020): the pins are fractions of the full
-              // picture and stay put on it — one the crop cut away is already
-              // gone from the request, so it is not drawn.
-              const shown = pic.size || size;
-              const pins = draft.comments
-                .filter((c) => c.picture === pic.key && (!pic.cut || pinInCrop(c.pin, pic.cut.rect) !== null))
-                .map((c) => ({ c, at: c.pin }));
-              const focus = pins.length
-                ? { x: pins.reduce((n, x) => n + x.at.x, 0) / pins.length, y: pins.reduce((n, x) => n + x.at.y, 0) / pins.length }
-                : pic.cut
-                  ? { x: pic.cut.rect.x + pic.cut.rect.width / 2, y: pic.cut.rect.y + pic.cut.rect.height / 2 }
-                  : { x: 0.5, y: 0 };
-              const crop = coverCrop({ width: 64, height: 42 }, shown, focus);
-              return (
-              <span key={pic.key} className="relative block h-[42px] w-[64px] shrink-0">
-                {pic.thumb ? (
-                  <span className="block h-[42px] w-[64px] overflow-hidden rounded-lg ring-1 ring-black/10 dark:ring-white/10">
-                    <img
-                      src={pic.thumb}
-                      alt=""
-                      className="relative block max-w-none"
-                      style={{ left: crop.x, top: crop.y, width: crop.width, height: crop.height }}
-                    />
-                    {pic.cut ? (
-                      /* What was cropped away stays in sight, dimmed, the
-                         kept part framed in white. */
-                      <span
-                        aria-hidden="true"
-                        className="absolute border border-white"
-                        style={{
-                          left: crop.x + pic.cut.rect.x * crop.width,
-                          top: crop.y + pic.cut.rect.y * crop.height,
-                          width: pic.cut.rect.width * crop.width,
-                          height: pic.cut.rect.height * crop.height,
-                          boxShadow: CROP_SHADE,
-                        }}
-                      />
-                    ) : null}
-                  </span>
-                ) : (
-                  <span className="block h-[42px] w-[64px] animate-pulse rounded-lg bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800" />
-                )}
-                {/* The pins over the preview: data beside the picture, as they are posted.
-                    Only those inside it: two pins far apart on a phone's tall
-                    picture do not both fit the preview's slice, and the one
-                    outside was drawn over the Title and Kudos rows. */}
-                {pins.map(({ c, at }) => ({ c, left: crop.x + at.x * crop.width, top: crop.y + at.y * crop.height }))
-                  .filter(({ left, top }) => left >= 0 && left <= 64 && top >= 0 && top <= 42)
-                  .map(({ c, left, top }) => (
-                    <span
-                      key={c.key}
-                      aria-hidden="true"
-                      className={`absolute h-[10px] w-[10px] -translate-y-full ${PIN_SHAPE} bg-violet-600 shadow-[0_0_0_1.5px_#fff]`}
-                      style={{ left, top }}
-                    />
-                  ))}
-                {pic.base ? (
-                  <>
-                    <button
-                      type="button"
-                      aria-label={t('devchat:commentPin.shot.removeLabel')}
-                      title={t('devchat:commentPin.shot.remove')}
-                      disabled={draft.sending}
-                      onClick={() => update(draft.key, { keepShot: false })}
-                      className="absolute -end-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
-                    >
-                      <XIcon className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={t('devchat:commentPin.shot.cropLabel')}
-                      title={t('devchat:commentPin.shot.crop')}
-                      disabled={draft.sending}
-                      onClick={() => setCropping({ picture: pic.key, rect: pic.cut?.rect ?? FULL_CROP })}
-                      className="absolute -bottom-2 -end-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
-                    >
-                      <ArrowsPointingInIcon className="h-3 w-3" />
-                    </button>
-                  </>
-                ) : null}
-              </span>
-              );
-            })}
-            {draft.images.map((img) => (
-              <span key={img.url} className="relative block h-[42px] w-[64px] shrink-0">
-                <img src={img.url} alt={imageName(img)} className="h-[42px] w-[64px] rounded-lg object-cover ring-1 ring-black/10 dark:ring-white/10" />
-                <button
-                  type="button"
-                  aria-label={img.name
-                    ? t('devchat:commentPin.image.remove', { name: img.name })
-                    : img.n != null
-                      ? t('devchat:commentPin.image.removeNumbered', { number: img.n })
-                      : t('devchat:commentPin.image.removePasted')}
-                  title={t('devchat:commentPin.image.removeTitle')}
-                  disabled={draft.sending}
-                  onClick={() => removeImage(draft.key, img.url)}
-                  className="absolute -end-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
-                >
-                  <XIcon className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            <span id="comment-pin-shot" className="min-w-[90px] flex-1 text-xs leading-tight text-zinc-500 dark:text-zinc-400">
-              {shotLine}
-              {!draft.keepShot ? (
-                <button
-                  type="button"
-                  disabled={draft.sending || draft.images.length >= MAX_PICTURES}
-                  onClick={() => update(draft.key, { keepShot: true })}
-                  className="ms-1 font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
-                >
-                  {t('devchat:commentPin.shot.addBack')}
-                </button>
-              ) : null}
-            </span>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg"
-              multiple
-              className="hidden"
-              tabIndex={-1}
-              aria-hidden="true"
-              onChange={(e) => { addImages(Array.from(e.target.files || [])); e.target.value = ''; }}
-            />
-          </div>
+          {/* On a computer the pictures' row sits here; on a phone it rides in
+              the sheet's sticky foot, below. */}
+          {phone ? null : attachRow}
           {/* Kudos (#964): one line, a switch. What it costs is said on hover
               and to a screen reader; the line itself says what it is for.
               Not drawn while kudos is parked (#5249, ../leaderboard/kudos-parked.ts). */}
@@ -2255,7 +2367,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           {draft.error ? (
             <p id="comment-pin-error" role="alert" className="text-[13px] text-red-700 dark:text-red-400">{draft.error}</p>
           ) : null}
-          <div className={`flex items-center gap-1.5 border-t border-black/5 pt-2 dark:border-white/10${phone ? ' comment-sheet-actions' : ''}`}>
+          <div className={phone
+            ? 'comment-sheet-actions flex flex-col gap-2 border-t border-black/5 pt-3 dark:border-white/10'
+            : 'flex flex-col gap-2 border-t border-black/5 pt-2 dark:border-white/10'}
+          >
+          {phone ? attachRow : null}
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               title={t('devchat:commentPin.box.attachTitle')}
@@ -2292,6 +2409,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             >
               {draft.sending ? t('devchat:commentPin.posting') : live > 1 ? t('devchat:commentPin.postMany', { count: live }) : t('devchat:commentPin.post')}
             </Button>
+          </div>
           </div>
             </>
           )}
@@ -2349,9 +2467,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           role="dialog"
           aria-label={t('devchat:commentPin.intro.title')}
           className={[
-            'absolute left-1/2 flex w-[340px] max-w-[calc(var(--platform-float-w)-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10',
+            'absolute flex w-[340px] max-w-[calc(var(--platform-float-w)-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10',
           ].join(' ')}
-          style={inset ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
+          style={inset ? { left: midX, top: band + 8 } : { left: midX, bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
         >
           <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">{t('devchat:commentPin.intro.title')}</p>
           <ul className="flex flex-col gap-1 text-[13px] text-zinc-600 dark:text-zinc-300">
@@ -2375,8 +2493,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           aria-live="polite"
           aria-label={t('devchat:commentPin.sent.label')}
           data-comment-pin-sent=""
-          className="absolute left-1/2 flex w-[340px] max-w-[calc(var(--platform-float-w)-24px)] -translate-x-1/2 flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
-          style={inset ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
+          className="absolute flex w-[340px] max-w-[calc(var(--platform-float-w)-24px)] -translate-x-1/2 flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+          style={inset ? { left: midX, top: band + 8 } : { left: midX, bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
         >
           <div className="flex items-center gap-2">
             <span className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-violet-600 text-white`} aria-hidden="true"><CheckIcon className="h-3.5 w-3.5" /></span>
@@ -2392,7 +2510,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           </div>
           {sentRequest.title ? <p className="text-[13px] text-zinc-600 dark:text-zinc-300">{sentRequest.title}</p> : null}
           <div className="mt-1 flex items-center gap-2 border-t border-black/5 pt-2 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-400">
-            <span className="min-w-0 flex-1 truncate">{t('devchat:commentPin.hint.another')}</span>
+            <span className="min-w-0 flex-1 truncate">{fingers ? t('devchat:commentPin.hint.anotherTouch') : t('devchat:commentPin.hint.another')}</span>
             {sentRequest.href ? (
               <a
                 href={sentRequest.href}
@@ -2435,13 +2553,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           barFrame
             ? 'rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.18)]'
             : 'shadow-[0_8px_30px_rgba(0,0,0,0.22)]',
-          !barFrame && !barPlace ? 'left-1/2 -translate-x-1/2' : '',
-          // Not over the live page while the first picture draws: drawn there
-          // it covered the page's own header for a few frames, then the
-          // picture shrank in under it. It fades in with the picture, or on
-          // its own once the picture has kept it waiting (`barWaits`), so
-          // the mode can always be left.
-          barWaits ? 'pointer-events-none opacity-0' : 'comment-bar-in',
+          !barFrame && !barPlace ? '-translate-x-1/2' : '',
+          // It fades in with the frame, at once (#110), so the mode can
+          // always be left.
+          'comment-bar-in',
         ].filter(Boolean).join(' ')}
         style={barFrame
           ? {
@@ -2449,7 +2564,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             top: safeTop + Math.max(6, Math.round((HEADER_BAND - barSize.height) / 2)),
             width: size.width * barFrame.scale,
           }
-          : barPlace ? { left: barPlace.left, top: barPlace.top } : { bottom: 'calc(1rem + var(--platform-safe-bottom, 0px))' }}
+          : barPlace ? { left: barPlace.left, top: barPlace.top } : { left: midX, bottom: 'calc(1rem + var(--platform-safe-bottom, 0px))' }}
       >
         {/* The live-page fallback's handle: the crop bar has none, so the
             grip stands down while the person crops. */}
@@ -2478,11 +2593,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 its question, which otherwise read "Discard t…". */}
             <span
               aria-hidden="true"
-              className={`comment-shot-label-in min-w-0 truncate ps-1.5 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400${confirm ? ' hidden sm:inline' : ''}`}
+              className={`comment-shot-label-in min-w-0 truncate ps-1.5 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400${confirm === 'exit' ? ' hidden sm:inline' : ''}${fingers ? ' sm:hidden' : ''}`}
             >
               {t('devchat:commentPin.view.chip')}
             </span>
-            <span aria-hidden="true" className="comment-shot-label-in hidden h-4 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700 sm:block" />
+            <span aria-hidden="true" className={`comment-shot-label-in hidden h-4 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700${fingers ? '' : ' sm:block'}`} />
           </>
         ) : null}
         {cropping && cropView ? (
@@ -2525,10 +2640,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               {t('devchat:commentPin.crop.apply')}
             </button>
           </>
-        ) : confirm ? (
+        ) : confirm === 'exit' ? (
           <>
-            <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
-              {confirm === 'discard' ? t('devchat:commentPin.bar.confirmDiscard') : t('devchat:commentPin.bar.confirmExit')}
+            {/* Leaving with unposted words is the bar's question, since Done
+                is on the bar; a request's own discard is asked in its box
+                (#48). It wraps rather than cut off beside its answers. */}
+            <span className="min-w-0 whitespace-normal text-[13px] font-semibold leading-tight text-zinc-900 dark:text-white">
+              {t('devchat:commentPin.bar.confirmExit')}
             </span>
             {inset ? <span className="min-w-0 flex-1" /> : null}
             <button
@@ -2540,7 +2658,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             </button>
             <button
               type="button"
-              onClick={() => { if (confirm === 'discard') discard(); else leave(); }}
+              onClick={() => leave()}
               className="h-[34px] shrink-0 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900"
             >
               {t('devchat:commentPin.bar.discard')}
@@ -2554,7 +2672,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             {/* A phone has room for the words only while the first picture
                 draws, which is when it needs them: the bar is all there is
                 to say the mode is on. */}
-            <span className={`${shotIntro ? 'inline ps-1.5 sm:ps-0' : 'hidden sm:inline'} min-w-0 truncate text-sm font-bold text-violet-700 dark:text-violet-300`}>{hint}</span>
+            {/* On a touch screen it wraps onto a second line rather than
+                stopping at "Tap anywhere to s…" (#78). */}
+            <span className={`${shotIntro ? 'inline ps-1.5 sm:ps-0' : 'hidden sm:inline'} min-w-0 ${fingers ? 'whitespace-normal leading-tight' : 'truncate'} text-sm font-bold text-violet-700 dark:text-violet-300`}>{hint}</span>
             {postedCount ? (
               <span className="hidden shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-bold tabular-nums text-zinc-600 md:inline dark:bg-zinc-800 dark:text-zinc-300">
                 {t('devchat:commentPin.bar.posted', { count: postedCount })}
@@ -2587,10 +2707,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <button
               type="button"
               onClick={requestExit}
-              className="inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900 sm:pe-3"
+              className={`inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900${fingers ? '' : ' sm:pe-3'}`}
             >
               {t('devchat:commentPin.bar.done')}
-              <kbd className="hidden rounded-[5px] px-1 font-mono text-[11px] font-semibold opacity-70 ring-1 ring-inset ring-current sm:inline">{t('devchat:commentPin.bar.doneKey')}</kbd>
+              {/* The key that does the same, for a keyboard: none on a touch screen (#10, #78). */}
+              {fingers ? null : <kbd className="hidden rounded-[5px] px-1 font-mono text-[11px] font-semibold opacity-70 ring-1 ring-inset ring-current sm:inline">{t('devchat:commentPin.bar.doneKey')}</kbd>}
             </button>
           </>
         )}
