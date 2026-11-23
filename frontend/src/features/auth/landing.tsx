@@ -1789,6 +1789,19 @@ export function LandingScreen() {
             its own aspect ratio, and is inked black (white in dark mode) like
             the logotype everywhere (#4382); `title` gives it the accessible name the
             text branch has for free, so the bar still answers "Homeroom".
+            `max-w-full` draws it smaller, and whole, where this box is
+            narrower than it: beside Sign in and Join the waitlist on a 360px
+            phone the box is 101px and the mark 109, and the box clipped it to
+            "Homeroon" ("Ho" at the largest text size).
+
+            While an app is open for a visitor, Pin sits beside Sign in over
+            the trailing box (below). The two are 110px wide (137px once it
+            reads "Pinned"), and `px-10` with the trailing box ends a name
+            80px short of where they end, room for Sign in alone: the name ran
+            under Pin. With Pin in the bar the name keeps 112px clear at its
+            end instead, and a long one ends in an ellipsis before the
+            buttons. Pixels, not rems: the buttons hardly grow with the text
+            size, and at the largest one 7rem left the name no room at all.
 
             Not a heading (polish N10): the page under it has its own <h1>
             (the story's or the pitch's headline), and a second one in the
@@ -1796,9 +1809,9 @@ export function LandingScreen() {
         */}
         <div
           id="landing-header-title"
-          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start"
+          className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start [#landing-header:has([data-landing-pin-app])_&]:pe-[112px]"
         >
-          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
+          {openApp ? headerTitle : <Wordmark className="h-7 w-auto max-w-full inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </div>
         {/*
             The trailing 28px, mirroring the lead box so the label sits on the
@@ -1824,8 +1837,9 @@ export function LandingScreen() {
             (tests/header-height-parity.test.js), and placed over the
             trailing box rather than in the row, so the mark stays on the
             bar's true centre; the title's `px-10` keeps a long project name
-            from running under it. Making an account is still the body's
-            Continue, under the sentence that says what this place is.
+            from running under it (112px at its end when Pin is beside it).
+            Making an account is still the body's Continue, under the
+            sentence that says what this place is.
             Not for a waiting-room session, which is signed in already.
 
             `un-touch-target` on this button and the one beside it: both are
