@@ -7276,6 +7276,14 @@ html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-f
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
 }
+/* THREE DOORS NEED THREE COLUMNS' WORTH OF ROOM. Side by side from 768px, a door was 231px wide on a 1024px window beside the open sidebar: after its glyph, its count and its chevron it had 20px left for words, and read "N…" for Needs you and "Disc…" for Discussion. Below 1200px beside the open sidebar, and below 1020px beside the folded one, they are a list, one to a row, as on a phone. */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
+}
+@media (min-width: 1020px) and (max-width: 1199.98px) {
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; margin-top: 0; }
+}
 /* RECENTLY LIVE, as a list and not a wall of pictures. Each change is a row
    of Home's own kind: a small picture at its side (a thumbnail, not a
    poster), then its title over who shipped it and when. Three across from
