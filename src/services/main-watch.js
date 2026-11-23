@@ -88,6 +88,11 @@
 // own besides the proposals' cap, because it gates every merge on the app
 // and its suite runs against a Postgres in its own pod. A run still waiting
 // when a newer merge claims the row leaves the line; nobody would read it.
+// A run already running when a newer merge claims the row runs on, because
+// a superseded green is still read (main-red-fix.js takes the newest green
+// before a red to tell which merges broke main), unless its verdict is one
+// nobody reads: then it is stopped, its Jobs deleted and its slot freed at
+// once (watchVerdict).
 
 const crypto = require('crypto');
 const log = require('./logger');
@@ -300,12 +305,127 @@ async function takeSlot(config, pool, app, mergeSha, { onRunId = null, signal = 
   return { superseded: false, runId, release };
 }
 
+// ── A run whose verdict nobody reads ─────────────────────────────────────
+//
+// Of 42 verdicts on the platform's main on 23 Nov 2026, 25 were of runs a
+// newer merge had already taken the row from (34 of 69 on 18 Nov). A run
+// that had its slot ran to the end, its Job using a checks slot proposals
+// wait for, and the machine kept its verdict only as superseded. What reads
+// such a verdict (looked at 23 Nov 2026):
+//
+//   * main-red-fix.suspectsFor reads every passing verdict, superseded ones
+//     too, to find the newest green before a confirmed red: the merges after
+//     it are the suspects the fix request names. A superseded first run or
+//     confirmation may be that green, so it runs on.
+//   * the proposal-pipeline topic's "Reds that passed on a re-run"
+//     (topic-figures.js) counts main's reds and flakes, superseded ones too.
+//     It is a measurement, a floor by its own account, and decides nothing.
+//   * the pause (mergePause, main_check_paused_sha), the fix request, the
+//     flake records (main_test_flakes) and disjointReds are the current
+//     run's alone: a superseded verdict changes none of them.
+//
+// So a run the row was taken from stops only when its verdict cannot be
+// read (verdictUnread):
+//
+//   'recheck'      it is a recheck: the machine throws a superseded
+//                  recheck's verdict away (main-check machine.ts reported);
+//   'newer_green'  a run claimed after it has already passed (a verdict not
+//                  superseded, recorded since this run started): its green
+//                  can never be the newest before a red, and stored after
+//                  the newer one it would be read first and widen the
+//                  suspects. The tip copying a pass of its tree
+//                  (unit-suite-reuse.js) is the common way.
+//
+// The run for the commit the row is about is never stopped, nor one this
+// process does not hold: the stop takes the run's check_runs row only from
+// its own owner, so a run another process adopted (adoptRun's claim) is that
+// process's. Its verdict is 'superseded', which the machine stores nothing
+// for, as for a run that left the line.
+
+// How often a running main run asks whether its verdict is still read.
+function stopPollMs() {
+  return Math.max(100, Number(process.env.MAIN_WATCH_STOP_POLL_MS) || 15_000);
+}
+
+// Why nobody reads this run's verdict any more, or null while somebody may.
+// `runId` is its checks-queue row, whose start is when the run began.
+async function verdictUnread(pool, appId, { sha, phase, runId }) {
+  const { rows: [r] } = await pool.query(
+    `SELECT a.main_check_sha,
+            EXISTS (SELECT 1 FROM main_watch_verdicts v JOIN check_runs cr ON cr.run_id = $3
+                     WHERE v.app_id = a.id AND v.state = 'passing' AND v.superseded = FALSE
+                       AND v.sha <> $2 AND v.created_at >= cr.started_at) AS newer_green
+       FROM apps a WHERE a.id = $1`,
+    [appId, String(sha).toLowerCase(), runId]
+  );
+  // The row is about this commit (or cannot be read): its verdict is the one.
+  if (!r || !r.main_check_sha || sameSha(r.main_check_sha, sha)) return null;
+  if (phase === 'recheck') return { why: 'recheck', tipSha: r.main_check_sha };
+  if (r.newer_green === true) return { why: 'newer_green', tipSha: r.main_check_sha };
+  return null;
+}
+
+// Watch a run that holds its slot, and stop it once its verdict is unread:
+// its queue row taken from its owner (this process) in one compare-and-swap,
+// so the slot is free at once and no adopter can take the run after; its
+// Jobs deleted; `signal` aborted, so the suite's runner returns. A read that
+// fails stops nothing. `end()` stops the watch; `stopped()` says whether it
+// stopped the run.
+function watchVerdict(config, pool, app, { sha, phase = null, runId, everyMs = stopPollMs() }) {
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  let ended = false;
+  let busy = false;
+  let stopped = null;
+  const tick = async () => {
+    if (ended || busy || stopped) return;
+    busy = true;
+    try {
+      const unread = await verdictUnread(pool, app.id, { sha, phase, runId });
+      if (!unread || ended) return;
+      const { rows: [taken] } = await pool.query(
+        'DELETE FROM check_runs WHERE run_id = $1 AND owner = $2 RETURNING run_id', [runId, checkRuns.selfOwner()]);
+      // Gone already (the run settled meanwhile), or another process's now.
+      if (!taken || ended) return;
+      stopped = unread;
+      const ranMs = Date.now() - startedAt;
+      checksQueue.slotFreed();
+      await require('./kubernetes').deleteRunCheckJobs(config, { sessionId: mainSessionId(app), previewRunId: runId });
+      controller.abort(new Error('A newer merge made this check of main one nobody reads'));
+      log.info('main-watch', 'Stopped a check of main nobody would read', {
+        appId: app.id, slug: app.slug, runId, sha, tipSha: unread.tipSha, phase, why: unread.why, ranMs,
+      });
+      const events = require('./events');
+      events.record(pool, {
+        type: events.EVENT_TYPES.MAIN_CHECK_STOPPED, appId: app.id,
+        metadata: { runId, sha: String(sha).toLowerCase(), tipSha: String(unread.tipSha).toLowerCase(), phase, why: unread.why, ranMs },
+      });
+    } catch (err) {
+      log.warn('main-watch', 'Could not tell whether a check of main is still read (non-fatal)', {
+        appId: app.id, runId, err: err.message,
+      });
+    } finally {
+      busy = false;
+    }
+  };
+  const timer = setInterval(tick, everyMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  return {
+    signal: controller.signal,
+    stopped: () => !!stopped,
+    end: () => { ended = true; clearInterval(timer); },
+  };
+}
+
 // One run of the suite on the merge commit, as a verdict. Never throws: a
 // runner that could not be reached is an 'error' verdict. 'superseded' is a
 // run that never started because a newer merge took the row while it
-// waited for its slot; the machine stores nothing for it.
-async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null, signal = null, reuse = false } = {}) {
+// waited for its slot, or one stopped because a newer merge made its
+// verdict one nobody reads (watchVerdict); the machine stores nothing for it.
+// `phase` is the machine's for the run ('first', 'confirm', 'recheck').
+async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null, signal = null, reuse = false, phase = null } = {}) {
   let slot = null;
+  let watch = null;
   try {
     if (adopt) {
       const adopted = await adoptRun(config, pool, app, mergeSha, adopt);
@@ -335,6 +455,9 @@ async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onR
     }
     slot = await takeSlot(config, pool, app, mergeSha, { onRunId, signal });
     if (slot.superseded) return { state: 'superseded', detail: {} };
+    // Its Jobs hold a slot from here: watched for a newer merge that makes
+    // its verdict one nobody reads.
+    if (slot.runId) watch = watchVerdict(config, pool, app, { sha: mergeSha, phase, runId: slot.runId });
     const outcome = await unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id,
       // Not a proposal's run: named for the app so a session's own cleanup
@@ -344,12 +467,16 @@ async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onR
       // The Jobs carry the queue row's run id, so a process that takes over
       // after this one dies finds them (adoptRun).
       ...(slot.runId ? { previewRunId: slot.runId } : {}),
+      ...(watch ? { signal: watch.signal } : {}),
       repoOwner: parsed.owner, repoName: parsed.repo, ref: mergeSha, prNumber: null,
     });
+    if (watch?.stopped()) return { state: 'superseded', detail: {} };
     return classify(outcome);
   } catch (err) {
+    if (watch?.stopped()) return { state: 'superseded', detail: {} };
     return { state: 'error', detail: { failureReason: String(err && err.message || err).slice(0, 600) } };
   } finally {
+    watch?.end();
     if (slot) await slot.release().catch(() => {});
     // The test-durations baseline, read at the merge commit: past a tenth of
     // the test files with no entry or a placeholder, one low-priority request
@@ -787,8 +914,10 @@ async function checkBaselineRefresh(config, pool, app, parsed, sha, { strict = f
 // (classify); never throws.
 //
 // `reuse`: the machine allows this run to copy a pass of the merge's tree
-// (runSuite). Anything but `true` runs the suite.
-async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunId = null, signal = null, reuse = false } = {}) {
+// (runSuite). Anything but `true` runs the suite. `phase` is the machine's
+// for the run: a superseded recheck's verdict is read by nobody
+// (watchVerdict).
+async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunId = null, signal = null, reuse = false, phase = null } = {}) {
   const parsed = parseRepo(app && app.repo_url);
   if (!parsed) return { state: 'skipped', detail: { reason: 'no repository' } };
   let adopt = null;
@@ -799,7 +928,7 @@ async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunI
       if (r) adopt = { runId: resumeRunId, owner: r.owner };
     } catch { /* nothing to adopt: the suite runs again */ }
   }
-  return runSuite(config, pool, app, parsed, sha, { adopt, onRunId, signal, reuse: reuse === true });
+  return runSuite(config, pool, app, parsed, sha, { adopt, onRunId, signal, reuse: reuse === true, phase });
 }
 
 module.exports = {

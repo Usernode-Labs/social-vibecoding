@@ -58,6 +58,13 @@ const WORK_DDL = (() => {
   const start = schema.indexOf('CREATE TABLE IF NOT EXISTS wf_work (');
   return schema.slice(start, schema.indexOf(';', schema.indexOf('CONSTRAINT wf_work_claim_shape', start)) + 1);
 })();
+// Main watch's verdicts, which a running check of main reads to tell
+// whether its own is still wanted (main-watch.js verdictUnread).
+const VERDICTS_DDL = (() => {
+  const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
+  const start = schema.indexOf('CREATE TABLE IF NOT EXISTS main_watch_verdicts (');
+  return schema.slice(start, schema.indexOf(';', start) + 1);
+})();
 const DDL = `
   CREATE TABLE apps (
     id SERIAL PRIMARY KEY, slug TEXT, name TEXT, repo_url TEXT, main_sha TEXT,
@@ -83,6 +90,7 @@ const DDL = `
   );
   ${CHECK_RUNS_DDL}
   ${WORK_DDL}
+  ${VERDICTS_DDL}
 `;
 
 let pg;
@@ -194,6 +202,7 @@ async function until(fn, { timeoutMs = 5000, everyMs = 50 } = {}) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const { waitFor, within } = require('./lib/wait-for');
 
 // The preview machine's work item for a run (its checks.run, under the
 // run's key), or the checks.cancel that follows a cancel.
@@ -743,4 +752,59 @@ test('the leftovers are swept: finished, ended, abandoned and past their deadlin
   for (const id of [settled, purged, ended, lingered]) assert.equal(await present(pool, id), false);
   for (const id of [retrying, recent, closing, lingering, live, main]) assert.ok(await present(pool, id), id);
   assert.deepEqual(plan.holding, { main: 0, proposal: 3 }, 'the recent hand-over, the lingering run and the live one');
+});
+
+// ── A check of main a newer merge made pointless ────────────────────────
+
+test('main-watch: a running check is stopped once a newer merge has passed, never while its green may be read', async (t) => {
+  const env = await fresh(t, { cap: 1 });
+  if (!env) return;
+  const { pool, appId } = env;
+  const saved = process.env.MAIN_WATCH_STOP_POLL_MS;
+  process.env.MAIN_WATCH_STOP_POLL_MS = '100';
+  t.after(() => { if (saved === undefined) delete process.env.MAIN_WATCH_STOP_POLL_MS; else process.env.MAIN_WATCH_STOP_POLL_MS = saved; });
+  const config = { workerRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
+  const deleted = [];
+  t.mock.method(require('../src/services/kubernetes'), 'deleteRunCheckJobs', async (cfg, args) => { deleted.push(args); return 1; });
+  let release = null;
+  t.mock.method(unitSuite, 'maybeRunUnitSuite', (opts) => new Promise((resolve, reject) => {
+    release = () => resolve(null);
+    opts.signal?.addEventListener('abort', () => reject(opts.signal.reason), { once: true });
+  }));
+  const app = { id: appId, slug: 'demo', repo_url: 'https://github.com/org/demo' };
+  const [A, B, C, OLD] = ['a', 'b', 'c', 'f'].map((ch) => ch.repeat(40));
+  // A green recorded before this run started is an older run's, never a newer one's.
+  await pool.query(
+    `INSERT INTO main_watch_verdicts (app_id, sha, state, created_at) VALUES ($1, $2, 'passing', NOW() - INTERVAL '1 minute')`,
+    [appId, OLD]);
+  await pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, A]);
+  // The run's own pool, counting the times its watch asks whether it is read.
+  let asked = 0;
+  const watched = {
+    query: (sql, params) => {
+      if (/SELECT a\.main_check_sha,/.test(String(sql))) asked += 1;
+      return pool.query(sql, params);
+    },
+    connect: () => pool.connect(),
+  };
+  t.after(() => { if (release) release(); });
+  const running = mainWatch.runMainSuite(config, watched, { app, sha: A, phase: 'first' });
+  const row = await until(async () => (await pool.query(
+    "SELECT run_id FROM check_runs WHERE kind = 'main' AND app_id = $1 AND admitted_at IS NOT NULL", [appId])).rows[0]);
+
+  // A newer merge claims the row; another superseded run passes. Neither
+  // says this run's green would go unread: a later red may still need it.
+  await pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, B]);
+  await pool.query(`INSERT INTO main_watch_verdicts (app_id, sha, state, superseded) VALUES ($1, $2, 'passing', TRUE)`, [appId, C]);
+  const before = asked;
+  await waitFor(() => asked >= before + 3, { label: 'the watch asking three times after the newer merge' });
+  assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [row.run_id])).rows.length, 1, 'it runs on');
+  assert.deepEqual(deleted, []);
+
+  // The newer merge's own run passes (it copied a pass of its tree).
+  await pool.query(`INSERT INTO main_watch_verdicts (app_id, sha, state) VALUES ($1, $2, 'passing')`, [appId, B]);
+  const out = await within(running, 5000, 'the check of main a newer green made pointless');
+  assert.equal(out.state, 'superseded');
+  assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [row.run_id])).rows.length, 0, 'its slot is free');
+  assert.deepEqual(deleted, [{ sessionId: `main-${appId}`, previewRunId: row.run_id }], 'and its Jobs deleted');
 });
