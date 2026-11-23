@@ -10053,6 +10053,18 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request,
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) { max-width: none; margin-inline: 0; padding-inline: var(--wip-gutter); }
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(#gc-thread-head:empty) .dev-request-sheet { background: none; border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* A DECISION'S DISCUSSION LINES UP WITH THE POST ABOVE IT (asked 23 Nov 2026, #7052): a request's and a change's
+   replies run the page's width, with no card (the rule at "The stream: no sheet of its own", further down). A
+   decision kept the base card's 900px cap and centred it, so on the widened page it floated in the middle under a
+   post that filled the width. Here it takes the post's own edges: its text column on the left (the post's 16px
+   padding, the 36px avatar and the 12px gap, `.messages-message`) and its 16px on the right. Phones, a side panel,
+   the page with the reader open, and the other looks keep the centred card. */
+@media (min-width: 768px) {
+  html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request.dev-decision #gc-thread-messages {
+    max-width: none;
+    margin-inline: calc(16px + 36px + 12px) 16px;
+  }
+}
 /* THE PAGE'S TITLE (asked 20 Nov 2026): the other places open under their name ("Hub", "Needs you", "Workshop"), and
    this page opened under nothing. It says the place it is under, in the band and at the size the others have theirs.
    The standard look alone, from 768px, on the page: a phone's header says it, and a side panel has its own head. */
