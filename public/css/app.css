@@ -9517,6 +9517,12 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   padding-top: 6px;
 }
 .cm-card-name {
+  /* A finger needs 44px and this line is 21–34px tall. The padding grows the
+     link's own box to a tap target and the negative margin gives the space
+     back, so nothing on the card moves; the overlay is pulled back to the
+     text's own rect so it never reaches past the card either. */
+  padding-block: 12px;
+  margin-block: -12px;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -9528,6 +9534,10 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   line-height: 1.25;
   color: var(--cm-ink);
 }
+/* The card-wide press overlay (Tailwind's `after:inset-0`) covers the padding
+   box; keep it on the text's rect, where it was before the padding above. The
+   doubled class outranks the utility, which loads after this file. */
+.cm-card-name.cm-card-name::after { inset-block: 12px; }
 .cm-card-members {
   overflow: hidden;
   text-overflow: ellipsis;
