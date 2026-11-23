@@ -8591,6 +8591,7 @@ html:not([data-skin]) {
   --wip-nav-count-ink: #121a0e;
   --wip-nav-on-count-bg: #121a0e;
   --wip-nav-on-count-ink: #ffffff;
+  --wip-nav-on-badge-bg: color-mix(in srgb, var(--wip-nav-on-ink) 14%, transparent); /* the grey "new to read" count on the lit row: a tint of the row's own ink */
   --wip-nav-row-h: 2.5rem;
   --wip-nav-row-radius: 0.75rem;
   --wip-nav-bar-h: 56px;         /* the phone's bar, as the shell reserves it (--platform-bar-h) */
@@ -8686,6 +8687,11 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
 html:not([data-skin]) #platform-tabs [aria-current="page"] :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
   background: var(--wip-nav-on-count-bg);
   color: var(--wip-nav-on-count-ink);
+}
+/* The grey "new to read" count takes the panel's faint white for its fill, which on the lit row's sun left white numerals on yellow (1.13:1). There it is the row's own ink on a tint of it: still the quiet count, and readable. */
+html:not([data-skin]) #platform-tabs [aria-current="page"] .platform-tab-badge {
+  background: var(--wip-nav-on-badge-bg);
+  color: var(--wip-nav-on-ink);
 }
 html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { color: var(--wip-nav-mut); }
 html:not([data-skin]) #platform-tab-home { --wip-nav-ic: var(--wip-nav-ic-home); }
