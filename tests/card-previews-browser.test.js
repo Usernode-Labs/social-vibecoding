@@ -41,17 +41,20 @@ function bundle() {
     import { createRoot } from 'react-dom/client';
     import { CardPreview } from ${JSON.stringify(path.join(FRONTEND, 'src/features/guest/card-preview.tsx'))};
     const srcs = (window as any).CARD_SRCS as string[];
-    function Card({ i, src }: { i: number; src: string }) {
+    function Card({ i, src, play }: { i: number; src: string; play?: boolean }) {
       return (
-        <article data-card={i} style={{ position: 'relative', width: 320, height: 300, margin: '0 0 24px' }}>
+        <article data-card={i} data-play-card={play ? '' : undefined} style={{ position: 'relative', width: 320, height: 300, margin: '0 0 24px' }}>
           <span style={{ position: 'relative', display: 'block', width: 320, height: 200, background: '#fde68a' }}>
-            <CardPreview src={src} />
+            <CardPreview src={src} playClassName={play ? 'card-play' : undefined} />
           </span>
           <a href={'#card-' + i} data-card-link={i}>Card {i}</a>
         </article>
       );
     }
-    createRoot(document.getElementById('root')!).render(<>{srcs.map((src, i) => <Card key={i} i={i} src={src} />)}</>);
+    createRoot(document.getElementById('root')!).render(<>
+      {srcs.map((src, i) => <Card key={i} i={i} src={src} />)}
+      <Card i={srcs.length} src="/loop.mp4" play />
+    </>);
   `);
   const result = esbuild.buildSync({
     entryPoints: [entry], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'es2020',
@@ -80,8 +83,17 @@ test('a card\'s preview plays only when it is chosen, one at a time, and never a
     if (url === '/' || url === '/phone') {
       const srcs = url === '/phone' ? ['/loop.mp4', '/loop.mp4', '/loop.mp4', '/loop.mp4'] : ['/loop.mp4', '/loop.mp4', '/missing.mp4'];
       res.setHeader('Content-Type', 'text/html');
-      res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"><div id="root"></div>
+      res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>[data-card-preview-play] { position: absolute; inset: 0; margin: auto; width: 48px; height: 44px; border: 0; border-radius: 999px; background: rgba(9,9,11,.35); color: #fff; z-index: 1; }</style>
+        </head><body style="margin:0"><div id="root"></div>
         <script>window.CARD_SRCS = ${JSON.stringify(srcs)};</script><script>${code}</script></body></html>`);
+      return;
+    }
+    if (url === '/api/languages') {
+      // The language runtime asks for the server's list on load; it is not a
+      // clip, so it is not counted as one.
+      res.statusCode = 204;
+      res.end();
       return;
     }
     if (url === '/loop.mp4') {
@@ -150,6 +162,47 @@ test('a card\'s preview plays only when it is chosen, one at a time, and never a
       await page.hover('[data-card="2"]');
       await page.waitForTimeout(500);
       assert.equal(fetched.filter((u) => u === '/missing.mp4').length, asked, 'a failed loop is not asked for again');
+      // Moving to the play button with the keyboard starts nothing; pressing it would.
+      await page.mouse.move(850, 950);
+      await page.focus('[data-play-card] [data-card-preview-play]');
+      await page.waitForTimeout(500);
+      assert.equal(await videos(page), 0, 'focusing the play button starts nothing');
+      await page.evaluate(() => document.activeElement.blur());
+      assert.deepEqual(errors.filter((e) => !/Failed to load resource/.test(e)), [], 'no script error on the console');
+      await context.close();
+    });
+
+    await t.test('a touch screen: the picture\'s own button plays the loop and pauses it', async () => {
+      const context = await browser.newContext({ viewport: { width: 400, height: 900 }, hasTouch: true, isMobile: true });
+      const page = await context.newPage();
+      const errors = [];
+      page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto(base);
+      const button = page.locator('[data-play-card] [data-card-preview-play]');
+      await button.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('[data-card-preview-play]').count(), 1, 'only the card given the button draws one');
+      assert.equal(await button.getAttribute('aria-pressed'), 'false');
+      assert.equal(await button.getAttribute('aria-label'), 'Play the preview');
+      assert.equal(await videos(page), 0, 'nothing plays by itself');
+
+      // Moving to the button with the keyboard does not start it.
+      await button.focus();
+      await page.waitForTimeout(400);
+      assert.equal(await videos(page), 0, 'focusing the button starts nothing');
+
+      await button.click();
+      await page.waitForFunction(() => {
+        const v = document.querySelector('[data-play-card] [data-card-preview-video]');
+        return !!v && !v.paused && v.currentTime > 0;
+      }, null, { timeout: 8000 });
+      assert.equal(await button.getAttribute('aria-pressed'), 'true');
+      assert.equal(await button.getAttribute('aria-label'), 'Pause the preview');
+
+      await button.click();
+      await page.waitForFunction(() => !document.querySelector('[data-play-card] [data-card-preview-video]'));
+      assert.equal(await button.getAttribute('aria-pressed'), 'false');
+      assert.equal(await button.getAttribute('aria-label'), 'Play the preview');
       assert.deepEqual(errors.filter((e) => !/Failed to load resource/.test(e)), [], 'no script error on the console');
       await context.close();
     });
@@ -168,6 +221,7 @@ test('a card\'s preview plays only when it is chosen, one at a time, and never a
         await page.hover('[data-card="0"]');
         await page.waitForTimeout(700);
         assert.equal(await videos(page), 0, `no video with ${name}`);
+        assert.equal(await page.locator('[data-card-preview-play]').count(), 0, `no play button with ${name}`);
         await context.close();
       });
     }

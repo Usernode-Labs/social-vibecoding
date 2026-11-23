@@ -491,6 +491,14 @@
     "text": "Tell Homeroom bot what to change",
     "description": "Button on the card at the top of a project's Hub when nothing is open and nothing has ever been merged: opens the person's chat with Homeroom bot (the assistant's name; keep it as it is) with this project attached, ready for them to type what they want changed. \"Change\" is a verb."
   },
+  "hub.preview.play": {
+    "text": "Play the preview",
+    "description": "See-through round button in the middle of the picture beside a project hub's hero: plays the silent loop of the real app, so a touch screen that never hovers can watch it."
+  },
+  "hub.preview.pause": {
+    "text": "Pause the preview",
+    "description": "See-through round button in the middle of the picture beside a project hub's hero, while the silent loop of the real app plays: stops it and shows the picture again."
+  },
   "hub.card.close": {
     "text": "Close this card",
     "description": "Accessible name and tooltip of the small close (✕) button at the top right of the cards on a project's hub: \"Share it\", the Invite card and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."

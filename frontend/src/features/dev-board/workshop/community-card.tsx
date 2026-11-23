@@ -1419,7 +1419,8 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
     </section>
     {previewBeside ? (
       // The picture at rest; pointing at it plays the project's loop over it, as a featured card on Home does
-      // (../../guest/card-preview.tsx: after a moment's hover, one at a time, never on a phone or under reduced motion).
+      // (../../guest/card-preview.tsx: after a moment's hover, one at a time, never under reduced motion).
+      // It also carries a see-through play button, so a touch screen that never hovers can play the loop.
       <div className="wip-hero-preview" data-ws-hero-preview="">
         {data.cover?.illustration_url ? (
           <img className={data.cover.illustration_dark_url ? 'wip-hero-preview-pic dark:hidden' : 'wip-hero-preview-pic'} src={data.cover.illustration_url} alt="" draggable={false} />
@@ -1427,7 +1428,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
         {data.cover?.illustration_url && data.cover.illustration_dark_url ? (
           <img className="wip-hero-preview-pic hidden dark:block" src={data.cover.illustration_dark_url} alt="" draggable={false} />
         ) : null}
-        {data.cover?.preview_url ? <CardPreview src={data.cover.preview_url} /> : null}
+        {data.cover?.preview_url ? <CardPreview src={data.cover.preview_url} playClassName="wip-hero-preview-play" /> : null}
       </div>
     ) : null}
     </>

@@ -5853,6 +5853,12 @@ html:not([data-skin]) {
   --wip-hero-ink-muted: var(--wip-ink-muted);
   --wip-hero-glass: var(--wip-card-bg);    /* a quiet control on the card */
   --wip-hero-glass-line: var(--wip-card-line);
+  /* The see-through play button over a project's preview picture: dark at both
+     looks, because it sits on a photograph rather than on the page. */
+  --wip-hero-play-bg: rgb(9 9 11 / 0.35);
+  --wip-hero-play-bg-hover: rgb(9 9 11 / 0.5);
+  --wip-hero-play-line: rgb(255 255 255 / 0.4);
+  --wip-hero-play-ink: #ffffff;
   --wip-hero-ring: hsl(from var(--wip-hero-tint) h 40% 50% / 0.1);
   --wip-hero-dot: hsl(from var(--wip-hero-tint) h 30% 40% / 0.1);
   --wip-hero-shadow: var(--wip-card-shadow);
@@ -7555,6 +7561,23 @@ html:not([data-skin]) #dev-workshop .wip-hero-people { max-width: calc(100% - 1.
    hub's three columns and the preview the third, the two as tall as each other. Narrower, there is no card: the hero keeps the picture at its own side, tilted, as before. */
 html:not([data-skin]) #dev-workshop .wip-hero-preview { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: var(--wip-card-radius); box-shadow: inset 0 0 0 1px var(--wip-card-line); background-color: var(--wip-card-bg); }
 html:not([data-skin]) #dev-workshop .wip-hero-preview > .wip-hero-preview-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* The picture's one action: play the project's preview. A see-through round button in its middle, as the
+   signed-out page's project card has, so a touch screen that never hovers can play the loop and stop it
+   (frontend/src/features/guest/card-preview.tsx). */
+html:not([data-skin]) #dev-workshop .wip-hero-preview-play {
+  position: absolute; inset: 0; z-index: 1; margin: auto;
+  display: flex; align-items: center; justify-content: center;
+  width: 3.5rem; height: 3.5rem; padding: 0;
+  border: 0; border-radius: 999px;
+  background: var(--wip-hero-play-bg);
+  backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 0 1px var(--wip-hero-play-line);
+  color: var(--wip-hero-play-ink);
+  cursor: pointer;
+}
+html:not([data-skin]) #dev-workshop .wip-hero-preview-play:hover { background: var(--wip-hero-play-bg-hover); }
+html:not([data-skin]) #dev-workshop .wip-hero-preview-play:focus-visible { outline: 2px solid var(--wip-hero-play-ink); outline-offset: 2px; }
+html:not([data-skin]) #dev-workshop .wip-hero-preview-play > svg { width: 1.25rem; height: 1.25rem; }
 @media (min-width: 1024px) {
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary[data-has-preview] { grid-column: 1 / 3; align-self: stretch; }
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .wip-hero-preview { grid-column: 3; align-self: stretch; }

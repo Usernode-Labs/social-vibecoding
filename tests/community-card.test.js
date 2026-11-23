@@ -12,10 +12,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
+
+test('#7046: the hub picture offers a see-through play button for its preview loop', () => {
+  const src = read(CARD);
+  // The button exists only where a preview loop does, and only the hub's
+  // picture is given it: Home's cards and other thumbnails stay as they were.
+  assert.match(src, /<CardPreview src=\{data\.cover\.preview_url\} playClassName="wip-hero-preview-play" \/>/);
+  assert.equal(message('project:hub.preview.play'), 'Play the preview');
+  assert.equal(message('project:hub.preview.pause'), 'Pause the preview');
+  // It is drawn over the WIP look's picture, on the hub alone.
+  assert.match(read('public/css/app.css'), /#dev-workshop \.wip-hero-preview-play \{/);
+});
 
 test('the approval rule is one sentence per regime, read from the server', () => {
   // In the page's words (first-session run-through, 5 Oct 2026): a change
