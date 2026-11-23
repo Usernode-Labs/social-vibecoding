@@ -199,7 +199,7 @@ export function ArchiveForm({ className, header, submit, onDescribe, allowance, 
               data-make-archive-check=""
               onClick={choose}
               disabled={state === 'uploading'}
-              className="shrink-0 rounded-full bg-zinc-100 px-3.5 py-1.5 text-[14px] font-semibold text-zinc-900 disabled:opacity-60 dark:bg-zinc-800 dark:text-zinc-100"
+              className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-full bg-zinc-100 px-3.5 text-[14px] font-semibold text-zinc-900 disabled:opacity-60 dark:bg-zinc-800 dark:text-zinc-100"
             >
               {file ? t('onboarding:firstSession.archive.chooseAnother') : t('onboarding:firstSession.archive.choose')}
             </button>
@@ -211,7 +211,7 @@ export function ArchiveForm({ className, header, submit, onDescribe, allowance, 
             className={state === 'error' || missing === 'file' ? NEEDED : state === 'ok' ? OK : HINT}
           >
             {state === 'uploading' ? <SpinnerArcIcon className="me-1.5 inline-block h-3.5 w-3.5 animate-spin align-[-2px]" aria-hidden="true" /> : null}
-            {missing === 'file' && state !== 'error' ? t('onboarding:firstSession.archive.needed.file') : status}
+            {missing === 'file' && state !== 'error' ? t('onboarding:firstSession.archive.needed.file') : (status || t('onboarding:firstSession.archive.limits'))}
           </p>
         </div>
         <div className={FIELD}>
@@ -231,7 +231,6 @@ export function ArchiveForm({ className, header, submit, onDescribe, allowance, 
           {missing === 'name' ? <p id="make-archive-name-hint" role="alert" className={NEEDED}>{t('onboarding:firstSession.archive.needed.name')}</p> : null}
         </div>
       </div>
-      <p className="mt-2 px-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.archive.limits')}</p>
       {allowance}
       {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
       <div className="grow" />
@@ -247,7 +246,7 @@ export function ArchiveForm({ className, header, submit, onDescribe, allowance, 
         {busy ? t('onboarding:firstSession.archive.submitting') : t('onboarding:firstSession.archive.submit')}
       </Button>
       <p className="mt-3 text-center">
-        <button type="button" data-make-describe="" onClick={onDescribe} className="text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400">
+        <button type="button" data-make-describe="" onClick={onDescribe} className="inline-flex min-h-[44px] items-center px-2 text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400">
           {t('onboarding:firstSession.import.describeInstead')}
         </button>
       </p>

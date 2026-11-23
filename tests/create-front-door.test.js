@@ -319,8 +319,8 @@ test('the archive upload form: choose a file, its check, the name, Upload it, an
   assert.equal(mod.archiveBaseName('site.tar.gz'), 'site');
   assert.equal(mod.archiveBaseName('site.7z'), 'site');
   assert.match(message('onboarding:firstSession.archive.title'), /^Upload a project archive$/);
-  assert.equal(message('onboarding:firstSession.archive.found_other', { count: 42 }), '✓ 42 files, index.html found.');
-  assert.equal(message('onboarding:firstSession.archive.found_one', { count: 1 }), '✓ 1 file, index.html found.');
+  assert.equal(message('onboarding:firstSession.archive.found_other', { count: 42 }), '42 files, index.html found.');
+  assert.equal(message('onboarding:firstSession.archive.found_one', { count: 1 }), '1 file, index.html found.');
   for (const id of ['firstSession.make.archiveLink', 'firstSession.archive.submit', 'firstSession.archive.needed.file',
     'firstSession.archive.error.tooBig', 'firstSession.archive.error.type', 'firstSession.made.line.unpacking', 'firstSession.made.note.archived']) {
     assert.ok(message(`onboarding:${id}`).length > 0, id);

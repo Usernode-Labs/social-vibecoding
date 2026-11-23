@@ -1232,11 +1232,11 @@
     "description": "Status line under the archive file field while the chosen file is sent to Homeroom to be checked."
   },
   "firstSession.archive.found_one": {
-    "text": "✓ {{count}} file, index.html found.",
+    "text": "{{count}} file, index.html found.",
     "description": "Status line under the archive file field when the archive is fine and holds one file. {{count}} is the number of files; \"index.html\" is a file name and stays as written."
   },
   "firstSession.archive.found_other": {
-    "text": "✓ {{count}} files, index.html found.",
+    "text": "{{count}} files, index.html found.",
     "description": "Status line under the archive file field when the archive is fine. {{count}} is the number of files; \"index.html\" is a file name and stays as written."
   },
   "firstSession.archive.limits": {

@@ -1290,12 +1290,12 @@ export function MakeScreen({
                   {t('onboarding:firstSession.make.importLink')}
                 </button>
               </p>
-              <p className="mt-2 text-center">
+              <p className="mt-1 text-center">
                 <button
                   type="button"
                   data-make-archive-link=""
                   onClick={() => setMode('archive')}
-                  className="text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
+                  className="inline-flex min-h-[44px] items-center px-2 text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
                 >
                   {t('onboarding:firstSession.make.archiveLink')}
                 </button>
