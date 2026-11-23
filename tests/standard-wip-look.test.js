@@ -156,8 +156,8 @@ function menuMath(all) {
 test('it is the standard look: the head sets data-skin-wip and no data-skin', () => {
   const head = read('frontend', 'src', 'head.html');
   assert.match(head, /if \(skin === 'wip'\) root\.setAttribute\('data-skin-wip', ''\);/);
-  assert.match(head, /if \(skin !== 'standard' && skin !== 'wip'\) \{\s*root\.setAttribute\('data-skin', skin\);/,
-    'no look\'s rules (html[data-skin] …) apply under it');
+  assert.match(head, /if \(skin !== 'standard' && skin !== 'wip' && skin !== 'sunrise'\) \{\s*root\.setAttribute\('data-skin', skin\);/,
+    'no look\'s rules (html[data-skin] …) apply under it (sunrise is a template, not a data-skin look)');
   const skin = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
   assert.equal(skin.isFrameSkin('wip'), false, 'it keeps the standard pages, not the frame\'s');
 });

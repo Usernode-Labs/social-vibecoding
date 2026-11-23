@@ -2879,6 +2879,12 @@
       "expectSelector": "#settings-theme-section #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"light\"] ~ [data-theme-mode=\"system\"]"
     },
     {
+      "name": "Appearance offers the Template Chooser with Sunrise in light and dark (#6984)",
+      "path": "/#settings/theme",
+      "expectSelector": "#settings-theme-section [data-template-chooser] [data-template-choice=\"sunrise-dark\"]",
+      "expectText": "Sunrise"
+    },
+    {
       "name": "A bare #settings opens the Account page, led by the Profile card",
       "path": "/#settings",
       "expectSelector": "#settings-section-content [data-settings-section=\"profile\"]:not(.hidden) a#settings-profile-card[href=\"#profile?edit\"]",

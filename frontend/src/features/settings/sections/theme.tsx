@@ -41,6 +41,7 @@ import { Switch } from '@/components/ui/switch';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 import { radioGroupKeys } from '../../../lib/radio-group';
+import { currentSkin } from '../../../lib/skin';
 
 // Order of the three segments in the DOM.
 const THEME_MODES = ['light', 'dark', 'system'] as const;
@@ -145,6 +146,137 @@ function ThemeControl() {
   );
 }
 
+// ── The Template Chooser ───────────────────────────────────────────────
+//
+// Settings › Appearance (request #6984): the two visual styles a device can
+// wear. Standard is today's look and the default. Sunrise draws the same
+// pages in a warm cream light or deep plum dark token set (head.html
+// window.Skin, 'sunrise'; app.css, THE SUNRISE TEMPLATE).
+//
+// The pics are fixed pictures of the real Home screen, not live drawings:
+// the card is about choosing a whole style at a glance, and two live Homes
+// twice over would be a heavier thing than the choice needs. Picking a
+// picture APPLIES it at once (no Save button), exactly like the Theme
+// control above: Sunrise light sets the light appearance, Sunrise dark the
+// dark one, and Standard goes back to today's look without touching the
+// appearance. The choice is kept on the device by window.Skin, the same
+// place the Theme setting lives.
+//
+// It starts with nothing checked, which is the prerender: the live look and
+// appearance are only readable on the client, so reading them during render
+// would mismatch the hydrated document (a console error, which fails the
+// proposal checks). The layout effect fills the highlight in on the first
+// client pass, and follows a look or appearance changed anywhere else.
+const TEMPLATE_CHOICES = ['standard', 'sunrise-light', 'sunrise-dark'] as const;
+type TemplateChoice = (typeof TEMPLATE_CHOICES)[number];
+
+const TEMPLATE_LABELS: Record<TemplateChoice, string> = {
+  standard: 'settings:theme.template.standard',
+  'sunrise-light': 'settings:theme.mode.light',
+  'sunrise-dark': 'settings:theme.mode.dark',
+};
+
+/** The round mark a choice wears; the lit one is filled with the accent. */
+function TemplateDot({ on }: { on: boolean }) {
+  return <span aria-hidden="true" className={on ? 'tc-dot tc-dot-on' : 'tc-dot'} />;
+}
+
+function TemplateChooser() {
+  const t = useMessages('settings');
+  const [choice, setChoice] = useState<TemplateChoice | null>(null);
+
+  const sync = useCallback(() => {
+    const skin = currentSkin();
+    if (skin === 'sunrise') {
+      const dark = document.documentElement.classList.contains('dark');
+      setChoice(dark ? 'sunrise-dark' : 'sunrise-light');
+    } else {
+      // Standard is the chooser's other choice. An admin's 'wip' or 'brand'
+      // is not on it, so neither row is lit while one of those is on.
+      setChoice(skin === 'standard' ? 'standard' : null);
+    }
+  }, []);
+
+  useIsomorphicLayoutEffect(() => {
+    sync();
+    // A look or appearance changed anywhere else (the Theme control above,
+    // the OS sunset switch, another tab) re-lights the right picture.
+    window.Skin?.onChange?.(sync);
+    window.Theme?.onChange?.(sync);
+  }, [sync]);
+
+  useWindowEvent('usernode:settings-section', sync);
+
+  const choose = useCallback(
+    (next: TemplateChoice) => {
+      if (next === 'standard') {
+        window.Skin?.set?.('standard');
+      } else {
+        // The appearance first, then the style: the picture keeps what it
+        // showed when it was pressed.
+        window.Theme?.set?.(next === 'sunrise-dark' ? 'dark' : 'light');
+        window.Skin?.set?.('sunrise');
+      }
+      sync();
+    },
+    [sync],
+  );
+  const keys = radioGroupKeys(TEMPLATE_CHOICES, choice, choose);
+
+  const tile = (value: 'sunrise-light' | 'sunrise-dark', src: string, alt: string) => {
+    const on = choice === value;
+    return (
+      <button
+        type="button"
+        role="radio"
+        aria-checked={on ? 'true' : 'false'}
+        tabIndex={keys.tabIndex(value)}
+        data-template-choice={value}
+        className={on ? 'tc-tile tc-tile-on' : 'tc-tile'}
+        onClick={() => choose(value)}
+      >
+        <span className="tc-head">
+          <span>{t(TEMPLATE_LABELS[value])}</span>
+          <TemplateDot on={on} />
+        </span>
+        <img className="tc-pic" src={src} width={160} height={190} alt={alt} loading="lazy" />
+      </button>
+    );
+  };
+
+  return (
+    <div className="ui-card tc-card mt-6" data-template-chooser="">
+      <SectionHeading title={t('settings:theme.template.title')}>
+        {t('settings:theme.template.intro')}
+      </SectionHeading>
+      <div
+        role="radiogroup"
+        aria-label={t('settings:theme.template.controlName')}
+        onKeyDown={keys.onKeyDown}
+        className="tc-group"
+      >
+        <button
+          type="button"
+          role="radio"
+          aria-checked={choice === 'standard' ? 'true' : 'false'}
+          tabIndex={keys.tabIndex('standard')}
+          data-template-choice="standard"
+          className="tc-opt"
+          onClick={() => choose('standard')}
+        >
+          <TemplateDot on={choice === 'standard'} />
+          <span>{t('settings:theme.template.standard')}</span>
+        </button>
+        <div className="tc-style">{t('settings:theme.template.sunrise')}</div>
+        <div className="tc-tiles">
+          {tile('sunrise-light', '/brand/templates/sunrise-light.webp', t('settings:theme.template.previewLight'))}
+          {tile('sunrise-dark', '/brand/templates/sunrise-dark.webp', t('settings:theme.template.previewDark'))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // The key App._railPinned reads (public/js/app.js). Read here too so the
 // switch can show the stored value before App exists, and written through
 // App.setRailPinned so the router re-decides at once. ON unless '0' is
@@ -226,6 +358,7 @@ export function ThemeSection() {
         <div className="max-w-xs">
           <ThemeControl />
         </div>
+        <TemplateChooser />
         <RailPinnedRow />
       </div>
     </div>

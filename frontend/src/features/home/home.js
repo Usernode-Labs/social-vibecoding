@@ -721,8 +721,9 @@ const Home = {
     // screen; a phone, whose search row waits to be pulled into view, keeps
     // the tile. The standard look has the button at every width too since 20
     // Nov 2026 (it takes Standard (WIP)'s top row), so its grid draws no tile
-    // either.
-    if (skin === 'wip' || skin === 'standard') return true;
+    // either. Sunrise (lib/skin.ts, the Template Chooser's style) keeps the
+    // standard pages, so it is the standard look here too.
+    if (skin === 'wip' || skin === 'standard' || skin === 'sunrise') return true;
     if (skin !== 'brand') return false;
     try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },

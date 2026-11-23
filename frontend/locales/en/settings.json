@@ -1207,6 +1207,10 @@
     "text": "Paper, simplified, with brand styling",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way a look named Paper did (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is a proper name here."
   },
+  "experimental.look.sunrise": {
+    "text": "Sunrise",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages in warm cream colours in light and deep plum in dark. \"Sunrise\" is a proper name here."
+  },
   "experimental.wipTokens.brand": {
     "text": "Homeroom brand kit (WIP)",
     "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): Homeroom's usual visual style with the changes still being tried on it, drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress. Translate it as a short name, not a sentence."
@@ -1246,6 +1250,34 @@
   "theme.railPinned.description": {
     "text": "On, the sidebar stays beside an app you open, and the sidebar button at the top left hides it. Off, an app takes the whole window and has a close button instead.",
     "description": "Explanation under the \"Keep sidebar open in apps\" switch in Settings. \"Off\" and \"On\" are the two positions of that switch."
+  },
+  "theme.template.title": {
+    "text": "Template Chooser",
+    "description": "Heading of a card in Settings > Appearance, directly under the Theme card, where the person picks the visual style Homeroom is drawn in on this device. \"Template\" means a visual style here, not a document."
+  },
+  "theme.template.intro": {
+    "text": "Choose a visual style for your space.",
+    "description": "Explanation under the Template Chooser heading in Settings > Appearance. \"Space\" means the person's Homeroom on this device."
+  },
+  "theme.template.controlName": {
+    "text": "Template",
+    "description": "Accessible name of the set of visual styles in Settings > Appearance, announced to a screen reader."
+  },
+  "theme.template.standard": {
+    "text": "Standard",
+    "description": "Choice in the Template Chooser in Settings > Appearance: Homeroom's usual visual style, which is the default."
+  },
+  "theme.template.sunrise": {
+    "text": "Sunrise",
+    "description": "Name of a visual style in the Template Chooser in Settings > Appearance. It draws Homeroom's usual pages in warm cream colours in light and deep plum in dark. \"Sunrise\" is a proper name here, not a time of day."
+  },
+  "theme.template.previewLight": {
+    "text": "The Home screen in Sunrise, light appearance",
+    "description": "Text read out for the picture of Homeroom's Home screen shown in the light appearance of the Sunrise style, in Settings > Appearance."
+  },
+  "theme.template.previewDark": {
+    "text": "The Home screen in Sunrise, dark appearance",
+    "description": "Text read out for the picture of Homeroom's Home screen shown in the dark appearance of the Sunrise style, in Settings > Appearance."
   },
   "accessibility.textSize.title": {
     "text": "Text size",

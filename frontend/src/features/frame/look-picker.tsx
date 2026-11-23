@@ -34,6 +34,7 @@ const NAME_OF: Record<string, string> = {
   standard: 'settings:experimental.look.standard',
   wip: 'settings:experimental.wipTokens.brand',
   brand: 'settings:experimental.look.brand',
+  sunrise: 'settings:experimental.look.sunrise',
 };
 
 // The platform header's own disc, as its bell wears it (#2798: no fill at rest).

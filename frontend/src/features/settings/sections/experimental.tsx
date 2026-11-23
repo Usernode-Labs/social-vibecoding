@@ -32,12 +32,15 @@ import { InterfaceModeControl } from '../interface-mode-control';
  * (settings.js _renderAdminSection) so it can go back to Standard.
  *
  * Look (default Standard, kept on the DEVICE by the head's window.Skin,
- * src/head.html) offers the looks (lib/skin.ts MENU_SKINS), three with
- * Standard since 20 Nov 2026. `wip`, "Homeroom brand kit (WIP)", is the
+ * src/head.html) offers the looks (lib/skin.ts MENU_SKINS): Standard plus
+ * `wip`, `brand` and `sunrise`. `wip`, "Homeroom brand kit (WIP)", is the
  * standard look with the changes still being tried on it, drawn with the
  * brand kit's token set (data-skin-wip on <html>). `brand` keeps the
  * standard pages and redraws them in the website's colours and typefaces
- * (data-skin="brand"). Both are drawn in light and dark. The menu is an
+ * (data-skin="brand"). `sunrise` is the Template Chooser's style: the
+ * standard pages in a warm cream or deep plum token set, under
+ * data-template="sunrise" and no data-skin. All are drawn in light and
+ * dark. The menu is an
  * admin's preview while the looks are drawn screen by screen:
  * #settings-look-section ships hidden and settings.js _renderAdminSection
  * lifts the class only for a REAL admin (App._realIsAdmin), as it does for
@@ -68,6 +71,7 @@ export function ExperimentalSection() {
             <option value="">{t('settings:experimental.look.standard')}</option>
             <option value="wip">{t('settings:experimental.wipTokens.brand')}</option>
             <option value="brand">{t('settings:experimental.look.brand')}</option>
+            <option value="sunrise">{t('settings:experimental.look.sunrise')}</option>
           </Select>
           <p className="ui-hint text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
             {t('settings:experimental.look.description')}

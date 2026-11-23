@@ -23,10 +23,12 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
  * last of them, and since 20 Nov 2026 no menu offers it and the head
  * neither stores nor pins it, so nothing reaches the frame; the list stays
  * for the screens that still carry a frame drawing, until that is removed.
+ * 'sunrise' is NOT one of them: it is the Template Chooser's style, which
+ * keeps the standard pages.
  */
 export const FRAME_SKINS = ['paper'] as const;
 export type FrameSkin = typeof FRAME_SKINS[number];
-export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
+export type Skin = 'standard' | 'wip' | 'brand' | 'sunrise' | FrameSkin;
 
 /**
  * Every look the Look menu offers after Standard, in its order (20 Nov
@@ -35,10 +37,13 @@ export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
  * it and the brand kit's token set; the head sets `data-skin-wip` and
  * `data-wip-tokens="brand"` for it and no `data-skin`. 'brand' is
  * "Paper, simplified, with brand styling", which keeps the standard pages.
- * It is the head's SKINS, and the option values of Settings › Experimental
- * › Look and of the look picker.
+ * 'sunrise' is the Template Chooser's style: the standard pages in a warm
+ * cream or deep plum token set, under `data-template="sunrise"` and no
+ * `data-skin` (the head sets it; app.css, THE SUNRISE TEMPLATE). It is the
+ * head's SKINS, and the option values of Settings › Experimental › Look
+ * and of the look picker.
  */
-export const MENU_SKINS = ['wip', 'brand'] as const;
+export const MENU_SKINS = ['wip', 'brand', 'sunrise'] as const;
 export type MenuSkin = typeof MENU_SKINS[number];
 
 /**
@@ -46,11 +51,12 @@ export type MenuSkin = typeof MENU_SKINS[number];
  * (the one-column page, the pinned projects card, Recent threads, the
  * challenge posters; the grid of pinned communities and the joined list): Standard
  * (WIP), which drew them first, and the standard look, which took them on 20
- * Nov 2026. The first render's 'standard' is one of them, so the prerendered
- * document and the hydrated one agree.
+ * Nov 2026. Sunrise keeps the standard pages too, so Home draws the kit's
+ * markup under it as well. The first render's 'standard' is one of them, so
+ * the prerendered document and the hydrated one agree.
  */
 export function isKitHome(skin: Skin): boolean {
-  return skin === 'wip' || skin === 'standard';
+  return skin === 'wip' || skin === 'standard' || skin === 'sunrise';
 }
 
 /** True for a look that draws a page in the frame; 'brand' keeps the standard pages. */

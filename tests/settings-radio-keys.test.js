@@ -102,6 +102,26 @@ for (const [file, exportName, trackId, attr, options] of [
   });
 }
 
+// The Template Chooser (request #6984) is the second radio group on the same
+// page, so it gets the same keyboard promise: one tab stop, the arrows move
+// the pick through the shared radio-group keys, and the prerender has none
+// checked because both the look and the appearance read only on the client.
+test('the Template Chooser is a radio group wired to the shared keys', () => {
+  const src = read(THEME);
+  assert.match(src, /const keys = radioGroupKeys\(TEMPLATE_CHOICES, choice, choose\);/);
+  assert.match(src, /onKeyDown=\{keys\.onKeyDown\}/);
+  assert.match(src, /tabIndex=\{keys\.tabIndex\(/, 'each template gets its roving tabIndex');
+
+  const html = renderComponent(THEME, 'ThemeSection');
+  const options = ['standard', 'sunrise-light', 'sunrise-dark'];
+  options.forEach((option, i) => {
+    const btn = html.match(new RegExp(`<button[^>]*data-template-choice="${option}"[^>]*>`));
+    assert.ok(btn, `${option} choice missing`);
+    assert.match(btn[0], new RegExp(`tabindex="${i === 0 ? 0 : -1}"`), `${option} tabindex`);
+    assert.match(btn[0], /aria-checked="false"/, `${option} starts unchecked`);
+  });
+});
+
 // The same promise in the dialogs and vote forms (part of #6510): every group
 // below drew role="radio" buttons that each took a Tab press and ignored the
 // arrows. Each one's pick only fills in a draft, so an arrow may make it. The

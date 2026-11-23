@@ -32669,6 +32669,298 @@ html[data-skin]:where(:not([data-skin="brand"])) #notifications-sheet .notificat
 html[data-skin]:where(:not([data-skin="brand"])) #notifications-sheet .notifications-card .un-swipe > div:not(.un-swipe-tray) { background: linear-gradient(var(--fr-surface), var(--fr-surface)), var(--fr-solid, var(--fr-ground)); box-shadow: inset 0 0 0 1px var(--fr-line); }
 html[data-skin]:where(:not([data-skin="brand"])) #notifications-sheet .notifications-row:not(:last-child)::after { background: var(--fr-line2); }
 
+
+
+
+
+/* ════════════════════════════════════════════════════════════════════
+   THE SUNRISE TEMPLATE (request #6984)
+
+   The Template Chooser's style. It is NOT a data-skin look: the head
+   (window.Skin) sets data-template="sunrise" on <html> and no data-skin,
+   so the standard look's rules all still apply and only the token values
+   below change. That is why this style adds no data-skin attribute at all:
+   a look named that way would drop the 864 rules scoped to
+   html:not([data-skin]).
+
+   Light is a warm cream page with near-white cards; dark is a deep plum
+   page with plum cards. The accent is a warm coral: #bf4a32 in light so
+   white ink on it clears 4.5:1, and a light coral in dark that takes the
+   plum ink. The chooser's own tiles read these same tokens, so the card
+   is drawn in the style it is offering. */
+html[data-template="sunrise"]:not([data-skin]) {
+  background-color: #fbf1e4;
+  --bg-primary: #fffaf3;
+  --bg-secondary: #f7ecdd;
+  --bg-tertiary: #efe0cd;
+  --bg-input: #f7ecdd;
+  --border: #dccbb8;
+  --border-light: #e8dacb;
+  --text-primary: #2a2233;
+  --text-secondary: #4a3f56;
+  --text-muted: #6b5f76;
+  --text-faint: #7c7088;
+  --accent: #bf4a32;
+  --accent-light: #d2674c;
+  --accent-wash: #fbe1d7;
+  --accent-wash-ink: #a33d28;
+  --accent-tint: rgba(191, 74, 50, 0.10);
+  --accent-tint-ink: #a33d28;
+  --accent-ink: #ffffff;
+  --dc-strip: #fbf1e4;
+  --dc-sheet: #fffaf3;
+  --dc-raised: #f7ecdd;
+  --dc-sheet-raise: #fffaf3;
+  --dc-strip-fill: rgba(251, 241, 228, 0.55);
+  --dc-sheet-fill: rgba(255, 250, 243, 0.62);
+  --dc-float-fill: rgba(255, 250, 243, 0.95);
+  --dc-sheet-solid: #fffaf3;
+  --dc-strip-solid: #fbf1e4;
+  --app-sheet-line: rgba(42, 34, 51, 0.12);
+  --lit-ink: #a33d28;
+  --lit-tint: #fbe9e2;
+  --lit-line: rgba(191, 74, 50, 0.30);
+  --brand-ink: #8a4a3c;
+  --brand-tint: #f8e6dc;
+  --brand-line: #eccfc1;
+  /* Home and Communities draw from the kit's own tokens (--wip-*), not
+     from the general surface ladder, so the style repaints those too. */
+  --wip-page-bg: #fbf1e4;
+  --wip-page-bg-communities: #f6ece0;
+  --wip-card-bg: #fffaf3;
+  --wip-card-line: rgb(42 34 51 / 0.12);
+  --wip-ink: #2a2233;
+  --wip-ink-soft: rgb(42 34 51 / 0.78);
+  --wip-ink-muted: rgb(42 34 51 / 0.62);
+  --wip-ink-action: #2a2233;
+  --wip-icon-shadow: 0 1px 2px rgb(42 34 51 / 0.05), 0 6px 14px -6px rgb(42 34 51 / 0.16);
+  --wip-cta-from: #bf4a32;
+  --wip-cta-via: #bf4a32;
+  --wip-cta-to: #bf4a32;
+  --wip-cta-ink: #ffffff;
+  --wip-cta-glow: rgb(191 74 50 / 0.22);
+  --wip-top-cta-bg: #f4b18f;
+  --wip-top-cta-ink: #221a30;
+  --wip-top-cta-edge: inset 0 0 0 1px #221a30, 0 2px 0 #221a30;
+  --wip-top-cta-edge-down: inset 0 0 0 1px #221a30, 0 0 0 #221a30;
+  --wip-fold-bg: #fffaf3;
+  --wip-fold-bg-on: #fbe9e2;
+  --wip-fold-ink: #2a2233;
+  --wip-fold-edge: inset 0 0 0 1px rgb(42 34 51 / 0.5), 0 2px 0 rgb(42 34 51 / 0.5);
+  --wip-fold-edge-down: inset 0 0 0 1px rgb(42 34 51 / 0.5), 0 0 0 rgb(42 34 51 / 0.5);
+  --wip-pill-bg: #e8836a;
+  --wip-pill-ink: #2a2233;
+  --wip-count-bg: #f4b18f;
+  --wip-count-ink: #221a30;
+  --wip-count-line: rgb(42 34 51 / 0.2);
+  --wip-meter: #bf4a32;
+  --wip-icon-tile: #fffaf3;
+  --wip-nav-on-bg: #e8836a;
+  --wip-nav-on-ink: #221a30;
+  --wip-btn-line: #221a30;
+  --wip-btn-focus: #bf4a32;
+  --wip-btn-1-bg: #e8836a;
+  --wip-btn-1-ink: #221a30;
+  --wip-btn-1-line: #221a30;
+  --wip-btn-1-hover: #f09a80;
+  --wip-btn-2-bg: #fffaf3;
+  --wip-btn-2-ink: #2a2233;
+  --wip-btn-2-line: #2a2233;
+  --wip-btn-2-hover: #fbe9e2;
+  --wip-btn-link-ink: #2a2233;
+  --wip-btn-link-line: #bf4a32;
+}
+html[data-template="sunrise"]:not([data-skin]).dark {
+  background-color: #221a30;
+  --bg-primary: #30253f;
+  --bg-secondary: #3a2d4b;
+  --bg-tertiary: #493a5c;
+  --bg-input: #3a2d4b;
+  --border: #4d3d61;
+  --border-light: #5a4770;
+  --text-primary: #f4eefb;
+  --text-secondary: #e4d9ef;
+  --text-muted: #b8a9c9;
+  --text-faint: #a293b4;
+  --accent: #f4b18f;
+  --accent-light: #ffc7a8;
+  --accent-wash: #4a2f2a;
+  --accent-wash-ink: #ffc7a8;
+  --accent-tint: rgba(244, 177, 143, 0.16);
+  --accent-tint-ink: #f4b18f;
+  --accent-ink: #221a30;
+  --dc-strip: #221a30;
+  --dc-sheet: #30253f;
+  --dc-raised: #3a2d4b;
+  --dc-sheet-raise: #30253f;
+  --dc-strip-fill: rgba(34, 26, 48, 0.55);
+  --dc-sheet-fill: rgba(48, 37, 63, 0.72);
+  --dc-float-fill: rgba(48, 37, 63, 0.95);
+  --dc-sheet-solid: #30253f;
+  --dc-strip-solid: #221a30;
+  --app-sheet-line: rgba(244, 238, 251, 0.12);
+  --app-sheet-shadow-near: rgba(0, 0, 0, 0.55);
+  --app-sheet-shadow-far: rgba(0, 0, 0, 0.4);
+  --lit-ink: #f4b18f;
+  --lit-tint: rgba(244, 177, 143, 0.16);
+  --lit-line: rgba(244, 177, 143, 0.35);
+  --brand-ink: #e7c4b6;
+  --brand-tint: #3a2d3c;
+  --brand-line: #57405a;
+  --wip-page-bg: #221a30;
+  --wip-page-bg-communities: #241a2f;
+  --wip-card-bg: #30253f;
+  --wip-card-line: rgb(244 238 251 / 0.14);
+  --wip-ink: #f4eefb;
+  --wip-ink-soft: rgb(244 238 251 / 0.78);
+  --wip-ink-muted: rgb(244 238 251 / 0.62);
+  --wip-ink-action: #f4eefb;
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
+  --wip-cta-from: #f4b18f;
+  --wip-cta-via: #f4b18f;
+  --wip-cta-to: #f4b18f;
+  --wip-cta-ink: #221a30;
+  --wip-cta-glow: rgb(244 177 143 / 0.18);
+  --wip-top-cta-bg: #e8836a;
+  --wip-top-cta-ink: #221a30;
+  --wip-top-cta-edge: 0 0 0 transparent;
+  --wip-top-cta-edge-down: 0 0 0 transparent;
+  --wip-fold-bg: #30253f;
+  --wip-fold-bg-on: #493a5c;
+  --wip-fold-ink: #f4eefb;
+  --wip-fold-edge: inset 0 0 0 1px rgb(244 238 251 / 0.4);
+  --wip-fold-edge-down: inset 0 0 0 1px rgb(244 238 251 / 0.4);
+  --wip-pill-bg: #f4b18f;
+  --wip-pill-ink: #221a30;
+  --wip-count-bg: #f4b18f;
+  --wip-count-ink: #221a30;
+  --wip-count-line: transparent;
+  --wip-meter: #f4b18f;
+  --wip-icon-tile: #3a2d4b;
+  --wip-nav-on-bg: #e8836a;
+  --wip-nav-on-ink: #221a30;
+  --wip-btn-line: rgb(244 238 251 / 0.55);
+  --wip-btn-focus: #f4b18f;
+  --wip-btn-1-bg: #f4b18f;
+  --wip-btn-1-ink: #221a30;
+  --wip-btn-1-line: #f4b18f;
+  --wip-btn-1-hover: #ffc7a8;
+  --wip-btn-2-bg: #30253f;
+  --wip-btn-2-ink: #f4eefb;
+  --wip-btn-2-line: #f4eefb;
+  --wip-btn-2-hover: #493a5c;
+  --wip-btn-link-ink: #f4eefb;
+  --wip-btn-link-line: #f4b18f;
+}
+/* The page's wallpaper follows the template's ground. The selector repeats
+   the standard look's own :has() list because that rule's :has() arguments
+   carry its specificity; without them this could not outrank it. */
+html[data-template="sunrise"]:not([data-skin]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  --home-ground: #fbf1e4;
+  --home-star: none;
+  --home-grain: none;
+  --home-washes:
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(244, 177, 143, 0.35) 138px, rgba(244, 177, 143, 0) 258px) 0 0 / 100% 100% no-repeat var(--home-ground);
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    var(--home-washes);
+  background: var(--home-wallpaper);
+}
+html[data-template="sunrise"]:not([data-skin]).dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  --home-ground: #221a30;
+  --home-washes:
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(120, 74, 150, 0.45) 138px, rgba(120, 74, 150, 0) 258px) 0 0 / 100% 100% no-repeat var(--home-ground);
+}
+/* The chooser itself (features/settings/sections/theme.tsx). It is a card
+   like the Theme card above it: one hairline, 20px corners, a small
+   heading and one grey sentence. Nothing in the kit draws a picture
+   choice, so the tile is a small piece of its own, styled from these
+   same tokens. */
+#settings-root .tc-card {
+  margin-top: 16px;
+  padding: 20px;
+  border-radius: 20px;
+  background: var(--dc-sheet-solid, #fff);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line, rgba(0, 0, 0, 0.1));
+}
+#settings-root .tc-group { display: block; }
+#settings-root .tc-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary, #18181b);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  text-align: start;
+  cursor: pointer;
+}
+#settings-root .tc-style {
+  padding: 8px 0 2px;
+  color: var(--text-primary, #18181b);
+  font-size: 15px;
+  font-weight: 650;
+}
+#settings-root .tc-tiles { display: flex; gap: 12px; margin-top: 8px; }
+#settings-root .tc-tile {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--dc-sheet-solid, #fff);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line, rgba(0, 0, 0, 0.15));
+  font: inherit;
+  color: var(--text-primary, #18181b);
+  text-align: start;
+  cursor: pointer;
+}
+#settings-root .tc-tile.tc-tile-on { box-shadow: inset 0 0 0 2px #e8836a; }
+#settings-root .tc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 8px;
+  font-size: 13px;
+}
+#settings-root .tc-pic {
+  display: block;
+  width: 100%;
+  height: 190px;
+  border-radius: 10px;
+  object-fit: cover;
+  object-position: top;
+}
+#settings-root .tc-dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 2px var(--text-faint, #9a9aa3);
+}
+#settings-root .tc-dot.tc-dot-on { box-shadow: inset 0 0 0 2px var(--accent, #0a6ee0); }
+#settings-root .tc-dot.tc-dot-on::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent, #0a6ee0);
+}
+#settings-root .tc-opt:focus-visible,
+#settings-root .tc-tile:focus-visible {
+  outline: 2px solid var(--accent, #0a6ee0);
+  outline-offset: 2px;
+}
+
 /* looks:begin ── THE FRAME'S KIT AND ITS LOOKS ──────────────────────────────────────
    GENERATED by scripts/build-looks-css.js from frontend/looks/ (kit.css, one
    file per look, looks.json). Do not edit between the two marks: change a

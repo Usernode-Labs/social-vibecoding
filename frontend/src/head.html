@@ -479,17 +479,26 @@
     //                      standard look with the changes still being
     //                      tried on it, drawn with the brand kit's
     //                      token set
-    //                      Both are drawn in light and dark, and are
+    //                    → 'sunrise'  the Template Chooser's style:
+    //                      the standard pages in a warm cream (light) or
+    //                      deep plum (dark) token set. It sets
+    //                      data-template="sunrise" and NO data-skin, so
+    //                      every rule of the standard look still applies
+    //                      and only the token values change. Sunrise was
+    //                      one of the frame's looks until 19 Nov 2026;
+    //                      this is a new style under the same name.
+    //                      All are drawn in light and dark, and are
     //                      the Look menu's, an admin's preview.
     //                    → anything else, a retired look's id among them
     //                      ('brandkit', 'workbench', 'today', 'playground',
     //                      gone 12 Nov 2026; 'glass', 'pastel', 'mosaic',
-    //                      'sunrise', gone 19 Nov 2026; 'paper', the one
-    //                      frame's last look, gone 20 Nov 2026), reads as
-    //                      the standard look
+    //                      gone 19 Nov 2026; 'paper', the one frame's last
+    //                      look, gone 20 Nov 2026), reads as the standard
+    //                      look
     //                    → key removed for the standard look (the default)
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
-    // every rule of a look to html[data-skin="<look>"]. Every storage access
+    // every rule of a look to html[data-skin="<look>"], and Sunrise's to
+    // html[data-template="sunrise"]. Every storage access
     // sits in try/catch: unreadable storage means the standard look. A pick
     // is held in memory for the page's life as well (`chosen`), so it always
     // applies even when the browser refuses to store it; reading storage is
@@ -506,7 +515,7 @@
       // where a change to it is tried before it is the standard's. It sets no
       // data-skin (no rule of a look applies), only data-skin-wip for a rule
       // of its own, and data-wip-tokens for the token set that draws it.
-      const SKINS = ['wip', 'brand'];
+      const SKINS = ['wip', 'brand', 'sunrise'];
       const _listeners = [];
 
       let pinned = null;
@@ -551,7 +560,13 @@
         root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
         if (skin === 'wip') root.setAttribute('data-wip-tokens', WIP_TOKENS);
         else root.removeAttribute('data-wip-tokens');
-        if (skin !== 'standard' && skin !== 'wip') {
+        // Sunrise wears its own attribute and no data-skin: it keeps every
+        // standard-look rule and changes only the token values (app.css,
+        // THE SUNRISE TEMPLATE). A data-skin="sunrise" would drop the
+        // standard look's 864 scoped rules instead.
+        if (skin === 'sunrise') root.setAttribute('data-template', 'sunrise');
+        else root.removeAttribute('data-template');
+        if (skin !== 'standard' && skin !== 'wip' && skin !== 'sunrise') {
           root.setAttribute('data-skin', skin);
         } else {
           root.removeAttribute('data-skin');

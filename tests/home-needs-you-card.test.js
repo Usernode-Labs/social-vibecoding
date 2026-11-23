@@ -459,7 +459,7 @@ test('Standard (WIP): one token set draws it, the brand kit, and the others are 
   assert.equal(message('settings:experimental.wipTokens.brand'), 'Homeroom brand kit (WIP)');
   assert.doesNotMatch(picker, /data-look-tokens/, 'no second menu for token sets');
   const skinMod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
-  assert.deepEqual([...skinMod.LOOK_CHOICES], ['standard', 'wip', 'brand']);
+  assert.deepEqual([...skinMod.LOOK_CHOICES], ['standard', 'wip', 'brand', 'sunrise']);
   assert.equal(skinMod.WIP_TOKEN_SETS, undefined);
   assert.equal(skinMod.parseLookChoice, undefined);
   // The sidebar's logotype is drawn in the menu's own ink, over nothing of the bar's glass.

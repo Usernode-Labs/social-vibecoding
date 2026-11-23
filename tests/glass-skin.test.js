@@ -163,7 +163,7 @@ test('a pick made in another tab takes over, after a local pick', () => {
 // nothing that reaches it, until it is removed in its own change.
 
 const FRAME_LOOKS = ['paper'];
-const RETIRED_LOOKS = ['brandkit', 'workbench', 'today', 'playground', 'glass', 'pastel', 'mosaic', 'sunrise'];
+const RETIRED_LOOKS = ['brandkit', 'workbench', 'today', 'playground', 'glass', 'pastel', 'mosaic'];
 
 test('paper is neither stored, applied nor pinned any more', () => {
   for (const look of FRAME_LOOKS) {
@@ -215,23 +215,60 @@ test('a retired look, stored or named in the address, is the standard design', (
   }
 });
 
-test('the head and the hook list the same two looks, and neither is the frame\'s', () => {
+// Sunrise is a template (request #6984), not a frame look: it sets
+// data-template="sunrise" and no data-skin, so the standard pages stay and
+// only the token values change. It shares a name with a frame look retired
+// on 19 Nov 2026, but it is a new style rebuilt from the mockup's cream and
+// plum colours.
+test('sunrise is stored and applied without data-skin, and leaves with any other look', () => {
+  const { Skin, store, attrs } = runSkin();
+  Skin.set('sunrise');
+  assert.equal(store.get('homeroom:skin'), 'sunrise');
+  assert.equal(Skin.get(), 'sunrise');
+  assert.equal(attrs.get('data-template'), 'sunrise');
+  assert.equal(attrs.has('data-skin'), false, 'the standard look\'s rules all still apply');
+  Skin.set('brand');
+  assert.equal(attrs.get('data-skin'), 'brand');
+  assert.equal(attrs.has('data-template'), false, 'another look puts the template away');
+  Skin.set('standard');
+  assert.equal(attrs.has('data-template'), false);
+
+  const pinned = runSkin({ search: '?skin=sunrise' });
+  assert.equal(pinned.Skin.get(), 'sunrise');
+  assert.equal(pinned.attrs.get('data-template'), 'sunrise');
+  assert.equal(pinned.attrs.has('data-skin'), false);
+  assert.equal(runSkin({ stored: 'sunrise' }).attrs.get('data-template'), 'sunrise',
+    'a stored sunrise is on <html> as soon as the module runs');
+
+  const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
+  assert.equal(mod.isFrameSkin('sunrise'), false, 'it keeps the standard pages');
+  assert.equal(mod.isKitHome('sunrise'), true, 'so Home draws the kit markup');
+  const css = read('public', 'css', 'app.css');
+  assert.ok(css.includes('html[data-template="sunrise"]:not([data-skin])'), 'app.css has its light block');
+  assert.ok(css.includes('html[data-template="sunrise"]:not([data-skin]).dark'), 'and its dark block');
+  assert.ok(!css.includes('data-skin="sunrise"'), 'it is not a data-skin look');
+});
+
+test('the head and the hook list the same looks, and only paper draws a frame', () => {
   const head = skinModuleSrc().match(/const SKINS = \[([^\]]*)\]/);
   assert.ok(head, 'the head module lists its looks');
   const listed = head[1].split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean);
-  assert.deepEqual(listed, ['wip', 'brand']);
+  assert.deepEqual(listed, ['wip', 'brand', 'sunrise']);
   const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
   assert.deepEqual([...mod.FRAME_SKINS], FRAME_LOOKS);
   assert.deepEqual([...mod.MENU_SKINS], listed, 'the menu offers exactly the looks the head stores');
-  assert.deepEqual([...mod.LOOK_CHOICES], ['standard', ...listed], 'three entries, Standard first');
+  assert.deepEqual([...mod.LOOK_CHOICES], ['standard', ...listed], 'Standard first, then the looks');
   assert.equal(mod.isFrameSkin('standard'), false);
   assert.equal(mod.isFrameSkin('wip'), false);
   assert.equal(mod.isFrameSkin('brand'), false, 'brand keeps the standard pages');
+  assert.equal(mod.isFrameSkin('sunrise'), false, 'sunrise keeps the standard pages too');
   // Even a head module that still answered paper (a cached shell) is not believed.
   globalThis.window = { Skin: { get: () => 'paper', onChange() {} } };
   try { assert.equal(mod.currentSkin(), 'standard'); } finally { delete globalThis.window; }
-  globalThis.window = { Skin: { get: () => 'wip', onChange() {} } };
-  try { assert.equal(mod.currentSkin(), 'wip'); } finally { delete globalThis.window; }
+  for (const look of listed) {
+    globalThis.window = { Skin: { get: () => look, onChange() {} } };
+    try { assert.equal(mod.currentSkin(), look); } finally { delete globalThis.window; }
+  }
 });
 
 // ── The settings switch ──────────────────────────────────────────────────
@@ -242,10 +279,14 @@ test('the head and the hook list the same two looks, and neither is the frame\'s
 // non-admin"). New look's own switch stood above it until 13 Nov 2026;
 // its look, redrawn, is the menu's first option now.
 
-const LOOK_NAMES = { wip: 'Homeroom brand kit (WIP)', brand: 'Paper, simplified, with brand styling' };
+const LOOK_NAMES = { wip: 'Homeroom brand kit (WIP)', brand: 'Paper, simplified, with brand styling', sunrise: 'Sunrise' };
 // 'wip' is named by the token set that draws it, the one kept of its four.
-const LOOK_IDS = { wip: 'experimental.wipTokens.brand', brand: 'experimental.look.brand' };
-const MENU_LOOKS = ['wip', 'brand'];
+const LOOK_IDS = {
+  wip: 'experimental.wipTokens.brand',
+  brand: 'experimental.look.brand',
+  sunrise: 'experimental.look.sunrise',
+};
+const MENU_LOOKS = ['wip', 'brand', 'sunrise'];
 
 test('Settings › Experimental offers the three looks in one menu, shipped hidden, and no New look switch', () => {
   const { renderComponent } = require('./lib/render-tsx');

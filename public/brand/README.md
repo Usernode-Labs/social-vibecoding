@@ -168,3 +168,14 @@ re-encoding. Standard (WIP) draws one across the top of each pinned
 community's card on the Communities page (app.css, `--wip-scene-1` to `-6`).
 They are decoration loaded by the stylesheet when that page is drawn, so
 they are not in `public/sw.js`'s precache list.
+
+## `templates/` — the Template Chooser's two previews
+
+`templates/sunrise-light.webp` and `templates/sunrise-dark.webp` are the
+pictures Settings › Appearance's Template Chooser offers (request #6984).
+Each is a phone-width capture (390 × 470) of the real Home screen in the
+Sunrise style, taken from a local build at `/?demo=1&skin=sunrise&theme=light`
+and the same with `&theme=dark`, signed in as the staging member, then clipped
+to the top of the page and written as WebP at quality 78 (about 12 KB each).
+They are static, so nothing regenerates them: if Home's own look changes,
+replace both with the same steps and update the sizes here.
