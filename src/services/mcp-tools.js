@@ -2062,7 +2062,14 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
     behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
     mergeability: session.mergeability || null,
-    nextStep: changeNextStep(session, checks, liveState, kind),
+    // An outside agent reports a change to its user from this answer as
+    // readily as from get_proposal, so it carries the same sentence about
+    // which address to give. Homeroom bot links changes its own way
+    // (homeroom-bot-voice.js changeMd) and is told nothing new.
+    nextStep: changeNextStep(session, checks, liveState, kind)
+      + (kind === 'external'
+        ? personLinkStep(session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null, session.pr_url)
+        : ''),
     webPath: session.app_slug ? changeWebPath(origin, session.app_slug, session.id) : null,
   };
 }
@@ -6820,7 +6827,9 @@ function registerTools(server, ctx) {
         nextStep: attempt.status === 202 ? goingUpSentence(proposalRefSentence(proposalId, promotedPr))
           : `${proposalRefSentence(proposalId, promotedPr)} is now UP FOR THE GROUP'S VOTE as it stood: `
           + 'nothing was pushed and no code moved. Checks and the staging preview build automatically where '
-          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.',
+          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.'
+          + personLinkStep(promotedSlug ? changeLink(origin, promotedSlug, proposalId, promotedPr) : null,
+            typeof promotedBody.prUrl === 'string' ? promotedBody.prUrl : ((row && row.pr_url) || null)),
       });
     }
     // #4263: or a patch, with the taskId of the proposal's update work order.

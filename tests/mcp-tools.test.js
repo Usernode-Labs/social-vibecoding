@@ -5910,6 +5910,17 @@ test('an answer that carries both addresses says which one a person is given', a
   assert.ok(underway.link);
   assert.doesNotMatch(underway.nextStep, /When you tell the user about it/, 'a card with no pull request has one address');
 
+  // get_change, which an outside agent follows a proposal with as readily.
+  // Homeroom bot reads the same answer and links changes its own way, so it
+  // is told nothing new.
+  const row = { id: 4223, app_slug: 'recipe-box', status: 'promoted', branch_name: 'b', pr_number: 2151, pr_url: 'https://github.com/o/r/pull/2151' };
+  const outside = tools.shapeChange(row, {}, ORIGIN, 'external');
+  says(outside.nextStep, outside.link);
+  assert.doesNotMatch(tools.shapeChange(row, {}, ORIGIN, 'agent_mayor').nextStep, /When you tell the user about it/);
+  assert.doesNotMatch(tools.shapeChange({ ...row, pr_number: null, pr_url: null }, {}, ORIGIN, 'external').nextStep, /When you tell the user about it/);
+  // And the answer that puts a session up for the vote as it stands.
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/services/mcp-tools.js'), 'utf8'), /It ships only if the group votes it in\.'\s+\+ personLinkStep\(promotedSlug \? changeLink\(origin, promotedSlug, proposalId, promotedPr\) : null,/);
+
   // The charter says why, once, and spends no instruction budget on it.
   const charter = require('../src/services/mcp-charter');
   const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'linking-proposals');
