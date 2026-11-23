@@ -164,7 +164,10 @@ step predates the React shell and must not be copied across.
 Design Studio's Homeroom brand guidelines (`baked.design/brand/homeroom/`,
 which needs a sign-in; its files are under `/brand/homeroom/bg/`), saved on
 19 Nov 2026 and committed verbatim: each 1076 × 600 WebP, 5 to 26 KB, no
-re-encoding. Standard (WIP) draws one across the top of each pinned
-community's card on the Communities page (app.css, `--wip-scene-1` to `-6`).
-They are decoration loaded by the stylesheet when that page is drawn, so
-they are not in `public/sw.js`'s precache list.
+re-encoding. Standard (WIP) draws one behind a project page's hero
+(app.css, `--wip-scene-1` to `-6`, `.wip-hero-wash[data-scene]`). No
+community card or tile uses them since 23 Nov 2026: one with no picture of
+its own draws its icon on a wash of the icon's colour instead
+(`frontend/src/features/communities/card.tsx`). They are decoration loaded
+by the stylesheet when that page is drawn, so they are not in
+`public/sw.js`'s precache list.
