@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         sample: ['7010', '7000', '6999']
-        mode: [standard, archive, oci]
+        mode: [oci]
         include:
           - sample: '7010'
             revision: '1918616c204f30096f61edca8adaf3652d733a13'

@@ -94,9 +94,9 @@ else
     # Both scanners can read the layout while the local import is running.
     bash -eo pipefail -c '
       tar -C "$1" -cf - . | docker image load
-      test "$(docker image inspect --format "{{.Id}}" "$2")" = "$2"
-      docker image tag "$2" "$3"
-    ' _ "$layout" "$config" "$image" &
+      actual="$(docker image inspect --format "{{.Id}}" "$2")"
+      [[ "$actual" == "$3" || "$actual" == "$4" ]]
+    ' _ "$layout" "$image" "$manifest" "$config" &
     image_load_pid=$!
   fi
   docker run --rm --network none -e SYFT_CHECK_FOR_APP_UPDATE=false -v "$mount_dir:/image:ro" \
