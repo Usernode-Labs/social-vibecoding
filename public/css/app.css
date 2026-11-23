@@ -32099,6 +32099,20 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-message-bubble.messages-message-self:not(.messages-message-saved) .messages-bubble,
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .gc-bubble-self { box-shadow: inset 0 0 0 1px var(--bl-bubble-line-own); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) [data-bot-card-state] { box-shadow: inset 0 0 0 1px var(--bl-card-line); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-vote-pop { background: var(--bl-card); border-color: var(--bl-edge); box-shadow: var(--bl-lift-home); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch { background: var(--bl-page); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-opt:not([aria-pressed="true"]):hover { background: var(--bl-card); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-yes[aria-pressed="true"] { background: var(--bl-sun); color: var(--bl-on-sun); }
+html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-yes[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--bl-on-sun); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n { color: var(--bl-on-sun); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label) { color: var(--bl-label); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-why-opt { background: var(--bl-raise); border-color: transparent; box-shadow: var(--bl-raise-edge); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-why-opt[aria-checked="true"] { box-shadow: none; }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-box { background: var(--bl-raise); border-color: transparent; box-shadow: var(--bl-field-edge); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-cancel:hover { background: var(--bl-page); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes:not(:disabled):hover { background: var(--bl-sun-lit); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes:not(:disabled):active { box-shadow: var(--bl-pill-edge-down); }
 /* ── END OF THE THREAD PAGE IN THE STANDARD LOOK. ── */
 /* ═══════════════════════════════════════════════════════════════════════
    THE THREAD'S RAIL: "How it got here" (dev-board/topic/thread-rail.tsx).
@@ -34744,4 +34758,72 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble-self { box-shadow: inset 0 0 0 1px var(--bl-bubble-line-own); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-bot-card-state] { box-shadow: inset 0 0 0 1px var(--bl-card-line); }
 
+/* THE VOTE PICKER (request #7035). The box that opens on Vote was still the
+   shell's picker: a generic card edge, a black Yes half and a black Vote yes
+   button, beside a cream page, white cards and yellow buttons. It is one
+   picker drawn in three places — a card's popover (.dev-vote-pop), the
+   phone's bottom sheet (.dev-vote-sheet) and the vote sheet in Needs you
+   (.dev-ws-vote-form) — so the parts inside all three are painted here,
+   from the look's own colours. The sheet's frame stays the kit's; only what
+   is inside it is painted.
 
+   White card with a soft lift and a faint edge; the switch track is the
+   page's cream; the picked Yes is the sun with the website's ink outline
+   (light only, as every sun pill in this look is flat in dark) and the send
+   button is the same sun pill as the page's Vote. The line box wears the
+   page's field edge, the reason chips its raised edge, the labels its label
+   ink. A No keeps the app's own red tint (--state-blocked*, the look has no
+   red), and the tallies stay muted: the look's sky is for what asks for
+   you. Colours, backgrounds, borders and shadows only — no size, padding or
+   type changes. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-vote-pop {
+  background: var(--bl-card);
+  border-color: var(--bl-edge);
+  box-shadow: var(--bl-lift-home);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch {
+  background: var(--bl-page);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-opt:not([aria-pressed="true"]):hover {
+  background: var(--bl-card);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-yes[aria-pressed="true"] {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-yes[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px var(--bl-on-sun);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n {
+  color: var(--bl-on-sun);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label) {
+  color: var(--bl-label);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-why-opt {
+  background: var(--bl-raise);
+  border-color: transparent;
+  box-shadow: var(--bl-raise-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-why-opt[aria-checked="true"] {
+  box-shadow: none;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-box {
+  background: var(--bl-raise);
+  border-color: transparent;
+  box-shadow: var(--bl-field-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-cancel:hover {
+  background: var(--bl-page);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes:not(:disabled):hover {
+  background: var(--bl-sun-lit);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes:not(:disabled):active {
+  box-shadow: var(--bl-pill-edge-down);
+}
