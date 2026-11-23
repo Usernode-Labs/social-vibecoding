@@ -32890,6 +32890,7 @@ html[data-template="sunrise"]:not([data-skin]).dark body:has(:is(#home-screen, #
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-height: 44px;
   padding: 10px 0;
   border: 0;
   background: none;

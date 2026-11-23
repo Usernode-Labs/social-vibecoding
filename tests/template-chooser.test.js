@@ -86,6 +86,13 @@ test('Sunrise draws the standard pages from token values, never from data-skin',
   }
   assert.ok(!css.includes('data-skin="sunrise"'), 'there is no data-skin="sunrise" anywhere');
 
+  // Every control on the card is a finger-sized target on a phone (#6984's
+  // review): the Standard row and each picture tile are at least 44px tall.
+  const opt = css.slice(css.indexOf('#settings-root .tc-opt {'), css.indexOf('#settings-root .tc-style {'));
+  assert.match(opt, /min-height: 44px;/, 'the Standard row is 44px tall');
+  const tile = css.slice(css.indexOf('#settings-root .tc-tile {'), css.indexOf('#settings-root .tc-tile.tc-tile-on'));
+  assert.ok(/height: 190px;/.test(css.slice(css.indexOf('#settings-root .tc-pic {'))), 'the tiles carry a 190px picture');
+
   const head = read('frontend/src/head.html');
   assert.match(head, /root\.setAttribute\('data-template', 'sunrise'\)/);
   assert.match(head, /skin !== 'sunrise'/,
