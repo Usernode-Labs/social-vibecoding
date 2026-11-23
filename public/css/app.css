@@ -7491,6 +7491,306 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .w
 /* The place's own name bar spans the page too (on the hub as well), so the name starts where the cards do. */
 html:not([data-skin]) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) > .dev-ws-placebar,
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+
+/* ── A project's Workshop ───────────────────────────────────── */
+/* The Workshop is drawn as the hub is: the page's whole width on the
+   wallpaper, under its name in the band, every section a label over the
+   look's cards. Its figures are four cards of one shape, as the hub's For
+   you row is (a mark, the number over what it counts), with the bot's line
+   and the approval rule as two slim cards under them; "See all" stands at
+   the end of the Overview label's line. Under them, from 1280px (the sidebar takes 212 of them), What
+   happened and the viewer's own card stand side by side, each under its
+   label; narrower, and for a visitor, who has no card, the page is one
+   column in the order it is written. The pages under the Workshop (a week,
+   the bot's slots) keep the reading column they had. */
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="workshop"]) {
+  max-width: none;
+  font-family: var(--wip-font);
+  --accent: var(--wip-ink-action);
+}
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="workshop"]) {
+  border-radius: 0;
+  border-color: transparent;
+  background-color: var(--wip-page-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="workshop"]) { background-color: transparent; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:not(:has(> [data-ws-dashboard])) { width: 100%; max-width: 760px; margin-inline: auto; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]) { gap: 0.5rem var(--wip-card-gap); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-strip {
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+/* A section's label: Home's, from the same tokens; a section's room is over its label. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > h2[data-ws-part="overview"] { margin-top: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { display: block; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody :is(h2[data-ws-part], .dev-ws-parthead > h2) {
+  padding: 0;
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-parthead { align-items: center; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody .dev-ws-since-clear { color: var(--wip-ink-muted); }
+/* The figures: no card of their own, four cards. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--wip-col-gap);
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head { position: absolute; inset-block-start: -1.75rem; inset-inline-end: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { display: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open { font-size: var(--wip-link-size); font-weight: 650; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-dash { display: contents; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--wip-tile-gap);
+  align-items: center;
+  width: 100%;
+  min-height: 4.5rem;
+  margin: 0;
+  padding: 0.875rem 1rem;
+  border: 0;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  font: inherit;
+  text-align: start;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell[data-ws-dash-open] { cursor: pointer; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell[data-ws-dash-open]:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-mark {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--wip-radius-inner);
+  background-color: var(--wip-mark-2-bg);
+  color: var(--wip-mark-2-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="unclaimed"] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="votes"] > .dev-ws-dash-mark { background-color: var(--wip-mark-1-bg); color: var(--wip-mark-1-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="shipped"] > .dev-ws-dash-mark { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell > b {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  font-size: 1.5rem;
+  font-weight: 750;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--wip-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-label {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  display: block;
+  margin: 0;
+  font-size: var(--wip-link-size);
+  line-height: 1.3;
+  color: var(--wip-ink-muted);
+}
+/* The mark says what the dot said. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot { display: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; margin: 0; font-size: 0.75rem; white-space: nowrap; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="owed"] {
+  padding: 0.1875rem 0.625rem;
+  border-radius: var(--wip-radius-pill);
+  background: var(--wip-cta-from);
+  font-weight: 700;
+  color: var(--wip-cta-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="asof"] { grid-column: 2; grid-row: 3; white-space: normal; }
+/* Where the row of figures is narrow (a phone's two across, a small window's four), a card has no room for a third column: what hangs beside the figure goes under its label. The row is its own container (the Overview's `container-type`). */
+@container (max-width: 1000px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { grid-template-columns: auto minmax(0, 1fr); }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 2; grid-row: 3; justify-self: start; margin-top: 0.25rem; }
+}
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { padding: 0.75rem; }
+}
+/* The bot's line and the rule: two slim cards, each half the row. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) {
+  grid-column: 1 / -1;
+  align-items: center;
+  min-height: 3rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  font-size: var(--wip-link-size);
+  color: var(--wip-ink-soft);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > [data-ws-bot-slots-door]:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard]:has(> [data-ws-bot-slots-door]):has(> [data-ws-approval-rules]) > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) { grid-column: span 2; }
+}
+@media (min-width: 1280px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    align-items: start;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > * { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-parthead { grid-column: 1; order: 1; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> [data-ws-happened]) > .dev-ws-part-work { grid-column: 2; order: 2; align-self: center; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work) > [data-ws-happened] { grid-column: 1; order: 3; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> [data-ws-happened]) > .dev-ws-part-work + section { grid-column: 2; order: 4; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work) > [data-ws-happened] ~ * { order: 5; }
+}
+/* What happened has no card around it (asked 23 Nov 2026): this week is a
+   card, and each week before it a card of its own, as the figures are; the
+   line that nothing is new and "Earlier weeks" stand on the page. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-happened] { gap: var(--wip-col-gap); padding: 0; border-radius: 0; background: none; box-shadow: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-none { margin: 0; padding: 0 0.25rem; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-hweek { padding: 0.75rem 1rem; border-radius: var(--wip-card-radius); background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-wlist { gap: var(--wip-col-gap); margin: 0; border: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] .dev-ws-week { padding: 0.875rem 1rem; border: 0; border-radius: var(--wip-card-radius); background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] .dev-ws-week:hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > [data-ws-weeks-more] { margin: 0; padding-block: 0.375rem; }
+/* The bot's slots, a page under the Workshop: on the wallpaper as its parent
+   is, with no frame of its own around its sections (its cards are the only
+   cards), in the reading column a list of rows wants. */
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="bot"]) {
+  max-width: none;
+  font-family: var(--wip-font);
+  --accent: var(--wip-ink-action);
+}
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="bot"]) {
+  border-radius: 0;
+  border-color: transparent;
+  background-color: var(--wip-page-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="bot"]) { background-color: transparent; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] > .dev-ws-tabbody { width: 100%; max-width: 760px; margin-inline: auto; padding-block-start: 0.75rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-page] { border-radius: 0; background: none; box-shadow: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-page] > .dev-ws-pagehead { margin-block-end: 0.5rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-body] > h2 {
+  padding: 0.75rem 0.25rem 0;
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-body] > .ui-glist {
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+/* The pause notice hangs into the name's band, as on the hub. */
+@media (min-width: 900px) {
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice {
+    position: relative;
+    z-index: 2;
+    height: 0;
+    padding: 0 var(--wip-gutter);
+    display: flex;
+    justify-content: flex-end;
+    overflow: visible;
+    pointer-events: none;
+  }
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] {
+    flex: none;
+    max-width: 62%;
+    margin-top: 0.9375rem;
+    align-self: flex-start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: var(--wip-radius-pill);
+    font-size: var(--wip-link-size);
+    pointer-events: auto;
+  }
+}
+
+/* ── A place's name is in the top bar ───────────────────────── */
+/* From 768px the bar that holds the look, the theme, the bell and the
+   account names the page too, as a phone's header always did: the place's
+   name under the community's, small (header-title.tsx draws it beside the sidebar
+   as well; it is hidden wherever no look asks for it). The band that said
+   it in the page is folded to nothing while the bar says it, so no page
+   says its name twice; the h2 stays in the document. Homeroom's own pages
+   beside the open sidebar show the place alone: the panel's brand is the
+   community's name already. The pause notice, which hung into the band,
+   is a pill in the bar from 900px. */
+@media (min-width: 768px) {
+  /* Beside the community's name the two are a phone's header: the name over the place, small. */
+  html:not([data-skin]) #platform-header #header-title:has(.header-place-name) { overflow: visible; }
+  html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: 1.15;
+  }
+  html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) > #header-title-name { max-width: 100%; font-size: 1.0625rem; font-weight: 650; letter-spacing: -0.01em; }
+  html:not([data-skin]) #platform-header .header-place-name {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--wip-ink);
+    opacity: 0.78;
+  }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) { display: inline-flex; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) > #header-app-tile,
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(.header-place-name) > span > #header-title-name:has(> svg) { display: none; }
+  /* Alone, the place is the bar's title. */
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) .header-place-name { font-size: 1.25rem; font-weight: 700; line-height: 1.4; letter-spacing: -0.01em; opacity: 1; }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar {
+    height: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    box-shadow: none;
+  }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }
+  html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title { display: none; }
+}
+@media (min-width: 900px) {
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice {
+    position: fixed;
+    inset-block-start: calc(var(--browser-banner-h, 0px) + var(--platform-safe-top, 0px) + 0.5625rem);
+    inset-inline-end: 12.5rem;
+    z-index: 20;
+    height: auto;
+    padding: 0;
+  }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: min(36rem, 38vw); margin-top: 0; }
+}
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
   display: grid;
@@ -28033,6 +28333,8 @@ html.in-side-panel body {
    says itself shorter where the CARD is narrow ("Goes live when …"), on a
    phone or beside the side panel, not only where the window is. */
 .dev-ws-strip[data-ws-dashboard] { container-type: inline-size; }
+/* A figure's mark, and the label over the viewer's own card: drawn only by a look that asks for them (the Workshop in the standard look). */
+.dev-ws-dash-mark, .dev-ws-part-work { display: none; }
 .dev-ws-dash-sub {
   display: flex; align-items: center; gap: 3px; margin-top: 1px;
   font-size: 11.5px; line-height: 1.3; color: var(--text-muted);
