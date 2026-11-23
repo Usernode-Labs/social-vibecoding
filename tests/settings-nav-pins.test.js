@@ -292,7 +292,7 @@ test('a folded sidebar group still shows the page you are on', () => {
   assert.deepEqual(rows.map((r) => [r.props['data-settings-nav'], r.props['aria-current']]), [['experimental', 'page']]);
 });
 
-test('the phone menu draws the glyph as the row\'s leading, the controls beside it, and a folded group as its heading', () => {
+test('the phone menu draws the glyph as the row\'s leading, its count under its name, and a folded group as its heading', () => {
   const mobile = DESKTOP.map(({ first, ...g }) => ({ ...g, items: g.items.map(({ active, className, ...i }) => i) }));
   const tree = renderNav({ desktop: null, mobile, visit: 1 }, 'SettingsMobileMenu');
   const listRows = all(tree, (n) => n.props && n.props['data-settings-nav'] !== undefined);
@@ -300,15 +300,25 @@ test('the phone menu draws the glyph as the row\'s leading, the controls beside 
     'a folded group draws no rows');
   for (const r of listRows) {
     assert.ok(r.props.leading, `${r.props['data-settings-nav']} has a glyph`);
-    assert.equal(r.props.inset, 'none', 'the wrapper draws the hairline');
+    // Phone review S9: the row is the card's whole width, so its press fill is too.
+    assert.equal(r.props.inset, 'text', 'the row draws its own hairline: no wrapper beside it');
+    // Phone review #62: the rows' own weight, as on the You page.
+    assert.equal(r.props.titleClassName, undefined, 'the list rows\' title weight');
   }
   const expanded = expand(tree);
-  const pins = all(expanded, (n) => n.props && n.props['data-settings-control'] === 'pin');
-  assert.equal(pins.length, 4, 'every row has its pin, always shown');
+  // Phone review #62: no bookmark and no arrows beside a phone row; they are
+  // on the page (SettingsPagePin).
+  assert.equal(all(expanded, (n) => n.props && n.props['data-settings-control'] !== undefined).length, 0,
+    'no row controls on the phone menu');
+  // The count rides the second line, before the line that says what is behind the row.
+  const phones = listRows.find((r) => r.props['data-settings-nav'] === 'phones');
+  const text = (n) => (typeof n === 'string' ? n : Array.isArray(n) ? n.map(text).join('')
+    : n && n.props ? text(n.props.children) : '');
+  assert.equal(text(phones.props.subtitle), '2 linked');
+  assert.equal(phones.props.trailing, undefined, 'nothing but the chevron at its end');
   // Every phone control is at least 44 by 44 (the shell's tap target).
-  const controls = all(expanded, (n) => n.type === 'button' && n.props
-    && (n.props['data-settings-control'] !== undefined || n.props['data-settings-group-fold'] !== undefined));
-  assert.equal(controls.length, 4 + 2 * 2 + 2, 'four pins, two pinned rows\' arrows, two fold headings');
+  const controls = all(expanded, (n) => n.type === 'button' && n.props && n.props['data-settings-group-fold'] !== undefined);
+  assert.equal(controls.length, 2, 'two fold headings');
   for (const c of controls) {
     const { w, h } = tapSize(c.props.className);
     assert.ok(h >= 44, `${c.props['aria-label']} is at least 44px tall (${h})`);
@@ -318,9 +328,40 @@ test('the phone menu draws the glyph as the row\'s leading, the controls beside 
   const folds = all(expanded, (n) => n.props && n.props['data-settings-group-fold'] !== undefined);
   assert.deepEqual(folds.map((f) => [f.props['data-settings-group-fold'], f.props['aria-expanded']]),
     [['account', true], ['advanced', false]], 'the folded group keeps its heading');
+  assert.equal(text(folds[1]), 'Advanced');
+});
+
+test('a phone row with a count and a line under its name shows both, count first', () => {
+  const mobile = [{ name: 'Integrations', key: 'integrations', folded: false, items: [
+    { ...item('connectors', 'Connectors & CLI', { icon: 'terminal', status: '9 connected' }), subtitle: 'Claude, ChatGPT and the CLI' },
+  ] }];
+  const tree = renderNav({ desktop: null, mobile, visit: 1 }, 'SettingsMobileMenu');
+  const [row] = all(tree, (n) => n.props && n.props['data-settings-nav'] === 'connectors');
   const text = (n) => (typeof n === 'string' ? n : Array.isArray(n) ? n.map(text).join('')
     : n && n.props ? text(n.props.children) : '');
-  assert.equal(text(folds[1]), 'Advanced');
+  assert.equal(text(row.props.subtitle), '9 connected · Claude, ChatGPT and the CLI');
+});
+
+test('on a phone the page you are on carries its own bookmark, and a pinned page its arrows', () => {
+  const page = (desktop) => expand(renderNav({ desktop, mobile: null, visit: 1 }, 'SettingsPagePin'));
+  const unpinned = page(DESKTOP);
+  const pins = all(unpinned, (n) => n.props && n.props['data-settings-control'] === 'pin');
+  assert.equal(pins.length, 1);
+  assert.equal(pins[0].props['aria-label'], 'Pin Account to the top');
+  assert.equal(pins[0].props['aria-pressed'], false);
+  assert.equal(all(unpinned, (n) => n.props && n.props['data-settings-control'] === 'up').length, 0, 'an unpinned page has no arrows');
+  const { h } = tapSize(pins[0].props.className);
+  assert.ok(h >= 44, 'the bookmark is a 44px target');
+
+  const pinnedFirst = DESKTOP.map((g, gi) => ({ ...g, items: g.items.map((i, ii) => ({ ...i, active: gi === 0 && ii === 0 })) }));
+  const pinned = page(pinnedFirst);
+  const labels = (control) => all(pinned, (n) => n.props && n.props['data-settings-control'] === control)
+    .map((n) => [n.props['aria-label'], !!n.props.disabled]);
+  assert.deepEqual(labels('pin'), [['Unpin AI usage & models', false]]);
+  assert.deepEqual(labels('up'), [['Move AI usage & models up', true]], 'the first pinned page cannot move up');
+  assert.deepEqual(labels('down'), [['Move AI usage & models down', false]]);
+
+  assert.equal(page(null), null, 'nothing before the nav\'s first paint');
 });
 
 /**

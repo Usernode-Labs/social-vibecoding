@@ -1178,7 +1178,7 @@ export function PlatformTabs() {
           phone's marker and the bar's grid count those), and it lights on
           the Settings screen itself — the Me row stays lit too, because
           Settings still belongs to the Me section on both bars. (The
-          standard look's open menu draws Me's row at rest there, so only
+          standard look's menu, open or folded, draws Me's row at rest there, so only
           Settings is lit; Me keeps `aria-current`. app.css, "ON SETTINGS,
           SETTINGS IS LIT, NOT YOU".)
       */}

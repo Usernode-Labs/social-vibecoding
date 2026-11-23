@@ -33,6 +33,12 @@ const CONNECTORS_TSX = fs.readFileSync(
 const { demoConnectorState } = require('../src/routes/mcp-remote');
 const { englishPlatformI18n } = require('./lib/platform-i18n');
 
+// How settings.js writes an instant (phone review #126): the date as Linked
+// devices writes it, and the time to the minute.
+const stamp = (value) => new Date(value).toLocaleString(undefined, {
+  year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+});
+
 // The ids the panel drives. Every one is in the rendered markup and in
 // tests/baselines/shell-markup.json; a rename that misses one of the three
 // files shows up here as a case that stopped being reachable.
@@ -243,7 +249,7 @@ test('a passing test names the product and when it was last used', async () => {
   const { Settings, nodes } = testHarness(async () => response(fixture));
   await Settings._testConnector();
 
-  const lastUsed = new Date(fixture.connection.last_used_at).toLocaleString();
+  const lastUsed = stamp(fixture.connection.last_used_at);
   assert.equal(
     statusLine(nodes).textContent,
     message('settings:connectors.test.result.okUsed', {
@@ -450,6 +456,23 @@ test('a client that names none of the tools lands on Another agent under its own
   assert.equal(tool('claude').status, 'none');
 });
 
+test('two connections with one name on a card are numbered in the card\'s order', () => {
+  // Phone review #126 (23 Nov 2026): two rows both called "Claude".
+  const { Settings } = harness({ connectors: [] });
+  const at = new Date(Date.now() - 3600e3).toISOString();
+  const tools = Settings._connectorToolViews([
+    { id: 1, client_name: 'Claude', connected_at: at, last_used_at: at },
+    { id: 2, client_name: 'Claude', connected_at: at, last_used_at: null },
+    { id: 3, client_name: 'Claude Code', connected_at: at, last_used_at: at },
+  ]);
+  const claude = tools.find((entry) => entry.key === 'claude');
+  assert.deepEqual(Array.from(claude.connections, (row) => row.title), [
+    message('settings:connectors.row.sameName', { name: 'Claude', number: 1 }),
+    message('settings:connectors.row.sameName', { name: 'Claude', number: 2 }),
+    'Claude Code',
+  ], 'a name of its own is left as it is');
+});
+
 test('the name decides the card: Anthropic, Codex and OpenAI', async () => {
   const { Settings } = harness({ connectors: [] });
   assert.equal(Settings._connectorTool('Claude Code'), 'claude');
@@ -466,7 +489,11 @@ test('connectors-attention: the expired row is on its card, and only live rows c
   assert.equal(tool('claude').status, 'working');
   assert.equal(tool('chatgpt').status, 'attention');
   const [row] = tool('chatgpt').connections;
-  assert.equal(row.detail, message('settings:connectors.row.expired', { when: new Date(payload.connectors[1].expired_at).toLocaleString() }));
+  // One way to write an instant on these pages (phone review #126): the
+  // date as Linked devices writes it, and the time to the minute.
+  const when = stamp(payload.connectors[1].expired_at);
+  assert.equal(row.detail, message('settings:connectors.row.expired', { when }));
+  assert.doesNotMatch(row.detail, /:\d\d:\d\d/, 'no seconds');
   assert.equal(row.reconnect, false, 'no ChatGPT step signs in again, so no Reconnect');
   assert.equal(tool('claude').connections[0].reconnect, false, 'a live row has none either');
   assert.equal(row.capabilities, message('settings:connectors.capabilities.expiredReadWrite'));
@@ -590,7 +617,7 @@ test('connectors-reconnect: an expired Claude row offers Reconnect and says so',
   const [row] = tool('claude').connections;
   assert.equal(row.reconnect, true);
   const fixture = payload.connectors[0];
-  assert.equal(row.detail, message('settings:connectors.row.expiredReconnect', { when: new Date(fixture.expired_at).toLocaleString() }));
+  assert.equal(row.detail, message('settings:connectors.row.expiredReconnect', { when: stamp(fixture.expired_at) }));
 });
 
 test('an expired row from another agent keeps the steps line and no Reconnect', async () => {
@@ -598,7 +625,7 @@ test('an expired row from another agent keeps the steps line and no Reconnect', 
   const { tool } = await published(null, { connectors: [lapsed], hint: null });
   const [row] = tool('generic').connections;
   assert.equal(row.reconnect, false);
-  assert.equal(row.detail, message('settings:connectors.row.expired', { when: new Date(lapsed.expired_at).toLocaleString() }));
+  assert.equal(row.detail, message('settings:connectors.row.expired', { when: stamp(lapsed.expired_at) }));
 });
 
 test('Reconnect opens the tool\'s card on the step that signs in again', () => {

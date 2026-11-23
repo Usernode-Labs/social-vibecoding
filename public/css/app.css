@@ -9628,20 +9628,22 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
    keeps `aria-current` there, and its row was lit beside the lit button.
    In the open menu its row is at rest instead: a resting row's ink
    (--text-primary, as the shell's own row rule reads it), weight and no
-   ground, and it answers the pointer as a resting row does. Folded, the
-   strip keeps its own drawing, and the phone's bar has no Settings. */
+   ground, and it answers the pointer as a resting row does. The folded
+   strip too (phone review #80, 23 Nov 2026): there Settings' square and
+   You's tile stand one above the other, and both were lit. The phone's bar
+   has no Settings. */
 @media (min-width: 768px) {
-  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] {
+  html:not([data-skin]) #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] {
     background: transparent;
     box-shadow: none;
     color: var(--text-primary);
     font-weight: 600;
   }
-  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]:hover {
+  html:not([data-skin]) #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]:hover {
     background: var(--wip-nav-hover);
     color: var(--wip-nav-ink-strong);
   }
-  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
+  html:not([data-skin]) #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
     color: inherit;
   }
 }
@@ -13222,10 +13224,16 @@ html[data-browser-scroller="settings-screen"] #settings-screen:has(#settings-sec
   display: flex;
   flex-direction: column;
 }
+/* THE SHEET HUGS WHAT IT HOLDS (phone review #121, 23 Nov 2026). It took
+   the rest of the height and ran under the tab bar, so Appearance (a
+   heading, a sentence and three segments) was a card from the top bar to
+   behind the tab bar, 550pt of it empty, with its foot cut off. It is as
+   tall as its content now, its four corners round, and the screen's own
+   safe-scroll padding keeps it clear of the tab bar. */
 #settings-content-col > .settings-sheet {
-  flex: 1 0 auto;
-  margin-bottom: calc(-1 * max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
-  padding-bottom: calc(32px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
+  flex: 0 0 auto;
+  border-end-end-radius: 1.75rem;
+  border-end-start-radius: 1.75rem;
 }
 /* Keyboard up: the screen's safe-scroll padding is 0 (see
    `html.un-kb .platform-safe-scroll`), so there is nothing to spend. */
@@ -13239,6 +13247,22 @@ html.un-kb #settings-content-col > .settings-sheet {
    `md:pt-5` (8 for the header's notch, 12 of air) is the step for both. */
 @media (min-width: 1024px) {
   #settings-content-col > .settings-sheet { margin-top: 0; }
+}
+/* A PRESSED MENU ROW IS ITS FILL (phone review S9, 23 Nov 2026). The kit
+   shrinks every button to 97% on press (native.css, "Touch polish"), so a
+   Settings row's press fill stood a few points in from the card's edges, a
+   grey slab inside the rounded card. The row keeps its size; its fill, the
+   card's whole width, clipped by the card's radius, is the feedback. */
+#settings-mobile-menu-host .settings-menu-row:active {
+  transform: none;
+  filter: none;
+}
+/* AIR UNDER SIGN OUT (phone review #120, 23 Nov 2026). Under the phone's
+   menu Sign out is the page's last control, and it ended with its shadow on
+   the tab bar. The page's own section gap stands under it now. From lg the
+   footer is in the sidebar, which has its own end padding. */
+@media (max-width: 1023px) {
+  #settings-footer { padding-bottom: 24px; }
 }
 /* THE SECTION LIST IS A SHEET TOO (UX audit, 20 Oct 2026). It was drawn
    straight on the strip while the pane rose beside it, so one screen had two
@@ -13315,6 +13339,17 @@ html.un-kb #settings-content-col > .settings-sheet {
   font-size: 17px;
   line-height: 1.3;
   letter-spacing: 0;
+}
+/* ONE HEADING SIZE ON A PHONE (phone review #126, 23 Nov 2026). Below lg the
+   top bar names the page, so every heading in a pane is a part's heading,
+   at the part size: a one-part page's heading was 22px and a several-part
+   page's 17px, so Appearance and AI usage opened at two different sizes. */
+@media (max-width: 1023px) {
+  .settings-sheet h3 {
+    font-size: 17px;
+    line-height: 1.3;
+    letter-spacing: 0;
+  }
 }
 @media (min-width: 1024px) {
   .settings-sheet:has(> [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden) > :not(.hidden)) > .settings-page-title {
