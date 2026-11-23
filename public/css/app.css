@@ -8274,12 +8274,14 @@ html:not([data-skin]) body > :is(.dev-ws-side) {
    tiles say less. */
 html:not([data-skin]) #app-list .app-card-opened { display: none; }
 /* THE STANDARD LOOK'S BOARD KEEPS ITS WALLPAPER (20 Nov 2026), so the head that stays put while the columns scroll
-   under it (the place's name, then the filter line and the columns' names) wears the card's colour, nearly solid, where
+   under it (the place's name, then the filter line and the columns' names) wears the card's colour, solid, where
    Standard (WIP) paints its flat page colour. No blur: the shell keeps none over a few pixels (tests/no-glass-one-scheme).
+   It was 90% (audit, 23 Nov 2026): with no blur, a card passing under the head was read through it, its title ghosting
+   across "All items", the search box and the columns' names. Nothing shows through a head that words scroll under.
    The place's bar wears it only once it is pinned (`data-ws-pinned`, workshop.tsx usePinnedStrip): at rest nothing is
    under it, and it sits on the page over its hairline as it does over the hub. */
 html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"][data-ws-pinned] > .dev-ws-placebar,
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: color-mix(in srgb, var(--wip-card-bg) 90%, transparent); }
+html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: var(--wip-card-bg); }
 /* THE STANDARD LOOK'S BOARD IS A PAGE UNDER THE WORKSHOP (20 Nov 2026): the Workshop's door opens its overview, and the
    board's head leads with the way back up to it and the page's name, "‹ All items", the page's one heading. So the
    place's name over it is the quiet name of where you are, as "Hub" is over the hub's hero, not a second title. */
