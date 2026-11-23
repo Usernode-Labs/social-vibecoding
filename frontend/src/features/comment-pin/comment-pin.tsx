@@ -656,8 +656,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // The phone's sheet rides the keyboard: its fields reveal inside it, and
   // it moves with the keys the way the shell's own bottom sheets do.
   // Its head and its foot stay put while the rest scrolls (app.css), so the
-  // comment's field is revealed between the two (#19).
-  useKeyboardSurface(boxRef, { ride: true, foot: '.comment-sheet-actions', head: '.comment-sheet-head' });
+  // comment's field is revealed between the two (#19): `sheetHead` is how
+  // much of the sheet's top its pinned head covers, measured below.
+  const sheetHeadRef = useRef<HTMLDivElement>(null);
+  const [sheetHead, setSheetHead] = useState(0);
+  useKeyboardSurface(boxRef, { ride: true, foot: '.comment-sheet-actions', head: sheetHead });
 
   const update = useCallback((key: number, patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => {
     setDraft((d) => (d && d.key === key ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d));
@@ -691,6 +694,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     const l = floatLeftRef.current?.offsetWidth || 0;
     const r = floatRightRef.current?.offsetWidth || 0;
     if (l !== side.left || r !== side.right) setSide({ left: l, right: r });
+    const sheet = boxRef.current;
+    const pinned = sheetHeadRef.current;
+    const covered = sheet && pinned ? Math.max(0, Math.round(pinned.getBoundingClientRect().bottom - sheet.getBoundingClientRect().top)) : 0;
+    if (covered !== sheetHead) setSheetHead(covered);
   });
   useEffect(() => {
     const vv = window.visualViewport;
@@ -2202,7 +2209,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             /* The sheet's head stays at its top while the rest scrolls under
                it, so its ✕ is where a sheet's ✕ is looked for and never
                scrolled away with the keys up. */
-            <div className="comment-sheet-head">
+            <div ref={sheetHeadRef} className="comment-sheet-head">
               <div aria-hidden="true" className="comment-sheet-grabber" />
               {draft.active != null ? head : null}
             </div>

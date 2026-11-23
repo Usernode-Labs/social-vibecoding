@@ -182,7 +182,8 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   // On a phone the box is a bottom sheet, riding the keyboard, and while the
   // wait for the next pin is on it holds just that row.
   assert.match(src, /comment-sheet-in platform-kb-sheet/);
-  assert.match(src, /useKeyboardSurface\(boxRef, \{ ride: true, foot: '\.comment-sheet-actions', head: '\.comment-sheet-head' \}\);/);
+  assert.match(src, /useKeyboardSurface\(boxRef, \{ ride: true, foot: '\.comment-sheet-actions', head: sheetHead \}\);/);
+  assert.match(src, /<div ref=\{sheetHeadRef\} className="comment-sheet-head">/, 'the pinned head is measured for it');
   assert.match(src, /phone && draft\.active == null \?/);
   assert.match(src, /nextPinRow\n          \) : \(/);
   // The close-up at the top of the sheet draws the pin's area of the picture
@@ -336,7 +337,7 @@ test('on a phone a tap leaves a small comment, and only its field opens the shee
   const phoneHead = head.slice(head.indexOf('{phone ? ('), head.indexOf(') : (\n        <>'));
   assert.ok(phoneHead.includes('ChevronDownIcon'), 'the phone head is found');
   assert.doesNotMatch(phoneHead, /toForm/);
-  assert.match(src, /<div className="comment-sheet-head">\s*<div aria-hidden="true" className="comment-sheet-grabber" \/>/);
+  assert.match(src, /<div ref=\{sheetHeadRef\} className="comment-sheet-head">\s*<div aria-hidden="true" className="comment-sheet-grabber" \/>/);
   const css = read('public/css/app.css');
   assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-head \{\s*position: sticky;\s*top: -0\.75rem;/,
     'the head stays at the top while the sheet scrolls under it');

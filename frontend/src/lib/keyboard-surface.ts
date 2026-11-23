@@ -57,15 +57,12 @@ import { KB_OPEN_CLASS } from './keyboard-open';
  * no style or class of the sheet's is touched and its own open and close
  * transitions compose with it), and none with reduced motion.
  *
- * A sheet can name a sticky row at its foot (`foot`, the feedback sheet's
- * Cancel and Post request) and one at its head (`head`, its title with the
- * keys up): the reveal keeps the field between the two, and only while each
- * is actually sticky, since a row in the flow scrolls away with the rest.
- * When the keys' arrival leaves the focused field under one of them, it is
- * revealed in that same viewport event, without waiting for the keys to
- * settle: the sheet shrinks first, and for a beat the bar sat over the very
- * field being typed in (phone review #18, 23 Nov 2026). The settled reveal
- * still follows.
+ * A sheet that names a sticky row at its foot (`foot`) has a field the
+ * keys leave under that row, or under its `head`, revealed in the same
+ * viewport event, without waiting for the keys to settle: the sheet shrinks
+ * first, and for a beat the feedback sheet's Cancel / Post request row sat
+ * over the very field being typed in (phone review #18, 23 Nov 2026). The
+ * settled reveal still follows.
  *
  * Structural no-op on a desktop, without `visualViewport`, or without the
  * kit. Nothing is written to the DOM but the scroller's scrollTop and, for a
@@ -200,7 +197,7 @@ export function attachKeyboardSurface(
   scroller: HTMLElement | null | undefined,
   win: WinLike | undefined = typeof window !== 'undefined' ? (window as unknown as WinLike) : undefined,
   doc: DocLike | undefined = typeof document !== 'undefined' ? (document as unknown as DocLike) : undefined,
-  options: { ride?: boolean; foot?: string; head?: string } = {},
+  options: { ride?: boolean; foot?: string; head?: number } = {},
 ): () => void {
   const kit = win?.unNative;
   const vv = win?.visualViewport;
@@ -244,45 +241,35 @@ export function attachKeyboardSurface(
     } catch { /* it simply lands where it is */ }
   };
 
-  // A sticky row the sheet named (`foot`, `head`): the last match that is
-  // laid out and sticky is the one showing (a form and an edit section, one
-  // hidden at a time). A row in the flow covers nothing.
-  const stickyRow = (selector: string | undefined): DOMRect | null => {
-    if (!selector) return null;
-    const rows = scroller.querySelectorAll(selector);
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      const rect = rows[i].getBoundingClientRect();
-      if (!rect.width && !rect.height) continue;
-      let position = 'sticky';
-      try { position = getComputedStyle(rows[i]).position; } catch { /* no styles to read: as before */ }
-      return position === 'sticky' ? rect : null;
-    }
-    return null;
-  };
-  // The part of the scroller the sticky rows leave in sight.
-  const viewOf = () => {
-    const view = scroller.getBoundingClientRect();
-    // A sticky row at the scroller's foot (#5802): the form has no submit
-    // button to find, so the row that covers the view's foot names itself.
-    const foot = stickyRow(options.foot);
-    const head = stickyRow(options.head);
-    return {
-      top: head ? Math.max(view.top, head.bottom) : view.top,
-      bottom: foot ? Math.min(view.bottom, foot.top) : view.bottom,
-    };
-  };
-
-  const reveal = (field: FieldLike | null, instant = false) => {
+  const reveal = (field: FieldLike | null) => {
     if (!field || doc.activeElement !== field || !scroller.contains(field)) return;
-    const view = viewOf();
+    const view = scroller.getBoundingClientRect();
     const box = field.getBoundingClientRect();
     const action = actionOf(field, scroller);
     const act = action ? action.getBoundingClientRect() : null;
-    const viewBottom = view.bottom;
+    // A sticky row at the scroller's foot (#5802): the form has no submit
+    // button to find, so the row that covers the view's foot names itself.
+    // The last match with a rect is the one showing (a form and an edit
+    // section, one hidden at a time).
+    // And a bar floating over the scroller's head (the make screen's ✕,
+    // phone review #9): `head` px of the view's top are covered, so a field
+    // is revealed below them.
+    const viewTop = view.top + (options.head && options.head > 0 ? options.head : 0);
+    let viewBottom = view.bottom;
+    if (options.foot) {
+      const rows = scroller.querySelectorAll(options.foot);
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const rect = rows[i].getBoundingClientRect();
+        if (rect.width || rect.height) {
+          viewBottom = Math.min(viewBottom, rect.top);
+          break;
+        }
+      }
+    }
     const top = revealScrollTop({
       scrollTop: scroller.scrollTop,
       scrollMax: scroller.scrollHeight - scroller.clientHeight,
-      viewTop: view.top,
+      viewTop,
       viewBottom,
       fieldTop: box.top,
       fieldBottom: box.bottom,
@@ -291,21 +278,35 @@ export function attachKeyboardSurface(
     });
     if (top === Math.round(scroller.scrollTop)) return;
     try {
-      scroller.scrollTo({ top, behavior: instant || reduced() ? 'auto' : 'smooth' });
+      scroller.scrollTo({ top, behavior: revealNow || reduced() ? 'auto' : 'smooth' });
     } catch {
       scroller.scrollTop = top;
     }
   };
 
-  // The keys have just moved the sheet: a focused field a sticky row now
-  // covers is revealed at once, in this event (#18).
+  // The keys have just moved a sheet that names its foot: a focused field
+  // its foot row or its covered head now hides is revealed at once, in this
+  // event (#18), and with no smooth scroll to wait on.
+  let revealNow = false;
   const revealIfCovered = () => {
-    if (!options.foot && !options.head) return;
+    if (!options.foot) return;
     const field = (pending || doc.activeElement) as FieldLike | null;
     if (!field || doc.activeElement !== field || !scroller.contains(field)) return;
-    const view = viewOf();
+    const view = scroller.getBoundingClientRect();
+    const top = view.top + (options.head && options.head > 0 ? options.head : 0);
+    let bottom = view.bottom;
+    const rows = scroller.querySelectorAll(options.foot);
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const rect = rows[i].getBoundingClientRect();
+      if (rect.width || rect.height) {
+        bottom = Math.min(bottom, rect.top);
+        break;
+      }
+    }
     const box = field.getBoundingClientRect();
-    if (box.bottom > view.bottom || box.top < view.top) reveal(field, true);
+    if (box.bottom <= bottom && box.top >= top) return;
+    revealNow = true;
+    try { reveal(field); } finally { revealNow = false; }
   };
 
   const clearTimers = () => {
@@ -456,11 +457,11 @@ export function attachKeyboardSurface(
  * attachKeyboardSurface on whatever element `ref` holds, re-attached when
  * React hands it a new node (the sheet renders its panel only while open).
  */
-export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string; head?: string } = {}): void {
-  const attached = useRef<{ el: HTMLElement; foot: string | undefined; head: string | undefined; detach: () => void } | null>(null);
+export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string; head?: number } = {}): void {
+  const attached = useRef<{ el: HTMLElement; foot: string | undefined; head: number; detach: () => void } | null>(null);
   const ride = !!options.ride;
   const foot = options.foot;
-  const head = options.head;
+  const head = options.head || 0;
   useEffect(() => {
     const el = ref.current;
     if (attached.current && attached.current.el === el && attached.current.foot === foot && attached.current.head === head) return;

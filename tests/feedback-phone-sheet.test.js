@@ -172,7 +172,7 @@ test('the form takes the keyboard without panning the page', () => {
 test('the feedback dialog opts in and rides the keyboard on its card', () => {
   assert.match(FEEDBACK, /phoneSheet: true,/);
   assert.match(FEEDBACK, /<div aria-hidden="true" className="feedback-sheet-grabber" \/>/);
-  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions', head: '#feedback-form > h2' \}\);/);
+  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions', head: headPx \}\);/);
   // The option travels through useDialog to useStaticModal.
   assert.match(USE_DIALOG, /phoneSheet\?: boolean;/);
   assert.match(USE_DIALOG, /phoneSheet: opts\.current\.phoneSheet,/);
@@ -188,7 +188,10 @@ test('with the keys up the sheet keeps its heading and sits on the keys (phone r
   // On a screen the keys leave short, the row is in the flow.
   assert.match(APP_CSS, /html\.platform-kb-short #feedback-modal\[data-dialog-sheet\] \.feedback-actions \{\s*position: relative;/);
   // A field is revealed between the heading and the row.
-  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions', head: '#feedback-form > h2' \}\);/);
+  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions', head: headPx \}\);/);
+  assert.match(FEEDBACK, /const next = card\?\.closest\('\[data-dialog-sheet\]'\) && heading\?\.offsetHeight \? 24 \+ 6 \+ heading\.offsetHeight \+ 8 : 0;/,
+    'the pinned heading\'s height');
+  assert.match(FEEDBACK, /document\.documentElement\.classList\.contains\(KB_OPEN_CLASS\)\) return;/, 'measured with the keys down only');
   // The keys going down put the sheet back where it was.
   assert.match(FEEDBACK, /if \(now\) \{ before = card\.scrollTop; return; \}/);
   assert.match(FEEDBACK, /requestAnimationFrame\(\(\) => \{ card\.scrollTop = top; \}\);/);

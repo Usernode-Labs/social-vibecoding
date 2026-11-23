@@ -126,6 +126,12 @@ export function FeedbackDialog() {
   // rides the keyboard with it the way the sign-in sheet's does, and the
   // sheet's slide-up is `useStaticModal`'s `phoneSheet` presentation.
   const cardRef = useRef<HTMLDivElement>(null);
+  // How much of the sheet's top its heading covers while it is pinned with
+  // the keys up (app.css, phone review #17): the card's 24px top padding,
+  // the grabber's 6px, the heading's own line and 8px under it. Measured
+  // with the keys down only (the heading in the flow), so it holds still
+  // while they are up and the surface never re-attaches mid-reveal.
+  const [headPx, setHeadPx] = useState(0);
   const dialog = useDialog<OpenOptions>('feedback', {
     phoneSheet: true,
     onOpen: (opts) => {
@@ -143,9 +149,17 @@ export function FeedbackDialog() {
       Feedback._reset();
     },
   });
+  // After the dialog's own effects, which mark the card as a phone sheet.
+  useEffect(() => {
+    if (typeof document === 'undefined' || document.documentElement.classList.contains(KB_OPEN_CLASS)) return;
+    const card = cardRef.current;
+    const heading = card?.querySelector('#feedback-form > h2') as HTMLElement | null;
+    const next = card?.closest('[data-dialog-sheet]') && heading?.offsetHeight ? 24 + 6 + heading.offsetHeight + 8 : 0;
+    if (next !== headPx) setHeadPx(next);
+  });
   // With the keys up the heading stays at the sheet's top (app.css, phone
   // review #17), so a field is revealed under it as well as above the row.
-  useKeyboardSurface(cardRef, { ride: true, foot: '.feedback-actions', head: '#feedback-form > h2' });
+  useKeyboardSurface(cardRef, { ride: true, foot: '.feedback-actions', head: headPx });
   // Read once the island is live, never in the prerender (#87).
   useEffect(() => { setTouch(onTouchScreen()); }, []);
   // The keys going down put the sheet back where it was before they came up
