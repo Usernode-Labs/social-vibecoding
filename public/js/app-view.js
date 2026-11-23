@@ -24926,6 +24926,27 @@ const AppView = {
           act: () => AppView.promptReopenIssue(n),
         });
     }
+    // #7000: the request's own address, so a link pasted elsewhere opens this
+    // request and not just its title. Same row, words and notice as a change's
+    // page (_proposalMenuItems) and a governance vote's (_govDecisionMenu).
+    // Outside the closed guard above: sharing a closed request changes nothing,
+    // so it is offered on one too. A read-only viewer's ⋯ keeps exactly the
+    // rows it has always had (tests/card-action-layout.test.js pins that list,
+    // and the side panel's own Copy link is there for that page); this row is
+    // the only thing this change adds to the menu.
+    if (!AppView.readOnly) items.push({
+      label: PlatformI18n.t('changes:issue.menu.copyLink'),
+      icon: 'link',
+      title: PlatformI18n.t('changes:issue.menu.copyLink'),
+      copyLink: true,
+      act: () => {
+        const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+        const url = `${window.location.origin}/#app/${slug}/dev/issues/${n}`;
+        Promise.resolve(PlatformUI.copyText(url)).then((ok) => {
+          if (ok && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:issue.menu.copyLinkDone'));
+        });
+      },
+    });
     items.push({
       label: PlatformI18n.t('changes:issue.menu.share'),
       icon: 'share',
