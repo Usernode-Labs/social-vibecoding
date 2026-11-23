@@ -116,6 +116,27 @@ async function readSettings(pool) {
   return parseSettings(rows);
 }
 
+/**
+ * A sign-off is a name, not a list (phone review #103, 23 Nov 2026). A
+ * message that ends "…fun building" and then "- Evan" on a line of its own
+ * reads to the chat's markdown as a one-item list, so the welcome ended in
+ * a bullet point. The last line's leading dash (or * or +) goes and the name
+ * stays on its own line (the chat keeps single line breaks). A message that
+ * really ends in a list, its last line following another item, is left as
+ * it was. Pure, so db/migrate.js applies it to what was saved and sent.
+ */
+const SIGN_OFF = /(^|\n)[ \t]*[-*+][ \t]+([^\n]*\S)\s*$/;
+const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/;
+function plainSignOff(text) {
+  const value = String(text ?? '');
+  const match = SIGN_OFF.exec(value);
+  if (!match) return value;
+  const head = value.slice(0, match.index + match[1].length);
+  const lines = head.replace(/\s+$/, '').split('\n');
+  if (!head.trim() || LIST_ITEM.test(lines[lines.length - 1] || '')) return value;
+  return head + match[2];
+}
+
 /** `{username}` in a title or message becomes the new person's username. */
 function render(template, { username }) {
   return String(template).split('{username}').join(username);
@@ -382,7 +403,7 @@ async function processOne(pool, userId, settings) {
   let error = null;
   try {
     result = await conversations.sendMessage(pool, { id: step.senderId }, step.conversationId, {
-      content: render(settings.message, { username: step.username }),
+      content: plainSignOff(render(settings.message, { username: step.username })),
       idempotency_key: `welcome-dm:${userId}`,
     });
     if (!result) error = 'send_refused';
@@ -461,6 +482,7 @@ module.exports = {
   searchPeople,
   render,
   renderTitle,
+  plainSignOff,
   SETTING_KEYS,
   DEFAULT_TITLE,
   DEFAULT_MESSAGE,
