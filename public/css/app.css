@@ -8384,7 +8384,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
    screen. Not while the app has the whole window (the header is hidden). */
 @media (min-width: 768px) {
   html:not([data-skin]) body:not(:has(#platform-header.hidden)) #app-frame-host {
-    /* The app's view starts 8px under the bar's foot (the sheet tucked its round top there): the card clears the bar's line by its own 8px. */
+    /* The app's view starts 16px under the line at the page's edge (the bar's `-mb-2` sits over it): the card clears the line by its own 1rem. */
     margin: 1rem var(--wip-gutter) var(--wip-gutter);
     border: 1px solid var(--wip-card-line);
     border-radius: var(--wip-card-radius);
@@ -9422,7 +9422,7 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
       radial-gradient(circle at 100% 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
       linear-gradient(to right, transparent var(--platform-rail-w, 0px), var(--dc-sheet-solid) 0);
     background-position: var(--platform-rail-w, 0px) 0, 0 0;
-    background-size: var(--wip-nav-page-radius) var(--wip-nav-page-radius), auto;
+    background-size: var(--wip-nav-page-radius) var(--wip-nav-page-radius), 100% calc(100% - 0.5rem);
     background-repeat: no-repeat;
   }
   /* Right to left the panel is on the right. */
@@ -9544,11 +9544,14 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
      blue, header on the page" design): a hairline from the panel's edge,
      open or folded to its strip, to the window's, in the bar's own line, so
      the bar reads as part of the frame rather than part of the page. On
-     every page, a project's too. */
+     every page, a project's too. It sits at the page's top edge, not the
+     bar's box bottom: the bar carries `-mb-2` (a bar of air over the page),
+     and the line drawn at the box bottom ran 8px down into the first card,
+     as the Workshop's row did (#7048). */
   html:not([data-skin]) body #platform-header#platform-header::after {
     content: "";
     position: absolute;
-    inset-block-end: 0;
+    inset-block-end: 0.5rem;
     inset-inline-start: var(--platform-rail-w, 0px);
     inset-inline-end: 0;
     height: 1px;
@@ -9568,14 +9571,15 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
      ("THE ONE FAKED LAYER"), and the header's own `clip-path` keeps it to the
      bar. Its clip starts past the menu's edge and the rounded page corner, so
      the panel and the corner are untouched. The ::after line above paints
-     over this layer, so it stays on the bar's edge. */
+     over this layer, so it stays at the page's edge: the layer's bottom is
+     cut by the bar's `-mb-2` too, so the ground ends at the line. */
   html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before {
     content: "" !important;
     background: var(--home-wallpaper);
-    clip-path: inset(0 0 0 calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)));
+    clip-path: inset(0 0 0.5rem calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)));
   }
   html:not([data-skin])[dir="rtl"] body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before {
-    clip-path: inset(0 calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)) 0 0);
+    clip-path: inset(0 calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)) 0.5rem 0);
   }
   /* Standard (WIP) gives the page and its frame one colour, so there the
      layer paints that colour rather than the wallpaper the standard look has. */

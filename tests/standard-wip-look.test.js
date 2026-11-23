@@ -249,7 +249,7 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   assert.ok(line, 'the top bar ends in a line');
   assert.match(line.body, /content: "";/);
   assert.match(line.body, /position: absolute;/, 'on the bar itself, which is the positioned box');
-  assert.match(line.body, /inset-block-end: 0;/, 'at its foot');
+  assert.match(line.body, /inset-block-end: 0\.5rem;/, 'at the page\'s top edge: the bar\'s -mb-2 overlap (#7048)');
   assert.match(line.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'from the menu\'s edge, open or folded to its strip');
   assert.match(line.body, /inset-inline-end: 0;/, 'to the window\'s');
   assert.match(line.body, /height: 1px;/);
@@ -274,12 +274,12 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   assert.ok(under, 'Home and Communities paint the bar\'s layer');
   assert.match(under.body, /content: "" !important;/, 'it turns the layer back on against the content-none rule above');
   assert.match(under.body, /background: var\(--home-wallpaper\);/, 'with the page\'s own wallpaper, as the body paints it');
-  assert.match(under.body, /clip-path: inset\(0 0 0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\)\);/,
-    'clipped past the menu\'s edge and the rounded page corner');
+  assert.match(under.body, /clip-path: inset\(0 0 0\.5rem calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\)\);/,
+    'clipped past the menu\'s edge and the rounded page corner, and by the bar\'s -mb-2 at the foot');
   const rtlUnder = all.find((r) => r.selector === `${MENU_SCOPE}[dir="rtl"] body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before`);
   assert.ok(rtlUnder, 'right to left the menu is on the right');
-  assert.match(rtlUnder.body, /clip-path: inset\(0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\) 0 0\);/,
-    'so its strip is cut on the other side');
+  assert.match(rtlUnder.body, /clip-path: inset\(0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\) 0\.5rem 0\);/,
+    'so its strip is cut on the other side, and its foot by the bar\'s -mb-2');
   // Standard (WIP) makes the page and its frame one colour, so there the layer paints that colour.
   const wip = rules(wipBlock());
   const wipTokens = new Set();
@@ -428,7 +428,7 @@ test('where the page scrolls under the top bar, the bar has a ground from the me
   // …and the page's top corner at that edge, drawn as the corner layer draws it, since the bar lies over that layer.
   assert.match(ltr.body, /radial-gradient\(circle at 100% 100%, transparent calc\(var\(--wip-nav-page-radius\) - 0\.5px\), var\(--wip-nav-bg\) var\(--wip-nav-page-radius\)\),\s*linear-gradient/, 'the corner is the top layer');
   assert.match(ltr.body, /background-position: var\(--platform-rail-w, 0px\) 0, 0 0;/);
-  assert.match(ltr.body, /background-size: var\(--wip-nav-page-radius\) var\(--wip-nav-page-radius\), auto;/);
+  assert.match(ltr.body, /background-size: var\(--wip-nav-page-radius\) var\(--wip-nav-page-radius\), 100% calc\(100% - 0\.5rem\);/, 'the plane ends at the line, 0.5rem above the box bottom (#7048)');
   assert.match(ltr.body, /background-repeat: no-repeat;/);
   assert.doesNotMatch(ltr.body, /radius: 0/, 'no corner is squared off');
   const rtl = all.find((r) => r.selector.startsWith(`${MENU_SCOPE}[dir="rtl"][data-browser-scroller] ${DOCKED} #platform-header,`));
