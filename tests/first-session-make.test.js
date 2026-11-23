@@ -761,7 +761,7 @@ test('after Make it: the build line, then one invite, and the second button says
   assert.match(sheet, />Copy link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
   assert.match(src, /\{t\('onboarding:firstSession\.invite\.noteHint'\)\}/);
-  assert.match(sheet, /When you share, your note also goes in the group chat as your first message\./);
+  assert.match(sheet, /Your note goes with the link\. When you share or copy it, it also goes in the group chat as your first message\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
   assert.equal(invites.LIMITS.maxDays, 30);

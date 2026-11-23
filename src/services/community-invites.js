@@ -624,6 +624,30 @@ async function markShared(pool, { inviteId, user }) {
   return { ok: true, shared: true };
 }
 
+/**
+ * A link's note, changed after it was made: the invite sheet's note box may
+ * be typed or cleared after the link exists, and the note is what its page
+ * and its preview show. Only its maker may change it, and only while it is
+ * live (not turned off); `note` goes through cleanNote, so an empty box sets
+ * null and a note over the limit is refused. Returns `{ ok: true, note }` or
+ * `{ ok: false, status, error }`, a link that is not theirs being a 404 as
+ * everywhere here.
+ */
+async function setInviteNote(pool, { inviteId, user, note }) {
+  const id = parseInt(inviteId, 10);
+  if (!Number.isFinite(id) || !user?.id) return { ok: false, status: 404, error: 'Invite link not found' };
+  const cleaned = cleanNote(note);
+  if (!cleaned.ok) return { ok: false, status: 400, error: cleaned.error };
+  const { rows } = await pool.query(
+    `UPDATE community_invites SET note = $3
+      WHERE id = $1 AND created_by = $2 AND revoked_at IS NULL
+      RETURNING note`,
+    [id, user.id, cleaned.note]
+  );
+  if (!rows.length) return { ok: false, status: 404, error: 'Invite link not found' };
+  return { ok: true, note: rows[0].note || null };
+}
+
 // The link and its project, as preview and redeem read them. `lock` takes
 // the row lock redeem needs; the caller holds a transaction.
 async function loadInvite(db, token, { lock = false } = {}) {
@@ -1317,6 +1341,7 @@ async function dropCarried(pool, req, res, userId) {
 
 module.exports = {
   markShared,
+  setInviteNote,
   DEFAULT_DAYS,
   DEFAULT_USES,
   LIMITS,
