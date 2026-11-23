@@ -271,16 +271,19 @@ test('5. without a welcome, or once it has been shown, Accept opens the chat as 
   assert.deepEqual(calls.filter((c) => c[0] === 'discussion'), [['discussion', 'arena']]);
 });
 
-test('4. an invite to a project the viewer is already in says so under the sentence', () => {
+test('4. an invite to a project the viewer is already in is an offer to build', () => {
   const { N } = loadNotifications();
   let state = null;
   N._store = { set: (patch) => { state = patch; } };
-  // #4740: they joined through the Join button (or a link) while the build
-  // invite was still waiting, so the headcount they are part of is replaced.
+  // #4740/#7027: they joined through the Join button (or a link) while the
+  // build invite was still waiting, so it is no longer an invitation to
+  // join: it is an offer to build the project they are already in.
   N.invites = [{ ...PENDING, inCommunity: true }];
   N._renderInvites();
   const [already] = JSON.parse(JSON.stringify(state.invites));
-  assert.equal(already.members, "You're already in it");
+  assert.equal(already.line, 'notifications:invite.line.offer');
+  assert.equal(already.members, message('notifications:invite.alreadyIn'));
+  assert.equal(message('notifications:invite.alreadyIn'), 'You joined it');
 
   // It still renders through the existing members span, so the list draws it.
   const list = loadTsx('frontend/src/features/notifications/notifications-list.tsx', {
@@ -291,11 +294,14 @@ test('4. an invite to a project the viewer is already in says so under the sente
     },
   });
   const html = renderToHtml(createElement(list.NotificationsPinnedSections, {}));
-  assert.match(html, /<span data-invite-members="">You&#x27;re already in it · <\/span>/);
-  // A row without the flag keeps the headcount, as before.
+  assert.match(html, /<span class="font-bold">@alex_t1005<\/span> offered to let you build <span class="font-bold">Page Turners<\/span>/);
+  assert.match(html, /<span data-invite-members="">You joined it · <\/span>/);
+  // A row without the flag keeps the headcount and the join sentence: an
+  // invitation from someone not yet in the project reads exactly as before.
   N.invites = [PENDING];
   N._renderInvites();
   const [plain] = JSON.parse(JSON.stringify(state.invites));
+  assert.equal(plain.line, 'notifications:invite.line.join');
   assert.equal(plain.members, '2 people are in it');
 });
 

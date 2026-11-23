@@ -1704,8 +1704,8 @@
     "description": "Under a pending invitation to a private project. {{count}} is how many members the project has. \"It\" is the project."
   },
   "invite.alreadyIn": {
-    "text": "You're already in it",
-    "description": "Under a pending invitation to a project the viewer already belongs to (they joined through a link or the Join button while the invitation was still waiting). \"It\" is the project."
+    "text": "You joined it",
+    "description": "Under an invitation in the notifications sheet for a project the viewer already belongs to (they joined through a link or the Join button while the invitation to build was still waiting). \"It\" is the project."
   },
   "invite.meta.membersWhen": {
     "text": "<0>{{members}} · </0><1>{{when}}</1>",
@@ -1758,6 +1758,22 @@
   "invite.line.someoneBuildUnnamed": {
     "text": "<0>Someone</0> invited you to build <1>an app</1>",
     "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known invited the viewer to work on an app whose name is not known either. \"Build\" is a verb: make it together."
+  },
+  "invite.line.offer": {
+    "text": "<0>@{{username}}</0> offered to let you build <1>{{project}}</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project (by an invite link or the Join button) and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. {{username}} offered the viewer the right to build {{project}}, the project's name. Keep the @ before the username."
+  },
+  "invite.line.offerUnnamed": {
+    "text": "<0>@{{username}}</0> offered to let you build <1>an app</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. {{username}} offered the viewer the right to build an app whose name is not known. Keep the @ before the username."
+  },
+  "invite.line.someoneOffer": {
+    "text": "<0>Someone</0> offered to let you build <1>{{project}}</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. A person whose name is not known offered the viewer the right to build {{project}}, the project's name."
+  },
+  "invite.line.someoneOfferUnnamed": {
+    "text": "<0>Someone</0> offered to let you build <1>an app</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. A person whose name is not known offered the viewer the right to build an app whose name is not known either."
   },
   "invite.acceptFailed": {
     "text": "Accept failed (HTTP {{status}})",

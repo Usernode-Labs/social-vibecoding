@@ -1895,6 +1895,10 @@
     "text": "invited",
     "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person was invited and has not accepted yet. Lower case."
   },
+  "members.collaborators.tag.offered": {
+    "text": "offered to build",
+    "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person is already in the project and was offered the right to build it, which they have not taken up yet. Lower case."
+  },
   "members.collaborators.revoke": {
     "text": "Revoke",
     "description": "Button on a row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app for someone who has not accepted yet: withdraws their invitation."

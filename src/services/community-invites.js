@@ -1093,6 +1093,14 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
     const status = after[0]?.status === 'joined' ? 'joined' : 'queued';
     if (status === 'joined') {
       appAccess.invalidateVisibility(invite.app_id, invite.slug);
+      // #7027: the link let them in, so a waiting invitation's bell row is
+      // no longer news. Only the bell: a build invite still needs Accept.
+      // Best-effort, after the COMMIT, like the activity note.
+      try {
+        const notifications = require('./notifications');
+        const marked = await notifications.markJoinedInviteNotificationsRead(pool, user.id, invite.app_id);
+        if (marked) require('./ws').pushNotificationToUser(user.id, { type: 'notifications_changed' });
+      } catch {}
       // WP-E: the link's maker hears who came in by it, and the open that
       // brought them (from this browser, maybe signed out) is not news now.
       void require('./invite-activity').noteJoined(pool, { inviteId: invite.id, user, browser });
