@@ -917,7 +917,8 @@ test('an existing-screen claim no copy can show is recorded as no visible change
     ['shots-demo-member-vote-update-running-v1']);
   assert.deepEqual(installed.skipped, []);
   assert.equal(installed.installed.length, 1);
-  const app = { id: demoStates.IDS.workStatusApp, slug: 'shots-demo-vote-updates' };
+  // The change is one to Homeroom itself: only its own copies get demo states.
+  const app = { id: demoStates.IDS.workStatusApp, slug: homeroomBot.PLATFORM_SELF_APP_SLUG };
   const session = { id: demoStates.IDS.updateRunningProposal };
   const head = 'a'.repeat(40);
   const reason = 'A staged copy has no change with an update running on it, and no state holds one';
@@ -955,6 +956,16 @@ test('an existing-screen claim no copy can show is recorded as no visible change
   assert.equal(appended.length, 3);
   assert.equal(appended[2].intent.rationale,
     `${shotsView.UNSTAGEABLE_PREFIX} A change whose update failed`);
+  // Another app's change: Homeroom's demo states are never on its copies, so
+  // nothing is filed on Homeroom's board. The reason is still recorded on
+  // the change.
+  await homeroomBot.recordUnstageable(pool, config,
+    { app: { id: demoStates.IDS.workStatusApp, slug: 'shots-demo-vote-updates' }, bot, session, head,
+      reason: 'A ledger of that app with pending and approved expenses' });
+  assert.equal(filed.length, 1, 'no report on Homeroom\'s board for another app\'s change');
+  assert.equal(appended.length, 4);
+  assert.equal(appended[3].intent.rationale,
+    `${shotsView.UNSTAGEABLE_PREFIX} A ledger of that app with pending and approved expenses`);
 });
 
 // A real copy's staging seeds open the member's chat with Homeroom bot at
