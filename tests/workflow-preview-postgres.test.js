@@ -263,9 +263,13 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const [first] = claims.flatMap((c) => c.items);
     assert.equal(first.input.admissionId, input.admissionId);
     const child = crypto.randomUUID();
+    await pool.query(`UPDATE check_runs SET manifest = manifest || '{"proposalOverflow": true}'::jsonb
+      WHERE run_id = $1`, [input.admissionId]);
     const start = await queue.beginReadyClaim(pool, { admissionId: input.admissionId, runId: child, workId: first.id, attempt: first.attempt_count,
       sessionId: s.id, commitSha: input.head, manifest: { workflow: true, runKey: input.runId, launched: false } });
     assert.equal(start.early_id, early);
+    const { rows: [physical] } = await pool.query('SELECT manifest FROM check_runs WHERE run_id = $1', [child]);
+    assert.equal(physical.manifest.proposalOverflow, true, 'the claimed Jobs keep the overflow slot if their reservation is removed');
     assert.deepEqual((await queue.admit(pool, { capacity })).holding, { main: 0, proposal: 1 });
 
     // A dead conductor does not lose the place, charge a second slot, or

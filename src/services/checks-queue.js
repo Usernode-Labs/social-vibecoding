@@ -640,7 +640,8 @@ async function beginReadyClaim(pool, { admissionId, runId, sessionId, commitSha,
        RETURNING *
      ), claimed AS (INSERT INTO check_runs (run_id, session_id, app_id, commit_sha, owner, manifest, queued_at, admitted_at)
        SELECT $2, session_id, app_id, commit_sha, $7, $5::jsonb ||
-         jsonb_strip_nulls(jsonb_build_object('readyId', run_id, 'unitRunId', manifest->>'unitRunId')),
+         jsonb_strip_nulls(jsonb_build_object('readyId', run_id, 'unitRunId', manifest->>'unitRunId',
+           'proposalOverflow', manifest->'proposalOverflow')),
          queued_at, NOW() FROM ticket RETURNING run_id)
      SELECT ticket.queued_at, ticket.admitted_at, ticket.manifest->>'unitRunId' AS early_id
        FROM ticket, claimed`,
