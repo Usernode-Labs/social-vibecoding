@@ -74,6 +74,12 @@ function makeAppView(opts) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // A test that presses a row which copies a link supplies its own clipboard
+  // stub and the origin the link is built from.
+  if (opts && opts.platformUI) {
+    sandbox.location = { origin: opts.origin || 'https://homeroom.test' };
+    sandbox.PlatformUI = opts.platformUI;
+  }
   // The ⋯ rows and meta links to GitHub decide by the address
   // (frontend/src/lib/repo-link.js, published as window.RepoLink).
   require('./lib/repo-link').installRepoLink(sandbox);
@@ -656,6 +662,50 @@ test('#4190: the card: a disabled "Homeroom bot is building…" beside a Claim, 
   assert.ok(rows(baseIssue()).includes('Claim it'), 'as on any request');
   // Still never Build it now / Start work beside the bot.
   assert.ok(!rows(baseIssue({ bot: building() })).includes('Build it now'));
+});
+
+test('#7000: a request\'s ⋯ menu copies the request\'s address, never its title', async () => {
+  const AppView = makeAppView();
+  const labels = (av, issue) => Array.from(av._issueMenuItems(issue, { progressOnFace: false }), (it) => it.label);
+  // Every request offers it, directly above Share to…: an open one, a closed
+  // one and a read-only viewer (copying a link changes nothing).
+  for (const [av, issue] of [
+    [AppView, baseIssue()],
+    [AppView, baseIssue({ state: 'closed' })],
+    [makeAppView({ readOnly: true }), baseIssue()],
+  ]) {
+    const rows = labels(av, issue);
+    assert.equal(rows[rows.indexOf('Share to…') - 1], 'Copy link', 'just above Share to…');
+  }
+  // The request page's ⋯ is the same list, so it says it once.
+  assert.equal(
+    AppView._requestMenuItems(baseIssue()).filter((it) => it.label === 'Copy link').length, 1
+  );
+
+  // Pressing it puts the request's own address on the clipboard and says so.
+  const copied = [];
+  const toasts = [];
+  const pressing = makeAppView({
+    platformUI: {
+      copyText: async (text) => { copied.push(text); return true; },
+      toast: (text) => { toasts.push(text); },
+    },
+  });
+  const row = pressing._issueMenuItems(baseIssue(), { progressOnFace: false }).find((it) => it.copyLink);
+  assert.ok(row, 'the row is marked so the side panel can drop its duplicate');
+  await row.act();
+  // The row's copy runs in a `.then`, as a change's does; let it land.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(copied, ['https://homeroom.test/#app/demo/dev/issues/3']);
+  assert.ok(!copied[0].includes('Fix the thing'), 'the title is never what is copied');
+  assert.deepEqual(toasts, ['Link copied']);
+
+  // A refused clipboard (copyText resolves falsy) shows no notice, as on a
+  // change's page.
+  const refused = makeAppView({ platformUI: { copyText: async () => false, toast: (t) => toasts.push(t) } });
+  await refused._issueMenuItems(baseIssue(), { progressOnFace: false }).find((it) => it.copyLink).act();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(toasts, ['Link copied'], 'nothing new said');
 });
 
 test('#4190: the request page says so in a sentence and offers Claim in its actions', () => {
