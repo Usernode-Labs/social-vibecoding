@@ -367,22 +367,32 @@ function withForwarder(file) {
 }
 
 /**
+ * The archive's own files as the app serves them: every file under public/,
+ * its index.html with the Dev console forwarder inserted once. What a new
+ * project's first commit keeps, and what a project grew from an archive in
+ * the editor puts in place of its public folder (#6994).
+ */
+function siteFiles(archiveFiles) {
+  return (archiveFiles || []).map((file) => {
+    const placed = { path: `public/${file.path}`, content: file.content };
+    return file.path === 'index.html' ? withForwarder(placed) : placed;
+  });
+}
+
+/**
  * A new project's first commit: the empty scaffold's files, without its own
  * public/index.html, with every archive file under public/. The scaffold's
  * dapp.json, server.js and the rest stay exactly as the template wrote them.
  */
 function projectFiles(scaffold, archiveFiles) {
   const kept = (scaffold || []).filter((file) => file.path !== 'public/index.html');
-  const under = archiveFiles.map((file) => {
-    const placed = { path: `public/${file.path}`, content: file.content };
-    return file.path === 'index.html' ? withForwarder(placed) : placed;
-  });
-  return [...kept, ...under];
+  return [...kept, ...siteFiles(archiveFiles)];
 }
 
 module.exports = {
   read,
   projectFiles,
+  siteFiles,
   safePath,
   formatOf,
   MAX_ARCHIVE_BYTES,

@@ -90,6 +90,26 @@ test('a Buffer file is written byte for byte, as createRootCommit already does',
   assert.equal(await github.getFileContent('apps', 'bin-1', 'public/index.html', 'main'), '<html></html>');
 });
 
+test('pushFiles removes the paths it is told to, keeping the rest', async (t) => {
+  stubCreateApi(t);
+  await github.createRepo('apps', 'drop-1');
+  await github.pushFiles('apps', 'drop-1', [
+    { path: 'public/index.html', content: 'old' },
+    { path: 'public/old-page.html', content: 'gone' },
+    { path: 'server.js', content: 'serve' },
+  ], { message: 'before' });
+  await github.pushFiles('apps', 'drop-1', [
+    { path: 'public/index.html', content: 'new' },
+    { path: 'public/game.js', content: 'play' },
+  ], { message: 'after the archive', deletes: ['public/old-page.html'] });
+
+  const listed = await github.listRepoFiles('apps', 'drop-1', 'main');
+  assert.deepEqual(listed.files.map((f) => f.path).sort(), ['README.md', 'public/game.js', 'public/index.html', 'server.js']);
+  assert.equal(await github.getFileContent('apps', 'drop-1', 'public/index.html', 'main'), 'new');
+  assert.equal(await github.getFileContent('apps', 'drop-1', 'public/old-page.html', 'main'), null);
+  assert.equal(await github.getFileContent('apps', 'drop-1', 'server.js', 'main'), 'serve');
+});
+
 test('branches: created, compared, advanced only forward, forced, and a bench branch deleted', async (t) => {
   stubCreateApi(t);
   await github.createRepo('apps', 'br-1');

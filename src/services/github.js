@@ -575,9 +575,9 @@ async function getReadOctokit(owner) {
   return instrument(new Octokit({ auth: token }), `installation:${owner}`, { readOnly: true });
 }
 
-async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
+async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit', deletes = [] } = {}) {
   require('./code-host-write').requireCodeHostWrite('github.pushFiles');
-  if (onGitHost(owner)) return hostedGit().pushFiles(owner, repo, files, { branch, message });
+  if (onGitHost(owner)) return hostedGit().pushFiles(owner, repo, files, { branch, message, deletes });
   const octokit = await getOctokit(owner);
 
   const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
@@ -599,6 +599,13 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
     } else {
       tree.push({ path: f.path, mode: '100644', type: 'blob', content: f.content });
     }
+  }
+
+  // A website archive put in place of an existing site's files (#6994): a
+  // null sha drops the path from the new tree, which is how a page the
+  // archive no longer has stops being served.
+  for (const path of Array.isArray(deletes) ? deletes : []) {
+    if (typeof path === 'string' && path) tree.push({ path, mode: '100644', type: 'blob', sha: null });
   }
 
   const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, tree, base_tree: baseTreeSha });

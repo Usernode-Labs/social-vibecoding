@@ -61,3 +61,14 @@ test('a Buffer is pushed as a base64 blob; text stays in the tree', async () => 
   assert.equal(byPath['public/logo.png'].content, undefined);
   assert.equal(byPath['public/index.html'].content, '<html></html>');
 });
+
+test('a delete is a tree entry with a null sha', async () => {
+  blobs = [];
+  tree = null;
+  await github.pushFiles('Usernode-Labs', 'site', [
+    { path: 'public/index.html', content: '<html>new</html>' },
+  ], { message: 'Replace the site', deletes: ['public/old-page.html'] });
+
+  const byPath = Object.fromEntries(tree.tree.map((entry) => [entry.path, entry]));
+  assert.equal(byPath['public/old-page.html'].sha, null, 'the path is removed by the new tree');
+});

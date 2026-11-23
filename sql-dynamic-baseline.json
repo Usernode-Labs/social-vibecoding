@@ -1475,6 +1475,20 @@
     {
       "source": "src/services/homeroom-bot-mayor.js",
       "kind": "structural-template",
+      "fingerprint": "8ee7298344c382a2d910",
+      "count": 1,
+      "preview": "`SELECT a.id, a.filename, a.size_bytes, a.data FROM conversation_message_attachments a JOIN conversation_messages m ON m.id = a.message_id WHERE a.conversation_"
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
+      "fingerprint": "945f6b282591a7a10a8f",
+      "count": 1,
+      "preview": "`SELECT ${access.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-mayor.js",
+      "kind": "structural-template",
       "fingerprint": "f3f5fdd5a94eb8d50ab2",
       "count": 1,
       "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE slug = LOWER($1) OR LOWER(name) = LOWER($1) ORDER BY (slug = LOWER($1)) DESC, id LIM"

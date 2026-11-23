@@ -217,6 +217,9 @@ const SOURCE_REF = 'main';
 const SECRET_PATH_RE = /(^|\/)(\.env(\.[^/]*)?|\.npmrc|\.netrc|id_(rsa|ed25519|ecdsa)[^/]*|[^/]*\.(pem|key|p12|pfx|keystore|jks))$/i;
 // The person's pictures are sent from this many of their newest messages.
 const IMAGE_REPLAY_MESSAGES = 2;
+// #6994: the website archives use_archive can put into a project. Matched on
+// the name the chat stored, before the reader checks the bytes' own magic.
+const ARCHIVE_FILE_RE = /\.(?:zip|tar\.gz|tgz|rar|7z)$/i;
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
 const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 
@@ -831,6 +834,13 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  they are writing about. While it is waiting for approval, a problem they report with it, or anything they want',
     '  different in it, is for that change: call revise_proposal with its proposal id. Never offer a new',
     '  request for something that change should fix: it is not live yet.',
+    // #6994: the archive half of the same flow, from the editor.
+    '- A website archive they attached in this chat (.zip, .tar.gz, .tgz, .rar or .7z) and asked you to build or',
+    '  revamp a project from (use_archive): its files replace the project\'s pages, its front page becoming the',
+    '  app\'s, and the result goes up for the project\'s vote as their change. Call use_archive with the id',
+    '  on the line under their message, then say what the app now shows and name its change as "Change #N". When the',
+    '  chat is not about a project yet, ask which project before you call it. Never say you used the archive',
+    '  without calling use_archive.',
     '- Offer to file a new request on one of their projects when they ask you to build or change something that',
     '  is not one of your open changes (offer_request). Nothing is filed until they tap File it under your',
     '  message. Use their own words. You never file anything yourself, and never write that something was filed:',
@@ -1294,6 +1304,30 @@ const TOOLS = [
         properties: {
           project: { type: 'string', description: 'The project, by name or slug, when this thread is not about one yet.' },
         },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    // #6994: an archive they attached in this chat, built into the project
+    // they already have: its files replace the app's public folder, and the
+    // result goes up for the project's vote as their change.
+    type: 'function',
+    function: {
+      name: 'use_archive',
+      description: 'Put a website archive they attached in this chat in place of a project\'s pages, as a change of theirs up for the project\'s vote. '
+        + 'Its front page becomes the app\'s, every other file is kept exactly as it was, and pages the old site had and the archive does not are removed. '
+        + 'Use it when they attached a .zip, .tar.gz, .tgz, .rar or .7z of a website and asked you to build, replace or revamp the project\'s app from it. '
+        + 'The attachment is the id on the line under their message. Only for a project they can change, in a private thread. It answers the change\'s number. '
+        + 'Nothing is live until the project votes; say that. One per turn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          attachment: { type: 'string', description: 'The id of the archive they attached, from the line under their message.' },
+          project: { type: 'string', description: 'The project, by name or slug, when this thread is not about one yet.' },
+          title: { type: 'string', description: 'The change\'s name in a few plain words, when they named it. Leave it out to use the file\'s name.' },
+        },
+        required: ['attachment'],
         additionalProperties: false,
       },
     },
@@ -2237,6 +2271,9 @@ function doingFor(name, args = {}, { project = null, version = null, kind = null
     // 20 Nov 2026 (live-draft review, A): "Looking at the preview".
     case 'look_at_preview':
       return { kind: 'looking_preview' };
+    // #6994: "Putting the archive in place".
+    case 'use_archive':
+      return { kind: 'importing' };
     // #6354: opening one of Homeroom's own pages to copy it for a design.
     case 'capture_page': {
       const page = typeof args?.page === 'string' ? clip(args.page, 60) : '';
@@ -2955,6 +2992,11 @@ function picturesToSend(files, { theirs = [], always = [], imageInput = false, t
 function attachedLine(f, { picture = null, imageInput = false, withId = true } = {}) {
   const named = `${clip(f.filename, 120)}${withId ? ` (id ${f.id})` : ''}`;
   if (picture) return `[Homeroom: they attached the picture ${named}, shown below.]`;
+  // #6994: a website archive attached in this chat can be built into a
+  // project's app (use_archive). Every other file stays one they cannot open.
+  if (withId && ARCHIVE_FILE_RE.test(String(f.filename || ''))) {
+    return `[Homeroom: they attached the website archive ${named}. When they ask to build or revamp a project from it, call use_archive with this id: its files replace the app's public folder as a change of theirs. Never say you read the archive without doing that.]`;
+  }
   if (f.kind !== 'image') return `[Homeroom: they attached the file ${named}, which you cannot open.]`;
   return imageInput
     ? `[Homeroom: they attached the picture ${named}. Only the newest pictures are shown.]`
@@ -3526,6 +3568,99 @@ async function openAppPreview(pool, ctx, args = {}) {
   };
 }
 
+// ── A website archive they attached (#6994) ───────────────────────────────
+
+/**
+ * use_archive: the website archive they attached in this chat, put in place
+ * of the project's public folder as a change of theirs, up for the project's
+ * vote (services/archive-change.js). The archive is read from the bytes the
+ * chat stored, so nothing is uploaded again.
+ */
+async function useArchive(pool, ctx, args = {}) {
+  const rootId = Number(ctx.deps?.threadRootId) || null;
+  if (!rootId) {
+    return { ok: false, error: 'An archive builds into a project from a private thread of theirs: tell them to start a New chat set to that project, attach the archive there, and ask again.' };
+  }
+  const conversationId = Number(ctx.conversationId) || null;
+  if (!conversationId) return { ok: false, error: 'This chat cannot carry an archive just now. Tell them to ask again in a minute.' };
+  const access = ctx.deps?.appAccess || require('./app-access');
+  const { rows: [thread] } = await pool.query(
+    'SELECT app_id FROM private_threads WHERE root_message_id = $1 AND user_id = $2',
+    [rootId, ctx.user.id],
+  );
+  if (!thread) return { ok: false, error: 'This is not one of their private threads.' };
+  let app = null;
+  if (thread.app_id) {
+    const { rows: [row] } = await pool.query(
+      `SELECT ${access.nonSecretAppColumnList()} FROM apps WHERE id = $1`, [Number(thread.app_id)],
+    );
+    app = row || null;
+  }
+  if (!app && typeof args.project === 'string' && args.project.trim()) {
+    const named = args.project.trim();
+    const found = await findApp(pool, named);
+    if (!found || !(await canView(pool, found, ctx.user))) {
+      return { ok: false, error: `There is no project called ${clip(named, 80)} that they can see. Ask which one.` };
+    }
+    app = found;
+    // The thread becomes about it, as open_app_preview does, so later turns
+    // here know which project the archive was for.
+    await pool.query(
+      'UPDATE private_threads SET app_id = $3, updated_at = NOW() WHERE root_message_id = $1 AND user_id = $2 AND app_id IS NULL',
+      [rootId, ctx.user.id, app.id],
+    ).catch(() => {});
+  }
+  if (!app) {
+    return { ok: false, error: 'This thread is not about a project yet: ask which project the archive is for, then call use_archive with it.' };
+  }
+
+  const attachmentId = typeof args.attachment === 'string' ? args.attachment.trim().slice(0, 120) : '';
+  const params = [conversationId, Number(ctx.user.id), rootId];
+  const { rows: files } = await pool.query(
+    `SELECT a.id, a.filename, a.size_bytes, a.data
+       FROM conversation_message_attachments a
+       JOIN conversation_messages m ON m.id = a.message_id
+      WHERE a.conversation_id = $1 AND a.user_id = $2
+        AND (m.id = $3 OR m.thread_root_id = $3)
+        AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+        ${attachmentId ? 'AND a.id = $4' : ''}
+      ORDER BY a.created_at DESC, a.id DESC`,
+    attachmentId ? [...params, attachmentId] : params,
+  );
+  const file = files.find((row) => ARCHIVE_FILE_RE.test(String(row.filename || '')));
+  if (!file) {
+    return {
+      ok: false,
+      error: attachmentId
+        ? 'That attachment is not a website archive. Ask them to attach a .zip, .tar.gz, .rar or .7z of the site.'
+        : 'They have not attached a .zip, .tar.gz, .rar or .7z in this thread. Ask them to attach the archive here.',
+    };
+  }
+  if (!Buffer.isBuffer(file.data) || !file.data.length) {
+    return { ok: false, error: 'That archive could not be read from the chat. Ask them to attach it again.' };
+  }
+
+  const archiveChange = ctx.deps?.archiveChange || require('./archive-change');
+  const out = await archiveChange.createChange(pool, ctx.config, {
+    user: ctx.user, app, data: file.data, filename: file.filename, title: args.title, deps: ctx.deps || {},
+  });
+  if (!out.ok) return { ok: false, error: out.error };
+  ctx.archiveChange = { sessionId: out.sessionId, number: out.number };
+  const number = out.number ? `Change #${out.number}` : 'the change';
+  return {
+    ok: true,
+    fileCount: out.fileCount,
+    removed: out.removed,
+    number: out.number,
+    pending: out.pending,
+    note: `The archive's ${out.fileCount} ${out.fileCount === 1 ? 'file is' : 'files are'} in place of the project's pages as ${number}`
+      + `${out.pending ? ', going up for the vote now' : ', up for the project\'s vote now'}`
+      + `${out.removed ? `, and ${out.removed} ${out.removed === 1 ? 'old page' : 'old pages'} the archive did not have ${out.removed === 1 ? 'was' : 'were'} removed` : ''}. `
+      + 'Nothing is live until the project votes. Reply in a sentence: what the app now shows and that it is up for the vote. '
+      + `Call it "${number}", never a proposal or a pull request.`,
+  };
+}
+
 // ── What a draft request carries besides its words (#6251) ────────────────
 //
 // offer_request's extras: the person's pictures that belong with the
@@ -3863,6 +3998,7 @@ async function runTool(pool, ctx, name, args) {
       case 'start_design': return await startDesign(pool, ctx, args);
       case 'write_artifact': return await require('./artifact-session').startPage(pool, ctx, args);
       case 'open_app_preview': return await openAppPreview(pool, ctx, args);
+      case 'use_archive': return await useArchive(pool, ctx, args);
       case 'change_plan': return await changePlanTool(pool, ctx, args);
       case 'close_thread': return await closeThread(pool, ctx);
       case 'start_request': return await startRequest(pool, ctx, args);
@@ -8830,6 +8966,7 @@ module.exports = {
   commentText,
   commentOnRequest,
   startRequest,
+  useArchive,
   replanRequest,
   pendingBuild,
   answerLater,

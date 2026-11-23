@@ -3599,6 +3599,10 @@
     "text": "Changing the draft",
     "description": "On the card at the end of the chat while Homeroom bot changes the code of a live draft of an app, whose preview runs beside the chat. Three animated dots follow it, as an ellipsis."
   },
+  "thread.botWorking.importing": {
+    "text": "Putting the archive in place",
+    "description": "On the card at the end of the chat while Homeroom bot puts the files of a website archive the reader attached in place of a project's pages. Three animated dots follow it, as an ellipsis."
+  },
   "thread.botWorking.searching": {
     "text": "Searching the web",
     "description": "On the card at the end of the chat while Homeroom bot runs a web search to answer the reader. Three animated dots follow it, as an ellipsis."

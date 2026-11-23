@@ -241,6 +241,19 @@ test('projectFiles keeps the scaffold, drops its screen, and adds the archive un
   assert.equal(byPath['public/style.css'].toString('utf8'), 'body{}');
 });
 
+test('siteFiles is just the archive under public/, forwarder once on its index', () => {
+  const archiveFiles = [
+    { path: 'index.html', content: Buffer.from('<html><head></head><body>Mine</body></html>') },
+    { path: 'game.js', content: Buffer.from('play()') },
+  ];
+  const files = archiveImport.siteFiles(archiveFiles);
+  assert.deepEqual(files.map((file) => file.path), ['public/index.html', 'public/game.js']);
+  const html = files[0].content.toString('utf8');
+  assert.match(html, /usernode-dev-console@1/);
+  assert.equal((html.match(/usernode-dev-console@1/g) || []).length, 1);
+  assert.equal(files[1].content.toString('utf8'), 'play()');
+});
+
 test('safePath accepts a plain path and refuses a climb', () => {
   assert.equal(archiveImport.safePath('a/b.png'), 'a/b.png');
   assert.equal(archiveImport.safePath('./a//b.png'), 'a/b.png');

@@ -72,6 +72,8 @@ const DOING_WORDS: Record<string, string> = {
   searching: 'messages:thread.botWorking.searching',
   // 20 Nov 2026 (live-draft review, A): that draft's preview, looked at.
   looking_preview: 'messages:thread.botWorking.lookingPreview',
+  // #6994: an archive put in place of a project's files.
+  importing: 'messages:thread.botWorking.importing',
 };
 
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */

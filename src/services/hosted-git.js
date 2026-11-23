@@ -413,7 +413,7 @@ async function compareFiles(owner, repo, basehead, charBudget = 60000, { cap = 3
 // ── Writes ────────────────────────────────────────────────────────────
 
 /** Commit `files` ({ path, content }) on top of `branch` and move it there. GitHub's commit shape. */
-async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
+async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit', deletes = [] } = {}) {
   require('./code-host-write').requireCodeHostWrite('hosted-git.pushFiles');
   const dir = await mirror(owner, repo);
   const parent = await resolve(dir, branch);
@@ -422,7 +422,11 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
   // A Buffer (an uploaded archive's image, #6994) goes to hash-object as it
   // is, exactly as createRootCommit's; text is unchanged.
   for (const f of files) writes.push({ path: f.path, sha: await writeBlob(dir, Buffer.isBuffer(f.content) ? f.content : String(f.content ?? '')), mode: '100644' });
-  const tree = await buildTree(dir, `${parent}^{tree}`, { writes });
+  // A website archive put in place of an existing site's files (#6994):
+  // buildTree drops these paths, so a page the archive no longer has stops
+  // being served.
+  const drops = (Array.isArray(deletes) ? deletes : []).filter((path) => typeof path === 'string' && path);
+  const tree = await buildTree(dir, `${parent}^{tree}`, { writes, deletes: drops });
   const sha = await commitTree(dir, tree, [parent], message);
   await moveRef(owner, repo, dir, branch, parent, sha);
   log.info('hosted-git', 'Files pushed', { repo: `${owner}/${repo}`, branch, fileCount: files.length });
