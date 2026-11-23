@@ -25940,6 +25940,63 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
     box-shadow: 0 -200px 0 0 var(--home-ground, #fffeea);
   }
 }
+/* THE NEW PROJECT PAGE ON A PHONE (phone review, 23 Nov 2026, iPhone 17 and
+   iPhone Duo; first-session/make.tsx).
+
+   IT STOPS AT THE SYSTEM'S COLUMN (#9). The page is a fixed box, so it is
+   not in the body's content box and the strip's padding never reached it:
+   on the Duo's cover the form was centred on the whole 466pt of glass, with
+   a 57pt gutter on its left and the idea cards' right edge under the camera
+   and the clock. It pads itself by the column, as the signed-out shell
+   does (THE SIDE STRIP, below): its ground still fills the screen, its
+   content does not. */
+/* direction: physical — the column is a side of the HARDWARE, named by
+   `data-side-strip`, and must not mirror in a right-to-left language. */
+html[data-side-strip="right"] [data-first-session-make] {
+  padding-right: var(--platform-strip-w, 0px);
+}
+html[data-side-strip="left"] [data-first-session-make] {
+  padding-left: var(--platform-strip-w, 0px);
+}
+/* direction: logical */
+/* WHAT SCROLLS GOES UNDER THE ✕, FADING (#9). From Create the ✕ stood in a
+   48px band above the scroller, which clipped at the band's foot: scrolled a
+   little, the heading was cut in half along a straight line beside the ✕.
+   The ✕ floats over the scroller's head now. The head is padding, so the
+   page rests exactly where it did, and what scrolls up into it thins out to
+   nothing at the top (the ground is the wallpaper, so the fade is a mask on
+   the scroller, not a wash of colour over it). make.tsx's MAKE_HEAD is the
+   same 48px. */
+[data-first-session-make].platform-under-header:not([data-make-kit]) > [data-first-session-make-scroll] {
+  padding-top: 3rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 4px, #000 3rem);
+  mask-image: linear-gradient(to bottom, transparent 4px, #000 3rem);
+}
+/* THE KEYS SHORTEN IT WHEREVER THEY COVER IT (#16). The padding above is
+   the phone layout's (`platform-kb-open`, under 768px, measured against the
+   page at rest). The Duo unfolded and sideways is 951pt wide, so the page
+   kept its full height under the keys: the box being typed in showed a line
+   and a half, and Make it sat 200pt below the keys with 58pt left to
+   scroll. And folded to the cover with the field already focused, "at rest"
+   was measured with the keys up, the class never came on, and the field was
+   left behind them. The kit's own inset (`un-kb`, `--un-kb-inset`,
+   native.js) is the covered foot of the page at any width and however the
+   screen got there, so wherever the phone's class is not on, the page ends
+   at that instead; its scroller ends at the keys, and the focused field is
+   revealed in it (lib/keyboard-surface.ts; make.tsx after a fold or a
+   turn). Where the web view is resized for the keys both are 0. */
+html.un-kb:not(.platform-kb-open) [data-first-session-make] {
+  padding-bottom: var(--un-kb-inset, 0px);
+}
+/* ITS MAIN BUTTONS ARE IN THE PAGE'S SANS (S7). The look draws a button's
+   label in the serif (BUTTONS, above); on this page, where the tiles, the
+   two questions and the rule line are all in the sans, Make it read as a
+   line from another page. Make it, Import it and the rule sheet's Done keep
+   the button's fill, outline and edge, and take the face of the text around
+   them (`inherit`, so they follow the page whatever face it is given). */
+html:not([data-skin]) :is([data-first-session-make] button[type="submit"], [data-make-rule-done]) {
+  font-family: inherit;
+}
 
 .platform-tabs {
   /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three

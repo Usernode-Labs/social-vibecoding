@@ -491,7 +491,7 @@ test('the make screen is a surface whose fields are the keyboard surface\'s, eve
   // From Create, under the platform header (#4195), still a surface.
   assert.match(MAKE, /export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-\[9000\] flex flex-col /);
   assert.match(MAKE, /className=\{underHeader \? MAKE_ROOT_UNDER_HEADER : MAKE_ROOT\}/);
-  assert.match(MAKE, /useKeyboardSurface\(scrollerRef\);/);
+  assert.match(MAKE, /useKeyboardSurface\(scrollerRef, \{ head \}\);/);
   assert.doesNotMatch(MAKE, /\.focus\(\)/, 'no focus that lets iOS reveal on its own');
   // Make it is the form's submit button, so the reveal finds it.
   assert.match(MAKE, /<Button\s+type="submit"/);

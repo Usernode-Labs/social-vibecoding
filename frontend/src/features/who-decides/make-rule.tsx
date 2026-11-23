@@ -132,7 +132,12 @@ function PresetsSheet({ now, viewer, onPick, onGone }: {
         </div>
         <p className="mt-1 text-[14px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.rule.intro')}</p>
         <div className="mt-4">
-          <PresetTiles picked={picked} now={now} viewer={viewer} onPick={setPicked} labelId="make-rule-sheet-title" />
+          {/* No "Now" badge here (phone review #122, 23 Nov 2026): nothing is
+              in force before the project is made, and the word did not say it
+              meant the pick so far. The ring marks the pick, and the button
+              under the tiles says whether it would change ("Use ...") or not
+              ("Done"). */}
+          <PresetTiles picked={picked} now={null} viewer={viewer} onPick={setPicked} labelId="make-rule-sheet-title" />
         </div>
         <SectionHeader className="px-1 pb-1.5 pt-4">{t('onboarding:firstSession.make.rule.plays')}</SectionHeader>
         <PlaysOut preset={picked} viewer={viewer} />
