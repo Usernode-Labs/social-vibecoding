@@ -20363,6 +20363,13 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    have. A row, New chat or a link opens it, and the list gives the lane up
    again. */
 #ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
+/* WITH A THREAD OPEN BESIDE IT (23 Nov 2026) the list is about 270px wide,
+   and from 1024px each row still kept a 48px column for a request's number
+   (and its gap), empty on most rows: a title had 60 to 130px and read
+   "Staging …" twice in a row. The number's column goes while a thread is
+   open beside the list, as it does on every screen under 1024px; the
+   number is on the thread's own head. */
+#ai-screen[data-ai-docked][data-ai-open] [data-ai-line-number] { display: none; }
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
    a column inside centres. Here Main is the far edge, with no gutter, so the
