@@ -202,7 +202,7 @@ test('a still press of a third of a second opens the magnifier; moving early doe
   assert.match(css, /\.rf-compare \{[^}]*\-webkit-touch-callout: none;/);
   assert.match(
     css,
-    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-cap, \.rf-switch, [^}]*\{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
+    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-cap, \.rf-foot, \.rf-switch, [^}]*\{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
     'the magnifier opens at once when motion is reduced',
   );
 });

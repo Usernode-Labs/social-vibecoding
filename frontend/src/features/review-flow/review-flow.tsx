@@ -75,7 +75,7 @@ import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, takeRead, toReviewItems, trailIndex,
+  composeSheet, glyphBars, groundInMode, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, takeRead, toReviewItems, trailIndex,
   type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type PageKind, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
@@ -636,7 +636,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // AppView._workshopVisuals, which picks each picture for the mode the page
   // is in, so `dark` changes what the run's stills are (#6820).
   const dark = usePageDark();
-  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items, dark]);
+  // #65: in dark a screenshot's quiet cream ground is the card's dark one.
+  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)).map((it) => groundInMode(it, dark)) : null), [items, dark]);
   // #6344: the items the run cannot draw (a group decision, competing
   // changes, the bot's question). Each is decided on its own page, so when
   // nothing else waits they are listed with a way there.

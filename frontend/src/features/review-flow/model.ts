@@ -117,6 +117,21 @@ export type ReviewItem = {
  */
 export const GROUNDS = { quiet: '#ECE6CE', notable: '#F7E07A', loud: '#F2958A' } as const;
 
+/**
+ * Phone review #65 (23 Nov 2026): in dark, a screenshot does not sit in a
+ * cream panel. The calm cream was the brightest thing on a near-black card,
+ * framing a dark screenshot, so a picture of screens on the quiet ground
+ * takes the card's raised dark ground instead. The warm and coral grounds
+ * are a coloured stage that says how much changes, and a drawn picture was
+ * designed on its ground, so both keep theirs.
+ */
+export const DARK_QUIET_GROUND = 'var(--rf-fill)';
+
+export function groundInMode<T extends { ground: string; picture: Picture }>(item: T, dark: boolean): T {
+  if (!dark || item.ground !== GROUNDS.quiet || item.picture.kind === 'benefit' || item.picture.kind === 'decision') return item;
+  return { ...item, ground: DARK_QUIET_GROUND };
+}
+
 export function groundFor(screens: ReviewScreen[]): string {
   const spots = screens.reduce((n, s) => n + s.regions.length, 0);
   if (screens.length > 1 || spots >= 4) return GROUNDS.loud;
@@ -1182,9 +1197,12 @@ export function tileCrop(screen: ReviewScreen, size: number, display?: number, i
  * landing dim leaves around it.
  */
 export function openPlace(screen: ReviewScreen, view: { w: number; h: number }, display?: number): { place: Placement; cut: Box | null } {
-  const CAP = 36;
-  const BOT = 62;
-  const SWITCH = 36;
+  // Phone review #27 (23 Nov 2026): the slider's caption and switch are on
+  // solid strips across its top and foot (compare.tsx CAP_STRIP,
+  // FOOT_STRIP), so the screen is always placed in the room between them,
+  // not only when its change would have been under the caption or the switch.
+  const CAP = 30;
+  const BOT = 64;
   const focus = changeFocus(screen, 16);
   const max = densityOf(screen, display);
   const big = changeOf(screen);
@@ -1192,18 +1210,10 @@ export function openPlace(screen: ReviewScreen, view: { w: number; h: number }, 
     const p = placeBox(screen, focus, { w: view.w, h: view.h - top - bot }, max);
     const H = Math.max(screen.before.height, screen.after.height) * p.scale;
     let ty = p.ty + top;
-    if (H >= view.h - bot) ty = Math.max(view.h - bot - H, Math.min(0, ty));
+    if (H >= view.h - bot) ty = Math.max(view.h - bot - H, Math.min(top, ty));
     return { ...p, ty };
   };
-  let place = fit(0, 0);
-  if (big) {
-    const at = (p: Placement) => ({ x: big.x * p.scale + p.tx, y: big.y * p.scale + p.ty, w: big.w * p.scale, h: big.h * p.scale });
-    const top = at(place).y < CAP ? CAP : 0;
-    if (top) place = fit(top, 0);
-    const b = at(place);
-    const under = b.x < view.w / 2 + SWITCH && b.x + b.w > view.w / 2 - SWITCH && b.y + b.h > view.h - 54 && b.y < view.h - 14;
-    if (under) place = fit(top, BOT);
-  }
+  const place = fit(CAP, BOT);
   if (!big) return { place, cut: null };
   // The hole: the largest change, kept 4pt inside what the picture shows.
   const vx = Math.max(0, place.tx); const vy = Math.max(0, place.ty);

@@ -230,7 +230,7 @@ test('the transcript fades out under Jump to latest and "N new messages" while e
   const css = read('public/css/app.css');
   // Chosen by the control's own state (shown is inert-free), on the box
   // beside it, so nothing is written to a scroller group-chat.js owns.
-  assert.match(css, /\n:has\(\+ \[data-transcript-overlay="foot"\] \[data-jump-latest\]:not\(\[inert\]\)\) \{\n  -webkit-mask-image: linear-gradient\(to bottom, #000 calc\(100% - 64px\), transparent calc\(100% - 12px\)\);/);
+  assert.match(css, /\n:has\(\+ \[data-transcript-overlay="foot"\] \[data-jump-latest\]:not\(\[inert\]\)\) \{\n  -webkit-mask-image: linear-gradient\(to bottom, #000 calc\(100% - 28px\), transparent calc\(100% - 2px\)\);/);
   assert.match(css, /\n\[data-transcript-overlay="top"\]:has\(\[data-unread-banner\]:not\(\[inert\]\)\) \+ \* \{\n  -webkit-mask-image: linear-gradient\(to bottom, transparent 10px, #000 52px\);/);
   // Both up at once: one mask with both edges.
   assert.match(css, /\[data-transcript-overlay="top"\]:has\(\[data-unread-banner\]:not\(\[inert\]\)\) \+ :has\(\+ \[data-transcript-overlay="foot"\] \[data-jump-latest\]:not\(\[inert\]\)\) \{/);

@@ -471,9 +471,16 @@ test('#6832: a change with nothing visible shows its picture where the empty box
   assert.doesNotMatch(drawn, /data-thread-wait/, 'the empty box is not drawn under the picture');
   assert.equal(renderComponent(CARD, 'NoPicture', { ...none, diagram: seen, diagramLed: true }), '',
     'the author’s diagram already leads the page');
-  const box = renderComponent(CARD, 'NoPicture', { ...none });
+  const box = renderComponent(CARD, 'NoPicture', { ...none, phase: 'vote' });
   assert.match(box, /data-thread-wait="no-picture"/, 'nothing on screen changes and there is no picture');
   assert.match(box, /No picture yet/);
+  // Phone review #42 (23 Nov 2026): once it is live nothing is being added.
+  for (const phase of ['live', 'going', 'stuck', 'closed']) {
+    const ended = renderComponent(CARD, 'NoPicture', { ...none, phase });
+    assert.match(ended, /data-thread-wait="no-picture-taken"/, phase);
+    assert.match(ended, /No picture was taken for this change/, phase);
+    assert.doesNotMatch(ended, /No picture yet|is adding one/, phase);
+  }
 });
 
 test('a request with a summary shows it on the card, says what it was written from, and keeps the asker\'s words a press away', () => {
@@ -666,7 +673,10 @@ test('a run that worked out its screens is drawn with the Needs you slider, not 
   assert.match(change, /if \(single && s\.state === 'verified' && s\.screens && s\.screens\.length\) \{/);
   assert.match(change, /return <ThreadPicture s=\{s\} captions=\{voting \? null : chips\} \/>;/);
   const picture = read(PICTURE);
-  assert.match(picture, /import \{ CompareSlider \} from '\.\.\/\.\.\/review-flow\/compare';/);
+  assert.match(picture, /import \{ CAP_STRIP, CompareSlider, FOOT_STRIP, withinStrips \} from '\.\.\/\.\.\/review-flow\/compare';/);
+  // Phone review #27: the caption's strip and the switch's are part of the
+  // picture's height, and the screen is placed between them.
+  assert.match(picture, /return \{ height: room \+ CAP_STRIP \+ FOOT_STRIP, place: withinStrips\(placeBox\(screen, focus, \{ w: width, h: room \}, 1\)\) \};/);
   assert.match(picture, /ground="var\(--messages-surface-2\)"/, 'the ground is the card\'s own, never a tint');
   assert.doesNotMatch(picture, /shots-box|shots-flip-chip|groundFor/);
   assert.match(picture, /kind: 'shots', ref: \{ changeId: s\.changeId \}/, 'Expand opens the full viewer in the detail column');

@@ -158,10 +158,15 @@ export function ChatMessageRow({
     <div className={cn('flex gap-3 px-4 py-2', me && 'flex-row-reverse', className)} {...props}>
       {avatar}
       <div className="min-w-0 flex-1">
-        <div className={cn('flex items-baseline gap-2', me && 'justify-end')}>
-          <span className="truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{name}</span>
+        {/* The name never gives way to its meta (phone review #24, 23 Nov
+            2026): the line wraps, so a long time and "on Change #6894" go
+            under the name instead of squeezing it to "Ho…". Each part is
+            capped at the line, and only a name longer than the line itself
+            is cut. */}
+        <div className={cn('flex flex-wrap items-baseline gap-x-2', me && 'justify-end')}>
+          <span className="max-w-full truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{name}</span>
           {timestamp ? (
-            <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
+            <span className="max-w-full shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
           ) : null}
           {actions ? (
             <span className={cn('flex shrink-0 items-center gap-1', me ? 'order-first me-auto' : 'ms-auto')}>{actions}</span>
@@ -251,10 +256,18 @@ const FLOAT_MOTION = 'transition-[opacity,transform] duration-200 ease-out motio
  * (14 Oct 2026) it sat at the right edge, so as not to cover the middle of
  * a message's words; it is up only while the reader is up the transcript,
  * and centred it is the same control in a chat and on a change's page.
+ *
+ * Docked on the reply box's top edge, half over it (phone review #26, 23
+ * Nov 2026): floating 8px above the composer, the 40px disc landed on
+ * whatever had scrolled there, the before/after switch, "Suggest a change
+ * privately", a sender's line. The foot's box is the scroller's bottom
+ * edge, which is the composer's top, so the pill is centred on that line:
+ * its lower half is over the composer, its upper half over the transcript's
+ * own 12px of end padding, and nothing of the page's sits under it.
  */
 const OVERLAY_EDGE = {
   top: 'top-2 justify-center px-4',
-  foot: 'bottom-2 justify-center px-3',
+  foot: 'top-0 -translate-y-1/2 justify-center px-3',
 } as const;
 
 export function TranscriptOverlay({ edge, children }: { edge: 'top' | 'foot'; children?: React.ReactNode }) {
@@ -292,9 +305,9 @@ export function NewMessagesBanner({
 }
 
 /**
- * Jump to latest: a round disc with a down chevron at the transcript's
- * foot, up whenever the reader is not at the bottom, centred over it
- * (TranscriptOverlay, above). The disc is the language's floating control, white on the sheet; `dot` is the
+ * Jump to latest: a small pill with a down chevron on the reply box's top
+ * edge, up whenever the reader is not at the bottom, centred over it
+ * (TranscriptOverlay, above). 32px tall, its tap area 48px. The disc is the language's floating control, white on the sheet; `dot` is the
  * accent, for messages that arrived while the reader was up the
  * transcript, and the button's name says how many.
  */
@@ -307,16 +320,16 @@ export function JumpToLatestButton({
       inert={!shown}
       data-jump-latest=""
       className={cn(
-        'pointer-events-auto relative flex h-10 w-10 items-center justify-center rounded-full bg-white text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] dark:bg-zinc-800 dark:text-zinc-200',
+        'pointer-events-auto relative flex h-8 w-14 items-center justify-center rounded-full bg-white text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] after:absolute after:-inset-2 after:content-[\'\'] dark:bg-zinc-800 dark:text-zinc-200',
         FLOAT_MOTION,
         shown ? 'translate-y-0 scale-100 opacity-100' : 'pointer-events-none translate-y-2 scale-90 opacity-0',
         className,
       )}
       {...props}
     >
-      <ChevronDownIcon aria-hidden="true" className="h-5 w-5" />
+      <ChevronDownIcon aria-hidden="true" className="h-[1.125rem] w-[1.125rem]" />
       {dot ? (
-        <span aria-hidden="true" className="absolute end-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white dark:bg-violet-400 dark:ring-zinc-800" />
+        <span aria-hidden="true" className="absolute -end-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white dark:bg-violet-400 dark:ring-zinc-800" />
       ) : null}
     </button>
   );
