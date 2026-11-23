@@ -243,6 +243,8 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                   ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
                   : text}
             </span>
+            {/* The place's name beside the sidebar too, for a look that names the page in this bar (app.css shows it; hidden everywhere else). */}
+            {communityPage ? <HeaderPlaceName slug={slug} fallback={onCard ? 'workshop' : undefined} /> : null}
             {showSubtitle && !communityName ? (
               <span
                 id="header-subtitle"
