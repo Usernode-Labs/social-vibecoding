@@ -242,6 +242,25 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(handover.byRun.get(legacy).admitted, true);
     await pool.query("DELETE FROM wf_work WHERE key = 'old-rollout'");
     await pool.query('DELETE FROM check_runs WHERE run_id = $1', [legacy]);
+    // A work item can report before its result event removes the ticket.
+    // #7054 releases that ticket on the next pass, while any physical Jobs
+    // still stopping count immediately and only until their own deadline.
+    await queue.admit(pool, { capacity: available });
+    const unfinished = crypto.randomUUID();
+    await pool.query(`INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest)
+      VALUES ($1, $2, $3, 'departed', $4)`, [unfinished, s.id, old.head,
+      JSON.stringify({ workflow: true, readyId: old.admissionId, runKey: old.runId })]);
+    const checkRuns = require('../src/services/check-runs');
+    assert.equal(await checkRuns.linger(pool, unfinished), true);
+    await pool.query(`UPDATE wf_work SET status = 'reported' WHERE input->>'admissionId' = $1`, [old.admissionId]);
+    const finished = await queue.admit(pool, { capacity: available });
+    assert.deepEqual(finished.swept.map((r) => [r.runId, r.why]), [[old.admissionId, 'finished']]);
+    assert.deepEqual(finished.holding, { main: 0, proposal: 1 });
+    assert.equal(finished.byRun.get(unfinished).holding, true);
+    await pool.query("UPDATE check_runs SET admitted_at = 'epoch' WHERE run_id = $1", [unfinished]);
+    const expired = await queue.admit(pool, { capacity: available });
+    assert.deepEqual(expired.swept.map((r) => [r.runId, r.why]), [[unfinished, 'deadline']]);
+    assert.deepEqual(expired.holding, { main: 0, proposal: 0 });
     const input = await prepare(s, SHA('b'));
     assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [old.admissionId])).rowCount, 0);
     assert.equal(await queue.beginReadyClaim(pool, { admissionId: old.admissionId, runId: crypto.randomUUID(),
@@ -268,6 +287,8 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const start = await queue.beginReadyClaim(pool, { admissionId: input.admissionId, runId: child, workId: first.id, attempt: first.attempt_count,
       sessionId: s.id, commitSha: input.head, manifest: { workflow: true, runKey: input.runId, launched: false } });
     assert.equal(start.early_id, early);
+    assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [early])).rowCount, 0,
+      'the physical claim now owns the adopted suite, including its cleanup deadline');
     const { rows: [physical] } = await pool.query('SELECT manifest FROM check_runs WHERE run_id = $1', [child]);
     assert.equal(physical.manifest.proposalOverflow, true, 'the claimed Jobs keep the overflow slot if their reservation is removed');
     assert.deepEqual((await queue.admit(pool, { capacity })).holding, { main: 0, proposal: 1 });

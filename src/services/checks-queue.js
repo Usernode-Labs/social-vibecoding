@@ -642,7 +642,11 @@ async function beginReadyClaim(pool, { admissionId, runId, sessionId, commitSha,
        SELECT $2, session_id, app_id, commit_sha, $7, $5::jsonb ||
          jsonb_strip_nulls(jsonb_build_object('readyId', run_id, 'unitRunId', manifest->>'unitRunId',
            'proposalOverflow', manifest->'proposalOverflow')),
-         queued_at, NOW() FROM ticket RETURNING run_id)
+         queued_at, NOW() FROM ticket RETURNING run_id),
+     transferred AS (
+       DELETE FROM check_runs early USING ticket, claimed
+        WHERE early.run_id::text = ticket.manifest->>'unitRunId'
+          AND early.manifest->>'readyOwner' = ticket.run_id::text)
      SELECT ticket.queued_at, ticket.admitted_at, ticket.manifest->>'unitRunId' AS early_id
        FROM ticket, claimed`,
     [admissionId, runId, sessionId, commitSha, JSON.stringify(manifest), manifest.runKey, checkRuns.selfOwner(), workId, attempt]);
