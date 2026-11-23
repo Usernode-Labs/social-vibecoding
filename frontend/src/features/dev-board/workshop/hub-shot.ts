@@ -96,6 +96,7 @@ export function hubShotUpstream(kind: HubShot | null): Record<string, unknown> |
       sessionId: null,
       href: null,
       fromSha: '5f1c0de5f1c0de5f1c0de5f1c0de5f1c0de5f1c0',
+      sentAt: new Date(Date.now() - 3 * 864e5).toISOString(),
       brings: [
         { title: 'Other people: pick anyone in the group and see their whole board' },
         { title: 'Comments on each item, with @mentions' },

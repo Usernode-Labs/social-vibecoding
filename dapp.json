@@ -1926,10 +1926,17 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing has Sign in and one filled button in its bar, and under the story Explore apps and no link (first session)",
+      "name": "Landing has Sign in and one filled button in its bar, and under the story Explore apps and the door to private communities (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-explore]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story-explore] + a[data-landing-story-private][href=\"/communities\"]) #landing-header [data-landing-sign-in]:not(.hidden)",
       "expectText": "Sign in",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: /communities is the page about private communities, in the guest Discover's place, with its walk through a community, the approval rules and its own way in",
+      "path": "/communities?shot=anon",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-discover])) [data-guest-groups]:has([data-guest-groups-demo]):has(button[data-guest-groups-start]):has(a[data-guest-groups-public][href=\"/\"]) [data-guest-groups-rule=\"you_or_the_group\"] h3",
+      "expectText": "You or the group",
       "allowConsoleErrors": true
     },
     {
@@ -2551,9 +2558,9 @@
       "expectText": "Discussion"
     },
     {
-      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and a Private badge, last on the tab",
+      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and no Private pill of its own (the heading says it), last on the tab",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"] [data-private-badge]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"]:not(:has([data-private-badge])) svg",
       "expectText": "Staging demo private request"
     },
     {
@@ -2919,7 +2926,7 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Communities, then Recents (the pinned group, then the rest), then you",
+      "name": "The sidebar's markup order: Home, then Homeroom bot (AI) above Messages, then Communities, then Recents (the pinned group, then the rest), then you; app.css draws Communities second on every layout (phone review #81)",
       "path": "/?shot=app-context&demo=1",
       "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-tab-workshop[href=\"#communities\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-me"
     },
@@ -3919,9 +3926,9 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), how much it works on at once (#3624), and who it works for: everyone let in, or verified accounts only (#6632)",
+      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), how much it works on at once (#3624), and who it works for: everyone let in, or verified accounts only (#6632), with the automatic switch to verified accounts at its two thresholds",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person):has(#admin-homeroom-bot-works-for #admin-homeroom-bot-works-for-everyone) #admin-homeroom-bot-intro",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person):has(#admin-homeroom-bot-works-for #admin-homeroom-bot-works-for-everyone):has(#admin-homeroom-bot-verified-auto #admin-homeroom-bot-verified-auto-on + span):has(#admin-homeroom-bot-verified-auto-users):has(#admin-homeroom-bot-verified-auto-spend) #admin-homeroom-bot-intro",
       "expectText": "acts on every app but the"
     },
     {
@@ -4597,7 +4604,7 @@
       "name": "About is the app's page (nav prototype): Open, Add to your apps, and its builders with what each has merged",
       "path": "/?shot=app-about&demo=1&about=app#app/staging-demo-forkable/workshop",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane:has(#app-about-actions > #app-about-add) #app-about-contributors [data-contributor]",
-      "expectText": "14 live"
+      "expectText": "14 changes live"
     },
     {
       "name": "About Homeroom carries the platform's own figures: apps, members, merged (nav prototype)",

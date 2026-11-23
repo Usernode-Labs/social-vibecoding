@@ -114,14 +114,16 @@ function openVotes(sessionId: number | null, number: number | null): void {
  * thread (request-model.ts requestChangesStore), so the line needs no vote
  * snapshot: the section below carries the vote.
  */
-export function VoteLine({ sessionId, number, title }: { sessionId: number; number: number | null; title: string | null }): ReactNode {
+export function VoteLine({ sessionId, number, title, live = false }: { sessionId: number; number: number | null; title: string | null; live?: boolean }): ReactNode {
   const t = useMessages('chat');
+  // Once the change is live its vote is over: the line offers the change
+  // itself, whose section the same press scrolls to (phone review #116).
   return (
     <div className="gc-vote-line" data-vote-line={sessionId}>
       <span className="gc-vote-line-name">{changeName(t, { number, title })}</span>
       {' · '}
       <button type="button" className="dev-request-event-link" data-vote-see="" onClick={() => askVotesInView(sessionId)}>
-        {t('chat:group.voteCard.seeVote')}
+        {live ? t('chat:group.voteCard.seeChange') : t('chat:group.voteCard.seeVote')}
       </button>
     </div>
   );

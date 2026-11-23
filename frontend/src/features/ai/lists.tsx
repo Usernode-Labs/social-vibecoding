@@ -53,7 +53,7 @@
  * progress, Waiting or Live, with the track's word on its right), which
  * opens the thread and is lit while it is in the column.
  */
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { ReactNode } from 'react';
 
@@ -62,7 +62,7 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
   ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
-  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, WarningTriangleIcon, XIcon,
+  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, SearchIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -109,14 +109,19 @@ const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
 const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 // Where you are: the row whose chat is in the column, on the lit tint.
 const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
+// Phone review #140 (23 Nov 2026): a row with its own ⋯ beside it is lit
+// whole, the ⋯ inside the tint, so the button does not hang outside its own
+// row; the row's button then keeps the lit ink and no fill of its own.
+const LIT_ROW_WHOLE = 'flex min-w-0 items-center gap-1 rounded-md bg-[color:var(--lit-tint)]';
+const LIT_INK_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md text-[color:var(--lit-ink)]';
 
 function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   // #6159: a private thread's row has its ⋯ beside it, with Mark done.
   if (line.done) {
     const { rootId, mark } = line.done;
     return (
-      <div className="flex min-w-0 items-center gap-1" data-ai-line-done="">
-        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} freshTitles={freshTitles} /></div>
+      <div className={line.lit ? LIT_ROW_WHOLE : 'flex min-w-0 items-center gap-1'} data-ai-line-done="">
+        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} freshTitles={freshTitles} inLitRow={line.lit} /></div>
         <ThreadDoneMenu rootId={rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
       </div>
     );
@@ -126,7 +131,7 @@ function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; qui
 
 /**
  * #6262: the dot in the row's leading margin, so rows with and without one
- * stay lined up. The accent the page already uses for Vote and Needs Reply.
+ * stay lined up. The accent the page already uses for Vote and Needs reply.
  */
 const DOT = 'absolute -start-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
 
@@ -150,7 +155,7 @@ const FOLD_CLIP = 'min-h-0 overflow-hidden -ms-4 ps-4';
 const FOLD_OPEN = 'grid-rows-[1fr] opacity-100 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_200ms_ease-out]';
 const FOLD_SHUT = 'grid-rows-[0fr] opacity-0 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_0s_linear_300ms]';
 
-function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
+function LineButton({ line, quiet = false, freshTitles = false, inLitRow = false }: { line: Line; quiet?: boolean; freshTitles?: boolean; inLitRow?: boolean }): ReactNode {
   const t = useMessages('messages');
   // #6421: a thread that holds several requests says how many after its title.
   const many = Number(line.requests) > 1;
@@ -159,7 +164,7 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
   return (
     <button
       type="button"
-      className={`${line.lit ? LIT_ROW : quiet ? LIVE_ROW : ROW} relative`}
+      className={`${line.lit ? (inLitRow ? LIT_INK_ROW : LIT_ROW) : quiet ? LIVE_ROW : ROW} relative`}
       onClick={line.open}
       title={tooltip}
       data-ai-line={line.kind}
@@ -172,8 +177,9 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
       {/* Not on a phone, where the drawer's list is 85% of the screen: the
           title needs the room more, and the tooltip still says the number.
           1 Nov 2026: nor under 1024px, where the column beside the list
-          leaves it about as narrow. */}
-      <span className="hidden lg:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+          leaves it about as narrow. 23 Nov 2026: nor at any width while a
+          thread is open beside the list (app.css, `data-ai-line-number`). */}
+      <span className="hidden lg:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-ai-line-number="">
         {line.number ? t(line.pr ? 'messages:ai.live.numberPr' : 'messages:ai.live.number', { number: line.number }) : ''}
       </span>
       <span className="min-w-0 flex-1">
@@ -307,30 +313,84 @@ function FreshBadge({ count, className = '' }: { count: number; className?: stri
  * it rather than cutting the last one off against the sheet's border (Evan,
  * 30 Oct: wrapping to a second line read worse). The fade is a mask, so it
  * fades to whatever the sheet is, in either theme.
+ *
+ * THE FADE IS ONLY OVER A CHIP THAT IS CUT (phone review #95, 23 Nov 2026).
+ * A fixed 40px fade at an edge with anything past it washed out a chip that
+ * fitted whole (the picked "Homeroom" went grey on its right) and let a
+ * sliver of the next chip show beside More. So each edge is read off the
+ * chip the rail's edge actually cuts (`railMask`): a chip shown by less than
+ * a tap's worth is clipped clean at its own start, one shown by more fades
+ * over its cut part only (never more than 40px), and with no chip cut there
+ * is no fade at all. The picked chips are scrolled whole into view
+ * (`reveal`), so the one you chose is never the one under the fade.
  */
 const FADE = 40;
-function FadeRail({ className = '', children, ...props }: React.ComponentProps<'div'>): ReactNode {
+/** Under this many pixels showing, a cut chip is clipped clean rather than faded. */
+const SLIVER = 28;
+
+/**
+ * Pure: the mask for a rail `width` wide whose chips span `spans` (each
+ * [left, right], from the rail's own left edge), or null when nothing is
+ * cut. Physical sides, so it holds in either direction.
+ */
+export function railMask(width: number, spans: ReadonlyArray<readonly [number, number]>): string | null {
+  let left: string | null = null;
+  let right: string | null = null;
+  for (const [a, b] of spans) {
+    // Cut by the left edge: its start is past it, its end is not.
+    if (a < -0.5 && b > 0.5) {
+      const at = Math.round(b);
+      left = b < SLIVER ? `transparent ${at}px, #000 ${at}px` : `transparent 0px, #000 ${Math.round(Math.min(b, FADE))}px`;
+    }
+    // Cut by the right edge.
+    if (a < width - 0.5 && b > width + 0.5) {
+      const at = Math.round(a);
+      right = width - a < SLIVER ? `#000 ${at}px, transparent ${at}px` : `#000 ${Math.round(Math.max(a, width - FADE))}px, transparent 100%`;
+    }
+  }
+  if (!left && !right) return null;
+  return `linear-gradient(to right, ${left || '#000 0px'}, ${right || '#000 100%'})`;
+}
+
+function FadeRail({ className = '', children, reveal = '', ...props }: React.ComponentProps<'div'> & { reveal?: string }): ReactNode {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [edges, setEdges] = useState({ start: false, end: false });
+  const [mask, setMask] = useState<string | null>(null);
+  const sync = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const spans = [...el.children].map((child) => {
+      const r = child.getBoundingClientRect();
+      return [r.left - box.left, r.right - box.left] as const;
+    });
+    const next = railMask(box.width, spans);
+    setMask((had) => (had === next ? had : next));
+  }, []);
   useEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
-    const sync = () => {
-      // scrollLeft runs negative from the start in a right-to-left scroller.
-      const at = Math.abs(el.scrollLeft);
-      const start = at > 1;
-      const end = at + el.clientWidth < el.scrollWidth - 1;
-      setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
-    };
     sync();
     el.addEventListener('scroll', sync, { passive: true });
     const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync);
     ro?.observe(el);
     return () => { el.removeEventListener('scroll', sync); ro?.disconnect(); };
-  }, []);
-  const mask = edges.start || edges.end
-    ? `linear-gradient(to right, ${edges.start ? 'transparent' : '#000'}, #000 ${FADE}px, #000 calc(100% - ${FADE}px), ${edges.end ? 'transparent' : '#000'})`
-    : undefined;
+  }, [sync]);
+  // The picked chips, whole: scrolled into the rail (never the page) when
+  // the pick changes, then the mask is read again for where they landed.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const picked = [...el.querySelectorAll<HTMLElement>('[aria-pressed="true"]')];
+    const box = el.getBoundingClientRect();
+    let by = 0;
+    for (const chip of picked) {
+      const r = chip.getBoundingClientRect();
+      if (r.right > box.right) by = Math.max(by, r.right - box.right + 16);
+      else if (r.left < box.left) by = Math.min(by, r.left - box.left - 16);
+    }
+    if (by) el.scrollLeft += by;
+    sync();
+  }, [reveal, sync]);
   return (
     <div
       ref={ref}
@@ -339,8 +399,6 @@ function FadeRail({ className = '', children, ...props }: React.ComponentProps<'
       // under it. The first chip still starts 16px in, as the title does.
       className={`mx-1.5 flex gap-2 overflow-x-auto px-2.5 pt-3 pb-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
       style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
-      data-fade-start={edges.start ? '' : undefined}
-      data-fade-end={edges.end ? '' : undefined}
       {...props}
     >
       {children}
@@ -653,11 +711,17 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
 }
 
 export function AiLists({
-  hero, query = '', found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  hero, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
   picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
+  /**
+   * Empty the search box (phone review, 23 Nov 2026, #3): what the chip
+   * beside History's heading does, so a search that is narrowing History can
+   * be seen and ended there, with the box itself a long scroll above.
+   */
+  onQueryClear?: () => void;
   /**
    * #6398: what the page's search box says. The lists keep only the threads
    * whose title, number or project name contains it, upper and lower case
@@ -732,7 +796,7 @@ export function AiLists({
           // rail never scrolls it out of reach. Drawn too whenever a link
           // picked a project, however few there are, so All is a tap away.
           <div className="flex items-start" data-ai-project-filter="">
-            <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1">
+            <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1" reveal={picked.join(' ')}>
               <Chip size="bar" className={`gap-2 px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
                 {t('messages:ai.filter.all')}
                 <FreshBadge count={freshAll} className={!picked.length ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
@@ -861,8 +925,30 @@ export function AiLists({
       {history && (!searching || historyLines.length) ? (
         <div ref={historyRef} className={`${PLANE} pb-2 scroll-mt-4`} data-ai-sheet="history">
           <section className="pb-1" data-ai-list="history">
-            <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-              <SectionHeader className="px-0 pt-0 pb-0">{t('messages:ai.history.title')}</SectionHeader>
+            <div className="mb-1 flex items-center gap-2 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
+              <SectionHeader className="shrink-0 px-0 pt-0 pb-0">{t('messages:ai.history.title')}</SectionHeader>
+              {/* #3 (phone review, 23 Nov 2026): History is searched like
+                  every list, and the search box is the page's first thing,
+                  far above this card. So while a search narrows it, the card
+                  says so beside its heading, with the way to end it. */}
+              {/* The chip idiom's selection (a filter is on: you are looking
+                  at a subset), but a press clears it, so it is no toggle. */}
+              {searching && onQueryClear ? (
+                <Chip
+                  size="bar"
+                  selected
+                  aria-pressed={undefined}
+                  className="-my-1.5 ms-auto h-8 min-w-0 max-w-[70%] gap-1.5 ps-2.5 pe-2 text-[13px] [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:shrink-0"
+                  aria-label={t('messages:ai.history.searching.clear', { query: query.trim() })}
+                  title={t('messages:ai.history.searching.clear', { query: query.trim() })}
+                  onClick={onQueryClear}
+                  data-ai-history-search=""
+                >
+                  <SearchIcon aria-hidden="true" />
+                  <span className="min-w-0 truncate">{t('messages:ai.history.searching.chip', { query: query.trim() })}</span>
+                  <XIcon aria-hidden="true" strokeWidth="2.25" />
+                </Chip>
+              ) : null}
             </div>
             <div role="group" aria-label={t('messages:ai.history.kind.label')} className="flex gap-1.5 overflow-x-auto px-4 pt-1.5 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-ai-history-kinds="">
               <Chip size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={!historyKind} onClick={() => onHistoryKind?.(null)} data-ai-history-kind="all">

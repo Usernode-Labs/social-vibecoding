@@ -77,7 +77,7 @@ import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.j
 // inside the chunk — and a boot listener that only exists once the screen has
 // been opened would never fire.
 import './terms-first-run.js';
-import { SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle } from './settings-nav';
+import { SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPagePin, SettingsPageTitle } from './settings-nav';
 import { SettingsAccountRows } from './account-rows';
 
 interface SettingsChunkState {
@@ -202,6 +202,7 @@ export function SettingsScreen() {
             */}
             <div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">
               <SettingsPageTitle />
+              <SettingsPagePin />
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">

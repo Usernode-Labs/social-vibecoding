@@ -381,8 +381,9 @@ test('the unit suite starts with the build, under the attempt\'s own id, unless 
   assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'and with the whole preview');
 });
 
-test('required batch mode cannot launch speculative early suites even with the legacy switch enabled', async (t) => {
+test('required batch mode launches an early suite only with a reservation for the exact attempt', async (t) => {
   const k8s = require('../src/services/kubernetes');
+  const queue = require('../src/services/checks-queue');
   const prior = process.env.EARLY_UNIT_SUITE;
   process.env.EARLY_UNIT_SUITE = '1';
   t.after(() => {
@@ -390,13 +391,26 @@ test('required batch mode cannot launch speculative early suites even with the l
     else process.env.EARLY_UNIT_SUITE = prior;
   });
   t.mock.method(k8s, 'countRunningUnitSuiteJobs', async () => assert.fail('count-then-launch must not decide admission'));
-  const workers = previewServices({ config: { workerRuntime: 'kubernetes',
+  t.mock.method(k8s, 'findCheckJobs', async () => ({ unitSuites: [] }));
+  let grant = false;
+  const reserve = t.mock.method(queue, 'reserveEarlyUnitSlot', async () => grant);
+  const workers = previewServices({ config: { captureRuntime: 'kubernetes', workerRuntime: 'kubernetes',
     kubernetes: { checkNodePoolRequired: true } }, pool });
+  suites.preparing = true;
+  t.after(() => { suites.preparing = false; });
   suites.launched.length = 0;
   const results = await Promise.all(Array.from({ length: 10 }, (_, i) =>
     workers[WORK.unitEarly].run(ctx({ sessionId: 5 + i, appId: 2, n: 3, head }))));
-  assert.ok(results.every((r) => r.started === false && r.why === 'off'));
+  assert.ok(results.every((r) => r.started === false && r.why === 'no_spare_slot'));
   assert.equal(suites.launched.length, 0, 'unit suites run later inside the admitted checks run');
+  grant = true;
+  const input = { sessionId: 5, appId: 2, n: 3, head };
+  const result = await workers[WORK.unitEarly].run(ctx(input));
+  assert.equal(result.started, true);
+  assert.deepEqual(reserve.mock.calls[10].arguments[2], {
+    runId: result.runId, sessionId: 5, appId: 2, attempt: 3, commitSha: head,
+  });
+  assert.equal(suites.launched[0].previewRunId, result.runId);
 });
 
 // services/unit-suite-reuse.js: a head whose suite already passed under the

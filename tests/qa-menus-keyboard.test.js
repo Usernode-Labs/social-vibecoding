@@ -113,9 +113,10 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(plus, /const menuKeys = useMenuKeyboard\(open, popRef, btnRef, shut\);/);
   assert.match(plus, /id="messages-new-menu"[\s\S]*?onKeyDown=\{menuKeys\.onKeyDown\}/);
   const head = src.slice(src.indexOf('function ThreadHeader()'), src.indexOf('/** The day a message was sent'));
-  assert.match(head, /useDismiss\(menu, \[menuWrapRef\], closeMenu\);/, 'an outside press and Escape close it');
+  // The menu counts as inside too: in a phone's bar it is portalled to the page (#131).
+  assert.match(head, /useDismiss\(menu, \[menuWrapRef, menuRef\], closeMenu\);/, 'an outside press and Escape close it');
   assert.match(head, /aria-haspopup="menu" aria-expanded=\{menu\}/);
-  assert.match(head, /className="messages-thread-menu" role="menu"/);
+  assert.match(head, /className=\{discsInBar \? 'messages-thread-menu messages-thread-menu-bar' : 'messages-thread-menu'\}[\s\S]{0,200}role="menu"/);
   // Includes Rename group and the conversation-level Report user action.
   // The Homeroom bot DM's "Activity & history" (#3692) left the menu: the
   // bot's name block in the header opens the panel now. Polish N15: the bot

@@ -34,7 +34,7 @@ import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronDownIcon, SearchIcon, Squares2X2Icon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -102,26 +102,23 @@ export function ProjectChip({ slug, open, onOpen }: {
   // Read through the store so a name that arrives after the pick is drawn.
   const st = useStoreState(communityScopeStore);
   const info = slug ? st.info[slug] || null : null;
-  const color = useCommunityColor(info ? { color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug } : null);
   const name = info ? info.name : t('messages:newThread.anyProject');
-  const style = info ? ({ '--project-ink': color } as CSSProperties) : undefined;
   return (
     <button
       type="button"
       className="messages-project-chip"
       data-bot-new-thread-project={slug || ''}
       data-picked={info ? '' : undefined}
-      style={style}
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={t('messages:newThread.projectChip', { project: name })}
-      title={t('messages:newThread.projectChip', { project: name })}
       onClick={(event) => onOpen(event.currentTarget)}
     >
-      {info ? <Tile info={info} className="messages-project-chip-tile" /> : (
-        <span className="messages-project-chip-tile messages-project-chip-any" aria-hidden="true"><Squares2X2Icon /></span>
-      )}
-      <span className="messages-project-chip-name">{name}</span>
+      {/* Phone review S13: "About: Any project" says it in words, so no
+          tile stands for it; a picked project still shows its own. */}
+      {info ? <Tile info={info} className="messages-project-chip-tile" /> : null}
+      {/* Phone review S13: it says what it picks ("About: Homeroom", "With:
+          Homeroom bot"), and those words are its name for a screen reader. */}
+      <span className="messages-project-chip-name"><RichMessage id="messages:newThread.projectChip" values={{ project: name }} components={[<span className="messages-project-chip-label" />]} /></span>
       <ChevronDownIcon className="messages-project-chip-chev" aria-hidden="true" />
     </button>
   );

@@ -283,8 +283,8 @@ test('a message row hangs the same vote card a vote row does, and no module-fill
   // group-chat.js. Pinned in tests/vote-row-card.test.js; here only that
   // the bubble carries it.
   const tsx = read('frontend/src/features/group-chat/transcript.tsx');
-  const row = tsx.slice(tsx.indexOf('export const MessageRow'), tsx.indexOf('export const MessageRow') + 7000);
-  assert.match(row, /\{msg\.voteRef \? \(seeVote\s*\? <VoteLine sessionId=\{seeVote\.sessionId\} number=\{seeVote\.number\} title=\{seeVote\.title\} \/>\s*: <VoteCard msg=\{msg\} \/>\) : null\}/);
+  const row = tsx.slice(tsx.indexOf('export const MessageRow'), tsx.indexOf('export const MessageRow') + 8000);
+  assert.match(row, /\{msg\.voteRef \? \(seeVote\s*\? <VoteLine sessionId=\{seeVote\.sessionId\} number=\{seeVote\.number\} title=\{seeVote\.title\} live=\{!!seeVote\.live\} \/>\s*: <VoteCard msg=\{msg\} \/>\) : null\}/);
   assert.doesNotMatch(tsx, /data-vote-controls=""|gc-vote-inline/, 'no host left for the module to fill');
   assert.match(read('public/css/app.css'), /\.gc-vote-card \{[^}]*border-radius: 20px;[^}]*background: var\(--dc-sheet-solid\);/);
 });

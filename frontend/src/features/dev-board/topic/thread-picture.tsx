@@ -17,7 +17,7 @@ import { t as translate } from '../../../lib/i18n/runtime';
 // #6825: a tile is a strip thumbnail, so it loads the small copy only.
 import { shotThumb } from '../../../lib/shot-img';
 import { ExpandIcon } from '@/components/ui/icons';
-import { CompareSlider } from '../../review-flow/compare';
+import { CAP_STRIP, CompareSlider, FOOT_STRIP, withinStrips } from '../../review-flow/compare';
 import { focusBox, placeBox, type Placement, type ReviewScreen } from '../../review-flow/model';
 import type { ChangeThreadView } from './model';
 
@@ -34,10 +34,13 @@ export function pictureFrame(screen: ReviewScreen, width: number): { height: num
   const focus = focusBox(screen, ['before', 'after'], 24);
   const whole = Math.max(screen.before.height, screen.after.height);
   const scale = Math.min(1, width / focus.w);
-  const most = Math.min(PICTURE_MAX, Math.max(240, width * 1.1));
+  // The strips (#27) are inside PICTURE_MAX, so the picture is no taller than before.
+  const most = Math.min(PICTURE_MAX - CAP_STRIP - FOOT_STRIP, Math.max(240, width * 1.1));
   const least = Math.min(300, width * 0.62);
-  const height = Math.max(1, Math.round(Math.min(whole * scale, most, Math.max(focus.h * scale, least))));
-  return { height, place: placeBox(screen, focus, { w: width, h: height }, 1) };
+  const room = Math.max(1, Math.round(Math.min(whole * scale, most, Math.max(focus.h * scale, least))));
+  // #27: the caption's strip over the screen and the switch's under it are
+  // added to the picture, so the screen keeps all of its room.
+  return { height: room + CAP_STRIP + FOOT_STRIP, place: withinStrips(placeBox(screen, focus, { w: width, h: room }, 1)) };
 }
 
 export function ThreadPicture({ s, captions = null }: {

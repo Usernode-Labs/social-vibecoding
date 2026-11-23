@@ -67,6 +67,48 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s).replace(/\n/g, ' '); }
 
+// Phone review #31 (23 Nov 2026): a roster read that met a passing 502, 503
+// or 504 printed "Failed to load approvers: HTTP 503" with no way to try
+// again. Those three are a gateway or a busy server, so the read is tried
+// again twice, after 0.6s and 1.2s, before it gives up; any other answer is
+// final at once.
+const RETRY_STATUSES = new Set([502, 503, 504]);
+const RETRY_WAITS_MS = [600, 1200];
+async function fetchRoster(url) {
+  for (let attempt = 0; ; attempt += 1) {
+    const last = attempt >= RETRY_WAITS_MS.length;
+    let res = null;
+    try {
+      res = await fetch(url);
+    } catch (err) {
+      if (last) throw err;
+    }
+    if (res && (last || !RETRY_STATUSES.has(res.status))) return res;
+    await new Promise((resolve) => setTimeout(resolve, RETRY_WAITS_MS[attempt]));
+  }
+}
+
+// Phone review #52 (23 Nov 2026): a person invited by email is listed by the
+// address they were invited at, which is not a username, so it takes no "@"
+// ("@ann@gmail.com" read as a handle). Their row's "invited" tag says the rest.
+function rosterName(username) {
+  const name = String(username ?? '');
+  return name.includes('@') ? name : `@${name}`;
+}
+
+// What a roster that could not be read says, in the dialog's own words, and
+// the button that reads it again (wired by the caller): no status code.
+function rosterFailedHtml(messageId, retry) {
+  return `<div class="flex items-center justify-between gap-3 px-3 py-2 text-sm text-zinc-600 dark:text-zinc-300" data-members-load-failed="${escapeAttr(retry)}">`
+    + `<span class="min-w-0">${PlatformI18n.htmlText(messageId)}</span>`
+    + `<button type="button" data-members-retry="${escapeAttr(retry)}" class="shrink-0 min-h-[44px] px-2 text-sm font-semibold text-violet-700 hover:underline dark:text-violet-400">${PlatformI18n.htmlText('dialogs:members.retry')}</button>`
+    + '</div>';
+}
+function wireRetry(list, retry, load) {
+  const btn = list.querySelector(`[data-members-retry="${retry}"]`);
+  if (btn) btn.addEventListener('click', () => { void load(); });
+}
+
 const MembersDialog = {
   // ── Members & approvals modal ──────────────────────────────────────
   //
@@ -474,17 +516,28 @@ const MembersDialog = {
     }
   },
 
+  // #31: an invite field is held (disabled) while the list it adds to could
+  // not be read, and let go once it is.
+  _holdInvite(id, held) {
+    const input = document.getElementById(id);
+    if (input) input.disabled = !!held;
+  },
+
   async loadCollaborators() {
     const list = document.getElementById('members-list');
     if (!list || !AppView.appData) return;
     list.innerHTML = `<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('core:common.loading')}</div>`;
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/collaborators`);
+      const res = await fetchRoster(`/api/apps/${AppView.appData.slug}/collaborators`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      AppView._holdInvite('members-invite-input', false);
       AppView._renderCollaborators(data.collaborators || []);
-    } catch (err) {
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">${PlatformI18n.htmlText('dialogs:members.collaborators.loadFailed', { reason: err.message })}</div>`;
+    } catch {
+      // #31: the invite field waits for the list it adds to.
+      AppView._holdInvite('members-invite-input', true);
+      list.innerHTML = rosterFailedHtml('dialogs:members.collaborators.loadFailed', 'collaborators');
+      wireRetry(list, 'collaborators', () => AppView.loadCollaborators());
     }
   },
 
@@ -515,7 +568,7 @@ const MembersDialog = {
         ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? PlatformI18n.htmlText('dialogs:members.collaborators.revokeTitle') : (r.userId === me.id ? PlatformI18n.htmlText('dialogs:members.collaborators.leaveTitle') : PlatformI18n.htmlText('dialogs:members.collaborators.removeTitle'))}">${pending ? PlatformI18n.htmlText('dialogs:members.collaborators.revoke') : (r.userId === me.id ? PlatformI18n.htmlText('dialogs:members.collaborators.leave') : PlatformI18n.htmlText('dialogs:members.collaborators.remove'))}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending && !offered ? 'opacity-70' : ''}">
-        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">${escapeHtml(rosterName(r.username))}${tag}</span>
         ${removeBtn}
       </div>`;
     }).join('');
@@ -874,14 +927,17 @@ const MembersDialog = {
     const list = document.getElementById('members-appadmins-list');
     if (!section || !list || !AppView.appData) return;
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/admins${AppView._demoQuery()}`);
+      const res = await fetchRoster(`/api/apps/${AppView.appData.slug}/admins${AppView._demoQuery()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      AppView._holdInvite('members-appadmins-input', false);
       AppView._appAdminsDraft = [...(Array.isArray(data.declared) ? data.declared : [])];
       AppView._renderAppAdmins(data);
-    } catch (err) {
+    } catch {
       section.classList.remove('hidden');
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">${PlatformI18n.htmlText('dialogs:members.appAdmins.loadFailed', { reason: err.message })}</div>`;
+      AppView._holdInvite('members-appadmins-input', true);
+      list.innerHTML = rosterFailedHtml('dialogs:members.appAdmins.loadFailed', 'appadmins');
+      wireRetry(list, 'appadmins', () => AppView.loadAppAdmins());
     }
   },
 
@@ -1165,16 +1221,19 @@ const MembersDialog = {
     if (!list || !AppView.appData) return;
     list.innerHTML = `<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('core:common.loading')}</div>`;
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/approvers`);
+      const res = await fetchRoster(`/api/apps/${AppView.appData.slug}/approvers`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       AppView._approversData = data;
+      AppView._holdInvite('members-approver-invite-input', false);
       AppView._renderApprovers(data.approvers || []);
-    } catch (err) {
+    } catch {
       // Reveal the section so the failure isn't silently hidden.
       const section = document.getElementById('members-approvers-section');
       if (section) section.classList.remove('hidden');
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">${PlatformI18n.htmlText('dialogs:members.approvers.loadFailed', { reason: err.message })}</div>`;
+      AppView._holdInvite('members-approver-invite-input', true);
+      list.innerHTML = rosterFailedHtml('dialogs:members.approvers.loadFailed', 'approvers');
+      wireRetry(list, 'approvers', () => AppView.loadApprovers());
     }
   },
 
@@ -1213,7 +1272,7 @@ const MembersDialog = {
         ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? PlatformI18n.htmlText('dialogs:members.approvers.revokeTitle') : (r.userId === me.id ? PlatformI18n.htmlText('dialogs:members.approvers.leaveTitle') : PlatformI18n.htmlText('dialogs:members.approvers.removeTitle'))}">${pending ? PlatformI18n.htmlText('dialogs:members.approvers.revoke') : (r.userId === me.id ? PlatformI18n.htmlText('dialogs:members.approvers.leave') : PlatformI18n.htmlText('dialogs:members.approvers.remove'))}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
-        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">${escapeHtml(rosterName(r.username))}${tag}</span>
         ${removeBtn}
       </div>`;
     }).join('');

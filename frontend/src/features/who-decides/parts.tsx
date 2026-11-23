@@ -104,6 +104,12 @@ export function PresetTiles({ picked, now, viewer, onPick, labelId }: {
 
 /** The group's tile, beside a row about a change anyone (else) makes. */
 const GROUP_TILE = <IconTile size="xs"><UserGroupIcon aria-hidden="true" /></IconTile>;
+/**
+ * The face beside "You make a change", as wide as the group's tile under it
+ * (IconTile `xs`, 32px). At a face's usual 28px the two rows' words started
+ * 4px apart (phone review #122, 23 Nov 2026).
+ */
+export const PLAYS_LEAD = 32;
 
 /**
  * How a preset, or a project's own rules (`preset` null), plays out. Two
@@ -130,7 +136,7 @@ export function PlaysOut({ preset, viewer }: { preset: PresetKey | null; viewer:
   return (
     <GroupedList tone="plane" className="mx-0" data-who-plays="">
       <ListRow
-        leading={<Face name={viewer.creator && viewer.isCreator ? viewer.creator : 'you'} />}
+        leading={<Face name={viewer.creator && viewer.isCreator ? viewer.creator : 'you'} size={PLAYS_LEAD} />}
         title={t('dialogs:whoDecides.plays.youTitle')}
         subtitle={lines.you}
         chevron={false}

@@ -80,12 +80,12 @@
     "description": "Plain line at the foot of Homeroom's own About pane while a version is being deployed and there is no version code to show."
   },
   "appContext.about.stat.apps_one": {
-    "text": "app",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the apps on Homeroom."
+    "text": "project",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the projects on Homeroom (each one an app people build together)."
   },
   "appContext.about.stat.apps_other": {
-    "text": "apps",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the apps on Homeroom."
+    "text": "projects",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the projects on Homeroom (each one an app people build together)."
   },
   "appContext.about.stat.members_one": {
     "text": "member",
@@ -96,12 +96,12 @@
     "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the people on Homeroom."
   },
   "appContext.about.stat.live_one": {
-    "text": "live",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; an adjective."
+    "text": "change live",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; \"live\" is an adjective."
   },
   "appContext.about.stat.live_other": {
-    "text": "live",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; an adjective."
+    "text": "changes live",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; \"live\" is an adjective."
   },
   "appContext.about.contributor.unknown": {
     "text": "unknown",
@@ -311,6 +311,14 @@
     "text": "All links",
     "description": "Small heading in the Invite pane of the app menu over the list of every invite link, the ones that still work first and the ones that ended in the last 30 days after them, shown to someone who manages the project."
   },
+  "appContext.invite.ended_one": {
+    "text": "{{count}} ended link",
+    "description": "Folded row under the invite links in the Invite pane of the app menu: opens the links that stopped working in the last 30 days. {{count}} is how many."
+  },
+  "appContext.invite.ended_other": {
+    "text": "{{count}} ended links",
+    "description": "Folded row under the invite links in the Invite pane of the app menu: opens the links that stopped working in the last 30 days. {{count}} is how many."
+  },
   "appContext.invite.yourLinks": {
     "text": "Your links",
     "description": "Small heading in the Invite pane of the app menu over the list of the person's own invite links."
@@ -344,24 +352,24 @@
     "description": "Button on a row of the list of invite links in the Invite pane of the app menu, on a link that paused itself because a lot of people joined through it in one day: lets people join through it again."
   },
   "appContext.about.contributor.live_one": {
-    "text": "{{count}} live",
-    "description": "Shown at the right of a contributor's row in the About pane of the app menu: how many of that person's changes have been released. {{count}} is that number; \"live\" is an adjective."
+    "text": "{{number}} change live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu: how many of that person's changes have been released. {{number}} is that number, already formatted (\"2,027\"); {{count}} only selects the plural form. \"live\" is an adjective."
   },
   "appContext.about.contributor.live_other": {
-    "text": "{{count}} live",
-    "description": "Shown at the right of a contributor's row in the About pane of the app menu: how many of that person's changes have been released. {{count}} is that number; \"live\" is an adjective."
+    "text": "{{number}} changes live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu: how many of that person's changes have been released. {{number}} is that number, already formatted (\"2,027\"); {{count}} only selects the plural form. \"live\" is an adjective."
   },
   "appContext.about.contributor.creator": {
     "text": "Creator",
     "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app, when none of their changes have been released yet."
   },
   "appContext.about.contributor.creatorLive_one": {
-    "text": "Creator · {{count}} live",
-    "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app: they made it, and {{count}} of their changes have been released. \"live\" is an adjective."
+    "text": "Creator · {{number}} change live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app: they made it, and {{number}} of their changes have been released. {{number}} is already formatted (\"2,027\"); {{count}} only selects the plural form. \"live\" is an adjective."
   },
   "appContext.about.contributor.creatorLive_other": {
-    "text": "Creator · {{count}} live",
-    "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app: they made it, and {{count}} of their changes have been released. \"live\" is an adjective."
+    "text": "Creator · {{number}} changes live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app: they made it, and {{number}} of their changes have been released. {{number}} is already formatted (\"2,027\"); {{count}} only selects the plural form. \"live\" is an adjective."
   },
   "appContext.about.contributors.showFewer": {
     "text": "Show fewer",
@@ -510,6 +518,30 @@
   "appContext.row.toVote_other": {
     "text": "{{count}} decisions waiting on you",
     "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many decisions in this project wait on this person (changes and group decisions to vote on, questions to answer). The row then opens the project's Needs you list of them. {{count}} is that number; hidden at zero."
+  },
+  "appContext.row.owedVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Shown under the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name, while things in this project wait on this person. {{count}} is how many changes and group decisions they still have to vote on: the same words and number as the Needs you door on the project's hub. Hidden at zero."
+  },
+  "appContext.row.owedVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Shown under the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name, while things in this project wait on this person. {{count}} is how many changes and group decisions they still have to vote on: the same words and number as the Needs you door on the project's hub. Hidden at zero."
+  },
+  "appContext.row.owedAnswer_one": {
+    "text": "{{count}} to answer",
+    "description": "Shown under the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name, while things in this project wait on this person. {{count}} is how many questions Homeroom bot asked them about their requests that they have not answered yet."
+  },
+  "appContext.row.owedAnswer_other": {
+    "text": "{{count}} to answer",
+    "description": "Shown under the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name, while things in this project wait on this person. {{count}} is how many questions Homeroom bot asked them about their requests that they have not answered yet."
+  },
+  "appContext.row.owedBoth_one": {
+    "text": "{{votes}} to vote · {{questions}} to answer",
+    "description": "Shown under the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name, while things in this project wait on this person. {{votes}} is how many changes and group decisions they still have to vote on (the number the project's hub shows), {{questions}} how many of Homeroom bot's questions about their requests they have not answered. The plural form follows {{votes}}."
+  },
+  "appContext.row.owedBoth_other": {
+    "text": "{{votes}} to vote · {{questions}} to answer",
+    "description": "Shown under the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name, while things in this project wait on this person. {{votes}} is how many changes and group decisions they still have to vote on (the number the project's hub shows), {{questions}} how many of Homeroom bot's questions about their requests they have not answered. The plural form follows {{votes}}."
   },
   "appContext.row.terminal": {
     "text": "Developer terminal",

@@ -167,7 +167,7 @@ test('once the star is out of sight the offset stops moving, so scrolling writes
 
 test('the clamp is the star layer\'s own height in app.css', () => {
   const css = fs.readFileSync(path.join(ROOT, 'public', 'css', 'app.css'), 'utf8');
-  const layers = css.match(/var\(--home-star\) right 32px top var\(--home-star-y, 0px\) \/ \d+px \d+px/g) || [];
+  const layers = css.match(/var\(--home-star\) right var\(--home-star-x, 32px\) top var\(--home-star-y, 0px\) \/ \d+px \d+px/g) || [];
   assert.equal(layers.length, 4, 'phone + desktop, light + dark');
   for (const layer of layers) {
     assert.equal(Number(layer.match(/(\d+)px$/)[1]), mod.STAR_HEIGHT_PX,
@@ -185,7 +185,7 @@ test('inside an app (no wallpaper scroller showing) the star sits at rest', () =
 
 test('app.css reads the property on every star layer and never declares it', () => {
   const css = fs.readFileSync(path.join(ROOT, 'public', 'css', 'app.css'), 'utf8');
-  const layers = css.match(/var\(--home-star\) right 32px top [^/]+\//g) || [];
+  const layers = css.match(/var\(--home-star\) right var\(--home-star-x, 32px\) top [^/]+\//g) || [];
   assert.equal(layers.length, 4, 'phone + desktop, light + dark');
   for (const layer of layers) {
     assert.match(layer, /top var\(--home-star-y, 0px\) \//, 'the star layer follows the scroll property');

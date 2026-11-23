@@ -10,6 +10,9 @@
  *   (what happened, and every item; 6 Nov 2026: it took Your work's place
  *   there) and the Discussion (#general and its last line, or "No messages
  *   yet."). ForYouCard.
+ *   TOPICS, a row for each live topic's channel. TopicsCard.
+ *   TOP CONTRIBUTORS, the people who took part most, this month or over
+ *   all time, each a name and a count in words. ContributorsCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after
  *   shot, its title, and who made it and when; before any has, the app
  *   itself and since when it has been live. RecentlyLive.
@@ -85,6 +88,7 @@ import { openFirstVersion } from '../../ai/where';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
+import { swatchFor } from '../../messages/format';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
 import {
@@ -213,7 +217,9 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
   const look = useFirstLook(slug, hubShowsFirstLook(fv));
   const t = useMessages('project');
   const now = useNow();
-  if (!fv) return null;
+  // Once it is live the card has nothing left to say: the app is the
+  // hero's Open app (phone review #53), and the hero names the project.
+  if (!fv || firstVersionLine(fv) === 'live') return null;
   const asked = firstVersionAction(fv);
   const held = touring && asked === 'review';
   const line: BuildLineState = held ? 'working' : firstVersionLine(fv);
@@ -233,8 +239,6 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
       void openFirstVersion(slug);
     } else if (action === 'try' && fv.session_id) {
       (window as any).AppView?.tryFirstVersion?.(slug, fv.session_id);
-    } else if (action === 'open') {
-      (window as any).App?.openAppTab?.(slug, 'app');
     } else if (action === 'retry') {
       // The App tab's own opener for it (AppView.openFirstVersionThread).
       const thread = fv.thread || null;
@@ -300,23 +304,17 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
         ) : null}
       </div>
       {button && action ? (
-        action === 'open' ? (
-          <button type="button" className="dev-ws-open-app dev-ws-hub-first-open" data-ws-first-version-action="open" onClick={press}>
-            {t(ACTION_WORDS.open)}
-          </button>
-        ) : (
-          <Button
-            type="button"
-            layout="full"
-            variant="pillAccent"
-            size="pill"
-            ink="solid"
-            data-ws-first-version-action={action}
-            onClick={press}
-          >
-            {t(ACTION_WORDS[action])}
-          </Button>
-        )
+        <Button
+          type="button"
+          layout="full"
+          variant="pillAccent"
+          size="pill"
+          ink="solid"
+          data-ws-first-version-action={action}
+          onClick={press}
+        >
+          {t(ACTION_WORDS[action])}
+        </Button>
       ) : null}
     </section>
   );
@@ -555,6 +553,19 @@ export function hubAlone(data: Pick<CommunityPayload, 'audience' | 'member_count
 /** A row's label over its card: SectionHeader, set for the hub's column. */
 const HUB_HEAD = 'px-1 pb-0 pt-2';
 
+/**
+ * A door's one pill sits on its TITLE line, at that line's end (phone review
+ * #91, 23 Nov 2026). Beside the two lines it took the width of both, and on
+ * an iPhone the line under the title kept two or three words ("Needs you:
+ * Add a Template Choose…", "@scraido2: Hap…"). Now the second line has the
+ * row's whole width, and a title too long for the line ends short of the
+ * pill.
+ */
+const TITLE_WITH_PILL = 'dev-ws-foryou-title';
+function pillTitle(name: ReactNode, pill: ReactNode): ReactNode {
+  return pill ? <><span className="dev-ws-foryou-name">{name}</span>{pill}</> : name;
+}
+
 /** The Needs you tile while a vote is owed: the accent, which asks for you. */
 const OWED_TILE = 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300';
 
@@ -596,14 +607,14 @@ function NeedsRow({ queue, slug, canPost, onOpen, outsider = false }: {
           data-ws-hub-needs-open=""
           onClick={onOpen}
           leading={<IconTile size="xs" className={OWED_TILE}><BallotIcon aria-hidden="true" /></IconTile>}
-          title={t('project:hub.needs.upForVote')}
-          subtitle={<span data-ws-hub-needs-join="">{t('project:hub.needs.joinToVote')}</span>}
-          trailing={(
+          titleClassName={TITLE_WITH_PILL}
+          title={pillTitle(t('project:hub.needs.upForVote'), (
             <span className="dev-ws-foryou-pill dev-ws-foryou-pill-light" data-ws-hub-needs-count="">
               <span aria-hidden="true">{votes.length}</span>
               <span className="sr-only">{t('project:hub.needs.upForVoteCount', { count: votes.length })}</span>
             </span>
-          )}
+          ))}
+          subtitle={<span data-ws-hub-needs-join="">{t('project:hub.needs.joinToVote')}</span>}
         />
       </div>
     );
@@ -629,9 +640,9 @@ function NeedsRow({ queue, slug, canPost, onOpen, outsider = false }: {
         data-ws-hub-needs-open=""
         onClick={onOpen}
         leading={<IconTile size="xs" className={count ? OWED_TILE : undefined}><BallotIcon aria-hidden="true" /></IconTile>}
-        title={t('project:hub.needs.title')}
+        titleClassName={TITLE_WITH_PILL}
+        title={pillTitle(t('project:hub.needs.title'), count ? <span className="dev-ws-foryou-pill">{t('project:hub.needs.toVote', { count })}</span> : null)}
         subtitle={sub}
-        trailing={count ? <span className="dev-ws-foryou-pill">{t('project:hub.needs.toVote', { count })}</span> : undefined}
       />
       {count && !canPost ? (
         <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join="">{t('project:hub.needs.joinToVote')}</p>
@@ -725,19 +736,19 @@ function DiscussionRow({ data, onOpen, outsider = false }: {
       data-ws-channel-handle={channel.handle || undefined}
       onClick={onOpen}
       leading={<IconTile size="xs"><ChatIcon aria-hidden="true" /></IconTile>}
-      title={(
+      titleClassName={TITLE_WITH_PILL}
+      title={pillTitle((
         <RichMessage
           id="project:hub.forYou.discussion.title"
           values={{ handle: channel.handle || 'general' }}
           components={[<span className="dev-ws-foryou-handle" />]}
         />
-      )}
-      subtitle={sub}
-      trailing={unread > 0 ? (
+      ), unread > 0 ? (
         <span className="dev-ws-foryou-pill" data-ws-channel-unread={String(unread)}>
           {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
         </span>
-      ) : undefined}
+      ) : null)}
+      subtitle={sub}
     />
   );
 }
@@ -845,17 +856,17 @@ export function TopicsCard({ data, onOpen }: {
                     : <HashIcon aria-hidden="true" />}
                 </IconTile>
               )}
-              title={(
+              titleClassName={TITLE_WITH_PILL}
+              title={pillTitle((
                 <>
                   {topic.name || topic.handle} <span className="dev-ws-foryou-handle">#{topic.handle}</span>
                 </>
-              )}
-              subtitle={topic.about || undefined}
-              trailing={unread ? (
+              ), unread ? (
                 <span className="dev-ws-foryou-pill" data-ws-hub-topic-unread={String(unread)}>
                   {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
                 </span>
-              ) : undefined}
+              ) : null)}
+              subtitle={topic.about || undefined}
             />
           );
         })}
@@ -869,6 +880,69 @@ export function TopicsCard({ data, onOpen }: {
             title={t('project:places.list.showMore', { count: more })}
           />
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+/** Below this many people over all time the hub has no Top contributors card: no list of one. */
+export const HUB_CONTRIBUTORS_MIN = 2;
+
+/**
+ * TOP CONTRIBUTORS (request 6837): the people who took part most in this
+ * project, up to five, the most first, each a face, a name and one count in
+ * words ("14 contributions": their changes that went live, their votes on
+ * changes and the requests they filed). The order is the ranking: no rank
+ * number, no medal, no chart, and nobody is listed at zero. The head's
+ * switch picks This month or All time; it opens on This month, or on All
+ * time while nobody has taken part yet this month. Rows are for reading and
+ * open nothing. No card until two people have taken part, so a project that
+ * is just yours shows no list of one. The names are the server's
+ * (GET /api/apps/:slug/community `contributors`); an answer without them
+ * draws nothing.
+ */
+export function ContributorsCard({ data }: { data: CommunityPayload | null }): ReactNode {
+  const t = useMessages('project');
+  const headId = useId();
+  const [picked, setPicked] = useState<'month' | 'all' | null>(null);
+  const month = data?.contributors?.month || [];
+  const allTime = data?.contributors?.all_time || [];
+  if (allTime.length < HUB_CONTRIBUTORS_MIN) return null;
+  const span = picked || (month.length ? 'month' : 'all');
+  const people = span === 'month' ? month : allTime;
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-contributors={span} aria-labelledby={headId}>
+      <div className="dev-ws-hub-sechead">
+        <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.contributors.title')}</SectionHeader>
+        <div className="dev-ws-contrib-span" role="group" aria-label={t('project:hub.contributors.span')}>
+          <button type="button" data-ws-contrib-span="month" aria-pressed={span === 'month'} onClick={() => setPicked('month')}>
+            {t('project:hub.contributors.month')}
+          </button>
+          <button type="button" data-ws-contrib-span="all" aria-pressed={span === 'all'} onClick={() => setPicked('all')}>
+            {t('project:hub.contributors.allTime')}
+          </button>
+        </div>
+      </div>
+      <div className="dev-ws-strip dev-ws-foryou">
+        {people.length ? people.map((person) => (
+          <ListRow
+            key={person.id}
+            as="div"
+            inset="none"
+            chevron={false}
+            className="dev-ws-foryou-row dev-ws-contrib-row"
+            data-ws-contributor={person.username}
+            leading={(
+              <span className="dev-ws-hero-face dev-ws-contrib-face" style={{ background: swatchFor(person.username) }} aria-hidden="true">
+                {(person.username || '?').charAt(0).toUpperCase()}
+              </span>
+            )}
+            title={person.username}
+            trailing={<span className="dev-ws-foryou-count">{t('project:hub.contributors.count', { count: person.n })}</span>}
+          />
+        )) : (
+          <p className="dev-ws-week-note" data-ws-contrib-none="">{t('project:hub.contributors.emptyMonth')}</p>
+        )}
       </div>
     </section>
   );
@@ -962,6 +1036,51 @@ export function HubSkeleton({ others }: { others: boolean }): ReactNode {
 
 /* ── Recently live ───────────────────────────────────────────────────── */
 
+/** The shape Recently live's small picture is cut to: its slot's, about 96 × 60. */
+export const RECENT_FRAME_ASPECT = 1.6;
+/** Room kept round the element, in the screen's CSS px. */
+const RECENT_FRAME_PAD = 12;
+
+/**
+ * The part of an after screen Recently live shows (#41): the element its
+ * claim is about, with a little room round it, grown to the slot's shape and
+ * kept inside the screen. `[x, y, w, h]` in the screen's CSS px. Pure.
+ */
+export function recentFrameView(frame: { width: number; height: number; box: number[] }): [number, number, number, number] {
+  const [bx, by, bw, bh] = frame.box;
+  const W = frame.width;
+  const H = frame.height;
+  let w = Math.min(W, bw + RECENT_FRAME_PAD * 2);
+  let h = Math.min(H, bh + RECENT_FRAME_PAD * 2);
+  if (w / h > RECENT_FRAME_ASPECT) h = Math.min(H, w / RECENT_FRAME_ASPECT);
+  else w = Math.min(W, h * RECENT_FRAME_ASPECT);
+  const cx = bx + bw / 2;
+  const cy = by + bh / 2;
+  const x = Math.max(0, Math.min(W - w, cx - w / 2));
+  const y = Math.max(0, Math.min(H - h, cy - h / 2));
+  return [Math.round(x), Math.round(y), Math.round(w), Math.round(h)];
+}
+
+/**
+ * The after screen, framed: the still placed in the slot so that view of it
+ * fills the slot. Every offset is a share of the slot's WIDTH (a margin's
+ * percentage is), and the slot is RECENT_FRAME_ASPECT wide, so nothing needs
+ * measuring; a view narrower than the slot's shape is centred in it.
+ */
+export function framedShotStyle(frame: { width: number; height: number; box: number[] }): Record<string, string> {
+  const [x, y, w, h] = recentFrameView(frame);
+  const across = Math.max(w, h * RECENT_FRAME_ASPECT);
+  const left = x - (across - w) / 2;
+  const top = y - (across / RECENT_FRAME_ASPECT - h) / 2;
+  const pct = (n: number) => `${Math.round((n / across) * 10000) / 100}%`;
+  // Physical sides on purpose: the still is a picture, not text, and is never mirrored.
+  return { width: pct(frame.width), marginLeft: pct(-left), marginTop: pct(-top) };
+}
+
+function FramedShot({ frame }: { frame: { url: string; width: number; height: number; box: number[] } }): ReactNode {
+  return <img className="dev-ws-recent-frame" src={frame.url} alt="" loading="lazy" draggable={false} style={framedShotStyle(frame)} />;
+}
+
 /** How many of the newest changes Recently live draws. */
 export const RECENT_LIVE_SHOWN = 3;
 
@@ -1005,7 +1124,19 @@ export function liveSinceLine(value: string | null | undefined, now: number = Da
   return translate('project:hub.recent.own.since', { date: dayWords(at, zonedDay(at).year !== zonedDay(today).year) });
 }
 
-/** The app's own card opens the app, as the First version card's Open app does. */
+const COUNT_FORMAT = new Map<string, Intl.NumberFormat>();
+/** A count as the reader's language writes it ("1,045"). Pure but for the language. */
+export function countWords(n: number): string {
+  const lang = typeof document !== 'undefined' ? document.documentElement.lang || '' : '';
+  let format = COUNT_FORMAT.get(lang);
+  if (!format) {
+    try { format = new Intl.NumberFormat(lang || undefined); } catch { format = new Intl.NumberFormat(); }
+    COUNT_FORMAT.set(lang, format);
+  }
+  return format.format(n);
+}
+
+/** The app's own card opens the app. */
 function openApp(slug: string): void {
   (window as any).App?.openAppTab?.(slug, 'app');
 }
@@ -1094,8 +1225,10 @@ export function RecentlyLive({ slug, rows, onAll, own = null, ident = null, mont
                   data-ws-recent-item={r.key}
                   data-ws-recent-going={r.going ? '' : undefined}
                 >
-                  <span className="dev-ws-recent-pic" data-ws-recent-pic={r.picture ? 'shot' : 'plain'} aria-hidden="true">
-                    {r.picture ? (
+                  <span className="dev-ws-recent-pic" data-ws-recent-pic={r.frame ? 'frame' : r.picture ? 'shot' : 'plain'} aria-hidden="true">
+                    {r.frame ? (
+                      <FramedShot frame={r.frame} />
+                    ) : r.picture ? (
                       <img src={r.picture} alt="" loading="lazy" draggable={false} />
                     ) : tile ? (
                       <span className="app-icon-tile dev-ws-recent-app" data-icon={appIconKind(tile)}>
@@ -1120,8 +1253,10 @@ export function RecentlyLive({ slug, rows, onAll, own = null, ident = null, mont
         </ul>
         {more ? (
           <button type="button" className="dev-ws-recent-more" data-ws-recent-more={String(more)} onClick={onAll}>
-            <span className="dev-ws-recent-more-n" aria-hidden="true">{t('project:hub.recent.morePill', { count: more })}</span>
-            <span className="dev-ws-recent-more-words">{t('project:hub.recent.moreThisMonth', { count: more })}</span>
+            {/* Said once (phone review #91): a "+1045" badge before "1045 more
+                live this month" was the same number twice. The number is
+                written as the reader's language writes it: "1,045". */}
+            <span className="dev-ws-recent-more-words">{t('project:hub.recent.moreThisMonth', { count: more, shown: countWords(more) })}</span>
             <ChevronRightIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         ) : null}
@@ -1203,6 +1338,10 @@ export function UpdateCard({ slug, data }: { slug: string; data: CommunityPayloa
   const line = kind === 'behind' ? t('project:hub.update.behindLine')
     : kind === 'fit' && conflicts ? t('project:hub.update.clash', { count: conflicts })
       : bringsLine(offer && offer.brings) || t('project:hub.update.ready');
+  // When the update was sent: a version that does not get updates has none,
+  // and once Homeroom bot was asked the card only says so.
+  const sentAt = kind !== 'behind' && asked === null && offer ? offer.sentAt : null;
+  const sent = sentAt ? agoStamp(sentAt) : null;
 
   const see = async () => {
     if (busy) return;
@@ -1247,6 +1386,11 @@ export function UpdateCard({ slug, data }: { slug: string; data: CommunityPayloa
         </p>
       ) : (
         <>
+          {sent && sent.text && sentAt ? (
+            <p className="dev-ws-share-sent" data-ws-update-sent="">
+              <time dateTime={sentAt} title={sent.title}>{t('project:hub.update.sent', { when: sent.text })}</time>
+            </p>
+          ) : null}
           <p className="dev-ws-strip-text" data-ws-update-line="">{line}</p>
           {error ? <p className="dev-ws-share-sent" role="alert">{error}</p> : null}
           <div className="dev-ws-share-actions">

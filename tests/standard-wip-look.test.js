@@ -25,6 +25,12 @@ const WIP_HIDES = [
   'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
   'html:not([data-skin]) #app-list .app-card-people',
+  // On a phone New project is the grid's last tile, not a button on the search row that waits under the header (phone review, 23 Nov 2026).
+  'html:not([data-skin]) #home-search-bar #home-new-project-top',
+  // While words are in the Communities page's search, New community gives the field its place, as New project does on Home (phone review, 23 Nov 2026).
+  'html:not([data-skin]) #communities-screen .communities-top:has(#communities-search-input:not(:placeholder-shown)) > #communities-new-top',
+  // So it is beside the open sidebar up to 1280px, where the tile stays stacked: as a row its name had about 75px.
+  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html:not([data-skin]) #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
@@ -43,6 +49,14 @@ const WIP_HIDES = [
   'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle',
   // And the short claim over the picture: the full text is beside it, so it is said once.
   'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row',
+  // Messages' empty pane holds the guide from 768px: its own heading and line give way to the guide's.
+  'html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > :is(h2, p)',
+  // The Workshop's figures are four cards, each with a mark: the mark says what the label's dot said (asked 23 Nov 2026).
+  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot',
+  // Beside the open sidebar, on Homeroom's own pages, the bar shows the place alone: the panel's brand is the community's name already.
+  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) > #header-app-tile, html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(.header-place-name) > span > #header-title-name:has(> svg)',
+  // A request's page has no title of its own while the top bar names the place.
+  'html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title',
   // The project's preview is a card beside the hero from 1024px; narrower, the hero keeps the picture at its side (20 Nov 2026).
   'html:not([data-skin]) #dev-workshop .wip-hero-preview',
   // And where the card is there, the hero's own tilted copy of the picture is not.
@@ -59,6 +73,11 @@ const WIP_HIDES = [
  * declared once, and nothing hidden but what MENU_HIDES lists.
  */
 const MENU_SCOPE = 'html:not([data-skin])';
+// The bar's page-ground layer (asked 23 Nov 2026) paints the look's own page
+// colour under Standard (WIP), where the page and its frame are one ground;
+// the standard look reads its wallpaper instead. So these two rules
+// of the menu's block name that look on purpose, and the foot test holds them.
+const WIP_LAYER = /^html\[data-skin-wip\]\[data-wip-tokens\] body:has\(#(?:home|communities)-screen:not\(\.hidden\)\) #platform-header#platform-header::before$/;
 const MENU_HIDES = [
   // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
   'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
@@ -67,8 +86,11 @@ const MENU_HIDES = [
   'html:not([data-skin]) body #platform-header#platform-header::before',
   // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
-  // and the words, counts, headings, pins and nested places are the open menu's (asked 20 Nov 2026).
-  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x)',
+  // and the words, headings, pins and nested places are the open menu's (asked 20 Nov 2026); the counts on the
+  // places stay, on their glyphs' corners (phone review #81, 23 Nov 2026).
+  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x)',
+  // On a phone's bar the lit tab is its own sun pill, so the sliding marker is not drawn as well (phone review #106).
+  'html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker',
 ];
 
 function menuBlock() {
@@ -194,8 +216,8 @@ test('the menu and the top bar: one block for the standard look and this one, ev
   assert.ok(all.length > 30, 'the block holds the menu\'s rules');
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
-      assert.ok(one.startsWith(MENU_SCOPE), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.doesNotMatch(one, /data-skin-wip|data-skin="/, `"${one}" names a look: the block is the two together`);
+      assert.ok(one.startsWith(MENU_SCOPE) || WIP_LAYER.test(one), `"${one}" is not scoped to the standard look and its brand drawing`);
+      assert.ok(WIP_LAYER.test(one) || !/data-skin-wip|data-skin="/.test(one), `"${one}" names a look: the block is the two together`);
     }
   }
   // Colours are written in the token rules alone (light, then dark), and every token a rule reads is declared there.
@@ -206,6 +228,8 @@ test('the menu and the top bar: one block for the standard look and this one, ev
   for (const r of all) {
     if (tokens.includes(r)) continue;
     assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector} writes a colour of its own; make it a --wip-nav-* token`);
+    // The page's own colour is Standard (WIP)'s token, declared in that block; it is not the menu's.
+    if (WIP_LAYER.test(r.selector)) continue;
     for (const m of r.body.matchAll(/var\((--wip-[a-z0-9-]+)/g)) {
       assert.ok(declared.has(m[1]), `${m[1]} (used by ${r.selector}) is declared in the block's token rule`);
     }
@@ -232,7 +256,7 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   assert.ok(line, 'the top bar ends in a line');
   assert.match(line.body, /content: "";/);
   assert.match(line.body, /position: absolute;/, 'on the bar itself, which is the positioned box');
-  assert.match(line.body, /inset-block-end: 0;/, 'at its foot');
+  assert.match(line.body, /inset-block-end: 0\.5rem;/, 'at the page\'s top edge: the bar\'s -mb-2 overlap (#7048)');
   assert.match(line.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'from the menu\'s edge, open or folded to its strip');
   assert.match(line.body, /inset-inline-end: 0;/, 'to the window\'s');
   assert.match(line.body, /height: 1px;/);
@@ -247,6 +271,51 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   const query = css.lastIndexOf('@media', at);
   assert.equal(css.slice(query, css.indexOf('{', query)).trim(), '@media (min-width: 768px)');
   assert.ok(css.indexOf('\n}\n', query) > at, 'inside that query, not after it');
+
+  // THE PAGE STARTS AT THE FOOT (phone review #68, 23 Nov 2026): the bar no
+  // longer overlaps the page, the line stops at an iPhone Duo's column of
+  // system chrome, and a project's page keeps its gutter inside the box that
+  // clips it, so the clip is the line's own span.
+  const flush = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header`);
+  assert.ok(flush && /margin-bottom: 0;/.test(flush.body), 'the page starts under the line');
+  const strip = all.find((r) => r.selector.includes('[data-side-strip="right"] body #platform-header#platform-header::after'));
+  assert.ok(strip, 'the line has a rule for the Duo\'s column');
+  assert.match(strip.body, /inset-inline-end: var\(--platform-strip-w, 0px\);/, 'and ends where the column starts');
+  const view = all.find((r) => r.selector.endsWith('#app-view[data-app-surface="platform"]:not(.hidden)'));
+  assert.ok(view, 'a project\'s page');
+  assert.match(view.body, /padding-inline: var\(--platform-rail-w, 0px\) 0;/, 'stands beside the menu with no gutter outside its clip');
+  const content = all.find((r) => r.selector.endsWith('#app-view[data-app-surface="platform"] > #app-content'));
+  assert.ok(content && /padding-inline: var\(--platform-gutter\);/.test(content.body), 'the gutter is inside the clip');
+
+  // THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026): on Home and
+  // Communities the bar paints the page's own ground again, so the search
+  // field and the page's action pass behind it instead of showing through it
+  // and letting the foot line be drawn across them. The line does not move.
+  const UNDER = `${MENU_SCOPE} body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before`;
+  const under = all.find((r) => r.selector === UNDER);
+  assert.ok(under, 'Home and Communities paint the bar\'s layer');
+  assert.match(under.body, /content: "" !important;/, 'it turns the layer back on against the content-none rule above');
+  assert.match(under.body, /background: var\(--home-wallpaper\);/, 'with the page\'s own wallpaper, as the body paints it');
+  assert.match(under.body, /clip-path: inset\(0 0 0\.5rem calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\)\);/,
+    'clipped past the menu\'s edge and the rounded page corner, and by the bar\'s -mb-2 at the foot');
+  const rtlUnder = all.find((r) => r.selector === `${MENU_SCOPE}[dir="rtl"] body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before`);
+  assert.ok(rtlUnder, 'right to left the menu is on the right');
+  assert.match(rtlUnder.body, /clip-path: inset\(0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\) 0\.5rem 0\);/,
+    'so its strip is cut on the other side, and its foot by the bar\'s -mb-2');
+  // Standard (WIP) makes the page and its frame one colour, so there the layer paints that colour.
+  const wip = rules(wipBlock());
+  const wipTokens = new Set();
+  for (const r of wip) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) wipTokens.add(m[1]);
+  const wipHome = all.find((r) => WIP_LAYER.test(r.selector) && /#home-screen/.test(r.selector));
+  assert.ok(wipHome, 'Home under Standard (WIP) paints its page colour');
+  assert.match(wipHome.body, /background: var\(--wip-page-bg\);/);
+  assert.ok(wipTokens.has('--wip-page-bg'), 'the colour is the look\'s own token');
+  const wipCommunities = all.find((r) => WIP_LAYER.test(r.selector) && /#communities-screen/.test(r.selector));
+  assert.ok(wipCommunities, 'Communities under Standard (WIP) paints its page colour');
+  assert.match(wipCommunities.body, /background: var\(--wip-page-bg-communities\);/);
+  assert.ok(wipTokens.has('--wip-page-bg-communities'), 'the colour is the look\'s own token');
+  // The layer is never content of its own, so the hidden-rule list does not grow.
+  assert.ok(!MENU_HIDES.includes(UNDER));
 });
 
 test('on a community\'s page the Communities tab gives way to its row', () => {
@@ -260,7 +329,7 @@ test('on a community\'s page the Communities tab gives way to its row', () => {
   const glyph = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-glyph, .platform-tab-label)`);
   assert.ok(glyph, 'the glyph and the word stop wearing the lit row\'s on-ink');
   assert.match(glyph.body, /color: inherit;/);
-  const count = all.find((r) => r.selector === `${GIVE} .platform-tab-votes`);
+  const count = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-votes, .platform-tab-badge)`);
   assert.ok(count, 'its count goes back to an unlit row\'s disc');
   assert.match(count.body, /background: var\(--wip-nav-count-bg\);/);
   assert.match(count.body, /color: var\(--wip-nav-count-ink\);/);
@@ -305,7 +374,7 @@ test('the fold button leads the logo\'s line, on the same spot open and folded, 
   const RAIL = 'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden))';
   // ONE RULE PLACES IT, whatever the menu's state: its glyph in the rows' icon column, on the logo's line.
   assert.ok(block.includes(`${RAIL} #platform-header #sidebar-toggle {\n    position: absolute;\n`
-    + '    inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);\n'
+    + '    inset-block-start: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);\n'
     + '    inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) - (var(--wip-nav-fold) - var(--wip-nav-ic-size)) / 2);'));
   assert.deepEqual(all.filter((r) => r.selector.includes('#sidebar-toggle') && /folded|peek/.test(r.selector)).map((r) => r.selector), [],
     'no rule moves or repaints it for the folded menu (it jumped 240px to the top bar\'s start there)');
@@ -338,9 +407,9 @@ test('the page is a sheet tucked into the menu: its corners are rounded where it
   assert.ok(tokens, 'the corners\' radius is a token of the block');
   assert.match(tokens.body, /--wip-nav-page-radius: 20px;/);
   // The corners: a fixed layer on <body>, just past the menu's edge, while the menu is docked.
-  const docked = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after';
+  const docked = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#platform-header.hidden))::after';
   const corners = all.find((r) => r.selector === `${MENU_SCOPE} ${docked}`);
-  assert.ok(corners, 'drawn while the menu is docked; not while it peeks over the page, nor beside a running app');
+  assert.ok(corners, 'drawn while the menu is docked, beside a running app too (its frame is a card on the page); not while it peeks over the page, nor while an app has the whole window');
   assert.match(corners.body, /position: fixed;/);
   assert.match(corners.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'just past the menu\'s edge, open or folded to its strip');
   assert.match(corners.body, /width: var\(--wip-nav-page-radius\);/);
@@ -356,6 +425,62 @@ test('the page is a sheet tucked into the menu: its corners are rounded where it
   const at = css.indexOf('THE PAGE IS A SHEET TUCKED INTO THE MENU');
   assert.ok(at > 0);
   assert.match(css.slice(css.indexOf('*/', at) + 2, css.indexOf('*/', at) + 40), /^\n@media \(min-width: 768px\) \{/);
+});
+
+test('where the page scrolls under the top bar, the bar has a ground from the menu\'s edge and keeps the page\'s corner (audit, 23 Nov 2026)', () => {
+  const css = read('public', 'css', 'app.css');
+  const all = rules(menuBlock());
+  const DOCKED = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek))';
+  // A touch browser scrolls the document under the sticky bar (a project's
+  // Workshop ran under the logo and the bell on a tablet), and Safari's own
+  // ground covered the menu's top (its fold button was white on white).
+  const ltr = all.find((r) => r.selector.startsWith(`${MENU_SCOPE}[data-browser-scroller] ${DOCKED} #platform-header,`));
+  assert.ok(ltr, 'where the document scrolls, with the menu docked, the bar has a ground');
+  const [, safari] = topLevel(ltr.selector);
+  assert.ok(safari.startsWith(`${MENU_SCOPE}.un-ios.web-browser-chrome:not([data-community-tint]) ${DOCKED}:has(`), 'and on the screens Safari gives a ground of its own');
+  // …exactly those: the screens of Safari's own ground rule, and the platform's surface of #app-view.
+  const at = css.indexOf('html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen');
+  assert.ok(at > 0, 'Safari\'s own ground rule');
+  const screens = (s) => [...new Set(s.match(/#[a-z-]+-screen\b/g))].sort();
+  assert.deepEqual(screens(safari), screens(css.slice(at, css.indexOf('{', at))));
+  assert.ok(safari.includes('#app-view:not(.hidden)[data-app-surface="platform"]'));
+  // The page's plane from the menu's edge, so the menu still reaches the top…
+  assert.match(ltr.body, /background-color: transparent;/);
+  assert.match(ltr.body, /linear-gradient\(to right, transparent var\(--platform-rail-w, 0px\), var\(--dc-sheet-solid\) 0\)/);
+  // …and the page's top corner at that edge, drawn as the corner layer draws it, since the bar lies over that layer.
+  assert.match(ltr.body, /radial-gradient\(circle at 100% 100%, transparent calc\(var\(--wip-nav-page-radius\) - 0\.5px\), var\(--wip-nav-bg\) var\(--wip-nav-page-radius\)\),\s*linear-gradient/, 'the corner is the top layer');
+  assert.match(ltr.body, /background-position: var\(--platform-rail-w, 0px\) 0, 0 0;/);
+  assert.match(ltr.body, /background-size: var\(--wip-nav-page-radius\) var\(--wip-nav-page-radius\), 100% calc\(100% - 0\.5rem\);/, 'the plane ends at the line, 0.5rem above the box bottom (#7048)');
+  assert.match(ltr.body, /background-repeat: no-repeat;/);
+  assert.doesNotMatch(ltr.body, /radius: 0/, 'no corner is squared off');
+  const rtl = all.find((r) => r.selector.startsWith(`${MENU_SCOPE}[dir="rtl"][data-browser-scroller] ${DOCKED} #platform-header,`));
+  assert.ok(rtl, 'right to left the menu is on the right');
+  assert.match(rtl.body, /radial-gradient\(circle at 0 100%,[\s\S]*linear-gradient\(to left, transparent var\(--platform-rail-w, 0px\), var\(--dc-sheet-solid\) 0\)/);
+  assert.match(rtl.body, /background-position: right var\(--platform-rail-w, 0px\) top 0, 0 0;/);
+  // The menu starts under the strips above the header, and its brand's band, the brand and the fold button under the status bar.
+  const menu = all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs` && /z-index: 9;/.test(r.body));
+  assert.match(menu.body, /top: var\(--browser-banner-h, 0px\);/);
+  assert.match(menu.body, /padding-top: calc\(var\(--platform-safe-top, 0px\) \+ var\(--wip-nav-brand-h\)\);/);
+  const brand = all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs::before` && /mask:/.test(r.body));
+  assert.match(brand.body, /inset-block-start: calc\(var\(--platform-safe-top, 0px\) \+ var\(--wip-nav-brand-top\)\);/);
+  // The project's pause pill stands in the bar's row from 900px; where the bar is sticky at 30 with a ground, it rises over it.
+  assert.match(css, /html:not\(\[data-skin\]\)\[data-browser-scroller\] body:has\(#platform-header \.header-place-name\) #dev-forum-scroll:has\([^{]*\) > #dev-code-pause-notice \{ z-index: 31; \}/);
+  assert.match(css, /html\[data-browser-scroller\] :is\(#platform-header, #landing-header\) \{\s*position: sticky;\s*top: var\(--browser-banner-h\);\s*z-index: 30;/, 'the bar it rises over');
+});
+
+test('the All items head meets the top bar where the place bar is folded (asked 23 Nov 2026, #7050)', () => {
+  const css = read('public', 'css', 'app.css');
+  // The place bar is folded from 768px, so its height plus the column gap
+  // (`--dev-ws-head-top`, 10px) left a strip cards scrolled through above
+  // the pinned head. In that same block the All items head drops it and rests
+  // on the top bar's measured foot (`--ws-pin-top`), as the Hub's header does.
+  assert.match(css,
+    /html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] \.dev-ws-pane-head \{\s*top: var\(--ws-pin-top, 0px\);\s*\}/);
+  const fold = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar');
+  const head = css.indexOf('#dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head');
+  assert.ok(fold > 0 && head > fold, 'it goes in the 768px block that folds the bar, so it applies exactly when the bar is gone');
+  // The base rule keeps the measured gap for every other look and tab.
+  assert.match(css, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\)/);
 });
 
 test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {
@@ -438,7 +563,9 @@ test('open, You\'s row ends short of Settings, and on Settings only Settings is 
 
   // On Settings, You's tab keeps `aria-current` (it is Settings' section), and
   // its row steps back to rest: no ground, a resting row's ink and weight.
-  const GIVE = `${OPEN}:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]`;
+  // Open or folded (phone review #80): the folded strip stacks Settings'
+  // square over You's tile, and both were lit.
+  const GIVE = `${MENU_SCOPE} #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]`;
   const rest = all.find((r) => r.selector === GIVE);
   assert.ok(rest, 'You\'s row gives up its light while Settings is current');
   assert.equal(decl(rest.body, 'background'), 'transparent', 'the lit-row rule would otherwise paint it');
@@ -462,8 +589,8 @@ test('open, You\'s row ends short of Settings, and on Settings only Settings is 
   assert.ok(lit, 'the lit-row rule lights Settings');
   assert.equal(decl(lit.body, 'background'), 'var(--wip-nav-on-bg)');
   assert.ok(block.indexOf(GIVE) > block.indexOf(lit.selector), 'after the lit-row rule, which it out-ranks');
-  // A wide display's rules, for the open menu: folded, the strip keeps its own
-  // drawing, and the phone's bar has no Settings.
+  // A wide display's rules, for the open menu and the folded strip alike;
+  // the phone's bar has no Settings.
   assert.ok(block.includes(`@media (min-width: 768px) {\n  ${GIVE} {`), 'the give-way rules sit in a wide-display group of the menu block');
 });
 
@@ -493,7 +620,12 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   // The levels: the main action in the sun, the secondary in white, the destructive in red, a press onto the edge.
   assert.match(tokens[0].body, /--wip-btn-1-bg: #ffee6f;[\s\S]*--wip-btn-2-bg: #ffffff;[\s\S]*--wip-btn-bad-ink: #a3281a;/);
   assert.match(tokens[0].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-line\);/);
-  assert.match(tokens[0].body, /--wip-btn-font: 'Source Serif 4',/);
+  // Phone review S2 (23 Nov 2026): the label is the page's typeface, set once here.
+  assert.match(tokens[0].body, /--wip-btn-font: var\(--wip-font\);/);
+  assert.doesNotMatch(tokens[0].body, /Source Serif/);
+  // S8: in dark the hard edge is darker than the ground, never the pale outline again.
+  assert.match(tokens[1].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-shade\);/);
+  assert.match(tokens[1].body, /--wip-btn-shade: rgb\(0 0 0 \/ 0\.7\);/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
 });
@@ -508,17 +640,18 @@ test('New community wears the Communities page\'s typeface, not the buttons\' se
   assert.ok(token, 'the page\'s font is the one the rest of the page reads');
   // Two ids, so it outranks the BUTTONS block's shape (its classes are inside :where()).
   assert.equal((rule.selector.match(/#/g) || []).length, 2, 'it beats the class rules and the one-id page top action rule');
-  // The buttons' serif is untouched, and the shared page top action rule names
-  // no family, so Home's New project keeps it.
+  // Since phone review S2 every button wears the page's typeface (the buttons'
+  // own token), and the shared page top action rule names no family, so Home's
+  // New project takes that one too.
   const css = read('public', 'css', 'app.css');
   const start = css.indexOf('── BUTTONS (20 Nov 2026)');
   const end = css.indexOf('END OF BUTTONS.');
   const buttons = rules(css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, ''));
   const serif = buttons.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body))[0];
-  assert.match(serif.body, /--wip-btn-font: 'Source Serif 4',/);
+  assert.match(serif.body, /--wip-btn-font: var\(--wip-font\);/);
   const top = buttons.find((r) => r.selector === 'html:not([data-skin]) :is(#home-new-project-top, #communities-new-top)');
   assert.ok(top, 'the page top action rule is still the buttons block\'s');
-  assert.doesNotMatch(top.body, /font-family/, 'Home\'s New project keeps the serif');
+  assert.doesNotMatch(top.body, /font-family/, 'Home\'s New project reads the buttons\' face');
 });
 
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {

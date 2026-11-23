@@ -47,6 +47,7 @@ import {
 } from './kanban-filters-store';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { useMediaMatch } from '../../lib/use-narrow';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).AppView : null) || null;
@@ -119,6 +120,8 @@ const QUICK_FILTERS: Array<{
  * other rather than being read back out of the computed style on every frame.
  */
 const ROW_GAP_PX = 8;
+/** Where the strip's chips are glyphs alone (app.css: their words show from 700px). */
+const PHONE_FILTERS_QUERY = '(max-width: 699.98px)';
 const SEARCH_MIN_PX = 160;
 
 /**
@@ -229,7 +232,15 @@ export function KanbanFiltersView({
 }: KanbanFiltersState) {
   const t = useMessages('project');
   const rowRef = useRef<HTMLDivElement | null>(null);
-  const fits = useQuickFiltersFit(rowRef, !!quick);
+  const measuredFits = useQuickFiltersFit(rowRef, !!quick);
+  // S12 (phone review, 23 Nov 2026): on a phone All items' head has one
+  // Filters button, in words, and the two quick toggles are in its sheet,
+  // with their names beside their switches. Three bare glyphs said nothing of
+  // what the two people did or which was on.
+  // Below 700px, where the chips' words are hidden (app.css #5820); from
+  // there up each says its own.
+  const phone = useMediaMatch(PHONE_FILTERS_QUERY);
+  const fits = measuredFits && !phone;
   // The decision is the board's, not this component's: the dialog's payload,
   // the `Filters (n)` count and the chip row all turn on it, and all three are
   // built in app-view.js. Reported from a layout effect so the publish it

@@ -134,9 +134,10 @@ test('U03: the header\'s title is on the left from 640px, as on phones and the i
   assert.match(read('frontend/src/features/header/use-header-layout.ts'), /const CENTER_MIN_WIDTH_PX = 640;/, 'the hook never centres below it');
 });
 
-test('U02: the Duo strip\'s ✕ is pressed as 32px, and no word is drawn to overflow a pill', () => {
-  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x::after \{\n    content: "";\n    position: absolute;\n    inset: -6px;\n  \}/);
-  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x \{[^}]*width: 20px;\n    height: 20px;/, 'drawn as before: 20 + 6 + 6');
+test('U02: the Duo strip\'s ✕ is pressed as 44px, and no word is drawn to overflow a pill', () => {
+  // A 20px badge on the disc's corner, pressed as 44px (phone review #136).
+  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x::after \{\n    content: "";\n    position: absolute;\n    inset: -12px;\n  \}/);
+  assert.match(APP_CSS, /html\[data-side-strip\] \.platform-side-app-x \{[^}]*top: 0;\n    right: 0;[^}]*width: 20px;\n    height: 20px;[^}]*background: var\(--text-muted\);/, 'drawn as a 20px badge inside the disc\'s corner: 20 + 12 + 12');
   // The strip's tabs are icons only now (18 Nov 2026): the label that ran
   // past its pill is clipped to nothing, so it has no size of its own.
   assert.doesNotMatch(APP_CSS, /html\[data-side-strip\] #platform-tab-workshop \.platform-tab-label \{/);

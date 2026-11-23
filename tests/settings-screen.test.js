@@ -2840,7 +2840,11 @@ assert.ok(dotTextSrc, 'settings.js defines dotText');
 const dotText = new Function('tr', `${dotTextSrc[0]}\nreturn dotText;`)(tr);
 // #6479: and the module's `inZone`, which adds the picked time zone; the
 // harness has none picked, so it hands the options back as they came.
-const sliced = (...methods) => new Function('tr', 'dotText', 'inZone', `return ({${methods.join(',')}})`)(tr, dotText, (options = {}) => options);
+// And `stamp`, the module's one way to write an instant (phone review #126).
+const stampOf = (value) => new Date(value).toLocaleString(undefined, {
+  year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+});
+const sliced = (...methods) => new Function('tr', 'dotText', 'inZone', 'stamp', `return ({${methods.join(',')}})`)(tr, dotText, (options = {}) => options, stampOf);
 const tierView = () => sliced(
   sliceMethod(settingsJs, '_socialIdentityMoney'),
   sliceMethod(settingsJs, '_socialIdentityTierView'),

@@ -104,21 +104,22 @@ test('Q30f: invites scroll with the sheet and fold past three behind "Show N mor
   assert.match(src, /const \[invitesOpen, setInvitesOpen\] = useState\(false\);/);
 });
 
-test('Q24: the open section\'s sheet runs to the bottom, like every sheet on the ladder', () => {
+test('Q24, then #121: the open section\'s sheet hugs its content, on rounded corners', () => {
   const css = read('public/css/app.css');
   const sheet = css.slice(css.indexOf('.settings-sheet {'), css.indexOf('}', css.indexOf('.settings-sheet {')));
   assert.doesNotMatch(sheet, /min-height/, 'no fixed 60vh box that ends mid-screen');
   assert.match(css, /html\[data-browser-scroller="settings-screen"\] #settings-screen:has\(#settings-section-content:not\(\.hidden\)\) \{\n  flex: 1 0 auto;\n\}/,
     'on a phone the strip fills the screen instead of stopping at its content');
-  assert.match(css, /#settings-content-col > \.settings-sheet \{\n  flex: 1 0 auto;\n  margin-bottom: calc\(-1 \* max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)\);\n  padding-bottom: calc\(32px \+ max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)\);\n\}/,
-    'the sheet takes the rest of the height, runs under the tab bar and still clears it');
+  // Phone review #121 (23 Nov 2026): a short pane was a card from the top bar
+  // to behind the tab bar, mostly empty, with its foot cut off.
+  assert.match(css, /#settings-content-col > \.settings-sheet \{\n  flex: 0 0 auto;\n  border-end-end-radius: 1\.75rem;\n  border-end-start-radius: 1\.75rem;\n\}/,
+    'the sheet is as tall as what it holds, with a rounded foot, and does not run under the tab bar');
   // Scoped to an open section: the phone's level-1 menu keeps its layout.
   for (const sel of ['#settings-screen:not(.hidden):has(', '#settings-root:has(', '#settings-content-col:has(']) {
     assert.ok(css.includes(`${sel}${sel.startsWith('#settings-content-col') ? '> ' : ''}#settings-section-content:not(.hidden))`),
       `${sel} is scoped to an open section`);
   }
-  // The sheet is still the lift's session plane, whose square foot is drawn
-  // for exactly this: a sheet that runs off the bottom.
+  // The sheet is still the lift's session plane; its foot is rounded here.
   const island = read('frontend/src/features/settings/index.tsx');
   assert.match(island, /<div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">/);
 });

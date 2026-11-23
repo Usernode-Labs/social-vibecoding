@@ -289,6 +289,10 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.match(prScan.run, /--cache-from "type=registry,ref=ghcr\.io\/.*social-vibecoding-worker@\$LIVE_WORKER_DIGEST"/);
   assert.doesNotMatch(prScan.run, /type=gha|--cache-to/,
     'PRs can import layers from the promoted image and publish no cache');
+  assert.match(prScan.run, /sh scripts\/check-pr-worker-image\.sh "\$out"/);
+  const workerScan = fs.readFileSync(path.join(ROOT, 'scripts/check-pr-worker-image.sh'), 'utf8');
+  assert.match(workerScan, /--output "type=oci,tar=false,dest=\$layout,name=security-worker"/);
+  assert.match(workerScan, /wait "\$db_pid"[\s\S]*sh scripts\/check-image-security\.sh/);
   assert.equal(pr.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
   const releaseScan = workflow.jobs.build.steps.find((step) => step.name === 'Verify runtime and scan the exact image SBOM');
@@ -341,7 +345,8 @@ for a in "$@"; do
   prev="$a"
 done
 case "$*" in
-  *"image inspect"*) echo "sha256:${'e'.repeat(64)}" ;;
+  *"image inspect"*) echo "\${FAKE_IMAGE_ID:-sha256:${'e'.repeat(64)}}" ;;
+  *"image load"*) cat >/dev/null ;;
   *"anchore/syft"*) cat "${path.join(dir, 'baseline.json')}" ;;
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
   *"--entrypoint node"*) input=$(cat); [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8
@@ -353,6 +358,54 @@ esac
 `, { mode: 0o755 });
   return bin;
 }
+
+test('the PR worker scans and probes the freshly built OCI image, and rejects an unexpected loaded digest', t => {
+  if (spawnSync('jq', ['--version']).status !== 0) return t.skip('jq is required for OCI image checks');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-worker-image-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const layout = path.join(dir, 'layout');
+  const blobs = path.join(layout, 'blobs', 'sha256');
+  fs.mkdirSync(blobs, { recursive: true });
+  const manifest = 'a'.repeat(64);
+  const config = 'b'.repeat(64);
+  fs.writeFileSync(path.join(layout, 'index.json'), JSON.stringify({ manifests: [{ digest: `sha256:${manifest}` }] }));
+  fs.writeFileSync(path.join(blobs, manifest), JSON.stringify({ config: { digest: `sha256:${config}` } }));
+  fs.writeFileSync(path.join(blobs, config), JSON.stringify({ os: 'linux', architecture: 'amd64' }));
+  fs.writeFileSync(path.join(dir, 'baseline.json'), JSON.stringify({
+    spdxVersion: 'SPDX-2.3', packages: [{ name: 'test-package', versionInfo: '1.0.0' }],
+  }));
+  fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify({
+    SchemaVersion: 2, Results: [{ Target: 'security-worker', Vulnerabilities: [] }],
+  }));
+  const bin = fakeDocker(dir);
+
+  const run = (folder, inspectedDigest) => {
+    const out = path.join(dir, folder);
+    const result = spawnSync('sh', ['scripts/check-image-security.sh', 'security-worker', out,
+      path.join(out, 'sbom.spdx.json'), 'worker', layout], {
+      cwd: ROOT, encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_TRIVY_DB_READY: '1', FAKE_IMAGE_ID: inspectedDigest },
+    });
+    return { result, verdict: JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))) };
+  };
+
+  for (const id of [manifest, config]) {
+    const { result, verdict } = run(id, `sha256:${id}`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(verdict.status, 'clean');
+    assert.equal(verdict.image, `sha256:${id}`);
+  }
+  const calls = fs.readFileSync(path.join(dir, 'calls.log'), 'utf8');
+  assert.match(calls, /syft:v1\.55\.0 oci-dir:\/image/);
+  assert.match(calls, / image --skip-db-update.*--input \/image /);
+  assert.match(calls, / sbom --skip-db-update/);
+  assert.equal((calls.match(/--entrypoint node/g) || []).length, 6);
+  assert.doesNotMatch(calls, /image save|--download-db-only/);
+
+  const mismatched = run('unexpected', `sha256:${'e'.repeat(64)}`);
+  assert.equal(mismatched.result.status, 1);
+  assert.equal(mismatched.verdict.status, 'unavailable');
+});
 
 test('an image with the same digest as the live image is not pulled, saved or rescanned, and cannot block', () => {
   const live = 'ghcr.io/usernode-labs/social-vibecoding-worker@sha256:' + 'c'.repeat(64);

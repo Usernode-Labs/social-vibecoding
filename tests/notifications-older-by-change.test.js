@@ -133,12 +133,14 @@ test('revealed, Unread keeps its stacks and draws the older rows as sections of 
   // the two kinds when both are there; the gate and the order are the same.
   const at = SHEET_SRC.indexOf('{!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (');
   assert.ok(at > 0, 'the revealed branch sits under the same search gate');
-  const branch = SHEET_SRC.slice(at, SHEET_SRC.indexOf('{today.length ? (', at));
+  const branch = SHEET_SRC.slice(at, SHEET_SRC.indexOf('allSections.map(renderOlderSection)', at));
   assert.match(branch, /\{renderAppGroups\(\)\}\s*\{olderSections\.map\(renderOlderSection\)\}/);
   assert.doesNotMatch(SHEET_SRC, /renderOlderGroup|olderGroups/, 'no older stack per project is left');
-  // All, and the search, keep the flat Today / Earlier list.
-  assert.ok(SHEET_SRC.indexOf('{today.length ? (', at) > at);
-  assert.match(SHEET_SRC, /matches\.length \? matches\.map\(renderEntry\) : \(/);
+  // Phone review #118: All draws the same sections of cards, and a search's
+  // matches are cards too; the flat Today / Earlier list is gone.
+  assert.ok(SHEET_SRC.indexOf(') : allSections.map(renderOlderSection))}', at) > at);
+  assert.doesNotMatch(SHEET_SRC, /\{today\.length \? \(/);
+  assert.match(SHEET_SRC, /matches\.length \? <div className="notifications-stack">\{matches\.map\(renderEntry\)\}<\/div> : \(/);
 });
 
 test('an older section is its heading and its cards, in no stack, read and never removed', () => {

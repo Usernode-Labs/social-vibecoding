@@ -131,6 +131,23 @@ import { reducedMotion } from '../../lib/reduced-motion';
  * pushed Make it to the foot of the window is gone, so Make it follows the
  * rule line everywhere. The rule line's ⓘ says in a tip what happens next
  * (../who-decides/make-rule.tsx).
+ *
+ * PHONE REVIEW (23 Nov 2026, iPhone 17 and iPhone Duo):
+ *   - UNDER THE ✕, NOT CUT BESIDE IT (#9). From Create the ✕ stood in a 48px
+ *     band above a scroller that clipped at the band's foot, so a heading
+ *     scrolled a little was sliced along a straight line. The ✕ floats over
+ *     the scroller's head now (MAKE_HEAD of padding there, so the page rests
+ *     where it did) and what scrolls up fades out under it (app.css). Every
+ *     reveal counts that head as covered (`head`, lib/keyboard-surface.ts).
+ *     On the Duo the screen also stops at the system's column (app.css).
+ *   - THE KEYS SHORTEN IT AT EVERY WIDTH (#16), app.css; and when the screen
+ *     is folded or turned with a field focused, that field is shown again
+ *     (`revealField`), whatever was dragged before.
+ *   - SOMETHING ELSE KEEPS ITS NAME (S7). Writing in the box used to turn
+ *     the fourth tile into "Your own idea", ringed, though nothing had been
+ *     picked. Only a pick in the sheet does that now (`ideaChosen`). The
+ *     Instant or Custom line keeps its room before there is one to show, so
+ *     Make it does not move when it arrives.
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -381,6 +398,8 @@ type MakeDraft = {
   words: string;
   written: string | null;
   rule: PresetKey;
+  /** Your own idea was picked in the sheet, not only written in the box (S7). */
+  ideaChosen?: boolean;
 };
 let keptDraft: (MakeDraft & { who: string }) | null = null;
 
@@ -403,6 +422,54 @@ export function draftWorthKeeping(draft: MakeDraft | null): MakeDraft | null {
 
 /** How long the screen takes to fade off what is under it as it leaves (#8). */
 export const MAKE_LEAVE_MS = 200;
+
+/**
+ * #9: how much of the scroller's head the ✕ floats over, from Create under
+ * the platform header (px; app.css pads the scroller by the same 3rem and
+ * fades what scrolls into it). A reveal keeps a field and the heading clear
+ * of it.
+ */
+export const MAKE_HEAD = 48;
+/** How long after the window's width last changed (a fold, a turn) the focused field is shown again (ms). */
+export const TURN_SETTLE_MS = 300;
+
+/**
+ * Bring `field` into the scroller's view, with `action` (Make it) under it
+ * when the two fit, counting `head` px at the scroller's top as covered.
+ * `viewBottom` caps where the view ends (Safari's toolbar, with the keys
+ * down). Returns the scrollTop asked for, or null when nothing moved.
+ */
+export function revealField(
+  scroller: HTMLElement, field: Element, action: Element | null, head: number, viewBottom?: number,
+): number | null {
+  const view = scroller.getBoundingClientRect();
+  const box = field.getBoundingClientRect();
+  const act = action ? action.getBoundingClientRect() : null;
+  const scrollMax = scroller.scrollHeight - scroller.clientHeight;
+  const reveal = revealScrollTop({
+    scrollTop: scroller.scrollTop,
+    scrollMax,
+    viewTop: view.top + head,
+    viewBottom: viewBottom == null ? view.bottom : Math.min(view.bottom, viewBottom),
+    fieldTop: box.top,
+    fieldBottom: box.bottom,
+    actionTop: act ? act.top : null,
+    actionBottom: act ? act.bottom : null,
+  });
+  // N9: never stop inside the heading. Under the ✕'s head it is cut as soon
+  // as its top passes the head's foot, so that is where "inside" starts.
+  const heading = scroller.querySelector('#first-session-make-title')?.getBoundingClientRect();
+  const top = heading
+    ? clearOfHeading(reveal, heading.top - view.top + scroller.scrollTop - head, heading.bottom - view.top + scroller.scrollTop, scrollMax)
+    : reveal;
+  if (top === Math.round(scroller.scrollTop)) return null;
+  try {
+    scroller.scrollTo({ top, behavior: reducedMotion() ? 'auto' : 'smooth' });
+  } catch {
+    scroller.scrollTop = top;
+  }
+  return top;
+}
 
 /**
  * The screen's root. On the first session it is the whole screen: it
@@ -481,6 +548,11 @@ export function MakeScreen({
   const [name, setName] = useState(draft ? draft.name : handedName ?? '');
   // The tile picked: a template, Your own idea, or nothing yet.
   const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(draft ? draft.picked : waitlistIdea ? OWN_IDEA : null);
+  // S7: Your own idea PICKED (in the sheet, or the screen opening on an idea
+  // handed in), which is what the fourth tile shows. Words written in the box
+  // are `picked` Your own idea too, since they let go of a template, but
+  // nothing was chosen: the tile keeps its name.
+  const [ideaChosen, setIdeaChosen] = useState(draft ? !!draft.ideaChosen : !!waitlistIdea);
   // The template's choice, and their own words: in its blank, or the rest
   // of the game's sentence.
   const [choice, setChoice] = useState(draft ? draft.choice : '');
@@ -496,7 +568,7 @@ export function MakeScreen({
   const [rule, setRule] = useState<PresetKey>(draft ? draft.rule : DEFAULT_PRESET);
   // Kept when the screen goes, unless it went because the project was made.
   const formRef = useRef<MakeDraft | null>(null);
-  formRef.current = fromCreate ? { brief, name, nameTyped, picked, choice, words, written, rule } : null;
+  formRef.current = fromCreate ? { brief, name, nameTyped, picked, choice, words, written, rule, ideaChosen } : null;
   const madeRef = useRef(false);
   const whoRef = useRef(who);
   whoRef.current = who;
@@ -542,7 +614,10 @@ export function MakeScreen({
   useEffect(() => { if (mayFocusByCodeNow()) briefRef.current?.focus({ preventScroll: true }); }, []);
   // Taps on the fields without the pan, and the focused field (with Make it
   // when they fit) revealed inside the scroller once the keys are up.
-  useKeyboardSurface(scrollerRef);
+  // #9: under the platform header the ✕ floats over the scroller's head (not
+  // under one of the frame's looks, whose page draws its own head: `kit`).
+  const head = underHeader && !(isFrameSkin(look) && fromCreate) ? MAKE_HEAD : 0;
+  useKeyboardSurface(scrollerRef, { head });
   // MAKE IT IN VIEW (onboarding run two, 12 Oct 2026, iPhone 17 Safari): a
   // starting idea fills in its sentence and chips, the form grows, and Make
   // it went under Safari's toolbar. With the keys down, a pick brings the
@@ -559,30 +634,38 @@ export function MakeScreen({
       const card = scroller.querySelector('[data-make-brief]');
       const button = scroller.querySelector('[data-make-submit]');
       if (!card || !button) return;
-      const view = scroller.getBoundingClientRect();
-      const field = card.getBoundingClientRect();
-      const action = button.getBoundingClientRect();
-      const reveal = revealScrollTop({
-        scrollTop: scroller.scrollTop,
-        scrollMax: scroller.scrollHeight - scroller.clientHeight,
-        viewTop: view.top,
-        viewBottom: Math.min(view.bottom, window.innerHeight),
-        fieldTop: field.top,
-        fieldBottom: field.bottom,
-        actionTop: action.top,
-        actionBottom: action.bottom,
-      });
-      const heading = scroller.querySelector('#first-session-make-title')?.getBoundingClientRect();
-      const top = heading
-        ? clearOfHeading(reveal, heading.top - view.top + scroller.scrollTop, heading.bottom - view.top + scroller.scrollTop,
-          scroller.scrollHeight - scroller.clientHeight)
-        : reveal;
-      if (top === Math.round(scroller.scrollTop)) return;
-      const still = reducedMotion();
-      scroller.scrollTo({ top, behavior: still ? 'auto' : 'smooth' });
+      revealField(scroller, card, button, head, window.innerHeight);
     });
     return () => cancelAnimationFrame(raf);
-  }, [picked, choice, written]);
+  }, [picked, choice, written, head]);
+  // #16: FOLDED OR TURNED WITH A FIELD FOCUSED (iPhone Duo, 23 Nov 2026).
+  // Folding to the cover while typing left the field behind the keys and the
+  // heading cut in half: the screen is a different shape, and nothing showed
+  // the field again. A change of the window's width is that, never a
+  // keyboard, so once it has settled the focused field is revealed as a tap
+  // on it would be, whatever was dragged before.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    let width = window.innerWidth;
+    let timer: number | null = null;
+    const onResize = () => {
+      if (window.innerWidth === width) return;
+      width = window.innerWidth;
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        const scroller = scrollerRef.current;
+        const field = document.activeElement;
+        if (!scroller || !field || !scroller.contains(field) || !field.matches('input, textarea')) return;
+        revealField(scroller, field, scroller.querySelector('[data-make-submit]'), head);
+      }, TURN_SETTLE_MS);
+    };
+    window.addEventListener('resize', onResize, { passive: true });
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [head]);
   // One frame on the wallpaper alone, so the rise has a start.
   const [arrived, setArrived] = useState(false);
   useEffect(() => {
@@ -643,7 +726,11 @@ export function MakeScreen({
   const template = picked && picked !== OWN_IDEA ? picked : null;
   // The fourth tile: a pick from "Something else…" (Your own idea, or one of
   // MORE) takes it over and opens the sheet again; until then it is the way in.
-  const fourth: Template | typeof OWN_IDEA | null = picked === OWN_IDEA ? OWN_IDEA : template && MORE.includes(template) ? template : null;
+  // S7: Your own idea holds it only when it was picked, not when words were
+  // written in the box (`ideaChosen`).
+  const fourth: Template | typeof OWN_IDEA | null = picked === OWN_IDEA
+    ? (ideaChosen ? OWN_IDEA : null)
+    : template && MORE.includes(template) ? template : null;
   // The sentence is drawn until it is written out as plain text.
   const templated = !!template && written === null;
   const said = template ? sentence(template, choice, words) : null;
@@ -661,6 +748,7 @@ export function MakeScreen({
     if (picked === t && written === null) return;
     const first = firstChoice(t);
     setPicked(t);
+    setIdeaChosen(false);
     setChoice(first);
     setWords('');
     setWritten(null);
@@ -671,14 +759,19 @@ export function MakeScreen({
   }, [picked, written, nameTyped]);
 
   const pickIdea = useCallback(() => {
-    if (picked === OWN_IDEA) return;
-    setPicked(OWN_IDEA);
-    setWritten(null);
-    if (!nameTyped) setName('');
+    if (picked === OWN_IDEA && ideaChosen) return;
+    // S7: a pick, which the fourth tile shows, even when words in the box
+    // had already made the idea theirs.
+    setIdeaChosen(true);
+    if (picked !== OWN_IDEA) {
+      setPicked(OWN_IDEA);
+      setWritten(null);
+      if (!nameTyped) setName('');
+    }
     setError(null);
     setMissing(null);
     focusSoon(() => briefRef.current);
-  }, [picked, nameTyped]);
+  }, [picked, ideaChosen, nameTyped]);
 
   const pickChoice = useCallback((key: string) => {
     if (!template) return;
@@ -961,15 +1054,17 @@ export function MakeScreen({
           is inside it and what scrolls stops below the mark, not beside it.
           From Create, ✕ at its leading edge closes the screen. Under the
           platform header the header is the top of the screen: this bar is
-          only the ✕, with no mark of its own and no inset to clear. */}
-      <div className={underHeader ? `relative h-12 shrink-0 ${motion}` : `relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
+          only the ✕, with no mark of its own and no inset to clear, and it
+          takes no room (#9): the ✕ floats over the scroller's head, which
+          is padded by MAKE_HEAD and fades what scrolls up under it. */}
+      <div className={underHeader ? `relative z-10 h-0 shrink-0 ${motion}` : `relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         {onClose ? (
           <button
             type="button"
             data-make-close=""
             onClick={leave}
             aria-label={t('core:common.close')}
-            className="absolute bottom-1 start-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-400"
+            className={`absolute start-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-400 ${underHeader ? 'top-2' : 'bottom-1'}`}
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -977,7 +1072,8 @@ export function MakeScreen({
         {underHeader ? null : <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />}
       </div>
       {/* The scroller the keyboard surface reveals fields in. Its className
-          stays constant: nothing here varies it. */}
+          stays constant: nothing here varies it. Under the platform header
+          its head is the ✕'s (app.css, the root's `platform-under-header`). */}
       <div ref={scrollerRef} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">
         {mode === 'import' ? (
           <ImportForm
@@ -1198,17 +1294,30 @@ export function MakeScreen({
           {/* INSTANT OR CUSTOM: one line, drawn as the rule line under it is
               (its inks, icon size and inset), a step larger, with no colour
               of its own. It is one line from 390px wide; narrower, it wraps
-              without leaving one word on its own. */}
-          {speed ? (
-            <p data-make-speed={speed} className="mt-3 flex items-center gap-2 px-1 text-[14px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
-              {speed === 'instant'
-                ? <BoltIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
-                : <SparklesIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
-              <span className="min-w-0 text-pretty">
-                <RichMessage id={SPEED_LINE[speed]} components={[<b className="font-semibold text-zinc-900 dark:text-zinc-100" />]} />
-              </span>
-            </p>
-          ) : null}
+              without leaving one word on its own.
+              ITS ROOM IS KEPT (S7, 23 Nov 2026): the line used to arrive with
+              the first word typed and push Make it down under the finger.
+              Both lines are laid out in one cell, the one that applies shown
+              and the other holding its place unseen, so the slot is as tall
+              as the taller of the two at this width from the start, and
+              nothing under it moves when a line comes, goes or changes. */}
+          <div data-make-speed-slot="" className="mt-3 grid">
+            {(['instant', 'custom'] as const).map((key) => (
+              <p
+                key={key}
+                data-make-speed={speed === key ? key : undefined}
+                aria-hidden={speed === key ? undefined : true}
+                className={`col-start-1 row-start-1 flex items-center gap-2 px-1 text-[14px] leading-[1.4] text-zinc-600 dark:text-zinc-300${speed === key ? '' : ' invisible'}`}
+              >
+                {key === 'instant'
+                  ? <BoltIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+                  : <SparklesIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
+                <span className="min-w-0 text-pretty">
+                  <RichMessage id={SPEED_LINE[key]} components={[<b className="font-semibold text-zinc-900 dark:text-zinc-100" />]} />
+                </span>
+              </p>
+            ))}
+          </div>
           <MakeRuleLine preset={rule} onPick={setRule} who={who} />
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}

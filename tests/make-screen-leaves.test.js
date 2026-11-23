@@ -82,7 +82,9 @@ test('a reveal never stops inside the heading', () => {
   assert.equal(clearOfHeading(70, 40, 108, 90), 90, 'never past the end of the scroll');
   // Wired into the pick's reveal.
   assert.match(MAKE, /const heading = scroller\.querySelector\('#first-session-make-title'\)\?\.getBoundingClientRect\(\);/);
-  assert.match(MAKE, /clearOfHeading\(reveal, heading\.top - view\.top \+ scroller\.scrollTop, heading\.bottom - view\.top \+ scroller\.scrollTop,/);
+  // (Phone review #9: under the ✕'s head the heading is cut once its top
+  // passes the head's foot, so "inside" starts that much earlier.)
+  assert.match(MAKE, /clearOfHeading\(reveal, heading\.top - view\.top \+ scroller\.scrollTop - head, heading\.bottom - view\.top \+ scroller\.scrollTop, scrollMax\)/);
 });
 
 // ── 3. N9: what you started is kept ────────────────────────────────────

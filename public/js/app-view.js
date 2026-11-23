@@ -5432,6 +5432,18 @@ const AppView = {
       const home = await AppView._requestHomeOf(ref.id);
       if (AppView._devTopic !== asked) return;
       if (home) {
+        // #7045: the router runs twice for one followed link (popstate, then
+        // hashchange), and the second pass wrote this change's address again
+        // over the request's it had just been swapped for: a second entry,
+        // and a Back that did nothing. App.updateHash reads this and swaps
+        // that write in place as well.
+        try {
+          // The second pass finds the request's address here already: the
+          // change's, noted by the first, is the one kept.
+          if (/\/dev\/(?:changes|proposals|shared)\/\d+/.test(location.pathname)) {
+            AppView._forwardedChange = { from: location.pathname, at: Date.now() };
+          }
+        } catch (_) { AppView._forwardedChange = null; }
         AppView._openChangeOnRequest(home, ref.id, { replaceRoute: true });
         return;
       }
@@ -10746,6 +10758,18 @@ const AppView = {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
     if (!btn || !menu) return;
+    // A sheet row's words. A row's title can hold a second, quieter run after
+    // its name (App secrets' "No manifest yet", filled into #dc-secrets-state):
+    // two flex items on the desktop menu, with a gap between. `textContent`
+    // has no gap, so the sheet read "App secretsNo manifest yet"; the runs are
+    // joined with a middle dot instead. A title with one run reads as before.
+    const rowLabel = (titleEl, node) => {
+      const runs = Array.from(titleEl?.childNodes || [])
+        .map((part) => (part.textContent || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      if (runs.length) return runs.join(' · ');
+      return (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim();
+    };
     AppView._plusMenuAbort?.abort();
     const ac = new AbortController();
     AppView._plusMenuAbort = ac;
@@ -10774,8 +10798,10 @@ const AppView = {
       const glyph = node.querySelector('svg')?.cloneNode(true);
       if (glyph) glyph.removeAttribute('class');
       return {
-        label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+        label: rowLabel(titleEl, node),
         iconEl: glyph || undefined,
+        // Phone review #115: Leave is red in the sheet as in the menu.
+        destructive: node.hasAttribute('data-plus-destructive'),
         handler: () => node.click(),
       };
     });
@@ -10840,7 +10866,7 @@ const AppView = {
             const glyph = node.querySelector('svg')?.cloneNode(true);
             if (glyph) glyph.removeAttribute('class');
             return {
-              label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              label: rowLabel(titleEl, node),
               iconEl: glyph || undefined,
               // The menu's one lit row, Suggest an improvement (actions-row.tsx
               // `lit`, the owner, 8 Oct 2026), is lit in the sheet too.
@@ -10919,8 +10945,9 @@ const AppView = {
         // a sheet of their own, headed with the row's name.
         // The owner, 7 Oct: a second sheet of the same kind, titled, whose
         // last card is Back rather than Cancel. Back brings the menu back.
+        // S17: with its group labels, which sheetActions makes headings.
         const rows = settingsPanel
-          ? Array.from(settingsPanel.querySelectorAll('button[data-plus]')) : [];
+          ? Array.from(settingsPanel.querySelectorAll('button[data-plus], div[data-plus-group]')) : [];
         Promise.resolve(PlatformUI.actionSheet({
           title: PlatformI18n.t('changes:board.plusMenu.settingsTitle'), cancelLabel: PlatformI18n.t('core:common.back'), actions: sheetActions(rows),
         })).then((picked) => { if (!picked && btn.isConnected) btn.click(); });
@@ -13683,12 +13710,26 @@ const AppView = {
    * through the vote queue lands on the digest every time otherwise. Stored
    * per browser rather than per account: it is a reading position, not a
    * setting, and the same mechanism the grouping already uses.
+   *
+   * PER PROJECT (phone review #43, 23 Nov 2026). It was one place for every
+   * project on the device: a project whose Workshop had never been opened
+   * came back from its app on "Group challenge · Workshop", because the
+   * Workshop was the last place shown in ANOTHER project. Each project now
+   * remembers its own (`devWorkshopTab:<slug>`), and one with nothing
+   * remembered opens on its Hub. `slug` is the current project unless named;
+   * a switch (place-store.ts landKeepingPlace) still reads the page it is
+   * leaving, so it keeps the place you were on.
    */
-  _workshopTab() {
+  _workshopTabStoreKey(slug) {
+    const at = slug || (typeof App !== 'undefined' && App && App.currentApp) || '';
+    return at ? `${AppView.WORKSHOP_TAB_KEY}:${at}` : null;
+  },
+  _workshopTab(slug) {
     const url = AppView._workshopTabParam();
     if (url) return url;
     try {
-      const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
+      const key = AppView._workshopTabStoreKey(slug);
+      const stored = key ? window.localStorage.getItem(key) : null;
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
       if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
@@ -13767,6 +13808,7 @@ const AppView = {
       .slice(0, limit);
     return rows.map((m) => {
       const pictures = AppView._workshopVisuals(null, m.shots || null);
+      const thumb = AppView._recentLiveThumb(m.shots || null, pictures);
       const dep = m.deployment_state;
       const going = dep === 'pending' || dep === 'deploying' || (dep !== 'deployed' && m.live_at === null);
       const raw = AppView._devCardAuthor('merged', m);
@@ -13778,9 +13820,34 @@ const AppView = {
         who: AppView._botBuilt(m) ? PlatformI18n.t('changes:workshop.row.byBot') : (raw || null),
         at: going ? null : (m.live_at || m.merged_at || m.created_at || null),
         going,
-        picture: pictures && pictures.after ? pictures.after : null,
+        picture: thumb.picture,
+        frame: thumb.frame,
       };
     });
+  },
+  // RECENTLY LIVE'S SMALL PICTURE (phone review #41, 23 Nov 2026). It was the
+  // change's first after still, the whole screen, cropped to a 96 × 60 slot
+  // at random: a white box with words cut at its edge, a blurred strip, and on
+  // a dark page a bright slab, one of them blank. Now it shows what changed or
+  // nothing:
+  //   frame    the after screen framed on the element its claim is about,
+  //            as the shots run recorded it (#6966 `frames`), in the page's
+  //            mode: { url, width, height, box: [x, y, w, h] } in CSS px.
+  //   picture  else the run's element shot (a `focus` still), drawn whole.
+  // Neither, and the row draws the project's tile.
+  _recentLiveThumb(shots, pictures) {
+    const none = { picture: null, frame: null };
+    if (!pictures) return none;
+    for (const screen of (Array.isArray(pictures.screens) ? pictures.screens : [])) {
+      const f = (screen.frames || []).find((one) => one && one.n > 0 && Array.isArray(one.a) && one.a[2] > 0 && one.a[3] > 0);
+      if (f && screen.after && screen.after.url && screen.width > 0 && screen.after.height > 0) {
+        return { picture: null, frame: { url: screen.after.url, width: screen.width, height: screen.after.height, box: f.a.slice(0, 4) } };
+      }
+    }
+    const after = pictures.after || null;
+    const element = after && Array.isArray(shots && shots.artifacts)
+      && shots.artifacts.some((a) => a && a.url === after && a.variant === 'focus');
+    return element ? { picture: after, frame: null } : none;
   },
 
   // #6825: a still's smaller copies (services/shots-view.js `sizes`) as one
@@ -14000,13 +14067,16 @@ const AppView = {
     return `${(at > max * 0.6 ? cut.slice(0, at) : cut).trim()}…`;
   },
 
-  _setWorkshopTab(key) {
+  _setWorkshopTab(key, slug) {
     // The plan is gone once it is built, so the page reopens on the hub.
     const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
-    try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+    // Remembered for that project alone (#43, see _workshopTab).
+    const store = AppView._workshopTabStoreKey(slug);
+    if (!store) return;
+    try { window.localStorage.setItem(store, next); } catch {}
   },
   /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
@@ -14262,14 +14332,14 @@ const AppView = {
     if (AppView._historyWorkshopTab()) return false;
     const slug = (typeof App !== 'undefined' && App && App.currentApp) || null;
     if (!slug || !AppView._onProjectPage(slug)) return false;
-    return AppView._stampWorkshopTab(slug, AppView._workshopTab());
+    return AppView._stampWorkshopTab(slug, AppView._workshopTab(slug));
   },
   // Show an entry's tab after a traversal. Remembered the way a press is (so
   // the page mounts on it), and told to a page already up as a TRAVERSAL, so
   // the page switches without pushing an entry of its own.
   _showHistoryWorkshopTab(slug, tab) {
     if (!AppView._isWorkshopPlace(tab)) return;
-    AppView._setWorkshopTab(tab);
+    AppView._setWorkshopTab(tab, slug);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab, traversal: true } }));
     } catch {}
@@ -14294,7 +14364,7 @@ const AppView = {
   _landOnTab(slug, tab) {
     const key = AppView._isWorkshopPlace(tab) ? tab : 'status';
     AppView._notePlaceDecided(slug);
-    AppView._setWorkshopTab(key);
+    AppView._setWorkshopTab(key, slug);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}
@@ -31940,6 +32010,44 @@ const AppView = {
     });
   },
 
+  // PURE. The frame's rect with its top moved down to the platform header's
+  // foot where the header lies over it (phone review #74, 23 Nov 2026). The
+  // header overlaps the frame by its 8px rounded foot (`-mb-2`), and on an
+  // iPhone Duo held upright the header IS the system's top band, 80px
+  // beside the clock, so the frame started 7px inside the band and the app
+  // was told a 7px top inset for a strip the header already covers. What
+  // the header covers is not the app's to pad. A header that does not
+  // reach over the frame's top (hidden, chromeless, beside it) changes
+  // nothing; neither does a header taller than the frame, which cannot be.
+  _frameRectBelowHeader(rect, header) {
+    if (!rect || !header) return rect;
+    const top = Number(rect.top);
+    const bottom = Number(rect.bottom);
+    const foot = Number(header.bottom);
+    if (!Number.isFinite(top) || !Number.isFinite(bottom) || !Number.isFinite(foot)) return rect;
+    if (!(Number(header.height) > 0) || !(Number(header.width) > 0)) return rect;
+    if (!(Number(header.top) <= top) || !(foot > top) || !(foot < bottom)) return rect;
+    // It must span the frame: a header beside a desktop frame covers none of it.
+    if (!(Number(header.left) <= Number(rect.left) + 1) || !(Number(header.right) >= Number(rect.right) - 1)) return rect;
+    return {
+      top: foot,
+      bottom,
+      left: rect.left,
+      right: rect.right,
+      width: rect.width,
+      height: bottom - foot,
+    };
+  },
+
+  // The platform header's rect while it is on screen, else null.
+  _platformHeaderRect() {
+    if (typeof document === 'undefined') return null;
+    const header = document.getElementById('platform-header');
+    if (!header || header.classList.contains('hidden') || typeof header.getBoundingClientRect !== 'function') return null;
+    const r = header.getBoundingClientRect();
+    return r.width && r.height ? r : null;
+  },
+
   _frameInsets(raw, rect, viewport) {
     const zero = AppView._zeroInsets();
     if (!raw || !rect || !viewport) return zero;
@@ -32089,6 +32197,8 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
+    // The part of the frame the platform header does not cover (#74).
+    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     // The keyboard is read once and used twice: beside the edges below, and
     // in the root-bottom decision (#4545) as its guard.
@@ -32100,11 +32210,11 @@ const AppView = {
       androidStandalone: AppView._isAndroidStandalone(),
       keyboard,
     });
-    const insets = AppView._frameInsets(raw, rect, viewport);
+    const insets = AppView._frameInsets(raw, visible, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, keyboard);
+    insets.keyboard = AppView._frameKeyboardInset(visible, viewport, keyboard);
     return insets;
   },
 

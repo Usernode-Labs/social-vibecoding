@@ -72,6 +72,9 @@ const DDL = `
     imported_pr_head_sha TEXT, active_turn JSONB, staging_url TEXT,
     promoted_at TIMESTAMPTZ, last_activity_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
   );
+  CREATE TABLE wf_instances (
+    machine TEXT NOT NULL, key TEXT NOT NULL, data JSONB NOT NULL, PRIMARY KEY (machine, key)
+  );
   ${CHECK_RUNS_DDL}
 `;
 
@@ -123,7 +126,7 @@ async function fresh(t, { cap } = {}) {
   const pool = processPool();
   // Ids keep counting across tests: a run another test left in flight in
   // this process must never share a session id with this one's.
-  await pool.query('TRUNCATE check_runs, chat_sessions, apps CASCADE');
+  await pool.query('TRUNCATE check_runs, chat_sessions, apps, wf_instances CASCADE');
   const saved = process.env.CHECKS_MAX_CONCURRENT_RUNS;
   if (cap !== undefined) process.env.CHECKS_MAX_CONCURRENT_RUNS = String(cap);
   t.after(() => {
@@ -186,6 +189,56 @@ async function until(fn, { timeoutMs = 5000, everyMs = 50 } = {}) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Two processes, one cap ──────────────────────────────────────────────
+
+test('early units reserve spare shared capacity once and transfer it only to the matching head', async (t) => {
+  const env = await fresh(t, { cap: 4 });
+  if (!env) return;
+  const { pool, appId } = env;
+  const config = { kubernetes: { checkNodePoolRequired: true } };
+  const capacity = t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity',
+    async () => ({ available: true, cap: 4 }));
+  const secondPool = processPool();
+  const inputs = await Promise.all(['a', 'b', 'c', 'd'].map(async (char) => {
+    const head = char.repeat(40);
+    const s = await session(pool, appId, { checks_commit_sha: head });
+    await pool.query("INSERT INTO wf_instances VALUES ('preview', $1, $2)",
+      [`session:${s.id}`, { preparing: { n: 2, head } }]);
+    return { runId: crypto.randomUUID(), sessionId: s.id, appId, attempt: 2, commitSha: head };
+  }));
+  const reserve = (input, db = pool) => checksQueue.reserveEarlyUnitSlot(config, db, input);
+  assert.equal(await reserve({ ...inputs[0], attempt: 1 }), false);
+  assert.equal(await reserve({ ...inputs[0], commitSha: 'f'.repeat(40) }), false);
+  capacity.mock.mockImplementation(async () => ({ available: false, cap: 0 }));
+  assert.equal(await reserve(inputs[0]), false);
+  capacity.mock.restore();
+  t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity', async () => ({ available: true, cap: 4 }));
+  const ordinary = await ask(pool, await session(pool, appId));
+  assert.equal(await reserve(inputs[0]), false, 'a regular waiter is first even when there is room');
+  assert.deepEqual((await checksQueue.admit(pool)).admit, [ordinary]);
+
+  const raced = await Promise.all(inputs.map((input, i) => reserve(input, i % 2 ? secondPool : pool)));
+  assert.equal(raced.filter(Boolean).length, 1);
+  const early = inputs[raced.indexOf(true)];
+  const claim = { ...early, earlyRunId: early.runId, runId: crypto.randomUUID(), manifest: { launched: false } };
+  assert.equal(await checksQueue.takeEarlyUnitSlot(secondPool, { ...claim, commitSha: 'f'.repeat(40) }), null);
+  assert.equal(await checksQueue.takeEarlyUnitSlot(secondPool, { ...claim, sessionId: inputs.find(x => x !== early).sessionId }), null);
+  const handoffs = await Promise.all([claim, { ...claim, runId: crypto.randomUUID() }]
+    .map((candidate, i) => checksQueue.takeEarlyUnitSlot(i ? pool : secondPool, candidate)));
+  assert.ok(handoffs[0] || handoffs[1]);
+  assert.equal(handoffs.filter(Boolean).length, 1);
+  const { rows } = await pool.query("SELECT manifest, admitted_at FROM check_runs WHERE session_id = $1", [early.sessionId]);
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].admitted_at);
+  assert.equal(rows[0].manifest.unitRunId, early.runId);
+  assert.equal(rows[0].manifest.earlyUnit, undefined);
+  assert.equal(await checkRuns.finish(pool, early.runId), false, 'the old launcher cannot release the transferred slot');
+  const later = await ask(pool, await session(pool, appId));
+  const main = await askMain(pool, appId, 'e'.repeat(40));
+  await checksQueue.admit(pool);
+  assert.equal(await reserve(inputs.find(x => x !== early)), false, 'one shared slot stays available');
+  assert.ok((await admittedIds(pool)).includes(later));
+  assert.ok((await admittedIds(pool)).includes(main), 'main retains its own slot');
+});
 
 test('two processes never have more than the cap of runs admitted, whoever runs the pass', async (t) => {
   const env = await fresh(t, { cap: 4 });

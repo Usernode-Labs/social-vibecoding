@@ -229,19 +229,24 @@ export interface RequestChangesState {
    * the vote (../../group-chat/vote-card.tsx VoteLine).
    */
   titles: Record<number, string | null>;
+  /** Phone review #116: the changes that are live, whose line says See the change. */
+  live?: Record<number, boolean>;
 }
 
-export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {}, titles: {} });
+export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {}, titles: {}, live: {} });
 
-export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null; title?: string | null }[]): void {
+export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null; title?: string | null; state?: string | null }[]): void {
   const numbers: Record<number, number | null> = {};
   const titles: Record<number, string | null> = {};
+  const live: Record<number, boolean> = {};
   for (const c of changes) {
     numbers[Number(c.id)] = c.number == null ? null : Number(c.number);
     titles[Number(c.id)] = c.title ? String(c.title) : null;
+    if (c.state === 'merged') live[Number(c.id)] = true;
   }
   const prev = requestChangesStore.get();
   if (prev.number === number && JSON.stringify(prev.numbers) === JSON.stringify(numbers)
-    && JSON.stringify(prev.titles) === JSON.stringify(titles)) return;
-  requestChangesStore.set({ number, numbers, titles });
+    && JSON.stringify(prev.titles) === JSON.stringify(titles)
+    && JSON.stringify(prev.live || {}) === JSON.stringify(live)) return;
+  requestChangesStore.set({ number, numbers, titles, live });
 }

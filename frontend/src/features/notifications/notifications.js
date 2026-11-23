@@ -1343,6 +1343,16 @@ const Notifications = {
       }
       return;
     }
+    // The automatic switch to verified accounts only opens where it is set.
+    if (signal && signal.type === 'botVerified') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('homeroom-bot');
+      } else {
+        window.location.hash = '#admin/homeroom-bot';
+      }
+      return;
+    }
     if (item.kind === 'platform_incident') {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
@@ -2440,6 +2450,11 @@ const PLATFORM_INCIDENT_PRIVATE_RE = /^private:(\d{1,10})$/;
 // dollars, the balance's and the days it lasts ("credit:low:500:480:6").
 const PLATFORM_INCIDENT_CREDIT_RE = /^credit:(low|urgent):(\d{1,7}):(\d{1,7}):(\d{1,4})$/;
 const PLATFORM_INCIDENT_CREDIT_OUT_RE = /^credit:out$/;
+// services/homeroom-bot-verified-auto.js detailToken(): the automatic switch
+// to verified accounts only fired (on) or a figure passed 80% of its
+// threshold (near); the figure (u: people active in 30 days, s: AI spend in
+// whole dollars), its value and its threshold ("verify:on:u:512:500").
+const PLATFORM_INCIDENT_VERIFY_RE = /^verify:(on|near):(u|s):(\d{1,8}):(\d{1,8})$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
@@ -2448,6 +2463,13 @@ function parsePlatformIncidentDetail(detail) {
   const priv = PLATFORM_INCIDENT_PRIVATE_RE.exec(s);
   if (priv) return { type: 'private', privateRequestId: Number(priv[1]) };
   if (PLATFORM_INCIDENT_CREDIT_OUT_RE.test(s)) return { type: 'creditOut' };
+  const verify = PLATFORM_INCIDENT_VERIFY_RE.exec(s);
+  if (verify) {
+    return {
+      type: 'botVerified', fired: verify[1] === 'on', figure: verify[2] === 's' ? 'aiSpend' : 'activeUsers',
+      value: Number(verify[3]), threshold: Number(verify[4]),
+    };
+  }
   const credit = PLATFORM_INCIDENT_CREDIT_RE.exec(s);
   if (credit) {
     return {
@@ -2930,8 +2952,10 @@ function botMomentLine(detail, message) {
     meta = t('notifications:row.bot.metaRequest', { project: d.appName, number: d.issueNumber });
   } else if (d.appName) meta = t('notifications:row.bot.meta', { project: d.appName });
   // #5929: a needs-you asks the reader for something, except the one that
-  // says it waits on somebody else.
-  const needsYou = d.moment === 'needs_you' && d.said !== 'decide_others';
+  // says it waits on somebody else. Phone review #101 (23 Nov 2026): so does
+  // "Ready to try", which asks the reader to try what they asked for, as the
+  // change_ready row with the same words does: one label, one drawing.
+  const needsYou = (d.moment === 'needs_you' && d.said !== 'decide_others') || d.moment === 'ready';
   const noteId = d.moment === 'on_hold' && Object.prototype.hasOwnProperty.call(BOT_ON_HOLD_NOTE_IDS, d.said)
     ? BOT_ON_HOLD_NOTE_IDS[d.said] : null;
   return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
@@ -3269,7 +3293,7 @@ function rowWords(n) {
     // Homeroom bot's needs-you (botMomentLine), a friend request still to
     // answer. A project's group holding one comes first on Unread
     // (groupUnreadByApp in ./notifications-sheet.tsx).
-    needsYou: (VOTE_ASK_KINDS.has(n.kind) && n.kind !== 'stale_pr') || n.kind === 'build_needs_you',
+    needsYou: (VOTE_ASK_KINDS.has(n.kind) && n.kind !== 'stale_pr') || n.kind === 'build_needs_you' || n.kind === 'build_ready',
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
     // The kind line. Every branch below overwrites it; '' would render a
@@ -3631,6 +3655,29 @@ function rowWords(n) {
           v: alert.days > 0
             ? t('notifications:row.credit.low.body', { balance: dollars(alert.balanceCents), count: alert.days })
             : t('notifications:row.credit.low.bodyNoDays', { balance: dollars(alert.balanceCents) }),
+        }],
+      };
+    }
+    // Homeroom bot's automatic switch to verified accounts only
+    // (services/homeroom-bot-verified-auto.js): it fired, or a figure is
+    // close to its threshold.
+    if (alert && alert.type === 'botVerified') {
+      const shown = (n) => (alert.figure === 'aiSpend' ? `$${n.toLocaleString('en-US')}` : n.toLocaleString('en-US'));
+      const spend = alert.figure === 'aiSpend';
+      const figures = spend
+        ? { spend: shown(alert.value), threshold: shown(alert.threshold) }
+        : { people: shown(alert.value), threshold: shown(alert.threshold) };
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: alert.fired ? '\u{1F512}' : '\u26A0\uFE0F',
+        label: alert.fired ? t('notifications:row.botVerified.on.label') : t('notifications:row.botVerified.near.label'),
+        segments: [{
+          t: 'text',
+          v: alert.fired
+            ? (spend ? t('notifications:row.botVerified.on.bodySpend', figures) : t('notifications:row.botVerified.on.bodyUsers', figures))
+            : (spend ? t('notifications:row.botVerified.near.bodySpend', figures) : t('notifications:row.botVerified.near.bodyUsers', figures)),
         }],
       };
     }

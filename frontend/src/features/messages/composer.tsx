@@ -17,6 +17,7 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { useComposerStack } from '../../lib/use-composer-stack';
 import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
 import { PendingStripRows } from '../attachments/pending-strip';
@@ -165,6 +166,8 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   // #6810: and, after a deletion collapses the box, keep the transcript above
   // it at its newest line when that is where it was.
   useAutoGrow(inputRef, value, scroller);
+  // Phone review #58: once the text wraps, it has the card's whole width.
+  const stacked = useComposerStack(inputRef, value);
   // Plain Enter sends on this device (lib/enter-sends.ts): what the hint
   // under the box and the send button's tooltip say. False on the first
   // render, so the prerender and the hydration draw neither.
@@ -1011,7 +1014,7 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
           <RichMessage id="messages:composer.saveNote" components={[<span className="font-semibold" />]} />
         </p>
       ) : null}
-      <div className="flex items-end gap-1.5">
+      <div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? '' : undefined}>
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
           <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
