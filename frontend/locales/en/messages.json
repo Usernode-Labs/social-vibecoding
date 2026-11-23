@@ -6290,5 +6290,49 @@
   "previewPin.failed": {
     "text": "That comment wasn't sent. Try again.",
     "description": "Error in a pinned comment's box when posting it in the thread failed."
+  },
+  "rail.label": {
+    "text": "Your communities",
+    "description": "Accessible name of the rail down the left of the Messages screen: the viewer's communities and Direct messages, opened by its buttons."
+  },
+  "rail.dm": {
+    "text": "Direct messages",
+    "description": "First button in the Messages rail: shows the conversation list, the viewer's direct messages and group chats with people."
+  },
+  "rail.homeroom": {
+    "text": "Homeroom",
+    "description": "The Homeroom community's button in the Messages rail, opening its channels. A name: do not translate."
+  },
+  "rail.tile_one": {
+    "text": "{{name}}, {{count}} new message",
+    "description": "Spoken name of a button in the Messages rail when one message in that community is unread. {{name}} is the community's name and {{count}} is that number."
+  },
+  "rail.tile_other": {
+    "text": "{{name}}, {{count}} new messages",
+    "description": "Spoken name of a button in the Messages rail when messages in that community are unread. {{name}} is the community's name and {{count}} is that number."
+  },
+  "drawer.channels": {
+    "text": "Channels",
+    "description": "Small-caps heading over a community's channels in the Messages rail's drawer."
+  },
+  "drawer.hub": {
+    "text": "Hub",
+    "description": "Button beside a community's name in the Messages channel drawer: opens that community's Hub, where its members and Invite are."
+  },
+  "drawer.unread_one": {
+    "text": "{{shown}} new",
+    "description": "At the end of a channel's row in the Messages channel drawer: how many messages there are unread. {{shown}} is that number, or 99+ past ninety-nine."
+  },
+  "drawer.unread_other": {
+    "text": "{{shown}} new",
+    "description": "At the end of a channel's row in the Messages channel drawer: how many messages there are unread. {{shown}} is that number, or 99+ past ninety-nine."
+  },
+  "drawer.searchPlaceholder": {
+    "text": "Search channels",
+    "description": "Placeholder of the search field above the Messages channel drawer; it narrows the drawer's channels by name."
+  },
+  "drawer.noMatch": {
+    "text": "No channel matches “{{query}}”.",
+    "description": "Shown in the Messages channel drawer when the search finds no channel. {{query}} is what the person typed."
   }
 }

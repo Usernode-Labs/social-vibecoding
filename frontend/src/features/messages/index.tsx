@@ -111,6 +111,9 @@ import { Av as KitAv } from '@/components/ui/kit';
 import { NewMessageSheet } from './frame-new';
 import { MessagesFrameList, type FrameInboxRow } from './frame-list';
 import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery, type AppDiscussion } from './inbox';
+import { ConversationRowSkeleton } from './list-skeleton';
+import { ChannelDrawer, CommunityRail, markRailReturn, useRailReturn } from './community-rail-view';
+import { RAIL_KEY, defaultRailPick, railEntries, savedRailPick } from './community-rail';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage } from './types';
 
@@ -556,48 +559,6 @@ function inboxMatches(text: string | null | undefined, query: string): boolean {
 }
 
 /**
- * The conversation list's loading state, at the ROW's own geometry.
- *
- * It was a spinner beside the words "Loading conversations…" — a fixed mark
- * that says "busy, somewhere" over an empty pane. These say where the
- * conversations are going and roughly how many, so the arriving rows land on
- * their own outlines instead of replacing a centred line of grey text.
- *
- * The wrapper IS `.messages-conversation-row`, not an imitation of it: that
- * class owns the 66px minimum height, the padding, the gap and the inset
- * separator, all in app.css. Borrowing it means the placeholder cannot
- * drift from the row the first time any of those move — and the separator
- * between placeholders is drawn for free, which is most of what makes a list
- * read as a list.
- *
- * Six, because the pane is taller than that on every phone and a list that
- * stops halfway reads as a short list rather than a loading one.
- */
-function ConversationRowSkeleton() {
-  const t = useMessages('messages');
-  return (
-    <SkeletonGroup label={t('messages:inbox.loading')}>
-      {Array.from({ length: 6 }, (_, i) => (
-        <div key={i} className="messages-conversation-row">
-          {/* The `lg` square UserAvatar's 44px box. */}
-          <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
-          <div className="min-w-0 flex-1">
-            {/* The name line, with the timestamp's short bar pushed right —
-                the real row's trailing <time>. */}
-            <div className="flex items-center gap-2">
-              <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-              <Skeleton shape="muted" className="ms-auto w-8" />
-            </div>
-            {/* The preview line under it. */}
-            <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
-          </div>
-        </div>
-      ))}
-    </SkeletonGroup>
-  );
-}
-
-/**
  * #6508: the selector for one row's key (./inbox.ts), escaped where
  * `CSS.escape` exists (every browser that draws the shell) and quoted with
  * its own quotes and backslashes escaped where it does not, so no key can
@@ -712,6 +673,40 @@ function ConversationList({ drawer = false }: {
     .filter((item) => !item.homeroomBot && item.kind !== 'channel')
     .reduce((sum, item) => sum + Math.max(0, Number(item.unreadCount) || 0), 0);
   const unreadAside = unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null;
+
+  // ── The community rail (#6992) ──────────────────────────────────────
+  //
+  // Its buttons come from what Messages already loads (./community-rail.ts):
+  // Homeroom is the `channel` conversation, and every other community is a
+  // discussion. The pick is remembered per device (`usernode:messages-rail`),
+  // read after mount the way the search is, so the first render and the
+  // prerendered shell agree. Until anything is picked, someone with no
+  // conversations with people lands on Homeroom's channels rather than on
+  // "No messages yet".
+  const platform = usePlatformSlug(true);
+  const rail = useMemo(() => railEntries({
+    conversations: snap.conversations,
+    discussions: snap.discussions,
+    platformSlug: platform,
+  }), [snap.conversations, snap.discussions, platform]);
+  const [railChoice, setRailChoice] = useState<string | null>(null);
+  const [savedRail, setSavedRail] = useState<string | null>(null);
+  useEffect(() => {
+    try { setSavedRail(localStorage.getItem(RAIL_KEY)); } catch { /* storage unavailable */ }
+  }, []);
+  const railPick = (railChoice && rail.some((entry) => entry.key === railChoice) ? railChoice : null)
+    || savedRailPick(savedRail, rail)
+    || defaultRailPick(inbox.length, rail);
+  const railEntry = rail.find((entry) => entry.key === railPick) || rail[0];
+  const chooseRail = useCallback((key: string) => {
+    setRailChoice(key);
+    setSavedRail(key);
+    try { localStorage.setItem(RAIL_KEY, key); } catch { /* storage unavailable */ }
+  }, []);
+  // The drawer's own search, so a channel query never replaces the remembered
+  // people search when Direct messages is picked again.
+  const [channelQuery, setChannelQuery] = useState('');
+  const channelsView = railPick !== 'dm';
 
   // #6508: the list keeps its place while it updates live (./list-place.ts).
   // The row at the top of what the reader sees is noted on every scroll, and
@@ -861,7 +856,13 @@ function ConversationList({ drawer = false }: {
   }
 
   return (
-    <section className={`messages-list-pane ${drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
+    <section className={`messages-list-pane ${drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'} messages-has-rail`} aria-label={t('messages:inbox.listName')}>
+      <div className="messages-inbox-row">
+        {/* THE RAIL (#6992): Direct messages, then Homeroom, then the
+            viewer's communities, each with what is new. Picking one swaps the
+            people list below it for that community's channels. */}
+        <CommunityRail entries={rail} pick={railPick} onPick={chooseRail} />
+        <div className="messages-inbox-main">
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -879,14 +880,16 @@ function ConversationList({ drawer = false }: {
             id="messages-search"
             type="search"
             className="messages-search-input"
-            placeholder={t('messages:inbox.searchPlaceholder')}
+            placeholder={channelsView ? t('messages:drawer.searchPlaceholder') : t('messages:inbox.searchPlaceholder')}
             aria-label={t('messages:inbox.searchLabel')}
-            value={query}
-            onChange={(e) => changeQuery(e.currentTarget.value)}
+            value={channelsView ? channelQuery : query}
+            onChange={(e) => (channelsView ? setChannelQuery(e.currentTarget.value) : changeQuery(e.currentTarget.value))}
           />
         </div>
         <NewMessageButton />
       </div>
+      {channelsView && railEntry ? <ChannelDrawer entry={railEntry} query={channelQuery} /> : (
+      <>
       {/* No offline strip of its own (the native-offline proposal): the
           header's connection status says it for every screen, and a message
           written meanwhile says it was queued on its own row. */}
@@ -937,6 +940,10 @@ function ConversationList({ drawer = false }: {
         ) : null}
       </div>
       <InboxToEnd scroller={scrollRef} />
+      </>
+      )}
+        </div>
+      </div>
     </section>
   );
 
@@ -1111,7 +1118,15 @@ function ThreadHeader() {
   // #3407: #general's hub is the platform project's, whose slug may land
   // after this header first draws (channel-hub.ts), so it is subscribed to;
   // the disc's label and its press come from that one value.
+  //
+  // #6992: a #general opened from Messages' own rail goes back there, not to
+  // Homeroom's Hub — one press got the reader here and Messages is where
+  // they were. Any other way in keeps the Hub.
+  const railReturn = useRailReturn(active?.kind === 'channel' ? 'homeroom' : null);
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
+  const channelBack = railReturn
+    ? { label: t('core:tabs.messages'), onBack: () => { window.location.hash = '#messages'; } }
+    : hubBack;
   const closeMenu = () => setMenu(false);
   useDismiss(menu, [menuWrapRef], closeMenu);
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1199,7 +1214,7 @@ function ThreadHeader() {
   const groupFaces = active.kind === 'group' && !invited;
   return (
     <header className="messages-thread-header">
-      {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
+      {channel ? <PageBackButton label={channelBack.label} onBack={channelBack.onBack} data-channel-back="" /> : null}
       {/* THE PHONE'S DRAWER NAMES THE CONVERSATION IN THE HEADER (Evan's
           design, ./phone-drawer.tsx): its name over who it is with, so the
           page leaves its own name out and keeps only its discs. */}
@@ -1318,10 +1333,16 @@ export function dayLabel(message: ConversationMessage, now: Date = new Date(Date
 function AppDiscussionThread({ slug }: { slug: string }) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
+  // #6992: an app's #general opened from Messages' rail goes back to
+  // Messages; one opened any other way keeps the Hub it came from.
+  const railReturn = useRailReturn(`app:${slug}`);
   const host = useRef<HTMLDivElement | null>(null);
   const context = snap.discussionContext;
   const ready = !!context && context.slug === slug;
   const name = ready ? context.name : slug;
+  const channelBack = railReturn
+    ? { label: t('core:tabs.messages'), onBack: () => { window.location.hash = '#messages'; } }
+    : { label: name, onBack: () => openChannelHub(slug) };
   const readOnly = ready ? context.readOnly : false;
   const archived = ready ? !!context.archived : false;
   // The channel's list row, when the viewer is a member: its `#handle`, and
@@ -1394,7 +1415,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           once per browser and then never again. The conversation pane beside
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
-        <PageBackButton label={name} onBack={() => openChannelHub(slug)} data-channel-back="" />
+        <PageBackButton label={channelBack.label} onBack={channelBack.onBack} data-channel-back="" />
         <AppIconLink
           slug={slug}
           name={name}

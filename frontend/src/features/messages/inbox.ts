@@ -11,6 +11,11 @@
  *     A channel keeps its address (`#messages/app/<slug>`, `#messages/<id>`
  *     for #general), and opening one lights Communities rather than
  *     Messages.
+ *   - Since #6992 Messages also lists each community's channels, in the
+ *     rail's drawer (./community-rail.ts): picking a community there shows
+ *     its #general and its topics. That is a way IN, not a change to this
+ *     list — the channels themselves still live where they did, and a topic
+ *     opens its project's page.
  *   - The Homeroom bot's chat is the AI tab (#6019).
  *   - A change in flight was a second section, Agents, until 16 Nov 2026.
  *     The same changes are listed on the Homeroom bot tab, the Homeroom

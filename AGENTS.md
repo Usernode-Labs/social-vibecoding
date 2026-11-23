@@ -398,7 +398,12 @@ is no replay plan to write and nothing to verify locally.
   reconciled into `app_category_registry` (origin `'topic'`) when a change
   merges, its channel a `'category'` thread; a new topic, a rename, a merge
   or an archive is a proposal (Settings & rules › Topics). A project's channel lives on its page,
-  not in Messages, and #general is the Homeroom community's channel;
+  not in Messages, and #general is the Homeroom community's channel.
+  **Messages lists people, and each community's channels through its rail
+  (#6992):** a rail down the screen's left lists Direct messages first, then
+  Homeroom and the communities the viewer is in, and picking one lists that
+  community's channels — #general opens in Messages, a topic opens its
+  project's page, where it has always lived.
   Messages is people and agents. **A channel
   is what people said:** Homeroom writes no activity (a proposal put up for a
   vote, a merge, a check verdict, a setting changed) into a project's channel

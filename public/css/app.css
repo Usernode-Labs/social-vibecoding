@@ -618,6 +618,178 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   min-width: 0;
   min-height: 0;
 }
+/* ── The community rail inside the list pane (#6992) ────────────────────
+   Messages' first column: the viewer's communities as rounded squares, with
+   Direct messages at its top. It is drawn inside `.messages-list-pane`, so
+   the phone's drawer already carries it when the list slides, and the pane
+   beside an open desktop chat keeps it too.
+   `.messages-inbox-row` is the rail and the list side by side;
+   `.messages-inbox-main` is the list's own column (its toolbar, then its
+   scroller or the channel drawer). */
+.messages-inbox-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.messages-inbox-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.messages-rail {
+  flex: 0 0 72px;
+  width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0 var(--platform-tabs-h, 0px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-inline-end: 1px solid var(--app-sheet-line);
+}
+/* 48px, 16px radius, and the icon clipped to that square while the badge
+   sticks out past its corner. */
+.messages-rail-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.messages-rail-tile:hover { background: var(--messages-surface-2); }
+/* Where you are: the lit marker, the same one the sidebar's and the tab
+   bar's rows carry (AGENTS.md, "Type and colour"). */
+.messages-rail-tile-on,
+.messages-rail-tile-on:hover {
+  background: var(--lit-tint);
+  color: var(--lit-ink);
+  box-shadow: inset 0 0 0 1px var(--lit-line);
+}
+.messages-rail-tile-on::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -12px;
+  top: 10px;
+  width: 4px;
+  height: 28px;
+  border-radius: 4px;
+  background: var(--lit-ink);
+}
+.messages-rail-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.messages-rail-glyph svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.messages-rail-glyph img { width: 100%; height: 100%; object-fit: cover; }
+/* What is new: the accent, as every count that asks for the viewer is. The
+   ring is the ground the badge sits on, so it reads as a corner of the tile. */
+.messages-rail-badge {
+  position: absolute;
+  inset-inline-end: -4px;
+  bottom: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 2px solid var(--bg-primary);
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.messages-rail-badge[hidden] { display: none; }
+.messages-rail-divider {
+  display: block;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 1px;
+  background: var(--app-sheet-line);
+}
+
+/* ── The channel drawer (#6992) ────────────────────────────────────────
+   Picking a community replaces the people list with its channels: its name,
+   who it is for, a way to its Hub, then the channels under the small-caps
+   heading the list already uses. */
+.messages-channel-drawer {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--platform-tabs-h, 0px);
+}
+.messages-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 16px 0;
+}
+.messages-drawer-title { flex: 1 1 auto; min-width: 0; }
+.messages-drawer-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.messages-drawer-sub {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.messages-drawer-hub {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.messages-drawer-hub:hover { background: var(--messages-surface-2); }
 /* The sheet. Its top margin is what shows the strip's shoulder above it on
    a phone: the sheet sits ON the strip rather than abutting it. */
 .messages-thread-pane {
@@ -2324,6 +2496,12 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
     flex: 0 0 var(--list-pane-w);
     width: var(--list-pane-w);
     padding-inline-end: 8px;
+  }
+  /* #6992: the rail is 72px at every width, so the column beside it grows by
+     that much rather than narrowing the list it held before. */
+  .messages-list-pane.messages-has-rail {
+    flex-basis: calc(var(--list-pane-w) + 72px);
+    width: calc(var(--list-pane-w) + 72px);
   }
   .messages-thread-pane {
     flex: 1 1 auto;

@@ -59,8 +59,13 @@ test('one disc: the Workshop\'s page head and the channels draw the same button'
 
 test('a project\'s channel leads its header with the way back to its hub', () => {
   const pane = fn(SCREEN, 'AppDiscussionThread');
+  // #6992: the disc still leads the row and still goes to the hub — unless
+  // the channel was opened from Messages' rail, whose own way back it then is.
   assert.match(pane,
-    /<header className="messages-thread-header">\s*<PageBackButton label=\{name\} onBack=\{\(\) => openChannelHub\(slug\)\} data-channel-back="" \/>\s*<AppIconLink/);
+    /<header className="messages-thread-header">\s*<PageBackButton label=\{channelBack\.label\} onBack=\{channelBack\.onBack\} data-channel-back="" \/>\s*<AppIconLink/);
+  assert.match(pane, /const channelBack = railReturn\s*\? \{ label: t\('core:tabs\.messages'\), onBack: \(\) => \{ window\.location\.hash = '#messages'; \} \}\s*: \{ label: name, onBack: \(\) => openChannelHub\(slug\) \};/,
+    'anything but the rail keeps the hub');
+  assert.match(pane, /useRailReturn\(`app:\$\{slug\}`\)/);
 });
 
 test('#general leads with the way back to the Homeroom hub; a conversation does not', () => {
@@ -70,7 +75,9 @@ test('#general leads with the way back to the Homeroom hub; a conversation does 
   assert.ok(hook > 0 && hook < header.indexOf('if (!active) return null;'), 'the hook runs before the early return');
   // The label and the press come from the one value.
   assert.match(header,
-    /\{channel \? <PageBackButton label=\{hubBack\.label\} onBack=\{hubBack\.onBack\} data-channel-back="" \/> : null\}/);
+    /\{channel \? <PageBackButton label=\{channelBack\.label\} onBack=\{channelBack\.onBack\} data-channel-back="" \/> : null\}/);
+  // #6992: opened from Messages' rail it says Messages; otherwise the Hub.
+  assert.match(header, /const channelBack = railReturn\s*\? \{ label: t\('core:tabs\.messages'\), onBack: \(\) => \{ window\.location\.hash = '#messages'; \} \}\s*: hubBack;/);
   assert.equal((header.match(/<PageBackButton /g) || []).length, 1, 'only behind `channel`');
   assert.match(SCREEN, /import \{ generalHubBack, openChannelHub, usePlatformSlug \} from '\.\/channel-hub';/);
   assert.match(HUB_SRC, /useSyncExternalStore\(subscribePlatformSlug, platformSlug, \(\) => null\)/);
