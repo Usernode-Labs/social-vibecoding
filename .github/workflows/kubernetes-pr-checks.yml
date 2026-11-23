@@ -117,8 +117,8 @@ jobs:
             # candidate still builds locally and gets all of its own checks.
             build_args+=(--cache-from "type=registry,ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-worker@$LIVE_WORKER_DIGEST")
           fi
-          if [ "$COMPONENT" = worker ]; then
-            sh scripts/check-pr-worker-image.sh "$out" "${build_args[@]}" "$CONTEXT"
+          if [[ "$COMPONENT" = worker || "$COMPONENT" = standalone ]]; then
+            sh scripts/check-pr-oci-image.sh "$COMPONENT" "$out" "${build_args[@]}" "$CONTEXT"
           else
             docker buildx build --load "${build_args[@]}" "$CONTEXT"
             sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"

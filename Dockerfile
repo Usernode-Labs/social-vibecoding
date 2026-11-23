@@ -115,9 +115,6 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 RUN apk upgrade --no-cache \
   && apk add --no-cache git postgresql-client
 COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
-COPY --from=buildx-tools /buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
-COPY --from=buildx-tools /src/internal/namesgenerator/LICENSE /usr/local/share/doc/buildx/LICENSE.namesgenerator
-COPY --from=buildx-tools /src/internal/namesgenerator/NOTICE /usr/local/share/doc/buildx/NOTICE.namesgenerator
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY vendor/decode-uri-component ./vendor/decode-uri-component
@@ -150,6 +147,10 @@ COPY --from=shell /build/public/locales/ /opt/usernode-shell-assets/locales/
 COPY --from=css /build/public/css/tailwind.css /opt/usernode-shell-assets/css/tailwind.css
 RUN cp public/shell/release.json /opt/usernode-shell-assets/shell/release.json \
     && cp public/shell/worker.js /opt/usernode-shell-assets/shell/worker.js
+# These tools are first used at runtime. Let the app build while Go compiles them.
+COPY --from=buildx-tools /buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
+COPY --from=buildx-tools /src/internal/namesgenerator/LICENSE /usr/local/share/doc/buildx/LICENSE.namesgenerator
+COPY --from=buildx-tools /src/internal/namesgenerator/NOTICE /usr/local/share/doc/buildx/NOTICE.namesgenerator
 # #2508: this image ran with NODE_ENV UNSET, and a great deal keys off it.
 # Two consequences were live in production:
 #

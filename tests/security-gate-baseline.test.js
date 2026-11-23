@@ -289,10 +289,10 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.match(prScan.run, /--cache-from "type=registry,ref=ghcr\.io\/.*social-vibecoding-worker@\$LIVE_WORKER_DIGEST"/);
   assert.doesNotMatch(prScan.run, /type=gha|--cache-to/,
     'PRs can import layers from the promoted image and publish no cache');
-  assert.match(prScan.run, /sh scripts\/check-pr-worker-image\.sh "\$out"/);
-  const workerScan = fs.readFileSync(path.join(ROOT, 'scripts/check-pr-worker-image.sh'), 'utf8');
-  assert.match(workerScan, /--output "type=oci,tar=false,dest=\$layout,name=security-worker"/);
-  assert.match(workerScan, /wait "\$db_pid"[\s\S]*sh scripts\/check-image-security\.sh/);
+  assert.match(prScan.run, /sh scripts\/check-pr-oci-image\.sh "\$COMPONENT" "\$out"/);
+  const ociScan = fs.readFileSync(path.join(ROOT, 'scripts/check-pr-oci-image.sh'), 'utf8');
+  assert.match(ociScan, /--output "type=oci,tar=false,compression=uncompressed,dest=\$layout,name=security-\$component"/);
+  assert.match(ociScan, /wait "\$db_pid"[\s\S]*sh scripts\/check-image-security\.sh/);
   assert.equal(pr.jobs['security-images'].steps.some((s) => s.uses?.startsWith('actions/cache')), false,
     'PR-written inventories cannot be persisted then reused by a later revision');
   const releaseScan = workflow.jobs.build.steps.find((step) => step.name === 'Verify runtime and scan the exact image SBOM');
@@ -345,6 +345,7 @@ for a in "$@"; do
   prev="$a"
 done
 case "$*" in
+  *".RootFS.Layers"*) echo "\${FAKE_LAYERS:-[]}" ;;
   *"image inspect"*) echo "\${FAKE_IMAGE_ID:-sha256:${'e'.repeat(64)}}" ;;
   *"image load"*) cat >/dev/null ;;
   *"anchore/syft"*) cat "${path.join(dir, 'baseline.json')}" ;;
@@ -359,7 +360,7 @@ esac
   return bin;
 }
 
-test('the PR worker scans and probes the freshly built OCI image, and rejects an unexpected loaded digest', t => {
+test('PR OCI scans verify the loaded image and its ordered filesystem layers before runtime probes', t => {
   if (spawnSync('jq', ['--version']).status !== 0) return t.skip('jq is required for OCI image checks');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-worker-image-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -370,7 +371,8 @@ test('the PR worker scans and probes the freshly built OCI image, and rejects an
   const config = 'b'.repeat(64);
   fs.writeFileSync(path.join(layout, 'index.json'), JSON.stringify({ manifests: [{ digest: `sha256:${manifest}` }] }));
   fs.writeFileSync(path.join(blobs, manifest), JSON.stringify({ config: { digest: `sha256:${config}` } }));
-  fs.writeFileSync(path.join(blobs, config), JSON.stringify({ os: 'linux', architecture: 'amd64' }));
+  const layers = ['sha256:' + 'c'.repeat(64), 'sha256:' + 'd'.repeat(64)];
+  fs.writeFileSync(path.join(blobs, config), JSON.stringify({ os: 'linux', architecture: 'amd64', rootfs: { diff_ids: layers } }));
   fs.writeFileSync(path.join(dir, 'baseline.json'), JSON.stringify({
     spdxVersion: 'SPDX-2.3', packages: [{ name: 'test-package', versionInfo: '1.0.0' }],
   }));
@@ -379,21 +381,24 @@ test('the PR worker scans and probes the freshly built OCI image, and rejects an
   }));
   const bin = fakeDocker(dir);
 
-  const run = (folder, inspectedDigest) => {
+  const run = (folder, inspectedDigest, component, loadedLayers = layers) => {
     const out = path.join(dir, folder);
-    const result = spawnSync('sh', ['scripts/check-image-security.sh', 'security-worker', out,
-      path.join(out, 'sbom.spdx.json'), 'worker', layout], {
+    const result = spawnSync('sh', ['scripts/check-image-security.sh', `security-${component}`, out,
+      path.join(out, 'sbom.spdx.json'), component, layout], {
       cwd: ROOT, encoding: 'utf8',
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_TRIVY_DB_READY: '1', FAKE_IMAGE_ID: inspectedDigest },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_TRIVY_DB_READY: '1', FAKE_IMAGE_ID: inspectedDigest, FAKE_LAYERS: JSON.stringify(loadedLayers) },
     });
     return { result, verdict: JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))) };
   };
 
-  for (const id of [manifest, config]) {
-    const { result, verdict } = run(id, `sha256:${id}`);
+  for (const [id, component] of [[manifest, 'worker'], [config, 'standalone']]) {
+    const { result, verdict } = run(id, `sha256:${id}`, component);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(verdict.status, 'clean');
     assert.equal(verdict.image, `sha256:${id}`);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, id, 'image-identity.json'))), {
+      manifest: `sha256:${manifest}`, config: `sha256:${config}`, diffIds: layers,
+    });
   }
   const calls = fs.readFileSync(path.join(dir, 'calls.log'), 'utf8');
   assert.match(calls, /syft:v1\.55\.0 oci-dir:\/image/);
@@ -402,9 +407,12 @@ test('the PR worker scans and probes the freshly built OCI image, and rejects an
   assert.equal((calls.match(/--entrypoint node/g) || []).length, 6);
   assert.doesNotMatch(calls, /image save|--download-db-only/);
 
-  const mismatched = run('unexpected', `sha256:${'e'.repeat(64)}`);
+  const mismatched = run('unexpected', `sha256:${'e'.repeat(64)}`, 'worker');
   assert.equal(mismatched.result.status, 1);
   assert.equal(mismatched.verdict.status, 'unavailable');
+  const reordered = run('reordered', `sha256:${config}`, 'standalone', layers.slice().reverse());
+  assert.equal(reordered.result.status, 1);
+  assert.equal(reordered.verdict.status, 'unavailable');
 });
 
 test('an image with the same digest as the live image is not pulled, saved or rescanned, and cannot block', () => {

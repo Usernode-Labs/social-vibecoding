@@ -67,7 +67,7 @@ if [ -z "$layout" ]; then
   db_pid=$!
 else
   phase='prepare shared scan input'
-  test "$component" = worker
+  case "$component" in worker|standalone) ;; *) exit 1 ;; esac
   test -z "$live"
   test "${SECURITY_TRIVY_DB_READY:-}" = 1
   manifest=$(jq -er '.manifests | select(length == 1) | .[0].digest | select(test("^sha256:[0-9a-f]{64}$"))' "$layout/index.json")
@@ -76,11 +76,17 @@ else
 
   # Both scanners read this layout while Docker imports it for the probes.
   # Docker can report the manifest or the config digest as the loaded ID.
-  bash -eo pipefail -c '
-    tar -C "$1" -cf - . | docker image load
-    actual="$(docker image inspect --format "{{.Id}}" "$2")"
-    [[ "$actual" == "$3" || "$actual" == "$4" ]]
-  ' _ "$layout" "$image" "$manifest" "$config" &
+  (
+    bash -eo pipefail -c 'tar -C "$1" -cf - . | docker image load' _ "$layout"
+    actual=$(docker image inspect --format '{{.Id}}' "$image")
+    case "$actual" in "$manifest"|"$config") ;; *) exit 1 ;; esac
+    layers=$(docker image inspect --format '{{json .RootFS.Layers}}' "$image")
+    jq -e --argjson loaded "$layers" \
+      '.rootfs.diff_ids == $loaded and ($loaded | type == "array" and length > 0)' \
+      "$layout/blobs/sha256/${config#sha256:}" >/dev/null
+    jq -n --arg manifest "$manifest" --arg config "$config" --argjson layers "$layers" \
+      '{manifest: $manifest, config: $config, diffIds: $layers}' > "$out/image-identity.json"
+  ) &
   image_load_pid=$!
   docker run --rm --network none -e SYFT_CHECK_FOR_APP_UPDATE=false -v "$layout:/image:ro" \
     anchore/syft:v1.55.0 oci-dir:/image -o spdx-json > "$sbom" &
