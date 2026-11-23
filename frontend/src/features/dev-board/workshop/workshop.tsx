@@ -950,6 +950,18 @@ function pace(d: Dash): string {
  */
 type DashStage = 'open' | 'unclaimed' | 'shipped';
 
+/**
+ * Nothing open, nobody waiting on a vote, nothing live this week (phone
+ * review #64): a project with nothing going on was a dashboard of zeros, "0
+ * open items", "0 nobody on them", "0 waiting on votes", "0 live this week",
+ * under the bot's "building 0 of 5". It says so in one line instead, and the
+ * bot's line goes with the tiles. Not while "live this week" is still being
+ * read, nor from a paged history, whose zero is a floor.
+ */
+export function dashQuiet(d: Dash | null | undefined, pending = false): boolean {
+  return !!d && !pending && !d.partial && !d.open && !d.unclaimed && !d.votesWaiting && !d.shippedWeek;
+}
+
 function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: number; pending?: boolean; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
   // The native-offline proposal: drawn from what this phone saved while
@@ -961,6 +973,7 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
   const asOf = status !== 'online' && status !== 'updating' && savedAt !== null && showsAge(savedAt)
     ? t('project:workshop.dash.asOf', { time: savedAtLabel(savedAt) })
     : null;
+  if (dashQuiet(d, pending)) return <p className="dev-ws-dash-none" data-ws-dash-none="">{t('project:workshop.dash.none')}</p>;
   const rate = !d.partial && d.shippedPrevWeekToDate > 0 ? (d.shippedWeek > d.shippedPrevWeekToDate ? 'up' : d.shippedWeek < d.shippedPrevWeekToDate ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
     { key: 'open', n: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
@@ -1035,6 +1048,7 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
               type="button"
               className={cls}
               data-ws-dash-cell={c.key}
+              data-zero={!waiting && !c.n ? '' : undefined}
               data-ws-dash-open=""
               onClick={onTap}
               title={c.title}
@@ -1048,6 +1062,7 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
             key={c.key}
             className={cls}
             data-ws-dash-cell={c.key}
+            data-zero={!waiting && !c.n ? '' : undefined}
             data-ws-dash-open={tappable ? '' : undefined}
             role={tappable ? 'button' : undefined}
             tabIndex={tappable ? 0 : undefined}
@@ -4001,7 +4016,7 @@ export function DevWorkshop(): ReactNode {
             },
           ],
         } : null}
-        first={v.mine?.viewer && frameFirst.show ? <FirstChangeCard slug={slug} onClose={frameFirst.close} /> : null}
+        first={v.mine?.viewer && frameFirst.show ? <FirstChangeCard slug={slug} onClose={frameFirst.close} solo={community?.audience === 'solo'} live={!!(v.dashboard && v.dashboard.everShipped) || (v.recentLive || []).length > 0} /> : null}
         work={v.mine?.viewer ? {
           line: line ? t(line.id, line.values) : null,
           words: deskWords(desk),
@@ -4468,7 +4483,7 @@ export function DevWorkshop(): ReactNode {
               (./bot-slots.tsx). Inside the card, above its rule, so the
               overview, the card and What's happening stay where the checks
               find them and the rule still ends the card. */}
-          {slug ? <BotSlotsDoor slug={slug} onOpen={() => openTab('bot')} /> : null}
+          {slug && !dashQuiet(v.dashboard, !!v.mergedPending) ? <BotSlotsDoor slug={slug} onOpen={() => openTab('bot')} /> : null}
           {/* How a change gets in, in one line: the three-step Approval
               rules card it was (#4457), folded into the sentence its steps
               spelled out, with Rules for whoever may change it (#4527). See
@@ -4485,7 +4500,14 @@ export function DevWorkshop(): ReactNode {
           from the board's buckets; New for you is What happened's now (its
           new requests nobody has picked up end with Build it). Not for a
           visitor, who has no work here. */}
-      {slug && v.mine && v.mine.viewer ? <YourWorkCard slug={slug} name={projectName} /> : null}
+      {slug && v.mine && v.mine.viewer ? (
+        <YourWorkCard
+          slug={slug}
+          name={projectName}
+          solo={community?.audience === 'solo'}
+          live={!!(v.dashboard && v.dashboard.everShipped) || (v.recentLive || []).length > 0}
+        />
+      ) : null}
       {/* Its label, for a look that stands the card beside What happened, where each of the two needs a name over it (app.css hides it everywhere else). AFTER the card in the document, which the declared checks read as Overview's next sibling; the look that shows it orders it over the card. */}
       {slug && v.mine && v.mine.viewer ? (
         <SectionHeader className="dev-ws-part-work px-1.5 pb-0 pt-3.5" data-ws-part="work">{t('project:hub.forYou.title')}</SectionHeader>

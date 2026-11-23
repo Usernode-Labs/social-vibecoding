@@ -54,20 +54,6 @@ async function postJson(url: string, body?: unknown): Promise<Response> {
   });
 }
 
-// The "Private" marker every private request carries. Neutral, not the
-// accent: it says what the request is, it does not ask anything.
-export function PrivateBadge({ label }: { label: string }): ReactNode {
-  return (
-    <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-      data-private-badge=""
-    >
-      <LockIcon className="h-3.5 w-3.5" aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
-
 function RequestDetail({ slug, request, canWrite, onClosed }: {
   slug: string;
   request: PrivateRequest;
@@ -264,6 +250,10 @@ export function PrivateRequests({ slug }: { slug: string }): ReactNode {
                   </span>
                 )}
                 title={r.title}
+                // Two lines for the title, and no "Private" pill (phone review
+                // S11): under the heading Private requests, beside a lock, the
+                // pill said it a third time and took the room the title needed.
+                titleClassName="whitespace-normal line-clamp-2"
                 subtitle={(
                   <>
                     {by}
@@ -272,7 +262,6 @@ export function PrivateRequests({ slug }: { slug: string }): ReactNode {
                     {r.commentCount ? <>{' · '}{t('project:workshop.private.comments', { count: r.commentCount })}</> : null}
                   </>
                 )}
-                trailing={<PrivateBadge label={t('project:workshop.private.badge')} />}
               />
               {open ? (
                 <RequestDetail

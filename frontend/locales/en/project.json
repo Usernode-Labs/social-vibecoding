@@ -659,6 +659,10 @@
     "text": "waiting on votes",
     "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
   },
+  "workshop.dash.none": {
+    "text": "Nothing open. Ask Homeroom bot for a change.",
+    "description": "One line in place of the four figures at the top of a project's Workshop (open items, nobody on them, waiting on votes, live this week) when all four are zero: the project has nothing going on, and the person can ask Homeroom bot to make a change."
+  },
   "workshop.dash.shipped": {
     "text": "live this week",
     "description": "Label under the fourth large figure on a project's Workshop tab: how many changes were merged and went live in the app this week. The number is drawn above it."
@@ -783,6 +787,14 @@
     "text": "Pick who does the building. Whatever it makes goes to the group for a vote.",
     "description": "Under \"Make your first change here\" on a project's Workshop page, over three rows: Homeroom bot, Claude Code and ChatGPT."
   },
+  "workshop.first.titleLive": {
+    "text": "Make a change here",
+    "description": "Heading of the card on a project's Workshop page for a member who has made nothing on it yet, on a project that already has changes live (so it is not the project's first change): it asks who should build what they have in mind, Homeroom bot or their own Claude Code or ChatGPT."
+  },
+  "workshop.first.textSolo": {
+    "text": "Pick who does the building. You approve what it makes.",
+    "description": "Line under the heading of the card on a Just you project's Workshop page (a project with one person, who approves every change) for somebody who has made nothing on it yet: they choose who builds (Homeroom bot or their own Claude Code or ChatGPT), and whatever it makes waits for their own approval, not a group vote."
+  },
   "workshop.first.label": {
     "text": "Who builds it",
     "description": "Accessible name of the group of three rows (Homeroom bot, Claude Code, ChatGPT) in the \"Make your first change here\" card on a project's Workshop page."
@@ -822,10 +834,6 @@
   "workshop.private.note": {
     "text": "Only platform admins can see these. They are kept in Homeroom, never on GitHub.",
     "description": "Grey line under the label of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
-  },
-  "workshop.private.badge": {
-    "text": "Private",
-    "description": "Short badge, beside a lock, on each row of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
   },
   "workshop.private.someone": {
     "text": "Someone",
@@ -878,6 +886,22 @@
   "happened.earlierWeeks": {
     "text": "Earlier weeks",
     "description": "Button at the foot of the \"What happened\" card on the Workshop tab of a project's page: lists more of the weeks before, one row each."
+  },
+  "happened.kind.request": {
+    "text": "Request",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a request somebody filed. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.change": {
+    "text": "Change",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a change somebody is building or has put up for a vote. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.live": {
+    "text": "Live",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a change that went live in the app. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.vote": {
+    "text": "Vote",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a group decision being voted on. A request and the change built for it can share a title, so this tells them apart."
   },
   "happened.row.new": {
     "text": "New",

@@ -36,7 +36,7 @@
  * title alone, until the reads land.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, TerminalIcon } from '@/components/ui/icons';
@@ -71,6 +71,8 @@ export function firstChangeFor(desk: DeskSummary, made: MadeRead | null): boolea
 }
 
 const KEEP_MS = 20000;
+/** How long the Workshop holds Your work's place for the reads (#123) before it draws Your work anyway. */
+const HOLD_MS = 4000;
 const kept = new Map<string, { at: number; read: Promise<MadeRead | null> }>();
 
 /** What the viewer made on `slug` before, as History lists it; kept a short while, like the desk's reads. */
@@ -99,9 +101,29 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   window.addEventListener('homeroom-bot-work-changed', () => kept.clear());
 }
 
-/** Whether the Workshop asks this viewer who should build, in Your work's place, and the ✕'s action. */
-export function useFirstChange(slug: string, desk: DeskSummary): { show: boolean; close: () => void } {
-  const [made, setMade] = useState<MadeRead | null>(null);
+/**
+ * Pure: whether the Workshop knows yet which card it draws, Your work or this
+ * one (phone review #123). Known at once for somebody who closed this card or
+ * may not start a change, once the desk lists something of theirs, or once
+ * History has answered (a failed read included, which means Your work).
+ */
+export function firstChangeDecided(desk: DeskSummary, madeRead: boolean, closed: boolean, readOnly: boolean): boolean {
+  if (closed || readOnly) return true;
+  // A desk read that failed is an answer too: Your work, as it always was then.
+  if (!desk.ready) return !!desk.settled;
+  if (desk.needs + desk.progress + desk.waiting > 0) return true;
+  return madeRead;
+}
+
+/**
+ * Whether the Workshop asks this viewer who should build, in Your work's
+ * place, and the ✕'s action. `decided` says whether that is known yet, and
+ * `likely` which card to hold the place for until it is: this one once the
+ * desk is empty and only History is still to answer.
+ */
+export function useFirstChange(slug: string, desk: DeskSummary): { show: boolean; close: () => void; decided: boolean; likely: boolean } {
+  // What History said, and for which project: a read for another slug is not one for this.
+  const [made, setMade] = useState<{ slug: string; read: MadeRead | null } | null>(null);
   const [closed, close] = useHubDismissed(slug, 'first');
   const readOnly = useStoreState(improveStore).readOnly;
   // Only once the desk says there is nothing of theirs here now: most members never ask History.
@@ -110,10 +132,26 @@ export function useFirstChange(slug: string, desk: DeskSummary): { show: boolean
     setMade(null);
     if (!slug || !empty || closed || readOnly) return undefined;
     let live = true;
-    void readMade(slug).then((read) => { if (live) setMade(read); });
+    void readMade(slug).then((read) => { if (live) setMade({ slug, read }); });
     return () => { live = false; };
   }, [slug, empty, closed, readOnly]);
-  return { show: !closed && !readOnly && firstChangeFor(desk, made), close };
+  const read = made && made.slug === slug ? made.read : null;
+  // Nor is a place held for ever: a read that never comes back (no signed-in
+  // user yet, a request that hangs) gives Your work after a few seconds.
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    setWaited(false);
+    if (!slug) return undefined;
+    const timer = setTimeout(() => setWaited(true), HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [slug]);
+  const answered = firstChangeDecided(desk, !!made && made.slug === slug, closed, readOnly);
+  // Once Your work is drawn for want of an answer it stays: a late answer swapping it would be #123 again.
+  const late = useRef<string | null>(null);
+  if (waited && !answered && late.current !== slug) late.current = slug;
+  const settledLate = late.current === slug;
+  const decided = !slug || waited || answered;
+  return { show: !closed && !readOnly && !settledLate && firstChangeFor(desk, read), close, decided, likely: empty };
 }
 
 function BuilderTile({ builder }: { builder: BotNewBuilder }): ReactNode {
@@ -126,8 +164,23 @@ function BuilderTile({ builder }: { builder: BotNewBuilder }): ReactNode {
   );
 }
 
-/** The card itself: three links, each to a new thread set to this project and that builder. */
-export function FirstChangeCard({ slug, onClose }: { slug: string; onClose: () => void }): ReactNode {
+/**
+ * The card itself: three links, each to a new thread set to this project and
+ * that builder.
+ *
+ * Its words fit the project (phone review #130). On a Just you project what
+ * gets made is the person's own to approve, as the rule line above it says,
+ * not "the group's for a vote". And "first" is the person's first here: on a
+ * project with changes already live it asks them to make "a change here".
+ */
+export function FirstChangeCard({ slug, onClose, solo = false, live = false }: {
+  slug: string;
+  onClose: () => void;
+  /** A Just you project. */
+  solo?: boolean;
+  /** The project already has changes live. */
+  live?: boolean;
+}): ReactNode {
   const t = useMessages('project');
   // Which products already have Homeroom's connector: a row without one says Set up.
   const [connected, setConnected] = useState<Record<OwnBuilder, boolean> | null>(null);
@@ -139,10 +192,10 @@ export function FirstChangeCard({ slug, onClose }: { slug: string; onClose: () =
   return (
     <section className="dev-ws-strip dev-ws-first" data-ws-first-change="">
       <div className="dev-ws-head">
-        <span className="dev-ws-head-title">{t('project:workshop.first.title')}</span>
+        <span className="dev-ws-head-title">{live ? t('project:workshop.first.titleLive') : t('project:workshop.first.title')}</span>
         <HubCardClose card="first" onClose={onClose} />
       </div>
-      <p className="dev-ws-strip-text">{t('project:workshop.first.text')}</p>
+      <p className="dev-ws-strip-text">{solo ? t('project:workshop.first.textSolo') : t('project:workshop.first.text')}</p>
       <div role="group" aria-label={t('project:workshop.first.label')} className="flex flex-col">
         {BOT_NEW_BUILDERS.map((builder) => {
           const own = builder === 'homeroom' ? null : builder;

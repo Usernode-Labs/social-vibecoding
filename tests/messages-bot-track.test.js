@@ -601,7 +601,7 @@ test('the slots page is a page under the Workshop: its address, its way back, it
   assert.match(ws, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);/);
   assert.match(ws, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
   assert.match(ws, /data-ws-side-open=\{sideOpen \? '' : undefined\}/);
-  assert.match(ws, /\{slug \? <BotSlotsDoor slug=\{slug\} onOpen=\{\(\) => openTab\('bot'\)\} \/> : null\}/, 'its door in the overview card');
+  assert.match(ws, /\{slug && !dashQuiet\(v\.dashboard, !!v\.mergedPending\) \? <BotSlotsDoor slug=\{slug\} onOpen=\{\(\) => openTab\('bot'\)\} \/> : null\}/, 'its door in the overview card, but for a project with nothing going on (phone review #64)');
   const src = read(SLOTS);
   assert.match(src, /if \(!view \|\| \(!view\.acts && !view\.slots\.length\)\) return null;/, 'no door where the bot neither builds nor holds anything');
   assert.match(src, /useEffect\(\(\) => \{\s*if \(!slug\) return undefined;/, 'it reads in an effect, never on the first render');

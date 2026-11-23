@@ -690,3 +690,27 @@ test('By stage counts and the column foot group digits in the interface language
     assert.doesNotMatch(src, /'en-US'/, `${f} names no fixed locale`);
   }
 });
+
+// Phone review #77, #38, #89 (23 Nov 2026): All items is one column until
+// its four columns fit whole, measured on its own pane rather than the
+// window, and the strip and the deferred columns follow what CSS drew.
+test('All items is one column until the four fit whole, by its pane, and a switch opens the column at its top', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const kanban = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'card', 'dev-kanban.tsx'), 'utf8');
+  assert.match(css, /#dev-workshop \.dev-ws-pane \{ container: ws-board \/ inline-size; \}/);
+  assert.match(css, /@container ws-board \(max-width: 975\.98px\) \{\n  \.dev-ws:not\(\[data-ws-side-open\]\) #dev-kanban \{ display: block; overflow-x: hidden; \}/);
+  assert.match(css, /@container ws-board \(max-width: 975\.98px\) \{\n  \.dev-ws:not\(\[data-ws-side-open\]\) \.dev-kanban-stages \{\n    display: flex;/, 'the strip is the tabs there');
+  // JS reads CSS's answer, never a number of its own.
+  assert.match(kanban, /const read = \(\) => setBoardOne\(window\.getComputedStyle\(el\)\.display === 'block'\);/);
+  assert.match(kanban, /export function useBoardOneColumn\(\): boolean \{/);
+  assert.match(kanban, /deferred=\{narrow && col\.key !== v\.activeTab\}/);
+  // A switch brings the list's top back under the pinned head.
+  assert.match(kanban, /if \(switched\) showListTop\(strip\);/);
+  // The tabs' ends fade where they run on, and the byline is one line.
+  assert.match(css, /\.dev-kanban-stages\[data-more-end\] \{ -webkit-mask-image: linear-gradient\(to right, #000 calc\(100% - 32px\), transparent\);/);
+  assert.match(kanban, /data-more-end=\{more\.end \? '' : undefined\}/);
+  // One way back on a phone, and one Filters button in words.
+  assert.match(css, /@media \(max-width: 767\.98px\) \{\n  #dev-workshop \.dev-ws\[data-ws-tab="all"\] \.dev-ws-allbar \[data-ws-page-back\] \{ display: none; \}\n\}/);
+  const filters = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'kanban-filters.tsx'), 'utf8');
+  assert.match(filters, /const fits = measuredFits && !phone;/);
+});

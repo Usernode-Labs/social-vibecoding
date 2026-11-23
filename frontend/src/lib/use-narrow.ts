@@ -20,18 +20,23 @@ import { useEffect, useState } from 'react';
 
 export const NARROW_QUERY = '(max-width: 639px)';
 
-function readNarrow(): boolean {
+function readMatch(query: string): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  try { return window.matchMedia(NARROW_QUERY).matches; } catch { return false; }
+  try { return window.matchMedia(query).matches; } catch { return false; }
 }
 
 export function useNarrowViewport(): boolean {
-  const [narrow, setNarrow] = useState(readNarrow);
+  return useMediaMatch(NARROW_QUERY);
+}
+
+/** Does `query` match the viewport, live? `false` where there is no matchMedia, as above. */
+export function useMediaMatch(query: string): boolean {
+  const [matches, setMatches] = useState(() => readMatch(query));
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
     let mql: MediaQueryList;
-    try { mql = window.matchMedia(NARROW_QUERY); } catch { return undefined; }
-    const onChange = () => setNarrow(mql.matches);
+    try { mql = window.matchMedia(query); } catch { return undefined; }
+    const onChange = () => setMatches(mql.matches);
     // Re-read on mount too: the first paint may have happened before the
     // effect ran, and a rotation can land in that gap.
     onChange();
@@ -45,6 +50,6 @@ export function useNarrowViewport(): boolean {
       return () => (mql as any).removeListener(onChange);
     }
     return undefined;
-  }, []);
-  return narrow;
+  }, [query]);
+  return matches;
 }
