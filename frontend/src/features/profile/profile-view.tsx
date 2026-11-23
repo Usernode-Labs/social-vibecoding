@@ -26,7 +26,8 @@ import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { k } from '@/components/ui/kit';
-import { PLANE_FILL } from '@/components/ui/grouped-list';
+import { PLANE_CARD } from '@/components/ui/grouped-list';
+import { CheckIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
@@ -87,7 +88,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
   return (
     <div
       id="profile-identity-card"
-      className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}
+      className={`${PLANE_CARD} p-4 mb-3`}
     >
       {/*
           QA 2026-09-24 Q30e: on a phone "Edit profile" took the right half of
@@ -108,6 +109,29 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
               // a fact.
               <div className="text-sm text-zinc-500 dark:text-zinc-400">
                 {identity.sub}
+              </div>
+            ) : null}
+            {/*
+                The verified accounts are facts about the person, so they sit
+                with the other facts, in the text column: a check and a line
+                of text each, not a pill under the avatar at the card's edge
+                (phone review #99). Edit profile, below, starts on the same
+                edge.
+            */}
+            {identity.chips.length ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                {identity.chips.map((chip: any) => (
+                  <a
+                    key={chip.key}
+                    className={chip.className}
+                    href={chip.href}
+                    data-verified-account={chip.key}
+                    {...(chip.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                  >
+                    <CheckIcon className="h-3.5 w-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
+                    <span className="min-w-0 break-all">{chip.label}</span>
+                  </a>
+                ))}
               </div>
             ) : null}
           </div>
@@ -143,20 +167,6 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           {identity.bio}
         </p>
       ) : null}
-      {identity.chips.length ? (
-        <div className="flex flex-wrap items-center gap-2 mt-3">
-          {identity.chips.map((chip: any) => (
-            <a
-              key={chip.key}
-              className={chip.className}
-              href={chip.href}
-              {...(chip.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-            >
-              {chip.label}
-            </a>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -180,7 +190,7 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
         <div
           key={stat.key}
           data-profile-stat={stat.key}
-          className={`rounded-2xl ${PLANE_FILL} px-2 py-3 text-center${stat.zero ? ' hidden' : ''}`}
+          className={`${PLANE_CARD} px-2 py-3 text-center${stat.zero ? ' hidden' : ''}`}
         >
           <div className="text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{stat.value}</div>
           <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{stat.label}</div>
@@ -244,7 +254,7 @@ function ActivityCard({ activity }: { activity: ActivityCardView | null }): Reac
   );
   if (activity.empty) {
     return (
-      <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+      <section id="profile-activity" className={`${PLANE_CARD} p-4 mb-2`}>
         {title}
         <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('profile:activity.empty')}</p>
       </section>
@@ -252,7 +262,7 @@ function ActivityCard({ activity }: { activity: ActivityCardView | null }): Reac
   }
   const days = activity.days || [];
   return (
-    <section id="profile-activity" className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+    <section id="profile-activity" className={`${PLANE_CARD} p-4 mb-2`}>
       {title}
       <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
         {activity.time ? (
@@ -335,7 +345,7 @@ function ProfileSkeleton(): ReactNode {
     <SkeletonGroup label={t('profile:screen.loading')}>
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
-          <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}>
+          <div className={`${PLANE_CARD} p-4 mb-3`}>
             <div className="flex items-center gap-3">
               <Skeleton shape="circle" className="w-14 h-14" />
               <div className="flex-1 min-w-0">
@@ -348,14 +358,14 @@ function ProfileSkeleton(): ReactNode {
           {/* The three stat cards: a figure over its label. */}
           <div className={STAT_GRID}>
             {Array.from({ length: STAT_COUNT }, (_, i) => (
-              <div key={i} className={`rounded-2xl ${PLANE_FILL} px-2 py-3 flex flex-col items-center`}>
+              <div key={i} className={`${PLANE_CARD} px-2 py-3 flex flex-col items-center`}>
                 <Skeleton shape="block" className="w-8 h-6" />
                 <Skeleton shape="muted" className="mt-1.5 w-14" />
               </div>
             ))}
           </div>
           {/* This week: its title, two figures and the plot. */}
-          <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-2`}>
+          <div className={`${PLANE_CARD} p-4 mb-2`}>
             <Skeleton className="w-20 h-4" />
             <div className="mt-3 flex gap-6">
               <Skeleton shape="block" className="w-16 h-6" />
@@ -367,7 +377,7 @@ function ProfileSkeleton(): ReactNode {
         {/* Your work, then Rewards: the right column's rows. */}
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           {[3, KUDOS_PARKED ? 1 : 2].map((count, group) => (
-            <div key={group} className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
+            <div key={group} className={`mt-8 ${PLANE_CARD}`}>
               {Array.from({ length: count }, (_, i) => (
                 <div key={i} className="flex items-center gap-4 px-4 py-3.5">
                   <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
@@ -382,7 +392,7 @@ function ProfileSkeleton(): ReactNode {
         </div>
         {/* Account: the two rows under the stats on the left. */}
         <div className="lg:col-start-1 lg:row-start-2">
-          <div className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
+          <div className={`mt-8 ${PLANE_CARD}`}>
             {Array.from({ length: 2 }, (_, i) => (
               <div key={i} className="flex items-center gap-4 px-4 py-3.5">
                 <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
