@@ -40,8 +40,10 @@
  * members, what it says it is and this week on one line (the pins' own
  * picture, GET /api/me/home-pins; the rest from GET
  * /api/me/home-pins/activity). One you joined is the compact card, its icon
- * beside its name and members (the joined list's own count), on the same
- * columns. The standard look (and Standard (WIP)) draws the big cards from
+ * beside its name and its week: the members (the joined list's own count)
+ * and who was active, then what went live, from the same activity read,
+ * one to a line on a phone, two across from 768px and three from 1280px.
+ * The standard look (and Standard (WIP)) draws the big cards from
  * 768px and the compact ones at every width; under 768px a pin is the small
  * tile, its picture on its band and its own icon on it. The brand look draws
  * both cards from 1280px, as it drew its cards before, and keeps its tiles
@@ -140,12 +142,16 @@ export function CommunitiesScreen() {
   const brandCards = useMinWidth(1280);
   const pinCards = wip ? wideCards : brand && brandCards;
   const joinCards = wip || (brand && brandCards);
-  // What a pinned card says beyond its name, read only where one is drawn.
+  // What a card says beyond its name (a pin's, and a joined community's
+  // week), read only where a card is drawn. Until it lands a joined card
+  // says what the joined list knows, its members, and its week's lines
+  // then appear under them.
   const activity = useStoreState(homePinsActivityStore);
   const pinKey = state.pins.map((p) => p.slug).join(',');
+  const joinedKey = state.joined.map((c) => c.slug).join(',');
   useEffect(() => {
-    if (pinCards && shown && state.ready && pinKey) void loadHomePinsActivity();
-  }, [pinCards, shown, state.ready, pinKey]);
+    if (shown && state.ready && ((pinCards && pinKey) || (joinCards && joinedKey))) void loadHomePinsActivity();
+  }, [pinCards, joinCards, shown, state.ready, pinKey, joinedKey]);
   // The joined list's member counts: the compact card's second line, and a
   // pinned card's while its activity is on its way.
   const joinedMembers = useMemo(() => new Map(state.joined.map((c) => [c.slug, c.member_count])), [state.joined]);
@@ -199,6 +205,11 @@ export function CommunitiesScreen() {
       }))
       .filter((c) => matchesQuery(q, c.name, c.slug));
   }, [state.joined, state.pins, q]);
+  /** A joined community as its compact card draws it: its week, once the activity read has it. */
+  const joinedCard = (c: (typeof joined)[number]): CardCommunity => {
+    const week = activity.bySlug[c.slug];
+    return week ? { ...c, activeWeek: week.activeWeek, liveWeek: week.liveWeek } : c;
+  };
   /** A joined community as the pin a + makes of it. */
   const pinOf = ({ members: _members, ...c }: (typeof joined)[number]) => ({ ...c, member: true } as HomePin);
   const say = (name: string) => ({
@@ -332,7 +343,7 @@ export function CommunitiesScreen() {
               {joinedShown.map((c) => (joinCards ? (
                 <CommunityPageCard
                   key={c.slug}
-                  community={c}
+                  community={joinedCard(c)}
                   votes={state.owed[c.slug] || 0}
                   editing={false}
                   compact

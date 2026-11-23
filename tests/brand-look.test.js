@@ -785,7 +785,7 @@ test('the Communities page\'s cards wear the look: its card, its inks and its sm
   assert.match(page, /const brandCards = useMinWidth\(1280\);/);
   assert.match(page, /const pinCards = wip \? wideCards : brand && brandCards;/, 'a pin is the big card from 1280px, as the look drew its cards');
   assert.match(page, /const joinCards = wip \|\| \(brand && brandCards\);/, 'and a joined community the compact card');
-  assert.match(page, /if \(pinCards && shown && state\.ready && pinKey\) void loadHomePinsActivity\(\);/, 'what a pinned card says is read only where one is drawn');
+  assert.match(page, /if \(shown && state\.ready && \(\(pinCards && pinKey\) \|\| \(joinCards && joinedKey\)\)\) void loadHomePinsActivity\(\);/, 'what a card says (a pin\'s, and a joined community\'s week) is read only where one is drawn');
   const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');
   assert.match(store, /readJson\('\/api\/me\/home-pins\/activity'\)/);
   // The card is "A COMMUNITY'S CARD", drawn from tokens: the look sets its own.
