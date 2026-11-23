@@ -2579,6 +2579,11 @@ const INVITE_LINE_IDS = {
     'notifications:invite.line.someoneJoin', 'notifications:invite.line.someoneJoinUnnamed'],
   build: ['notifications:invite.line.build', 'notifications:invite.line.buildUnnamed',
     'notifications:invite.line.someoneBuild', 'notifications:invite.line.someoneBuildUnnamed'],
+  // #7027: a build invitation whose person is already in the project (they
+  // came in by a link or the Join button) is no longer a waiting invitation
+  // to join: it is an offer to build what they can already see.
+  offer: ['notifications:invite.line.offer', 'notifications:invite.line.offerUnnamed',
+    'notifications:invite.line.someoneOffer', 'notifications:invite.line.someoneOfferUnnamed'],
 };
 function inviteView(inv) {
   const isApprover = inv.kind === 'approver';
@@ -2591,7 +2596,7 @@ function inviteView(inv) {
     icon: isApprover ? '🗳️' : '✉️',
     who: inv.invitedBy ? `@${inv.invitedBy}` : t('notifications:invite.someone'),
     inviter: inv.invitedBy || '',
-    line: INVITE_LINE_IDS[isApprover ? 'approve' : inv.joins ? 'join' : 'build'][
+    line: INVITE_LINE_IDS[isApprover ? 'approve' : inv.inCommunity ? 'offer' : inv.joins ? 'join' : 'build'][
       (inv.invitedBy ? 0 : 2) + (project ? 0 : 1)],
     appName: project,
     note: !isApprover && inv.note ? String(inv.note) : '',
