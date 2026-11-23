@@ -2,8 +2,9 @@
 
 HAND-EXPORTED and hand-committed. Nothing regenerates this directory: there is
 no `npm run` that rewrites these files or this README, and the repository
-carries no image tooling at all (no `sharp`, `imagemin`, `pngquant` or `svgo`
-in either `package.json`, and the Docker build never touches an image). So the
+has no image step for it (`sharp` is a server dependency, for sized
+screenshots, and no script points it here; there is no `imagemin`, `pngquant`
+or `svgo`, and the Docker build never touches an image). So the
 only record of where a file came from and how it was made is the table below —
 keep it true by hand, or the next person re-derives it from scratch.
 
@@ -35,13 +36,13 @@ fixed color, not the scalable source the app UI uses.
 
 | File | Figma file key | Node id | Export | Dimensions | Size |
 |---|---|---|---|---|---|
-| `people.png` | `4kAYqXh9NhpoCU44QwWvYo` | `1246:166` | the node's raw image fill, downsampled and quantised (below) | 816 × 612, 8-bit palette PNG with `tRNS`, sRGB | 87.9 KB |
+| `people.png` | n/a — supplied as a finished drawing | n/a | the four people sitting in a circle (red hoodie, green jumper, cream hoodie, black hoodie; the drawing the Homeroom website shares as its `og:image`), from a 576 × 432 PNG on a transparent ground supplied by the product owner (23 Nov 2026), made fully opaque where it was nearly so and quantised (below). It replaced the Figma drawing of four people in red and green (file `4kAYqXh9NhpoCU44QwWvYo`, node `1246:166`; 816 × 612), which is in this file's git history | 576 × 432, 8-bit palette PNG with `tRNS`, sRGB | 88.1 KB |
 | `homeroom-mark.png` | n/a — no Figma export | n/a | supplied by the product owner as a finished raster during the navigation design study (#2718) and committed verbatim; no re-encoding, no quantisation, no tooling involved | 261 × 261, 8-bit RGBA PNG | 7.8 KB |
 | `homeroom-logotype-black.png` | n/a — no Figma export | n/a | the eight `WORDMARK_PATHS` from `frontend/@/components/ui/wordmark.tsx` (viewBox `0 0 1236.9 319.2`) written into a plain SVG with `fill="#1c1c1e"` (`zinc-900`), then `rsvg-convert -w 280` (librsvg 2.63.2, a one-off local step whose output is committed) on a transparent background; drawn at 140 × 37 in the mail, so 2× (#2908) | 280 × 73, 8-bit RGBA PNG | 7.9 KB |
 | `homeroom-logo-black.png` | n/a — no Figma export | n/a | hand-encoded: a 5×7 bitmap "HOMEROOM" wordmark rasterized to `zinc-900` (`#1c1c1e`) on a transparent RGBA background, then wrapped in a minimal PNG (`IHDR`/`IDAT`/`IEND`) using only Node's built-in `zlib.deflateSync` — see the one-off generator note in the git history for #2673, since the repo has no `sharp`/`canvas`/ImageMagick to export from | 294 × 54, 8-bit RGBA PNG | 451 B |
 | `sky.webp` | n/a — no Figma export | n/a | the cloud image the Homeroom website (onhomeroom.com) draws behind its own hero, downloaded as the site serves it (PNG), resized to 1920 px wide, cropped to the middle 1080 rows and encoded with Pillow (`quality=74, method=6`), a one-off local step whose output is committed | 1920 × 1080, lossy WebP | 54.3 KB |
 | `landing-communities.webp` | n/a — STAND-IN, cut from a mock-up | n/a | cropped from the hero mock-up Drea shared in the landing change's discussion (17 Nov 2026), its white ground flood-filled to transparent from the edges, encoded with Pillow (`quality=88, method=6`). Replace with an export of the drawing itself when there is one | 1060 × 656, lossy WebP with alpha | 82.7 KB |
-| `landing-people.webp` | n/a — STAND-IN, cut from a mock-up | n/a | cropped from the same mock-up; the white window and the sky behind the figures removed by colour (flood fill from the edges, plus the sky enclosed between the figures), the window's edge line erased, the alpha edge softened by 0.7 px; Pillow (`quality=90, method=6`). Replace with an export of the drawing itself when there is one | 619 × 434, lossy WebP with alpha | 68.4 KB |
+| `landing-people.webp` | n/a — the same drawing as `people.png` | n/a | the same 576 × 432 transparent source as `people.png` (23 Nov 2026), cropped to the figures, alpha of 248 and over set to fully opaque, and encoded with ffmpeg's libwebp (`-q:v 90 -compression_level 6`, `yuva420p`). Until then it was cut from a 976 × 604 copy of the drawing on white, which left a rougher edge | 572 × 410, lossy WebP with alpha | 58.8 KB |
 
 There is no `sha384` column, and the omission is deliberate rather than an
 oversight. `public/vendor/README.md` records a digest per file because each of
@@ -51,37 +52,41 @@ here would prove only that nobody has changed the file since it was written
 down, which the diff already proves. The file key plus the node id plus the
 export recipe below IS the reproducibility claim.
 
-**How `people.png` was made, and why not simply "export the node".** The
-node's own PNG export bakes an opaque `#FFFEEA` frame background into the
-image, which would draw as a cream rectangle on the dark ground — and the
-illustration is specified to sit straight on the ground in both themes, with
-no plate. So the export is the node's raw uploaded image fill instead, which
-is transparent: 1448 × 1086 RGBA, Lanczos-downsampled to 816 px wide and
-quantised with
+**How `people.png` was made.** The drawing came as a finished RGBA PNG on a
+transparent ground, so there is nothing to export and nothing to cut out. Two
+things were done to it. Its solid areas carried an alpha of 253, not 255,
+which lets the ground show faintly through the figures; every alpha of 248 or
+more is set to 255. Then it was quantised to a 255-colour palette with the
+repository's installed `sharp` (libimagequant):
 
-    pngquant --quality=70-95 --speed 1 64
+    sharp(pixels).png({ palette: true, quality: 100, effort: 10, dither: 1, compressionLevel: 9 })
 
-`pngquant` is on a developer machine (Homebrew), not in CI — this is a one-off
-local step whose OUTPUT is committed. Measured at export against the
-unquantised 3× render, the quantisation costs RMSE 4.1/255, which is invisible
-on this artwork and takes the file from roughly 605 KB to 87.9 KB.
+This is a one-off local step whose OUTPUT is committed; nothing in CI runs it.
+Measured against the unquantised image over its opaque pixels, the
+quantisation costs RMSE 2.5/255, which is invisible on this artwork and takes
+the file from 334.6 KB to 88.1 KB.
 
-**Why 816 px.** The landing draws the illustration in a 272 pt box, so 816 is
-3× — sharp on a 3× phone, which is the screen this redesign was drawn for and
-the only one it is judged on. The weight is the reason to state that
-explicitly: 87.9 KB is several times the largest artwork committed anywhere
-else in the tree (the nine challenge illustrations run 5.5–21 KB, capped at
-64 KB by `tests/challenge-illustrations.test.js`). Nothing in the suite
-enforces a budget on this file. It is the logged-out screen's one image, it
-carries the whole first impression, and 2× would save about 40 KB and lose the
-reason it is there — but it was a choice, and this paragraph is where it is
-recorded.
+**Why 576 px.** It is the size the drawing was supplied at; there is no
+larger copy yet. The landing draws it in a 272 pt box (320 from `xl`), so the
+file is a little over 2×: sharp on a 2× screen and slightly soft on a 3×
+phone, where the 816 px file it replaced was a full 3×. When a larger export
+of this drawing exists, replace the file and keep the 4:3 frame, so the
+`width`/`height` on each `<img>` only change in step. The weight is about what
+it was: 88.1 KB is several times the largest artwork committed anywhere else
+in the tree (the nine challenge illustrations run 5.5–21 KB, capped at 64 KB
+by `tests/challenge-illustrations.test.js`). Nothing in the suite enforces a
+budget on this file. It is the signed-out screens' one image and carries the
+whole first impression, which is why it is allowed that weight.
 
 ## What each one is for
 
 - **people.png** — the illustration on the logged-out landing screen,
   `frontend/src/features/auth/landing.tsx`, drawn as a plain `<img>` above the
-  activity chips. Decorative: the heading beside it carries the meaning, so it
+  activity chips. The other signed-out and first-run pages draw the same file
+  (the invite card, the waiting page, the welcome page and the short story's
+  phone layout, all under `frontend/src/features/auth/`), and so do two
+  signed-in places: Homeroom's own hero on the Workshop
+  (`.wip-hero-people`) and the end of the Needs you review (`.rf-end-art`). Decorative: the heading beside it carries the meaning, so it
   ships with an empty `alt`. The waitlist release email also draws it, as an
   absolute `${PRODUCTION_ORIGIN}/brand/people.png` URL in the
   `waitlist_released` template's first version (`src/db/email-template-seeds.js`, #4570), with the same
@@ -96,8 +101,8 @@ recorded.
 - **landing-communities.webp** — the picture of the communities page beside
   the landing hero's words, from 1024px. Decorative, empty `alt`.
 - **landing-people.webp** — the people on the bottom edge of the landing
-  hero's window, from 768px. Decorative, empty `alt`. It is drawn at up to 400px wide, so it is
-  soft on a 2× screen: the mock-up it was cut from had no more pixels.
+  hero's window, from 768px. Decorative, empty `alt`. It is drawn at up to 380px wide, and the
+  file is 572px wide (1.5×), the size the drawing was supplied at.
 - **homeroom-logotype-black.png** — the logo at the top of every
   transactional email (#2908), referenced by the standard email layout's first
   version (`src/db/email-template-seeds.js`) as an absolute
@@ -145,9 +150,10 @@ entry for it would fill the cache on install and never be read back out.
 
 ## Replacing an asset
 
-1. Re-export from the node id in the table above — the raw image fill, not the
-   node's PNG export, for the transparency reason recorded above.
-2. Re-run the downsample and `pngquant` line above, and measure the result
+1. Start from a copy on a transparent ground. For a Figma node that is the
+   node's raw image fill, not its PNG export, which bakes the frame's
+   background in as an opaque rectangle.
+2. Re-run the opacity and quantise steps above, and measure the result
    with `ls -l` rather than predicting it.
 3. Commit the new bytes and update this table's Dimensions and Size in the
    same commit.

@@ -368,8 +368,8 @@ export function DeadInvite({ preview, primaryClass }: { preview: InvitePreview; 
       <img
         src="/brand/people.png"
         alt=""
-        width={816}
-        height={612}
+        width={576}
+        height={432}
         draggable={false}
         className="mx-auto block h-auto w-[240px] xl:w-[280px] max-w-full"
       />
