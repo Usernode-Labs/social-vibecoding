@@ -92,7 +92,7 @@ import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
-import { closeNewThread, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
+import { closeNewThread, newThreadIn, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
 import { noteThreadNames } from '../messages/private-thread-bar';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
@@ -987,6 +987,10 @@ export function AiScreen(): ReactNode {
   // late) takes the column from it, where one the person opened stays.
   useEffect(() => {
     if (!visible || !mounted || !docked || phone || !botId || column) return;
+    // A new chat an address just asked for (`#homeroom-bot/new?with=…`, the
+    // effect above, in this same commit) is already there, set as it asked:
+    // read live, since this render's `column` is from before it.
+    if (newThreadIn() === botId) return;
     autoBlank.current = true;
     startNewThread(botId, newChatPreset());
   }, [visible, mounted, docked, phone, botId, column]); // eslint-disable-line react-hooks/exhaustive-deps
