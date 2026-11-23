@@ -25342,6 +25342,22 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
+/* EACH SEAT IS AS WIDE AS ITS WORD (visual audit, Nov 2026). The seats above are fixed shares of the bar, measured to
+   fit the labels at 11px on a 360 to 390px phone, with the two long labels let out of their seats where they did not.
+   So at 320px, and on any phone whose system text size is turned up (an Android WebView scales the text, not the bar),
+   "Communities" ran out of its lit pill and into "Homeroom bot", and that into "Messages". In the standard look a seat
+   now starts from its own label and the bar's spare room is shared out evenly, so a pill always holds its word; and if
+   the five words together are wider than the bar, the longest end in an ellipsis instead of being printed over their
+   neighbours. Only the word is cut: the tab itself stays unclipped, so the count on its glyph's corner is whole. Not the
+   side strip, which stacks its tabs and has its own rules. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs { grid-template-columns: repeat(5, auto); }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 5px; }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label { overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 374.98px) {
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 3px; }
+}
 
 /* TWO ORDERS, ONE MARKUP (Evan, 29 Oct 2026). The tabs' markup is the
    desktop sidebar's order, Home, AI, Messages, Communities, then you, so a
