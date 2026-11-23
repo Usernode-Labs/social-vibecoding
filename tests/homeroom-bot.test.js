@@ -353,8 +353,10 @@ test('settings default to off and clamp their numbers', () => {
     // (services/openrouter-credit.js); both are settings an admin can move.
     creditWarnCents: 50000, creditUrgentCents: 20000,
     // #6632: it works for everyone who is let in until an admin chooses
-    // verified accounts; phone, X and GitHub are what start ticked then.
-    worksFor: 'everyone', verifiedSignals: ['phone', 'x', 'github'], verifiedGrandfather: true, verifiedSince: null,
+    // verified accounts; a phone, and GitHub and X together and a year old,
+    // are what start ticked then.
+    worksFor: 'everyone', verifiedSignals: ['phone', 'github_x_age'], verifiedGrandfather: true, verifiedSince: null,
+    verifiedMinAccountAgeDays: 365,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },

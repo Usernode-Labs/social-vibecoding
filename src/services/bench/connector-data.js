@@ -215,6 +215,8 @@ function settingsOf(p = {}) {
     verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : [],
     verifiedGrandfather: s.verifiedGrandfather !== false,
     verifiedSince: s.verifiedSince || null,
+    // How old both accounts must be for github_x_age, in days.
+    verifiedMinAccountAgeDays: num(s.verifiedMinAccountAgeDays),
   };
 }
 
@@ -612,7 +614,7 @@ const SETTINGS_FIELDS = Object.freeze([
   'continueReads', 'liveBuildStream',
   // #6632: who the bot works for (everyone let in, or verified accounts),
   // which signals count, and whether earlier members keep it.
-  'worksFor', 'verifiedSignals', 'verifiedGrandfather',
+  'worksFor', 'verifiedSignals', 'verifiedGrandfather', 'verifiedMinAccountAgeDays',
   // Homeroom bot parity, P8: pictures' model and weekly cap.
   'imageModel', 'pictureWeeklyCap',
   // #6867: the OpenRouter credit levels the full admins are warned at.

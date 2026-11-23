@@ -667,6 +667,20 @@ export const JOBS: readonly Job[] = Object.freeze([
     }),
   },
   {
+    // When each linked GitHub and X account was made on its provider, for
+    // the accounts linked before it was recorded at link time (Homeroom
+    // bot's github_x_age signal, services/social-account-age.js): every X
+    // account it can date from its snowflake id, and a page of GitHub ones
+    // from GitHub's public user API, inside the hourly share background
+    // reads keep to and only while the budget allows. Nothing once all are dated.
+    name: 'social-account-age', everyMs: 10 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/social-account-age').backfill(pool, {
+      previous: (ctx.input.previous ?? null) as any,
+      // 20 a run: 120 an hour, a fifth of GITHUB_READS_PER_HOUR.
+      githubLimit: 20,
+    }),
+  },
+  {
     // The ready-made originals (services/originals.js): one project per
     // starter directory with ready-made entries, made through the normal
     // create path when it is missing, and the platform's approvers kept in

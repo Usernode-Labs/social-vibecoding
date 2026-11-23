@@ -105,6 +105,9 @@ interface Settings {
   verifiedSignals?: string[];
   verifiedGrandfather?: boolean;
   verifiedSince?: string | null;
+  // How old, in days, both accounts must be for "GitHub and X, both older
+  // than a minimum age".
+  verifiedMinAccountAgeDays?: number;
   // When it went on for everyone: older requests nobody has touched since
   // are left alone.
   everyoneSince?: string | null;
@@ -1522,6 +1525,7 @@ interface Form {
   worksFor: 'everyone' | 'verified';
   verifiedSignals: string[];
   verifiedGrandfather: boolean;
+  verifiedMinAccountAgeDays: string;
   shadowBuildPlatform: boolean;
   buildConcurrency: string;
   liveAtOnce: string;
@@ -1556,6 +1560,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   worksFor: 'who it works for',
   verifiedSignals: 'what counts as verified',
   verifiedGrandfather: 'earlier members keeping the bot',
+  verifiedMinAccountAgeDays: 'how old GitHub and X must be',
   shadowBuildPlatform: 'side builds of Homeroom',
   buildConcurrency: 'shadow builds at once',
   liveAtOnce: 'live requests at once',
@@ -1574,6 +1579,7 @@ export const BOT_SIGNALS: readonly { key: string; label: string; how: string }[]
   { key: 'phone', label: 'Phone', how: 'an SMS code' },
   { key: 'x', label: 'X', how: 'linked in Settings' },
   { key: 'github', label: 'GitHub', how: 'linked in Settings' },
+  { key: 'github_x_age', label: 'GitHub and X, both older than a minimum age', how: 'both linked in Settings' },
   { key: 'zkpassport', label: 'zkPassport', how: 'a proof from the mobile app' },
   { key: 'oauth', label: 'Google or Apple sign-in', how: 'signed in with one' },
   { key: 'email', label: 'Confirmed email', how: 'a confirmed address' },
@@ -1600,8 +1606,9 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     continueReads: s.continueReads !== false,
     liveBuildStream: s.liveBuildStream !== false,
     worksFor: s.worksFor === 'verified' ? 'verified' : 'everyone',
-    verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : ['phone', 'x', 'github'],
+    verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : ['phone', 'github_x_age'],
     verifiedGrandfather: s.verifiedGrandfather !== false,
+    verifiedMinAccountAgeDays: String(s.verifiedMinAccountAgeDays ?? 365),
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 12),
@@ -1703,6 +1710,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
       // next "Verified accounts only" starts from, and the route keeps one.
       if (form.verifiedSignals.length) patch.verifiedSignals = BOT_SIGNALS.map((s) => s.key).filter((k) => form.verifiedSignals.includes(k));
     } else if (key === 'verifiedGrandfather') patch.verifiedGrandfather = form.verifiedGrandfather;
+    else if (key === 'verifiedMinAccountAgeDays') patch.verifiedMinAccountAgeDays = whole(key, 0, 3650, 'Days old, GitHub and X');
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
     else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform'
       || key === 'voiceSession' || key === 'voiceIssue' || key === 'voiceChat') patch[key] = form[key];
@@ -2605,6 +2613,17 @@ function HomeroomBotSection() {
                       <span>{signal.label} <span className={AdminUI.muted}>({signal.how})</span></span>
                     </label>
                   ))}
+                  {form.verifiedSignals.includes('github_x_age') ? (
+                    <div className="mt-3 ms-6">
+                      <NumberField id="admin-homeroom-bot-verified-min-age" label="Days old, both accounts"
+                        value={form.verifiedMinAccountAgeDays} min={0} max={3650} canWrite={canWrite}
+                        onChange={(v) => setField('verifiedMinAccountAgeDays', v)}>
+                        <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-verified-min-age-note">
+                          Counted from when each account was made on GitHub and on X. An account whose date is not known does not count.
+                        </p>
+                      </NumberField>
+                    </div>
+                  ) : null}
                   <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-verified-grandfather">
                     <input
                       id="admin-homeroom-bot-verified-grandfather" type="checkbox"
