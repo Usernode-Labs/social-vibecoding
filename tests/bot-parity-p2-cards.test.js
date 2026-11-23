@@ -417,13 +417,18 @@ test('the table card: headings, rows 15 over 13, one tag a row, a request\'s row
   shared(html);
   assert.match(html, />Your requests</);
   assert.match(html, /<div class="-mx-4 mt-1 overflow-x-auto px-4"><table/, 'a wide table scrolls inside the card');
-  assert.match(html, /<th scope="col" class="py-1\.5 pe-3 align-bottom text-\[0\.75rem\] font-semibold[^"]*">Request<\/th>/);
+  assert.match(html, /<th scope="col" class="py-1\.5 pe-3 text-start align-bottom text-\[0\.75rem\] font-semibold[^"]*">Request<\/th>/);
+  // Phone review #28 (23 Nov 2026): no floor of its own on a phone, where it
+  // was 280px in a card 257px inside and the last column was cut; and a row's
+  // name starts at the line's start (a <th> is centred by default).
+  assert.match(html, /<table class="w-full border-collapse text-start sm:min-w-\[280px\]">/);
+  assert.match(html, /<th scope="row" class="py-2 pe-3 text-start /);
   // 2 Nov 2026: headings wrap and words break whole, never mid-word at a phone's width.
   assert.doesNotMatch(html, /whitespace-nowrap py-1\.5|overflow-wrap:anywhere/);
   assert.equal((html.match(/ break-words /g) || []).length, 8, 'every cell wraps at a word');
   assert.match(html, /<a href="#app\/gym-3f2a1c\/dev\/issues\/12"[^>]*data-bot-table-request="gym-3f2a1c#12"[^>]*>Dark mode<\/a>/);
   assert.match(html, /title="Open Gym Tracker request #12"/);
-  assert.match(html, /<th scope="row" class="py-2 pe-3 text-\[0\.9375rem\] font-\[650\][^"]*">Streaks<\/th><td class="py-2 pe-3 text-\[0\.8125rem\][^"]*text-zinc-500/);
+  assert.match(html, /<th scope="row" class="py-2 pe-3 text-start text-\[0\.9375rem\] font-\[650\][^"]*">Streaks<\/th><td class="py-2 pe-3 text-\[0\.8125rem\][^"]*text-zinc-500/);
   assert.match(html, /rounded-full px-1\.5 py-0\.5[^"]* bg-violet-500\/10 text-violet-700[^"]*" data-bot-table-tag="ready">Ready</, 'ready in the blue accent');
   assert.match(html, /bg-amber-500\/10 text-amber-800[^"]*" data-bot-table-tag="question">Question</);
   assert.match(html, /bg-zinc-500\/10 text-zinc-600[^"]*" data-bot-table-tag="done">Done</);

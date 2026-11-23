@@ -1077,7 +1077,7 @@ export interface DesignThread {
   width: number;
   height: number;
   latest: number;
-  versions: Array<{ version: number; author: string; note: string | null; messageId: number | null }>;
+  versions: Array<{ version: number; author: string; note: string | null; messageId: number | null; at?: string | null }>;
   /** 1 Nov 2026 (C2.2): the open request Request it posts the plan on (the thread's), or null for a new one. */
   planOn?: number | null;
 }
@@ -1178,6 +1178,8 @@ export async function getDesign(rootId: number, artifactId: number | null = null
         author: text(pick(row, 'author')),
         note: text(pick(row, 'note')) || null,
         messageId: strictId(pick(row, 'messageId')),
+        // Phone review #132: when it was made, said where it has no note.
+        at: text(pick(row, 'at')) || null,
       };
     }).filter((v) => v.version > 0),
   };
