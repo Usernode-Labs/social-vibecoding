@@ -367,7 +367,7 @@ test('#4074: the plan, read only, for the people who joined: what it will do, wh
   })), '', 'no plan to read (built, or not a member): nothing, and it goes back to the Hub');
   const src = read('frontend/src/features/dev-board/workshop/plan-page.tsx');
   assert.match(src, /const gone = !!data && !plan;\s*useEffect\(\(\) => \{\s*if \(gone\) onBack\(\);/);
-  assert.match(LANDER, /\{tab === 'plan' \? \(\s*<PlanPage\s+name=\{community\?\.name \|\| app\.name \|\| slug\}\s+data=\{community\}\s+onBack=\{\(\) => openTab\('status'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>\s*\) : null\}/);
+  assert.match(LANDER, /\{tab === 'plan' \? \(\s*<PlanPage\s+name=\{community\?\.name \|\| app\.name \|\| slug\}\s+data=\{community\}\s+onBack=\{\(\) => upTab\('status'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>\s*\) : null\}/);
 });
 
 test('#4045: `?shot=hub-first-week` draws a made-up first week for the before/after shots', () => {

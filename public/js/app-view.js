@@ -5432,6 +5432,18 @@ const AppView = {
       const home = await AppView._requestHomeOf(ref.id);
       if (AppView._devTopic !== asked) return;
       if (home) {
+        // #7045: the router runs twice for one followed link (popstate, then
+        // hashchange), and the second pass wrote this change's address again
+        // over the request's it had just been swapped for: a second entry,
+        // and a Back that did nothing. App.updateHash reads this and swaps
+        // that write in place as well.
+        try {
+          // The second pass finds the request's address here already: the
+          // change's, noted by the first, is the one kept.
+          if (/\/dev\/(?:changes|proposals|shared)\/\d+/.test(location.pathname)) {
+            AppView._forwardedChange = { from: location.pathname, at: Date.now() };
+          }
+        } catch (_) { AppView._forwardedChange = null; }
         AppView._openChangeOnRequest(home, ref.id, { replaceRoute: true });
         return;
       }

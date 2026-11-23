@@ -123,6 +123,7 @@ import { placeRows } from './project-places';
 import { kanbanFiltersStore, type KanbanFiltersState } from '../kanban-filters-store';
 import { ruleSentence } from './community-card';
 import { THIS_WEEK_NEW_MAX, THIS_WEEK_SEEN } from './week-pages';
+import { pushDismissible } from '../../../lib/back-stack';
 import { FirstChangeCard, useFirstChange } from './first-change';
 import { slotCounts, useBotSlots } from './bot-slots';
 import { weekName, weekRange } from './week-pages';
@@ -3170,6 +3171,18 @@ export function DevWorkshop(): ReactNode {
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
+  // #7045: A PAGE'S OWN "‹" TO THE HUB (a project's Needs you, the plan) is
+  // a step Back too when the Hub is the entry below, as All items' is to the
+  // Workshop. It pushed the Hub on top instead, so Back from the Hub came
+  // straight back to the page just left.
+  const upTab = (next: TabKey) => {
+    const was = tabRef.current;
+    setTab(next);
+    callAppView('_setWorkshopTab', next);
+    if (was === next || !callAppView('_upWorkshopTab', v.slug, next)) callAppView('_pushWorkshopTab', v.slug, was, next);
+    callAppView('_saveFeedScroll', v.slug, 0);
+    scrollToHead(hostRef.current);
+  };
   // #3701: THE LIT COMMUNITIES TAB ASKS THIS PAGE WHERE IT IS
   // (../../workshop/tab-ladder.ts). All items is a level below the Workshop
   // tab, so a press over it comes up to the Workshop, at its top, as a new
@@ -3419,6 +3432,39 @@ export function DevWorkshop(): ReactNode {
     setSideItem(null);
     if (tab !== 'workshop') setOpenWeek(null);
   }, [tab]);
+  // #7045: A WEEK'S PAGE IS OPEN, NOT NAVIGATED TO, so it had no history
+  // entry and Back from it left the Workshop for whatever place came before.
+  // While one is up it owns the next Back (lib/back-stack.ts), which closes
+  // it; closed any other way (its own "‹", a change of place or project),
+  // the claim is handed back.
+  useEffect(() => {
+    if (!openWeek) return undefined;
+    let backed = false;
+    const release = pushDismissible(() => {
+      backed = true;
+      setOpenWeek(null);
+      callAppView('closeWorkshopWeek');
+      return true;
+    });
+    return () => { if (!backed) release(); };
+  }, [openWeek]);
+  // #7045: THE PANEL BESIDE THE LIST IS OPEN, NOT NAVIGATED TO, either. Its
+  // item's address is written over the page's entry (AppView.
+  // _followPanelAddress), so Back from it skipped the page it was opened on
+  // (All items, the Workshop) for the place before. While a panel is up it
+  // owns the next Back, which closes it and leaves the list where it was.
+  // One item to another keeps the one claim.
+  const panelUp = !!sideItem;
+  useEffect(() => {
+    if (!panelUp) return undefined;
+    let backed = false;
+    const release = pushDismissible(() => {
+      backed = true;
+      setSideItem(null);
+      return true;
+    });
+    return () => { if (!backed) release(); };
+  }, [panelUp]);
   useEffect(() => {
     if (!sideWide) setSideItem(null);
   }, [sideWide]);
@@ -3585,12 +3631,17 @@ export function DevWorkshop(): ReactNode {
   // (./place-store.ts): the sidebar's nested list, a merged topic's card.
   const openTabRef = useRef(openTab);
   openTabRef.current = openTab;
+  const upTabRef = useRef(upTab);
+  upTabRef.current = upTab;
   useEffect(() => {
     if (!v.slug) return undefined;
     const mine = v.slug;
     const undo = registerPlaceOpener(mine, (key) => {
       if (key === tabRef.current) scrollToHead(hostRef.current);
       else openTabRef.current(key);
+    }, (key) => {
+      if (key === tabRef.current) scrollToHead(hostRef.current);
+      else upTabRef.current(key);
     });
     return () => { undo(); clearPlace(mine); };
   }, [v.slug]);
@@ -4315,7 +4366,7 @@ export function DevWorkshop(): ReactNode {
         <PlanPage
           name={community?.name || app.name || slug}
           data={community}
-          onBack={() => openTab('status')}
+          onBack={() => upTab('status')}
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
@@ -4526,7 +4577,7 @@ export function DevWorkshop(): ReactNode {
         // It reads the feed again when a change's state moves, so it lists a
         // vote when the count above (`owed`) starts to count it; `project`
         // is the name its empty line says nothing waits in.
-        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} project={projectName} />
+        <ProjectReviewFlow slug={slug} onDone={() => upTab('status')} project={projectName} />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:

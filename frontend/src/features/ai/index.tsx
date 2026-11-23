@@ -191,15 +191,40 @@ function go(href: string | null): void {
 }
 
 /**
- * The address says what the column shows, in place: a row pressed here is
- * no step for Back to take (as it was not before), but a reload reopens it.
- * Only while the address is this page's.
+ * The address says what the column shows, so a reload reopens it. Only while
+ * the address is this page's.
+ *
+ * #7045: A ROW OPENED FROM THE LISTS IS A STEP BACK CAN UNDO. The address was
+ * always replaced in place, so Back from a thread left the tab altogether
+ * (on a phone, where the thread is the whole screen, that was the only Back
+ * there is). Now the first thing opened from the bare tab is a new entry,
+ * and closing it steps back onto the tab's own entry when that is the one
+ * below (App._stepBackTo), so no second copy of the list is left behind.
+ * One row to another, a filter, a detail: those still swap in place.
  */
+let steppingBack = false;
 function showAddress(href: string): void {
   if (typeof window === 'undefined' || !/^#(homeroom-bot|ai)(\/|\?|$)/.test(window.location.hash)) return;
+  // A step back is on its way (history.back() lands a task later): the
+  // address is about to be the tab's, and a second write now would step
+  // back twice, off the tab.
+  if (steppingBack) return;
   if (window.location.hash === href) return;
+  const bare = (hash: string) => /^#(homeroom-bot|ai)(\?|$)/.test(hash);
+  const url = `${window.location.pathname}${window.location.search}${href}`;
   try {
-    history.replaceState(history.state, '', `${window.location.pathname}${window.location.search}${href}`);
+    if (bare(window.location.hash) && !bare(href)) { history.pushState(history.state, '', url); return; }
+    if (!bare(window.location.hash) && bare(href)) {
+      const app = (window as { App?: { _stepBackTo?: (to: string) => boolean } }).App;
+      if (app?._stepBackTo?.(href)) {
+        steppingBack = true;
+        const done = () => { steppingBack = false; };
+        window.addEventListener('popstate', done, { once: true });
+        window.setTimeout(done, 1500);
+        return;
+      }
+    }
+    history.replaceState(history.state, '', url);
   } catch { /* the column still shows it */ }
 }
 

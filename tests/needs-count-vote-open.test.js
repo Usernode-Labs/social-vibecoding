@@ -307,6 +307,6 @@ test('a project\'s own page says nothing waits in that project; Needs you speaks
   assert.match(own, /data-needs-empty=""[^>]*>Nothing is waiting on your vote in Garden Club\.<\/p>/);
   assert.doesNotMatch(own, /in any of your projects/);
   assert.match(html({}), /data-needs-empty=""[^>]*>Nothing is waiting on your vote in any of your projects\.<\/p>/);
-  assert.match(WORKSHOP_TSX, /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} project=\{projectName\} \/>/);
+  assert.match(WORKSHOP_TSX, /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => upTab\('status'\)\} project=\{projectName\} \/>/);
   assert.match(FLOW_SRC, /project=\{project\}\s+grows/);
 });
