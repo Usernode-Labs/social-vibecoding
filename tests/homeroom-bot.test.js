@@ -355,6 +355,9 @@ test('settings default to off and clamp their numbers', () => {
     // #6632: it works for everyone who is let in until an admin chooses
     // verified accounts; phone, X and GitHub are what start ticked then.
     worksFor: 'everyone', verifiedSignals: ['phone', 'x', 'github'], verifiedGrandfather: true, verifiedSince: null,
+    // The automatic switch to verified accounts only is not armed until an
+    // admin arms it: 500 people active in 30 days, or $5,000 of AI spend.
+    verifiedAuto: false, verifiedAutoUsers: 500, verifiedAutoSpendCents: 500000,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },

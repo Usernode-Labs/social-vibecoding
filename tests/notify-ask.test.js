@@ -87,8 +87,10 @@ test('"we\'ll email you" only where activity-mail really sends', () => {
   const mail = require('../src/services/activity-mail');
   // app_building and suggestion are build_ready, invite_sent invite_activity,
   // project_opens the opening. The votes owed (community) are not emailed
-  // any more (#5794).
-  assert.deepEqual([...mail.KINDS].sort(), ['build_ready', 'invite_activity', 'project_opened']);
+  // any more (#5794). An app slot grant has no ask moment: it is sent
+  // whatever the phone can take (#7043).
+  assert.deepEqual([...mail.KINDS].sort(),
+    ['app_slots_granted', 'build_ready', 'invite_activity', 'project_opened']);
 });
 
 // ── 2. The account's record ────────────────────────────────────────────

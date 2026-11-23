@@ -22,6 +22,7 @@ import { type ReactNode } from 'react';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { nodePillStore, type NodeStatusKind } from './node-pill-store';
+import { ACCOUNT_ROW, ACCOUNT_ROW_TITLE } from './account-row';
 
 export const STATUS_STYLES: Record<NodeStatusKind, {
   dot: string; labelId: string; ink: string;
@@ -57,13 +58,6 @@ export function styleFor(status: string | null | undefined) {
   return STATUS_STYLES[status as NodeStatusKind] || STATUS_STYLES.unavailable;
 }
 
-/** The row's own class run, in both states — the `hidden` is the model's. */
-const ROW
-  = 'flex items-center gap-3 px-4 min-h-[44px] w-full text-start relative'
-  + " after:absolute after:bottom-0 after:start-12 after:end-0 after:h-px"
-  + " after:bg-zinc-100 dark:after:bg-zinc-800 after:content-['']"
-  + ' text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800';
-
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).NodePill : null) || null;
 }
@@ -75,7 +69,7 @@ export function NodePillRow(): ReactNode {
   return (
     <button
       id="account-row-node"
-      className={s.visible ? ROW : `hidden ${ROW}`}
+      className={s.visible ? ACCOUNT_ROW : `hidden ${ACCOUNT_ROW}`}
       onClick={() => controller()?.openFromRow?.()}
     >
       <span
@@ -84,7 +78,7 @@ export function NodePillRow(): ReactNode {
         aria-hidden="true"
       >
       </span>
-      <span className="text-sm font-medium">
+      <span className={ACCOUNT_ROW_TITLE}>
         {t('wallet:node.row.label')}
       </span>
       {/* Empty until the module has something to say — the hand-written row
@@ -92,7 +86,7 @@ export function NodePillRow(): ReactNode {
       <span
         id="account-node-status"
         data-node-status={s.status}
-        className={s.visible ? `ms-auto text-xs font-medium ${style.ink}` : 'ms-auto text-xs font-medium text-zinc-500 dark:text-zinc-400'}
+        className={s.visible ? `ms-auto text-[0.8125rem] font-medium ${style.ink}` : 'ms-auto text-[0.8125rem] font-medium text-zinc-500 dark:text-zinc-400'}
       >{s.visible ? t(style.labelId) : ''}</span>
     </button>
   );

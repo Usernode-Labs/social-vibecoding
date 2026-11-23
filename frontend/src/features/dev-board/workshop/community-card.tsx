@@ -742,10 +742,19 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
                 </span>
               </span>
               {!solo && data.audience_label ? (
-                <span className="wip-hub-meta-people">
+                // Phone review #52 (23 Nov 2026): the faces and the count
+                // looked like a way to see who is in it and did nothing; the
+                // roster was three levels down the ⋯ menu. They open it.
+                <button
+                  type="button"
+                  className="wip-hub-meta-people"
+                  data-ws-members-open=""
+                  title={t('project:communityCard.people.open')}
+                  onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+                >
                   <HeroFaces members={data.members} />
                   {t('project:communityCard.people.members', { count })}
-                </span>
+                </button>
               ) : null}
             </span>
           ) : solo || !data.audience_label ? (

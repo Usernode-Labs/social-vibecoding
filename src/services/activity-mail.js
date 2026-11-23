@@ -2,16 +2,20 @@
 
 // WP-E: the email that stands in for a push somebody cannot get.
 //
-// Three moments only: something they asked Homeroom bot for is ready to try
+// Four moments only: something they asked Homeroom bot for is ready to try
 // (`build_ready`; for a project's first version, its going live instead, the
 // moment its maker was promised: homeroom-bot-dm.js sendDm), the first
 // of a day's news about the people their invite link brought
-// (`invite_activity`, services/invite-activity.js), and a project they joined
-// while it was made opening (`project_opened`, services/project-opened.js).
-// The daily vote digest is NOT emailed (#5794): frequent mail is what gets a
-// person to unsubscribe. Each remaining one is a moment the notification ask promises
-// "Until then, we'll email you" for (frontend/src/features/notify-ask/
-// decide.ts EMAILED_MOMENTS). Sent only when ALL of these hold:
+// (`invite_activity`, services/invite-activity.js), a project they joined
+// while it was made opening (`project_opened`, services/project-opened.js),
+// and an admin raising their app slots (`app_slots_granted`, #7043, owed by
+// the notice services/app-allowance.js writes).
+//
+// `app_slots_granted` is the one that goes out even when a phone could take
+// the push: the person asked an admin for the slots, and the grant is the
+// answer they are waiting for. The daily vote digest is NOT emailed (#5794):
+// frequent mail is what gets a person to unsubscribe. Every other kind is
+// sent only when ALL of these hold:
 //   - they have no phone that could take the push (no live registration,
 //     the same test schema.sql enqueue_mobile_push_deliveries makes). A
 //     phone with the category switched off is a choice, not a gap: no mail.
@@ -23,15 +27,18 @@
 //
 // Each one is owed by the transaction that decides it and sent as work: a
 // build's by the bot-dm machine (`dm.mail`, appended with the message that
-// rang), an invite's day by the invite-activity clock (its row's
-// `mailed_at`). So it throws when it cannot decide, and its work tries again;
+// rang), an invite's day and an app slot grant by a notice's own
+// `mailed_at`. So it throws when it cannot decide, and its work tries again;
 // sent after the commit instead, a restart in between lost it for good.
 
 const crypto = require('crypto');
 const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
 const { englishFrom, englishTexts } = require('./push-text');
 
-const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened']);
+const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened', 'app_slots_granted']);
+
+// Kinds sent whether or not a phone could take the push (#7043).
+const EVEN_WITH_PUSH = new Set(['app_slots_granted']);
 
 // The platform config, for the mail transport and the secret the
 // unsubscribe links are signed with. server.js hands it over at boot; until
@@ -119,14 +126,16 @@ async function readyRow(pool, { userId, conversationId, messageId = null }) {
 
 /**
  * Send `kind` to `userId` when a push cannot reach them (see the top of this
- * file). Resolves 'sent' (the mailer has it and keeps its own record), or why
- * not; throws when it cannot tell. A `build_ready` is worded as its push is
+ * file; `app_slots_granted` goes out even when one could). Resolves 'sent'
+ * (the mailer has it and keeps its own record), or why not; throws when it
+ * cannot tell. A `build_ready` is worded as its push is
  * (homeroom-bot-notify-copy.js botEmailCopy), from `detail` when given, else
  * from the notification it rang as.
  */
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
   detail = null, threadRootId = null, messageId: rangFor = null, count = null, notice = null, issueNumber = null,
+  username = null, added = null, total = null,
 }) {
   if (!config || !KINDS.includes(kind) || !userId) return 'off';
   const unsubscribe = unsubscribeUrl(userId);
@@ -138,7 +147,7 @@ async function emailIfNoPush(pool, {
   const user = rows[0];
   if (!user || user.is_synthetic || !user.email || !user.email_confirmed) return 'no_email';
   if (user.activity_email === false) return 'turned_off';
-  if (await canPush(pool, userId)) return 'push';
+  if (!EVEN_WITH_PUSH.has(kind) && await canPush(pool, userId)) return 'push';
   let words = null;
   let root = threadRootId;
   let messageId = null;
@@ -162,6 +171,9 @@ async function emailIfNoPush(pool, {
     ...(notice ? { notice } : {}),
     ...(count != null ? { count } : {}),
     ...(notWorking ? { notWorking: true } : {}),
+    ...(username ? { username } : {}),
+    ...(added != null ? { added } : {}),
+    ...(total != null ? { total } : {}),
     ...(words ? { subject: words.subject, lead: words.lead } : {}),
     url: openUrl({ appSlug, conversationId, threadRootId: root, messageId, issueNumber }),
     unsubscribeUrl: unsubscribe,
@@ -181,7 +193,7 @@ async function emailIfNoPush(pool, {
 
 // The vote digest is deliberately not here (#5794): it rings the bell and the
 // phone, and owes no email. A row already queued for one is 'settled' below.
-const NOTICE_MAIL_KINDS = new Set(['member_joined', 'first_message', 'project_opened']);
+const NOTICE_MAIL_KINDS = new Set(['member_joined', 'first_message', 'project_opened', 'app_quota_changed']);
 const NOTICE_MAIL_WITHIN_HOURS = 24;
 // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's change
 // ready to try rings its requester from its stage (services/work-state.js
@@ -203,7 +215,18 @@ async function noticeMailTargets(pool, { limit = 200 } = {}) {
 }
 
 // The email a notice stands for, from the notice: its kind, words and link.
+// Null when the notice owes none after all (an app allowance that did not
+// go up: mailNotice settles it without sending).
 function noticeEmail(row) {
+  // #7043: an app slot grant's detail is `<before>:<after>`; only a rise
+  // owes the email, and only one that is a rise is useful to word.
+  if (row.kind === 'app_quota_changed') {
+    const said = /^(\d{1,6}):(\d{1,6})$/.exec(row.detail || '');
+    const before = said ? Number(said[1]) : 0;
+    const total = said ? Number(said[2]) : 0;
+    if (!said || total <= before) return null;
+    return { kind: 'app_slots_granted', username: row.recipient_username || null, added: total - before, total };
+  }
   const app = { appName: row.app_name || null, appSlug: row.app_slug || null };
   // `line` is the English; `notice` lets the mail word it in the recipient's language.
   const english = englishFrom(englishTexts(undefined, 'email'));
@@ -233,17 +256,21 @@ async function mailNotice(pool, notificationId, steps) {
   const { rows: [row] } = await pool.query(
     `SELECT n.id, n.user_id, n.kind, n.detail, n.mailed_at, n.created_at > NOW() - make_interval(hours => $2::int) AS recent,
             n.conversation_message_id,
-            a.slug AS app_slug, a.name AS app_name, u.username
+            a.slug AS app_slug, a.name AS app_name, u.username,
+            ru.username AS recipient_username
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN users u ON u.id = n.source_user_id
+       LEFT JOIN users ru ON ru.id = n.user_id
       WHERE n.id = $1`,
     [notificationId, NOTICE_MAIL_WITHIN_HOURS],
   );
   const stage = row?.kind === 'build_ready' && row.conversation_message_id == null && !!row.detail;
   if (!row || row.mailed_at || !(NOTICE_MAIL_KINDS.has(row.kind) || stage)) return { said: 'settled' };
+  const email = noticeEmail(row);
   const said = !row.recent ? 'stale'
-    : await steps.once('sent', () => module.exports.emailIfNoPush(pool, { userId: row.user_id, ...noticeEmail(row) }));
+    : email ? await steps.once('sent', () => module.exports.emailIfNoPush(pool, { userId: row.user_id, ...email }))
+      : 'settled';
   await pool.query('UPDATE notifications SET mailed_at = NOW() WHERE id = $1 AND mailed_at IS NULL', [row.id]);
   return { said };
 }

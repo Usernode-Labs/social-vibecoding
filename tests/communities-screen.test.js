@@ -185,7 +185,7 @@ test('the page\'s words are in the catalog, and say nothing of pinning to Home',
   assert.equal(message('communities:page.search.placeholder'), 'Search your communities');
   assert.equal(message('home:communities.pinNamed', { community: 'Orchard' }), 'Pin Orchard');
   assert.equal(message('home:communities.pinned', { community: 'Orchard' }), 'Orchard pinned to Communities');
-  assert.equal(message('project:menu.homeCommunity.add'), 'Pin community');
+  assert.equal(message('project:menu.homeCommunity.add'), 'Pin to Communities');
   assert.equal(message('home:membership.joinedPinned', { community: 'Orchard' }), 'Joined Orchard · pinned to Communities');
 });
 
