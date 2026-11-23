@@ -879,3 +879,64 @@ test('Messages on a phone is a white sheet with its rows flush on it', () => {
   assert.match(at('.messages-layout.messages-drawer .messages-search-input:focus').body, /border-color:\s*var\(--brand-line\);/);
   assert.match(read('frontend', 'src', 'features', 'messages', 'index.tsx'), /const drawerClass = drawer\.on \? ` messages-drawer/, 'the class the rules key on');
 });
+
+test('the vote picker is the look\'s white card, with a sun Yes and a sun send', () => {
+  // The picker that opens on Vote is one component in three places: a
+  // card's body-mounted popover, the phone's bottom sheet, and Needs you's
+  // vote sheet. Each host paints the same parts from the look's colours.
+  const HOST = ':is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form)';
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  // The popover is the look's card, not the shell's generic one.
+  const pop = at('.dev-vote-pop');
+  assert.ok(pop, 'one rule for the popover, in both modes');
+  assert.match(pop.body, /background:\s*var\(--bl-card\);/);
+  assert.match(pop.body, /border-color:\s*var\(--bl-edge\);/);
+  assert.match(pop.body, /box-shadow:\s*var\(--bl-lift-home\);/);
+  // The switch sits on the page's cream inside that card.
+  assert.match(at(`${HOST} .dev-vote-switch`).body, /background:\s*var\(--bl-page\);/);
+  assert.match(at(`${HOST} .dev-vote-switch-opt:not([aria-pressed="true"]):hover`).body,
+    /background:\s*var\(--bl-card\);/, 'hover is the card, not the shell\'s page fill');
+  // A picked Yes is the sun; the ink outline is light's alone, as every sun
+  // pill in this look is flat in dark.
+  const yes = at(`${HOST} .dev-vote-switch-yes[aria-pressed="true"]`);
+  assert.match(yes.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(yes.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(ruleAt(`${LIGHT} ${HOST} .dev-vote-switch-yes[aria-pressed="true"]`).body,
+    /box-shadow:\s*inset 0 0 0 1px var\(--bl-on-sun\);/);
+  assert.equal(ruleAt(`${DARK} ${HOST} .dev-vote-switch-yes[aria-pressed="true"]`), undefined,
+    'no dark rule: the sun is flat there');
+  // Its tally stays readable on the sun.
+  assert.match(at(`${HOST} .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n`).body,
+    /color:\s*var\(--bl-on-sun\);/);
+  // The send is the page's own Vote pill.
+  const send = at(`${HOST} .dev-vote-reason-send-yes`);
+  assert.match(send.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(send.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(send.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-reason-send-yes:not(:disabled):hover`).body,
+    /background:\s*var\(--bl-sun-lit\);/);
+  assert.match(at(`${HOST} .dev-vote-reason-send-yes:not(:disabled):active`).body,
+    /box-shadow:\s*var\(--bl-pill-edge-down\);/);
+  // The line box wears the page's field edge; the reason chips its raised.
+  assert.match(at(`${HOST} .dev-vote-reason-box`).body, /box-shadow:\s*var\(--bl-field-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-why-opt`).body, /box-shadow:\s*var\(--bl-raise-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-why-opt[aria-checked="true"]`).body, /box-shadow:\s*none;/,
+    'the picked reason keeps its own fill and drops the edge');
+  // The quiet words above the parts read the look's label ink.
+  assert.match(at(`${HOST} :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label)`).body,
+    /color:\s*var\(--bl-label\);/);
+  // Paint only: the three hosts are all covered, no size, padding or type
+  // moves, and a No keeps the app's own red.
+  const pieces = ['.dev-vote-pop', '.dev-vote-sheet', '.dev-ws-vote-form', '.dev-vote-switch',
+    '.dev-vote-why', '.dev-vote-reason', '.dev-vote-uncounted'];
+  const picker = lookRules().filter((rule) => rule.selectors.some((sel) => pieces.some((piece) => sel.includes(piece))));
+  assert.ok(picker.length >= 10, 'the picker\'s rules are all in the block');
+  for (const rule of picker) {
+    for (const sel of rule.selectors) {
+      assert.ok(['.dev-vote-pop', '.dev-vote-sheet', '.dev-ws-vote-form'].some((host) => sel.includes(host)),
+        `"${sel}" is scoped to the picker's three hosts`);
+    }
+    assert.doesNotMatch(rule.body, /\bheight:|padding|font-size|font:/, `"${rule.selectors[0]}" changes no size or type`);
+    assert.doesNotMatch(rule.body, /--state-blocked/, `"${rule.selectors[0]}" leaves a No its own red`);
+  }
+});
