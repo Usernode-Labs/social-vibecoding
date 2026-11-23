@@ -367,6 +367,21 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
 });
 
+test('folded, a count is pinned by its end so its figures stay whole inside the tab (asked 23 Nov 2026, #7055)', () => {
+  const STRIP = 'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)';
+  const count = rules(menuBlock()).find((r) => r.selector === `${STRIP} .platform-tab :is(.platform-tab-votes, .platform-tab-badge)`);
+  assert.ok(count, 'the folded strip draws the counts on their glyphs\' corners');
+  // The tab is 44px wide and clips its overflow: a start anchor let a second figure ("25") run past the edge and be cut.
+  assert.match(count.body, /inset-inline-start: auto;/, 'its start is no longer measured from the middle of the tab');
+  assert.match(count.body, /inset-inline-end: 2px;/, 'its end is pinned 2px inside the tab, room for its 2px ring');
+  assert.ok(!count.body.includes('calc(50% + 4px)'), 'it no longer grows outward from the glyph\'s right edge');
+  // The anchor moves, not the pill: one size, the same type and the same padding as the bar's.
+  assert.match(count.body, /min-width: 16px;/);
+  assert.match(count.body, /height: 16px;/);
+  assert.match(count.body, /padding: 0 4px;/);
+  assert.match(count.body, /font-size: 10px;/);
+});
+
 test('the fold button leads the logo\'s line, on the same spot open and folded, with one glyph', () => {
   const css = read('public', 'css', 'app.css');
   const block = menuBlock();

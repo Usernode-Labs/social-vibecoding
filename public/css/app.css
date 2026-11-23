@@ -9905,11 +9905,16 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
      dropped with the words, so turning an iPhone Duo sideways (where the menu starts folded) took the Communities
      count away; and the unread count stood beside its glyph and pushed it off the column's centre. Both are the
      phone bar's pill on the glyph's top-right corner now, the glyph left where the others are. The tab is the
-     anchor: the glyph's wrapper is dissolved from 768px. */
+     anchor: the glyph's wrapper is dissolved from 768px.
+     ITS END IS PINNED, NOT ITS START (asked 23 Nov 2026, #7055). The tab is 44px wide and clips its overflow, so a
+     start anchor let a second figure ("25") run past the edge and be cut, ring and all. The count's end now sits
+     2px inside the tab (room for its 2px ring) and a longer number grows inward over the glyph's corner, as the
+     side strip already does; a single figure stays exactly where it was. `inset-inline-end` mirrors in RTL. */
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-tab :is(.platform-tab-votes, .platform-tab-badge) {
     position: absolute;
     top: 3px;
-    inset-inline-start: calc(50% + 4px);
+    inset-inline-start: auto;
+    inset-inline-end: 2px;
     min-width: 16px;
     height: 16px;
     padding: 0 4px;
