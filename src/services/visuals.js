@@ -46,6 +46,7 @@ const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
 const checkRuns = require('./check-runs');
 const checksQueue = require('./checks-queue');
+const dbRetry = require('./db-retry');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { sameSha } = require('./pr-vote-revision');
 const { isFrontendFile, isUiAffecting } = require('./visual-file-classifier');
@@ -2683,8 +2684,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // The run broke before a verdict: the machine records an 'error' with
     // this reason, and its error lane runs it again. A Job the API refused
     // or lost, or a Pod that never started, is the platform's fault and says
-    // so (check-pod-start.js).
+    // so (check-pod-start.js), and so is a database that gave no connection.
+    if (dbRetry.handBackOnDrain(err)) {
+      // Its process drains (a release replaced it) and had no connection for
+      // it: not settled here. The work item's next claim, in the process
+      // that replaced this one, collects what its Jobs wrote or runs it
+      // again in the place in line it had (preview services checks.run).
+      traceStatus = 'handed_over';
+      throw err;
+    }
     traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
+    if (dbRetry.isConnectionError(err)) return databaseBusyResult();
     const fault = require('./check-pod-start').checkStartFault(err);
     return fault
       ? { outcome: 'blocked', reason: require('./check-pod-start').browserNotRunSentence(fault), platformFault: true }
@@ -2736,6 +2746,17 @@ async function giveBackSettledSlot(config, pool, { sessionId, runId, adoptedEarl
   }
   await checkRuns.finish(pool, runId);
   return 'freed';
+}
+
+// 23 Nov 2026: a run that could not get a database connection in time (a
+// release's draining process on its small pool, or a server refusing
+// connections: db-retry.isConnectionError) tested nothing. It is the
+// platform's fault, so the error lane's platform allowance runs it again
+// (check_error_platform), and the card says so in words rather than the
+// driver's "timeout exceeded when trying to connect".
+const CHECKS_DATABASE_BUSY = 'Homeroom was too busy to run the checks, so nothing was tested. This says nothing about the change.';
+function databaseBusyResult() {
+  return { outcome: 'blocked', reason: CHECKS_DATABASE_BUSY, platformFault: true };
 }
 
 // What captureForSession reads from the machine's work item: the abort
@@ -3676,6 +3697,8 @@ module.exports = {
   captureForSession,
   // How a settled run's slot goes back (exported for tests).
   giveBackSettledSlot,
+  CHECKS_DATABASE_BUSY,
+  databaseBusyResult,
   // The settlement half of a run, for the retry of a machine's work item
   // (check-harvest.collectForWorkflow) reading a run whose launcher died.
   settleCaptureRun,

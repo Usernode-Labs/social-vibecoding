@@ -259,6 +259,9 @@ const KEY_WORKS_FOR = 'homeroom_bot_works_for';
 const KEY_VERIFIED_SIGNALS = 'homeroom_bot_verified_signals';
 const KEY_VERIFIED_GRANDFATHER = 'homeroom_bot_verified_grandfather';
 const KEY_VERIFIED_SINCE = 'homeroom_bot_verified_since';
+// How old, in days, the GitHub and X accounts must both be for the
+// github_x_age signal (homeroom-bot-verified.js).
+const KEY_VERIFIED_MIN_AGE = 'homeroom_bot_verified_min_account_age_days';
 // The automatic switch to verified accounts only (services/
 // homeroom-bot-verified-auto.js): whether it is armed, and its two
 // thresholds, people active in the last 30 days and the platform's AI spend
@@ -278,7 +281,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING, KEY_APP_CAPS,
   KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
   KEY_IMAGE_MODEL, KEY_PICTURE_WEEKLY_CAP,
-  KEY_WORKS_FOR, KEY_VERIFIED_SIGNALS, KEY_VERIFIED_GRANDFATHER, KEY_VERIFIED_SINCE,
+  KEY_WORKS_FOR, KEY_VERIFIED_SIGNALS, KEY_VERIFIED_GRANDFATHER, KEY_VERIFIED_SINCE, KEY_VERIFIED_MIN_AGE,
   KEY_VERIFIED_AUTO, KEY_VERIFIED_AUTO_USERS, KEY_VERIFIED_AUTO_SPEND,
   KEY_CREDIT_WARN, KEY_CREDIT_URGENT,
   ...Object.values(KEY_MODELS),
@@ -336,6 +339,7 @@ const DEFAULTS = Object.freeze({
   verifiedSignals: botVerified.DEFAULT_SIGNALS,
   verifiedGrandfather: true,
   verifiedSince: null,
+  verifiedMinAccountAgeDays: botVerified.DEFAULT_MIN_ACCOUNT_AGE_DAYS,
   // Not armed until an admin arms it: 500 people active in 30 days, or
   // $5,000 of AI spend over them.
   verifiedAuto: false,
@@ -779,13 +783,16 @@ function parseSettings(rows) {
   const verifiedGrandfather = map.get(KEY_VERIFIED_GRANDFATHER) !== 'off';
   const verifiedSinceMs = Date.parse(map.get(KEY_VERIFIED_SINCE) || '');
   const verifiedSince = Number.isFinite(verifiedSinceMs) ? new Date(verifiedSinceMs).toISOString() : null;
+  const verifiedMinAccountAgeDays = clampInt(
+    map.get(KEY_VERIFIED_MIN_AGE), DEFAULTS.verifiedMinAccountAgeDays, 0, botVerified.MAX_MIN_ACCOUNT_AGE_DAYS,
+  );
   const verifiedAuto = map.get(KEY_VERIFIED_AUTO) === 'on';
   const verifiedAutoUsers = clampInt(map.get(KEY_VERIFIED_AUTO_USERS), DEFAULTS.verifiedAutoUsers, 1, MAX_VERIFIED_AUTO_USERS);
   const verifiedAutoSpendCents = clampInt(
     map.get(KEY_VERIFIED_AUTO_SPEND), DEFAULTS.verifiedAutoSpendCents, 1, MAX_VERIFIED_AUTO_SPEND_CENTS,
   );
   return {
-    worksFor, verifiedSignals, verifiedGrandfather, verifiedSince,
+    worksFor, verifiedSignals, verifiedGrandfather, verifiedSince, verifiedMinAccountAgeDays,
     verifiedAuto, verifiedAutoUsers, verifiedAutoSpendCents,
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
@@ -1028,6 +1035,13 @@ function validateSettingsPatch(patch) {
   if (body.verifiedGrandfather !== undefined) {
     if (typeof body.verifiedGrandfather !== 'boolean') return { ok: false, error: 'verifiedGrandfather must be true or false' };
     updates.push([KEY_VERIFIED_GRANDFATHER, body.verifiedGrandfather ? 'on' : 'off']);
+  }
+  if (body.verifiedMinAccountAgeDays !== undefined) {
+    const n = body.verifiedMinAccountAgeDays;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > botVerified.MAX_MIN_ACCOUNT_AGE_DAYS) {
+      return { ok: false, error: `verifiedMinAccountAgeDays must be an integer from 0 to ${botVerified.MAX_MIN_ACCOUNT_AGE_DAYS}` };
+    }
+    updates.push([KEY_VERIFIED_MIN_AGE, String(n)]);
   }
   // The automatic switch to verified accounts only: armed or not, and its
   // two thresholds. Its record of when it fired is the sweep's, never a
@@ -12828,6 +12842,7 @@ module.exports = {
   KEY_VERIFIED_SIGNALS,
   KEY_VERIFIED_GRANDFATHER,
   KEY_VERIFIED_SINCE,
+  KEY_VERIFIED_MIN_AGE,
   DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,

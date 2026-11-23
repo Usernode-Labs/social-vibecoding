@@ -7888,8 +7888,8 @@ const AppView = {
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
-      const title = AppView._checksPhaseCopy(item.check_phase, item).title;
-      note = why ? `${title} ${why}` : title;
+      const phase = AppView._checksPhaseCopy(item.check_phase, item);
+      note = why ? `${phase.sentence} ${why}` : phase.title;
     } else if (item.check_state === 'error' && item.check_error_detail) {
       // The run's own reason first: it is the one that can say "not this
       // change" (#1771).
@@ -9274,8 +9274,9 @@ const AppView = {
     }
     if (phase === 'queued' || phase === 'deferred') {
       const copy = AppView._checksPhaseCopy(phase, item);
-      // #6122: a queued run also says how long its wait should be.
-      const note = [copy.title];
+      // #6122: a queued run also says how long its wait should be. Its
+      // place in line is the note's first sentence, so it ends as one.
+      const note = [copy.sentence];
       if (phase === 'queued') {
         const eta = AppView._checksEta(item);
         if (eta && eta.kind === 'wait') note.push(PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) }));
@@ -9376,7 +9377,13 @@ const AppView = {
         retake: !running && AppView._canRetakeShots(item) ? Number(item.id) : null,
       };
     }
-    if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    if (running) {
+      // 23 Nov 2026: a run Homeroom takes again because it was too busy to
+      // get a database connection says that, still under way, rather than
+      // that the screenshots are being taken.
+      const busy = view.retrying && shots.failureCode === 'database_busy';
+      return { state: view.state, html: '', line: busy ? view.sentence : PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    }
     return {
       state: view.state, html: '', line: view.sentence, waiting: false,
       retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
@@ -22073,19 +22080,30 @@ const AppView = {
 
   // `pr` is optional: a queued run's title says how many runs are ahead of
   // it when the row carries that (checks_progress.queue.ahead).
+  //
+  // `sentence` is the title as the first sentence of a note that goes on
+  // (the Testing card's "About 6 minutes until it starts.", the trigger in
+  // Details). A queued run's title is a heading, with no full stop, so the
+  // note reads it as a sentence of its own, in every language, rather than
+  // "Waiting for a checks slot (2 ahead) This wait is longer than usual."
+  // (23 Nov 2026). The other phases' titles already end as sentences do.
   _checksPhaseCopy(phase, pr) {
     const ids = AppView.CHECKS_PHASE_COPY[phase] || AppView.CHECKS_PHASE_OTHER_COPY;
-    const copy = { title: PlatformI18n.t(ids.title), detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
+    const title = PlatformI18n.t(ids.title);
+    const copy = { title, sentence: title, detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
     if (phase !== 'queued') return copy;
     // The title with the place in line is a whole message per case.
     const q = pr && pr.checks_progress && pr.checks_progress.queue;
     const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
-    if (ahead === null) return copy;
+    if (ahead === null) return { ...copy, sentence: PlatformI18n.t('changes:checks.phase.queued.sentence') };
     return {
       ...copy,
       title: ahead === 0
         ? PlatformI18n.t('changes:checks.phase.queued.titleNext')
         : PlatformI18n.t('changes:checks.phase.queued.titleAhead', { count: ahead }),
+      sentence: ahead === 0
+        ? PlatformI18n.t('changes:checks.phase.queued.sentenceNext')
+        : PlatformI18n.t('changes:checks.phase.queued.sentenceAhead', { count: ahead }),
     };
   },
 
@@ -26127,12 +26145,18 @@ const AppView = {
             ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
             : shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:badge.reason.shots.retryingGithubDetail')
-              : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
+              : shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:badge.reason.shots.retryingBusyDetail')
+                : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
           : notStarted ? AppView._shotsNotStartedReason(shots)
-            // #6598: never quote GitHub's own error page here.
+            // #6598: never quote GitHub's own error page here, nor (23 Nov
+            // 2026) the database driver's words for a connection it could
+            // not give in time.
             : shots.state === 'failed' && shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:shots.sentence.githubDown')
-              : shots.failureReason)
+              : shots.state === 'failed' && shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:shots.sentence.busy')
+                : shots.failureReason)
           || (enforced
             ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
             : PlatformI18n.t('changes:badge.reason.shots.missingDetail')),
@@ -27007,6 +27031,12 @@ const AppView = {
         ? [t('changes:shots.state.changeFailed.label'), e.failureReason || t('changes:shots.state.changeFailed.detail')]
         : e.failureCode === 'shots_stopped'
         ? [t('changes:shots.state.stopped.label'), e.failureReason || t('changes:shots.state.stopped.detail')]
+        // 23 Nov 2026: no database connection in time. The driver's own
+        // words are never shown; the line says what Homeroom does next.
+        : e.failureCode === 'database_busy'
+        ? (e.automaticRetryPending === true
+          ? [t('changes:shots.state.retrying.label'), t('changes:shots.state.retryingBusy.detail')]
+          : [t('changes:shots.state.couldNot.label'), t('changes:shots.state.busy.detail')])
         : e.automaticRetryPending === true
           ? [t('changes:shots.state.retrying.label'), e.failureCode === 'shots_run_interrupted'
             ? t('changes:shots.state.retrying.detail') : t('changes:shots.state.retryingFault.detail')]
@@ -27057,6 +27087,14 @@ const AppView = {
         return e.automaticRetryPending === true
           ? t('changes:shots.sentence.retryingGithub')
           : t('changes:shots.sentence.githubDown');
+      }
+      // 23 Nov 2026: Homeroom could not get a database connection in time
+      // (a release's draining process, say). Nothing the proposal did; the
+      // driver's own words are never quoted.
+      if (e.failureCode === 'database_busy') {
+        return e.automaticRetryPending === true
+          ? t('changes:shots.sentence.retryingBusy')
+          : t('changes:shots.sentence.busy');
       }
       if (e.failureCode === 'shots_change_failed') {
         return e.failureReason
@@ -32175,12 +32213,25 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
-    // The part of the frame the platform header does not cover (#74).
-    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
-    const viewport = { width: window.innerWidth, height: window.innerHeight };
     // The keyboard is read once and used twice: beside the edges below, and
     // in the root-bottom decision (#4545) as its guard.
     const keyboard = AppView._keyboardInset();
+    // With the keys up, what is on screen is the band of the LAYOUT viewport
+    // from iOS's pan down to the keys (phone review #1, 23 Nov 2026), and the
+    // shell lays the frame on that band (app.css, "THE SHELL HOLDS STILL").
+    // So the frame is measured against the band: its top against the pan,
+    // where the status bar now is, and the keyboard against the band's foot,
+    // which the frame ends on. `innerHeight` cannot stand in for the layout
+    // viewport there: iOS collapses it to the visual viewport (the kit's
+    // #1938 table), and the keyboard read off it came out as nearly the
+    // whole frame. At rest nothing here changes.
+    const pan = keyboard > 0 ? AppView._viewportPan() : 0;
+    const layout = keyboard > 0 ? (AppView._layoutViewportHeight() || window.innerHeight) : window.innerHeight;
+    const viewport = { width: window.innerWidth, height: layout };
+    // The part of the frame the platform header does not cover (#74), read
+    // where both are laid out (the layout viewport), then moved into the band.
+    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
+    const seen = pan > 0 ? AppView._shiftRect(visible, -pan) : visible;
     const raw = AppView._readRootInsets();
     raw.bottom = AppView._rootBottomInset({
       bottom: raw.bottom,
@@ -32188,12 +32239,35 @@ const AppView = {
       androidStandalone: AppView._isAndroidStandalone(),
       keyboard,
     });
-    const insets = AppView._frameInsets(raw, visible, viewport);
+    const insets = AppView._frameInsets(raw, seen, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(visible, viewport, keyboard);
+    insets.keyboard = AppView._frameKeyboardInset(seen, viewport, keyboard);
     return insets;
+  },
+
+  // Pure. A DOMRect-alike moved down by `dy` px (up when negative).
+  _shiftRect(rect, dy) {
+    const d = Number(dy) || 0;
+    return {
+      top: rect.top + d, bottom: rect.bottom + d,
+      left: rect.left, right: rect.right,
+      width: rect.width, height: rect.height,
+    };
+  },
+
+  // How far iOS has panned the visual viewport down the layout viewport to
+  // reveal a focused field, in whole px. 0 while pinch-zoomed (a zoom's
+  // offset is not a pan) and wherever nothing pans. The same reading
+  // lib/visual-viewport.ts publishes as `--platform-vv-top`.
+  _viewportPan() {
+    if (typeof window === 'undefined' || !window.visualViewport) return 0;
+    const vv = window.visualViewport;
+    const scale = Number(vv.scale);
+    if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
+    const top = Number(vv.offsetTop);
+    return Number.isFinite(top) && top > 0 ? Math.round(top) : 0;
   },
 
   // Post the current insets into every owned frame whose value changed.
@@ -33374,6 +33448,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('orientationchange', onViewportChange, { passive: true });
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportChange, { passive: true });
+    // iOS's pan arrives in its own event, after the resize, and moves where
+    // the shell lays the frame (safeAreaForFrame).
+    window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
   }
 }
 

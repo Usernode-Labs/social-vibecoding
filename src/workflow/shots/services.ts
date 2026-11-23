@@ -5,6 +5,7 @@
 // outside world (the copies, the worker). The decisions are the machine's.
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
+import { HandedBack } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { MACHINE, WORK, sessionKey } from './machine.ts';
 import { turnOwner } from '../rules/turn-stop.ts';
@@ -16,6 +17,10 @@ interface Deps { config: any; pool: Pool }
 // own proposal's worker and costs the platform almost nothing.
 export const COPIES_CONCURRENCY = 4;
 export const AGENT_CONCURRENCY = 32;
+// How often, and how far apart, a published run's comparison is made again
+// after its first one failed (shots.recompare): four tries in about an hour.
+export const RECOMPARE_ATTEMPTS = 4;
+export const RECOMPARE_BACKOFF_MS: readonly number[] = Object.freeze([5 * 60_000, 15 * 60_000, 45 * 60_000]);
 
 const orchestrator = () => legacy('services/shots-orchestrator');
 
@@ -23,16 +28,31 @@ const orchestrator = () => legacy('services/shots-orchestrator');
 // and the platform's fault kind when it is one (taken again once). A stop
 // (the item cancelled, its lease lost, the process stopping) is not a
 // failure: it is thrown, so nothing is reported and the next claim goes on.
+// The words are the error's own; a connection the database would not give
+// has its own code (orchestrator errorCode), which every reader says in
+// plain words instead.
 function failureOf(error: any): Json {
   const o = orchestrator();
   const fault = o.platformFault(error);
   return {
-    code: String(error?.code || 'shots_failed').slice(0, 48),
+    code: o.errorCode(error),
     message: o.visibleError(error),
     fault: fault?.kind ?? null,
     retryAt: fault?.retryAt ? new Date(fault.retryAt).toISOString() : null,
   };
 }
+
+// A step that could not get a database connection while its process drains
+// (a release replaced it, and it finishes its work on small pools) is not
+// failed: it is handed back (the kernel's HandedBack), so the process that
+// replaced this one claims it at once and carries it on, as it carries on a
+// step a stopping process left: the revision asked again, the copies from
+// their checkpoint (the images kept; what the attempt left removed first),
+// the agent's turn followed where its worker still runs it. Where the kernel
+// cannot hand it back (this process still claims), `otherwise` is reported,
+// the failure the step would have reported, a platform fault.
+const handBack = (error: unknown, otherwise: Json) => (legacy('services/db-retry').handBackOnDrain(error)
+  ? new HandedBack(error, otherwise) : null);
 
 export function shotsServices({ config, pool }: Deps): Record<string, WorkHandler> {
   return {
@@ -47,7 +67,10 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
         try {
           return await orchestrator().resolveRevision(pool, { sessionId: input.sessionId, headSha: input.head });
         } catch (error: any) {
-          return { failed: failureOf(error) };
+          const failed = { failed: failureOf(error) };
+          const back = handBack(error, failed);
+          if (back) throw back;
+          return failed;
         }
       },
     },
@@ -79,7 +102,10 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
           });
         } catch (error: any) {
           if (signal.aborted) throw error;
-          return { failed: failureOf(error) };
+          const failed = { failed: failureOf(error) };
+          const back = handBack(error, failed);
+          if (back) throw back;
+          return failed;
         }
       },
     },
@@ -111,7 +137,10 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
           return JSON.parse(JSON.stringify(out)) as Json;
         } catch (error: any) {
           if (signal.aborted || error?.stopped === true || error?.code === 'steps_stopped') throw error;
-          return { agent: { outcome: 'failed', ...(failureOf(error) as object) }, passed: false, skippedAny: false } as Json;
+          const failed = { agent: { outcome: 'failed', ...(failureOf(error) as object) }, passed: false, skippedAny: false } as Json;
+          const back = handBack(error, failed);
+          if (back) throw back;
+          return failed;
         }
       },
     },
@@ -124,6 +153,21 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
       leaseMs: 120000,
       async run({ input, signal }): Promise<Json> {
         return { verdict: await orchestrator().compareScreens(pool, { runId: input.runId, verdict: input.verdict, signal }) };
+      },
+    },
+
+    // A published run's comparison, made again after its first one failed
+    // (the machine asks for it as it publishes the stand-in screens). A try
+    // that fails again throws, so the kernel tries it later, a bounded number
+    // of times, spaced out; one that never succeeds leaves the stand-ins. One
+    // at a time across the platform: it is never in anybody's way.
+    [WORK.recompare]: {
+      maxAttempts: RECOMPARE_ATTEMPTS,
+      backoffMs: (attempt) => RECOMPARE_BACKOFF_MS[Math.min(attempt - 1, RECOMPARE_BACKOFF_MS.length - 1)]!,
+      leaseMs: 120000,
+      concurrency: 1,
+      async run({ input, signal }): Promise<Json> {
+        return orchestrator().recompareScreens(pool, { runId: input.runId, signal });
       },
     },
 

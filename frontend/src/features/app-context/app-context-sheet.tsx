@@ -149,7 +149,6 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
-import { placeHref } from '../dev-board/workshop/places';
 import { navStore } from '../nav/nav-store.js';
 
 /**
@@ -277,10 +276,12 @@ function loadedPlatformShort(): string | null {
  * here as a navigation of ours: the browser opens its tab.
  */
 /**
- * Where the "Go to community" row opens the project page (#5927 item 3): on
- * Needs you, the list of what waits on this person, while its badge counts
- * any; on the hub otherwise. `owed` is the badge's own figure, so the row
- * opens on what it says.
+ * Where the "Go to community" row opens the project page: always the hub
+ * (#7049). It opened the project's Needs you list while the row's badge
+ * counted decisions waiting on the viewer (#5927 item 3), but the row says
+ * "Go to community", and every other door to a community opens its hub. The
+ * `owed` figure stays in the signature for callers, and the badge still shows
+ * it; where the row goes no longer depends on it.
  */
 /** The menu's figure in words: a message id and its values (owedWords). */
 export type OwedWords = { id: string; values: Record<string, number> };
@@ -306,36 +307,34 @@ export function owedWords(slug: string, total: number, owed: readonly string[] |
   return { id: 'agent:appContext.row.owedVote', values: { count: votes } };
 }
 
-export function communityRowPlace(owed: number | null): 'needs' | 'status' {
-  return typeof owed === 'number' && owed > 0 ? 'needs' : 'status';
+export function communityRowPlace(owed: number | null): 'status' {
+  return 'status';
 }
 
 /**
  * The row's link, for whatever the browser does with it itself: a new tab,
- * a middle click, a copied address. While the badge shows it is Needs you's
- * own address (`?ws=needs`, ../dev-board/workshop/places.ts placeHref), so a
- * tab opened from it lands where a plain tap does; otherwise the hub's.
+ * a middle click, a copied address. It is the Hub's own address whatever the
+ * badge says, so a tab opened from the row lands where a plain tap does
+ * (#7049).
  */
 export function communityRowHref(slug: string | null | undefined, owed: number | null): string {
   if (!slug) return '#';
-  return communityRowPlace(owed) === 'needs'
-    ? placeHref(slug, 'needs')
-    // The Hub's own address (App._placeAddress), so a new tab lands where a
-    // plain tap does: a bare /workshop opens the Workshop.
-    : `#app/${encodeURIComponent(slug)}/dev/hub`;
+  // The Hub's own address (App._placeAddress), so a new tab lands where a
+  // plain tap does: a bare /workshop opens the Workshop.
+  return `#app/${encodeURIComponent(slug)}/dev/hub`;
 }
 
 /**
- * A press on the row. Only a plain click is ours: it says which place the
- * page opens on (AppView._landOnTab / _landOnHub), then follows the page's
- * own address in place. A modified or middle click, or one something else
- * took, changes nothing on this page, and the browser opens the link.
+ * A press on the row. Only a plain click is ours: it lands on the community's
+ * hub (AppView._landOnHub, #7049), then follows the page's own address in
+ * place. A modified or middle click, or one something else took, changes
+ * nothing on this page, and the browser opens the link.
  *
- * ITS MENU CLOSES A TICK LATER. The browser reads the link after this
- * handler returns, and closing publishes `open: false` synchronously
- * (flushSync), which clears the badge's figure (`owed`) and with it the
- * Needs you address: a new tab opened from a closed-in-time row went to the
- * hub. Deferred, the close comes after the browser has read the link.
+ * ITS MENU CLOSES A TICK LATER (the ordering it has always had). Closing
+ * publishes `open: false` synchronously (flushSync), which tears the row
+ * down, while the browser reads the link once this handler returns. Deferred,
+ * the close comes after that read, so a new tab opens the address the person
+ * saw.
  */
 export function openCommunityRow(e: React.MouseEvent, slug: string | null | undefined, owed: number | null): void {
   if (!isPlainClick(e)) {
@@ -344,8 +343,7 @@ export function openCommunityRow(e: React.MouseEvent, slug: string | null | unde
   }
   if (slug) {
     const view = (window as any).AppView;
-    if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
-    else view?._landOnHub?.(slug);
+    view?._landOnHub?.(slug);
   }
   followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
 }
@@ -1044,9 +1042,10 @@ export function AppsSwitcherSheet(): ReactNode {
             // running app on a desktop it opens full width, leaving the app,
             // as every link to a community does: a community's page is never
             // the side panel's (../side-panel/routes.ts).
-            // #5927 item 3: while it says decisions wait on you, it opens
-            // on the list of them, the project's Needs you place, rather
-            // than the hub, where they are one card among others.
+            // #7049: always the hub, even while the badge says decisions
+            // wait on you. Those are still one card away there (the hub's
+            // For you card); the row used to open Needs you itself (#5927
+            // item 3).
             onClick={(e) => openCommunityRow(e, slug, owed)}
           />
           {/*

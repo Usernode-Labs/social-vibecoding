@@ -87,6 +87,78 @@ test('work at the process limit is declined, and cancellation kills a running co
   assert.deepEqual(await compare([], []), [], 'an already stopped request took no slot');
 });
 
+// 23 Nov 2026: a run's own comparison (`wait`) at the process's limit waits
+// for a worker, behind a bounded line, instead of being refused, and gets
+// the longer deadline; anything else at the limit (the close-ups an agent's
+// tool asks for, a still's checks as save_shot saves it) is still refused.
+test('a run\'s own comparison at the limit waits its turn, in a bounded line; anything else is refused', async (t) => {
+  const compare = comparison.createComparer({ workerFile: workerFixture(t), maxWorkers: 1, maxWaiting: 1 });
+  const holder = new AbortController();
+  const started = new Int32Array(new SharedArrayBuffer(4));
+  const held = compare([{ mode: 'hang', started }], [], { signal: holder.signal });
+  held.catch(() => {});
+  await untilStarted(started);
+  await assert.rejects(compare([], []), { code: 'shots_diff_busy' }, 'a close-up\'s comparison is refused, as before');
+  let settled = false;
+  const waiting = compare([], [], { wait: true }).then((screens) => { settled = true; return screens; });
+  await assert.rejects(compare([], [], { wait: true }), { code: 'shots_diff_busy' }, 'the line is bounded');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(settled, false, 'it waits while the worker is taken');
+  holder.abort(new Error('done with it'));
+  assert.deepEqual(await waiting, [], 'and runs once the worker is free');
+
+  // One that stops while it waits leaves the line, taking no worker.
+  const again = new Int32Array(new SharedArrayBuffer(4));
+  const second = new AbortController();
+  const busy = compare([{ mode: 'hang', started: again }], [], { signal: second.signal });
+  busy.catch(() => {});
+  await untilStarted(again);
+  const gone = new AbortController();
+  const reason = new Error('lease lost');
+  const left = compare([], [], { wait: true, signal: gone.signal });
+  gone.abort(reason);
+  await assert.rejects(left, (error) => error === reason);
+  second.abort(new Error('done'));
+  await assert.rejects(busy);
+  assert.deepEqual(await compare([], [], { wait: true }), [], 'the line is empty again');
+
+  // A still's checks answer save_shot, which must not wait: at the limit
+  // they are refused, as they always were.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-check-worker-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const checkFile = path.join(dir, 'check.cjs');
+  fs.writeFileSync(checkFile, `
+    const { workerData } = require('node:worker_threads');
+    Atomics.store(workerData.job.started, 0, 1);
+    Atomics.notify(workerData.job.started, 0);
+    while (true) {}
+  `);
+  const check = comparison.createChecker({ workerFile: checkFile, maxWorkers: 1 });
+  const checking = new AbortController();
+  const checkStarted = new Int32Array(new SharedArrayBuffer(4));
+  const first = check({ started: checkStarted }, { signal: checking.signal });
+  first.catch(() => {});
+  await untilStarted(checkStarted);
+  await assert.rejects(check({ started: new Int32Array(new SharedArrayBuffer(4)) }), { code: 'shots_diff_busy' });
+  checking.abort(new Error('done'));
+  await assert.rejects(first);
+  assert.equal(comparison.RUN_COMPARE_TIMEOUT_MS, 60_000);
+  assert.equal(comparison.TIMEOUT_MS, 5000, 'the close-ups keep the short deadline');
+  assert.equal(comparison.CHECK_TIMEOUT_MS, 3000, 'save_shot\'s checks keep theirs');
+});
+
+test('a run\'s own comparison gets the longer deadline, a close-up\'s the short one', async (t) => {
+  const compare = comparison.createComparer({ workerFile: workerFixture(t), timeoutMs: 200, runTimeoutMs: 1500, maxWorkers: 2 });
+  const quick = new Int32Array(new SharedArrayBuffer(4));
+  const startedAt = Date.now();
+  await assert.rejects(compare([{ mode: 'hang', started: quick }], []), { code: 'shots_diff_timeout' });
+  assert.ok(Date.now() - startedAt < 1200, 'the short deadline');
+  const long = new Int32Array(new SharedArrayBuffer(4));
+  const runStartedAt = Date.now();
+  await assert.rejects(compare([{ mode: 'hang', started: long }], [], { wait: true }), { code: 'shots_diff_timeout' });
+  assert.ok(Date.now() - runStartedAt >= 1400, 'the run\'s own, longer one');
+});
+
 test('worker errors and an exit without a result settle promptly and leave capacity usable', async (t) => {
   const compare = comparison.createComparer({ workerFile: workerFixture(t), maxWorkers: 1 });
   await assert.rejects(compare([{ mode: 'error' }], []), /bad image/);
@@ -106,8 +178,13 @@ test('publishing falls back once on a comparison timeout and propagates a lost l
   const timeout = Object.assign(new Error('budget exceeded'), { code: 'shots_diff_timeout' });
   const run = t.mock.method(comparison, 'screensFor', async () => { throw timeout; });
   t.mock.method(require('../src/services/logger'), 'warn', () => {});
-  assert.equal(await orchestrator.compareScreens(null, { runId: 'run', verdict }), verdict);
+  // 23 Nov 2026: the fallback still carries a screen for each one the run
+  // shot (none here), and says it fell back, for the machine to compare
+  // again later (tests/shots-screens-fallback.test.js).
+  assert.deepEqual(await orchestrator.compareScreens(null, { runId: 'run', verdict }),
+    { ...verdict, screens: [], screensFallback: true });
   assert.equal(run.mock.callCount(), 1, 'the completed fallback does not retry the comparison');
+  assert.equal(run.mock.calls[0].arguments[2].wait, true, 'the run\'s own comparison waits for a worker');
   const controller = new AbortController();
   controller.abort(new Error('lease lost'));
   await assert.rejects(orchestrator.compareScreens(null, { runId: 'run', verdict, signal: controller.signal }),

@@ -513,13 +513,17 @@ export const MessageRow = memo(function MessageRow({
       {designVersion && message.threadRootId ? (
         <DesignVersionCard conversationId={conversationId} rootId={message.threadRootId} version={designVersion} title={message.metadata?.homeroomBot?.designTitle || null} artifactId={designArtifactOf(message)} />
       ) : null}
+      {/* Homeroom bot parity (P1-P9): a card the bot put under its reply
+          (./bot-cards/). Phone review #30 (23 Nov 2026): it is part of the
+          answer, which its words refer to ("the table compares…"), so it is
+          drawn right under them, before the questions and buttons that
+          close a reply, not after them. */}
+      {botCardOf(message) ? <BotRichCard message={message} conversationId={conversationId} /> : null}
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
         ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
       {/* 18 Nov 2026: the request the reply started work on, followed live. */}
       {liveWork ? <BotLiveCard work={liveWork} objects={message.objects} /> : null}
-      {/* Homeroom bot parity (P1-P9): a card the bot put under its reply (./bot-cards/). */}
-      {botCardOf(message) ? <BotRichCard message={message} conversationId={conversationId} /> : null}
       {fileAttachments.length ? <div className="messages-attachments">{fileAttachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {objects.length ? <div className="messages-object-list">{objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the

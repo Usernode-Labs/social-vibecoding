@@ -282,3 +282,26 @@ test('until it is cleaned and measured the words are drawn: never an empty bubbl
 
   assert.equal(catalog('messages:row.botHtml.frameTitle'), 'Homeroom bot\'s answer, laid out');
 });
+
+test('phone review #97 and #29: the frame keeps the chat\'s leading, and a block of code is a block that scrolls', () => {
+  const frame = loadTsx('frontend/src/features/messages/bot-html.tsx');
+  const look = {
+    vars: Object.fromEntries(frame.REPLY_TOKENS.map(([name, , fallback]) => [name, fallback])),
+    dark: false, font: 'system-ui, sans-serif', size: '17px',
+  };
+  // The plain messages' 17 on 22.1 is the frame's too, read off the words' own classes.
+  assert.match(frame.replyFrameDoc('<p>Hi</p>', { ...look, leading: '22.1px' }), /font-size:17px;line-height:22\.1px\}/);
+  assert.match(frame.replyFrameDoc('<p>Hi</p>', look), /font-size:17px;line-height:1\.4\}/, 'unread, the frame\'s own');
+  assert.doesNotMatch(frame.replyFrameDoc('<p>Hi</p>', { ...look, leading: '1px}</style><script>' }), /<\/style><script>/);
+  const source = read('frontend/src/features/messages/bot-html.tsx');
+  assert.match(source, /const WORDS_CLASS = 'messages-markdown gc-msg-content';/);
+  assert.match(source, /leading = \/\^\\d\+\(\\\.\\d\+\)\?px\$\/\.test\(words\.lineHeight\) \? words\.lineHeight : undefined;/);
+  assert.match(source, /'pre\{margin:0 0 \.6em;padding:10px 12px;border-radius:8px;background:var\(--surface-2\);overflow-x:auto;white-space:pre;line-height:1\.5\}/);
+});
+
+test('phone review #30: a card under a reply is drawn before its questions and buttons', () => {
+  const row = read('frontend/src/features/messages/message-row.tsx');
+  const card = row.indexOf('<BotRichCard message={message}');
+  const question = row.indexOf('<BotQuestion message={message}');
+  assert.ok(card > 0 && question > 0 && card < question, 'the card, then the pills that close the reply');
+});

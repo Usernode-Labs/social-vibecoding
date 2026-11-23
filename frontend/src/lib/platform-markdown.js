@@ -259,7 +259,7 @@ const PlatformMarkdown = {
     PlatformMarkdown._renderImagesInline = allowImages;
     let html;
     try {
-      html = marked.parse(text, { breaks });
+      html = marked.parse(PlatformMarkdown.fencesOnOwnLines(text), { breaks });
     } finally {
       PlatformMarkdown._renderImagesInline = false;
       PlatformMarkdown._renderImageWithinLink = false;
@@ -280,6 +280,53 @@ const PlatformMarkdown = {
     });
     if (cacheable && typeof out === 'string') PlatformMarkdown._mdCachePut(text, flags, out);
     return out;
+  },
+
+  // ── A fence written at the end of a line (phone review #29) ──────
+  //
+  // A fence opens a code block only at the start of its own line. Written
+  // after words ("Below it, two lines: ```js", then the code), it is a code
+  // span instead: the language word became its first word, the lines were
+  // joined by spaces, and the block was a grey run wrapping mid-statement.
+  // So, outside a block, a run of three or more backticks (with a language
+  // word or none) that ends a line of words, and has lines after it, moves
+  // onto a line of its own; inside a block opened that way, one that ends
+  // a line of code closes it on a line of its own. Everything else is left
+  // as it was written: a block opened on its own line keeps every line in
+  // it, and a one-line ```code``` span stays a span. Pure.
+  fencesOnOwnLines(text) {
+    if (typeof text !== 'string' || text.indexOf('```') < 0) return text;
+    const lines = text.split('\n');
+    const out = [];
+    let open = '';
+    let moved = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const cr = line.endsWith('\r') ? '\r' : '';
+      const bare = cr ? line.slice(0, -1) : line;
+      if (!open) {
+        const opener = /^ {0,3}(`{3,})[^`]*$/.exec(bare);
+        if (opener) { open = opener[1]; moved = false; out.push(line); continue; }
+        const glued = i < lines.length - 1 ? /^(.*[^`\s])[ \t]*(`{3,})([\w+#.:-]*)[ \t]*$/.exec(bare) : null;
+        if (glued) {
+          out.push(glued[1] + cr, glued[2] + glued[3] + cr);
+          open = glued[2];
+          moved = true;
+          continue;
+        }
+        out.push(line);
+        continue;
+      }
+      if (new RegExp(`^ {0,3}\`{${open.length},}[ \\t]*$`).test(bare)) { open = ''; out.push(line); continue; }
+      const closed = moved ? /^(.*[^`\s])[ \t]*(`{3,})[ \t]*$/.exec(bare) : null;
+      if (closed && closed[2].length >= open.length) {
+        out.push(closed[1] + cr, closed[2] + cr);
+        open = '';
+        continue;
+      }
+      out.push(line);
+    }
+    return out.join('\n');
   },
 
   // ── The rendered-markdown cache ───────────────────────────────────

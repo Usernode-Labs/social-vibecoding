@@ -90,7 +90,7 @@ test('exchange reads immutable id + login once, then revokes and returns no toke
       verifier,
     });
     assert.deepEqual(identity, {
-      provider: 'github', subject: '12345', handle: 'octo-contributor',
+      provider: 'github', subject: '12345', handle: 'octo-contributor', accountCreatedAt: null,
     });
     const tokenCall = mock.calls.find((c) => c.url.includes('/login/oauth/access_token'));
     assert.equal(JSON.parse(tokenCall.init.body).code_verifier, verifier);
@@ -101,6 +101,24 @@ test('exchange reads immutable id + login once, then revokes and returns no toke
     assert.equal(revoke.method, 'DELETE');
     assert.deepEqual(JSON.parse(revoke.init.body), { access_token: 'gho_once' });
     assert.equal(JSON.stringify(identity).includes('gho_once'), false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('exchange keeps when the account was made on GitHub, from the same /user response', async () => {
+  const originalFetch = global.fetch;
+  // GitHub's /user carries created_at (an ISO 8601 UTC timestamp).
+  const mock = githubFetch({ user: { id: 583231, login: 'octocat', created_at: '2011-01-25T18:44:36Z' } });
+  global.fetch = mock.fn;
+  try {
+    const identity = await githubLink.exchangeCode(config, {
+      code: 'one-time-code', redirectUri: 'https://example.test/api/me/github/callback', verifier,
+    });
+    assert.deepEqual(identity, {
+      provider: 'github', subject: '583231', handle: 'octocat', accountCreatedAt: '2011-01-25T18:44:36.000Z',
+    });
+    assert.equal(mock.calls.filter((c) => c.url === 'https://api.github.com/user').length, 1, 'no second call for it');
   } finally {
     global.fetch = originalFetch;
   }
@@ -158,7 +176,7 @@ test('invalid provider identities are refused, while revoke failure cannot leak 
   try {
     assert.deepEqual(await githubLink.exchangeCode(config, {
       code: 'code', redirectUri: 'https://example.test/api/me/github/callback', verifier,
-    }), { provider: 'github', subject: '12345', handle: 'octo-contributor' });
+    }), { provider: 'github', subject: '12345', handle: 'octo-contributor', accountCreatedAt: null });
   } finally {
     global.fetch = originalFetch;
   }

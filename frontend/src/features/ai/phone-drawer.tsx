@@ -37,7 +37,7 @@ import { isPan, landingIn, SLIDE_EASE, SLIDE_MS } from '../nav-drawer/drawer-mat
 import { reducedMotion } from '../nav-drawer/drawer-store';
 import { dirSign } from '../../lib/i18n/direction';
 
-const PHONE_QUERY = '(max-width: 767.98px)';
+export const PHONE_QUERY = '(max-width: 767.98px)';
 
 /** Whether this is a phone's width. False on the first render, as the prerender is. */
 export function usePhone(): boolean {

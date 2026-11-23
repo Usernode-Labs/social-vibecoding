@@ -130,10 +130,18 @@ test('the verified-accounts rule against the full PostgreSQL schema', { timeout:
     await pool.query(
       `INSERT INTO user_activities (user_id, season_event_id, activity_type, activity_at, source, challenge_id)
        VALUES ($1, $2, 'challenge', NOW(), 'zkpassport', $3)`, [zkpassport.id, event.id, challenge.id]);
-    const people = { phone, x, github, zkpassport, oauth, email };
+    // GitHub and X, both made on their providers over a year ago: the
+    // two signals their rows prove, and the one they prove together.
+    const aged = await user('aged');
+    await pool.query(
+      `INSERT INTO user_social_identities (user_id, provider, provider_subject, handle, account_created_at, account_created_source)
+       VALUES ($1, 'github', '9003', 'gh-aged', NOW() - INTERVAL '400 days', 'provider'),
+              ($1, 'x', '9004', 'x_aged', NOW() - INTERVAL '400 days', 'provider')`, [aged.id]);
+    const people = { phone, x, github, github_x_age: aged, zkpassport, oauth, email };
+    const proves = (signal) => (signal === 'github_x_age' ? ['x', 'github', 'github_x_age'] : [signal]);
     for (const signal of rule.SIGNALS) {
       const flags = await rule.readSignals(pool, people[signal].id);
-      assert.deepEqual(rule.SIGNALS.filter((s) => flags[s]), [signal], `${signal}: its own row and no other`);
+      assert.deepEqual(rule.SIGNALS.filter((s) => flags[s]), proves(signal), `${signal}: its own row and no other`);
     }
     // The rule on, with no grandfathering: each signal alone, ticked and not.
     assert.deepEqual(await save({ worksFor: 'verified', verifiedGrandfather: false }), { ok: true });
@@ -141,7 +149,7 @@ test('the verified-accounts rule against the full PostgreSQL schema', { timeout:
       assert.deepEqual(await save({ verifiedSignals: [signal] }), { ok: true });
       const s = await settings();
       for (const other of rule.SIGNALS) {
-        assert.equal(await dm.botWorksFor(pool, s, people[other]), other === signal, `only ${signal} ticked: ${other}`);
+        assert.equal(await dm.botWorksFor(pool, s, people[other]), proves(other).includes(signal), `only ${signal} ticked: ${other}`);
       }
       assert.equal(await dm.botWorksFor(pool, s, plain), false);
     }

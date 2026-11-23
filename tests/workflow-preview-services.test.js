@@ -478,3 +478,40 @@ test('#6157 a preview that does not wake in time is the platform\'s fault, never
   const machine = require('node:fs').readFileSync(require.resolve('../src/workflow/preview/machine.ts'), 'utf8');
   assert.match(machine, /const platformFault = state === 'error' && \(!!r\?\.platformFault/);
 });
+
+// 23 Nov 2026: a checks run whose process drains (a release replaced it) and
+// that could not get a database connection on its small pools is handed
+// back, not settled: the next process's claim collects what its Jobs wrote,
+// or runs it again in the place in line it had (above). Where it cannot be
+// handed back it is the platform's error it would have been.
+test('a checks run that could not get a connection while its process drains is handed back, not settled', async (t) => {
+  const { HandedBack } = require('../src/workflow/kernel/index.ts');
+  const visuals = require('../src/services/visuals');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = visuals.captureForSession;
+  t.after(() => { visuals.captureForSession = saved; });
+  const timeout = new Error('timeout exceeded when trying to connect');
+  visuals.captureForSession = async () => { throw timeout; };
+  const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-11', trigger: 'commit-push',
+    runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
+  sleeping.next = null;
+
+  t.mock.method(lifecycle, 'isShuttingDown', () => true);
+  await assert.rejects(handlers[WORK.run].run(ctx(input)), (error) => {
+    assert.ok(error instanceof HandedBack);
+    assert.equal(error.cause, timeout);
+    assert.deepEqual(error.otherwise, visuals.databaseBusyResult(), 'otherwise the platform\'s error, in words');
+    assert.equal(error.otherwise.platformFault, true);
+    return true;
+  });
+
+  // Not draining: the handler rethrows what it met, for the kernel's retry.
+  lifecycle.isShuttingDown.mock.mockImplementation(() => false);
+  await assert.rejects(handlers[WORK.run].run(ctx(input)), (error) => error === timeout);
+
+  // Any other error while draining is the run's, as before.
+  lifecycle.isShuttingDown.mock.mockImplementation(() => true);
+  const other = new Error('Image pull failed');
+  visuals.captureForSession = async () => { throw other; };
+  await assert.rejects(handlers[WORK.run].run(ctx(input)), (error) => error === other);
+});

@@ -137,12 +137,11 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // The menu row lands on the hub before it follows its link, which is full
   // width everywhere, beside a running app too: a community's page is never
   // the side panel's (side-panel/routes.ts).
-  // #5927 item 3: while its badge counts decisions waiting on you, the row
-  // is a door to the list of them, Needs you, instead of the hub; a plain
-  // click only (tests/app-menu-title-version.test.js presses it).
+  // #7049: the row always opens the hub, even while its badge counts
+  // decisions waiting on you; a plain click only (the same suite presses it).
   const sheetSrc = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheetSrc, /onClick=\{\(e\) => openCommunityRow\(e, slug, owed\)\}/);
-  assert.match(sheetSrc, /if \(communityRowPlace\(owed\) === 'needs'\) view\?\._landOnTab\?\.\(slug, 'needs'\);\n\s*else view\?\._landOnHub\?\.\(slug\);\n\s*\}\n\s*followThenDismiss\(e,/);
+  assert.match(sheetSrc, /if \(slug\) \{\n\s*const view = \(window as any\)\.AppView;\n\s*view\?\._landOnHub\?\.\(slug\);\n\s*\}\n\s*followThenDismiss\(e,/);
   // One Home (#6361): a Home card's "Go to community" and an old
   // `#apps/<slug>` details address are doors to the hub too.
   assert.match(read('frontend/src/features/home/home.js'), /openHub\(slug\) \{\n\s*if \(!slug\) return;\n\s*try \{ window\.AppView\?\._landOnHub\?\.\(slug\); \}/);

@@ -2391,6 +2391,12 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
         ...inFlight);
     }
   }
+  // Phone review S6 (23 Nov 2026): A THREAD THE PERSON OPENED STARTS WITH
+  // THEIR OWN WORDS, NOT A REPLY. A new chat's thread hangs off the bot's
+  // "New thread." line, which is not drawn, so its first message is the
+  // person's, and it names the thread. Counted, a thread just sent said
+  // "1 reply" under its own title. It is not counted, and with nothing else
+  // in the thread yet (the bot has not answered) there is no count line.
   let previous: MergedRow | null = null;
   let newLineDrawn = false;
   // Which try each entry belongs to: one divider where a try begins.
@@ -2418,14 +2424,18 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   // line out too, #6250). The root still names the thread; it is only
   // not drawn.
   const rootRow = root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} /> : null;
+  // (S6, above: the root not drawn is that "New thread." line.)
+  const opensWithOwnWords = sheet && !!root && !rootRow
+    && merged[0]?.kind === 'reply' && merged[0].message.sender.id === meId;
+  const counted = merged.length - (opensWithOwnWords ? 1 : 0);
   const repliesPart = (
     <>
           {/* An error stands in place of the thread (#5219 review): with one,
               the count line would say "No replies yet", which is a different
               answer to the same question, so it waits. */}
-          {thread?.error ? null : (
+          {thread?.error || (opensWithOwnWords && !counted) ? null : (
             <div className="messages-reply-count" aria-hidden={!merged.length}>
-              <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
+              <span>{counted ? t('messages:replies.count', { count: counted }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
             </div>
           )}
           {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}

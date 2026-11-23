@@ -81,7 +81,7 @@
  * moves (./live.ts), not only when it is shown again.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { MicrophoneIcon, SearchIcon, XIcon } from '@/components/ui/icons';
@@ -128,7 +128,7 @@ import { cleanQuery, useBotSearch } from './search';
 import { clearSearchMark, currentSearchMark } from './search-mark';
 import { communityScopeStore } from '../workshop/community-scope';
 import { NewChatButton } from './new-chat-button';
-import { AiDrawer, ThreadPane, usePhone } from './phone-drawer';
+import { AiDrawer, PHONE_QUERY, ThreadPane } from './phone-drawer';
 import { claimDetail, closeDetail, detailEntry, detailLayout, holdDetail, openDetail, reopenDetail, setDetailOwner, takeHeldDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
@@ -172,6 +172,35 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<ListRead<T
  * an error ('failed'). Null when every list has something to draw.
  */
 export type ListsFailure = 'unreachable' | 'failed' | null;
+
+/**
+ * Phone review #11 (23 Nov 2026): the page's two layouts read as ONE answer.
+ * A phone's width and a docked window's were two hooks, each with its own
+ * listener, so turning a folded phone drew one render with both true: the
+ * drawer's chat and the docked one both mounted, and the drawer's, leaving a
+ * render later, closed the route they share (../messages/store.ts release).
+ * The thread was gone and the address was the bare tab's. Both queries are
+ * read together here, on either one's change, so the layouts swap in one render.
+ */
+function useWidths(): { phone: boolean; wide: boolean } {
+  const [widths, setWidths] = useState({ phone: false, wide: false });
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const narrow = window.matchMedia(PHONE_QUERY);
+    const docked = window.matchMedia(WIDE);
+    const sync = () => setWidths((had) => (
+      had.phone === narrow.matches && had.wide === docked.matches ? had : { phone: narrow.matches, wide: docked.matches }
+    ));
+    sync();
+    narrow.addEventListener?.('change', sync);
+    docked.addEventListener?.('change', sync);
+    return () => {
+      narrow.removeEventListener?.('change', sync);
+      docked.removeEventListener?.('change', sync);
+    };
+  }, []);
+  return widths;
+}
 
 function useWide(at: string = WIDE): boolean {
   const [wide, setWide] = useState(false);
@@ -299,13 +328,14 @@ export function AiScreen(): ReactNode {
   const previewRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'ai-screen', false);
   const visible = useVisibility('ai-screen', false);
-  const wide = useWide();
+  // A phone: the list and the column are one drawer (./phone-drawer.tsx);
+  // from 768px the column is docked. One reading of the two (useWidths).
+  const { phone, wide } = useWidths();
   const [work, setWork] = useState<AiWork | null>(null);
   const [needs, setNeeds] = useState<NeedItem[] | null>(null);
   const [botId, setBotId] = useState<number | null>(null);
   const [at, setAt] = useState<{ threadRootId: number | null; focusMessageId: number | null } | null>(null);
-  // A phone: the list and the column are one drawer (./phone-drawer.tsx); level 1 is the thread or the new chat.
-  const phone = usePhone();
+  // On a phone, level 1 is the thread or the new chat.
   const [level, setLevel] = useState<0 | 1>(0);
   // A boot from the saved session draws this page before the server has
   // confirmed who you are, and a read made in that window can come back
@@ -622,16 +652,33 @@ export function AiScreen(): ReactNode {
   }, [visible, shown]);
   // Another thread opened: the one left holds what it showed, and the one
   // arrived at shows what it held, if anything.
+  //
+  // LEAVING THE PAGE IS LEAVING THE THREAD (phone review #5, 23 Nov 2026).
+  // The store is the whole shell's, and a request's or a change's own page
+  // draws whatever is in it (../detail/detail-slot.tsx). An artifact left
+  // open here, with Home pressed instead of its back arrow, stayed in the
+  // store, and the next request opened was covered by it, whatever its
+  // project. So what the thread shows is held for it when this page stops
+  // being the one on screen, as when another thread opens, and shown again
+  // when the page is come back to. A running preview is not: its frame is
+  // the staging overlay's, which puts its own entry away.
   const ownerWas = useRef<string | null>(null);
   useEffect(() => {
-    if (!visible) return;
     const was = ownerWas.current;
+    if (!visible) {
+      ownerWas.current = null;
+      const entry = detailEntry();
+      if (!entry?.owner || entry.kind === 'preview') return;
+      const ofThisChat = (entry.kind === 'design' || entry.kind === 'draft') && !!botId && entry.ref.conversationId === botId;
+      if (entry.owner === was || ofThisChat) holdDetail(entry.owner);
+      return;
+    }
     ownerWas.current = shown;
     if (was === shown) return;
     if (was) holdDetail(was);
     const back = takeHeldDetail(shown);
     if (back) reopenDetail(back);
-  }, [visible, shown]);
+  }, [visible, shown]); // eslint-disable-line react-hooks/exhaustive-deps
   // Put the column's detail away with its thread, to show again when the
   // thread is opened again; one that belongs to no thread just closes.
   const putAway = () => {
@@ -1032,6 +1079,53 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (blank && autoBlank.current && openRoot && !phone) { autoBlank.current = false; closeNewThread(); }
   }, [blank, openRoot, phone]);
+  // THE LAYOUT SWITCHED (phone review #11, 23 Nov 2026): a folded phone
+  // turned, or opened and closed, crosses 768px, and the drawer and the
+  // docked column are two trees with a chat mounted in each. The one left
+  // gives the store's route back as it goes (../messages/store.ts release),
+  // which closed the thread on screen and left the address the bare tab's.
+  // So the thread that was open is asked for again in the layout arrived at
+  // (after the two chats' own effects, which run before this one), slid in
+  // on a phone; a new chat the person opened stays up too, where one the
+  // page put in an empty column (above) gives the phone its list back.
+  const layoutNow = phone ? 'phone' : wide ? 'wide' : null;
+  const layoutWas = useRef<'phone' | 'wide' | null>(null);
+  useEffect(() => {
+    const was = layoutWas.current;
+    layoutWas.current = layoutNow;
+    if (!was || !layoutNow || was === layoutNow || !botId) return;
+    if (openRoot) {
+      const next = { threadRootId: openRoot, focusMessageId: null };
+      setAt(next);
+      embed(botId, next, { threadsOnly: true });
+      if (layoutNow === 'phone') setLevel(1);
+      return;
+    }
+    if (layoutNow === 'phone') setLevel(blank && !autoBlank.current ? 1 : 0);
+  }, [layoutNow]); // eslint-disable-line react-hooks/exhaustive-deps
+  // And the lists keep their place: they are drawn again in the other
+  // layout's scroller (the drawer's list on a phone, the page itself from
+  // 768px), which would start at its top.
+  const listTop = useRef(0);
+  useEffect(() => {
+    const screen = screenRef.current;
+    if (!screen) return undefined;
+    const note = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (target === screen || target?.classList?.contains('ai-drawer-list')) listTop.current = target.scrollTop;
+    };
+    screen.addEventListener('scroll', note, true);
+    return () => screen.removeEventListener('scroll', note, true);
+  }, []);
+  const scrolledIn = useRef<'phone' | 'wide' | null>(null);
+  useLayoutEffect(() => {
+    const was = scrolledIn.current;
+    scrolledIn.current = layoutNow;
+    const screen = screenRef.current;
+    if (!was || !layoutNow || was === layoutNow || !screen || !listTop.current) return;
+    const scroller = layoutNow === 'phone' ? screen.querySelector<HTMLElement>('.ai-drawer-list') : screen;
+    if (scroller) scroller.scrollTop = listTop.current;
+  }, [layoutNow]);
   // SEARCH (#6398, 6 Nov 2026): a round button beside the plus opens a box
   // under the heading, and every list narrows to the threads whose title,
   // number or project matches what it says (./lists.tsx). It starts closed

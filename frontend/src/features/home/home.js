@@ -2233,6 +2233,9 @@ const Home = {
   // is a pure client-side re-render.
   _searchWired: false,
   _searchDebounce: null,
+  // How far a finger travels on the page before the search's keys go (px):
+  // past a tap's slop, well short of a scroll's first screenful.
+  SEARCH_DRAG_DISMISS_PX: 12,
 
   _wireSearch() {
     if (Home._searchWired) return;
@@ -2272,7 +2275,33 @@ const Home = {
         clearTimeout(Home._searchDebounce);
         apply();
       }
+      // RETURN PUTS THE KEYS AWAY (phone review #13, 23 Nov 2026). The list
+      // filters as you type, so Return has nothing left to submit; on a
+      // phone it is the key that says "done typing", and it did nothing, so
+      // the keyboard sat over the results. Not mid-composition (an IME's
+      // Return chooses its candidate).
+      if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
+        input.blur();
+      }
     });
+    // A DRAG ON THE RESULTS PUTS THEM AWAY TOO, as a search list does on a
+    // phone: a finger that travels down the page from outside the field
+    // means reading, and the keys were over what it reads.
+    const screen = document.getElementById('home-screen');
+    if (screen) {
+      let from = null;
+      screen.addEventListener('touchstart', (e) => {
+        from = document.activeElement === input && e.touches.length === 1 && e.target !== input
+          ? e.touches[0].clientY : null;
+      }, { passive: true });
+      screen.addEventListener('touchmove', (e) => {
+        if (from == null || !e.touches.length) return;
+        if (Math.abs(e.touches[0].clientY - from) < Home.SEARCH_DRAG_DISMISS_PX) return;
+        from = null;
+        if (document.activeElement === input) input.blur();
+      }, { passive: true });
+    }
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
         input.value = '';

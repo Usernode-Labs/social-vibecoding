@@ -53,7 +53,7 @@ const PLATFORM_FAULT_KINDS = new Set([
   'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'github_unavailable', 'agent_exit',
 ]);
 
-const { currentCode, agentBusyCode, AGENT_BUSY_REASON } = detailRules;
+const { currentCode, agentBusyCode, AGENT_BUSY_REASON, DATABASE_BUSY_CODE, DATABASE_BUSY_REASON } = detailRules;
 
 class ShotsStateError extends Error {
   constructor(code, message, status = 409) {
@@ -344,6 +344,8 @@ module.exports = {
   currentCode,
   AGENT_BUSY_REASON,
   agentBusyCode,
+  DATABASE_BUSY_CODE,
+  DATABASE_BUSY_REASON,
   PLATFORM_FAULT_KINDS,
   STATES,
   TRANSITIONS,
