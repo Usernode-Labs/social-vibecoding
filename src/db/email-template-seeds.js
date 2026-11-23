@@ -432,6 +432,35 @@ const SEEDS = {
         + `{{#if hasUnsubscribeUrl}}\n\n`
         + `To stop these emails: {{unsubscribeUrl}}{{/if}}`,
     },
+
+    app_slots_granted: {
+      name: ACTIONS.app_slots_granted.label,
+      layout: STANDARD_LAYOUT,
+      subject: `{{#if oneTotal}}You have 1 app slot now{{else}}`
+        + `You have {{total}} app slots now{{/if}}`,
+      preheader: `{{#if oneAdded}}You have 1 more app slot. Take a look.{{else}}`
+        + `You have {{added}} more app slots. Take a look.{{/if}}`,
+      why: `You are receiving this because an admin changed your app slots on Homeroom. Turn these emails off with the link above.`,
+      html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td style="text-align:center">`
+        + `<p style="margin:0px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#68686c">App slots</p>`
+        + `<p style="margin:10px 0 0;font-size:24px;line-height:30px;font-weight:800;color:#1c1c1e">`
+        + `{{#if oneAdded}}You have 1 more app slot{{else}}`
+        + `You have {{added}} more app slots{{/if}}</p>`
+        + `<p style="margin:12px 0 0;font-size:15px;line-height:22px;color:#3a3a3c">`
+        + `{{#if hasUsername}}Hi {{username}}, {{else}}Hi, {{/if}}`
+        + `an admin gave you {{#if oneAdded}}1 more app slot{{else}}{{added}} more app slots{{/if}}. `
+        + `You can now have {{#if oneTotal}}1 app{{else}}{{total}} apps{{/if}} on Homeroom.</p>`
+        + `<p style="margin:20px 0 0"><a href="{{url}}" style="display:inline-block;padding:12px 28px;border-radius:999px;background:#0a6ee0;color:#ffffff;font-size:16px;font-weight:650;text-decoration:none">Open Homeroom</a></p>`
+        + `{{#if hasUnsubscribeUrl}}<p style="margin:16px 0 0;font-size:13px"><a href="{{unsubscribeUrl}}" style="color:#68686c">Stop these emails</a></p>{{/if}}</td></tr></table>`,
+      text: `{{#if oneAdded}}You have 1 more app slot{{else}}`
+        + `You have {{added}} more app slots{{/if}}\n\n`
+        + `{{#if hasUsername}}Hi {{username}}, {{else}}Hi, {{/if}}`
+        + `an admin gave you {{#if oneAdded}}1 more app slot{{else}}{{added}} more app slots{{/if}}. `
+        + `You can now have {{#if oneTotal}}1 app{{else}}{{total}} apps{{/if}} on Homeroom.\n\n`
+        + `Open Homeroom: {{url}}`
+        + `{{#if hasUnsubscribeUrl}}\n\n`
+        + `To stop these emails: {{unsubscribeUrl}}{{/if}}`,
+    },
   },
 };
 
