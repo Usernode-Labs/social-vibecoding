@@ -742,10 +742,19 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
                 </span>
               </span>
               {!solo && data.audience_label ? (
-                <span className="wip-hub-meta-people">
+                // Phone review #52 (23 Nov 2026): the faces and the count
+                // looked like a way to see who is in it and did nothing; the
+                // roster was three levels down the ⋯ menu. They open it.
+                <button
+                  type="button"
+                  className="wip-hub-meta-people"
+                  data-ws-members-open=""
+                  title={t('project:communityCard.people.open')}
+                  onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+                >
                   <HeroFaces members={data.members} />
                   {t('project:communityCard.people.members', { count })}
-                </span>
+                </button>
               ) : null}
             </span>
           ) : solo || !data.audience_label ? (
@@ -988,6 +997,16 @@ export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef
       </div>
     </div>
   );
+}
+
+/**
+ * Whether the project's app is there to open: no first version on the way,
+ * or that first version is live. The hero's Open app is drawn then, and the
+ * First version card is not (./hub-cards.tsx FirstVersionCard). Pure.
+ */
+export function hubAppLive(data: Pick<CommunityPayload, 'first_version'> | null | undefined): boolean {
+  const fv = data ? data.first_version : null;
+  return !fv || fv.line === 'live';
 }
 
 export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false, platform = false }: {
@@ -1239,10 +1258,13 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   // WHO IS AROUND is for a project with other people in it: never one that
   // is just yours, and not one nobody else has joined yet.
   const others = !solo && (Number(data.member_count) || 0) > 1;
-  // While its first version is on the way (or, in its first week, just
-  // went live) the First version card is the way into the app: Open app
-  // there, so not here too.
-  const appButton = data.first_version ? null : openApp;
+  // While its first version is on the way there is no app to open yet: the
+  // First version card says where its build stands. Once it is live, Open
+  // app is the hero's, as on every other hub (phone review #53: in a
+  // project's first week it moved to that card, under the project's name
+  // and tile a second time, with a full-width button of its own).
+  const appLive = hubAppLive(data);
+  const appButton = appLive ? openApp : null;
 
   // STILL DECIDING (the hand-off of 11 Nov 2026): signed in, not in it, and
   // not opened from an invite link (which leads with who invited them). The
@@ -1272,7 +1294,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           description={data.description}
           actions={(
             <>
-              {canOpenApp && !data.first_version ? (
+              {canOpenApp && appLive ? (
                 <button
                   type="button"
                   className={CARD_OPEN_BTN}
@@ -1877,20 +1899,36 @@ export function ruleSentence(
  * card's (app.css shows one): the named approvers' faces, then their names
  * in bold, where the sentence names them.
  */
+/**
+ * The approvers' names in bold, their faces before them, and the faces held
+ * on the line of the first name (phone review #64): drawn apart, a narrow
+ * card broke the line between them, "…checks pass and (E)(S)" over "evan or
+ * snait says yes". The first name is a username, one word, so the faces and
+ * it are one unbreakable run and the rest of the list wraps as words do.
+ */
+function NamesWithFaces({ names, children }: { names: string[] | null; children?: ReactNode }) {
+  const faces = names && names.length ? (
+    <span className="dev-ws-ov-faces" aria-hidden="true">
+      {names.map((name) => (
+        <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
+          {(name || '?').charAt(0).toUpperCase()}
+        </span>
+      ))}
+    </span>
+  ) : null;
+  const text = typeof children === 'string' ? children
+    : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+  const first = names && names.length ? names[0] : '';
+  if (faces && text !== null && first && text.startsWith(first)) {
+    return <b className="dev-ws-ov-names"><span className="dev-ws-ov-glued">{faces}{first}</span>{text.slice(first.length)}</b>;
+  }
+  return <b className="dev-ws-ov-names">{faces}{children}</b>;
+}
+
 export function RuleWords({ line }: { line: RuleSentence }) {
   useMessages('project');
-  const parts = [
-    line.names ? (
-      <span className="dev-ws-ov-faces" aria-hidden="true">
-        {line.names.map((name) => (
-          <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
-            {(name || '?').charAt(0).toUpperCase()}
-          </span>
-        ))}
-      </span>
-    ) : <span />,
-    <b className="dev-ws-ov-names" />,
-  ];
+  // <0></0> is where the faces were drawn; they ride with the names now.
+  const parts = [<span />, <NamesWithFaces names={line.names} />];
   return (
     <>
       <span className="dev-ws-ov-wide"><RichMessage id={line.long} values={line.values} components={parts} /></span>

@@ -250,8 +250,9 @@ is no replay plan to write and nothing to verify locally.
   owns are **projects**. Use "project" in user-facing copy where the app is
   the thing being built; keep "app" where it is the thing being used (the
   App tab, Pinned apps).
-- **The phone's bar is Home · Communities · AI · Messages · You; the desktop
-  sidebar is Home, AI, Messages, Communities, then Recents and You** (#6019;
+- **The phone's bar is Home · Communities · AI · Messages · You, and the
+  desktop sidebar draws the same order, then Recents and You** (one order on
+  every layout since the phone review of 23 Nov 2026; #6019;
   One Home, #6361; the Communities tab came back on 18 Nov 2026). AI is the Homeroom bot's chat, which is not a row of Messages
   and is never drawn on the Messages screen: its page
   (`frontend/src/features/ai/`) is the lists, with **New chat**, a labelled
@@ -349,7 +350,9 @@ is no replay plan to write and nothing to verify locally.
   Communities page (`goToCommunity(null)`, `openCommunitiesPage` in
   `features/workshop/community-scope.ts`). The tab is a plain door to that
   page on both bars, lit there and on a community's own page. The markup
-  is the sidebar's order, and app.css orders the phone's five cells.
+  keeps the old sidebar order (Home, AI, Messages, Communities) for the
+  declared checks; app.css draws every layout in the one order with `order`,
+  and `tab-bar.tsx` hands screen readers and the Tab key that order.
   **Needs you** (`#needs`, `features/workshop/index.tsx`, the
   `#workshop-screen` root) is a page under Home, its header's arrow up to
   it: every decision owed across your projects
@@ -745,24 +748,29 @@ carry most of them.
 - **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
   heading's own words to a row's label so the row does not repeat them.
 
-- **The signed-out landing wears the website's look, not the shell's (13 Nov
-  2026).** The guest Discover (its short story and its list) is a visitor's
-  next click after onhomeroom.com, so it is drawn as that site is: clouds
-  with a white window in them, serif headlines (Young Serif, the stand-in
-  the new look already ships; the hero's headline and button are Source
-  Serif 4, `--site-display`, lighter and tighter), sun pills on an ink
-  outline and outlined cards. The hero is one frame (17 Nov 2026): the words
-  centred in the window, a pill under them, and the people on the window's
-  bottom edge; the pictures are in `public/brand/`, whose README says where
-  each came from. `public/css/app.css` ("THE WEBSITE'S LOOK ON THE
-  SIGNED-OUT PAGES") declares that look's variables on `#auth-landing-screen`
-  and moves them for the dark shell in one rule. The component drawn only
-  there (`features/auth/story.tsx`'s short story) spells every colour as one
-  of those variables and names no `dark:` class; the pieces shared with the
-  signed-in app (the bar's button, the search, the chips, the cards) keep
-  their classes and are repainted from that block by their own hooks.
-  Everything a member sees once signed in keeps the rules above.
-  `tests/guest-discover.test.js` holds it.
+- **The signed-out pages wear the website's look, not the shell's (13 Nov
+  2026).** The guest Discover (its short story and its list) and the page
+  about private communities are a visitor's next click after onhomeroom.com,
+  so they are drawn as that site is: clouds with a white window in them,
+  serif headlines (Young Serif, the stand-in the new look already ships;
+  the two heroes' headline and buttons are Source Serif 4, `--site-display`,
+  lighter and tighter), sun pills on an ink outline, outlined cards, and
+  bands of colour down the page. The two heroes share one frame (17 Nov
+  2026): a white window on the clouds with two pills under its words; the
+  pictures are in `public/brand/`, whose README says where each came from.
+  `public/css/app.css` ("THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES")
+  declares that look's variables on `#auth-landing-screen` and moves them for
+  the dark shell in one rule. The two components drawn only there
+  (`features/auth/story.tsx`'s short story, `features/guest/guest-communities.tsx`)
+  spell every colour as one of those variables and name no `dark:` class; the
+  pieces shared with the signed-in app (the bar's button, the search, the
+  chips, the cards) keep their classes and are repainted from that block by
+  their own hooks. The one exception is the walk through a community in the
+  private page's hero (the B3 design, 23 Nov 2026): it is a picture of the
+  app, so it keeps one palette of its own in both modes, declared on
+  `.hr-demo` in the same block. Everything a member sees once signed in
+  keeps the rules above. `tests/guest-discover.test.js` and
+  `tests/guest-communities.test.js` hold it.
 
 Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is

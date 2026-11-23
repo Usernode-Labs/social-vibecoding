@@ -153,7 +153,7 @@ test('the field still grows with the text, up to the ceiling it had', () => {
 });
 
 test('the "+", the field and the send disc are one row', () => {
-  const row = COMPOSER.slice(COMPOSER.indexOf('<div className="flex items-end gap-1.5">'));
+  const row = COMPOSER.slice(COMPOSER.indexOf('<div className="messages-composer-row flex items-end gap-1.5"'));
   const add = row.indexOf('className="messages-composer-action"');
   const field = row.indexOf('className="messages-composer-input"');
   const send = row.indexOf('className="messages-send"');
@@ -293,4 +293,37 @@ test('the bar\'s tab-bar, home-indicator and keyboard clearances are not the pho
   assert.match(rule('.platform-safe-bar'),
     /padding-bottom: calc\(0\.5rem \+ max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)\) !important;/);
   assert.match(CSS, /html\.un-kb \.platform-safe-bar \{\n\s*padding-bottom: 0\.5rem !important;\n\}/);
+});
+
+// Phone review #58 (23 Nov 2026): once the text wraps, the field takes the
+// card's whole width and the buttons stand on a line of their own beneath it,
+// in the conversation composer and in New chat alike.
+test('a box whose text wraps is stacked: the field over its buttons', () => {
+  const NEW_THREAD = read('frontend/src/features/messages/new-thread.tsx');
+  for (const [src, value] of [[COMPOSER, 'value'], [NEW_THREAD, 'words']]) {
+    assert.match(src, new RegExp(`useAutoGrow\\(inputRef, ${value}(, scroller)?\\);\\n[^\\n]*\\n  const stacked = useComposerStack\\(inputRef, ${value}\\);`),
+      'read after the box is sized, so the height it measures is fresh');
+    assert.match(src, /<div className="messages-composer-row flex items-end gap-1\.5" data-stacked=\{stacked \? '' : undefined\}>/);
+  }
+  const rule = (sel) => {
+    const at = CSS.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `${sel} is in app.css`);
+    return CSS.slice(at, CSS.indexOf('}', at));
+  };
+  assert.match(rule('.messages-composer-row[data-stacked]'), /flex-wrap: wrap/);
+  const field = rule('.messages-composer-row[data-stacked] > .messages-composer-input');
+  assert.match(field, /order: -1;/, 'the field leads');
+  assert.match(field, /flex: 1 0 100%;/, 'the whole width');
+  assert.match(field, /mask-image: linear-gradient\(to bottom, transparent 2px, #000 14px\)/, 'a line scrolled under the top edge fades out');
+  assert.match(rule('.messages-composer-row[data-stacked] > .messages-composer-add'), /margin-inline-end: auto/, 'the "+" at the start, the mic and Send at the end');
+
+  const { nextStacked } = loadTsx('frontend/src/lib/use-composer-stack.ts');
+  assert.equal(nextStacked(false, '', true, null), false, 'an empty box is one line');
+  assert.equal(nextStacked(false, 'short', false, null), false);
+  assert.equal(nextStacked(false, 'long enough to wrap', true, null), true, 'it stacks once the text wraps beside the buttons');
+  assert.equal(nextStacked(true, 'fits at the full width', false, false), true,
+    'it stays stacked while the text would wrap beside the buttons again, however it fits at the full width');
+  assert.equal(nextStacked(true, 'short again', false, true), false, 'it unstacks once the text fits beside them');
+  assert.equal(nextStacked(true, 'two\nlines', false, true), true, 'a line break keeps it stacked');
+  assert.equal(nextStacked(true, '', true, null), false, 'emptied, as after a send');
 });

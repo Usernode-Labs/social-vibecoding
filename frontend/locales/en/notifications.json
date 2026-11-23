@@ -251,10 +251,6 @@
     "text": "Today",
     "description": "Heading over the notifications that arrived today, in the notifications sheet."
   },
-  "sheet.earlier": {
-    "text": "Earlier",
-    "description": "Heading over the notifications that arrived before today, in the notifications sheet."
-  },
   "sheet.yesterday": {
     "text": "Yesterday",
     "description": "Heading over the older notifications that arrived yesterday, on the notifications sheet's Unread filter once its older notifications are showing."
@@ -318,6 +314,10 @@
   "sheet.search.placeholder": {
     "text": "Search notifications…",
     "description": "Placeholder and accessible name of the search field between the title and the filter buttons in the notifications sheet. It narrows the notifications, or the threads on the Recent threads filter, already loaded to those whose project, kind or subject matches."
+  },
+  "sheet.search.clear": {
+    "text": "Clear search",
+    "description": "Name and tooltip of the small × button at the end of the search field in the notifications sheet, shown while the field holds text. It empties the field, so the whole list shows again."
   },
   "sheet.search.noMatches": {
     "text": "No notifications match “{{query}}”.",
@@ -802,6 +802,30 @@
   "row.credit.out.body": {
     "text": "Homeroom bot paused building. It starts again by itself once credit is added.",
     "description": "Second line of that notification: the pause lifts without anyone doing anything once credit is added."
+  },
+  "row.botVerified.on.label": {
+    "text": "Homeroom bot now works for verified accounts only",
+    "description": "First line of a notification sent to platform administrators: Homeroom bot's automatic switch made it work only for accounts with a verified phone number, linked account or similar, because the platform grew past a level an administrator set."
+  },
+  "row.botVerified.on.bodyUsers": {
+    "text": "It switched by itself: {{people}} people were active in the last 30 days, and it switches at {{threshold}}.",
+    "description": "Second line of the \"now works for verified accounts only\" notification, when the number of active people set it off. {{people}} and {{threshold}} are numbers of people, such as 512 and 500."
+  },
+  "row.botVerified.on.bodySpend": {
+    "text": "It switched by itself: AI spend over the last 30 days reached {{spend}}, and it switches at {{threshold}}.",
+    "description": "Second line of the \"now works for verified accounts only\" notification, when what the platform spent on AI set it off. {{spend}} and {{threshold}} are dollar amounts, such as $5,120 and $5,000."
+  },
+  "row.botVerified.near.label": {
+    "text": "Homeroom bot may soon switch to verified accounts only",
+    "description": "First line of a notification sent to platform administrators: one of the two figures that switch Homeroom bot to verified accounts only by itself has passed 80% of the level an administrator set."
+  },
+  "row.botVerified.near.bodyUsers": {
+    "text": "{{people}} people were active in the last 30 days. It switches at {{threshold}}.",
+    "description": "Second line of the \"may soon switch to verified accounts only\" notification, about active people. {{people}} and {{threshold}} are numbers of people, such as 410 and 500."
+  },
+  "row.botVerified.near.bodySpend": {
+    "text": "AI spend over the last 30 days is {{spend}}. It switches at {{threshold}}.",
+    "description": "Second line of the \"may soon switch to verified accounts only\" notification, about what the platform spent on AI. {{spend}} and {{threshold}} are dollar amounts, such as $4,100 and $5,000."
   },
   "row.releaseHold.label": {
     "text": "Needs your approval",

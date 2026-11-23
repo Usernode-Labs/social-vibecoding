@@ -51,6 +51,11 @@ export function MessageActionSheet({
   useEffect(() => { if (!open) setPicking(false); }, [open]);
   useEffect(() => {
     if (!open) return undefined;
+    // Phone review #20 (23 Nov 2026): a selection iOS began under the
+    // finger before the hold was ours would keep its handles and its
+    // Copy · Look Up · Translate callout over this sheet, which offers the
+    // same acts. The sheet opens with nothing selected.
+    try { window.getSelection?.()?.removeAllRanges(); } catch { /* nothing to clear */ }
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     sheet.current?.focus({ preventScroll: true });
@@ -123,24 +128,41 @@ export function MessageActionSheet({
  * moves (a scroll) or lifts early cancels. The click the lift would produce
  * after a completed press is swallowed, so the press does not also follow a
  * link or open a quote under the finger.
+ *
+ * WHILE A FINGER IS DOWN THE ROW IS ARMED (phone review #20, 23 Nov 2026):
+ * it carries `data-press-armed`, which app.css reads to turn off the
+ * system's own long press there (no text selection, no callout), so a hold
+ * opens this sheet alone. The attribute is never rendered, so React and
+ * the prerender never see it; it goes when the finger lifts, and text can
+ * be selected again as before.
  */
+export const PRESS_ARMED = 'data-press-armed';
+
 export function useLongPress(onLongPress: () => void, { disabled = false, ms = 450 } = {}) {
   const timer = useRef<number | null>(null);
   const origin = useRef<{ x: number; y: number } | null>(null);
   const touching = useRef(false);
   const fired = useRef(false);
+  const armed = useRef<Element | null>(null);
+  const disarm = () => {
+    armed.current?.removeAttribute(PRESS_ARMED);
+    armed.current = null;
+  };
   const cancel = () => {
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = null;
     origin.current = null;
   };
-  useEffect(() => cancel, []);
+  useEffect(() => () => { cancel(); disarm(); }, []);
   return {
     onPointerDown(event: ReactPointerEvent) {
       if (disabled || event.pointerType !== 'touch') return;
       touching.current = true;
       fired.current = false;
       origin.current = { x: event.clientX, y: event.clientY };
+      disarm();
+      armed.current = event.currentTarget as Element;
+      armed.current.setAttribute(PRESS_ARMED, '');
       timer.current = window.setTimeout(() => {
         fired.current = true;
         timer.current = null;
@@ -150,10 +172,10 @@ export function useLongPress(onLongPress: () => void, { disabled = false, ms = 4
     onPointerMove(event: ReactPointerEvent) {
       const start = origin.current;
       if (!start) return;
-      if (Math.abs(event.clientX - start.x) > 8 || Math.abs(event.clientY - start.y) > 8) cancel();
+      if (Math.abs(event.clientX - start.x) > 8 || Math.abs(event.clientY - start.y) > 8) { cancel(); disarm(); }
     },
-    onPointerUp() { touching.current = false; cancel(); },
-    onPointerCancel() { touching.current = false; cancel(); },
+    onPointerUp() { touching.current = false; cancel(); disarm(); },
+    onPointerCancel() { touching.current = false; cancel(); disarm(); },
     onClickCapture(event: ReactMouseEvent) {
       if (!fired.current) return;
       fired.current = false;

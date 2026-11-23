@@ -610,8 +610,11 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   quiet._merged = [];
   quiet._mergedTotal = 0;
   const calm = workshopHtml(quiet, 'workshop');
-  assert.match(calm, /data-ws-dash-cell="votes"[^>]*><b>0<\/b>/);
-  assert.match(calm, /data-ws-dash-cell="shipped"[^>]*><b>0<\/b>/);
+  // Phone review #64: when all four are zero they are one line, not four
+  // zeros, and the bot's line goes with them.
+  assert.match(calm, /<p class="dev-ws-dash-none" data-ws-dash-none="">Nothing open\. Ask Homeroom bot for a change\.<\/p>/);
+  assert.ok(!calm.includes('data-ws-dash-cell='), 'no tiles of zeros');
+  assert.ok(!calm.includes('data-ws-bot-slots-door'), 'and no "building 0 of 5"');
   assert.ok(!/dev-ws-dash-cell-(good|warn)/.test(calm), 'no tone on a resting figure');
   assert.ok(!calm.includes('dev-ws-dash-dot'), 'and no mark either');
   assert.ok(!calm.includes('data-ws-dash-sub'), 'and a zero says nothing under it');
@@ -3321,7 +3324,7 @@ test('reaching the retired Board takes one answer: the All items tab, which is t
   // every hop above.
   assert.equal(at(loc('?view=kanban&ws=needs')), 'needs', 'an explicit tab wins');
   assert.equal(at({
-    localStorage: { devViewMode: 'kanban', devWorkshopTab: 'needs' },
+    localStorage: { devViewMode: 'kanban', 'devWorkshopTab:demo-app': 'needs' },
   }), 'needs', 'and a choice they have actually made wins over the migration');
 });
 
@@ -4183,11 +4186,11 @@ test('the ?ws= deep link survives arriving AFTER the first paint', () => {
   // just set the tab — opened on a tab the viewer had since left. The
   // publish stays the fallback, and the late-arrival effect stays for a
   // mount where AppView is not there to ask.
-  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\);/,
+  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => freshTab\(v\.slug\) \|\| v\.tab \|\| 'status'\);/,
     'the seed still paints the right tab on the first frame when the view is already there');
   assert.match(
     WORKSHOP,
-    /const deepTabApplied = useRef<boolean>\(!!v\.tab \|\| !!freshTab\(\)\);\s*useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/,
+    /const deepTabApplied = useRef<boolean>\(!!v\.tab \|\| !!freshTab\(v\.slug\)\);\s*useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/,
     'and an effect applies it when the publish lands later',
   );
   // The ref is not decoration. `v.tab` reads the URL, so it never changes for
@@ -4310,17 +4313,17 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   assert.match(WORKSHOP, /onAll=\{\(\) => openTab\('workshop'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
-  const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next, v\.slug\);/);
+  const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key, slug) {'));
   const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
-  assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
+  assert.match(setTabBody, /localStorage\.setItem\(store, next\)/);
   assert.ok(!/_rewirePlusMenu|_repaintDevBody|_rerenderWorkshop/.test(setTabBody),
     'the tab is persisted, not repainted');
   // And a deep-linked or remembered `ws=all` reaches a cold Workshop through
   // the late-arrival effect on `v.tab`: a state update raised inside a
   // passive effect is scheduled at default priority, so the pane lands a task
   // AFTER the synchronous publish the module's call follows.
-  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
+  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => freshTab\(v\.slug\) \|\| v\.tab \|\| 'status'\)/);
   assert.match(WORKSHOP, /useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/);
   // So the ⋯ asks for itself, from its OWN mount effect. It rode on the
   // filter row's effect while it lived at the end of that row; it is its own
@@ -4489,7 +4492,7 @@ test('This week shows its new rows, then a few seen ones, then All of this week,
   assert.ok(rows.slice(0, THIS_WEEK_NEW_MAX).every((m) => m[2]) && rows.slice(THIS_WEEK_NEW_MAX).every((m) => !m[2]), 'new first, then seen');
   assert.deepEqual(rows.slice(THIS_WEEK_NEW_MAX).map((m) => m[1]), ['seen:merged:200', 'seen:merged:201', 'seen:merged:202'], 'each newest first');
   // A live change's row: a green check, its title, when it moved.
-  assert.match(week, /<li class="dev-ws-hrow" data-ws-row="since:merged:100" data-ws-kind="live" data-ws-open="proposal:100" data-new=""><span class="dev-ws-hrow-dot" role="img" aria-label="New"><\/span><span class="dev-ws-hrow-glyph" data-kind="live" aria-hidden="true"><svg[\s\S]*?<\/svg><\/span><span class="dev-ws-hrow-main"><a class="dev-ws-hrow-link" href="#app\/demo-app\/dev\/proposals\/100">Fresh 0<\/a><span class="dev-ws-hrow-meta"><time class="dev-ws-hrow-ago" dateTime="[^"]+" title="[^"]+">2h ago<\/time><\/span><\/span><\/li>/);
+  assert.match(week, /<li class="dev-ws-hrow" data-ws-row="since:merged:100" data-ws-kind="live" data-ws-open="proposal:100" data-new=""><span class="dev-ws-hrow-dot" role="img" aria-label="New"><\/span><span class="dev-ws-hrow-glyph" data-kind="live" role="img" aria-label="Live" title="Live"><svg[\s\S]*?<\/svg><\/span><span class="dev-ws-hrow-main"><a class="dev-ws-hrow-link" href="#app\/demo-app\/dev\/proposals\/100">Fresh 0<\/a><span class="dev-ws-hrow-meta"><time class="dev-ws-hrow-ago" dateTime="[^"]+" title="[^"]+">2h ago<\/time><\/span><\/span><\/li>/);
   assert.ok(!week.includes('dev-ws-hrow-you'), 'nobody else\'s row says You');
   // THE REST OF THE WEEK IS ITS PAGE: All of this week opens it, as an
   // earlier week's row opens its own.
@@ -4789,26 +4792,29 @@ test('the project page opens on the page you last used', () => {
   // the digest every single visit. Stored per browser: it is a reading
   // position, not a setting, and it reuses the mechanism the grouping has.
   assert.match(APP_VIEW_SRC, /WORKSHOP_TAB_KEY: 'devWorkshopTab',/);
-  const read = /_workshopTab\(\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  // Per project (phone review #43): `devWorkshopTab:<slug>`, so one project's
+  // last place never opens another's page.
+  assert.match(APP_VIEW_SRC, /_workshopTabStoreKey\(slug\) \{\s*const at = slug \|\| \(typeof App !== 'undefined' && App && App\.currentApp\) \|\| '';\s*return at \? `\$\{AppView\.WORKSHOP_TAB_KEY\}:\$\{at\}` : null;/);
+  const read = /_workshopTab\(slug\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
   assert.ok(read, '_workshopTab resolves it');
   // ORDER MATTERS: the deep link wins, then what you chose, then the default.
   // A declared check runs against an empty localStorage, so `?ws=` losing to
   // a stored value would make every one of them assert the wrong tab.
   assert.match(read[1], /const url = AppView\._workshopTabParam\(\);\s*if \(url\) return url;/);
-  assert.match(read[1], /localStorage\.getItem\(AppView\.WORKSHOP_TAB_KEY\)/);
+  assert.match(read[1], /const key = AppView\._workshopTabStoreKey\(slug\);\s*const stored = key \? window\.localStorage\.getItem\(key\) : null;/);
   assert.match(read[1], /return 'status';/);
   // And an explicit tap retires the URL override, exactly as the grouping
   // does — otherwise `?ws=` would keep winning over every later press.
-  const write = /_setWorkshopTab\(key\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  const write = /_setWorkshopTab\(key, slug\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
   assert.ok(write, '_setWorkshopTab stores it');
   assert.match(write[1], /AppView\._workshopTabUrlOverride = null;/);
-  assert.match(write[1], /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
+  assert.match(write[1], /const store = AppView\._workshopTabStoreKey\(slug\);\s*if \(!store\) return;\s*try \{ window\.localStorage\.setItem\(store, next\); \} catch \{\}/);
   // The view model publishes the RESOLVED tab, not the raw parameter.
   assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
   assert.match(WORKSHOP, /onNeeds=\{\(\) => openTab\('needs'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next, v\.slug\);/);
 });
 
 test('a category card is raised off the pane it sits on', () => {
@@ -5096,7 +5102,8 @@ test('14 Nov 2026: under Your work, New chat about the project opens a new chat 
   assert.match(src, /href=\{botNewAddress\(\{ project: slug \}\)\}/, 'the tab\'s own address for a new chat (ai/door.ts)');
   // The first-change card keeps its own rows: its Homeroom bot row is this
   // same door, so the new row is not drawn beside it.
-  assert.match(src, /if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;\n\s+return \(\n\s+<section className="dev-ws-strip dev-ws-desk" data-ws-desk="">\n\s+<YourWorkRow [^\n]+\n\s+<div [^\n]+\n\s+<NewChatRow slug=\{slug\} name=\{name\} className="rounded-\[14px\] px-1 py-2" \/>\n\s+<\/section>/);
+  assert.match(src, /if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} solo=\{solo\} live=\{live\} \/>;/);
+  assert.match(src, /function DeskRows\(\{ slug, name \}: \{ slug: string; name: string \}\): ReactNode \{\n\s+return \(\n\s+<section className="dev-ws-strip dev-ws-desk" data-ws-desk="">\n\s+<YourWorkRow [^\n]+\n\s+<div [^\n]+\n\s+<NewChatRow slug=\{slug\} name=\{name\} className="rounded-\[14px\] px-1 py-2" \/>\n\s+<\/section>/);
   assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/first-change.tsx'), /NewChatRow|desk\.newChat/);
   // No Homeroom bot row under a project in the sidebar or its places list.
   assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/project-places.tsx'), /botNewAddress|desk\.newChat/);
@@ -5151,9 +5158,30 @@ test('10 Nov 2026: somebody who has made nothing here is asked who should build,
   const DAPP_CHECKS = JSON.parse(read('dapp.json')).tests;
   assert.ok(DAPP_CHECKS.some((check) => /\?demo=1&ws=workshop#app\//.test(check.path) && /\[data-ws-dashboard\] \+ \[data-ws-desk\]/.test(check.expectSelector || '')),
     'the demo Workshop\'s Your work has a declared check');
-  assert.match(src, /return \{ show: !closed && !readOnly && firstChangeFor\(desk, made\), close \};/);
+  assert.match(src, /return \{ show: !closed && !readOnly && !settledLate && firstChangeFor\(desk, read\), close, decided, likely: empty \};/);
   assert.match(read('frontend/src/features/dev-board/workshop/your-work.tsx'),
-    /const first = useFirstChange\(slug, useDesk\(slug\)\);\n\s+if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;/);
+    /const first = useFirstChange\(slug, desk\);\n\s+if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} solo=\{solo\} live=\{live\} \/>;/);
+
+  // Phone review #123: which card it is, is decided before either is drawn.
+  // Until then its place is held, empty and inert, at the likelier card's
+  // height, so nothing is swapped under a finger.
+  const decided = (d, read, closed = false, readOnly = false) => first.firstChangeDecided(d, read, closed, readOnly);
+  assert.equal(decided(desk({ ready: false }), false), false, 'the desk unread: not yet');
+  assert.equal(decided({ ...desk({ ready: false }), settled: true }, false), true, 'a desk read that failed is an answer: Your work');
+  assert.equal(decided(desk({ needs: 2 }), false), true, 'work of theirs here: Your work, without asking History');
+  assert.equal(decided(desk(), false), false, 'nothing here now: History is still to answer');
+  assert.equal(decided(desk(), true), true);
+  assert.equal(decided(desk({ ready: false }), false, true), true, 'closed for good: Your work');
+  const card = read('frontend/src/features/dev-board/workshop/your-work.tsx');
+  assert.match(card, /if \(!first\.decided\) \{\n\s+return \(\n\s+<div className="invisible" data-ws-desk-held="" aria-hidden="true" inert>\n\s+\{first\.likely \? <FirstChangeCard [^\n]+ : <DeskRows slug=\{slug\} name=\{name\} \/>\}/);
+  assert.match(src, /const HOLD_MS = 4000;/, 'and never held for ever');
+  // Phone review #130: its words fit the project.
+  const solo = renderToHtml(createElement(first.FirstChangeCard, { slug: 'demo-app', onClose() {}, solo: true, live: true }));
+  assert.ok(solo.includes(message('project:workshop.first.textSolo')), 'a Just you project: you approve what it makes');
+  assert.ok(!solo.includes(message('project:workshop.first.text')), 'not "to the group for a vote"');
+  assert.match(solo, new RegExp(`<span class="dev-ws-head-title">${message('project:workshop.first.titleLive')}</span>`), 'and not "first" once changes are live');
+  assert.equal(message('project:workshop.first.titleLive'), 'Make a change here');
+  assert.equal(message('project:workshop.first.textSolo'), 'Pick who does the building. You approve what it makes.');
   assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'invite' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
   assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/ai\/history', async \(req, res\) => \{/);
 });
@@ -5715,20 +5743,20 @@ test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch
   };
   const loc = (search = '', hash = '#app/garden/workshop') => ({ search, hash, href: `http://localhost/${search}${hash}` });
   // 1. A link, with the Hub remembered: the Workshop, remembered from now on.
-  const linked = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  const linked = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'status' } });
   assert.equal(arrive(linked, loc()), true);
-  assert.equal(linked._workshopTab(), 'workshop');
+  assert.equal(linked._workshopTab('garden'), 'workshop');
   // 2. A door: _landOnHub decides first, and the router takes it.
-  const door = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  const door = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'workshop' } });
   door._landOnHub('garden');
   assert.equal(arrive(door, loc()), false);
-  assert.equal(door._workshopTab(), 'status');
+  assert.equal(door._workshopTab('garden'), 'status');
   assert.equal(door._takePlaceDecision('garden'), false, 'spent on the arrival it was made for');
   // …for its own project only.
   const other = makeAppView({ localStorage: {} });
   other._landOnTab('elsewhere', 'needs');
   assert.equal(arrive(other, loc()), true);
-  assert.equal(other._workshopTab(), 'workshop');
+  assert.equal(other._workshopTab('garden'), 'workshop');
   // …and not long after: a decision a page turned in place is not a later link's.
   const stale = makeAppView({ localStorage: {} });
   stale._landOnTab('garden', 'needs');
@@ -5738,10 +5766,10 @@ test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch
   const named = makeAppView({ localStorage: {} });
   assert.equal(arrive(named, loc('?ws=needs')), false);
   // 4. Back, Forward or a reload: the entry names its place.
-  const traversed = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  const traversed = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'status' } });
   traversed._historyWorkshopTab = () => ({ slug: 'garden', tab: 'status' });
   assert.equal(arrive(traversed, loc()), false);
-  assert.equal(traversed._workshopTab(), 'status');
+  assert.equal(traversed._workshopTab('garden'), 'status');
   // 5. The Communities tab reopening the page you left keeps its place.
   assert.match(appSrc, /AppView\?\._notePlaceDecided\?\.\(view\.slug\);\s*\} catch[^\n]*\n\s*try \{\s*history\.pushState\(null, '', `\$\{view\.path\}/);
 });
@@ -5750,13 +5778,13 @@ test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the 
   const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
   const at = appSrc.indexOf('  _placeAddress(parts) {');
   const body = appSrc.slice(at + '  _placeAddress(parts) {'.length, appSrc.indexOf('\n  },', at));
-  const view = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  const view = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'workshop' } });
   // eslint-disable-next-line no-new-func
   const placeAddress = new Function('AppView', `return (function (parts) {${body}\n})`)(view);
   const parts = ['app', 'garden', 'dev', 'hub'];
   assert.equal(placeAddress(parts), true);
   assert.deepEqual(parts, ['app', 'garden', 'workshop'], 'rewritten to the page\'s own address');
-  assert.equal(view._workshopTab(), 'status', 'on its Hub');
+  assert.equal(view._workshopTab('garden'), 'status', 'on its Hub');
   assert.equal(view._takePlaceDecision('garden'), true, 'a decision the /workshop link rule then honours');
   // With no project, Home: the communities are Home's (One Home, #6361).
   assert.match(appSrc, /_hubHref\(slug\) \{\s*(?:\/\/[^\n]*\n\s*)*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '\/';/);
@@ -5905,4 +5933,18 @@ test('T2.5: a change row whose stored row is not up for a vote draws that row\'s
   // The row draws it in place of the card's pill.
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'frontend/src/features/dev-board/workshop/work-row.tsx'), 'utf8');
   assert.match(src, /<Votes card=\{card\} pill=\{b\.pill \|\| null\} \/>/);
+});
+
+// Phone review of 23 Nov 2026, the Workshop's overview (#23, #37, #63, #64).
+test('the overview keeps the hub\'s gutter and one label inset, its lines wrap, and its dividers run straight', () => {
+  const P = 'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody';
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(CSS, /@media \(max-width: 767\.98px\) \{\n  \.dev-ws:is\(\[data-ws-tab="workshop"\], \[data-ws-tab="all"\]\) > \.dev-ws-tabbody \{ padding-inline: 12px; \}\n\}/, '#63: 16pt, as the hub');
+  assert.ok(CSS.includes(`${P} > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0; }`), '#63: one label inset');
+  assert.match(CSS, new RegExp(`${esc(P)} > \\[data-ws-dashboard\\] \\.dev-ws-dash-sub \\{ grid-column: 3; grid-row: 1 / span 2; min-width: 0; margin: 0; font-size: 0\\.75rem; color: var\\(--wip-ink-muted\\); \\}`), '#23: the line wraps');
+  assert.match(CSS, new RegExp(`${esc(P)} > \\[data-ws-dashboard\\] \\[data-ws-dash-cell\\] \\{[^}]*align-items: start;\\n  align-content: start;`), '#64: the cards read from the top');
+  assert.ok(CSS.includes(`${P} > [data-ws-dashboard] [data-ws-dash-cell][data-zero] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }`), '#64: a zero wears no colour');
+  assert.match(CSS, /\.dev-ws-hrow \{\n  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;\n  padding: 8px 2px; border-radius: 10px;\n\}\n[\s\S]{0,300}\.dev-ws-hrow::before \{\n  content: ''; position: absolute; inset-inline: 0; top: 0; height: 1px;/, '#37: the divider is its own straight line');
+  const slots = read('frontend/src/features/dev-board/workshop/bot-slots.tsx');
+  assert.match(slots, /<span className="min-w-0 flex-1 text-pretty">\{doorWords\(view\)\}<\/span>/, '#63: the bot\'s line wraps');
 });

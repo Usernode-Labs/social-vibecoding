@@ -13,16 +13,25 @@
  * simulator, 12 Oct 2026). One picture, always at full size, always zoomed
  * about its own pin. A cut picture is shown whole (#5020): `crop` frames the
  * part kept in white and dims the rest, so what was cropped away stays seen.
+ *
+ * It opens at zoom 1, the picture's width across the box, with the pin in
+ * the middle (23 Nov 2026). It opened at 2x in a 150px box, which on a phone
+ * showed under a twentieth of the screen: nobody could tell what had been
+ * commented on, and pinching all the way out stopped at a band of it. One
+ * finger now moves the picture and follows the finger (the drag was lost on
+ * every move, see `closeUpView`), and two zoom from the whole screen in the
+ * box up to four times its width.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
-import { closeUpView, CROP_SHADE, type Point, type Rect, type Size } from './picture';
+import { closeUpMinZoom, closeUpView, CLOSE_UP_MAX_ZOOM, CROP_SHADE, type Point, type Rect, type Size } from './picture';
 
-const HEIGHT = 150;
-const START_ZOOM = 2;
-const MAX_ZOOM = 4;
+/** The box's height: about a quarter of a phone's screen at zoom 1. */
+export const CLOSE_UP_HEIGHT = 200;
+const HEIGHT = CLOSE_UP_HEIGHT;
+const START_ZOOM = 1;
 
 const midOf = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const distOf = (a: Point, b: Point): number => Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
@@ -39,7 +48,8 @@ export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: 
   // its own load had just set and leave the box empty.
   const [loaded, setLoaded] = useState<{ src: string; size: Size } | null>(null);
   const picture = loaded && loaded.src === view ? loaded.size : null;
-  const [pinched, setPinched] = useState(false);
+  // The hint goes once the person has moved the picture either way.
+  const [moved, setMoved] = useState(false);
   const [drawn, setDrawn] = useState(0);
   // Gesture math reads and writes these directly; `drawn` only asks for the
   // re-render, so a move never works from a state update it cannot see yet.
@@ -91,7 +101,7 @@ export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: 
     if (g.mode === 'pan' && e.pointerId !== g.id) {
       // A second finger: the pan becomes a pinch about the two fingers.
       gesture.current = { mode: 'pinch', ids: [g.id, e.pointerId], mid: midOf(g.last, now), dist: distOf(g.last, now) };
-      setPinched(true);
+      setMoved(true);
     }
   };
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -101,7 +111,11 @@ export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: 
     points.current.set(e.pointerId, now);
     if (g.mode === 'pan') {
       if (e.pointerId !== g.id) return;
-      panRef.current = clampPan({ x: panRef.current.x - (now.x - g.last.x), y: panRef.current.y - (now.y - g.last.y) }, zoomRef.current);
+      // The picture follows the finger: the pan is where the picture's corner
+      // is drawn, so it moves by what the finger moved, the same way the
+      // pinch below moves it.
+      panRef.current = clampPan({ x: panRef.current.x + (now.x - g.last.x), y: panRef.current.y + (now.y - g.last.y) }, zoomRef.current);
+      if (!moved && (now.x !== g.last.x || now.y !== g.last.y)) setMoved(true);
       g.last = now;
       sync();
       return;
@@ -116,8 +130,13 @@ export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: 
     // takes up what the zoom change would otherwise shift (see the seam
     // comment on closeUpView: offset = centre - pin * base * zoom + pan).
     const zPrev = zoomRef.current;
-    const z = Math.max(1, Math.min(MAX_ZOOM, zPrev * dist / g.dist));
-    const c = { x: boxWidth / 2, y: HEIGHT / 2 };
+    const zMin = picture ? closeUpMinZoom({ width: boxWidth, height: HEIGHT }, picture) : 1;
+    const z = Math.max(zMin, Math.min(CLOSE_UP_MAX_ZOOM, zPrev * dist / g.dist));
+    // The fingers in the box's own pixels, where its centre is: they come in
+    // the page's, and mixed with the box's they zoomed about a point far
+    // below the box once the zoom could change by more than a little.
+    const r = e.currentTarget.getBoundingClientRect();
+    const c = { x: r.left + boxWidth / 2, y: r.top + HEIGHT / 2 };
     panRef.current = clampPan({
       x: mid.x - c.x - (g.mid.x - c.x - panRef.current.x) * (z / zPrev),
       y: mid.y - c.y - (g.mid.y - c.y - panRef.current.y) * (z / zPrev),
@@ -200,8 +219,8 @@ export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: 
           style={{ left: view2.offset.x + pinPx.x * scale, top: view2.offset.y + pinPx.y * scale, transform: 'translate(-50%, -50%)' }}
         />
       ) : null}
-      {pinched || !view ? null : (
-        <span className="absolute start-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">{t('devchat:commentPin.closeUp.pinchHint')}</span>
+      {moved || !view ? null : (
+        <span className="pointer-events-none absolute start-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">{t('devchat:commentPin.closeUp.pinchHint')}</span>
       )}
     </div>
   );

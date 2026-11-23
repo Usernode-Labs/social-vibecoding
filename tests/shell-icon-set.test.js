@@ -263,6 +263,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // NewspaperIcon nowhere.
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     'M4 9.5h16',
+    // StepBackIcon (phone review S4, 23 Nov 2026): Needs you's previous
+    // change beside Yes / No, drawn only once the run has a change open.
+    'M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+    'M9 14 4 9l5-5',
     'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
     'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     // ── #2718 moved paths across this line, in both directions ───────
@@ -403,7 +407,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // "Vote on what changes" and "Ask for what you want". That story's
     // points are numbered now (features/auth/story.tsx), so nothing in the
     // cold document draws either: the lightbulb's other users and the
-    // ballot's render behind state.
+    // ballot's (the page about private communities among them) render
+    // behind state or at their own address.
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
     'M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15',
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',

@@ -659,6 +659,10 @@
     "text": "waiting on votes",
     "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
   },
+  "workshop.dash.none": {
+    "text": "Nothing open. Ask Homeroom bot for a change.",
+    "description": "One line in place of the four figures at the top of a project's Workshop (open items, nobody on them, waiting on votes, live this week) when all four are zero: the project has nothing going on, and the person can ask Homeroom bot to make a change."
+  },
   "workshop.dash.shipped": {
     "text": "live this week",
     "description": "Label under the fourth large figure on a project's Workshop tab: how many changes were merged and went live in the app this week. The number is drawn above it."
@@ -783,6 +787,14 @@
     "text": "Pick who does the building. Whatever it makes goes to the group for a vote.",
     "description": "Under \"Make your first change here\" on a project's Workshop page, over three rows: Homeroom bot, Claude Code and ChatGPT."
   },
+  "workshop.first.titleLive": {
+    "text": "Make a change here",
+    "description": "Heading of the card on a project's Workshop page for a member who has made nothing on it yet, on a project that already has changes live (so it is not the project's first change): it asks who should build what they have in mind, Homeroom bot or their own Claude Code or ChatGPT."
+  },
+  "workshop.first.textSolo": {
+    "text": "Pick who does the building. You approve what it makes.",
+    "description": "Line under the heading of the card on a Just you project's Workshop page (a project with one person, who approves every change) for somebody who has made nothing on it yet: they choose who builds (Homeroom bot or their own Claude Code or ChatGPT), and whatever it makes waits for their own approval, not a group vote."
+  },
   "workshop.first.label": {
     "text": "Who builds it",
     "description": "Accessible name of the group of three rows (Homeroom bot, Claude Code, ChatGPT) in the \"Make your first change here\" card on a project's Workshop page."
@@ -822,10 +834,6 @@
   "workshop.private.note": {
     "text": "Only platform admins can see these. They are kept in Homeroom, never on GitHub.",
     "description": "Grey line under the label of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
-  },
-  "workshop.private.badge": {
-    "text": "Private",
-    "description": "Short badge, beside a lock, on each row of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
   },
   "workshop.private.someone": {
     "text": "Someone",
@@ -878,6 +886,22 @@
   "happened.earlierWeeks": {
     "text": "Earlier weeks",
     "description": "Button at the foot of the \"What happened\" card on the Workshop tab of a project's page: lists more of the weeks before, one row each."
+  },
+  "happened.kind.request": {
+    "text": "Request",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a request somebody filed. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.change": {
+    "text": "Change",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a change somebody is building or has put up for a vote. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.live": {
+    "text": "Live",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a change that went live in the app. A request and the change built for it can share a title, so this tells them apart."
+  },
+  "happened.kind.vote": {
+    "text": "Vote",
+    "description": "Name of the small glyph at the start of a row in What happened on a project's Workshop page, read by screen readers and shown as its tooltip: the row is a group decision being voted on. A request and the change built for it can share a title, so this tells them apart."
   },
   "happened.row.new": {
     "text": "New",
@@ -1971,21 +1995,13 @@
     "text": "Going live now",
     "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
   },
-  "hub.recent.morePill_one": {
-    "text": "+{{count}}",
-    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
-  },
-  "hub.recent.morePill_other": {
-    "text": "+{{count}}",
-    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
-  },
   "hub.recent.moreThisMonth_one": {
-    "text": "{{count}} more live this month",
-    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+    "text": "{{shown}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the latest changes: how many more went live in the last thirty days. {{shown}} is that number written with the reader's digit grouping (1,045); the plural form follows the real count. Opens the Workshop."
   },
   "hub.recent.moreThisMonth_other": {
-    "text": "{{count}} more live this month",
-    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+    "text": "{{shown}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the latest changes: how many more went live in the last thirty days. {{shown}} is that number written with the reader's digit grouping (1,045); the plural form follows the real count. Opens the Workshop."
   },
   "hub.recent.own.today": {
     "text": "Live since today",
@@ -2278,6 +2294,10 @@
   "communityCard.people.members_other": {
     "text": "{{count}} members",
     "description": "Line beside the members' faces at the top of a project's Hub, when the audience's name is not known: how many members the community has."
+  },
+  "communityCard.people.open": {
+    "text": "See who is in it",
+    "description": "Tooltip of the members' faces and count at the top of a project's Hub, which open the list of its members."
   },
   "communityCard.people.audienceMembers_one": {
     "text": "<0>{{audience}}</0> · {{count}} member",
@@ -4628,12 +4648,12 @@
     "description": "Second line of the 'Build it now' row in a project's ⋯ menu: the person works with an AI coding agent, then puts the result up for the community's approval."
   },
   "menu.importPr.title": {
-    "text": "Import Feature from a PR",
+    "text": "Import a feature from a PR",
     "description": "Row in a project's ⋯ menu, shown to people who may build the project: brings in a feature that already exists as a GitHub pull request (PR), so it becomes a proposal here."
   },
   "menu.importPr.sub": {
     "text": "Your computer · your own tools. You have already built it, so there is no chat for this one",
-    "description": "Second line of the 'Import Feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
+    "description": "Second line of the 'Import a feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
   },
   "menu.settings.title": {
     "text": "Settings & rules",
@@ -4646,6 +4666,18 @@
   "menu.settings.back": {
     "text": "Back to the menu",
     "description": "Accessible name of the heading button at the top of the settings panel in a project's ⋯ menu: returns from the settings rows to the menu's first list."
+  },
+  "menu.settings.group.people": {
+    "text": "People and rules",
+    "description": "Small heading in a project's Settings & rules menu, over who can see and change it, its members and its topics."
+  },
+  "menu.settings.group.look": {
+    "text": "Look",
+    "description": "Small heading in a project's Settings & rules menu, over its name and its featured illustration: how it looks to others."
+  },
+  "menu.settings.group.advanced": {
+    "text": "Advanced",
+    "description": "Small heading in a project's Settings & rules menu, over the rows few people need: its settings, its web address, its secrets and its versions."
   },
   "menu.leave.named": {
     "text": "Leave {{project}}",
@@ -4668,35 +4700,35 @@
     "description": "The same row once the community is pinned: lets it move with the rest of the desktop sidebar's Recents again. It stays one of the person's communities."
   },
   "menu.homeApp.add": {
-    "text": "Pin app to Home",
-    "description": "Row in a project's ⋯ menu on its hub: puts the project's app among Home's Pinned apps, where its tile opens the app. Pinning does not join."
+    "text": "Pin to Home",
+    "description": "Row in a project's ⋯ menu: puts the project's app on the viewer's Home as a tile. The second line says the tile opens the app; the community has its own pin, to Communities."
   },
   "menu.homeApp.sub": {
     "text": "Its tile opens the app",
     "description": "Second line under Pin app to Home in the project's ⋯ menu, saying what the pinned tile does."
   },
   "menu.homeApp.remove": {
-    "text": "Unpin app from Home",
-    "description": "The same row once the app is pinned: takes the app's tile off Home's Pinned apps. Membership does not change."
+    "text": "Unpin from Home",
+    "description": "Row in a project's ⋯ menu: takes the project's app off the viewer's Home. Names the place it is pinned to, as the Communities pin's row does."
   },
   "menu.homeCommunity.add": {
-    "text": "Pin community",
-    "description": "Row in a project's ⋯ menu on its hub: puts the community in the Pinned group of the Communities page, where its tile opens this hub. Pinning does not join."
+    "text": "Pin to Communities",
+    "description": "Row in a project's ⋯ menu: pins the community to the top of the viewer's Communities page. Names the place, as the Home pin's row does."
   },
   "menu.homeCommunity.sub": {
     "text": "Its tile opens this hub",
     "description": "Second line under Pin community in the project's ⋯ menu, saying what the pinned tile does."
   },
   "menu.homeCommunity.remove": {
-    "text": "Unpin community",
-    "description": "The same row once the community is pinned: takes its tile out of the Pinned group of the Communities page. Membership does not change."
+    "text": "Unpin from Communities",
+    "description": "Row in a project's ⋯ menu: takes the community off the Pinned part of the viewer's Communities page. Names the place, as the Home pin's row does."
   },
   "menu.appSettings.title": {
-    "text": "App settings",
+    "text": "Project settings",
     "description": "Row among a project's settings, shown to those who manage it: opens the dialog for who can use and build the app, and for deleting it."
   },
   "menu.appSettings.sub": {
-    "text": "Manage who can use and build this app",
+    "text": "Manage who can use and build this project",
     "description": "Second line of the 'App settings' row in a project's settings. 'Build' is a verb, to work on the app's code."
   },
   "menu.domain.title": {
@@ -4728,11 +4760,11 @@
     "description": "Row among a project's settings: opens the dialog listing the project's collaborators and admins and the rule for approving proposals."
   },
   "menu.members.sub": {
-    "text": "Manage collaborators, app admins and proposal approvals",
+    "text": "Manage members, admins and proposal approvals",
     "description": "Second line of the 'Members & approvals' row in a project's settings. Collaborators are people allowed to build the project; a proposal is a change put up for a vote."
   },
   "menu.rename.title": {
-    "text": "App display name",
+    "text": "Project name",
     "description": "Row among a project's settings: opens the dialog for proposing a new name for the app, the name people see."
   },
   "menu.rename.sub": {
@@ -4740,7 +4772,7 @@
     "description": "Second line of the 'App display name' row in a project's settings: a new name is itself a change put up for a vote, and takes effect only when the vote passes."
   },
   "menu.secrets.appTitle": {
-    "text": "App secrets",
+    "text": "Project secrets",
     "description": "Row among a project's settings: opens the dialog for the app's secret values, such as API keys its server reads. A short status may follow this title."
   },
   "menu.secrets.appSub": {
@@ -7106,6 +7138,10 @@
   "topic.card.shots.noPictureTitle": {
     "text": "No picture yet",
     "description": "Heading in the box where a change's picture would be, on a change that changes nothing on screen and has no picture of what it does yet."
+  },
+  "topic.card.shots.noPictureTakenTitle": {
+    "text": "No picture was taken for this change",
+    "description": "The one line in the box where a change's picture would be, on a change that changes nothing on screen and is already live, going live or closed without a picture of what it does: nothing will be added any more."
   },
   "topic.card.shots.noPictureText": {
     "text": "Nothing on screen changes, and this change has no picture of what it does yet. Homeroom bot is adding one.",

@@ -173,12 +173,16 @@ async function setQuota(pool, { userId = null, quota, actorId }) {
        WHERE id = ANY($2::int[])`,
       [quota, changed.map((user) => user.id)],
     );
+    // #7043: a rise for one person also owes them an email, so its notice is
+    // inserted with mailed_at NULL for the notice-mail clock to send. Every
+    // other change (a drop, the same value, an all users change) owes none.
     const { rows } = await db.query(
-      `INSERT INTO notifications (user_id, source_user_id, kind, detail)
-       SELECT id, $1, 'app_quota_changed', old_quota::text || ':' || $2::int::text
+      `INSERT INTO notifications (user_id, source_user_id, kind, detail, mailed_at)
+       SELECT id, $1, 'app_quota_changed', old_quota::text || ':' || $2::int::text,
+              CASE WHEN $5::int IS NOT NULL AND $2::int > old_quota THEN NULL ELSE NOW() END
          FROM unnest($3::int[], $4::int[]) AS changed(id, old_quota)
        RETURNING id, user_id`,
-      [actorId, quota, changed.map((user) => user.id), changed.map((user) => user.app_quota)],
+      [actorId, quota, changed.map((user) => user.id), changed.map((user) => user.app_quota), userId],
     );
     return { users, changed, notifications: rows };
   });
@@ -212,8 +216,8 @@ async function grantRequest(pool, { userId, actorId }) {
         WHERE id = $1 AND app_quota_requested_at IS NOT NULL AND app_quota <= 2147483645
         RETURNING id, app_quota
      ), notified AS (
-       INSERT INTO notifications (user_id, source_user_id, kind, detail)
-       SELECT id, $2, 'app_quota_changed', (app_quota - 2)::text || ':' || app_quota::text
+       INSERT INTO notifications (user_id, source_user_id, kind, detail, mailed_at)
+       SELECT id, $2, 'app_quota_changed', (app_quota - 2)::text || ':' || app_quota::text, NULL
          FROM changed RETURNING id, user_id
      )
      SELECT notified.id, notified.user_id, changed.app_quota

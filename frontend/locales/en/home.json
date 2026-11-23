@@ -63,6 +63,22 @@
     "text": "Show all {{count}} apps",
     "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
   },
+  "grid.showAllCount_one": {
+    "text": "Show all {{count}}",
+    "description": "Link at the end of the Pinned projects heading on Home: unfolds the grid of project tiles to show the rows folded away. {{count}} is the total number of the viewer's pinned projects. The heading beside it already names them, so it says no noun."
+  },
+  "grid.showAllCount_other": {
+    "text": "Show all {{count}}",
+    "description": "Link at the end of the Pinned projects heading on Home: unfolds the grid of project tiles to show the rows folded away. {{count}} is the total number of the viewer's pinned projects. The heading beside it already names them, so it says no noun."
+  },
+  "grid.showAllProjects_one": {
+    "text": "Show all {{count}} pinned project",
+    "description": "Accessible name and tooltip of the Pinned projects heading's Show all link on Home: unfolds the grid of project tiles. {{count}} is the total number of the viewer's pinned projects."
+  },
+  "grid.showAllProjects_other": {
+    "text": "Show all {{count}} pinned projects",
+    "description": "Accessible name and tooltip of the Pinned projects heading's Show all link on Home: unfolds the grid of project tiles. {{count}} is the total number of the viewer's pinned projects."
+  },
   "grid.notice.offline": {
     "text": "You're offline. Apps you've opened before will appear here once this device has loaded them.",
     "description": "Shown in place of Home's app tiles when the device has no connection and no apps are stored yet."
@@ -985,11 +1001,11 @@
   },
   "communities.activeWeek_one": {
     "text": "{{formatted}} active this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). On a phone the line is a people glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.activeWeek_other": {
     "text": "{{formatted}} active this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). On a phone the line is a people glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.activeShort_one": {
     "text": "{{formatted}} active",
@@ -1001,11 +1017,11 @@
   },
   "communities.liveThisWeek_one": {
     "text": "{{formatted}} change live this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. On a phone the line is a tick glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.liveThisWeek_other": {
     "text": "{{formatted}} changes live this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. On a phone the line is a tick glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.compactMembersActive_one": {
     "text": "<0>{{members}},</0> <1>{{formatted}} active this week</1>",
@@ -1031,13 +1047,9 @@
     "text": "Communities",
     "description": "Heading over the cards of public communities at the bottom of Home for a visitor who is not signed in."
   },
-  "join.featuredAppsCommunities": {
-    "text": "Featured apps / communities",
-    "description": "Small label over the row of featured cards on the Home screen under the Standard (WIP) look, where that row stands apart from Communities to join. Each card is an app and the community that builds it."
-  },
   "join.featured": {
     "text": "Featured",
-    "description": "Small heading over the communities the platform features, the first group of cards in Communities to join on Home (signed in or out)."
+    "description": "Small heading over the communities the platform features: the first group of cards in Communities to join on Home (signed in or out), and the row of featured cards that stands apart from that list in the standard look."
   },
   "join.featuredKind": {
     "text": "Featured in {{kind}}",

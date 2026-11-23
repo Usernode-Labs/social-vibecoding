@@ -95,6 +95,7 @@ import { linkKind } from '../../lib/repo-link.js';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
+import { swatchFor } from '../messages/format';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
 import { isNativeApp, isStandalone } from '../mobile-install/environment';
@@ -231,7 +232,12 @@ function afterDismiss(then: () => void): void {
   void AppContext.dismissForNav().then(then);
 }
 
-/** A person's initial in the roster's circle — Discover's contributor disc. */
+/**
+ * A person's initial in the roster's circle. Phone review #119 (23 Nov 2026):
+ * the one face a person wears in a list of people, the hub's and the
+ * dialogs' (messages/format.tsx UserAvatar): a disc in their own colour
+ * (swatchFor) with a white initial. It was a pale blue disc here only.
+ */
 function Avatar({ who, size }: { who: string; size: 'sm' | 'xs' }): ReactNode {
   const box = size === 'xs'
     ? 'w-6 h-6 text-[0.625rem] ring-2 ring-white dark:ring-zinc-900'
@@ -239,8 +245,8 @@ function Avatar({ who, size }: { who: string; size: 'sm' | 'xs' }): ReactNode {
   return (
     <span
       aria-hidden="true"
-      className={`${box} shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 `
-        + 'text-violet-700 dark:text-violet-300 font-semibold flex items-center justify-center'}
+      className={`${box} shrink-0 rounded-full text-white font-semibold flex items-center justify-center`}
+      style={{ backgroundColor: swatchFor(who) }}
     >
       {(who[0] || '?').toUpperCase()}
     </span>

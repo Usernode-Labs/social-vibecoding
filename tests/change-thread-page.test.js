@@ -122,7 +122,7 @@ test('ChangeRows: "N replies", then Messages rows and quiet lines in the order t
   assert.ok(at('data-change-event="submitted"') < at('data-change-event="preview"'));
   assert.ok(at('data-change-event="preview"') < at('data-change-event="vote"'));
   assert.ok(at('data-change-event="vote"') < at('Looks good on my phone.'));
-  assert.match(html, /<b>snait<\/b> asked for approval<span class="dev-request-event-time"[^>]*> · 1:36 PM<\/span>/);
+  assert.match(html, /<b>snait<\/b> asked for approval<span class="dev-request-event-time"[^>]*>1:36 PM<\/span>/);
   assert.match(html, /The preview is ready · <button type="button" class="dev-request-event-link">Try it<\/button>/);
   assert.match(html, /<b>cilokman<\/b> voted yes on an earlier version/);
   assert.match(html, /<b>jo<\/b> voted no<span class="dev-change-event-reason">: “Not yet”<\/span>/, 'a vote\'s reason, quoted after it');

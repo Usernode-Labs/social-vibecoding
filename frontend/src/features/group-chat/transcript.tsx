@@ -620,6 +620,8 @@ export interface SeeVote {
   sessionId: number;
   number: number | null;
   title: string | null;
+  /** The change is live, so its vote is over: the line offers the change, not the vote (#116). */
+  live?: boolean;
 }
 
 /**
@@ -645,7 +647,7 @@ export const SystemRow = memo(function SystemRow({ msg, seeVote = null }: { msg:
         <span className="gc-msg-system-repeat" title={t('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
       ) : null}
       {vote ? (seeVote
-        ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+        ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} live={!!seeVote.live} />
         : <VoteCard msg={msg} />) : null}
       {/*
           A system or vote row is savable and reactable, exactly as the string
@@ -1022,7 +1024,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
               the vote, elsewhere the small card with Preview and Vote.
           */}
           {msg.voteRef ? (seeVote
-            ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} />
+            ? <VoteLine sessionId={seeVote.sessionId} number={seeVote.number} title={seeVote.title} live={!!seeVote.live} />
             : <VoteCard msg={msg} />) : null}
           {/* #6533: what a change looks like under Homeroom bot's reply. */}
           {msg.botGallery ? <ChangePictures card={msg.botGallery} /> : null}
@@ -1333,7 +1335,8 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
           <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
         {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>{t('project:topic.request.stream.read')}</button></> : null}
-        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
+        {/* Its own muted line under the sentence, with nothing before it (#116). */}
+        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{msg.time}</span> : null}
       </span>
     </div>
   );
@@ -1387,7 +1390,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
     const out = new Map<number, SeeVote>();
     for (const key of Object.keys(changes.numbers)) {
       const id = Number(key);
-      out.set(id, { sessionId: id, number: changes.numbers[id] ?? null, title: changes.titles?.[id] ?? null });
+      out.set(id, { sessionId: id, number: changes.numbers[id] ?? null, title: changes.titles?.[id] ?? null, live: !!changes.live?.[id] });
     }
     return out;
   }, [changes]);
@@ -1504,8 +1507,17 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
         {line.kind === 'spec' && msg.specShare?.sessionId ? (
           <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => controller()?.openSharedSpec?.(msg.specShare?.sessionId, msg.specShare?.version, msg.specShare?.previewTitle)}>{t('project:topic.request.stream.read')}</button></>
         ) : null}
-        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
-        {tag ? <span className="dev-request-event-time" data-change-event-tag="">{` · ${tag}`}</span> : null}
+        {/* The time and the change it happened to are their own muted line
+            under the sentence (phone review #116, 23 Nov 2026): a separator
+            baked into the start of the time began that line with a stray
+            "·" whenever the sentence wrapped. The tag rides inside the
+            time's span, so the dot is only ever between the two. */}
+        {msg.time ? (
+          <span className="dev-request-event-time" title={msg.timeTitle}>
+            {msg.time}
+            {tag ? <span data-change-event-tag="">{` · ${tag}`}</span> : null}
+          </span>
+        ) : tag ? <span className="dev-request-event-time" data-change-event-tag="">{tag}</span> : null}
       </span>
     </div>
   );

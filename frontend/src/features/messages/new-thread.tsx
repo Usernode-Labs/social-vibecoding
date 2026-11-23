@@ -60,6 +60,7 @@ import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { useComposerStack } from '../../lib/use-composer-stack';
 import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
@@ -281,6 +282,8 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);
   useAutoGrow(inputRef, words);
+  // Phone review #58: once the text wraps, it has the card's whole width.
+  const stacked = useComposerStack(inputRef, words);
   // Plain Enter sends on this device: the hint and the tooltip say so.
   const enterKey = useEnterSends();
   // The starts in the reader's language: what each writes, and what it is for.
@@ -617,7 +620,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
               {uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}
             </div>
           ) : null}
-          <div className="flex items-end gap-1.5">
+          <div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? '' : undefined}>
             <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
             {/* The same "+" and menu a reply thread offers. The cap disables the
                 Attach files ROW, never the "+" itself. */}

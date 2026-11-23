@@ -232,7 +232,7 @@ test('its box is the conversation composer\'s card, piece for piece', () => {
   const composer = read('frontend/src/features/messages/composer.tsx');
   for (const piece of [
     '<div className="messages-composer-card">',
-    '<div className="flex items-end gap-1.5">',
+    '<div className="messages-composer-row flex items-end gap-1.5" data-stacked={stacked ? \'\' : undefined}>',
     '<div className="messages-composer-add" ref={addRef}>',
     'className="messages-composer-input"',
     'className="messages-send"',
@@ -281,6 +281,12 @@ test('who works on it: Homeroom bot by default, on a chip beside the project\'s,
   assert.ok(chip, 'the builder chip is the project chip\'s own class');
   assert.match(chip[0], /aria-haspopup="dialog" aria-expanded="false"/);
   assert.doesNotMatch(chip[0], /data-picked/, 'tinted only for a pick of the person\'s own');
+  // Phone review S13: each chip says what it picks, in words that are also
+  // its name for a screen reader, on one shared fill.
+  assert.match(chip[0], /<span class="messages-project-chip-name"><span class="messages-project-chip-label">With:<\/span> Homeroom bot<\/span>/);
+  assert.doesNotMatch(chip[0], /aria-label=|title=|style=/, 'its words name it; no tint is set');
+  const project = html.match(/<button type="button" class="messages-project-chip" data-bot-new-thread-project=""[^>]*>[\s\S]*?<\/button>/);
+  assert.match(project[0], new RegExp(`<span class="messages-project-chip-label">About:</span> ${escapeRe(message('messages:newThread.anyProject'))}`));
   assert.match(chip[0], new RegExp(escapeRe(message('messages:newThread.builder.homeroom.name'))));
   assert.ok(html.indexOf('data-bot-new-thread-project=""') < html.indexOf('data-bot-new-thread-builder="homeroom"'), 'after the project\'s chip');
   // Homeroom bot's thread is as it was: its own words under the title, its send, no steps.
@@ -293,7 +299,7 @@ test('who works on it: Homeroom bot by default, on a chip beside the project\'s,
   const bar = src.slice(src.indexOf('<div className="messages-project-row">'), src.indexOf('<div className="messages-composer-card">'));
   assert.match(bar, /<ProjectChip[\s\S]*?\/>\n\s+<BuilderChip/, 'both chips float over the card, in one row');
   assert.match(bar, /if \(!pickingBuilder && links\.phase !== 'ready' && links\.phase !== 'loading'\) void links\.load\(\);/, 'read on the first open');
-  assert.match(read('public/css/app.css'), /\.messages-project-row \{ display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px; \}/);
+  assert.match(read('public/css/app.css'), /\.messages-project-row \{ display: flex; gap: 6px; padding-bottom: 8px; \}\n\.messages-project-row > \[data-bot-new-thread-builder\] \{ flex-shrink: 0; \}/);
 });
 
 test('which products are connected is read off the names Settings sorts its cards by', () => {

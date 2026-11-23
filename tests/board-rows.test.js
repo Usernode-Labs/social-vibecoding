@@ -312,8 +312,9 @@ test('a row is square at rest, so the hairline between rows runs straight', () =
   // Lit (hovered, open beside the board, focused) it takes its corners, and
   // its own line goes clear as the next row's does.
   assert.match(CSS, /\.dev-ws-wrow:is\(:hover, \[data-on\], :has\(> \.dev-ws-wrow-main > \.dev-ws-wrow-link:focus-visible\)\) \{ border-radius: 12px; border-top-color: transparent; \}/);
-  // A board row's title and its line in words wrap without leaving one word
-  // ("ago", "now") on a line of its own.
+  // A board row's title wraps without leaving one word ("ago", "now") on a
+  // line of its own; its line in words keeps to one line (phone review #77:
+  // wrapped in a narrow column, every line of it began with a stray "·").
   assert.match(CSS, /\.dev-ws-brow \.dev-ws-wrow-link \{ -webkit-line-clamp: 3; text-wrap: pretty; \}/);
-  assert.match(CSS, /\.dev-ws-brow \.dev-ws-wrow-sub \{ white-space: normal; overflow: visible; text-wrap: pretty; \}/);
+  assert.match(CSS, /\.dev-ws-brow \.dev-ws-wrow-sub \{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/);
 });

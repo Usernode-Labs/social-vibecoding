@@ -958,7 +958,10 @@ export interface DevWorkshopView {
     who: string | null;
     at: string | null;
     going: boolean;
+    /** The run's element shot, drawn whole; null without one. */
     picture: string | null;
+    /** The after screen framed on what its claim is about (#41): its URL, size and the element's box, in CSS px. */
+    frame?: { url: string; width: number; height: number; box: number[] } | null;
   }[];
   /**
    * One unclaimed open issue to suggest, as a row. Null when there is none;

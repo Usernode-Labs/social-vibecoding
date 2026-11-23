@@ -302,8 +302,18 @@ export interface ChangeRailInput {
 /** The pills that only count votes: the step says "Up for a vote", and the foot has the count. */
 const VOTE_PILL: ReadonlySet<string> = new Set(['needs_vote', 'approvals', 'needs_member']);
 
+/** Pure: two lines that say the same thing, whatever their case and closing stop. */
+const same = (a: unknown, b: unknown): boolean => typeof a === 'string' && typeof b === 'string'
+  && a.trim().replace(/[.!?…]+$/, '').toLowerCase() === b.trim().replace(/[.!?…]+$/, '').toLowerCase();
+
+/** Pure: the step's figure for its note, unless the step's title already says it (#88). */
+const unlessTitled = (figure: string | null | undefined, title: unknown): string | null => (figure && !same(figure, title) ? figure : null);
+
 const sentence = (parts: (string | null | undefined)[]): string => parts
   .map((p) => String(p || '').trim()).filter(Boolean)
+  // Phone review #88 (23 Nov 2026): a sentence said once. The note under
+  // "Set aside in ~7h 1m" led with the same "Set aside in ~7h 1m".
+  .filter((p, i, all) => all.findIndex((q) => same(q, p)) === i)
   .map((p) => (/[.!?…]$/.test(p) ? p : `${p}.`))
   .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
   .join(' ');
@@ -377,9 +387,10 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
       break;
     case 'stuck':
       if (testing.done && testing.tone !== 'bad') tested();
+      const stuckTitle = input.merge && input.merge.tone === 'bad' ? input.merge.name : status.label;
       now({
-        icon: 'stopped', tone: 'bad', title: input.merge && input.merge.tone === 'bad' ? input.merge.name : status.label,
-        note: sentence(input.merge && input.merge.tone === 'bad' ? [input.merge.figure, ...input.merge.note] : votes.note) || null,
+        icon: 'stopped', tone: 'bad', title: stuckTitle,
+        note: sentence(input.merge && input.merge.tone === 'bad' ? [unlessTitled(input.merge.figure, stuckTitle), ...input.merge.note] : votes.note) || null,
         noteTone: 'bad', open: ballot,
       });
       break;
@@ -420,12 +431,14 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
     default: {
       tested();
       const asking = votes.tone === 'ask';
+      const title = asking || VOTE_PILL.has(status.key) ? { id: 'core:work.stage.upForVote' } : status.label;
       now({
         icon: 'vote',
-        title: asking || VOTE_PILL.has(status.key) ? { id: 'core:work.stage.upForVote' } : status.label,
+        title,
         // The figure is the foot's headline: here it leads who can give the
-        // yes, when the card says so; else the plain sentence.
-        note: votes.note.length ? sentence([votes.figure, votes.note[0]]) : { id: 'project:topic.rail.note.vote' },
+        // yes, when the card says so; else the plain sentence. A figure the
+        // title already says ("Set aside in ~7h 1m") is not said again.
+        note: votes.note.length ? sentence([unlessTitled(votes.figure, title), votes.note[0]]) : { id: 'project:topic.rail.note.vote' },
         noteTone: 'act',
         open: ballot,
       });

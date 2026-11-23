@@ -140,7 +140,7 @@ test('#4391/#4393: while the first-session tour runs, no Review the plan: the bo
   assert.match(card(building({ step: 3, line: 'plan', waits_on: 'plan' })), /data-ws-first-version-action="review"[^>]*>Review the plan<\/button>/);
 });
 
-test('ready to try: Try it, with no line above it; live in its first week: Open app', () => {
+test('ready to try: Try it, with no line above it; once live, no card: Open app is the hero\'s', () => {
   const html = card(building({ step: 6, line: 'ready', ready: true, session_id: 990003 }));
   assert.match(html, /data-ws-first-version="ready"/);
   assert.doesNotMatch(html, /data-build-line|See the change/);
@@ -150,11 +150,13 @@ test('ready to try: Try it, with no line above it; live in its first week: Open 
   const unread = card(building({ step: 6, line: 'ready', ready: true, session_id: null }));
   assert.doesNotMatch(unread, /data-ws-first-version-action/, 'no change to open when the read of it failed');
   assert.match(unread, /data-build-line="ready"[^>]*>.*Ready to try/, 'so the line says it');
+  // Phone review #53: live in its first week, the card drew the project's
+  // name and tile again with an Open app of its own, while the hero had none.
+  // Now the card is gone and Open app is the hero's, as on every hub.
   const live = card(building({ step: null, of: null, line: 'live', mine: false, conversation_id: null }));
-  assert.match(live, /data-ws-first-version="live"/);
-  assert.match(live, /<button type="button" class="dev-ws-open-app dev-ws-hub-first-open" data-ws-first-version-action="open">Open app<\/button>/);
-  assert.doesNotMatch(live, /data-build-line/);
-  assert.match(read(HUB), /\(window as any\)\.App\?\.openAppTab\?\.\(slug, 'app'\);/);
+  assert.equal(live, '', 'once it is live there is no First version card');
+  assert.match(read(HUB), /if \(!fv \|\| firstVersionLine\(fv\) === 'live'\) return null;/);
+  assert.match(read('frontend/src/features/dev-board/workshop/community-card.tsx'), /const appButton = appLive \? openApp : null;/);
 });
 
 test('somebody else reading it while its plan waits: Planning it, and See the plan when they joined (#4074)', () => {
@@ -367,7 +369,7 @@ test('#4074: the plan, read only, for the people who joined: what it will do, wh
   })), '', 'no plan to read (built, or not a member): nothing, and it goes back to the Hub');
   const src = read('frontend/src/features/dev-board/workshop/plan-page.tsx');
   assert.match(src, /const gone = !!data && !plan;\s*useEffect\(\(\) => \{\s*if \(gone\) onBack\(\);/);
-  assert.match(LANDER, /\{tab === 'plan' \? \(\s*<PlanPage\s+name=\{community\?\.name \|\| app\.name \|\| slug\}\s+data=\{community\}\s+onBack=\{\(\) => openTab\('status'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>\s*\) : null\}/);
+  assert.match(LANDER, /\{tab === 'plan' \? \(\s*<PlanPage\s+name=\{community\?\.name \|\| app\.name \|\| slug\}\s+data=\{community\}\s+onBack=\{\(\) => upTab\('status'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>\s*\) : null\}/);
 });
 
 test('#4045: `?shot=hub-first-week` draws a made-up first week for the before/after shots', () => {

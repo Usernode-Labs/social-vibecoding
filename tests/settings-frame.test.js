@@ -85,7 +85,7 @@ test('the list of sections carries the names a look dresses: search, cards of ro
   assert.match(nav, /<div className="ui-search px-1 pb-4">/);
   assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"\s+className="ui-btn ui-btn-bad ui-btn-block w-full /);
   // What today's list has and the mockup omits is kept.
-  for (const kept of ['data-settings-recent=""', 'data-settings-control="pin"', 'data-settings-group-fold', 'data-settings-nav-status=""', 'data-settings-nav-tag=""', 'subtitle={item.subtitle || undefined}']) {
+  for (const kept of ['data-settings-recent=""', 'data-settings-control="pin"', 'data-settings-group-fold', 'data-settings-nav-status=""', 'data-settings-nav-tag=""', 'subtitle={menuSubtitle(item)}']) {
     assert.ok(nav.includes(kept), kept);
   }
   assert.match(settings, new RegExp(`${ANY} #settings-root \\.ui-card > \\[data-settings-row\\] \\+ \\[data-settings-row\\] > \\.ui-row \\{ border-top: 1px solid var\\(--fr-line2\\); \\}`), 'a row sits in its pin wrapper, so the kit\'s line between rows is said here');

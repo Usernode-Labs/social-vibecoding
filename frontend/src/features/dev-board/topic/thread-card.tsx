@@ -442,6 +442,12 @@ export function NoPicture({ none, phase, stopped, diagram, diagramLed = false }:
     // bot's follow-up adds one.
     if (diagramLed) return null;
     if (picture) return <Diagram d={picture} source="author" />;
+    // Phone review #42 (23 Nov 2026): once the change is live (or going
+    // live, or closed) nothing is being added any more, so the box says what
+    // happened instead of promising a picture that will not come.
+    if (phase === 'live' || phase === 'going' || phase === 'stuck' || phase === 'closed') {
+      return <ShotsWait state="no-picture-taken" title={t('project:topic.card.shots.noPictureTakenTitle')} text={null} />;
+    }
     return <ShotsWait state="no-picture" title={t('project:topic.card.shots.noPictureTitle')} text={t('project:topic.card.shots.noPictureText')} />;
   }
   if (phase === 'testing') return <ShotsWait state="waiting" title={t('project:topic.card.shots.notYetTitle')} text={t('project:topic.card.shots.notYetText')} />;

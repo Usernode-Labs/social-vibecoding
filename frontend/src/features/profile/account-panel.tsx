@@ -247,6 +247,7 @@ export function AccountPanel({ rows }: {
 }): ReactNode {
   const allowance = useAppAllowance();
   const slotsLine = appSlotsLine(allowance.quota, allowance.requestedAt as string | null);
+  const unlimited = !!allowance.quota && allowance.quota.limit === null;
   const t = useMessages('profile');
   return (
     <section id="profile-account" className="mt-2">
@@ -267,7 +268,7 @@ export function AccountPanel({ rows }: {
           subtitle={rows.friends || t('profile:more.friends.hint')}
           subtitleClassName={SUBTITLE}
         />
-        <ListRow
+        {!unlimited ? (<ListRow
           as="a"
           id="profile-row-app-slots"
           href="#profile?slots"
@@ -284,7 +285,20 @@ export function AccountPanel({ rows }: {
           titleClassName={TITLE}
           subtitle={slotsLine || t('profile:more.appSlots.hint')}
           subtitleClassName={SUBTITLE}
-        />
+        />) : (
+          // Phone review #125 (23 Nov 2026): with no limit there is nothing
+          // to request, and the card only said the row's own line again under
+          // a second name. The row says it and opens nothing.
+          <ListRow
+            id="profile-row-app-slots"
+            leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
+            title={t('profile:more.appSlots.title')}
+            titleClassName={TITLE}
+            subtitle={slotsLine}
+            subtitleClassName={SUBTITLE}
+            chevron={false}
+          />
+        )}
       </GroupedList>
     </section>
   );
