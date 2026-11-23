@@ -3228,12 +3228,12 @@
     "description": "Accessible name of the pane that holds the conversation list."
   },
   "inbox.searchPlaceholder": {
-    "text": "Search",
-    "description": "Placeholder of the search field above the conversation list; it filters the list by name."
+    "text": "Search people and chats",
+    "description": "Placeholder of the search field above the conversation list on the Messages tab. It narrows the list to the chats whose name, or whose preview line (the latest message, shown under the name), contains what is typed. It does not search earlier messages."
   },
   "inbox.searchLabel": {
-    "text": "Search messages",
-    "description": "Accessible label of the search field above the conversation list."
+    "text": "Search people and chats",
+    "description": "Accessible label of the search field above the conversation list on the Messages tab. It narrows the list to the chats whose name or preview line contains what is typed."
   },
   "inbox.empty.title": {
     "text": "No messages yet",
@@ -3248,8 +3248,16 @@
     "description": "Button under the empty conversation list: opens the dialog for starting a conversation."
   },
   "inbox.searchEmpty": {
-    "text": "No messages match “{{query}}”.",
-    "description": "Shown in place of the conversation list when the search finds nothing. {{query}} is what the person typed."
+    "text": "No people or chats match “{{query}}”.",
+    "description": "Shown in place of the conversation list on the Messages tab when the search finds nothing. {{query}} is what the person typed. The search reads each chat's name and its preview line, not earlier messages."
+  },
+  "inbox.searchEmptyHint": {
+    "text": "Search looks at names and the latest message in each chat.",
+    "description": "Second line of the Messages tab's empty search result, under \"No people or chats match…\". It says what the search reads, so a word from an older message not being found is explained."
+  },
+  "inbox.searchClear": {
+    "text": "Clear search",
+    "description": "Button under the Messages tab's empty search result. It empties the search field, so the whole conversation list shows again."
   },
   "invitation.error.respond": {
     "text": "Couldn’t update this invitation.",
@@ -4921,31 +4929,31 @@
   },
   "ai.hero.both": {
     "text": "Needs you: {{needs}} · In progress: {{next}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Line under the heading: {{needs}} is how many things in its Needs you list ask something of the person (a vote, an answer, a Build it), {{next}} how many of their pieces of work are being worked on."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons: {{needs}} is how many things in its Needs you list ask something of the person (a vote, an answer, a Build it), {{next}} how many of their pieces of work are being worked on."
   },
   "ai.hero.next": {
     "text": "In progress: {{next}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Line under the heading when nothing waits on the person: {{next}} is how many of their pieces of work are being worked on."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page when nothing waits on the person: {{next}} is how many of their pieces of work are being worked on."
   },
   "ai.hero.needs": {
     "text": "Needs you: {{needs}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Line under the heading when nothing of theirs is being worked on: {{needs}} is how many things in its Needs you list ask something of the person (a vote, an answer, a Build it)."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page when nothing of theirs is being worked on: {{needs}} is how many things in its Needs you list ask something of the person (a vote, an answer, a Build it)."
   },
   "ai.hero.bothFresh_one": {
     "text": "Needs you: {{needs}} · <0>{{fresh}} new</0> · In progress: {{next}}",
-    "description": "The AI tab's main view: line under the heading when something needs the person and something is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
+    "description": "The AI tab's main view: the line at the top of the page when something needs the person and something is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
   },
   "ai.hero.bothFresh_other": {
     "text": "Needs you: {{needs}} · <0>{{fresh}} new</0> · In progress: {{next}}",
-    "description": "The AI tab's main view: line under the heading when something needs the person and something is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
+    "description": "The AI tab's main view: the line at the top of the page when something needs the person and something is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
   },
   "ai.hero.needsFresh_one": {
     "text": "Needs you: {{needs}} · <0>{{fresh}} new</0>",
-    "description": "The AI tab's main view: line under the heading when something needs the person and nothing of theirs is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour)."
+    "description": "The AI tab's main view: the line at the top of the page when something needs the person and nothing of theirs is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour)."
   },
   "ai.hero.needsFresh_other": {
     "text": "Needs you: {{needs}} · <0>{{fresh}} new</0>",
-    "description": "The AI tab's main view: line under the heading when something needs the person and nothing of theirs is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour)."
+    "description": "The AI tab's main view: the line at the top of the page when something needs the person and nothing of theirs is in progress. {{needs}} is how many things ask something of them, {{fresh}} how many of those threads have a message they have not read yet (the number in colour)."
   },
   "ai.work.fresh_one": {
     "text": "{{count}} new",
@@ -5291,6 +5299,10 @@
     "text": "Search threads and messages",
     "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed, and lists the messages in the person's chat with Homeroom bot that contain it."
   },
+  "ai.search.clear": {
+    "text": "Clear search",
+    "description": "The Homeroom bot tab: name and tooltip of the small × button at the end of the search box, shown while the box holds text. It empties the box and leaves it open."
+  },
   "ai.search.none": {
     "text": "Nothing in your threads or messages matches “{{query}}”",
     "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page and no message in the person's chat with Homeroom bot. {{query}} is what the person typed."
@@ -5370,6 +5382,14 @@
   "ai.why.fixBoth": {
     "text": "Tests failing · conflicts with main",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change, made through a coding agent, whose votes are in but whose tests fail and which conflicts with main."
+  },
+  "ai.history.searching.chip": {
+    "text": "“{{query}}”",
+    "description": "The Homeroom bot tab's History card, while the page's search box is narrowing it: a small chip beside the History heading, between a magnifying glass and an ×, that shows the words being searched for. {{query}} is what the person typed. Keep the quotation marks, in the target language's style."
+  },
+  "ai.history.searching.clear": {
+    "text": "Showing only what matches “{{query}}”. Clear search",
+    "description": "The Homeroom bot tab's History card, while the page's search box is narrowing it: accessible name and tooltip of the chip beside the History heading. Pressing it empties the search, so History lists everything again. {{query}} is what the person typed."
   },
   "ai.history.title": {
     "text": "History",

@@ -233,6 +233,37 @@ function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 
   return <UserAvatar user={null} title={conversation.title} size="lg" shape="square" />;
 }
 
+/**
+ * The line a row draws under its name, as text: the one place it is put
+ * together, because the search reads it too (phone review, 23 Nov 2026, #44:
+ * a word standing in a row's preview answered "No messages match", since the
+ * search knew only the names).
+ *
+ * #5393: in a group the preview names its last sender, the way #general's
+ * row already does: "@name: …", or "You: …" when the viewer wrote it. A
+ * message with no person behind it (a platform line) keeps the bare
+ * summary. A direct message keeps its preview as it is, an invitation says
+ * it is one to review, and the bot's own line (`botLine`) still wins where
+ * it is given.
+ */
+function rowPreview(
+  conversation: ConversationSummary,
+  t: ReturnType<typeof useMessages>,
+  botLine: string | null = null,
+): string {
+  if (conversation.membershipStatus === 'invited') {
+    return conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview');
+  }
+  const groupSender = conversation.kind === 'group' ? conversation.latestMessage?.sender || null : null;
+  if (groupSender?.id && conversation.latestSummary) {
+    const viewer = typeof window === 'undefined' ? null : window.App?.user?.id;
+    return Number(groupSender.id) === Number(viewer)
+      ? t('messages:inbox.previewYou', { message: ownDirection(conversation.latestSummary) })
+      : t('messages:inbox.previewBy', { username: groupSender.username, message: ownDirection(conversation.latestSummary) });
+  }
+  return ownDirection(botLine || conversation.latestSummary || '') || t('messages:inbox.noMessages');
+}
+
 const ConversationRow = memo(function ConversationRow({ conversation, active, preview = null, rowKey }: {
   conversation: ConversationSummary;
   active: boolean;
@@ -252,19 +283,6 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
   // conversation last spoken in during March read "412d", which is a duration
   // and not information. `title` carries the unelided instant either way.
   const activity = agoStamp(conversation.lastActivityAt);
-  // #5393: in a group the preview names its last sender, the way #general's
-  // row already does — "@name: …", or "You: …" when the viewer wrote it. A
-  // message with no person behind it (a platform line) keeps the bare
-  // summary. A direct message and an invitation keep their previews as they
-  // are, and the bot's own line (`preview`) still wins where it is given.
-  const groupSender = conversation.kind === 'group' && !invited
-    ? conversation.latestMessage?.sender || null
-    : null;
-  const groupPreview = groupSender?.id && conversation.latestSummary
-    ? (Number(groupSender.id) === Number(window.App?.user?.id)
-      ? t('messages:inbox.previewYou', { message: ownDirection(conversation.latestSummary) })
-      : t('messages:inbox.previewBy', { username: groupSender.username, message: ownDirection(conversation.latestSummary) }))
-    : null;
   return (
     <a
       href={`#messages/${conversation.id}`}
@@ -293,7 +311,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (ownDirection(preview || conversation.latestSummary || '') || t('messages:inbox.noMessages'))}</span>
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{rowPreview(conversation, t, preview)}</span>
           {conversation.unreadCount > 0 ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
         </div>
       </div>
@@ -584,9 +602,12 @@ function PeopleHead({ aside }: { aside: string | null }) {
  *
  * A CLIENT-SIDE MATCH over the three lists already in memory, so it answers
  * on every keystroke and adds no endpoint. What it matches is the text each
- * row draws — a person's name or a group's title, an app's name, a chat's
- * title — because a search that found rows by a field the reader cannot see
- * would return results they cannot explain.
+ * row draws — a person's name or a group's title, and (#44, 23 Nov 2026) the
+ * preview line under it, `rowPreview` — because a search that found rows by a
+ * field the reader cannot see would return results they cannot explain, and
+ * one that missed a word standing on the row cannot be explained either.
+ * Nothing earlier in a conversation is read: the field says what it searches
+ * ("Search people and chats"), and its empty state says so again.
  *
  * It composes with the filter rather than replacing it: the strip says which
  * kinds, this says which of them, and an empty query is every row.
@@ -708,26 +729,6 @@ function ConversationList({ drawer = false }: {
   }), [snap.conversations]);
   const byConversation = useMemo(() => new Map(snap.conversations.map((item) => [String(item.id), item])), [snap.conversations]);
 
-  const q = deferredQuery.trim().toLowerCase();
-  const matches = (entry: { kind: string; key: string }) => {
-    if (!q) return true;
-    if (entry.kind === 'person') {
-      const c = byConversation.get(entry.key.slice('person:'.length));
-      if (!c) return false;
-      const peer = directPerson(c) || conversationPeer(c);
-      return inboxMatches(c.title, q)
-        || inboxMatches(peer?.username, q)
-        || inboxMatches(peer?.displayName, q);
-    }
-    return false;
-  };
-  const searching = !!q;
-  const found = inbox.filter(matches);
-  // The conversation that is open.
-  const isOpen = (entry: { kind: string; key: string }) => (
-    entry.kind === 'person' && snap.route.conversationId === Number(entry.key.slice('person:'.length))
-  );
-
   // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
   // what it is doing ("1 needs you · 2 in progress", ./bot-strip.tsx
   // summaryParts), counted from your requests' tracks once this list is up;
@@ -744,6 +745,27 @@ function ConversationList({ drawer = false }: {
     const parts = summaryParts(stripGroups(botWork.work));
     return parts.length ? parts.slice(0, 2).map((part) => part.text).join(' · ') : null;
   }, [botWork.work]);
+
+  const q = deferredQuery.trim().toLowerCase();
+  const matches = (entry: { kind: string; key: string }) => {
+    if (!q) return true;
+    if (entry.kind === 'person') {
+      const c = byConversation.get(entry.key.slice('person:'.length));
+      if (!c) return false;
+      const peer = directPerson(c) || conversationPeer(c);
+      return inboxMatches(c.title, q)
+        || inboxMatches(peer?.username, q)
+        || inboxMatches(peer?.displayName, q)
+        || inboxMatches(rowPreview(c, t, c.homeroomBot ? botLine : null), q);
+    }
+    return false;
+  };
+  const searching = !!q;
+  const found = inbox.filter(matches);
+  // The conversation that is open.
+  const isOpen = (entry: { kind: string; key: string }) => (
+    entry.kind === 'person' && snap.route.conversationId === Number(entry.key.slice('person:'.length))
+  );
 
   // What the heading says: the messages from people you have not read. A
   // zero says nothing. Unread is new to read, grey like every unread count
@@ -924,6 +946,9 @@ function ConversationList({ drawer = false }: {
             aria-label={t('messages:inbox.searchLabel')}
             value={query}
             onChange={(e) => changeQuery(e.currentTarget.value)}
+            // #44: a phone capitalised the first letter typed, which is
+            // not what a name or a word from a message is searched by.
+            autoCapitalize="none"
           />
         </div>
         <NewMessageButton />
@@ -960,7 +985,15 @@ function ConversationList({ drawer = false }: {
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !found.length
-          ? <div id="messages-search-empty" className="messages-state"><p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p></div>
+          ? (
+            // #44: it says what was searched, and offers the way back to the
+            // whole list, so the page is not one grey line over nothing.
+            <div id="messages-search-empty" className="messages-state">
+              <p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p>
+              <p>{t('messages:inbox.searchEmptyHint')}</p>
+              <button type="button" onClick={() => changeQuery('')}>{t('messages:inbox.searchClear')}</button>
+            </div>
+          )
           : null}
         {/* PEOPLE, HEADED (16 Oct 2026): the rows sit in a card under their
             heading, the grouped list's label-over-card shape; on a desktop

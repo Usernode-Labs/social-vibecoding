@@ -84,7 +84,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { MicrophoneIcon, SearchIcon } from '@/components/ui/icons';
+import { MicrophoneIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
@@ -329,6 +329,16 @@ export function AiScreen(): ReactNode {
   const [historyKind, setHistoryKind] = useState<HistoryKind | null>(null);
   const [toHistory, setToHistory] = useState(0);
   const historyRef = useRef<HTMLDivElement | null>(null);
+  // THE SEARCH BOX DOES NOT OUTLIVE THE VISIT (phone review, 23 Nov 2026, #3
+  // and S14). This screen stays mounted while another is shown, so what was
+  // typed here an hour ago was still narrowing every list when You › Your
+  // changes opened History: one row of 2,330, the box scrolled out of sight.
+  // So the box is emptied and closed when the tab is left, and when a door
+  // asks for History (`#homeroom-bot/history`), which is asking for all of it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const endSearch = useCallback(() => { setQuery(''); setSearchOpen(false); }, []);
   // Read again each time the tab is shown, too: an old address the router
   // swaps for one of the tab's in place (#profile/your-changes, which is
   // History on changes now) fires no hashchange.
@@ -339,7 +349,7 @@ export function AiScreen(): ReactNode {
     if (!isBotTabHash(hash)) return;
     setPicked(projectsOf(hash));
     setHistoryKind(kindOf(hash));
-    if (historyAsked(hash)) setToHistory((n) => n + 1);
+    if (historyAsked(hash)) { setToHistory((n) => n + 1); endSearch(); }
   };
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -348,7 +358,7 @@ export function AiScreen(): ReactNode {
     window.addEventListener('hashchange', take);
     return () => window.removeEventListener('hashchange', take);
   }, []);
-  useEffect(() => { if (visible) takeFilter.current(); }, [visible]);
+  useEffect(() => { if (visible) takeFilter.current(); else endSearch(); }, [visible, endSearch]);
   const filterRef = useRef({ picked, historyKind });
   filterRef.current = { picked, historyKind };
   const writeFilter = (next: { picked: string[]; historyKind: HistoryKind | null }) => {
@@ -1026,10 +1036,9 @@ export function AiScreen(): ReactNode {
   // under the heading, and every list narrows to the threads whose title,
   // number or project matches what it says (./lists.tsx). It starts closed
   // each time the page loads, closing it clears what was typed, and it is
-  // not kept in the address: the chips are what a link carries.
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const searchRef = useRef<HTMLInputElement | null>(null);
+  // not kept in the address: the chips are what a link carries. Its state
+  // is declared above, with the filter, which empties it when the tab is
+  // left or a door opens History.
   useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
   // 13 Nov 2026: the box also searches what was said, in the person's own
   // threads with the bot, on the server (./search.ts). Asked
@@ -1064,8 +1073,12 @@ export function AiScreen(): ReactNode {
     <>
       <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
         <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+        {/* The page is named once on screen, by the bar above (phone review,
+            23 Nov 2026, S14): this card repeated "Homeroom bot" directly
+            under it. The heading stays for a screen reader; what is drawn is
+            the line that counts the lists below. */}
         <span className="min-w-0 flex-1 flex flex-col">
-          <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
+          <h1 className="sr-only">{t('messages:ai.hero.name')}</h1>
           {heroLine ? (
             <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
               <RichMessage
@@ -1109,6 +1122,20 @@ export function AiScreen(): ReactNode {
             className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-base text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-100 dark:placeholder:text-zinc-400 [&::-webkit-search-cancel-button]:hidden"
             data-ai-search=""
           />
+          {/* S14: a way to empty the box without closing it. Drawn only
+              while it holds something; the cursor stays in the box. */}
+          {query ? (
+            <button
+              type="button"
+              className="-me-2 inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 [&>svg]:h-4 [&>svg]:w-4"
+              aria-label={t('messages:ai.search.clear')}
+              title={t('messages:ai.search.clear')}
+              data-ai-search-clear=""
+              onClick={(e) => { e.preventDefault(); setQuery(''); searchRef.current?.focus(); }}
+            >
+              <XIcon aria-hidden="true" strokeWidth="2.25" />
+            </button>
+          ) : null}
         </label>
       ) : null}
     </>
@@ -1153,6 +1180,7 @@ export function AiScreen(): ReactNode {
         <AiLists
           hero={hero}
           query={searchOpen ? query : ''}
+          onQueryClear={endSearch}
           found={search.found}
           onFoundRetry={search.retry}
           lit={lit}
