@@ -222,20 +222,20 @@ async function seedStarter(config, pool, row, sketch, ctx, category = null, arch
       // repoUrl makes the template name this repo as the app's canonical one
       // (.claude/homeroom-canonical-repo, read by the freshness check). No
       // database URL: none goes into a repository.
-      const scaffold = starterFiles(row, { repoUrl, sketch, category });
+      const files = starterFiles(row, { repoUrl, sketch, category });
       // #6994: an archive's own index.html replaces the starter's screen;
       // every other file it carried is kept under public/ byte for byte.
-      const files = archive
-        ? archiveImport.projectFiles(scaffold, await archiveFilesOf(archive))
-        : scaffold;
+      const committed = archive
+        ? archiveImport.projectFiles(files, await archiveFilesOf(archive))
+        : files;
       // An adopted repository's head is read, never guessed: a read that fails
       // fails the setup (Retry makes it again), rather than push the commit
       // twice.
       const head = repo.adopted ? await github.headCommit(botUsername, row.slug) : null;
       const commit = head && head.message === initMessage(row.name)
         ? head
-        : await github.pushFiles(botUsername, row.slug, files, { message: initMessage(row.name) });
-      return { repoUrl, files, commit };
+        : await github.pushFiles(botUsername, row.slug, committed, { message: initMessage(row.name) });
+      return { repoUrl, files: committed, commit };
     }, { signal: ctx?.signal, label: { appId: row.id, slug: row.slug } });
     const { repoUrl, files, commit } = made;
     const sha = String(commit?.sha || '').toLowerCase() || null;

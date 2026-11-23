@@ -126,7 +126,7 @@ const DRAFT_LIMITS = Object.freeze({
 const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
-  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'write_artifact', 'open_app_preview', 'close_thread',
+  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'write_artifact', 'open_app_preview', 'use_archive', 'close_thread',
   'report_problem', 'offer_new_project', 'change_plan', 'web_search', 'reply',
   // 20 Nov 2026 (live-draft review, C): offered only while the turn has the
   // thread's live draft loaded (homeroom-bot-mayor.js toolsFor).

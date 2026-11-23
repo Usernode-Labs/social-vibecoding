@@ -119,7 +119,7 @@ test('the tools: sixteen lookups and actions and a reply, every one closed to ex
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
-      'start_design', 'write_artifact', 'open_app_preview', 'offer_propose_draft', 'change_plan', 'close_thread', 'report_problem',
+      'start_design', 'write_artifact', 'open_app_preview', 'use_archive', 'offer_propose_draft', 'change_plan', 'close_thread', 'report_problem',
       'offer_new_project', 'reply']);
   // 14 Nov 2026: Main Chat is gone, and with it the one tool that existed
   // only to open a thread from Main (start_project_thread). A new project
