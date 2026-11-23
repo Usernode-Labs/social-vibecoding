@@ -667,16 +667,18 @@ test('#4190: the card: a disabled "Homeroom bot is building…" beside a Claim, 
 test('#7000: a request\'s ⋯ menu copies the request\'s address, never its title', async () => {
   const AppView = makeAppView();
   const labels = (av, issue) => Array.from(av._issueMenuItems(issue, { progressOnFace: false }), (it) => it.label);
-  // Every request offers it, directly above Share to…: an open one, a closed
-  // one and a read-only viewer (copying a link changes nothing).
-  for (const [av, issue] of [
-    [AppView, baseIssue()],
-    [AppView, baseIssue({ state: 'closed' })],
-    [makeAppView({ readOnly: true }), baseIssue()],
-  ]) {
-    const rows = labels(av, issue);
+  // A member gets it directly above Share to…, on an open request and a closed
+  // one (sharing a closed request changes nothing).
+  for (const issue of [baseIssue(), baseIssue({ state: 'closed' })]) {
+    const rows = labels(AppView, issue);
     assert.equal(rows[rows.indexOf('Share to…') - 1], 'Copy link', 'just above Share to…');
   }
+  // A read-only viewer's ⋯ is the two rows it has always had, and this change
+  // does not add a third (`tests/card-action-layout.test.js` pins that list);
+  // the side panel's own Copy link covers that page.
+  const readOnlyRows = labels(makeAppView({ readOnly: true }), baseIssue());
+  assert.equal(readOnlyRows.join('|'), 'Share to…|Open on GitHub',
+    'a read-only viewer keeps the menu it had');
   // The request page's ⋯ is the same list, so it says it once.
   assert.equal(
     AppView._requestMenuItems(baseIssue()).filter((it) => it.label === 'Copy link').length, 1
