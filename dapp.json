@@ -2926,7 +2926,7 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Communities, then Recents (the pinned group, then the rest), then you",
+      "name": "The sidebar's markup order: Home, then Homeroom bot (AI) above Messages, then Communities, then Recents (the pinned group, then the rest), then you; app.css draws Communities second on every layout (phone review #81)",
       "path": "/?shot=app-context&demo=1",
       "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-tab-workshop[href=\"#communities\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-me"
     },

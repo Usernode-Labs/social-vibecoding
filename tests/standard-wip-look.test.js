@@ -86,8 +86,11 @@ const MENU_HIDES = [
   'html:not([data-skin]) body #platform-header#platform-header::before',
   // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
-  // and the words, counts, headings, pins and nested places are the open menu's (asked 20 Nov 2026).
-  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x)',
+  // and the words, headings, pins and nested places are the open menu's (asked 20 Nov 2026); the counts on the
+  // places stay, on their glyphs' corners (phone review #81, 23 Nov 2026).
+  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x)',
+  // On a phone's bar the lit tab is its own sun pill, so the sliding marker is not drawn as well (phone review #106).
+  'html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker',
 ];
 
 function menuBlock() {
@@ -269,6 +272,21 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   assert.equal(css.slice(query, css.indexOf('{', query)).trim(), '@media (min-width: 768px)');
   assert.ok(css.indexOf('\n}\n', query) > at, 'inside that query, not after it');
 
+  // THE PAGE STARTS AT THE FOOT (phone review #68, 23 Nov 2026): the bar no
+  // longer overlaps the page, the line stops at an iPhone Duo's column of
+  // system chrome, and a project's page keeps its gutter inside the box that
+  // clips it, so the clip is the line's own span.
+  const flush = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header`);
+  assert.ok(flush && /margin-bottom: 0;/.test(flush.body), 'the page starts under the line');
+  const strip = all.find((r) => r.selector.includes('[data-side-strip="right"] body #platform-header#platform-header::after'));
+  assert.ok(strip, 'the line has a rule for the Duo\'s column');
+  assert.match(strip.body, /inset-inline-end: var\(--platform-strip-w, 0px\);/, 'and ends where the column starts');
+  const view = all.find((r) => r.selector.endsWith('#app-view[data-app-surface="platform"]:not(.hidden)'));
+  assert.ok(view, 'a project\'s page');
+  assert.match(view.body, /padding-inline: var\(--platform-rail-w, 0px\) 0;/, 'stands beside the menu with no gutter outside its clip');
+  const content = all.find((r) => r.selector.endsWith('#app-view[data-app-surface="platform"] > #app-content'));
+  assert.ok(content && /padding-inline: var\(--platform-gutter\);/.test(content.body), 'the gutter is inside the clip');
+
   // THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026): on Home and
   // Communities the bar paints the page's own ground again, so the search
   // field and the page's action pass behind it instead of showing through it
@@ -311,7 +329,7 @@ test('on a community\'s page the Communities tab gives way to its row', () => {
   const glyph = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-glyph, .platform-tab-label)`);
   assert.ok(glyph, 'the glyph and the word stop wearing the lit row\'s on-ink');
   assert.match(glyph.body, /color: inherit;/);
-  const count = all.find((r) => r.selector === `${GIVE} .platform-tab-votes`);
+  const count = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-votes, .platform-tab-badge)`);
   assert.ok(count, 'its count goes back to an unlit row\'s disc');
   assert.match(count.body, /background: var\(--wip-nav-count-bg\);/);
   assert.match(count.body, /color: var\(--wip-nav-count-ink\);/);

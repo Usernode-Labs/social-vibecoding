@@ -9522,19 +9522,23 @@ html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings,
 html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label, .dev-ws-place-glyph, .dev-ws-place-label, .platform-rail-sub-glyph, .platform-rail-sub-name, .platform-rail-settings-glyph) {
   color: var(--wip-nav-on-ink);
 }
-html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+/* ONE BADGE RECIPE (phone review #45, 23 Nov 2026). The unread count on Messages (and the bot's) was the panel's faint
+   white, 32% white with a white numeral: the quietest thing on the bar, and on the lit tab's sun close to invisible,
+   while the vote count beside it was a solid pill. A new message is no less worth seeing, so every count on the panel
+   is the same solid pill with the same contrast: white with the panel's dark ink at rest, the lit row's dark ink with
+   white numerals on the sun. */
+html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .platform-tab-badge, .dev-ws-place-count, .platform-rail-sub-count) {
   background: var(--wip-nav-count-bg);
   color: var(--wip-nav-count-ink);
 }
-html:not([data-skin]) #platform-tabs [aria-current="page"] :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+html:not([data-skin]) #platform-tabs [aria-current="page"] :is(.platform-rail-votes, .platform-tab-votes, .platform-tab-badge, .dev-ws-place-count, .platform-rail-sub-count) {
   background: var(--wip-nav-on-count-bg);
   color: var(--wip-nav-on-count-ink);
 }
-/* The grey "new to read" count takes the panel's faint white for its fill, which on the lit row's sun left white numerals on yellow (1.13:1). There it is the row's own ink on a tint of it: still the quiet count, and readable. */
-html:not([data-skin]) #platform-tabs [aria-current="page"] .platform-tab-badge {
-  background: var(--wip-nav-on-badge-bg);
-  color: var(--wip-nav-on-ink);
-}
+/* On a glyph's corner (the phone's bar, the folded menu) the pill is ringed in the ground it stands on, so where it
+   meets the glyph it cuts a clean edge rather than leaving specks of the stroke beside its figures. */
+html:not([data-skin]) #platform-tabs .platform-tab :is(.platform-tab-votes, .platform-tab-badge) { box-shadow: 0 0 0 2px var(--wip-nav-bg); }
+html:not([data-skin]) #platform-tabs .platform-tab[aria-current="page"] :is(.platform-tab-votes, .platform-tab-badge) { box-shadow: 0 0 0 2px var(--wip-nav-on-bg); }
 /* A letter tile's face is the page's white, not the panel's blue, so its initial takes the page's faint grey (as on Home) and not the panel's faint white, which drew a blank square. Dark tiles are the page's dark grey, where the panel's faint white reads. */
 html:not([data-skin]):not(.dark) #platform-tabs :is(.app-icon-tile[data-icon="letter"], .app-icon-wait) { color: var(--wip-nav-tile-letter); }
 html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { color: var(--wip-nav-mut); }
@@ -9560,6 +9564,11 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs .platform-tab:first-child,
   html:not([data-skin]) #platform-tabs #platform-tab-home { margin-inline-start: var(--wip-nav-tab-inset); }
   html:not([data-skin]) #platform-tabs #platform-tab-me { margin-inline-end: var(--wip-nav-tab-inset); }
+  /* ONE PILL, NOT TWO (phone review #106, 23 Nov 2026). The lit tab is its own sun fill here, and the sliding marker
+     behind it was drawn as well: a wider 16% white pill that showed as a pale ring round the yellow. The tab's fill
+     is the one drawn, as the side strip and the sidebar already do; the marker is still measured (tab-bar.tsx), so
+     its `data-marker-at` is set as before. */
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker { display: none; }
 }
 @media (min-width: 768px) {
   html:not([data-skin]) #platform-tabs {
@@ -9733,6 +9742,31 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     background: var(--wip-nav-bar-line);
     pointer-events: none;
   }
+  /* THE PAGE STARTS AT THE FOOT (phone review #68, 23 Nov 2026). The bar
+     overlapped the page by 8px (its `-mb-2`, the phone's "eats into the
+     app area" corner), and here the bar has no fill, so the page showed
+     through its last pixels: a card's rounded top stood above the line,
+     two lines at two heights. The page starts under the line instead.
+     The line ends where the screen does, or at an iPhone Duo's column of
+     system chrome, where it ran on under the clock. */
+  html:not([data-skin]) body #platform-header#platform-header { margin-bottom: 0; }
+  html:not([data-skin]):not([dir="rtl"])[data-side-strip="right"] body #platform-header#platform-header::after,
+  html:not([data-skin])[dir="rtl"][data-side-strip="left"] body #platform-header#platform-header::after {
+    inset-inline-end: var(--platform-strip-w, 0px);
+  }
+  /* …AND THE PAGE'S SIDES ARE THE LINE'S (#68). A project's page (its
+     Workshop, a request) kept the gutter beside the menu as padding on
+     #app-view, outside the box that clips it, so what the page holds was
+     cut 24px short of where the line and the page's rounded corner start.
+     The gutter moves inside that box: the content stands where it stood,
+     and the clip is the line's own span. Not a running app, which keeps
+     its frame's own rules. */
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #app-view[data-app-surface="platform"]:not(.hidden) {
+    padding-inline: var(--platform-rail-w, 0px) 0;
+  }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #app-view[data-app-surface="platform"] > #app-content {
+    padding-inline: var(--platform-gutter);
+  }
   /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
   /* THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026). Home and Communities
@@ -9810,7 +9844,21 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) { display: flex; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek).platform-tabs { padding-inline: var(--wip-nav-mini-pad); }
-  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x) { display: none; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x) { display: none; }
+  /* THE COUNTS STAY, ON THE GLYPH'S CORNER (phone review #81, 23 Nov 2026). Folded, the votes waiting on you were
+     dropped with the words, so turning an iPhone Duo sideways (where the menu starts folded) took the Communities
+     count away; and the unread count stood beside its glyph and pushed it off the column's centre. Both are the
+     phone bar's pill on the glyph's top-right corner now, the glyph left where the others are. The tab is the
+     anchor: the glyph's wrapper is dissolved from 768px. */
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-tab :is(.platform-tab-votes, .platform-tab-badge) {
+    position: absolute;
+    top: 3px;
+    inset-inline-start: calc(50% + 4px);
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab, .platform-rail-community, .platform-rail-settings, .platform-side-app) { justify-content: center; padding-inline: 0; gap: 0; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-row, .platform-side-app-row) { display: flex; justify-content: center; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-community, .platform-side-app) { flex: 1; }
@@ -9855,9 +9903,10 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
     color: inherit;
   }
-  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] .platform-tab-votes {
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] :is(.platform-tab-votes, .platform-tab-badge) {
     background: var(--wip-nav-count-bg);
     color: var(--wip-nav-count-ink);
+    box-shadow: 0 0 0 2px var(--wip-nav-bg);
   }
 }
 /* ON SETTINGS, SETTINGS IS LIT, NOT YOU (20 Nov 2026): one thing lit at a
@@ -11110,6 +11159,15 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   position: absolute;
   top: -2px;
   inset-inline-end: -2px;
+}
+/* NOT ON A PHONE (phone review S15, 23 Nov 2026). There the app you left is
+   already named by the Resume strip over the tab bar (or, on an iPhone Duo's
+   cover, the strip's Apps), and an unexplained grey dot on its Home tile said
+   the same thing a second time, with no legend. The tile keeps its words for
+   a screen reader ("…, still open"); the dot is the sidebar's mark, where the
+   App row's close control sits. */
+@media (max-width: 767.98px) {
+  #home-screen .app-card-live-dot { display: none; }
 }
 
 /* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────
@@ -26628,9 +26686,11 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    the five words together are wider than the bar, the longest end in an ellipsis instead of being printed over their
    neighbours. Only the word is cut: the tab itself stays unclipped, so the count on its glyph's corner is whole. Not the
    side strip, which stacks its tabs and has its own rules. */
+/* The lit pill is the tab's own box, so its word has the tab's side padding to the pill's edge: 8px, as Home and You
+   had to spare (phone review #106: "Communities" ran to within 4px of its sun). Below 375px the words need the room. */
 @media (max-width: 767.98px) {
   html:not([data-skin]):not([data-side-strip]) #platform-tabs { grid-template-columns: repeat(5, auto); }
-  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 5px; }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 8px; }
   html:not([data-skin]):not([data-side-strip]) #platform-tabs :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label { overflow: hidden; text-overflow: ellipsis; }
 }
 @media (max-width: 374.98px) {
@@ -26649,13 +26709,21 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 
    THE COMMUNITIES TAB IS DRAWN AGAIN (18 Nov 2026), on both bars. One Home
    (#6361) had hidden it here and kept your communities on Home; they are
-   its page's now (`#communities`, features/communities/). */
-@media (max-width: 767.98px) {
-  #platform-tab-home { order: -5; }
-  #platform-tab-workshop { order: -4; }
-  #platform-tab-ai { order: -3; }
-  #platform-tab-messages { order: -2; }
-}
+   its page's now (`#communities`, features/communities/).
+
+   …AND IT IS ONE ORDER ON EVERY LAYOUT (phone review #81, 23 Nov 2026).
+   The sidebar kept the markup's order, so an iPhone Duo turned sideways
+   (where the bar becomes the folded sidebar) moved Communities from second
+   to fourth, and a phone and a desktop disagreed. The sidebar is laid out
+   by the same four rules now: Home, Communities, Homeroom bot, Messages,
+   then Recents (the pinned and the recent, `order: 0`, still under their
+   heading) and you at the foot (the desktop block's `order: 1` to `3`).
+   The markup, and so the declared checks' sibling chain, is unchanged;
+   tab-bar.tsx hands screen readers and the Tab key the drawn order. */
+#platform-tab-home { order: -5; }
+#platform-tab-workshop { order: -4; }
+#platform-tab-ai { order: -3; }
+#platform-tab-messages { order: -2; }
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
    red disc as #notifications-badge, on the argument that two counts on one
@@ -26673,11 +26741,19 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    ink. The fill is `--text-faint`, the neutral ramp's lightest step, which
    is #8e8e93 in BOTH themes: a mid grey that reads as a mark on the light
    bar and on the dark one without competing with either. The desktop rail
-   moves the count off the glyph altogether (the desktop block below). */
+   moves the count off the glyph altogether (the desktop block below).
+
+   ANCHORED AT THE GLYPH'S RIGHT EDGE AND GROWING OUTWARD (phone review
+   #105, 23 Nov 2026). Its start sat 7 to 8px inside the 22px glyph, so a
+   second figure ("62") grew back over the icon and hid a third of it, and
+   the pill rose over the tab's own box. It starts at the glyph's right
+   edge now, as the vote count beside it does, a longer number only
+   reaching further out, and its top is the glyph's, inside the tab (the
+   lit pill's edge), its ring included. */
 .platform-tab-badge {
   position: absolute;
-  top: -3px;
-  inset-inline-start: calc(100% - 7px);
+  top: 0;
+  inset-inline-start: calc(100% - 1px);
   min-width: 1.1rem;
   height: 1.1rem;
   padding: 0 4px;
@@ -26699,7 +26775,7 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    its own: the ring that named the community it was on went when the tab
    became a plain door to its page (18 Nov 2026). */
 .platform-tab-votes {
-  position: absolute; top: -4px; inset-inline-start: calc(100% - 8px);
+  position: absolute; top: 0; inset-inline-start: calc(100% - 1px);
   min-width: 1.1rem; height: 1.1rem; padding: 0 4px; box-sizing: border-box;
   border-radius: 999px; background: var(--accent); color: #fff;
   font-size: 0.65rem; font-weight: 700; line-height: 1;
@@ -27017,6 +27093,22 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     width: 24px;
     height: 24px;
   }
+  /* THE COUNT STAYS INSIDE THE CAPSULE (phone review #73, 23 Nov 2026).
+     It kept the bottom bar's place, starting near the glyph's right edge
+     and growing outward, which in a 48px capsule is past its side: "62"
+     poked 7px out into the bare column. Here its END is pinned instead, on
+     the glyph's top-right corner a step inside the capsule's edge, and a
+     longer number grows inward over the corner, a size down from the bar's
+     so it stays on the corner. */
+  html[data-side-strip] .platform-tab :is(.platform-tab-badge, .platform-tab-votes) {
+    top: -5px;
+    inset-inline-start: auto;
+    inset-inline-end: -7px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
   /* The place you are on is the pill inside the capsule, filled from the
      bar's own lit tokens with their hairline, exactly as the phone's marker
      and the rail's lit row are. A community's page lights Communities, which
@@ -27042,6 +27134,22 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
   }
   html:not([data-skin])[data-side-strip] .platform-tab:not([aria-current="page"]) {
     color: var(--text-muted);
+  }
+  /* Its counts are the bar's one recipe, read for the capsule's plane: the
+     bar's white pill was white on the white capsule (#73), so on the light
+     plane the pill is the lit row's dark one, on the dark plane the white
+     one, and ringed in the plane it stands on. */
+  html:not([data-skin])[data-side-strip] #platform-tabs .platform-tab :is(.platform-tab-votes, .platform-tab-badge) {
+    background: var(--wip-nav-on-count-bg);
+    color: var(--wip-nav-on-count-ink);
+    box-shadow: 0 0 0 2px var(--dc-sheet-solid);
+  }
+  html:not([data-skin])[data-side-strip].dark #platform-tabs .platform-tab:not([aria-current="page"]) :is(.platform-tab-votes, .platform-tab-badge) {
+    background: var(--wip-nav-count-bg);
+    color: var(--wip-nav-count-ink);
+  }
+  html:not([data-skin])[data-side-strip] #platform-tabs .platform-tab[aria-current="page"] :is(.platform-tab-votes, .platform-tab-badge) {
+    box-shadow: 0 0 0 2px var(--wip-nav-on-bg);
   }
   /* The words are not drawn (the system's own side tabs have none), but the
      tab is still named by them: clipped to nothing rather than removed, so a
@@ -27111,11 +27219,16 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
   html[data-side-strip] .platform-side-app-row {
     position: relative;
   }
+  /* THE ✕ IS A BADGE ON THE DISC'S CORNER (phone review #136, 23 Nov 2026).
+     It was a bare 12px glyph floating off the disc's top-right, over the
+     wallpaper, attached to nothing. It is a 20px badge now, filled and
+     ringed in the disc's own plane, inside the disc's square at its corner,
+     the way iOS marks a removable item. */
   html[data-side-strip] .platform-side-app-x {
     position: absolute;
     z-index: 2;
-    top: -6px;
-    right: -8px;
+    top: 0;
+    right: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -27123,20 +27236,25 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     height: 20px;
     border: 0;
     border-radius: 999px;
-    background: transparent;
-    color: var(--text-muted);
+    background: var(--text-muted);
+    box-shadow: 0 0 0 2px var(--dc-sheet-solid);
+    color: var(--dc-sheet-solid);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  /* A FINGER'S TARGET, NOT A POINTER'S (overnight audit U02). The ✕ that
-     forgets an app was its 20px glyph box, perched on the tile's corner: it
-     is pressed as 32px now, out over the disc's corner, and drawn as
-     before. Above the app's own target (z-index 2), so a press near the
-     corner forgets rather than opens. */
+  html[data-side-strip] .platform-side-app-x > svg {
+    width: 12px;
+    height: 12px;
+    stroke-width: 2.5;
+  }
+  /* A FINGER'S TARGET, NOT A POINTER'S (overnight audit U02; 44px since the
+     phone review's #136). Pressed as 44px round the badge, drawn as 20.
+     Above the app's own target (z-index 2), so a press near the corner
+     forgets rather than opens. */
   html[data-side-strip] .platform-side-app-x::after {
     content: "";
     position: absolute;
-    inset: -6px;
+    inset: -12px;
   }
   html[data-side-strip] #platform-parked {
     display: none;
