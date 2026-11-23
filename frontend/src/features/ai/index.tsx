@@ -946,7 +946,10 @@ export function AiScreen(): ReactNode {
 
   // NEW CHAT (#6071 follow-up; 14 Nov 2026): a new chat with the bot, in the
   // column (../messages/new-thread.tsx), slid in on a phone.
+  // Whether the new chat in the column was put there by the page (below), not asked for.
+  const autoBlank = useRef(false);
   const openBlank = () => {
+    autoBlank.current = false;
     sidePanel()?.close?.();
     putAway();
     if (phone) setLevel(1);
@@ -974,6 +977,22 @@ export function AiScreen(): ReactNode {
     openBlank();
     startNewThread(botId, preset);
   };
+  // THE COLUMN IS NEVER EMPTY BESIDE THE LISTS (23 Nov 2026, #7039): from
+  // 768px, where the column is docked, a new chat is what it shows whenever
+  // nothing else is open there, as if New chat had been pressed. The page
+  // opens on it, and closing a thread or a page comes back to it. Nothing
+  // is made until the first message. A phone's list stays alone.
+  // `autoBlank` says this new chat was not asked for: a thread that arrives
+  // after it (a cold load on a thread's address, whose chat is learned
+  // late) takes the column from it, where one the person opened stays.
+  useEffect(() => {
+    if (!visible || !mounted || !docked || phone || !botId || column) return;
+    autoBlank.current = true;
+    startNewThread(botId, newChatPreset());
+  }, [visible, mounted, docked, phone, botId, column]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (blank && autoBlank.current && openRoot && !phone) { autoBlank.current = false; closeNewThread(); }
+  }, [blank, openRoot, phone]);
   // SEARCH (#6398, 6 Nov 2026): a round button beside the plus opens a box
   // under the heading, and every list narrows to the threads whose title,
   // number or project matches what it says (./lists.tsx). It starts closed
