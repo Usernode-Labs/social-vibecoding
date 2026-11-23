@@ -35,14 +35,23 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # loudly if the mirror would still ship anything older than 6.12.118-1
 # (audit of 23 Nov 2026), so a stale cached layer cannot quietly keep the
 # old package.
+# The four krb5 libraries are named for the same reason (audit of 23 Nov 2026:
+# 1.21.3-5+deb13u2 or later). The check below fails the build if the mirror
+# still ships anything older.
 ARG BASE_PACKAGES_REFRESHED=2026-11-23
 RUN echo "base packages refreshed: ${BASE_PACKAGES_REFRESHED}" \
   && apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ linux-libc-dev \
+    libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0 \
   && v="$(dpkg-query -W -f='${Version}' linux-libc-dev)" \
   && { dpkg --compare-versions "$v" ge 6.12.118-1 \
        || { echo "linux-libc-dev $v is older than 6.12.118-1" >&2; exit 1; }; } \
+  && for p in libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0; do \
+       v="$(dpkg-query -W -f='${Version}' "$p")"; \
+       dpkg --compare-versions "$v" ge 1.21.3-5+deb13u2 \
+         || { echo "$p $v is older than 1.21.3-5+deb13u2" >&2; exit 1; }; \
+     done \
   && rm -rf /var/lib/apt/lists/*
 
 # ── The shots browser's system font (#4087) ────────────────────────────
