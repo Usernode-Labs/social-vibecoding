@@ -309,9 +309,13 @@ test('the bot\'s row says what waits on you, and the heading counts what is unre
   assert.doesNotMatch(SCREEN, /loadBotWork\(\);\s*\}, POLL_MS\)/, 'no timer');
   assert.match(SCREEN, /preview=\{conversation\.homeroomBot \? botLine : null\}/);
   // #5393: a group's preview names its last sender ahead of this; the bot's
-  // own line (`preview`) still leads the fallback the DM rows draw.
-  assert.match(SCREEN, /: groupPreview \?\? \(ownDirection\(preview \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)\)/,
+  // own line still leads the fallback the DM rows draw. #44 (23 Nov 2026):
+  // the line is put together once, in rowPreview, which the row draws and
+  // the search reads.
+  assert.match(SCREEN, /return ownDirection\(botLine \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\);/,
     'its last message until then — the bot\'s own line first, then a group\'s sender-prefixed one');
+  assert.match(SCREEN, /<span className=\{`messages-row-preview \$\{invited \? 'messages-row-preview-invited' : ''\}`\}>\{rowPreview\(conversation, t, preview\)\}<\/span>/,
+    'the row draws that line');
   assert.throws(() => message('messages:inbox.section.working', { count: 1 }), 'no Agents heading to say "1 working"');
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
   assert.match(SCREEN, /const unreadAside = unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null;/,
@@ -336,10 +340,14 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   const row = SCREEN.slice(SCREEN.indexOf('const ConversationRow = memo('), SCREEN.indexOf('const GeneralChannelRow = memo('));
   assert.match(row, /conversation\.kind === 'group' && !invited\s*\? <GroupFaces conversation=\{conversation\} \/>/);
   assert.doesNotMatch(row.slice(row.indexOf('<UserAvatar')), /<GroupFaces/, 'the fallback tile is the old one');
-  // The preview names its last sender, the way #general's row already does.
-  assert.match(row, /const groupSender = conversation\.kind === 'group' && !invited\s*\? conversation\.latestMessage\?\.sender \|\| null\s*: null;/);
-  assert.match(row, /t\('messages:inbox\.previewYou', \{ message: ownDirection\(conversation\.latestSummary\) \}\)/, 'the viewer\'s own message reads "You: …"');
-  assert.match(row, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: ownDirection\(conversation\.latestSummary\) \}\)/, 'anyone else reads "@name: …"');
+  // The preview names its last sender, the way #general's row already does
+  // (rowPreview, which the search reads too since #44): an invitation has
+  // said it is one before the sender is looked at.
+  const preview = SCREEN.slice(SCREEN.indexOf('function rowPreview('), SCREEN.indexOf('const ConversationRow = memo('));
+  assert.ok(preview.indexOf("if (conversation.membershipStatus === 'invited') {") < preview.indexOf('const groupSender'), 'an invitation first');
+  assert.match(preview, /const groupSender = conversation\.kind === 'group' \? conversation\.latestMessage\?\.sender \|\| null : null;/);
+  assert.match(preview, /t\('messages:inbox\.previewYou', \{ message: ownDirection\(conversation\.latestSummary\) \}\)/, 'the viewer\'s own message reads "You: …"');
+  assert.match(preview, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: ownDirection\(conversation\.latestSummary\) \}\)/, 'anyone else reads "@name: …"');
   assert.equal(message('messages:inbox.previewYou', { message: 'hi' }), 'You: hi');
   assert.equal(message('messages:inbox.previewBy', { username: 'ada', message: 'hi' }), '@ada: hi');
   // The pair keeps the row's own geometry: a 44px box on the 74px inset.

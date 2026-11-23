@@ -850,11 +850,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    conversation" (desktop only — below 768px the list IS the screen until you
    pick a row) is the same words standing on the strip where the sheet would
    be, because a card there would read as a conversation with nothing in it. */
+/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
+.messages-guide { display: none; }
+/* A rule of its own (phone review, 23 Nov 2026, #44): written inside the list
+   below, it hid every state with it, and a search that found nothing left a
+   blank page. */
 .messages-state,
 .messages-empty,
 .messages-thread-empty,
-/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
-.messages-guide { display: none; }
 .messages-no-selection {
   display: flex;
   align-items: center;
@@ -12748,6 +12751,14 @@ html.un-kb #settings-content-col > .settings-sheet {
 @media (max-width: 1023px) {
   #settings-mobile-menu-host { padding: 4px 0 0; }
 }
+/* While "Find a setting" holds a query, the list is its results alone
+   (phone review, 23 Nov 2026, #61). The footer under the menu (the wallet
+   and node group of the phone app, then Sign out) is no page the search
+   reads, so it stood under the results as if it matched; Sign out is still
+   offered as a result when the words ask for it (settings-nav.tsx
+   matchesSignOut). settings.js moves the footer between the two columns, so
+   the rule follows it to whichever one holds the results. */
+:is(#settings-sidebar-col, #settings-content-col):has([data-settings-filter-results]) > #settings-footer { display: none; }
 
 /* ── The bell's sheet on the ladder ─────────────────────────────────────
    #notifications-sheet wears `.dc-lift dc-lift-panel` (features/notifications/

@@ -62,7 +62,7 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
   ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
-  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, WarningTriangleIcon, XIcon,
+  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, SearchIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -653,11 +653,17 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
 }
 
 export function AiLists({
-  hero, query = '', found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  hero, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
   picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
+  /**
+   * Empty the search box (phone review, 23 Nov 2026, #3): what the chip
+   * beside History's heading does, so a search that is narrowing History can
+   * be seen and ended there, with the box itself a long scroll above.
+   */
+  onQueryClear?: () => void;
   /**
    * #6398: what the page's search box says. The lists keep only the threads
    * whose title, number or project name contains it, upper and lower case
@@ -861,8 +867,30 @@ export function AiLists({
       {history && (!searching || historyLines.length) ? (
         <div ref={historyRef} className={`${PLANE} pb-2 scroll-mt-4`} data-ai-sheet="history">
           <section className="pb-1" data-ai-list="history">
-            <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-              <SectionHeader className="px-0 pt-0 pb-0">{t('messages:ai.history.title')}</SectionHeader>
+            <div className="mb-1 flex items-center gap-2 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
+              <SectionHeader className="shrink-0 px-0 pt-0 pb-0">{t('messages:ai.history.title')}</SectionHeader>
+              {/* #3 (phone review, 23 Nov 2026): History is searched like
+                  every list, and the search box is the page's first thing,
+                  far above this card. So while a search narrows it, the card
+                  says so beside its heading, with the way to end it. */}
+              {/* The chip idiom's selection (a filter is on: you are looking
+                  at a subset), but a press clears it, so it is no toggle. */}
+              {searching && onQueryClear ? (
+                <Chip
+                  size="bar"
+                  selected
+                  aria-pressed={undefined}
+                  className="-my-1.5 ms-auto h-8 min-w-0 max-w-[70%] gap-1.5 ps-2.5 pe-2 text-[13px] [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:shrink-0"
+                  aria-label={t('messages:ai.history.searching.clear', { query: query.trim() })}
+                  title={t('messages:ai.history.searching.clear', { query: query.trim() })}
+                  onClick={onQueryClear}
+                  data-ai-history-search=""
+                >
+                  <SearchIcon aria-hidden="true" />
+                  <span className="min-w-0 truncate">{t('messages:ai.history.searching.chip', { query: query.trim() })}</span>
+                  <XIcon aria-hidden="true" strokeWidth="2.25" />
+                </Chip>
+              ) : null}
             </div>
             <div role="group" aria-label={t('messages:ai.history.kind.label')} className="flex gap-1.5 overflow-x-auto px-4 pt-1.5 pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-ai-history-kinds="">
               <Chip size="bar" className={`h-8 px-3 text-[13px] ${CHIP_EDGE}`} selected={!historyKind} onClick={() => onHistoryKind?.(null)} data-ai-history-kind="all">

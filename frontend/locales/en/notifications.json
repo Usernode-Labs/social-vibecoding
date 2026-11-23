@@ -319,6 +319,10 @@
     "text": "Search notifications…",
     "description": "Placeholder and accessible name of the search field between the title and the filter buttons in the notifications sheet. It narrows the notifications, or the threads on the Recent threads filter, already loaded to those whose project, kind or subject matches."
   },
+  "sheet.search.clear": {
+    "text": "Clear search",
+    "description": "Name and tooltip of the small × button at the end of the search field in the notifications sheet, shown while the field holds text. It empties the field, so the whole list shows again."
+  },
   "sheet.search.noMatches": {
     "text": "No notifications match “{{query}}”.",
     "description": "Shown in the notifications sheet when a search over the loaded notifications finds nothing. {{query}} is the text typed into the search field."
