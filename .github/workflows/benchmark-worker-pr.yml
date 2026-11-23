@@ -1,0 +1,99 @@
+name: Benchmark worker PR reuse
+
+on:
+  push:
+    branches: [codex/exact-worker-pr-ci]
+    paths:
+      - .github/workflows/benchmark-worker-pr.yml
+      - .github/benchmarks/worker-pr-reuse.sh
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ${{ matrix.sample }} / ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sample: '7010'
+            mode: baseline
+            revision: '1918616c204f30096f61edca8adaf3652d733a13'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '7010'
+            mode: digest
+            revision: '1918616c204f30096f61edca8adaf3652d733a13'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '7010'
+            mode: layers
+            revision: '1918616c204f30096f61edca8adaf3652d733a13'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '7000'
+            mode: baseline
+            revision: '5cf79b6c993c3799ed65b1724d6842bf99df0087'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '7000'
+            mode: digest
+            revision: '5cf79b6c993c3799ed65b1724d6842bf99df0087'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '6999'
+            mode: baseline
+            revision: '0a42d7079ae170cb26b05270e62da2666e9e66f4'
+            base: '51e2e4bb1f1c6850734f8122f627eda488d41580'
+          - sample: '6999'
+            mode: digest
+            revision: '0a42d7079ae170cb26b05270e62da2666e9e66f4'
+            base: '51e2e4bb1f1c6850734f8122f627eda488d41580'
+          - sample: '7010'
+            mode: missing
+            revision: '1918616c204f30096f61edca8adaf3652d733a13'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '6993'
+            mode: changed
+            revision: '90b09da360b9534bacad84b1ac07a9112d732d2a'
+            base: '90b09da360b9534bacad84b1ac07a9112d732d2a'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select the recorded source revision
+        env:
+          SAMPLE_REVISION: ${{ matrix.revision }}
+        run: |
+          cp .github/benchmarks/worker-pr-reuse.sh "$RUNNER_TEMP/worker-pr-reuse.sh"
+          git fetch --no-tags --depth=1 origin "$SAMPLE_REVISION"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SAMPLE_REVISION"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Time acquisition, fresh inventory and full security checks
+        env:
+          BENCHMARK_MODE: ${{ matrix.mode }}
+          SECURITY_BASELINE_REVISION: ${{ matrix.base }}
+          SECURITY_SCAN_PLATFORM: linux/amd64
+          EXPERIMENT_IMAGE: ghcr.io/usernode-labs/social-vibecoding-worker@sha256:7b43ce7c94e87c36b5b2649a14ed57b4149db97ee1cd7839f814a9c3d5419b8d
+          EXPERIMENT_SOURCE: f00887ce6ca0b9ff16fb344cc9bf6543e2146c29
+        run: bash "$RUNNER_TEMP/worker-pr-reuse.sh"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-bench-${{ matrix.sample }}-${{ matrix.mode }}
+          path: ${{ runner.temp }}/worker-bench-result/
+          if-no-files-found: error
+          retention-days: 7
