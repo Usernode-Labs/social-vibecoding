@@ -2685,6 +2685,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // this reason, and its error lane runs it again. A Job the API refused
     // or lost, or a Pod that never started, is the platform's fault and says
     // so (check-pod-start.js), and so is a database that gave no connection.
+    if (dbRetry.handBackOnDrain(err)) {
+      // Its process drains (a release replaced it) and had no connection for
+      // it: not settled here. The work item's next claim, in the process
+      // that replaced this one, collects what its Jobs wrote or runs it
+      // again in the place in line it had (preview services checks.run).
+      traceStatus = 'handed_over';
+      throw err;
+    }
     traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
     if (dbRetry.isConnectionError(err)) return databaseBusyResult();
     const fault = require('./check-pod-start').checkStartFault(err);

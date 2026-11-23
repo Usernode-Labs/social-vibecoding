@@ -5,6 +5,7 @@
 // outside world (the copies, the worker). The decisions are the machine's.
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
+import { HandedBack } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { MACHINE, WORK, sessionKey } from './machine.ts';
 import { turnOwner } from '../rules/turn-stop.ts';
@@ -37,6 +38,18 @@ function failureOf(error: any): Json {
   };
 }
 
+// A step that could not get a database connection while its process drains
+// (a release replaced it, and it finishes its work on small pools) is not
+// failed: it is handed back (the kernel's HandedBack), so the process that
+// replaced this one claims it at once and carries it on, as it carries on a
+// step a stopping process left: the revision asked again, the copies from
+// their checkpoint (the images kept; what the attempt left removed first),
+// the agent's turn followed where its worker still runs it. Where the kernel
+// cannot hand it back (this process still claims), `otherwise` is reported,
+// the failure the step would have reported, a platform fault.
+const handBack = (error: unknown, otherwise: Json) => (legacy('services/db-retry').handBackOnDrain(error)
+  ? new HandedBack(error, otherwise) : null);
+
 export function shotsServices({ config, pool }: Deps): Record<string, WorkHandler> {
   return {
     // The exact before revision of the head (GitHub's merge base). Nothing
@@ -50,7 +63,10 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
         try {
           return await orchestrator().resolveRevision(pool, { sessionId: input.sessionId, headSha: input.head });
         } catch (error: any) {
-          return { failed: failureOf(error) };
+          const failed = { failed: failureOf(error) };
+          const back = handBack(error, failed);
+          if (back) throw back;
+          return failed;
         }
       },
     },
@@ -82,7 +98,10 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
           });
         } catch (error: any) {
           if (signal.aborted) throw error;
-          return { failed: failureOf(error) };
+          const failed = { failed: failureOf(error) };
+          const back = handBack(error, failed);
+          if (back) throw back;
+          return failed;
         }
       },
     },
@@ -114,7 +133,10 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
           return JSON.parse(JSON.stringify(out)) as Json;
         } catch (error: any) {
           if (signal.aborted || error?.stopped === true || error?.code === 'steps_stopped') throw error;
-          return { agent: { outcome: 'failed', ...(failureOf(error) as object) }, passed: false, skippedAny: false } as Json;
+          const failed = { agent: { outcome: 'failed', ...(failureOf(error) as object) }, passed: false, skippedAny: false } as Json;
+          const back = handBack(error, failed);
+          if (back) throw back;
+          return failed;
         }
       },
     },

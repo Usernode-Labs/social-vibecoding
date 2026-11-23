@@ -96,6 +96,18 @@ function isConnectionError(error, depth = 0) {
   return error.cause !== error && isConnectionError(error.cause, depth + 1);
 }
 
+// A release's replaced process finishes its work on small pools (server.js
+// shrinkPoolsForDrain: the main pool at DRAIN_DB_POOL_MAX, the workflow's at
+// DRAIN_WF_POOL_MAX, db-manager one operation at a time), so a step it still
+// runs can wait past DB_POOL_WAIT_MS for a connection. That is the drain,
+// not the work: such a step is handed to the process that replaced this one
+// (the workflow kernel's HandedBack), which carries it on as it carries on
+// any step a stopping process left, rather than recorded as a failure.
+// `draining` is lifecycle.isShuttingDown(): set from SIGTERM on.
+function handBackOnDrain(error, draining = require('./lifecycle').isShuttingDown()) {
+  return !!draining && isConnectionError(error);
+}
+
 // Run `fn(attempt)` until it settles, at most `attempts` times. Only an error
 // `retryable` accepts is tried again; `beforeRetry(error, attempt)` runs
 // before the pause (a step that clears what the conflict was about). The
@@ -131,5 +143,6 @@ module.exports = {
   isObjectInUse,
   isDbConflict,
   isConnectionError,
+  handBackOnDrain,
   withDbRetry,
 };

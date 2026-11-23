@@ -94,6 +94,17 @@ pins it). A staging preview and a docker-compose color keep the short drain:
 neither has a grace to spend. A node drain (`kubectl drain`) now waits for a
 platform Pod's drain too; pass `--grace-period` to cut it short.
 
+A draining process runs on small pools (`shrinkPoolsForDrain`), so a step
+it still finishes can wait past `DB_POOL_WAIT_MS` for a connection. That is
+the drain, not the step: a shots step or a checks run that meets it
+(`db-retry.handBackOnDrain`) throws the kernel's `HandedBack`, and a runtime
+that claims nothing more gives the item up as a stop does. The process that
+replaced this one claims it at once and carries it on: the copies from their
+checkpoint, the agent's turn where its worker still runs it, the checks run
+by collecting its Jobs or running again in the place in line it had. A
+runtime that still claims reports what the step would have said instead, a
+platform fault (23 Nov 2026).
+
 ## What a process leaves
 
 Nothing recovers work at an election: there is none. A work item whose
