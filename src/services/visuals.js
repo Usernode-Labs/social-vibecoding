@@ -1828,6 +1828,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   let closeProgress = () => {};
   // The early unit suite this run reads, when it does (below).
   let earlyUnitRunId = null;
+  let adoptedEarlyUnit = null;
+  const requiredPool = config.kubernetes?.checkNodePoolRequired === true;
   // The run's identity on the cluster (services/check-runs.js): the work
   // item claim's run id, which labels its Jobs, so the retry of the item can
   // find THIS run's Jobs and nobody else's (check-harvest.collectForWorkflow).
@@ -1887,9 +1889,28 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         manifest: { launched: false, trigger: trigger || null, debugRunId, startedAt: runStartedAt,
           workflow: true, runKey: workflow.runKey },
       };
-      const place = checksQueue.isEnabled()
-        ? await checksQueue.enqueue(pool, { ...provisional, queuedSince: workflow.queuedSince || null })
-        : null;
+      let place = null;
+      if (requiredPool && workflow.unitRunId && config.workerRuntime === 'kubernetes') {
+        // Transfer only once the whole suite exists; if the launcher is
+        // already gone or has written only some Jobs, it keeps its slot.
+        const jobs = await kubernetes.findCheckJobs(config, {
+          sessionId: session.id, previewRunId: workflow.unitRunId,
+        }).catch(() => null);
+        if (jobs?.unitSuites?.length >= (jobs?.unitShards || 1)) {
+          place = await checksQueue.takeEarlyUnitSlot(pool, {
+            ...provisional, earlyRunId: workflow.unitRunId,
+          });
+          if (place) {
+            adoptedEarlyUnit = workflow.unitRunId;
+            log.info('checks-queue', 'Adopted an early unit-suite slot', {
+              sessionId: session.id, commitSha: commitHash, runId, earlyRunId: adoptedEarlyUnit,
+            });
+          }
+        }
+      }
+      if (!place && checksQueue.isEnabled()) {
+        place = await checksQueue.enqueue(pool, { ...provisional, queuedSince: workflow.queuedSince || null });
+      }
       if (!place) await checkRuns.record(pool, provisional);
       stopHeartbeat = checkRuns.startHeartbeat(pool, runId);
       if (place) {
@@ -2355,7 +2376,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // The unit suite started with this attempt's build, when its Jobs are on
     // the cluster: read rather than run again. A deferred verdict runs no
     // suite; the attempt's retirement stops it.
-    earlyUnitRunId = !shotsOnly && workflow.unitRunId && config.workerRuntime === 'kubernetes'
+    earlyUnitRunId = !shotsOnly && adoptedEarlyUnit
+      ? adoptedEarlyUnit
+      : !shotsOnly && !requiredPool && workflow.unitRunId && config.workerRuntime === 'kubernetes'
       ? await kubernetes.findCheckJobs(config, { sessionId: session.id, previewRunId: workflow.unitRunId })
         .then((jobs) => ((jobs.unitSuites && jobs.unitSuites.length) || jobs.unitSuite ? workflow.unitRunId : null))
         .catch(() => null)
@@ -2413,7 +2436,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           build: buildProgressFromTimings(stagingResult && stagingResult.timings),
           captureShards,
           // Where a collect finds the unit suite when it is the early one.
-          ...(earlyUnitRunId ? { unitRunId: earlyUnitRunId } : {}),
+          ...((adoptedEarlyUnit || earlyUnitRunId) ? { unitRunId: adoptedEarlyUnit || earlyUnitRunId } : {}),
           // Or the pass it copied instead of running one: a collect stores
           // the same row, and looks for no unit-suite Job.
           ...(reusedUnit ? { unitReused: { row: reusedUnit.row, earned: reusedUnit.earned || null, snapshot: reusedUnit.snapshot } } : {}),
@@ -2454,7 +2477,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       ? unitSuite.collectUnitSuite({
         config, pool, appId: app.id, sessionId: session.id, previewRunId: earlyUnitRunId,
         onProgress: progress.observeUnit, signal: operation.signal,
-      }).then((outcome) => outcome || ownUnitSuite())
+      }).then(async (outcome) => {
+        if (outcome && (!adoptedEarlyUnit || !outcome.row?.couldNotRun)) return outcome;
+        // An unreadable early suite cannot share the slot with its fallback.
+        if (adoptedEarlyUnit) {
+          await kubernetes.cancelPreviewChecks(config, session.id, adoptedEarlyUnit, { includeEarly: true });
+        }
+        return ownUnitSuite();
+      })
       : ownUnitSuite()).catch((err) => {
       log.warn('visuals', 'Unit-suite check failed to run', {
         sessionId: session.id, err: err.message,
@@ -2671,13 +2701,26 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     stopHeartbeat();
     // A run that did not settle keeps its row: the retry of its work item
     // collects its Jobs by it, and the machine's cancel clears it.
-    if (harvestable && settledRun) await checkRuns.finish(pool, runId);
+    if (harvestable && settledRun) {
+      // Some capture paths (including shots-only) settle without reading
+      // the adopted suite. Keep accounting for its Pods until they stop.
+      try {
+        if (adoptedEarlyUnit) {
+          await kubernetes.cancelPreviewChecks(config, session.id, adoptedEarlyUnit, { includeEarly: true });
+        }
+        await checkRuns.finish(pool, runId);
+      } catch (err) {
+        log.warn('visuals', 'Keeping the checks slot until early unit Jobs stop or expire', { runId, err: err.message });
+      }
+    }
     // ...and so do its Jobs, once it settled: with the row gone nothing will
     // read them, and the Job TTL would hold the worker namespace's Job slots
     // for another hour. A run that ended any other way keeps its Jobs for
     // whoever cancels them, and the TTL.
     if (harvestable && settledRun) releaseCheckJobs(config, session.id, runId);
-    if (harvestable && settledRun && earlyUnitRunId) releaseCheckJobs(config, session.id, earlyUnitRunId);
+    if (harvestable && settledRun && (adoptedEarlyUnit || earlyUnitRunId)) {
+      releaseCheckJobs(config, session.id, adoptedEarlyUnit || earlyUnitRunId);
+    }
   }
 }
 

@@ -269,7 +269,7 @@ test('captureForSession waits for its slot after the preview is up and before an
   assert.ok(unit > wait && capture > wait, 'no Job exists, so no Job deadline runs, while it waits');
   assert.match(live, /if \(slot\.outcome === 'superseded'\) \{[\s\S]{0,300}traceStatus = 'superseded';\s+settledRun = true;\s+return \{ outcome: 'blocked', reason: /,
     'a superseded waiting run leaves with no verdict; its finally clears its row');
-  assert.match(live, /const place = checksQueue\.isEnabled\(\)\s+\? await checksQueue\.enqueue\(pool, \{ \.\.\.provisional, queuedSince: workflow\.queuedSince \|\| null \}\)\s+: null;\s+if \(!place\) await checkRuns\.record\(pool, provisional\);/,
+  assert.match(live, /if \(!place && checksQueue\.isEnabled\(\)\) \{\s+place = await checksQueue\.enqueue\(pool, \{ \.\.\.provisional, queuedSince: workflow\.queuedSince \|\| null \}\);\s+\}\s+if \(!place\) await checkRuns\.record\(pool, provisional\);/,
     'the queue row is the provisional manifest; without the queue it is written as before');
 });
 

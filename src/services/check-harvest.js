@@ -172,7 +172,12 @@ async function collectForWorkflow(config, pool, { runKey, session, app, signal }
   }
   // A suite that blocks merges and cannot be read is one only a fresh run
   // can judge.
+  const adoptedEarly = config.kubernetes?.checkNodePoolRequired && manifest.unitRunId;
+  if (adoptedEarly && !manifest.shotsOnly && (!unitOutcome || unitOutcome.row?.couldNotRun)) return null;
   if (!unitOutcome && !manifest.shotsOnly && graduated) return null;
+  if (adoptedEarly) {
+    await kubernetes.cancelPreviewChecks(config, sessionId, manifest.unitRunId, { includeEarly: true });
+  }
   // A capture Job that wrote nothing at all, or that its deadline did not
   // end, says nothing about the proposal. It is the
   // platform's fault, and spends none of the proposal's automatic retries.

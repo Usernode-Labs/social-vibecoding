@@ -689,14 +689,12 @@ images can still be reused. Existing work
 finishes under its original scheduling rules. Coding workers, apps and
 preview servers keep their existing placement.
 
-Required-pool mode also requires a positive checks-queue limit and disables
-speculative early unit suites (`EARLY_UNIT_SUITE=0`). The runtime enforces
-this even when an imported environment enables early suites. Every unit suite
-then runs after its build, within the admitted checks run, so the early
-launcher cannot race past the shared budget. This can lengthen proposal
-checks; it does not skip tests. Non-required mode keeps its existing early
-suite switch. Let previously started early Jobs finish before evaluating the
-new steady-state envelope.
+Required-pool mode requires a positive checks-queue limit. At most one
+unit suite can start during its preview build. It reserves a proposal slot
+only when the regular queue is empty and another shared slot will stay free.
+The checks run takes over that reservation when the full suite has launched.
+With no reservation, the suite starts through normal checks admission.
+`EARLY_UNIT_SUITE=0` disables early starts.
 
 In required mode, `config.checkPoolMetricsUrl` should name the existing
 Prometheus base URL. Export only the pool label with kube-state-metrics'
