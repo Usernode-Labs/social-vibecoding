@@ -111,7 +111,6 @@ import { Av as KitAv } from '@/components/ui/kit';
 import { NewMessageSheet } from './frame-new';
 import { MessagesFrameList, type FrameInboxRow } from './frame-list';
 import { INBOX_QUERY_MAX, buildInbox, savedInboxQuery, type AppDiscussion } from './inbox';
-import { ConversationRowSkeleton } from './list-skeleton';
 import { ChannelDrawer, CommunityRail, markRailReturn, useRailReturn } from './community-rail-view';
 import { RAIL_KEY, defaultRailPick, railEntries, savedRailPick } from './community-rail';
 import { useSidebarRows } from '../nav/sidebar-rows';
@@ -559,6 +558,48 @@ function inboxMatches(text: string | null | undefined, query: string): boolean {
 }
 
 /**
+ * The conversation list's loading state, at the ROW's own geometry.
+ *
+ * It was a spinner beside the words "Loading conversations…" — a fixed mark
+ * that says "busy, somewhere" over an empty pane. These say where the
+ * conversations are going and roughly how many, so the arriving rows land on
+ * their own outlines instead of replacing a centred line of grey text.
+ *
+ * The wrapper IS `.messages-conversation-row`, not an imitation of it: that
+ * class owns the 66px minimum height, the padding, the gap and the inset
+ * separator, all in app.css. Borrowing it means the placeholder cannot
+ * drift from the row the first time any of those move — and the separator
+ * between placeholders is drawn for free, which is most of what makes a list
+ * read as a list.
+ *
+ * Six, because the pane is taller than that on every phone and a list that
+ * stops halfway reads as a short list rather than a loading one.
+ */
+function ConversationRowSkeleton() {
+  const t = useMessages('messages');
+  return (
+    <SkeletonGroup label={t('messages:inbox.loading')}>
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="messages-conversation-row">
+          {/* The `lg` square UserAvatar's 44px box. */}
+          <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
+          <div className="min-w-0 flex-1">
+            {/* The name line, with the timestamp's short bar pushed right —
+                the real row's trailing <time>. */}
+            <div className="flex items-center gap-2">
+              <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
+              <Skeleton shape="muted" className="ms-auto w-8" />
+            </div>
+            {/* The preview line under it. */}
+            <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
+          </div>
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
+/**
  * #6508: the selector for one row's key (./inbox.ts), escaped where
  * `CSS.escape` exists (every browser that draws the shell) and quoted with
  * its own quotes and backslashes escaped where it does not, so no key can
@@ -874,18 +915,36 @@ function ConversationList({ drawer = false }: {
           ended went (16 Oct 2026): the sections' headings say which is
           which. */}
       <div className="messages-toolbar">
-        <div className="messages-search">
-          <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
-          <input
-            id="messages-search"
-            type="search"
-            className="messages-search-input"
-            placeholder={channelsView ? t('messages:drawer.searchPlaceholder') : t('messages:inbox.searchPlaceholder')}
-            aria-label={t('messages:inbox.searchLabel')}
-            value={channelsView ? channelQuery : query}
-            onChange={(e) => (channelsView ? setChannelQuery(e.currentTarget.value) : changeQuery(e.currentTarget.value))}
-          />
-        </div>
+        {/* #6992: the drawer has its OWN search, so a channel query never
+            replaces the remembered people search. Only one of the two fields
+            is drawn at a time, so both keep the id the checks select on. */}
+        {channelsView ? (
+          <div className="messages-search">
+            <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+            <input
+              id="messages-search"
+              type="search"
+              className="messages-search-input"
+              placeholder={t('messages:drawer.searchPlaceholder')}
+              aria-label={t('messages:inbox.searchLabel')}
+              value={channelQuery}
+              onChange={(e) => setChannelQuery(e.currentTarget.value)}
+            />
+          </div>
+        ) : (
+          <div className="messages-search">
+            <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+            <input
+              id="messages-search"
+              type="search"
+              className="messages-search-input"
+              placeholder={t('messages:inbox.searchPlaceholder')}
+              aria-label={t('messages:inbox.searchLabel')}
+              value={query}
+              onChange={(e) => changeQuery(e.currentTarget.value)}
+            />
+          </div>
+        )}
         <NewMessageButton />
       </div>
       {channelsView && railEntry ? <ChannelDrawer entry={railEntry} query={channelQuery} /> : (

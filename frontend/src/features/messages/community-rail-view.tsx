@@ -25,13 +25,13 @@
 import { Fragment, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 
 import { ChatIcon } from '@/components/ui/icons';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { useMessages } from '../../lib/i18n/react';
 import { AppIconContent } from '../apps/app-card-view';
 import { audienceLine, useCachedCommunity } from '../dev-board/workshop/community-card';
 import { openChannelHub } from './channel-hub';
 import { channelRows, railUnreadShown, type RailEntry } from './community-rail';
-import { ConversationRowSkeleton } from './list-skeleton';
 
 // ── Where an opened channel goes back to ──────────────────────────────
 
@@ -132,6 +132,29 @@ export function CommunityRail({ entries, pick, onPick }: {
 
 // ── The drawer ────────────────────────────────────────────────────────
 
+/**
+ * The drawer's loading state, at the CHANNEL row's own geometry. It is the
+ * same `.messages-conversation-row` wrapper the real row uses (the 66px
+ * height, the padding, the inset separator), with the 44px leading tile the
+ * channel's `#` sits in, so the rows land on their own outlines.
+ */
+function ChannelRowsSkeleton() {
+  const t = useMessages('messages');
+  return (
+    <SkeletonGroup label={t('messages:drawer.channels')}>
+      {Array.from({ length: 4 }, (_, i) => (
+        <div key={i} className="messages-conversation-row messages-channel-row">
+          <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
+          <div className="min-w-0 flex-1">
+            <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
+            <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
+          </div>
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
 export function ChannelDrawer({ entry, query }: { entry: RailEntry; query: string }): ReactNode {
   const t = useMessages('messages');
   const record = useCachedCommunity(entry.slug || '');
@@ -188,7 +211,7 @@ export function ChannelDrawer({ entry, query }: { entry: RailEntry; query: strin
             </div>
           </a>
         ))}
-        {loading ? <ConversationRowSkeleton /> : null}
+        {loading ? <ChannelRowsSkeleton /> : null}
       </div>
       {!rows.length && !loading
         ? <div className="messages-state"><p>{t('messages:drawer.noMatch', { query: query.trim() })}</p></div>
