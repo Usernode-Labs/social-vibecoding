@@ -3919,9 +3919,9 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), how much it works on at once (#3624), and who it works for: everyone let in, or verified accounts only (#6632)",
+      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), how much it works on at once (#3624), and who it works for: everyone let in, or verified accounts only (#6632), with the automatic switch to verified accounts at its two thresholds",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person):has(#admin-homeroom-bot-works-for #admin-homeroom-bot-works-for-everyone) #admin-homeroom-bot-intro",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person):has(#admin-homeroom-bot-works-for #admin-homeroom-bot-works-for-everyone):has(#admin-homeroom-bot-verified-auto #admin-homeroom-bot-verified-auto-on + span):has(#admin-homeroom-bot-verified-auto-users):has(#admin-homeroom-bot-verified-auto-spend) #admin-homeroom-bot-intro",
       "expectText": "acts on every app but the"
     },
     {
