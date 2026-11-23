@@ -166,7 +166,7 @@ const MEASURES = {
   PROPOSAL_ACCEPTED: {
     label: 'Got a proposal accepted',
     phrase: 'gets a proposal accepted',
-    summary: 'Had a proposal voted through and merged inside the window. Each one is graded on how useful the change is.',
+    summary: 'Had a proposal voted through and merged inside the window, as its author or as the person who filed a request it was built for. Each one is graded on how useful the change is.',
     unit: 'proposal',
     targetUnit: 'accepted proposals',
     counted: true,
@@ -379,9 +379,19 @@ function weekStartMs(ms) {
 // too for WINDOW_GRACE_MS after it closed, so a Sunday-night action is still
 // paid by the run that comes after midnight. Each is clipped to the
 // challenge's own window; a week wholly outside it is left out.
-function weeklyWindows(window, { now = Date.now(), graceMs = WINDOW_GRACE_MS } = {}) {
+//
+// `extraWeekStarts` adds weeks the caller names, once each, for a one-time
+// catch-up (#6986: the week of 16 Nov 2026, whose acceptances were credited
+// to the bot). A week already in the list, or one wholly outside the
+// challenge's window, adds nothing.
+function weeklyWindows(window, { now = Date.now(), graceMs = WINDOW_GRACE_MS, extraWeekStarts = [] } = {}) {
   const current = weekStartMs(now);
   const starts = now - current < graceMs ? [current - WEEK_MS, current] : [current];
+  for (const extra of extraWeekStarts) {
+    const start = Number(extra);
+    if (!Number.isFinite(start) || starts.includes(start)) continue;
+    starts.push(start);
+  }
   const out = [];
   for (const start of starts) {
     const end = start + WEEK_MS - 1;
@@ -545,6 +555,11 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
       activityAt: c.activityAt,
       timestampPrecision: c.timestampPrecision,
       description: c.description || null,
+      // How the person earned it, for a measure that credits more than one
+      // relationship to the same event (#6986's filer of a request beside the
+      // change's author). The ledger keeps it so a credit's row can say which
+      // one it is; null everywhere the candidate does not name one.
+      via: c.via || null,
       completion: !spec.counted && !weekly,
       needsGrade: spec.graded === true,
       gradeInput: c.gradeInput || null,

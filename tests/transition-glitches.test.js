@@ -296,7 +296,7 @@ test('Create\'s screen covers the page under the header in its own ground, and t
   // platform header's foot (#4195). Both are one opaque box, never a dialog card.
   assert.match(make, /export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
   assert.match(make, /export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-\[9000\] flex flex-col /);
-  assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
+  assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #fffeea\)' \}\}/);
   assert.doesNotMatch(APP_CSS, /#create-card|--create-modal-/);
 });
 

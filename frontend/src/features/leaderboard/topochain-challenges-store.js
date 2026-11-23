@@ -44,6 +44,11 @@ export const topochainChallengesStore = createStore({
   mounted: false,
   /** The #tc-se-grid descriptor (see gridView), or null before the first load. */
   grid: null,
+  /**
+   * The History tab's descriptor (see historyView), or null before the first
+   * load. Written wherever `grid` is, from the same `_mine` rows.
+   */
+  history: null,
   /** The detail page descriptor (see detailView), or null when it is closed. */
   detail: null,
 });

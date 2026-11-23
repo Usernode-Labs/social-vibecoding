@@ -49,9 +49,9 @@ function fakeDoc({ vt, wallpaper }) {
 }
 
 test('a starting transition carries the body’s wallpaper onto <html>', () => {
-  const { doc, props, compute } = fakeDoc({ vt: true, wallpaper: ' radial-gradient(red, blue) #f4f2e4 ' });
-  assert.equal(ground.syncTransitionGround(doc, compute), 'radial-gradient(red, blue) #f4f2e4');
-  assert.equal(props['--un-vt-ground'], 'radial-gradient(red, blue) #f4f2e4');
+  const { doc, props, compute } = fakeDoc({ vt: true, wallpaper: ' radial-gradient(red, blue) #fffeea ' });
+  assert.equal(ground.syncTransitionGround(doc, compute), 'radial-gradient(red, blue) #fffeea');
+  assert.equal(props['--un-vt-ground'], 'radial-gradient(red, blue) #fffeea');
 });
 
 test('a route with no wallpaper leaves the transition on the plain canvas', () => {

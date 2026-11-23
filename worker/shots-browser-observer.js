@@ -129,10 +129,24 @@ function savedScreenshotPath(text) {
   return match ? match[1] : null;
 }
 
+// The element an agent's screenshot was of: its `target` (Playwright MCP's
+// ref, `ref` in older versions) and its description. Null for a screenshot
+// of the screen, a full page, or a close-up.
+function elementShotTarget(args) {
+  if (!args || typeof args !== 'object' || args.fullPage === true || args.closeup) return null;
+  const target = typeof args.target === 'string' ? args.target : typeof args.ref === 'string' ? args.ref : '';
+  if (!target || target.length > 200) return null;
+  const element = typeof args.element === 'string' && args.element ? args.element.slice(0, 200) : 'element';
+  return { target, element };
+}
+
 function createObserver({
   persona, phone = false, origins, hints = {}, emit, now = () => performance.now(),
-  outputDir = null, provenance = boundary,
+  outputDir = null, provenance = boundary, onElementShot = null,
 }) {
+  // The element each screenshot call in flight was of, by request id: once
+  // its file is saved, `onElementShot` measures where that element is.
+  const elementShots = new Map();
   // What the shots bridge needs to publish only shots of the app: the site
   // each screenshot was taken on, and every site a recorded session showed.
   let pageUrl = null;
@@ -188,6 +202,10 @@ function createObserver({
         startedAt: now(),
       };
       active.set(JSON.stringify(message.id), call);
+      if (safeTool === 'browser_take_screenshot' && onElementShot && elementShots.size < 1000) {
+        const shot = elementShotTarget(message.params.arguments);
+        if (shot) elementShots.set(JSON.stringify(message.id), shot);
+      }
       const { startedAt: _privateTime, ...event } = call;
       emit({ kind: 'browser_call_start', ...event });
     },
@@ -200,6 +218,8 @@ function createObserver({
       const call = active.get(key);
       if (!call) return;
       active.delete(key);
+      const elementShot = elementShots.get(key) || null;
+      elementShots.delete(key);
       const { startedAt, ...event } = call;
       const shape = resultShape(message, bytes, truncated);
       emit({ kind: 'browser_call_end', ...event,
@@ -215,7 +235,17 @@ function createObserver({
         const succeeded = shape.outcome === 'ok' || (!message && truncated);
         if (call.tool === 'browser_take_screenshot' && succeeded) {
           const file = savedScreenshotPath(text);
-          if (insideOutput(file)) provenance.stampScreenshot(outputDir, path.resolve(file), pageUrl);
+          if (insideOutput(file)) {
+            const resolved = path.resolve(file);
+            // An element's screenshot is stamped as still being measured, and
+            // measured before anything else runs in this browser: the shots
+            // bridge waits for the box, and the card frames on it.
+            const sha256 = provenance.stampScreenshot(outputDir, resolved, pageUrl, { boxPending: !!elementShot });
+            if (elementShot) {
+              try { onElementShot({ name: path.basename(resolved), sha256, ...elementShot }); }
+              catch { /* no box: the platform finds the element in the screen shot instead */ }
+            }
+          }
         }
         if (call.tool === 'browser_close' && shape.outcome === 'ok') {
           // The session's clip is written as it closes: these are its pages.
@@ -255,6 +285,7 @@ function createObserver({
           durationMs: Math.max(0, Math.round(now() - startedAt)) });
       }
       active.clear();
+      elementShots.clear();
       emit({ kind: 'browser_server_exit', ...browser,
         outcome: code === 0 ? 'ok' : 'error',
         ...(Number.isInteger(code) ? { exitCode: code } : {}),
@@ -612,6 +643,64 @@ const CONTROL_LINE_MAX_BYTES = 4096;
 const DARK_SETTLE_SECONDS = 0.6;
 const CONTROL_ANSWER_MAX_CHARS = 200_000;
 
+// ── Where an element shot's element is ──────────────────────────────────
+//
+// The card frames a change on the element the agent shot for it (PR 6958:
+// framed on two unrelated strips of text instead of the top bar the claim
+// was about, because nothing said where the bar was and a plain 52 px strip
+// cannot be found by its pixels). So when an agent's screenshot of an
+// element succeeds, the observer asks the browser, through the same queue,
+// where that element is on the screen just shot, before any later call of
+// the agent's can move the page: its getBoundingClientRect on the visible
+// screen (the visual viewport, in the screen's points, as a close-up's
+// region is) and on the whole page (scroll added, for a full-page screen
+// shot). The answer goes into the screenshot's stamp; the agent sees none
+// of it. The text it looks for carries a nonce, so a page's own text never
+// passes for it.
+const ELEMENT_BOX_TIMEOUT_MS = 10_000;
+
+function elementBoxFunction(nonce) {
+  return `(element) => {
+  const r = element.getBoundingClientRect();
+  const v = window.visualViewport;
+  const s = v && v.scale > 0 ? v.scale : 1;
+  const ox = v ? v.offsetLeft : 0;
+  const oy = v ? v.offsetTop : 0;
+  const x0 = Math.floor((r.left - ox) * s); const y0 = Math.floor((r.top - oy) * s);
+  const x1 = Math.ceil((r.right - ox) * s); const y1 = Math.ceil((r.bottom - oy) * s);
+  const px = Math.floor(r.left + window.scrollX); const py = Math.floor(r.top + window.scrollY);
+  const pw = Math.ceil(r.left + window.scrollX + r.width) - px; const ph = Math.ceil(r.top + window.scrollY + r.height) - py;
+  return 'usernode-box-${nonce}:' + [x0, y0, x1 - x0, y1 - y0, px, py, pw, ph].join(',');
+}`;
+}
+
+function parseElementBox(text, nonce) {
+  if (!/^[0-9a-f]{8,32}$/.test(String(nonce || ''))) return null;
+  const match = new RegExp(`usernode-box-${nonce}:(-?\\d{1,6}(?:,-?\\d{1,6}){7})(?!\\d)`).exec(String(text || ''));
+  if (!match) return null;
+  const n = match[1].split(',').map(Number);
+  const box = { view: n.slice(0, 4), page: n.slice(4, 8) };
+  return boundary.validElementBox(box) ? box : null;
+}
+
+// Measures one element shot's element (`shot`: the file's name and digest,
+// the agent's target) and settles its stamp, with the box or without one.
+async function measureElement({ parker, outputDir, provenance = boundary, nonce, emit = () => {}, browser = {} }, shot) {
+  let box = null;
+  let outcome = 'not_measured';
+  try {
+    const answer = await parker.inject('browser_evaluate', {
+      element: shot.element || 'element', target: shot.target, function: elementBoxFunction(nonce),
+    }, { limitMs: ELEMENT_BOX_TIMEOUT_MS });
+    box = answer.outcome === 'ok' ? parseElementBox(answer.text, nonce) : null;
+    outcome = box ? 'ok' : answer.outcome === 'ok' ? 'unreadable' : answer.outcome;
+  } catch { outcome = 'failed'; }
+  try { if (outputDir) provenance.stampElementBox(outputDir, shot.name, shot.sha256, box); }
+  catch { /* a stamp left pending: the bridge stops waiting for it */ }
+  emit({ kind: 'element_box', ...browser, outcome });
+  return box;
+}
+
 function sameToken(value, expected) {
   if (typeof value !== 'string' || value.length !== expected.length) return false;
   return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(expected));
@@ -748,7 +837,17 @@ function start({ persona, phone = false, args, binary = null,
   const list = args || [];
   const outputAt = list.indexOf('--output-dir');
   const outputDir = outputAt >= 0 ? list[outputAt + 1] || null : null;
-  const observer = createObserver({ persona, phone, origins, hints, emit, outputDir });
+  const safePersona = ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member';
+  const parker = createPointerParker({
+    emit, persona: safePersona,
+    parkBeforeClose: recordsClips,
+  });
+  const boxNonce = crypto.randomBytes(8).toString('hex');
+  const measured = { parker, outputDir, nonce: boxNonce, emit, browser: { persona: safePersona, ...(phone === true ? { phone: true } : {}) } };
+  const observer = createObserver({
+    persona, phone, origins, hints, emit, outputDir,
+    onElementShot: (shot) => { measureElement(measured, shot).catch(() => {}); },
+  });
   const [command, ...prefix] = binary ? [binary] : browserCommand();
   // In the read-only samples directory: the server's workspace root
   // (--ignore-roots), so the only files a page can be handed are the samples
@@ -758,11 +857,6 @@ function start({ persona, phone = false, args, binary = null,
   });
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
   const inputTap = lineTap((line, meta) => observer.request(line, meta));
-  const safePersona = ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member';
-  const parker = createPointerParker({
-    emit, persona: safePersona,
-    parkBeforeClose: recordsClips,
-  });
   const control = startControl({
     dir: controlDir, name: `${safePersona}${phone === true ? '_phone' : ''}`, token: controlToken,
     samplesDir, parker, emit, browser: { persona: safePersona, ...(phone === true ? { phone: true } : {}) },
@@ -813,5 +907,5 @@ if (require.main === module) {
 
 module.exports = {
   MARKER, lineTap, createObserver, createPointerParker, startControl, closeupArgs, start, reportedPageUrl, savedScreenshotPath,
-  browserCommand, browserName,
+  browserCommand, browserName, elementShotTarget, elementBoxFunction, parseElementBox, measureElement,
 };

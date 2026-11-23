@@ -48,6 +48,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CreditList, type CreditView } from './challenge-credits';
+import { ChallengeHistory, type HistoryView } from './challenge-history';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { LockedChallengesCard, lockedHint, lockedTitle } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -191,6 +192,9 @@ type DetailView = {
   // #3650: the invite challenge's plain-language line under the rail, and
   // the per-person list of who the viewer invited and why each counts.
   invitesNote?: string | null;
+  // #6986: on the "Get a proposal accepted" challenge, what counts, under the
+  // rail: the viewer's own change, or one built for a request they filed.
+  proposalsNote?: string | null;
   invites?: {
     state: 'loading' | 'error' | 'ready';
     people?: { key: string; name: string; word: string; reason: string }[];
@@ -649,6 +653,9 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {/* #3650: what makes an invite count, in plain words, right under the
           rail that shows the count. */}
       {view.invitesNote ? <p className={PROSE}>{view.invitesNote}</p> : null}
+      {/* #6986: the same for an accepted proposal, whose count also comes
+          from a request the viewer filed that somebody else built. */}
+      {view.proposalsNote ? <p className={PROSE}>{view.proposalsNote}</p> : null}
       {/* #4036: the same for a feedback report, whose own project and
           scheduled, graded count are what a stuck rail is usually about. */}
       {view.feedbackNote ? <p className={PROSE}>{view.feedbackNote}</p> : null}
@@ -754,8 +761,14 @@ export function ChallengesPane(): ReactNode {
   const state = useStoreState(topochainChallengesStore) as {
     mounted: boolean;
     grid: GridView | null;
+    history: HistoryView | null;
     detail: DetailView | null;
   };
+  // #6967: the screen's third tab. Challenges and Standings keep the pane
+  // exactly as they had it; History replaces the standing card and the grid
+  // with its own list, in every look.
+  const { section } = useLeaderboardSection();
+  const onHistory = section === 'challenge-history';
 
   // A page is a level of the screen, so the screen's scroller is the page's:
   // it opens at its top, and going back up returns the grid to where it was
@@ -809,15 +822,26 @@ export function ChallengesPane(): ReactNode {
   return (
     <>
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
-        {/*
-            The viewer's own standing leads the tab, as the prototype's
-            Challenges page does — the rank, the people it is among and the
-            token allocation the Me screen used to carry (./your-standing.tsx).
-            It is inside the grid so a challenge's page hides it too.
-        */}
-        {frame ? <ChallengesInFrame grid={state.grid} up={!state.detail} /> : null}
-        <YourStanding />
-        <Grid view={state.grid} />
+        {onHistory ? (
+          /*
+              #6967: the History tab, in both the standard and the frame
+              looks — the same cards either way. It takes the grid's place,
+              so the standing card and the challenge cards step aside.
+          */
+          <ChallengeHistory view={state.history} />
+        ) : (
+          <>
+            {/*
+                The viewer's own standing leads the tab, as the prototype's
+                Challenges page does — the rank, the people it is among and the
+                token allocation the Me screen used to carry (./your-standing.tsx).
+                It is inside the grid so a challenge's page hides it too.
+            */}
+            {frame ? <ChallengesInFrame grid={state.grid} up={!state.detail} /> : null}
+            <YourStanding />
+            <Grid view={state.grid} />
+          </>
+        )}
       </div>
       {/* Challenge detail page */}
       <div

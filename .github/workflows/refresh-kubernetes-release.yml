@@ -32,8 +32,8 @@ jobs:
             --jq 'any(.jobs[]; .name == "Publish atomic Helm release" and any(.steps[]; .name == "Publish OCI Helm release" and .conclusion == "success"))')"
           echo "published=$published" >> "$GITHUB_OUTPUT"
 
-      # A hard refresh bypasses Argo's cached lookup of the stable 0.1.* tag.
-      # Automated sync and periodic reconciliation still belong to Argo CD.
+      # Avoid a second comparison if Argo is already syncing the release.
+      # Argo records a chart version for Helm sources and a digest for OCI.
       - name: Ask Argo CD to refresh the release
         if: steps.chart.outputs.published == 'true'
         continue-on-error: true
@@ -41,16 +41,108 @@ jobs:
           ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
           ARGOCD_SERVER: argocd.platform.beta.usernodelabs.org
           ARGOCD_APPLICATION: social-vibecoding-platform
+          RELEASE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RELEASE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
         run: |
           [ -n "$ARGOCD_REFRESH_TOKEN" ] || exit 0
+          # The build names each immutable chart by its release run and attempt.
+          chart_version="0.1.$((RELEASE_RUN_NUMBER * 1000 + RELEASE_ATTEMPT))"
+          application_url="https://${ARGOCD_SERVER}/api/v1/applications/${ARGOCD_APPLICATION}"
+          application="$(curl --silent --fail --max-time 5 \
+            --header "Authorization: Bearer ${ARGOCD_REFRESH_TOKEN}" \
+            "$application_url" || true)"
+          active_revision="$(jq -er '
+            .status.operationState as $operation
+            | select($operation.phase == "Running" or $operation.phase == "Succeeded")
+            | ($operation.operation.sync.revisions[0] // $operation.syncResult.revisions[0] // empty)
+          ' 2>/dev/null <<< "$application" || true)"
+          if [ "$active_revision" = "$chart_version" ]; then
+            echo "Argo CD already started syncing chart ${chart_version}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          chart_repo="${REGISTRY_OWNER,,}/charts/social-vibecoding-platform"
+          if [[ "$active_revision" =~ ^sha256:[a-f0-9]{64}$ ]] && jq -e --arg url "oci://ghcr.io/$chart_repo" '
+            .spec.sources[0] | .repoURL == $url and .targetRevision == "release"
+          ' >/dev/null 2>&1 <<< "$application"; then
+            # An earlier workflow can finish refreshing after a newer release
+            # advances the tag. Compare with the digest Argo should serve now.
+            token="$(curl -fsS --max-time 5 --get --data-urlencode "scope=repository:$chart_repo:pull" \
+              'https://ghcr.io/token?service=ghcr.io' | jq -er '.token // empty' || true)"
+            if [ -n "$token" ]; then
+              desired_digest="$(curl -fsSI --max-time 5 --header "Authorization: Bearer $token" \
+                --header 'Cache-Control: no-cache' --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
+                "https://ghcr.io/v2/$chart_repo/manifests/release" \
+                | awk 'tolower($1) == "docker-content-digest:" { sub(/\r$/, "", $2); print $2 }' || true)"
+              if [ "$active_revision" = "$desired_digest" ]; then
+                echo "Argo CD already started syncing OCI release ${desired_digest}." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
+          fi
+
+          started="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "Hard refresh requested at ${started}."
           status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --max-time 120 \
             --header "Authorization: Bearer ${ARGOCD_REFRESH_TOKEN}" \
-            "https://${ARGOCD_SERVER}/api/v1/applications/${ARGOCD_APPLICATION}?refresh=hard")" \
+            "${application_url}?refresh=hard")" \
             || status="curl exit $?"
+          finished="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "Hard refresh from ${started} to ${finished} (${status})." | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$status" = "200" ]; then
             echo "Argo CD re-read the chart registry and compared ${ARGOCD_APPLICATION}." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "::warning title=Argo CD refresh not confirmed::${ARGOCD_APPLICATION} returned '${status}'. Periodic reconciliation will pick up the chart. See the infra runbook for token configuration."
           exit 1
+
+  # Keep polling off the refresh job as well as off the publication path.
+  observe:
+    name: Observe Kubernetes rollout timings
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_repository.full_name == github.repository
+          && github.event.workflow_run.path == '.github/workflows/build-kubernetes-images.yml'
+          && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Find the promotion time for this attempt
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          completed_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "Publish atomic Helm release" and .conclusion == "success") | .steps[] | select(.name == "Promote OCI release tag" and .conclusion == "success") | .completed_at // empty')"
+          echo "completed_at=$completed_at" >> "$GITHUB_OUTPUT"
+
+      # The observer is from the trusted workflow revision. It never
+      # executes code from the triggering run or consumes its artifacts.
+      - uses: actions/checkout@v6
+        if: steps.promotion.outputs.completed_at != ''
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/observe-kubernetes-rollout.js
+            scripts/promote-kubernetes-chart.js
+          sparse-checkout-cone-mode: false
+
+      - name: Measure Argo sync, migration and live traffic
+        if: steps.promotion.outputs.completed_at != ''
+        env:
+          ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RELEASE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PROMOTED_AT: ${{ steps.promotion.outputs.completed_at }}
+        run: node scripts/observe-kubernetes-rollout.js

@@ -155,6 +155,16 @@ function minutesSince(value, now) {
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
+// The day the bot's budget week turns, by name: the next week boundary
+// after `now` (weeks start on Monday 00:00 UTC, as services/limits.js
+// weeklyResetAt and a managed key's weekly reset have it), in UTC, because a
+// push has no reader's time zone to say it in.
+function weekTurnDay(now) {
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const ahead = (8 - day.getUTCDay()) % 7;
+  day.setUTCDate(day.getUTCDate() + (ahead === 0 ? 7 : ahead));
+  return new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(day);
+}
 // Whole MiB as GiB, one decimal under ten (the capacity limits' figures).
 function gib(mib) {
   const n = Number(mib) / 1024;
@@ -166,7 +176,7 @@ const QUOTA_ROLES = Object.freeze({
   quota_workers: { name: 'workers', full: 'new coding sessions and checks wait until some finish or the quota is raised', warn: 'new coding sessions and checks wait' },
   quota_builds: { name: 'builds', full: 'new image builds fail until old ones are cleared or the quota is raised', warn: 'new image builds fail' },
 });
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|bot_budget|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 // #6901: "apps_away:<people>:<cap>:<ago>", platform-limit-alerts.js
 // refusalToken. ago is the minutes from the run's start to the notice; 0 is
 // "someone was just turned away".
@@ -197,10 +207,12 @@ function platformIncidentCopy(detail) {
       body: 'Homeroom bot paused building. It starts again by itself once credit is added',
     };
   }
+  // The OpenRouter ACCOUNT's credit, and how long it lasts at the rate it
+  // has been going down (0: no estimate yet).
   const credit = INCIDENT_CREDIT_RE.exec(detail);
   if (credit) {
     const [, , threshold, balance, days] = credit;
-    const about = Number(days) > 0 ? `, about ${days} days at this week's rate` : '';
+    const about = Number(days) > 0 ? `, about ${days} day${Number(days) === 1 ? '' : 's'} at the recent rate` : '';
     return {
       title: `OpenRouter credit is below $${Number(threshold).toLocaleString('en-US')}`,
       body: `$${Number(balance).toLocaleString('en-US')} left${about}. Add credit before Homeroom bot stops building`,
@@ -289,6 +301,19 @@ function platformLimitCopy(detail) {
         body: `All ${cap} of this hour's GitHub App requests are used. It resets within the hour` }
       : { title: 'GitHub App requests running low',
         body: `${used} of ${cap} GitHub App requests used this hour` };
+  }
+  // Homeroom bot's weekly budget, in cents (services/openrouter-credit.js
+  // budget). Its week turns with Homeroom's own and its key's weekly reset.
+  // The bot's key also pays for before and after screenshots, Sync with main
+  // and apps' AI features (openrouter-messages.js), so they stop with it.
+  if (limit === 'bot_budget') {
+    const money = (cents) => `$${Math.round(Number(cents) / 100).toLocaleString('en-US')}`;
+    const day = weekTurnDay(new Date());
+    return level === 'full'
+      ? { title: 'Homeroom bot\'s weekly budget is used up',
+        body: `Building, screenshots, sync with main and apps' AI features have stopped. They start again on ${day}, or once the budget is raised` }
+      : { title: `Homeroom bot's weekly budget is ${Math.floor((Number(used) / Math.max(1, Number(cap))) * 100)}% used`,
+        body: `${money(used)} of ${money(cap)} used. At ${money(cap)} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until ${day}` };
   }
   // The cluster's own ceilings (services/platform-capacity.js): volumes in
   // MiB, a quota's tightest resource in thousandths of its hard value.

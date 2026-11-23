@@ -2272,6 +2272,8 @@ function botMessageSummary(meta) {
   if (typeof meta.html === 'string' && meta.html) out.htmlChars = meta.html.length;
   const version = positiveId(meta.designVersion);
   if (version) out.designVersion = version;
+  // K (20 Nov 2026): which of the thread's artifacts, when it is a later one.
+  if (version && positiveId(meta.artifactId) > 1) out.artifactId = positiveId(meta.artifactId);
   if (typeof meta.designTitle === 'string' && meta.designTitle.trim()) {
     out.designTitle = untrusted(meta.designTitle, MAX_TITLE_CHARS);
   }
@@ -2336,6 +2338,7 @@ function shapeBotThreadMessage(m, viewerId) {
   const bot = sender.bot && meta ? botMessageSummary(meta.homeroomBot) : null;
   const pin = !sender.bot && meta && meta.designPin && typeof meta.designPin === 'object'
     ? positiveId(meta.designPin.version) : null;
+  const pinnedOn = pin ? positiveId(meta.designPin.artifactId) : null;
   const name = sender.bot ? (sender.displayName || sender.username) : sender.username;
   return {
     id: Number(row.id),
@@ -2363,8 +2366,9 @@ function shapeBotThreadMessage(m, viewerId) {
       })),
     cards: hidden ? [] : (Array.isArray(row.objects) ? row.objects : []).map(shapeBotThreadCard),
     ...(bot ? { bot } : {}),
-    // A comment pinned on a design's preview: the version it was pinned on.
-    ...(pin ? { designPin: { version: pin } } : {}),
+    // A comment pinned on a design's preview: the version it was pinned on,
+    // and (K, 20 Nov 2026) the artifact of the thread when it is a later one.
+    ...(pin ? { designPin: { version: pin, ...(pinnedOn > 1 ? { artifactId: pinnedOn } : {}) } } : {}),
   };
 }
 
@@ -6117,7 +6121,7 @@ function registerTools(server, ctx) {
   // credential in it, nothing the receiving agent has to look up.
   server.registerTool('prepare_work', {
     title: 'Prepare a change for a coding agent',
-    description: "Prepare a change to a Homeroom app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch (or a patch: your call, never the user's) — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` (the human's next steps) in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten, tidy or correct it, or retype the branch name or commit id: one wrong character breaks it. The work order names the repository, the branch and the exact commit to start from. For an app on GitHub it makes the fork itself (Homeroom has NO write access to the user's GitHub account); for one on Homeroom's git host (`forkStatus` not_needed) it clones the public `cloneUrl` and the change comes back as a patch, no fork. Pass `proposalId` to REVISE a proposal already up for a vote instead of opening a new one: the work order then starts at its head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. An app on GitHub requires a linked GitHub account (identity only). This spends the user's own coding-agent subscription, not their Homeroom credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
+    description: "Prepare a change to a Homeroom app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch (or a patch: your call, never the user's) — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` (the human's next steps) in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten, tidy or correct it, or retype the branch name or commit id: one wrong character breaks it. The work order names the repository, the branch and the exact commit to start from. For GitHub apps it prepares a fork. For Homeroom-hosted apps it supplies a clone URL or private download and accepts a patch. Pass `proposalId` to REVISE a proposal already up for a vote instead of opening a new one: the work order then starts at its head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. An app on GitHub requires a linked GitHub account (identity only). This spends the user's own coding-agent subscription, not their Homeroom credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()

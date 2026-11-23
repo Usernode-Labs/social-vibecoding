@@ -15,6 +15,7 @@ import { placeUnderAnchor } from '../../lib/anchor-popover';
 import { currentDirection } from '../../lib/i18n/direction';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { menuItems, roveMenuFocus } from '../../lib/menu-keys';
+import { isTopSurface } from '../../lib/open-surfaces';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { AppsSwitcherSheet } from './app-context-sheet';
@@ -228,6 +229,10 @@ export function AppContextIsland() {
       }
     }
     const onKey = (event: KeyboardEvent) => {
+      // #6981: a panel opened over the menu owns Escape. The welcome tour is
+      // the one that may sit above it with the menu still up, and its own
+      // listener asks whether to skip; one press must not close both.
+      if (event.key === 'Escape' && !isTopSurface('apps-switcher-sheet')) return;
       if (AppContext._sheet) {
         if (kitSheetTakesEscape(event, document, 'apps-switcher-sheet')) void AppContext.close();
         return;

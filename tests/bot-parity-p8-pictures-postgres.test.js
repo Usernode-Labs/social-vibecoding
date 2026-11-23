@@ -17,7 +17,7 @@
 //      called.
 //   3. A gallery's taps: Use it in the app (a screenshot a request can
 //      carry), Propose as the featured picture (the card picture's vote),
-//      Add to the design (the design thread's pictures, in the designer's
+//      Add to the artifact (the design thread's pictures, in the designer's
 //      next prompt).
 //   4. A build's picture is billed to whoever pays for the build; a build
 //      nobody pays for makes none.
@@ -106,7 +106,7 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     deps: { openMcp: async () => null, ...turnDeps, threadRootId: held.rootId, threadDesign: held },
   });
   const section = (messages) => (messages || [])
-    .filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S DESIGN'))
+    .filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S ARTIFACT'))
     .map((m) => m.content).join('\n');
 
   async function user(username, { synthetic = false } = {}) {

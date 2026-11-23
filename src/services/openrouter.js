@@ -37,6 +37,21 @@ const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
 const MAX_IGNORED_PROVIDERS = 8;
 
+// 20 Nov 2026 (live-draft review, E): one web search, run by OpenRouter
+// before the model answers (its `web` plugin), for Homeroom bot's
+// web_search tool (bot-web-search.js). A caller asks for it by `webSearch`
+// and never hands in a plugin of its own. Exa is named so the fee is known
+// (OpenRouter's fallback engine for a model with no search of its own, as
+// the chat's are): about $0.005 to $0.007 a search for up to ten results,
+// on the request's usage.cost. Each result comes back as a `url_citation`
+// annotation on the message (`citations` below).
+const WEB_SEARCH_ENGINE = 'exa';
+const MAX_WEB_RESULTS = 10;
+const MAX_CITATIONS = 20;
+const MAX_CITATION_URL_CHARS = 2048;
+const MAX_CITATION_TITLE_CHARS = 300;
+const MAX_CITATION_CONTENT_CHARS = 2000;
+
 class OpenRouterProviderError extends Error {
   constructor(code, message, {
     status = null,
@@ -120,6 +135,7 @@ function buildRequest({
   parallelToolCalls = null,
   toolChoice = 'auto',
   ignoreProviders = null,
+  webSearch = null,
 }) {
   const copiedTools = jsonArray(tools, 'tools', MAX_TOOLS);
   const availableToolNames = new Set(copiedTools.map((tool) => tool?.function?.name).filter(Boolean));
@@ -183,6 +199,13 @@ function buildRequest({
   const ignore = [...new Set((Array.isArray(ignoreProviders) ? ignoreProviders : [])
     .map(providerSlug).filter(Boolean))].slice(0, MAX_IGNORED_PROVIDERS);
   if (ignore.length) request.provider = noTrainingProvider({ ...request.provider, ignore });
+  if (webSearch) {
+    request.plugins = [{
+      id: 'web',
+      engine: WEB_SEARCH_ENGINE,
+      max_results: boundedInteger(webSearch.maxResults, 5, 1, MAX_WEB_RESULTS, 'webSearch.maxResults'),
+    }];
+  }
   if (temperature != null) {
     request.temperature = boundedNumber(temperature, 0.1, 0, 2, 'temperature');
   }
@@ -241,6 +264,26 @@ function contentDelta(value) {
     if (part && typeof part.text === 'string') return part.text;
     return '';
   }).join('');
+}
+
+/**
+ * Pure: a message's `url_citation` annotations (a web search's results) as
+ * { url, title, content }, http(s) only, bounded, each address once. A
+ * citation is what a web page says: its caller reads it as untrusted.
+ */
+function citationsOf(annotations) {
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(annotations) ? annotations : []) {
+    if (out.length >= MAX_CITATIONS) break;
+    const cite = item && item.type === 'url_citation' ? (item.url_citation || item) : null;
+    const url = typeof cite?.url === 'string' ? cite.url.trim() : '';
+    if (!url || url.length > MAX_CITATION_URL_CHARS || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    const text = (value, max) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+    out.push({ url, title: text(cite.title, MAX_CITATION_TITLE_CHARS), content: text(cite.content, MAX_CITATION_CONTENT_CHARS) });
+  }
+  return out;
 }
 
 function appendToolCall(map, raw) {
@@ -332,6 +375,7 @@ async function readEventStream(body, { startedAt, state, onDelta }) {
   const decoder = new TextDecoder('utf-8');
   const out = { id: null, model: null, provider: null, usage: null, error: null, finish: null };
   const toolCalls = new Map();
+  const annotations = [];
   let content = '';
   let buffer = '';
   let bytes = 0;
@@ -360,6 +404,10 @@ async function readEventStream(body, { startedAt, state, onDelta }) {
     if (piece) {
       content += piece;
       if (content.length > MAX_CONTENT_CHARS) throw tooLarge();
+    }
+    // A web search's results (citationsOf), as they arrive.
+    if (Array.isArray(delta.annotations) && annotations.length < MAX_CITATIONS) {
+      annotations.push(...delta.annotations.slice(0, MAX_CITATIONS - annotations.length));
     }
     for (const call of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
       // A provider that repeats a call's id or name on every delta (rather
@@ -413,6 +461,7 @@ async function readEventStream(body, { startedAt, state, onDelta }) {
         role: 'assistant',
         content,
         tool_calls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call),
+        ...(annotations.length ? { annotations } : {}),
       },
     }],
     usage: out.usage,
@@ -585,6 +634,9 @@ async function streamChat({
       .sort(([left], [right]) => left - right)
       .map(([, call]) => call);
     const finishReason = choice?.finish_reason || null;
+    // 20 Nov 2026 (live-draft review, E): a web search's results, when the
+    // request asked for one (webSearch).
+    const citations = citationsOf(message.annotations);
 
     // A missing terminal reason or a length cutoff is incomplete and must
     // never be accepted as a partial action. Distinguish output exhaustion so
@@ -616,6 +668,7 @@ async function streamChat({
         content: content || null,
         ...(orderedToolCalls.length ? { tool_calls: orderedToolCalls } : {}),
       },
+      ...(citations.length ? { citations } : {}),
       usage: usageFrom(completion.usage),
       timings: timingSnapshot(startedAt, timingState),
     };
@@ -650,6 +703,7 @@ module.exports = {
   reasoningEffort,
   buildRequest,
   providerSlug,
+  citationsOf,
   usageFrom,
   retryAfterMs,
   streamChat,

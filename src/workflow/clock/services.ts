@@ -385,6 +385,11 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/repo-privacy-audit').audit(pool, { shouldStop: stopped(ctx) }),
   },
   {
+    name: 'project-repo-visibility', everyMs: 5 * MIN, leaseMs: 5 * MIN,
+    newestOnly: true,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/project-repo-visibility').sweep(pool, { shouldStop: stopped(ctx) }),
+  },
+  {
     // #5634: the compliance report's scan, every
     // COMPLIANCE_SCAN_INTERVAL_DAYS (a week by default), and an admin's
     // Scan now: each check's result kept as one more scan, one GitHub read
@@ -873,7 +878,9 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // Each native proposal up for a vote: one merged by hand on GitHub is
-    // recorded.
+    // recorded. The GitHub webhook (routes/github-webhook.js) is the fast
+    // path, running the same look the moment the delivery arrives; this
+    // six-hourly run is the fallback for a delivery that never came.
     name: 'merged-by-hand', everyMs: 6 * HOUR,
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR)),
     item: {

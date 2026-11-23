@@ -185,8 +185,8 @@ test('the manifest is the app\'s own, with the PNG icon\'s real size, read once 
     assert.equal(manifest.name, 'Tom & Jerry <3');
     assert.equal(manifest.short_name, 'Tom & Jerry <3');
     assert.equal(manifest.description, 'Keeps recipes.');
-    assert.equal(manifest.background_color, '#f4f2e4');
-    assert.equal(manifest.theme_color, '#f4f2e4');
+    assert.equal(manifest.background_color, '#fffeea');
+    assert.equal(manifest.theme_color, '#fffeea');
     assert.deepEqual(manifest.icons, [
       { src: `/app-icons/${ICON_ID}`, sizes: '384x384', type: 'image/png', purpose: 'any' },
     ]);

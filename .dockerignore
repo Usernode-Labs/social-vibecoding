@@ -8,9 +8,9 @@ node_modules
 runtime
 public/index.html
 public/css/tailwind.css
-public/shell/assets/
-public/shell/release.json
-public/shell/worker.js
+# The shell build's output folder: the image's shell stage makes it and the
+# runtime stage copies /build/public/shell/assets/ from there.
+public/shell/
 public/locales/
 frontend/src/lib/i18n/catalogs.generated.json
 public.precompressed/

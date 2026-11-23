@@ -587,9 +587,11 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
   const turnFailure = require('./bot-turn-failure');
   const sortTurn = () => turnFailure.sort({ code: turn.routed?.error || null, turn: result });
   const outOfCredit = async () => {
-    await (deps.credit?.noteOutage ? deps.credit : require('./openrouter-credit'))
+    const noted = await (deps.credit?.noteOutage ? deps.credit : require('./openrouter-credit'))
       .noteOutage(pool, { words: 'an update of a change met OpenRouter\'s 402 for credit' }).catch(() => null);
-    return { ok: false, code: 'credit', error: CREDIT_WHY, costUsd, model };
+    // Which figure ran out (the outage's cause): the weekly budget's own words.
+    const pause = require('./bot-pause-words');
+    return { ok: false, code: 'credit', error: pause.isBudget(noted) ? pause.TAKEOVER_WHY : CREDIT_WHY, costUsd, model };
   };
   if (turn.routed?.error) {
     const code = String(turn.routed.error);

@@ -706,3 +706,34 @@ test('lists read the previous version\'s shots in one query, only for proposals 
   assert.equal(out.get(42).previous.headSha, OTHER);
   assert.equal(out.get(43).previous, null);
 });
+
+// PR 6958: what each change is about reaches the card beside what differs,
+// so the card frames on the first and outlines only the second.
+test('a screen\'s frames reach the card: whole pixels, one a declared change, never outlines', () => {
+  const claims = [{ id: 'bar', claim: 'A line under the top bar.' }, { id: 'list', claim: 'The list.' }];
+  const [screen] = view.cleanScreens([{
+    viewport: 'desktop', shot: 'bar', stories: ['bar'], width: 1280, heightBefore: 800, heightAfter: 800,
+    regions: [{ story: null, b: [40, 615, 400, 12], a: [40, 615, 400, 12], bMark: null, aMark: null }],
+    frames: [
+      { story: 'bar', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] },
+      { story: 'bar', b: [0, 0, 10, 10], a: [0, 0, 10, 10] },
+      { story: 'list', b: null, a: [20, 400, 300, 80] },
+      { story: 'someone-else', b: [0, 0, 5, 5], a: [0, 0, 5, 5] },
+      { story: 'list', b: [-1, 0, 10, 10], a: [0, 0, 0, 10] },
+    ],
+  }], claims);
+  assert.deepEqual(screen.frames, [
+    { story: 'bar', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] },
+    { story: 'list', b: null, a: [20, 400, 300, 80] },
+  ]);
+  assert.equal(screen.regions.length, 1, 'the areas stay what differs');
+  assert.equal(screen.regions[0].story, null);
+  // A run from before frames has none.
+  const [old] = view.cleanScreens([{ viewport: 'desktop', shot: 'bar', stories: ['bar'], width: 1280, heightBefore: 800, heightAfter: 800, regions: [] }], claims);
+  assert.deepEqual(old.frames, []);
+  // And a published run's view carries them to the card.
+  const published = view.serializePrevious(previousRun({ screens: [{ viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+    width: 1280, heightBefore: 800, heightAfter: 800, regions: [], frames: [{ story: 'dialog', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] }] }] }),
+  moving(), 'demo-app');
+  assert.deepEqual(published.screens[0].frames, [{ story: 'dialog', b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] }]);
+});

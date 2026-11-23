@@ -1015,9 +1015,16 @@ test('GET /upstream: the version\'s side, every field present', async () => {
     assert.equal(r.status, 200);
     assert.equal(r.body.offer.state, 'open');
     assert.deepEqual(Object.keys(r.body.offer).sort(),
-      ['brings', 'conflicts', 'facts', 'fromSha', 'href', 'keeps', 'sessionId', 'state']);
+      ['brings', 'conflicts', 'facts', 'fromSha', 'href', 'keeps', 'sentAt', 'sessionId', 'state']);
     assert.equal(r.body.offer.href, `#app/${fx.ver}/dev/changes/7/900`);
     assert.equal(r.body.offer.fromSha, fx.fromSha);
+    assert.equal(r.body.offer.sentAt, null, 'an offer row with no created_at says nothing');
+
+    // The card's date: the offer's created_at, in ISO form.
+    s.offers.get(12).created_at = new Date('2026-11-20T16:12:00Z');
+    const dated = await call('GET', `/${fx.ver}/upstream`);
+    assert.equal(dated.body.offer.sentAt, '2026-11-20T16:12:00.000Z');
+    delete s.offers.get(12).created_at;
     assert.deepEqual(Object.keys(r.body.offer.facts).sort(),
       ['ai', 'destructive', 'hostsAdded', 'secretsAdded', 'storage', 'tablesAdded']);
 

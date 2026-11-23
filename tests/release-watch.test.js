@@ -140,16 +140,8 @@ test('classify: a release waiting behind a moving queue, or rolling out, is not 
   for (const status of ['pending', 'queued', 'waiting', 'in_progress']) {
     assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status, conclusion: null }, idleMs: 2 * MIN, grace }), null, status);
   }
-  // A run at main's tip waits out the release gap in its release job
-  // (7 Oct 2026: four rollouts in sixteen minutes), so the queue can be still
-  // for the grace and that gap with nothing stuck.
-  const gap = releaseWatch.RELEASE_MIN_GAP_MS;
-  for (const status of ['pending', 'in_progress']) {
-    assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status, conclusion: null }, idleMs: grace, grace }), null, status);
-    assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status, conclusion: null }, idleMs: grace + gap - 1, grace }), null, status);
-  }
-  // Still for longer than that: nothing is moving it.
-  assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status: 'pending', conclusion: null }, idleMs: grace + gap, grace }), 'workflow_running');
+  assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status: 'pending', conclusion: null }, idleMs: grace - 1, grace }), null);
+  assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status: 'pending', conclusion: null }, idleMs: grace, grace }), 'workflow_running');
   assert.equal(releaseWatch.classify({ ageMs: 40 * MIN, run: { status: 'in_progress', conclusion: null }, idleMs: 25 * MIN, grace }), 'workflow_running');
   // A run that finished a minute ago, for a merge half an hour old: Argo CD
   // is rolling it out. That grace runs from the run, not from the merge.
@@ -158,15 +150,6 @@ test('classify: a release waiting behind a moving queue, or rolling out, is not 
   // Neither clock softens a red run, nor hurries a merge inside its grace.
   assert.equal(releaseWatch.classify({ ageMs: 30 * MIN, run: { status: 'completed', conclusion: 'failure' }, doneAgoMs: MIN, grace }), 'workflow_failed');
   assert.equal(releaseWatch.classify({ ageMs: 3 * MIN, run: { status: 'pending', conclusion: null }, idleMs: 30 * MIN, grace }), null);
-});
-
-test('the release gap allowed for is the one the release workflow waits', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const YAML = require('yaml');
-  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '..', releaseWatch.WORKFLOW_PATH), 'utf8'));
-  const step = workflow.jobs.release.steps.find((s) => s.name === 'Check branch tip before publishing');
-  assert.equal(releaseWatch.RELEASE_MIN_GAP_MS, Number(step.env.RELEASE_MIN_GAP_MINUTES) * MIN);
 });
 
 test('the PR comes off the squash subject, and only from its first line', () => {
@@ -321,16 +304,14 @@ test('several merges in one burst: the newest waits its turn and is not called s
   });
   assert.equal(running.status, 'release_pending');
 
-  // Its run is the tip and waits out the release gap: eleven minutes since
-  // the queue last moved is still the wait, not a stall.
+  // An earlier release finished within the grace while this run waits.
   const waiting = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
-    now: now + 13 * MIN, octokit: actions({ status: 'in_progress', conclusion: null }, [finished(now + 2 * MIN)]),
+    now: now + 13 * MIN, octokit: actions({ status: 'in_progress', conclusion: null }, [finished(now + 5 * MIN)]),
   });
   assert.equal(waiting.status, 'release_pending');
   assert.equal(written(pool).length, 0);
 
-  // The queue stands still past the grace and the gap: that is stuck, and
-  // said once.
+  // An idle queue past the grace produces one stall report.
   const stuck = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
     now: now + 23 * MIN, octokit: actions({ status: 'in_progress', conclusion: null }, [finished(now + 2 * MIN)]),
   });

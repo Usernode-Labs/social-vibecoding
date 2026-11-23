@@ -1010,6 +1010,7 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
         const tappable = !waiting && c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
         const onTap = c.key === 'votes' ? onVotes : () => onStage && onStage(c.key as DashStage);
         const cls = !waiting && c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
+        const Mark = c.key === 'open' ? Squares2X2Icon : c.key === 'unclaimed' ? UserIcon : c.key === 'votes' ? BallotIcon : CheckIcon;
         const content = (
           <>
             <b>{waiting ? <CountSkeleton /> : c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
@@ -1022,6 +1023,8 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
             </span>
             {waiting ? null : c.sub}
             {c.key === 'votes' && asOf ? <span className="dev-ws-dash-sub" data-ws-dash-sub="asof">{asOf}</span> : null}
+            {/* The figure's mark, last so the number stays the cell's first word: drawn only where a look makes each figure a card of its own (app.css, the Workshop in the standard look), which places it. */}
+            <i className="dev-ws-dash-mark" aria-hidden="true"><Mark className="h-5 w-5" /></i>
           </>
         );
         if (tappable && c.key === 'votes') {
@@ -1845,8 +1848,14 @@ function ShotsPicture({ v, near, wide }: {
   if (!screen) return null;
   const W = screen.width;
   const H = Math.max(screen.before.height, screen.after.height);
-  // The crop: every outlined area on either side, so a flip never moves it.
-  const rects = screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
+  // The crop: what each change is about (its frame, on either side) when the
+  // run recorded it, else every outlined area on either side, so a flip
+  // never moves it.
+  const frameRects = (screen.frames || []).filter((f) => f && f.n > 0)
+    .flatMap((f) => [f.b, f.a])
+    .filter((v): v is number[] => !!v && v.length === 4 && v[2] > 0 && v[3] > 0)
+    .map((v) => ({ box: { x: v[0], y: v[1], w: v[2], h: v[3] }, line: false }));
+  const rects = frameRects.length ? frameRects : screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
     .filter((r): r is { box: Box; line: boolean } => !!r);
   let place: { scale: number; tx: number; ty: number } | null = null;
   if (view.w && view.h) {
@@ -3122,10 +3131,13 @@ export function DevWorkshop(): ReactNode {
   // has since left. The first render is the loading skeleton either way, so
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
-  // Standard (WIP) folds Invite into the hero's row (no Invite card), and its Workshop door opens the board (below).
-  const wipLook = useLiveSkin() === 'wip';
-  // The hub is the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome); the board is not yet.
+  // Standard (WIP) folds Invite into the hero's row (no Invite card) and draws the board as the kit does.
+  const wipLook = isKitHome(useLiveSkin());
+  // The hub and the board are the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome).
   const kitHub = isKitHome(useLiveSkin());
+  // The Workshop's door opens the board under Standard (WIP) alone (below). The standard look took the kit's board and
+  // not its door: there the Workshop opens on its overview, and the board is the page under it (asked 20 Nov 2026).
+  const boardDoor = useLiveSkin() === 'wip';
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -3256,7 +3268,8 @@ export function DevWorkshop(): ReactNode {
   // items, before paint. The overview is still there one step up: All
   // items' own way back opens it (a step from All items or the bot's slots
   // is left alone), and so does Back or Forward onto an entry that was the
-  // overview (the router marks those `traversal`).
+  // overview (the router marks those `traversal`). Under that look alone
+  // (`boardDoor`): the standard look's Workshop opens on its overview.
   const cameFrom = useRef<TabKey | null>(null);
   const traversed = useRef(false);
   useEffect(() => {
@@ -3273,13 +3286,13 @@ export function DevWorkshop(): ReactNode {
   useLayoutEffect(() => {
     const was = cameFrom.current;
     cameFrom.current = tab;
-    if (!wipLook || tab !== 'workshop') return;
+    if (!boardDoor || tab !== 'workshop') return;
     if (was === 'all' || was === 'bot') return;
     if (traversed.current) { traversed.current = false; return; }
     cameFrom.current = 'all';
     setTab('all');
     callAppView('_setWorkshopTab', 'all');
-  }, [tab, wipLook]);
+  }, [tab, boardDoor]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
   // moment the browser tab comes back to the front — the moment a stale
@@ -4422,6 +4435,10 @@ export function DevWorkshop(): ReactNode {
           new requests nobody has picked up end with Build it). Not for a
           visitor, who has no work here. */}
       {slug && v.mine && v.mine.viewer ? <YourWorkCard slug={slug} name={projectName} /> : null}
+      {/* Its label, for a look that stands the card beside What happened, where each of the two needs a name over it (app.css hides it everywhere else). AFTER the card in the document, which the declared checks read as Overview's next sibling; the look that shows it orders it over the card. */}
+      {slug && v.mine && v.mine.viewer ? (
+        <SectionHeader className="dev-ws-part-work px-1.5 pb-0 pt-3.5" data-ws-part="work">{t('project:hub.forYou.title')}</SectionHeader>
+      ) : null}
 
       {/* ── WHAT HAPPENED ──
           One card for what was Since your last visit and Week by week:

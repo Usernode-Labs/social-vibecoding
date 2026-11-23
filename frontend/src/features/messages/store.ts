@@ -17,6 +17,7 @@ import { platformHubServed, platformSlug, subscribePlatformSlug } from './channe
 import { type AppDiscussion } from './inbox';
 import { MAX_UNSENT, messagesOutbox, type PendingSend, type UnsentState } from './outbox';
 import { carryToNewChat } from './new-chat-carry';
+import { showingFor } from './showing';
 import { openRequestPage, requestPage, requestPageOf, type RequestPage } from './request-page';
 import { markFor } from './unread-anchor';
 import type {
@@ -2200,6 +2201,8 @@ export async function send(input: {
   const scope = scopeKey(conversationId, threadRootId);
   const content = input.content.slice(0, 8000);
   const reply = replyFor(scope);
+  // 20 Nov 2026 (C, I): in a thread with Homeroom bot, what its column shows.
+  const showing = threadRootId && state.active?.homeroomBot ? showingFor(threadRootId) : null;
   const pending: PendingSend = {
     content,
     attachmentIds: input.attachmentIds,
@@ -2207,6 +2210,7 @@ export async function send(input: {
     replyToId: reply?.id,
     ...(threadRootId ? { threadRootId } : {}),
     idempotencyKey: idempotencyKey(),
+    ...(showing ? { showing } : {}),
   };
   const drawn = !threadRootId || (open && !!state.thread);
   // OFFLINE, IT WAITS INSTEAD OF GOING (offline test, finding 1): when the

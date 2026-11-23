@@ -1059,9 +1059,12 @@ async function promiseWaiting(pool, { app, place, speaker }) {
  * (say), and posts nothing twice. `sorry`: the turn before this one failed
  * for good; whoever spoke to the bot hears that it could not answer.
  * Throws on a failure a retry can cure. Resolves { outcome, throughId,
- * replyId }: the place reads after throughId next time.
+ * replyId, speakerIds, held }: the place reads after throughId next time.
+ * `resume`: the messages a returned credit owes an answer (see HELD_TEXT):
+ * they are answered even if older than ANSWER_WINDOW_MINUTES, `through`
+ * does not move, and the place's hourly cap does not refuse them.
  */
-async function runTurn(pool, config, { appId, place, through = 0, sorry = false, turnKey, deps = {} }) {
+async function runTurn(pool, config, { appId, place, through = 0, sorry = false, turnKey, resume = null, deps = {} }) {
   const turnId = await claim(pool, { appId, place, turnKey });
   if (!turnId) throw new PlaceBusy();
   // #6228/#6538: the thread's status line follows this turn, in every place
@@ -1089,7 +1092,11 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     record.addressedIds = judgedIds(record, outcome);
     await finishTurn(pool, turnId, record);
     noteStatus(true);
-    return { outcome, throughId: record.throughId || null, replyId: record.replyId || null };
+    return {
+      outcome, throughId: record.throughId || null, replyId: record.replyId || null,
+      speakerIds: ['replied', 'fallback', 'held'].includes(outcome) ? record.speakerIds || [] : [],
+      ...(record.held ? { held: record.held } : {}),
+    };
   };
   const cfg = configOf(config);
   const app = await appRow(pool, appId);
@@ -1116,9 +1123,16 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   // A reply thread's root is its own place's (the chat or topic it was
   // written in, which answers it), never the thread's to answer again.
   const root = place.type === 'message' ? Number(place.ref) : 0;
-  const fresh = messages.filter((m) => Number(m.id) > since && Number(m.id) !== root && m.user_id && Number(m.user_id) !== Number(bot.id)
-    && m.msg_type === 'message' && new Date(m.created_at).getTime() >= cutoff);
-  record.throughId = messages.length ? Math.max(since, Number(messages[messages.length - 1].id)) : since;
+  // #6920: a resumed turn answers exactly the messages kept for credit: no
+  // answer window (they were asked in time) and no move of `through`.
+  const keptIds = resume && Array.isArray(resume.ids)
+    ? new Set(resume.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0)) : null;
+  const fresh = keptIds
+    ? messages.filter((m) => keptIds.has(Number(m.id)) && Number(m.id) !== root && m.user_id
+      && Number(m.user_id) !== Number(bot.id) && m.msg_type === 'message')
+    : messages.filter((m) => Number(m.id) > since && Number(m.id) !== root && m.user_id
+      && Number(m.user_id) !== Number(bot.id) && m.msg_type === 'message' && new Date(m.created_at).getTime() >= cutoff);
+  record.throughId = keptIds ? null : (messages.length ? Math.max(since, Number(messages[messages.length - 1].id)) : since);
   if (!fresh.length) return finishWith('quiet');
   // Which of them were to the bot (the gate, for each): the newest of those
   // is who it answers. (With the voice off in a chat, nobody: the chat's
@@ -1163,7 +1177,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     await restOfChat();
     return finishWith('fallback');
   }
-  if (await turnsLastHour(pool, key) >= MAX_TURNS_PER_PLACE_HOUR) {
+  if (!keptIds && await turnsLastHour(pool, key) >= MAX_TURNS_PER_PLACE_HOUR) {
     record.error = 'busy_place';
     await restOfChat();
     return finishWith('quiet');
@@ -1172,6 +1186,9 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   // On a request, a message the voice answered is not read as a change to
   // the request unless it said so (ask_changed): homeroom-bot.js refreshApp.
   record.addressedIds = addressed.map((a) => Number(a.message.id));
+  // #6920: who this turn answered, so the machine drops an older ask of
+  // theirs kept for credit instead of answering it twice.
+  record.speakerIds = [...new Set(addressed.map((a) => Number(a.speaker.id)))];
   // 6 Nov 2026 (#6430): a go-ahead in the request's own discussion is
   // answered here, once, in the same fixed words the chat's start tool uses.
   // Nothing is being built, so the model never writes "I'm on it" or offers
@@ -1221,7 +1238,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     return finishWith('replied');
   }
   const out = await converse(pool, cfg, {
-    app, place, bot, settings, messages, fresh, addressed, deps, record, mark,
+    app, place, bot, settings, messages, fresh, addressed, deps, record, mark, resumed: !!keptIds,
   });
   record.replyId = out?.messageId || null;
   await restOfChat();
@@ -2087,7 +2104,7 @@ async function scopedPlatformCall(pool, platform, app, name, args, botId = null)
  * The model's turn in a place: context, tools, the claims check, one reply
  * (or nothing). Resolves { outcome, messageId }.
  */
-async function converse(pool, cfg, { app, place, bot, settings, messages, fresh, addressed, deps, record, mark = null }) {
+async function converse(pool, cfg, { app, place, bot, settings, messages, fresh, addressed, deps, record, mark = null, resumed = false }) {
   const mayor = mayorModule(deps);
   const last = addressed[addressed.length - 1];
   const speaker = last.speaker;
@@ -2366,11 +2383,23 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   // A turn that queued a change or made an offer did neither yet.
   if (text && (ctx.revised || ctx.offer)) text = notDoneYet(text);
-  if (!text) {
+  if (!text && record.error === 'credit_out') {
+    // #6920: OpenRouter's credit ran out. The ask is kept and answered here
+    // once credit is back, and the thread hears that once, in these words.
+    // A resumed turn that meets it again says nothing: the thread already does.
+    record.held = {
+      ids: addressed.map((a) => Number(a.message.id)),
+      speakers: [...new Set(addressed.map((a) => Number(a.speaker.id)))],
+    };
+    record.outcome = 'held';
+    if (resumed) return { outcome: 'held', messageId: null };
+    // Which figure ran out (the stored outage's cause): a weekly budget that
+    // is used up says the day it starts again.
+    const pause = require('./bot-pause-words');
+    text = await pause.budgetNow(pool, deps.credit || null) ? pause.threadHeld(pause.resetDay()) : HELD_TEXT;
+  } else if (!text) {
     // Nothing to say came back. Somebody who wrote to it hears that, once.
-    // T1.3: out of credit, asking again in a minute cannot help, so it says
-    // what is true: nothing here tries again by itself.
-    text = record.error === 'credit_out' ? CREDIT_TEXT : 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
+    text = 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
     record.outcome = 'fallback';
   }
   // Only beside words it still says: a cut claim, a "not done yet" or the
@@ -2379,7 +2408,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   // 18 Nov 2026: a long reply with no copy that still says its words is laid
   // out from them, as the chat's answer is (homeroom-bot-mayor.js answerHtml).
   // Never under an offer, whose words are one line over its buttons, or for
-  // the fallback line.
+  // the fallback line. #6920: the held line is one short line too, below
+  // answerHtml's threshold, so it stays words with no copy of its own.
   const spent = { ...t.usage };
   const laid = await require('./homeroom-bot-mayor').answerHtml(t, { reply: finalReply }, {
     text, html: ownHtml, laysOut: record.outcome !== 'fallback' && !ctx.offer, deps,
@@ -2422,6 +2452,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
     offer, suggestions, othersSuggestions, html: sentHtml, mark, gallery: ctx.gallery, comparison: ctx.comparison, deps, queued,
+    // #6920: the held line is plain: no buttons under it.
+    suggest: record.outcome !== 'held',
     attachments: ctx.attached || [],
     // #6684: a note sent into a build from this request, with its card under
     // the reply (say puts it on metadata.homeroomBot.buildNote).
@@ -2443,7 +2475,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     // queued for the change's next update without waiting for the sweep.
     try { require('./homeroom-bot-batches').noteRequestChanged(pool, app.id, Number(place.ref)); } catch { /* the sweep settles it too */ }
   }
-  return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
+  return { outcome: record.outcome === 'fallback' ? 'fallback' : record.outcome === 'held' ? 'held' : 'replied', messageId: posted?.id || null };
 }
 
 function safePlatformRules(mayor) {
@@ -3214,9 +3246,9 @@ const OFFERS_SQL = `(
 // #6614: when the bot says work is under way, its first button is a plain
 // yes in the person's words, and the answer to it is one short line.
 const AFFIRMATION = 'Sounds good';
-// T1.3: a thread's answer that met OpenRouter's 402 for credit.
-const CREDIT_TEXT = 'I\'m out of building credit right now, so I couldn\'t answer this. An admin has been told; '
-  + 'ask me again once it\'s back.';
+// #6920: a thread's answer that met OpenRouter's 402 for credit is held and
+// answered here once credit is back, as the chat's is. It says so once.
+const HELD_TEXT = 'OpenRouter\'s credit ran out. I\'ll answer this here as soon as it\'s back.';
 const AFFIRMED_ACK_TEXT = 'Thanks, I\'ll tell you here when it\'s ready.';
 // T1.15: the same yes, with no promise stored to keep.
 const AFFIRMED_PLAIN_TEXT = 'Thanks.';
@@ -4462,6 +4494,7 @@ module.exports = {
   isStandIn,
   OFFER_WORDS,
   SORRY_TEXT,
+  HELD_TEXT,
   CONNECTOR_PLACES,
   CONNECTOR_LOOP_SECONDS,
   MAX_CONNECTOR_RUN,

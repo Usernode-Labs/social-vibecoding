@@ -275,7 +275,7 @@ fi
 # part of the conversation history.
 if [ "$MODE" = "sync" ]; then
   echo "__USERNODE_PHASE__ sync_fetch_main"
-  git fetch origin main --quiet 2>&1 || \
+  usernode_source_git fetch origin main --quiet 2>&1 || \
     echo "__USERNODE_WARN__ fetch origin main failed"
 
   # Quick precheck — if we're already up to date, there's nothing to do
@@ -498,7 +498,7 @@ Where a key is defined more than once, leave exactly one definition, keeping the
 
   # Publication belongs to the conductor after this result is journalled.
   # Re-fetch so origin/main is fresh for the behind count below.
-  git fetch origin main --quiet 2>/dev/null || true
+  usernode_source_git fetch origin main --quiet 2>/dev/null || true
   AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
   BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
   SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -870,7 +870,7 @@ if usernode_settle_session_branch; then
   usernode_commit_leftovers "$TURN_START_SHA" "$COMMIT_MSG"
 fi
 
-git fetch origin main --quiet 2>/dev/null || true
+usernode_source_git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 # #8: how many commits this branch is behind origin/main. Drives the
 # change page's "Sync with main" banner and the merge-time block.

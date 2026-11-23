@@ -38,25 +38,11 @@
  *   unknown           past the grace, and no run to read (a token without
  *                     actions:read, or a workflow that never started).
  *
- * The grace runs from the merge, but a release cannot start before the ones
- * ahead of it: the workflow queues every push to main and runs them one at a
- * time (build-kubernetes-images.yml, `queue: max`), and a run whose commit is
- * no longer main's tip builds and then skips its publish. So a burst of
- * merges releases one after another, and the newest waits for all of them.
- * On 5 Oct 2026 ten merges landed in two minutes; ten minutes after the last
- * one (#3860) its run was still waiting its turn, and the Dev board called it
- * "Stuck going live" while the release was on its way. A run that has not
- * finished is therefore late only once the queue it waits in has stood still
- * for the grace: no run of the workflow on main has finished within it. And
- * a run that succeeded gives Argo CD and the rollout their own grace, from
- * when the run finished rather than from the merge.
- *
- * The queue can also stand still on purpose. Since 7 Oct 2026, when the
- * platform rolled out four times in sixteen minutes, a run at main's tip
- * waits in its release job until the run that published the previous release
- * finished RELEASE_MIN_GAP_MINUTES ago. Nothing is stuck while it waits, so an
- * unfinished run is late only once the queue has stood still for the grace
- * plus that gap (RELEASE_MIN_GAP_MS).
+ * The grace runs from the merge. Image builds overlap, and the publisher
+ * waits for the previous chart to be healthy and can yield to a newer
+ * verified run. An unfinished run is late once the queue has stood still
+ * for the grace. A green run gives Argo CD and the rollout their own grace
+ * from when that run finished.
  *
  * Each (sha, kind) is reported once — an app_health notification to the
  * admins, and a record on apps.release_stall that the board banner draws
@@ -75,12 +61,6 @@ function graceMs() {
   const v = parseInt(process.env.RELEASE_GRACE_MS, 10);
   return Number.isFinite(v) && v > 0 ? v : 10 * 60 * 1000;
 }
-
-// The release workflow's RELEASE_MIN_GAP_MINUTES: the longest a run at
-// main's tip waits for the previous release to age before it publishes.
-// tests/release-watch.test.js holds the two equal. Ten minutes until 10 Oct
-// 2026, four since (see the workflow's note on the gap).
-const RELEASE_MIN_GAP_MS = 4 * 60 * 1000;
 
 const WORKFLOW_PATH = '.github/workflows/build-kubernetes-images.yml';
 const WORKFLOW_FILE = 'build-kubernetes-images.yml';
@@ -199,10 +179,8 @@ function classify({ ageMs, run, idleMs = null, doneAgoMs = null, grace = graceMs
   if (run && run.status === 'completed' && FAILED_CONCLUSIONS.has(run.conclusion)) return 'workflow_failed';
   if (!(ageMs >= grace)) return null;
   if (run && run.status !== 'completed') {
-    // Waiting behind earlier merges' releases, running right after them,
-    // or waiting out the release gap: on its way while the queue keeps
-    // moving, or has been still for no longer than that wait explains.
-    if (Number.isFinite(idleMs) && idleMs < grace + RELEASE_MIN_GAP_MS) return null;
+    // Builds may be in flight while an earlier release finishes.
+    if (Number.isFinite(idleMs) && idleMs < grace) return null;
     return 'workflow_running';
   }
   if (run && run.conclusion === 'success') {
@@ -452,35 +430,14 @@ async function readStall(pool, appId, runningSha = process.env.GIT_SHA || null) 
 
 // ── When the next release goes live ────────────────────────────────────
 //
-// A merged change of the platform's own app reads "Going live" until the
-// release that carries it is running. Since 7 Oct 2026 (#4309) main releases
-// at most once every RELEASE_MIN_GAP_MS, and a release also takes its image
-// build and its rollout, so a merge read "Going live" for ten to twenty
-// minutes. With the bot merging several platform changes an hour, people
-// saw a column of them and took them for stuck. The surfaces that show such
-// a change now say why and when, in words frontend/src/lib/release-eta.ts
-// builds from what this returns: "Merged; goes live in the next release
-// (about 8 minutes)".
+// A merged change of the platform's own app reads "Going live" until a
+// release that carries it is running. The estimate uses the newest merge's
+// build and rollout. The publisher uses the previous chart's actual health,
+// so there is no timer to add to the estimate.
 //
-// Every merged change that is not live yet goes out in the SAME release: the
-// workflow publishes main's tip, and a run waiting out the gap skips when
-// main moves, so the next release carries everything merged before it
-// publishes. So there is one estimate, the next release's:
-//
-//   ready = max(released + RELEASE_MIN_GAP_MS, built)
-//   etaAt = ready + RELEASE_ROLLOUT_MS
-//
-//   released  when the running release went out: the self-hosted row's
-//             last_deploy_at, which seedSelfApp writes when that release's
-//             migration runs, right after its run published it (in the
-//             cluster only the migration Job runs it, never a Pod's boot).
-//   built     when the newest such merge's image is built: RELEASE_BUILD_MS
-//             after its build could start. That is the merge itself, or its
-//             run's own start when the poller read the run (release_run),
-//             or, a run still queued then, no sooner than that read. A run
-//             that finished green has published: it is ready when it
-//             finished. The build is timed from when it could start rather
-//             than from now, so the estimate counts down between reads.
+// A build is timed from the merge or its recorded Actions start. When the
+// poller saw it queued, start no earlier than the read. For a green run
+// for the current tip, use its finish as the estimated start of rollout.
 //
 // It promises nothing (`waiting`) when the release is in trouble: a stall
 // is recorded (release_stall; the board's banner says what), or the run for
@@ -495,9 +452,8 @@ async function readStall(pool, appId, runningSha = process.env.GIT_SHA || null) 
 
 // How long the release workflow's image build usually takes, from its run
 // starting to its release job: two to seven minutes on recent runs. A
-// constant, because a run's own duration includes the wait for the gap in
-// its release job; recent builds could only be timed by reading every run's
-// jobs, a read per run per tick for a few minutes of accuracy.
+// constant, since the run duration also includes the publication decision
+// and cannot tell when the image build finished.
 const RELEASE_BUILD_MS = 5 * 60 * 1000;
 // From publishing to the new build serving: Argo CD's refresh (the workflow
 // asks for one at once), the migration Job, the rollout. About a minute.
@@ -563,12 +519,11 @@ async function recordRun(pool, app, sha, run, now) {
  *   waiting  nothing is promised: a stall is recorded (`stalled`) or the
  *            run for main's tip failed
  *
- * `releasedAt` is when the running release went out, `newestMergedAt` the
- * newest merge still waiting for a release, and `run` the release run for
- * main's tip as recorded (recordRun), or null. Whether etaAt has passed is
+ * `newestMergedAt` is the newest merge waiting for a release, and `run`
+ * is the recorded release run for main's tip, or null. Whether etaAt has passed is
  * the reader's to say ("going live now"), against its own clock.
  */
-function estimate({ releasedAt = null, newestMergedAt = null, run = null, stalled = false } = {}) {
+function estimate({ newestMergedAt = null, run = null, stalled = false } = {}) {
   if (stalled) return WAITING;
   const merged = ms(newestMergedAt);
   const readAt = ms(run && run.readAt);
@@ -580,16 +535,14 @@ function estimate({ releasedAt = null, newestMergedAt = null, run = null, stalle
   if (status === 'completed' && FAILED_CONCLUSIONS.has(run.conclusion)) return WAITING;
   let ready;
   if (status === 'completed' && run.conclusion === 'success') {
-    // Green: it published when it finished, after any wait for the gap.
+    // Time the rollout from the completed run.
     ready = ms(run.completedAt) ?? readAt;
   } else {
     let from = null;
     if (status === 'in_progress') from = ms(run.startedAt) ?? readAt;
     else if (status && status !== 'completed') from = readAt; // queued, waiting, pending
     const start = maxOf(merged, from);
-    const built = start == null ? null : start + RELEASE_BUILD_MS;
-    const released = ms(releasedAt);
-    ready = maxOf(released == null ? null : released + RELEASE_MIN_GAP_MS, built);
+    ready = start == null ? null : start + RELEASE_BUILD_MS;
   }
   return { state: 'next', etaAt: ready == null ? null : new Date(ready + RELEASE_ROLLOUT_MS).toISOString() };
 }
@@ -691,7 +644,7 @@ function releaseOf(view, change = {}) {
     if (carried) return { state: 'rolling', etaAt: null };
   }
   return estimate({
-    releasedAt: view.releasedAt, newestMergedAt: view.newestMergedAt, run: view.run, stalled: view.stalled,
+    newestMergedAt: view.newestMergedAt, run: view.run, stalled: view.stalled,
   });
 }
 
@@ -728,14 +681,9 @@ async function releasesFor(pool, sessionIds, opts = {}) {
   return out;
 }
 
-/**
- * The staging demo's release (?demo=1): the running release went out three
- * minutes ago and the change merged a minute ago, so the next release is the
- * gap's, eight minutes off: "about 8 minutes", the example the words were
- * written from.
- */
+// The staging demo shows a build that started two minutes ago.
 function demoRelease(now = Date.now()) {
-  return estimate({ releasedAt: now - 60 * 1000, newestMergedAt: now - 3 * 60 * 1000 });
+  return estimate({ newestMergedAt: now - 2 * 60 * 1000 });
 }
 
 module.exports = {
@@ -753,7 +701,6 @@ module.exports = {
   releaseOf,
   releasesFor,
   demoRelease,
-  RELEASE_MIN_GAP_MS,
   RELEASE_BUILD_MS,
   RELEASE_ROLLOUT_MS,
   WORKFLOW_PATH,

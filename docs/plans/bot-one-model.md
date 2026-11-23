@@ -673,8 +673,6 @@ dropped any debt above priority 0 while the request was `building`. Request
   states, which a fresh staging copy cannot reach (the bot is off there).
   A person's change in shots, syncing or stuck on GitHub could be seeded,
   which would let those states be shot.
-- **Voice and look_into.** These still ask to be asked again once credit is
-  back; only the chat resumes by itself.
 - **The live `updateComingSql` check in Needs you stays.** The row can lag
   a turn's start by the 3-second drain.
 
@@ -787,8 +785,6 @@ page the bot writes, with design as one kind (`docs/plans/artifacts.md`).
 
 ### Left for later
 
-- **Voice and look_into after an outage** still ask to be asked again; the
-  chat alone holds a message for when credit is back.
 - **A first version's steps** read the ten stages through
   `firstVersionStepOf`, but their own functions are still keyed by the old
   step names.

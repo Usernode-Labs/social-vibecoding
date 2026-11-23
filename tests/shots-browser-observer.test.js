@@ -793,3 +793,129 @@ test('a close-up is taken on the observer\'s own socket, saved under its own nam
   child.kill('SIGTERM');
   await once(child, 'close');
 });
+
+// ── Where an element shot's element is (PR 6958) ─────────────────────────
+//
+// The card frames a change on the element its agent shot. When an agent's
+// screenshot of an element succeeds, the observer asks the browser where that
+// element is, through the parker's queue, before any later call of the
+// agent's can move the page, and records the box with the screenshot's stamp.
+
+test('an element screenshot is stamped as being measured, and only an element screenshot', (t) => {
+  const boundary = require('../worker/shots-boundary');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-observer-box-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const outputDir = path.join(dir, 'member');
+  fs.mkdirSync(outputDir);
+  const measured = [];
+  const observer = createObserver({ persona: 'member', origins: [], emit: () => {}, outputDir, onElementShot: (shot) => measured.push(shot) });
+  let id = 0;
+  const shoot = (name, args, { isError = false } = {}) => {
+    id += 1;
+    const file = path.join(outputDir, name);
+    fs.writeFileSync(file, name);
+    observer.request(JSON.stringify({ id, method: 'tools/call', params: { name: 'browser_take_screenshot', arguments: args } }));
+    observer.response(JSON.stringify({ id, result: { isError, content: [{ type: 'text', text: `### Result\n- [Screenshot of element](${file})` }] } }), { bytes: 100 });
+    return boundary.screenshotStamp(outputDir, name, Buffer.from(name));
+  };
+  assert.deepEqual(shoot('bar.png', { element: 'Top bar', target: 'e12', filename: 'bar.png' }), { origin: null, box: null, boxPending: true });
+  assert.deepEqual(measured, [{ name: 'bar.png', sha256: measured[0].sha256, target: 'e12', element: 'Top bar' }]);
+  assert.match(measured[0].sha256, /^[0-9a-f]{64}$/);
+  // The older argument name is read too.
+  shoot('old.png', { ref: 'e3' });
+  assert.equal(measured.at(-1).target, 'e3');
+  assert.equal(measured.at(-1).element, 'element');
+  // A screen, a full page, or a failed element screenshot is not measured.
+  assert.equal(shoot('screen.png', { filename: 'screen.png' }).boxPending, false);
+  assert.equal(shoot('page.png', { target: 'e12', fullPage: true }).boxPending, false);
+  shoot('failed.png', { target: 'e12' }, { isError: true });
+  assert.deepEqual(measured.map((shot) => shot.name), ['bar.png', 'old.png']);
+});
+
+test('the element is measured in the browser before the agent\'s next call, and its box settles the stamp', async (t) => {
+  const boundary = require('../worker/shots-boundary');
+  const { measureElement, elementBoxFunction } = require('../worker/shots-browser-observer');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-observer-box-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const outputDir = path.join(dir, 'member');
+  fs.mkdirSync(outputDir);
+  const h = parkerHarness();
+  const nonce = '0123456789abcdef';
+  const events = [];
+  const settled = [];
+  const observer = createObserver({
+    persona: 'member', origins: [], emit: () => {}, outputDir,
+    onElementShot: (shot) => settled.push(measureElement({ parker: h.parker, outputDir, nonce, emit: (e) => events.push(e), browser: { persona: 'member' } }, shot)),
+  });
+  const tap = lineTap((line, meta) => observer.response(line, meta));
+  h.parker.output.pipe(tap);
+  tap.resume();
+  h.parker.input.on('data', (chunk) => {
+    for (const line of chunk.toString().trim().split('\n')) {
+      try { observer.request(line); } catch { /* injected calls the observer never sees in production */ }
+    }
+  });
+  const file = path.join(outputDir, 'bar-after.png');
+  fs.writeFileSync(file, 'bar pixels');
+  h.parker.input.write(call(1, 'browser_take_screenshot', { element: 'Top bar', target: 'e12', filename: 'bar-after.png' }));
+  await h.tick();
+  // The screenshot's answer: the measurement is queued as it passes.
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: `### Result\n- [Screenshot of element](${file})` }] } })}\n`);
+  await h.tick();
+  // The agent's next call comes after it.
+  h.parker.input.write(call(2, 'browser_click', { element: 'Menu', target: 'e2' }));
+  await h.tick();
+  assert.deepEqual(h.names(), ['browser_take_screenshot', 'browser_evaluate', 'browser_click']);
+  const evaluate = h.forwarded[1];
+  assert.deepEqual({ ...evaluate.params.arguments, function: undefined }, { element: 'Top bar', target: 'e12', function: undefined });
+  assert.equal(evaluate.params.arguments.function, elementBoxFunction(nonce));
+  assert.equal(boundary.screenshotStamp(outputDir, 'bar-after.png', Buffer.from('bar pixels')).boxPending, true);
+  // The browser's answer (with a page snapshot that tries to pass for one).
+  const text = `### Result\n"usernode-box-${nonce}:0,0,1280,52,0,0,1280,52"\n### Snapshot\n- text "usernode-box-ffffffffffffffff:1,1,1,1,1,1,1,1"`;
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: evaluate.id, result: { content: [{ type: 'text', text }] } })}\n`);
+  assert.deepEqual(await settled[0], { view: [0, 0, 1280, 52], page: [0, 0, 1280, 52] });
+  assert.deepEqual(boundary.screenshotStamp(outputDir, 'bar-after.png', Buffer.from('bar pixels')),
+    { origin: null, box: { view: [0, 0, 1280, 52], page: [0, 0, 1280, 52] }, boxPending: false });
+  assert.deepEqual(events, [{ kind: 'element_box', persona: 'member', outcome: 'ok' }]);
+  await h.tick();
+  assert.deepEqual(h.answerIds(), [1], 'the agent never sees the measurement');
+  h.parker.close();
+});
+
+test('a measurement that fails, or answers nothing readable, settles the stamp with no box', async (t) => {
+  const boundary = require('../worker/shots-boundary');
+  const { measureElement, parseElementBox } = require('../worker/shots-browser-observer');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-observer-box-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const outputDir = path.join(dir, 'member');
+  fs.mkdirSync(outputDir);
+  const nonce = '0123456789abcdef';
+  const stamp = (name) => {
+    fs.writeFileSync(path.join(outputDir, name), name);
+    return boundary.stampScreenshot(outputDir, path.join(outputDir, name), null, { boxPending: true });
+  };
+  for (const [name, answer, outcome] of [
+    ['failed.png', { outcome: 'tool_error', text: 'Ref e12 not found' }, 'tool_error'],
+    ['plain.png', { outcome: 'ok', text: '### Result\n"something else"' }, 'unreadable'],
+    ['gone.png', { outcome: 'browser_gone', text: '' }, 'browser_gone'],
+  ]) {
+    const sha256 = stamp(name);
+    const events = [];
+    const box = await measureElement({ parker: { inject: async () => answer }, outputDir, nonce, emit: (e) => events.push(e) },
+      { name, sha256, target: 'e12' });
+    assert.equal(box, null, name);
+    assert.deepEqual(boundary.screenshotStamp(outputDir, name, Buffer.from(name)), { origin: null, box: null, boxPending: false });
+    assert.equal(events[0].outcome, outcome);
+  }
+  // A box is written only onto the stamp of the image it measured.
+  const sha256 = stamp('retaken.png');
+  fs.writeFileSync(path.join(outputDir, 'retaken.png'), 'another');
+  boundary.stampScreenshot(outputDir, path.join(outputDir, 'retaken.png'), null, { boxPending: true });
+  assert.equal(boundary.stampElementBox(outputDir, 'retaken.png', sha256, { view: [0, 0, 10, 10], page: [0, 0, 10, 10] }), false);
+  assert.equal(boundary.screenshotStamp(outputDir, 'retaken.png', Buffer.from('another')).boxPending, true);
+  // Only a whole box with a size, with this browser's nonce, is read.
+  assert.equal(parseElementBox(`usernode-box-${nonce}:0,0,10,10,0,0,10,10`, 'ffffffffffffffff'), null);
+  assert.equal(parseElementBox(`usernode-box-${nonce}:0,0,0,10,0,0,10,10`, nonce), null);
+  assert.equal(parseElementBox(`usernode-box-${nonce}:0,0,10,10,0,0,10`, nonce), null);
+  assert.deepEqual(parseElementBox(`"usernode-box-${nonce}:-4,12,10,10,0,1012,10,10"`, nonce), { view: [-4, 12, 10, 10], page: [0, 1012, 10, 10] });
+});

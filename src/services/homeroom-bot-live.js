@@ -690,7 +690,14 @@ function turnCreditOut(routed) {
   return require('./bot-turn-failure').sort({ code: routed.error || null, turn: routed.result || null }).class === 'credit';
 }
 
-function buildCreditText({ queued = true } = {}) {
+// `budget`: it was the bot's weekly budget that ran out (the outage's
+// cause, openrouter-credit.js), which starts again by itself on a day the
+// note names (bot-pause-words.js), never "once credit is back".
+function buildCreditText({ queued = true, budget = false, now = new Date() } = {}) {
+  if (budget) {
+    const pause = require('./bot-pause-words');
+    return pause.buildNote({ queued }, pause.resetDay(now));
+  }
   return queued
     ? 'Homeroom bot is out of building credit right now. It will pick this up again by itself once credit is back.'
     : 'Homeroom bot is out of building credit right now, and it could not keep this request\'s place in line. '

@@ -978,6 +978,9 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \\
   && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \\
   && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \\
   && npm cache clean --force
+# The base image's own packages are upgraded first so the daily dependency
+# audit's fixed advisories (OpenSSL 3.5.9-r1) are applied.
+RUN apk upgrade --no-cache
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

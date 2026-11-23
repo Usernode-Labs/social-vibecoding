@@ -9,9 +9,10 @@ import {
   ChatStatusLine, JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
 } from '@/components/ui/chat';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon,
-  PlusIcon, SearchIcon, UserGroupIcon, XIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronLeftIcon, EllipsisHorizontalIcon, ListBulletIcon,
+  LockIcon, PlusIcon, SearchIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
+import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
@@ -37,7 +38,8 @@ import {
   PrivateThreadDoors, PrivateThreadFoot, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName, privateThreadTitle, privateThreadWords, serverThreadName,
   usePrivateThread,
 } from './private-thread-bar';
-import { LiveDraftBar } from './live-draft-bar';
+import { useLiveDraft } from './live-draft-bar';
+import { ArtifactsButton } from './artifacts-button';
 import { requestPageOf } from './request-page';
 import { RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
@@ -96,7 +98,7 @@ import {
 import { typingLine } from './typing-line';
 import { BotWorkingCard, typingBesides, workingBot } from './bot-working';
 import { DesignPane, DesignViewSwitch, isDesignRoot, isDesignThread, setDesignView, useDesignView } from './design-pane';
-import { openPreview, usePreview } from '../ai/preview';
+// (20 Nov 2026, I: the thread head's Artifacts button opens the column: ./artifacts-button.tsx.)
 import { NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
 import { isBotMention, issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
@@ -1948,6 +1950,20 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
+  // #6963: the bot tab's list is hidden behind this thread, and this is the
+  // way back to it (../ai/list-closed). Drawn only in the bot tab's own
+  // column, never in a phone's drawer or another surface's thread. First in
+  // the head, where a phone draws its back arrow, on both heads this thread
+  // can have: the compact sheet the bot tab draws it as (#6863) and the
+  // plain one every other surface draws.
+  const showList = useShowListButton();
+  const showListButton = alone && !onBack && showList ? (
+    <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
+      aria-label={t('messages:ai.list.show')} title={t('messages:ai.list.show')}
+      onClick={() => setListClosed(false)}>
+      <ListBulletIcon aria-hidden="true" />
+    </button>
+  ) : null;
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
   // #6254: this thread is its own drop area — a file dropped on the reply box
@@ -2158,9 +2174,13 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     && privateRootMessage && !requestPageOf(privateRootMessage)
     ? rootId : null;
   const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);
-  // 1 Nov 2026 (C1): whether this thread's design is open beside it.
-  const preview = usePreview();
   const privateMine = !!privateRoot && isOwnPrivateThread(privateWhere, privateRootMessage, meId);
+  // 20 Nov 2026 (live-draft review, G and I): the thread's live draft, read
+  // and kept current here now that it has no bar (./live-draft-bar.tsx): its
+  // preview comes up when the bot opens it, reloads after each edit, and the
+  // Artifacts button shows it. Read before the early return, as the hooks
+  // above are.
+  const liveDraft = useLiveDraft(privateMine && privateRoot && privateWhere?.state === 'open' ? privateRoot : null);
   // #6159: what they write in a done thread brings it back (the server's
   // reopenOnReply): its state is read again once their message is in it.
   const ownCount = (thread?.messages || []).filter((item) => !item.sender.bot && item.sender.id === meId && item.id > 0).length;
@@ -2396,6 +2416,8 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
             <ThreadHeadCard
               attrs={{ 'data-reply-head': 'alone' }}
               tile={<span className="dev-thread-bar-tile dev-thread-bar-face" data-reply-avatar=""><UserAvatar user={face} title={aloneTitle || undefined} size="lg" shape="circle" /></span>}
+              // #6963: the way back to the list, before the tile (thread-head.tsx).
+              lead={showListButton}
               // The lock line is the small line's own part that gives way
               // first in a narrow head, as a request's project does: it is
               // the head's `.messages-thread-sub`, as it was in the pane's.
@@ -2409,12 +2431,11 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
               menu={(
                 <>
                   {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
-                  {preview?.rootId !== rootId && isDesignThread(root, replies) ? (
-                    <button type="button" className="messages-thread-action messages-thread-preview dev-thread-head-text" data-reply-preview=""
-                      onClick={() => openPreview({ conversationId, rootId, version: null })}>
-                      {t('messages:design.pane.showPreview')}
-                    </button>
-                  ) : null}
+                  {/* I: one Artifacts button, whenever the thread holds an
+                      artifact or runs a live draft; it toggles the column. */}
+                  <ArtifactsButton conversationId={conversationId} rootId={rootId}
+                    hasArtifact={isDesignThread(root, replies)} liveDraft={liveDraft}
+                    className="messages-thread-action messages-thread-preview dev-thread-head-text" />
                   {privateMine && privateRoot && privateWhere ? (
                     <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'} name={aloneTitle}
                       onChanged={(state) => setPrivateWhere({ ...privateWhere, state })}
@@ -2439,23 +2460,28 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
             </>
           )}
         >
-          {rootRow || footShown ? (
-            <div className="dev-thread-page-post" data-thread-page-post="">
-              <div className="dev-request-root dev-thread-card" data-thread-card="">
-                {rootRow ? <div className="min-w-0">{rootRow}</div> : null}
-                {footShown ? (
-                  <PrivateThreadFoot where={privateWhere} rootId={privateRoot}
-                    onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
-                ) : null}
-              </div>
+          {/* The opening card is always drawn, as a public page's is, so the
+              page is always drawn as cards (app.css reads the card). A thread
+              begun from New chat shows no opening line (the bot's "New
+              thread.", above), so its card holds only where the thread stands,
+              and with nothing to hold it is not drawn at all. */}
+          <div className="dev-thread-page-post" data-thread-page-post="">
+            <div className="dev-request-root dev-thread-card" data-thread-card="">
+              {rootRow ? <div className="min-w-0">{rootRow}</div> : null}
+              {footShown ? (
+                <PrivateThreadFoot where={privateWhere} rootId={privateRoot}
+                  onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
+              ) : null}
             </div>
-          ) : null}
-          {privateMine && privateRoot && privateWhere?.state === 'open' ? <LiveDraftBar rootId={privateRoot} /> : null}
+          </div>
           <div className="dev-thread-page-replies" data-thread-page-replies="">{repliesPart}</div>
         </ThreadPage>
       ) : (
         <>
           <header className="messages-thread-header" data-reply-head={alone ? 'alone' : undefined}>
+            {/* #6963: the list is hidden, and this is the way back to it —
+                first in the head, where a phone draws its back arrow. */}
+            {showListButton}
             {alone && onBack ? (
               <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
                 aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
@@ -2490,11 +2516,10 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
                 Preview, which opens the design as the tab's own column
                 (../ai/preview.ts), while it is not open already. */}
             {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
-            {alone && preview?.rootId !== rootId && isDesignThread(root, replies) ? (
-              <button type="button" className="messages-thread-action messages-thread-preview" data-reply-preview=""
-                onClick={() => openPreview({ conversationId, rootId, version: null })}>
-                <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
-              </button>
+            {alone ? (
+              <ArtifactsButton conversationId={conversationId} rootId={rootId}
+                hasArtifact={isDesignThread(root, replies)} liveDraft={liveDraft}
+                className="messages-thread-action messages-thread-preview" />
             ) : null}
             {/* #6159: Mark done, or Reopen, in the thread's own ⋯. */}
             {privateMine && privateRoot && privateWhere ? (
@@ -2518,13 +2543,6 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
           {privateMine && !(alone && privateWhere?.state === 'open') ? (
             <PrivateThreadNote where={privateWhere} rootId={privateRoot}
               onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
-          ) : null}
-          {/* A live draft of the thread's project, while one is open: a
-              preview beside the chat that Homeroom bot changes as they talk
-              (./live-draft-bar.tsx, services/live-drafts.js). Nothing until
-              they ask the bot for one. */}
-          {privateMine && privateRoot && privateWhere?.state === 'open' ? (
-            <LiveDraftBar rootId={privateRoot} />
           ) : null}
           <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
             {rootRow}

@@ -348,7 +348,7 @@ test('the home grid draws placeholders from the FIRST paint, prerender included'
 
 test('the topic thread host ships a placeholder from a stable constant', () => {
   const TOPIC = read('frontend/src/features/dev-board/topic-frame.tsx');
-  assert.match(TOPIC, /^const THREAD_INITIAL = \{ __html: skeletonListHtml\(1\) \};$/m,
+  assert.match(TOPIC, /^const THREAD_INITIAL = \{ __html: threadSkeletonHtml\(\) \};$/m,
     'module-level, so React 19 does not rewrite the host on every re-render');
   assert.match(TOPIC, /id="dev-topic-thread"[\s\S]{0,120}dangerouslySetInnerHTML=\{THREAD_INITIAL\}/,
     'the host is filled from that constant');

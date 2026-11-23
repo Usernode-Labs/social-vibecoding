@@ -258,79 +258,69 @@ test('Kubernetes passes no workflow flag: every machine is the only path for wha
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const workerDockerfile = read('worker/Dockerfile');
-  for (const component of ['platform', 'worker', 'capture']) {
-    assert.match(workflow, new RegExp(`component: ${component},`));
-  }
+  const action = read('.github/actions/build-kubernetes-image/action.yml');
+  const resolver = read('scripts/resolve-kubernetes-image.js');
+  assert.match(workflow, /component: \[platform, worker, capture\]/);
   assert.match(workflow, /packages: write/);
-  assert.match(workflow, /owner="\$\{GITHUB_REPOSITORY_OWNER,,\}"/);
-  assert.match(workflow, /ghcr\.io\/\$\{\{ steps\.registry\.outputs\.owner \}\}\/social-vibecoding-\$\{\{ matrix\.component \}\}/);
-  assert.doesNotMatch(workflow, /ghcr\.io\/\$\{\{ github\.repository_owner \}\}/);
-  assert.match(workflow, /sha-\$\{\{ github\.sha \}\}/);
-  assert.match(workflow, /steps\.build\.outputs\.digest/);
-  assert.match(workflow, /if: steps\.reuse\.outputs\.digest == ''/);
-  assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
-  assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
-  assert.match(workflow, /pull: true/);
+  assert.match(workflow, /uses: \.\/\.github\/actions\/build-kubernetes-image/);
+  assert.match(resolver, /ghcr\.io\/\$\{owner\.toLowerCase\(\)\}\/social-vibecoding-\$\{component\}/);
+  assert.match(action, /steps\.reuse\.outputs\.image \}\}:sha-\$\{\{ github\.sha \}\}/);
+  assert.match(action, /steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest/);
+  assert.match(action, /if: steps\.reuse\.outputs\.digest == ''/);
+  assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.image\.outputs\.digest \}\}/);
+  assert.match(action, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
+  assert.match(action, /pull: true/);
   assert.match(workflow, /needs: \[plan, build, preview-schema-compatibility\]/);
-  assert.match(workflow, /npm view @anthropic-ai\/claude-code@latest version/);
   assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,
     'the dependency version is resolved once in the plan');
   assert.match(workflow, /if: needs\.plan\.outputs\.should_release == 'true'/);
-  assert.match(workflow, /CLAUDE_CODE_VERSION: \$\{\{ steps\.claude\.outputs\.version \}\}/);
-  assert.match(workflow, /build-args: \|\n\s+GIT_SHA=\$\{\{ github\.sha \}\}\n\s+\$\{\{ steps\.claude\.outputs\.build_arg \}\}/,
-    'the shell build needs the same exact revision as the runtime, while retaining the worker version');
+  assert.match(workflow, /claude-code-version: \$\{\{ needs\.plan\.outputs\.claude_code_version \}\}/);
+  assert.match(action, /inputs\.component == 'platform' && format\('GIT_SHA=\{0\}', github\.sha\)/);
+  assert.match(action, /inputs\.component == 'worker' && format\('CLAUDE_CODE_VERSION=\{0\}', inputs\.claude-code-version\)/);
   assert.match(workerDockerfile, /ARG CLAUDE_CODE_VERSION=latest/);
   assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
 });
 
 test('every Kubernetes chart release validates its immutable platform image with the runtime revision', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
+  const build = workflow.slice(workflow.indexOf('\n  build:\n'), workflow.indexOf('\n  preview-schema-compatibility:\n'));
   const release = workflow.slice(workflow.indexOf('\n  release:\n'));
-  const start = release.indexOf('- name: Validate platform shell release');
-  const end = release.indexOf('- name: Prepare and validate release chart');
-  assert.ok(start > release.indexOf('- name: Download image digests'));
-  assert.ok(start > release.indexOf('- uses: docker/login-action@v4'));
-  assert.ok(end > start, 'validation gates chart publication');
-  const validation = release.slice(start, end);
-  assert.doesNotMatch(validation, /\bif:|continue-on-error:/,
-    'every release must pass the blocking shell check');
-  assert.match(validation, /image-digests\/platform\.txt/);
-  assert.match(validation, /social-vibecoding-platform@\$digest/);
+  const start = build.indexOf('- name: Validate platform shell release');
+  const end = build.indexOf('- name: Record immutable reference');
+  assert.ok(start > build.indexOf('- name: Verify runtime and scan the exact image SBOM'));
+  assert.ok(end > start, 'validation gates the digest artifact');
+  const validation = build.slice(start, end);
+  assert.match(validation, /if: matrix\.component == 'platform'/);
+  assert.doesNotMatch(validation, /continue-on-error:/);
+  assert.match(validation, /IMAGE: \$\{\{ steps\.image\.outputs\.image \}\}@\$\{\{ steps\.image\.outputs\.digest \}\}/);
+  assert.match(release, /needs\.build\.result == 'success'/, 'the publisher requires the platform check');
   assert.match(validation, /--env NODE_ENV=production --env GIT_SHA="\$GITHUB_SHA"/);
-  assert.match(validation, /--entrypoint node "\$image"/);
+  assert.match(validation, /--entrypoint node "\$IMAGE"/);
   assert.match(validation, /--network none --read-only/);
   assert.match(validation, /require\('\.\/src\/services\/shell-release'\)/);
   assert.match(validation, /loadShellRelease\('\/app\/public'\)/);
 });
 
-test('Kubernetes workflow retains queued releases, publishes the tip, and never an older revision over a newer one', () => {
+test('Kubernetes workflow retains queued builds and checks readiness under the publication lock', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const release = workflow.slice(workflow.indexOf('\n  release:\n'));
-  assert.match(workflow,
-    /concurrency:\n  group: kubernetes-images-\$\{\{ github\.ref \}\}\n  cancel-in-progress: false\n(?:  #[^\n]*\n)*  queue: max/,
-    'a later waiting push must not cancel an earlier merge before it gets a release run');
-  assert.match(release, /git ls-remote --exit-code origin "\$GITHUB_REF"/);
-  assert.match(release, /if \[ "\$current_sha" = "\$GITHUB_SHA" \]; then/);
-  // Behind the tip (5 October: twelve queued runs in a row skipped, so
-  // nothing deployed for an hour and a half), a stable run publishes only
-  // ahead of an older, lower-numbered release, at most every
-  // RELEASE_EVERY_MINUTES. tests/kubernetes-release-publish-rule.test.js runs
-  // the step against every case.
-  assert.match(release, /helm show chart "\$CHART_REF" --version '0\.1\.\*'/,
-    'the newest release Argo CD would run, read from the registry');
-  assert.match(release, /compare "\$published_sha" "\$GITHUB_SHA"\)" = ahead/, 'only over an older revision');
-  assert.match(release, /compare "\$GITHUB_SHA" "\$current_sha"\)" = ahead/, 'only a revision the branch still contains');
-  // The tip too (7 October: four rollouts in sixteen minutes) goes out no
-  // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
-  // in the step, re-reading the branch, and a dispatched run never waits.
-  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '4'/);
-  assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
-    'a run dispatched by hand is the way to release at once');
-  assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,
-    'every wait is followed by a fresh read of the branch tip');
+  assert.doesNotMatch(workflow, /^concurrency:/m, 'verified releases must not wait behind unrelated earlier builds');
+  for (const [start, end, component] of [
+    ['build', 'preview-schema-compatibility', '\${{ matrix.component }}'],
+    ['preview-schema-compatibility', 'release', 'postgres'],
+  ]) {
+    const job = workflow.slice(workflow.indexOf(`\n  ${start}:\n`), workflow.indexOf(`\n  ${end}:\n`));
+    assert.ok(job.includes(`group: kubernetes-build-\${{ github.ref }}-${component}-\${{ needs.plan.outputs.build_lane }}`));
+    assert.match(job, /cancel-in-progress: false\n\s+queue: max/);
+  }
+  assert.match(release,
+    /concurrency:\n      group: kubernetes-images-\$\{\{ github\.ref \}\}\n      cancel-in-progress: false\n      queue: max/,
+    'the publisher shares a single lock with old workflow revisions');
+  assert.match(release, /run: node scripts\/choose-kubernetes-release\.js/);
+  assert.match(release, /ARGOCD_REFRESH_TOKEN: \$\{\{ secrets\.ARGOCD_REFRESH_TOKEN \}\}/);
   assert.match(release, /^    permissions:\n(?:      #.*\n)*      actions: read$/m,
-    'the release age is read from this workflow\'s own runs');
-  for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
+    'the publisher can read the verification jobs of newer releases');
+  for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Promote OCI release tag', 'Record atomic release']) {
     assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
   }
 });
@@ -358,7 +348,7 @@ test('Kubernetes workflow retries the chart push before it fails a release (#665
 test('Argo refresh runs separately and only for a published stable chart', () => {
   const release = read('.github/workflows/build-kubernetes-images.yml');
   const refresh = read('.github/workflows/refresh-kubernetes-release.yml');
-  assert.doesNotMatch(release, /ARGOCD_REFRESH_TOKEN|refresh=hard/);
+  assert.doesNotMatch(release, /refresh=hard/);
   assert.match(refresh, /workflows: \[Build Kubernetes images\]\n    branches: \[main\]\n    types: \[completed\]/);
   assert.match(refresh, /workflow_run\.conclusion == 'success'/);
   assert.match(refresh, /workflow_run\.head_repository\.full_name == github\.repository/);
@@ -373,7 +363,13 @@ test('Argo refresh runs separately and only for a published stable chart', () =>
   assert.match(refresh, /--max-time \d+/);
   assert.match(refresh, /ARGOCD_APPLICATION: social-vibecoding-platform/);
   assert.match(refresh, /::warning title=Argo CD refresh not confirmed::/);
-  assert.doesNotMatch(refresh, /actions\/checkout|\/sync\b/, 'the refresh uses only the trusted workflow and lets Argo own sync');
+  const [refreshJob, observer] = refresh.split('\n  observe:\n');
+  assert.doesNotMatch(refreshJob, /actions\/checkout/, 'refresh dispatch uses only the trusted workflow');
+  assert.doesNotMatch(refresh, /\/sync\b/, 'Argo owns sync');
+  assert.doesNotMatch(observer, /\bneeds:/, 'rollout observation samples independently of refresh dispatch');
+  assert.match(observer, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(observer, /persist-credentials: false/);
+  assert.match(observer, /\.name == "Promote OCI release tag" and \.conclusion == "success"/);
 });
 
 test('migration command validates the target database identifier', () => {
@@ -414,8 +410,8 @@ test('Kubernetes chart preserves both social account-linking credential pairs', 
   ]) {
     assert.match(values, new RegExp(`${provider.value}ClientId: ""`));
     assert.match(values, new RegExp(`${provider.value}ClientSecret: ""`));
-    assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
-    assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \{\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \{\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
     assert.match(readme, new RegExp(`/api/me/${provider.callback}/callback`));
   }
 });

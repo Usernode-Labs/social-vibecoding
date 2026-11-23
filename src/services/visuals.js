@@ -40,6 +40,7 @@ const contentReview = require('./content-review');
 const releaseHolds = require('./release-holds');
 const tokenOrderCheck = require('./token-order-check');
 const outsideScriptCheck = require('./outside-script-check');
+const buildOutputCheck = require('./build-output-check');
 const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
@@ -2919,6 +2920,13 @@ async function settleCaptureRun(config, pool, run) {
     config, pool, sessionId: session.id, appSlug: app.slug, repoOwner, repoName, commitHash,
   }).catch(() => null);
   if (outsideScriptOutcome) extraRows.push(outsideScriptOutcome.row);
+  // A file the shell build makes, added by this change: a failing check on the
+  // platform's own repository (PR 6917 committed 127 of them, 20 Nov 2026).
+  // Deterministic, cached per head, always blocking. Never throws.
+  const buildOutputOutcome = shotsOnly ? null : await buildOutputCheck.maybeRunBuildOutputCheck({
+    config, pool, sessionId: session.id, appSlug: app.slug, repoOwner, repoName, commitHash,
+  }).catch(() => null);
+  if (buildOutputOutcome) extraRows.push(buildOutputOutcome.row);
   // The small-change tag, watch only: a row for admins, never a check row,
   // so it is not awaited and nothing below reads it. Cached per head like
   // the review above. Never rejects.

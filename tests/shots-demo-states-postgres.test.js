@@ -465,8 +465,9 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // answered with Build it, and the bot's thanks under it: the card Build
   // it moved under the plan, read through the chat's own layout and the
   // cards' reader. Its build waits its turn, so its line is Building it,
-  // and the plan carries its state. Under it: the close offer's pair and,
-  // newest of all, the drafted request's pair (#4605).
+  // and the plan carries its state. Under it: the close offer's pair, the
+  // drafted request's pair (#4605) and, newest of all, the laid-out answer
+  // (#6975).
   // 14 Nov 2026: Main Chat is gone, and what these states say is in threads
   // (the first version's own, and each ask's with its offer under it). Read
   // flat here, every message in the order it was written, so the states'
@@ -487,7 +488,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(planState(plan.metadata.homeroomBot), 'built');
   assert.equal(plan.metadata.homeroomBot.firstVersion, true);
   assert.equal(thanks.content, botActivity.thanksText('[shots fixture] Book club'));
-  assert.equal(thanks.id, messages.at(-5).id, 'under it the close offer\'s pair and the drafted request\'s pair');
+  assert.equal(thanks.id, messages.at(-7).id, 'under it the close offer\'s pair, the drafted request\'s pair and the laid-out answer');
   assert.ok(plan.id < thanks.id, 'the plan, then the thanks under it');
   // The plan and its thanks card are replies in the first version's thread
   // now, in that order. Read as the thread shows them (its replies, with no
@@ -508,11 +509,11 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
        FROM apps a WHERE a.id = $1`, [demoStates.IDS.firstVersionApp]);
   assert.deepEqual(project, { created_by: member, view_visibility: 'private', first_versions: 0 });
 
-  // Second to last in the same chat, the bot's offer to open a vote on
+  // Third to last in the same chat, the bot's offer to open a vote on
   // closing request #900001, quoting the member's message that says it is
   // done, with the words, buttons and open action a live offer has
   // (homeroom-bot-mayor.js offer). The drafted request's pair follows it.
-  const [ask, offered] = messages.slice(-4, -2);
+  const [ask, offered] = messages.slice(-6, -4);
   assert.equal(ask.sender.id, member);
   assert.equal(offered.threadRootId, ask.id, 'the offer is under the ask, in the ask\'s thread');
   const { rows: [action] } = await pool.query(
@@ -540,17 +541,28 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual([settled.state, settled.text], ['failed', 'I couldn\'t propose closing it just now. Try again in a minute.']);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
 
-  // Last in the same chat, the bot's drafted request (#4605): quoting the
-  // member's message that asked for one, with the words, buttons and open
-  // action a live offer has (homeroom-bot-mayor.js offer). The chat's
-  // newest message, and read.
-  const [fileAsk, fileOffer] = messages.slice(-2);
+  // Second to last in the same chat, the bot's drafted request (#4605):
+  // quoting the member's message that asked for one, with the words,
+  // buttons and open action a live offer has (homeroom-bot-mayor.js
+  // offer). The laid-out answer's pair follows it.
+  const [fileAsk, fileOffer] = messages.slice(-4, -2);
   assert.equal(fileAsk.sender.id, member);
   assert.equal(fileOffer.threadRootId, fileAsk.id, 'the draft is under the ask, in the ask\'s thread');
-  assert.equal(chat.latestMessage.id, fileOffer.id);
+  // Last in the same chat, the bot's laid-out answer (#6975): the member's
+  // question about a weekly book club and, under it, a chat reply with the
+  // same words drawn as a heading, a list and a table. The chat's newest
+  // message, read, and no news about a request recorded for it.
+  const [layoutAsk, layoutReply] = messages.slice(-2);
+  assert.equal(layoutAsk.sender.id, member);
+  assert.equal(layoutReply.threadRootId, layoutAsk.id, 'the answer is under the question, in its thread');
+  assert.equal(layoutReply.metadata.homeroomBot.kind, 'chat');
+  assert.ok(layoutReply.metadata.homeroomBot.html.trim());
+  assert.equal(chat.latestMessage.id, layoutReply.id);
+  assert.equal((await pool.query(
+    'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_messages WHERE message_id = $1', [layoutReply.id])).rows[0].n, 0);
   // The threads the Homeroom bot page lists for them: the first version's
   // (opened by the line that says it is being set up, holding its plan and
-  // the thanks), and each ask's with its offer. Each is read, so the chat's
+  // the thanks), and each ask's with its reply. Each is read, so the chat's
   // count, the sum of its threads', is zero (above).
   const { rows: listedThreads } = await pool.query(
     `SELECT p.kind, p.root_message_id, p.app_id, p.last_read_message_id FROM private_threads p
@@ -560,6 +572,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     ['first_version', plan.threadRootId, demoStates.IDS.firstVersionApp, thanks.id],
     ['idea', ask.id, null, offered.id],
     ['idea', fileAsk.id, null, fileOffer.id],
+    ['idea', layoutAsk.id, null, layoutReply.id],
   ]);
   assert.equal(thanks.threadRootId, plan.threadRootId, 'the plan and the thanks are in one thread');
   const firstOpener = messages.find((m) => m.id === plan.threadRootId);
@@ -904,7 +917,8 @@ test('an existing-screen claim no copy can show is recorded as no visible change
     ['shots-demo-member-vote-update-running-v1']);
   assert.deepEqual(installed.skipped, []);
   assert.equal(installed.installed.length, 1);
-  const app = { id: demoStates.IDS.workStatusApp, slug: 'shots-demo-vote-updates' };
+  // The change is one to Homeroom itself: only its own copies get demo states.
+  const app = { id: demoStates.IDS.workStatusApp, slug: homeroomBot.PLATFORM_SELF_APP_SLUG };
   const session = { id: demoStates.IDS.updateRunningProposal };
   const head = 'a'.repeat(40);
   const reason = 'A staged copy has no change with an update running on it, and no state holds one';
@@ -942,6 +956,16 @@ test('an existing-screen claim no copy can show is recorded as no visible change
   assert.equal(appended.length, 3);
   assert.equal(appended[2].intent.rationale,
     `${shotsView.UNSTAGEABLE_PREFIX} A change whose update failed`);
+  // Another app's change: Homeroom's demo states are never on its copies, so
+  // nothing is filed on Homeroom's board. The reason is still recorded on
+  // the change.
+  await homeroomBot.recordUnstageable(pool, config,
+    { app: { id: demoStates.IDS.workStatusApp, slug: 'shots-demo-vote-updates' }, bot, session, head,
+      reason: 'A ledger of that app with pending and approved expenses' });
+  assert.equal(filed.length, 1, 'no report on Homeroom\'s board for another app\'s change');
+  assert.equal(appended.length, 4);
+  assert.equal(appended[3].intent.rationale,
+    `${shotsView.UNSTAGEABLE_PREFIX} A ledger of that app with pending and approved expenses`);
 });
 
 // A real copy's staging seeds open the member's chat with Homeroom bot at
@@ -976,7 +1000,7 @@ test('the chat states go into the chat a copy\'s staging seeds already opened', 
       [chat.id, bot]);
   }
   const chatStates = ['shots-demo-member-first-version-thanks-v1', 'shots-demo-member-bot-close-offer-v1',
-    'shots-demo-member-bot-file-offer-v1', 'shots-demo-member-bot-rings-v1'];
+    'shots-demo-member-bot-file-offer-v1', 'shots-demo-member-bot-laid-out-reply-v1', 'shots-demo-member-bot-rings-v1'];
   for (const side of [base, head]) {
     const ready = await demoStates.inspectDemoStates(side.input);
     for (const id of chatStates) assert.ok(ready.includes(id), `${id} is ready beside the seeds' chat`);
@@ -996,7 +1020,20 @@ test('the chat states go into the chat a copy\'s staging seeds already opened', 
   const { rows: threads } = await pool.query(
     'SELECT kind, conversation_id, root_message_id FROM private_threads ORDER BY root_message_id');
   assert.deepEqual(threads.map((row) => [row.kind, Number(row.conversation_id)]),
-    [['first_version', chatId], ['idea', chatId], ['idea', chatId]]);
+    [['first_version', chatId], ['idea', chatId], ['idea', chatId], ['idea', chatId]]);
+  // The laid-out answer (#6975) is a chat reply, under its ask, with the
+  // words laid out beside them, and no record of news about a request.
+  const { rows: [layoutAsk] } = await pool.query(
+    "SELECT id FROM conversation_messages WHERE idempotency_key = 'shots-fixture-hrbot-layout-ask'");
+  const { rows: [layoutReply] } = await pool.query(
+    `SELECT id, thread_root_id, metadata FROM conversation_messages
+      WHERE idempotency_key = 'shots-fixture-hrbot-layout-reply'`);
+  assert.equal(layoutReply.metadata.homeroomBot.kind, 'chat');
+  assert.match(layoutReply.metadata.homeroomBot.html, /<h3>.*<\/h3>[\s\S]*<ul>[\s\S]*<table>/);
+  assert.equal(Number(layoutReply.thread_root_id), Number(layoutAsk.id));
+  assert.equal((await pool.query(
+    'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_messages WHERE message_id = $1', [layoutReply.id])).rows[0].n, 0,
+  'a plain chat answer records no news about a request');
   // Where the brief sends the agent is that thread, in that chat.
   assert.equal(result.installed[0].shows[0].path, `/#homeroom-bot/thread/${Number(threads[0].root_message_id)}`);
   const { rows: rings } = await pool.query(

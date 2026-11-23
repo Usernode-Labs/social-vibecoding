@@ -33,16 +33,18 @@
  * options as drawShell, run in the panel's own document — and takeBase lays
  * it in at the frame's rectangle, beside the app's picture.
  *
- * ── Designs draw themselves (#6261) ───────────────────────────────────
+ * ── Designs and bot replies draw themselves (#6261) ───────────────────
  *
  * A design's frame (../messages/design-pane.tsx, ./design-card.tsx) is
  * `sandbox="allow-scripts"` with an opaque origin, so the shell cannot draw
- * into it and it came out a blank box. Each marked frame is asked for its
- * own picture (../artifact/frame-doc.ts's helper injects the vendored SnapDOM
- * source as an inline script), and takeBase lays it into the frame's
- * rectangle, clipped to its wrapper, on the first picture and the retake.
- * `drawDocument` runs the same leg in the panel's own document. A frame that
- * does not answer in three seconds keeps today's empty box.
+ * into it and it came out a blank box. A bot's laid-out reply
+ * (../messages/bot-html.tsx) is a frame of the same kind. Each marked frame
+ * is asked for its own picture (../artifact/frame-doc.ts's helper injects the
+ * vendored SnapDOM source as an inline script, with the frame's nonce),
+ * and takeBase lays it into the frame's rectangle, clipped to its wrapper, on
+ * the first picture and the retake. `drawDocument` runs the same leg in the
+ * panel's own document. A frame that does not answer in three seconds keeps
+ * today's empty box.
  *
  * ── When ───────────────────────────────────────────────────────────────
  *
@@ -502,11 +504,11 @@ export function requestPanelPicture(
   });
 }
 
-// ── A design draws its own picture (#6261) ────────────────────────────
+// ── A design or a bot reply draws its own picture (#6261) ─────────────
 //
-// The design's frames carry `data-artifact-pictured`; see the header. They are
-// another origin, so nothing here looks inside one: it is asked, and what it
-// sends back is drawn in its rectangle only.
+// The design's frames and a bot's laid-out reply carry `data-artifact-pictured`;
+// see the header. They are another origin, so nothing here looks inside one:
+// it is asked, and what it sends back is drawn in its rectangle only.
 
 /** The viewport the picture is taken of, as its own measurements use it. */
 function viewportSize(): Size {

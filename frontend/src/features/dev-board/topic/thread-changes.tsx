@@ -59,6 +59,8 @@ import type { MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { i18n, t as translate } from '../../../lib/i18n/runtime';
+import { useStoreState } from '../../../lib/use-store-state';
+import { voteSendingStore } from '../card/cards-store';
 import { projectChangesOnGithub } from '../../../lib/change-ref';
 import { changeHref } from '../../../lib/change-href';
 import { reload as reloadTab } from '../../../lib/tab-build';
@@ -1536,6 +1538,10 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
     try { setAll(await readCloseReplies(slug, close.id)); } finally { setLoadingAll(false); }
   };
   const mine = row ? row.myVote : close.myVote || null;
+  // #6987: the side this vote is on its way for, published by castIssueVote.
+  // The pressed button reads "Sending…" until the server answers.
+  const sendingAll = useStoreState(voteSendingStore);
+  const sendingSide = sendingAll[`castIssueVote:${close.id}`] || null;
   const yes = row ? row.yes : 0;
   const need = row ? row.need : 1;
   const folded = close.folded || [];
@@ -1567,6 +1573,7 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
             <div className="dev-change-gate-act">
               {(['up', 'down'] as const).map((side) => {
                 const on = mine === (side === 'up' ? 'yes' : 'no');
+                const sending = sendingSide === (side === 'up' ? 'yes' : 'no');
                 return (
                   <button
                     key={side}
@@ -1575,11 +1582,12 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
                     aria-pressed={on}
                     aria-disabled={busy || undefined}
                     data-close-vote={side}
-                    style={on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
+                    data-sending={sending ? 'true' : undefined}
+                    style={sending ? { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' } : on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
                     onClick={(e) => { void vote(side, e.currentTarget); }}
                   >
-                    {side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />}
-                    {side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no')}
+                    {sending ? null : (side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />)}
+                    {sending ? t('project:topic.thread.close.sending') : (side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no'))}
                   </button>
                 );
               })}
@@ -1671,6 +1679,10 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
   const ending = outcomeLine(votes.outcome);
   const open = votes.open;
   const mine = votes.mine;
+  // #6987: the same sending state as the request's close vote, on this
+  // decision's own page.
+  const sendingAll = useStoreState(voteSendingStore);
+  const sendingSide = sendingAll[`castIssueVote:${g.id}`] || null;
   const figure = t('project:topic.decision.votes.figure', { yes: votes.yes, need: votes.need });
   return (
     <div ref={box} className="mt-3" data-gov-vote={g.id}>
@@ -1698,6 +1710,7 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
             <div className="dev-change-gate-act">
               {(['up', 'down'] as const).map((side) => {
                 const on = mine === (side === 'up' ? 'yes' : 'no');
+                const sending = sendingSide === (side === 'up' ? 'yes' : 'no');
                 return (
                   <button
                     key={side}
@@ -1706,11 +1719,12 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
                     aria-pressed={on}
                     aria-disabled={busy || undefined}
                     data-close-vote={side}
-                    style={on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
+                    data-sending={sending ? 'true' : undefined}
+                    style={sending ? { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' } : on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
                     onClick={(e) => { void vote(side, e.currentTarget); }}
                   >
-                    {side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />}
-                    {side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no')}
+                    {sending ? null : (side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />)}
+                    {sending ? t('project:topic.thread.close.sending') : (side === 'up' ? t('project:topic.thread.close.yes') : t('project:topic.thread.close.no'))}
                   </button>
                 );
               })}

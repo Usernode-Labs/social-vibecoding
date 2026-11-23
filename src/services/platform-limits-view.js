@@ -12,9 +12,17 @@
 //                   limit. At it, new sessions pause idle ones, then are
 //                   refused.
 //   openrouter_credit
-//                   the bot's building credit (services/openrouter-credit.js,
-//                   #6867): the lower of the account's credit and the bot
-//                   key's own limit. Out, the bot stops planning and building.
+//                   the OpenRouter ACCOUNT's credit (services/
+//                   openrouter-credit.js, #6867). Out, the bot stops planning
+//                   and building. Never the bot key's remaining: that is its
+//                   weekly budget, the next row.
+//   bot_budget      Homeroom bot's weekly budget: the further along of
+//                   OpenRouter's count of its key's week and Homeroom's own
+//                   (openrouter-credit.js `budget`, the `bot_budget` limit of
+//                   platform-limit-alerts.js, so it has a stored level, bell
+//                   notices and texts like the counted limits). Used up, the
+//                   bot stops building until the week turns or the budget is
+//                   raised.
 //   db_connections  client connections on the shared Postgres server against
 //                   the line where ordinary logins (every app's) are refused:
 //                   platform-limit-alerts.js's `connections` limit, so it
@@ -62,13 +70,16 @@ const COUNTED = Object.freeze(['apps', 'sessions', 'connections']);
 const CAPACITY = Object.freeze(['db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool']);
 // Four missed sweeps (every five minutes) make a stored figure too old.
 const CAPACITY_STALE_MS = 20 * 60 * 1000;
+// The limits whose rows are built from what their sweep stored: the
+// cluster's own, and Homeroom bot's weekly budget.
+const STORED = Object.freeze([...CAPACITY, 'bot_budget']);
 // The alerts' key for a limit, and the row's (the client's) key for it.
 const ROW_KEY = Object.freeze({ apps: 'apps', sessions: 'sessions', connections: 'db_connections' });
 // Worst first; then the order the mockup lists them in.
 const STATE_RANK = Object.freeze({ over: 0, at: 1, out: 1, near: 2, unknown: 3 });
 const KEY_RANK = Object.freeze({
-  apps: 0, openrouter_credit: 1, sessions: 2, db_connections: 3,
-  db_disk: 4, node_pool: 5, quota_apps: 6, quota_workers: 7, quota_builds: 8,
+  apps: 0, openrouter_credit: 1, bot_budget: 2, sessions: 3, db_connections: 4,
+  db_disk: 5, node_pool: 6, quota_apps: 7, quota_workers: 8, quota_builds: 9,
 });
 // The states the bell's red dot is for: Homeroom is refusing something now.
 const BROKEN = Object.freeze(new Set(['over', 'at', 'out']));
@@ -106,37 +117,45 @@ function countedRow(key, { used, cap, percent, level }) {
 }
 
 /**
- * The credit as a row, or null when there is nothing to say. Pure. `status`
- * is openrouter-credit.status(): the stored state the sweep keeps.
+ * The account's credit as a row, or null when there is nothing to say. Pure.
+ * `status` is openrouter-credit.status(): the stored state the sweep keeps,
+ * whose `creditCents` is the ACCOUNT's credit (a prepaid key's remaining
+ * standing in only when the account cannot be read), never what is left of
+ * the bot's weekly budget.
  *
- *   out      a turn found the credit gone (the stored outage), or the last
- *            read found none left
+ *   out      a turn found the credit gone (the stored outage, when its
+ *            cause is credit), or the last read found none left
  *   near     under the warn line ($500 by default; `urgent` once under $200)
  *   unknown  a figure was known, but the last read got no answer, or the
  *            last read is older than CREDIT_STALE_MS
  *
- * A deploy that has never had a figure (no management key and an unlimited
- * bot key) says nothing: that is not a limit anybody can watch.
+ * An outage whose cause is the bot's weekly budget is that limit's row, not
+ * this one: the account has credit, and "add credit" would fix nothing.
+ *
+ * A deploy that has never had a figure says nothing: that is not a limit
+ * anybody can watch. Nor does one with no management key, whose account
+ * credit cannot be read at all: "couldn't check" would stand for ever, and
+ * the console's tile says it once instead.
  */
 function creditRow(status, { now = Date.now() } = {}) {
   if (!status || typeof status !== 'object') return null;
-  const known = Number.isFinite(status.balanceCents);
+  const known = Number.isFinite(status.creditCents);
   const base = {
     key: 'openrouter_credit',
-    balanceCents: known ? Math.max(0, Math.round(status.balanceCents)) : null,
+    balanceCents: known ? Math.max(0, Math.round(status.creditCents)) : null,
     warnCents: Number.isFinite(status.warnCents) ? status.warnCents : null,
     urgentCents: Number.isFinite(status.urgentCents) ? status.urgentCents : null,
     daysLeft: Number.isFinite(status.daysLeft) ? status.daysLeft : null,
-    measuredAt: status.at || null,
+    measuredAt: status.creditAt || status.at || null,
   };
-  if (status.outage && status.outage.since) {
+  if (status.outage && status.outage.since && status.outage.cause !== 'budget') {
     return { ...base, state: 'out', since: status.outage.since };
   }
   if (!known) return null;
   const at = Date.parse(status.at || '');
-  const noAnswer = status.accountCents == null && status.keyCents == null;
-  if (noAnswer || !Number.isFinite(at) || now - at > CREDIT_STALE_MS) {
-    return { ...base, state: 'unknown', reason: noAnswer ? 'no_answer' : 'stale' };
+  if (!status.creditRead || !Number.isFinite(at) || now - at > CREDIT_STALE_MS) {
+    if (status.management === false && status.creditSource !== 'key') return null;
+    return { ...base, state: 'unknown', reason: status.creditRead ? 'stale' : 'no_answer' };
   }
   if (base.balanceCents <= 0) return { ...base, state: 'out', since: null };
   if (base.warnCents != null && base.balanceCents < base.warnCents) {
@@ -154,7 +173,8 @@ function unknownRow(key, reason) {
 }
 
 /**
- * One of the cluster's limits as a row, from what the sweep stored, or null:
+ * One of the stored limits (the cluster's, the bot's weekly budget) as a row,
+ * from what the sweep stored, or null:
  * never measured here, or under its line. Pure. `stored` is its
  * platform_limit_alerts row ({ level, used, cap, measured_at, detail }).
  */
@@ -184,7 +204,7 @@ async function storedLevels(pool) {
     const { rows } = await pool.query(
       `SELECT limit_key, level, used, cap, measured_at, detail
          FROM platform_limit_alerts WHERE limit_key = ANY($1::text[])`,
-      [[...COUNTED, ...CAPACITY]],
+      [[...COUNTED, ...STORED]],
     );
     for (const row of rows) out.set(row.limit_key, row);
   } catch (err) {
@@ -217,8 +237,8 @@ async function compute(pool, config) {
       rows.push(unknownRow(ROW_KEY[key], 'no_answer'));
     }
   }
-  for (const key of CAPACITY) {
-    const limit = limits.CAPACITY_LIMITS.find((l) => l.key === key);
+  for (const key of STORED) {
+    const limit = limits.ALL_LIMITS.find((l) => l.key === key);
     if (!limit || !limit.enabled(config)) continue;
     const row = capacityRow(key, levels.get(key), { percent });
     if (row) rows.push(row);
@@ -265,11 +285,13 @@ async function read(pool, config, { fresh = false } = {}) {
  */
 async function refresh(pool, config) {
   const limits = alerts();
-  for (const key of [...COUNTED, ...CAPACITY]) {
+  // The credit sweep first: the bot's weekly budget is measured from the
+  // key's figures it stores.
+  await require('./openrouter-credit').sweep(pool, config);
+  for (const key of [...COUNTED, ...STORED]) {
     await limits.evaluate(pool, config, key).catch((err) =>
       log.warn('platform-limits', 'A limit check failed', { limit: key, err: err.message }));
   }
-  await require('./openrouter-credit').sweep(pool, config);
   return read(pool, config, { fresh: true });
 }
 
@@ -291,7 +313,9 @@ function changed() {
  * change state (low, out, unknown, or gone). Pure decision, then `changed`.
  */
 function creditMoved(before, after, settings = {}, { now = Date.now() } = {}) {
-  const row = (state) => creditRow(state ? { ...settings, ...state } : null, { now });
+  const row = (state) => (state
+    ? creditRow(require('./openrouter-credit').statusOf(state, settings, now), { now })
+    : null);
   const was = row(before);
   const is = row(after);
   if ((was && was.state) !== (is && is.state)) {

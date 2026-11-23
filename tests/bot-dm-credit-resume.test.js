@@ -412,7 +412,9 @@ test('A1, end to end: OpenRouter\'s real 402 through the real client is an outag
   const stored = JSON.parse(settings.get(credit.KEY_STATE));
   assert.ok(stored.outage?.since, 'the outage is in the one stored state');
   assert.deepEqual(writes.filter((w) => w === 'incident').length, 1, 'one incident for the outage');
-  assert.deepEqual(await credit.creditState(pool), { out: true, since: stored.outage.since, words: stored.outage.words });
+  // The cause is credit: nothing here says the bot's weekly budget ran out
+  // (no "Key limit exceeded", and no key figures to judge from).
+  assert.deepEqual(await credit.creditState(pool), { out: true, since: stored.outage.since, words: stored.outage.words, cause: 'credit' });
   // 3. While that outage stands, the next message asks the stored state
   //    first and sends no request at all (review B1).
   requests.length = 0;
@@ -469,9 +471,14 @@ test('the last try\'s line says the message is answered once credit is back, in 
     + 'a few minutes, and an admin has been told; you don\'t need to send it again.');
   assert.deepEqual([mayor.answerKey(80), mayor.answerKey(80, 2), mayor.answerKey(80, 0, 1), mayor.answerKey(80, 3, 2)],
     ['hrbot-mayor-80', 'hrbot-mayor-80-d2', 'hrbot-mayor-80-r1', 'hrbot-mayor-80-r2-d3']);
-  // The voice and look_into are left as they were: "ask me again once it's back".
+  // #6920: the voice and look_into hold their asks too, as the chat does.
   const read = (p) => require('node:fs').readFileSync(require.resolve(p), 'utf8');
-  assert.match(read('../src/services/homeroom-bot-thread-tools/look-into.js'), /Ask me again once it\\'s back\./);
+  const voiceFile = read('../src/services/homeroom-bot-voice.js');
+  assert.match(voiceFile, /HELD_TEXT = 'OpenRouter/);
+  assert.doesNotMatch(voiceFile, /CREDIT_TEXT/);
+  const lookFile = read('../src/services/homeroom-bot-thread-tools/look-into.js');
+  assert.match(lookFile, /LOOK_HELD_TEXT/);
+  assert.doesNotMatch(lookFile, /Ask me again once it\\'s back\./);
 });
 
 // ── The DM's answer and its work ────────────────────────────────────────

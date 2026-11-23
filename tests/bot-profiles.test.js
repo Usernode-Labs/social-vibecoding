@@ -114,6 +114,22 @@ test('no surface offers a tool its profile does not list, and every rule named i
   }
 });
 
+// 20 Nov 2026 (live-draft review, E): the chat searches the web, a few times
+// a turn at most; a project's thread does not.
+test('E: a private thread may search the web, up to its profile\'s cap; no project thread does', () => {
+  assert.ok(profiles.profileOf('private').tools.includes('web_search'));
+  for (const kind of ['request', 'change', 'channel', 'reply']) assert.ok(!profiles.profileOf(kind).tools.includes('web_search'), kind);
+  for (const name of profiles.profileOf('private').capabilities) {
+    assert.ok(!profiles.capabilityOf(name).tools.includes('web_search'), `${name}: the chat's own, in every capability`);
+  }
+  assert.equal(profiles.CHAT_LIMITS.searchesPerTurn, 3);
+  assert.equal(require('../src/services/bot-web-search').SEARCHES_PER_TURN, profiles.CHAT_LIMITS.searchesPerTurn);
+  const tools = require('../src/services/bot-tools');
+  assert.equal(tools.toolsFor(['web_search'], 'main')[0].function.name, 'web_search');
+  assert.ok(!tools.offers('web_search', 'thread') && !tools.offers('web_search', 'design'));
+  assert.match(read('src/services/homeroom-bot-mayor.js'), /const webTools = ctx\.webSearch \? botTools\.toolsFor\(\['web_search'\], 'main'\) : \[\];/);
+});
+
 test('#6389: the change thread may make its own version of somebody else\'s change', () => {
   assert.ok(profiles.profileOf('change').tools.includes('make_own_version'));
   const voice = require('../src/services/homeroom-bot-voice');
@@ -189,6 +205,12 @@ test('#6358: a design turn draws a whole screen within its budget', () => {
   assert.deepEqual(profiles.turnLimits(['design']), { rounds: 16, outputTokens: 16000, retryOutputTokens: 32000, requestTimeoutMs: 180_000 });
   assert.deepEqual(profiles.turnLimits([]), { rounds: 16, outputTokens: 8000, retryOutputTokens: 16000, requestTimeoutMs: 90_000 });
   assert.deepEqual(profiles.turnLimits(['draft']).rounds, 18);
+  // 20 Nov 2026 (live-draft review, A): a draft turn looks at its preview at
+  // most twice (look_at_preview), counted by its session.
+  assert.equal(profiles.DRAFT_LIMITS.looksPerTurn, 2);
+  assert.ok(profiles.DRAFT_TOOLS.includes('look_at_preview'));
+  assert.equal(require('../src/services/live-draft-bot').MAX_LOOKS, profiles.DRAFT_LIMITS.looksPerTurn);
+  assert.match(read('src/services/live-draft-bot.js'), /const MAX_LOOKS = DRAFT_LIMITS\.looksPerTurn;/);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /maxOutputTokens: room\.outputTokens, retryOutputTokens: room\.retryOutputTokens, timeoutMs: room\.requestTimeoutMs,/);
   assert.match(src, /const room = loaded\(\)\.length \? turnLimits\(loaded\(\)\) : null;/);

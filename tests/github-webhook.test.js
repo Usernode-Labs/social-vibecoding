@@ -33,20 +33,31 @@ function sign(body, secret = SECRET) {
 /** A server with a mocked pool and a recording sync. */
 function harness({ secret = SECRET, sessions = [] } = {}) {
   const synced = [];
+  const looked = [];
+  // The two lookups share a query shape; each SQL's own WHERE decides which
+  // rows the real database would return, so the mock applies the same parts.
   const pool = {
     async query(sql, params) {
-      if (/FROM chat_sessions cs/.test(String(sql))) {
-        return { rows: sessions.filter((s) => Number(s.pr_number) === Number(params[0])) };
-      }
-      return { rows: [] };
+      const text = String(sql);
+      if (!/FROM chat_sessions cs/.test(text)) return { rows: [] };
+      let rows = sessions.filter((s) => Number(s.pr_number) === Number(params[0]));
+      if (text.includes("cs.source = 'imported'")) rows = rows.filter((s) => s.source === 'imported');
+      if (text.includes("cs.source IS DISTINCT FROM 'imported'")) rows = rows.filter((s) => s.source !== 'imported');
+      if (text.includes("cs.status = 'promoted'")) rows = rows.filter((s) => s.status === 'promoted');
+      if (text.includes('cs.status IN (')) rows = rows.filter((s) => ['active', 'promoted', 'merging'].includes(s.status));
+      return { rows };
     },
   };
   const prImportSync = {
     async syncImportedProposal({ session }) { synced.push(session.id); return 'updated'; },
   };
+  // #7013: the merged-by-hand look the clock also runs, recorded here.
+  const proposalScans = {
+    async lookMergedByHand(_pool, sessionId) { looked.push(sessionId); return { merged: true }; },
+  };
   const app = express();
-  app.use(githubWebhookRoutes({ githubWebhookSecret: secret }, { pool, prImportSync }));
-  return { app, synced };
+  app.use(githubWebhookRoutes({ githubWebhookSecret: secret }, { pool, prImportSync, proposalScans }));
+  return { app, synced, looked };
 }
 
 async function listen(app) {
@@ -196,6 +207,80 @@ test('it mounts before the body parser and outside the session gate', () => {
     'the secret comes from the environment and defaults to off');
   assert.ok(!/head\.sha|head_sha/.test(src),
     'the head SHA is never taken from the delivery: the sync re-reads it from GitHub');
+});
+
+// ── A native proposal merged by hand (#7013) ─────────────────────────────
+//
+// A native proposal somebody merges on GitHub used to be noticed only by the
+// merged-by-hand clock, every six hours, so its row stayed in In progress
+// saying Going live until then. A `closed` delivery now runs the same look.
+
+const NATIVE = {
+  id: 4700, pr_number: 2685, source: 'native', status: 'promoted',
+  app_slug: 'usernode-1a2b3c', repo_url: `https://github.com/${REPO}`,
+};
+
+const closedPayload = (over = {}) => payload({ action: 'closed', ...over });
+
+const tick = () => new Promise((r) => setTimeout(r, 30));
+
+test('a closed delivery runs the merged-by-hand look for a native proposal', async () => {
+  const { app, synced, looked } = harness({ sessions: [NATIVE] });
+  const { server, base } = await listen(app);
+  try {
+    const body = closedPayload();
+    const res = await post(base, body, { signature: sign(body) });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, action: 'closed', prNumber: 2685 });
+    await tick();
+    assert.deepEqual(looked, [4700], 'the look the six-hourly clock also makes, run now');
+    assert.deepEqual(synced, [], 'a native proposal is not handed to the imported sync');
+  } finally { server.close(); }
+});
+
+test('the native look needs a close, a matching repository and a proposal up for a vote', async () => {
+  // Another app's repository: two apps can carry the same PR number.
+  const otherRepo = harness({ sessions: [{ ...NATIVE, repo_url: 'https://github.com/someone-else/other-app' }] });
+  const one = await listen(otherRepo.app);
+  try {
+    const body = closedPayload();
+    await post(one.base, body, { signature: sign(body) });
+    await tick();
+    assert.deepEqual(otherRepo.looked, [], 'the repository has to match');
+  } finally { one.server.close(); }
+
+  // A push is not a merge.
+  const pushing = harness({ sessions: [NATIVE] });
+  const two = await listen(pushing.app);
+  try {
+    const body = payload();
+    await post(two.base, body, { signature: sign(body) });
+    await tick();
+    assert.deepEqual(pushing.looked, [], 'a synchronize delivery looks for no merge');
+  } finally { two.server.close(); }
+
+  // A native row that is not up for a vote: Homeroom is merging it itself,
+  // or it is already merged, so it gets no second Merged.
+  const merging = harness({ sessions: [{ ...NATIVE, status: 'merging' }] });
+  const three = await listen(merging.app);
+  try {
+    const body = closedPayload();
+    await post(three.base, body, { signature: sign(body) });
+    await tick();
+    assert.deepEqual(merging.looked, [], 'only a promoted native proposal is looked at');
+  } finally { three.server.close(); }
+});
+
+test('a closed delivery for an imported proposal keeps the imported path only', async () => {
+  const { app, synced, looked } = harness({ sessions: [SESSION] });
+  const { server, base } = await listen(app);
+  try {
+    const body = closedPayload();
+    await post(base, body, { signature: sign(body) });
+    await tick();
+    assert.deepEqual(synced, [4654], 'the imported proposal still goes to its own sync');
+    assert.deepEqual(looked, [], 'and never to the native look');
+  } finally { server.close(); }
 });
 
 test('the poller is kept as the fallback', () => {

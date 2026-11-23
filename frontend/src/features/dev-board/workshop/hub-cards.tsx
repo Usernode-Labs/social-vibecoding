@@ -1270,6 +1270,10 @@ export function UpdateCard({ slug, data }: { slug: string; data: CommunityPayloa
   const line = kind === 'behind' ? t('project:hub.update.behindLine')
     : kind === 'fit' && conflicts ? t('project:hub.update.clash', { count: conflicts })
       : bringsLine(offer && offer.brings) || t('project:hub.update.ready');
+  // When the update was sent: a version that does not get updates has none,
+  // and once Homeroom bot was asked the card only says so.
+  const sentAt = kind !== 'behind' && asked === null && offer ? offer.sentAt : null;
+  const sent = sentAt ? agoStamp(sentAt) : null;
 
   const see = async () => {
     if (busy) return;
@@ -1314,6 +1318,11 @@ export function UpdateCard({ slug, data }: { slug: string; data: CommunityPayloa
         </p>
       ) : (
         <>
+          {sent && sent.text && sentAt ? (
+            <p className="dev-ws-share-sent" data-ws-update-sent="">
+              <time dateTime={sentAt} title={sent.title}>{t('project:hub.update.sent', { when: sent.text })}</time>
+            </p>
+          ) : null}
           <p className="dev-ws-strip-text" data-ws-update-line="">{line}</p>
           {error ? <p className="dev-ws-share-sent" role="alert">{error}</p> : null}
           <div className="dev-ws-share-actions">

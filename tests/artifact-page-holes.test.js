@@ -127,7 +127,10 @@ const PAGE = {
 const pageStore = () => ({ ...realStore, async versionOf() { return { version: 1, html: PAGE_HTML }; } });
 const resultOf = (messages, id) => JSON.parse((messages.find((m) => m.role === 'tool' && m.tool_call_id === id) || { content: 'null' }).content);
 
-test('in a page\'s thread no screen is drawn and no project is offered; with a design loaded, no page is started', async () => {
+// 20 Nov 2026 (live-draft review, K): a thread holds several artifacts of
+// either kind, so a screen asked for in a page's thread is a new artifact
+// beside the page. The page itself still never becomes a project.
+test('in a page\'s thread a screen is a new artifact beside the page, and no project is offered; a design\'s thread writes with its own tools', async () => {
   const turn = designChatTurn([
     { calls: [
       call('start_design', { what: 'a budget screen', title: 'Budget' }),
@@ -136,28 +139,36 @@ test('in a page\'s thread no screen is drawn and no project is offered; with a d
     { calls: [call('reply', { text: 'This thread holds the page, so start a new thread for that.' })] },
   ], { design: PAGE, ask: 'make this an app', deps: { artifacts: pageStore() } });
   await turn.run;
-  assert.equal(turn.offered[0].includes('start_design'), false, 'not offered while the page is loaded');
-  assert.deepEqual(resultOf(turn.seen[1], 'cstart_design'), { ok: false, error: session.NO_SCREEN_TEXT }, 'and refused if called');
+  assert.equal(turn.offered[0].includes('start_design'), true, 'offered beside the page (K)');
+  assert.equal(resultOf(turn.seen[1], 'cstart_design').ok, true, 'and it opens a new screen');
+  assert.ok(turn.offered[1].includes('capture_page'), 'the design\'s own tools for the rest of the turn');
+  assert.equal(turn.offered[1].includes('start_design'), false, 'one new artifact a turn');
   assert.deepEqual(resultOf(turn.seen[1], 'coffer_new_project'), { ok: false, error: session.NO_PROJECT_TEXT });
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].metadata?.makeProject, undefined, 'no New project card under the reply');
 
-  // A page that cannot be opened in this turn (put away) is still a page.
+  // A page that cannot be opened in this turn (put away) is still a page;
+  // start_design hands a screen to the turn, whose loadDesign refuses a
+  // put-away thread (homeroom-bot-mayor.js switchArtifact).
   const closed = { ...PAGE, state: 'done' };
-  const refused = await require('../src/services/homeroom-bot-mayor').startDesign({ async query() { return { rows: [] }; } },
-    { user: { id: 9 }, deps: { threadDesign: closed }, loadDesign: async () => ({ ok: true }) }, { what: 'x', title: 'X' });
-  assert.deepEqual(refused, { ok: false, error: session.NO_SCREEN_TEXT });
+  const asked = [];
+  const handed = await require('../src/services/homeroom-bot-mayor').startDesign({ async query() { return { rows: [] }; } },
+    { user: { id: 9 }, deps: { threadDesign: closed }, loadDesign: async (args) => { asked.push(args); return { ok: false, error: 'put away' }; } },
+    { what: 'x', title: 'X' });
+  assert.deepEqual(handed, { ok: false, error: 'put away' });
+  assert.equal(asked.length, 1);
   assert.equal(session.holdsPage({ deps: { threadDesign: closed } }), true);
   assert.equal(session.holdsPage({ deps: { threadDesign: { artifactKind: 'design' } } }), false);
   assert.equal(session.holdsPage({ caps: { design: { capability: 'design' } } }), false);
 
-  // A thread that holds a design: its tools, and no way to start a page in it.
+  // A thread that holds a design: its tools, and the design's own write
+  // (with no number it is a new artifact); a new screen is offered beside it.
   const design = { ...PAGE, artifactKind: 'design', title: 'Ear home', app: { slug: 'ear', name: 'Ear Trainer' }, surface: 'app', width: 390, height: 844 };
   const drawn = designChatTurn([{ calls: [call('reply', { text: 'Nothing to change yet.' })] }], {
     design, current: { version: 1, html: '<main>Ear</main>' },
   });
   await drawn.run;
   assert.ok(drawn.offered[0].includes('edit_artifact'));
-  assert.equal(drawn.offered[0].filter((name) => name === 'write_artifact').length, 1, 'the design\'s own write (stage 3), never the chat\'s that starts a page');
-  assert.equal(drawn.offered[0].includes('start_design'), false);
+  assert.equal(drawn.offered[0].filter((name) => name === 'write_artifact').length, 1, 'the design\'s own write (stage 3), never the chat\'s');
+  assert.equal(drawn.offered[0].includes('start_design'), true);
 });

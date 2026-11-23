@@ -42,6 +42,7 @@ import { createStore } from '../../lib/plain-store.js';
  *   vote: PreviewVote | null, shotsHtml: string, view: 'preview' | 'shots',
  *   placement: 'full' | 'column' | 'panel', rect: PreviewRect | null, expanded: boolean, wide: boolean,
  *   beside: 'app' | null, liveSpot: { left: number, top: number } | null, noteSeen: boolean,
+ *   sessionId: number | null,
  * }} StagingState
  * @typedef {{ open: boolean, openedAt: number, label: string, bodyHtml: string }} VisualCompareState
  */
@@ -145,6 +146,13 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   liveSpot: null,
   /** The first-visit line was put away on this device ("Got it"). */
   noteSeen: false,
+  /**
+   * 20 Nov 2026 (live-draft review, G, J): the change whose preview this is,
+   * as placement.ts was told it, so the header can tell a live draft's
+   * preview (its Propose and Close draft, its pinned comments) from a
+   * proposal's. Nothing in the markup reads it.
+   */
+  sessionId: null,
 }));
 
 /**

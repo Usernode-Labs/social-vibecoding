@@ -735,7 +735,7 @@ test('the island draws the held frame at once, and only the frame goes when the 
   assert.match(html, /class="fixed inset-0 z-\[9000\] flex flex-col text-zinc-900/);
   assert.match(html, /data-first-session-scroll="" class="min-h-0 flex-1 overflow-y-auto"/);
   assert.doesNotMatch(html, /data-first-session-foot/, 'the held frame has no button');
-  assert.match(html, /background:var\(--home-wallpaper, #f4f2e4\)/);
+  assert.match(html, /background:var\(--home-wallpaper, #fffeea\)/);
   assert.match(html, /role="status">Opening your invite</);
 });
 

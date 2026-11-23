@@ -14,7 +14,8 @@
 //   - the bot column puts its own header row away for those pages
 //     (`data-thread-pill`) and the page in it paints no ground;
 //   - the line between two columns is a grip that drags (lib/split-drag.ts),
-//     shown only for a pointer that moved onto it.
+//     shown only for a pointer that moved onto it, and at rest on touch,
+//     where a finger has no hover to discover it with.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -50,8 +51,10 @@ const changeView = (patch = {}) => ({
 
 test('a change\'s bar is the head: the project\'s tile first, "Change #N", its title, the project and topic, ⋯, then ↗ and ×', () => {
   const html = withProject(() => renderToHtml(createElement(ChangeBar, { v: changeView(), menuKey: 'change:17' })));
-  assert.match(html, /^<header class="messages-thread-header"><span class="app-icon-tile dev-thread-bar-tile"[^>]*aria-hidden="true">/,
-    'the tile leads the header');
+  // #6973: the way back to the bot's list comes first (shown only beside the
+  // hidden list), then the project's tile.
+  assert.match(html, /^<header class="messages-thread-header"><button type="button" class="messages-thread-action messages-thread-back dev-thread-show-list" data-thread-show-list=""[^]*?<\/button><span class="app-icon-tile dev-thread-bar-tile"[^>]*aria-hidden="true">/,
+    'the list button, then the tile');
   // 19 Nov 2026: "Change #N" is the small line's; the title is the change's
   // own, its number until it has one.
   assert.match(html, /<div class="min-w-0 flex-1 dev-thread-bar-text"><div class="flex min-w-0 items-center gap-2"><div class="messages-thread-kicker min-w-0" data-change-kicker="">Change #9200<\/div><\/div>/);
@@ -75,7 +78,7 @@ test('a request\'s bar is the same head, its name kept beside its category for t
     status: { closed: false, stage: 'asked' },
   };
   const html = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: null, threadMenu: true })));
-  assert.match(html, /^<header class="messages-thread-header"><span class="app-icon-tile dev-thread-bar-tile"/);
+  assert.match(html, /^<header class="messages-thread-header"><button type="button" class="messages-thread-action messages-thread-back dev-thread-show-list" data-thread-show-list=""[^]*?<\/button><span class="app-icon-tile dev-thread-bar-tile"/);
   assert.match(html, /<div class="min-w-0 flex-1 dev-thread-bar-text"><div class="messages-thread-kicker" data-request-kicker="">/);
   // #6081: the title the page shows, translated when the reader asked.
   const shown = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: null, title: 'Demo de staging : une demande' })));
@@ -211,7 +214,10 @@ test('app.css: the halves layout draws its edge only while the detail is open', 
 
 test('the grip shows for a pointer that moved onto the line, never one the line arrived under, and at rest on touch', () => {
   assert.match(CSS, /@media \(hover: hover\) \{\s+:is\(\.split-handle\[data-armed\], \.side-panel-divider\):hover::before \{ opacity: \.5; \}/);
-  assert.match(CSS, /@media \(pointer: coarse\) \{\s+:is\(\.split-handle, \.side-panel-divider\)::before \{ opacity: \.5; \}/);
+  assert.match(CSS, /@media \(hover: none\), \(pointer: coarse\) \{\s+:is\(\.split-handle, html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) \.side-panel-divider\)::before \{ opacity: \.5; \}/,
+    'the at-rest grip on touch matches the hide rule\'s selector weight, or it is out-specified');
+  assert.doesNotMatch(CSS, /@media \(pointer: coarse\) \{\s+:is\(\.split-handle, \.side-panel-divider\)::before \{ opacity: \.5; \}/,
+    'the lighter selector never beat the hide rule, so it must not come back');
   const { armOnMove } = loadTsx('frontend/src/lib/split-drag.ts');
   const listeners = {};
   const attrs = new Set();
@@ -324,7 +330,8 @@ test('the head measures itself while full and tightens once the thread scrolls (
   for (const file of [CHANGE, REQUEST]) {
     const src = read(file);
     assert.match(src, /if \(frame\) return <TopicFrameHead /);
-    assert.match(src, /<ThreadHeadCard\s+tile=\{<ThreadBarTile \/>\}/);
+    assert.match(src, /<ThreadHeadCard\s+lead=\{<ThreadShowList \/>\}\s+tile=\{<ThreadBarTile \/>\}/,
+      'the way back to the list leads, then the tile (#6973)');
     assert.doesNotMatch(src, /useThreadHeadFit\(/, 'the card fits itself');
   }
   assert.match(read('frontend/src/features/messages/index.tsx'), /<ThreadHeadCard\s+attrs=\{\{ 'data-reply-head': 'alone' \}\}/);
@@ -402,7 +409,9 @@ test('a private thread with the bot is drawn on the public thread\'s page, from 
   assert.match(messages, /<ThreadPage\s+kind="private"/);
   assert.match(messages, /<ThreadHeadCard\s+attrs=\{\{ 'data-reply-head': 'alone' \}\}\s+tile=\{<span className="dev-thread-bar-tile dev-thread-bar-face" data-reply-avatar="">/);
   assert.match(messages, /<div className="messages-thread-sub" data-private-thread-sub="">/, 'the lock line is the small line\'s part that gives way first');
-  assert.match(messages, /className="messages-thread-action messages-thread-preview dev-thread-head-text" data-reply-preview=""/);
+  // 20 Nov 2026 (live-draft review, I): the head's Artifacts button, a pill sized to its word.
+  assert.match(messages, /<ArtifactsButton [^>]*\n\s*hasArtifact=\{isDesignThread\(root, replies\)\} liveDraft=\{liveDraft\}\n\s*className="messages-thread-action messages-thread-preview dev-thread-head-text" \/>/);
+  assert.match(read('frontend/src/features/messages/artifacts-button.tsx'), /<button type="button" className=\{className\} data-reply-preview="" data-reply-artifacts=""/);
   // The opening message is the first card, its foot where the thread went; the replies the second.
   assert.match(messages, /<div className="dev-thread-page-post" data-thread-page-post="">\s*<div className="dev-request-root dev-thread-card" data-thread-card="">/);
   assert.match(messages, /<PrivateThreadFoot where=\{privateWhere\}/);

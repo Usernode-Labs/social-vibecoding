@@ -172,9 +172,20 @@ function lookBlock() {
 // The sheet before the look's block, less the one other block that may name
 // the look's typefaces: the signed-out pages wear the website's look too,
 // between two marks of their own. Where that block is absent, nothing is cut.
+// The standard look's thread page is this look's own rules written a second
+// time (scripts/thread-look.js, held by tests/thread-look.test.js): a block
+// between two marks just before this one, which is this look, not "outside" it.
+function lessTheThreadPage(css) {
+  const a = css.indexOf('/* ── THE THREAD PAGE IN THE STANDARD LOOK');
+  if (a < 0) return css;
+  const end = '/* ── END OF THE THREAD PAGE IN THE STANDARD LOOK. ── */';
+  const b = css.indexOf(end, a);
+  assert.ok(b > a, 'the thread page\'s block is one block between its two marks');
+  return css.slice(0, a) + css.slice(b + end.length);
+}
 function outsideTheLooks() {
   const css = read('public', 'css', 'app.css');
-  const before = css.slice(0, css.indexOf(HEADING));
+  const before = lessTheThreadPage(css.slice(0, css.indexOf(HEADING)));
   const a = before.indexOf("/* ── THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES");
   if (a < 0) return before;
   const end = "/* the website's look on the signed-out pages: end */";
@@ -509,7 +520,7 @@ test('Home\'s pinned apps and the Communities page\'s groups each sit on a card,
     'what Home\'s search finds: the grid is the section\'s direct child, after its label');
   const page = read('frontend', 'src', 'features', 'communities', 'index.tsx');
   assert.match(page, /const GRID = 'communities-grid grid grid-cols-4 /, 'the page\'s two groups share one grid');
-  assert.equal((page.match(/<div className=\{GRID\}>/g) || []).length, 2, 'Pinned and Joined');
+  assert.equal((page.match(/<div className=\{(?:pinCards|joinCards) \? CARDS : GRID\}/g) || []).length, 2, 'Pinned and Joined, where they are tiles');
   assert.match(read('frontend', 'src', 'features', 'home', 'app-grid.tsx'), /id="app-list"/);
 });
 
@@ -601,7 +612,7 @@ test('the empty-state figures are committed beside their provenance, and drawn o
   }
   assert.match(read('public', 'illustrations', 'people', 'README.md'), /onhomeroom\.com/, 'where the figures come from');
   const css = read('public', 'css', 'app.css');
-  const before = css.slice(0, css.indexOf(HEADING));
+  const before = lessTheThreadPage(css.slice(0, css.indexOf(HEADING)));
   assert.ok(!before.includes('/illustrations/people/'), 'nothing outside this look loads them');
 });
 
@@ -769,49 +780,38 @@ test('the Communities page wears the look: its button, its cards, and no count o
   assert.match(at('#platform-tab-workshop :is(.platform-tab-votes, .platform-tab-badge)').body, /display:\s*none;/, 'Home\'s Needs you card says it');
 });
 
-test('a community\'s card says its members, what went live and who was there, read only where it is drawn', () => {
-  const src = read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx');
+test('the Communities page\'s cards wear the look: its card, its inks and its small words, from 1280px, read only where they are drawn', () => {
   const page = read('frontend', 'src', 'features', 'communities', 'index.tsx');
-  assert.match(page, /const cards = \(brand && wide\) \|\| wip;/);
-  assert.match(page, /if \(cards && shown && state\.ready && listKey !== '\|'\) void loadHomePinsActivity\(\);/, 'only on the page, in the look, on a wide screen');
-  assert.match(page, /detail=\{cards \? activity\.bySlug\[pin\.slug\] : undefined\}/, 'the pinned ones');
-  assert.match(page, /detail=\{cards \? activity\.bySlug\[c\.slug\] : undefined\}/, 'and the joined ones');
-  assert.match(src, /<span className="hidden" data-home-community-detail=""/, 'hidden everywhere the look does not draw cards');
-  assert.match(src, /<span className="hidden home-community-line" data-home-community-meta="">/, 'and the members line under the name too');
-  assert.doesNotMatch(src, /if \(!members && !live && !active\) return null;/, 'every card with its week has a foot');
-  assert.match(src, /const quiet = !live && !active;/);
-  assert.match(src, /<span className="hidden" data-home-community-detail="" data-quiet=\{quiet \? '' : undefined\}>\s*\{quiet \? \(\s*<span className="home-community-quiet">/,
-    'a quiet week says so, so a quiet card is not a blank lower half beside a busy one');
-  assert.match(src, /\{t\('home:communities\.quietWeek'\)\}/);
-  assert.match(src, /\{active \? \(\s*<span className="home-community-people">/, 'a zero says nothing on either line');
-  assert.match(src, /\{live \? \(\s*<span className="home-community-news">/);
-  assert.doesNotMatch(src, /home-community-news">\{t\(/, 'what went live is a line of words with its check, not a pill');
+  assert.match(page, /const brandCards = useMinWidth\(1280\);/);
+  assert.match(page, /const pinCards = wip \? wideCards : brand && brandCards;/, 'a pin is the big card from 1280px, as the look drew its cards');
+  assert.match(page, /const joinCards = wip \|\| \(brand && brandCards\);/, 'and a joined community the compact card');
+  assert.match(page, /if \(pinCards && shown && state\.ready && pinKey\) void loadHomePinsActivity\(\);/, 'what a pinned card says is read only where one is drawn');
   const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');
   assert.match(store, /readJson\('\/api\/me\/home-pins\/activity'\)/);
-  const foot = ruleAt(`${EITHER} .communities-grid [data-home-community-detail]`).body;
-  assert.match(foot, /display:\s*flex;/);
-  assert.match(foot, /align-self:\s*end;/, 'the foot keeps to the card\'s bottom edge, so a row of cards lines its feet up');
-  assert.match(foot, /border-top:\s*1px solid var\(--app-sheet-line\);/);
-  assert.match(ruleAt(`${EITHER} .communities-grid [data-home-community-meta]`).body, /display:\s*block;[\s\S]*font-size:\s*13px;/, 'the members line is the name\'s 13px subtitle');
-  // Every rule that shows a part of the card names the cards' grid, which
-  // only the wide screen's media block styles: elsewhere the parts keep
-  // their `hidden`.
-  for (const needle of ['.home-community-line', '.home-community-people', '.home-community-news']) {
-    for (const rule of ruleFor(needle)) {
-      assert.ok(rule.selectors.every((sel) => sel.includes('.communities-grid')), `${needle} is styled only on the cards`);
-    }
+  // The card is "A COMMUNITY'S CARD", drawn from tokens: the look sets its own.
+  const tokens = lookRules().find((rule) => rule.selectors.length === 1 && rule.selectors[0] === EITHER && /--cm-bg:/.test(rule.body));
+  assert.ok(tokens, 'the look sets the card\'s tokens on <html>, in both modes');
+  assert.equal(valueOf(tokens.body, '--cm-bg'), 'var(--bl-card)', 'the mode\'s card');
+  assert.equal(valueOf(tokens.body, '--cm-radius'), '18px');
+  assert.equal(valueOf(tokens.body, '--cm-edge'), 'inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift)', 'its hairline and its lift');
+  assert.equal(valueOf(tokens.body, '--cm-edge-on'), 'inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home)', 'a stronger lift under the pointer');
+  assert.equal(valueOf(tokens.body, '--cm-ink'), 'var(--text-primary)');
+  assert.equal(valueOf(tokens.body, '--cm-muted'), 'var(--text-muted)');
+  assert.equal(valueOf(tokens.body, '--cm-link'), 'var(--bl-sky)', 'what went live in the sky');
+  assert.equal(valueOf(tokens.body, '--cm-small'), '13px');
+  assert.equal(valueOf(tokens.body, '--cm-small-line'), '18px');
+  assert.equal(valueOf(tokens.body, '--cm-gap'), '14px');
+  assert.match(ruleAt(`${EITHER} .cm-card [data-home-community-votes]`).body, /top:\s*-7px;[\s\S]*min-width:\s*20px;/, 'the votes waiting on the icon\'s corner');
+  // The old card's parts, and the rules that drew them, are gone.
+  for (const needle of ['data-home-community-detail', 'data-home-community-meta', '.home-community-people', '.home-community-news', '.home-community-quiet']) {
+    assert.deepEqual(ruleFor(needle), [], `${needle} is not drawn any more`);
   }
-  // The cards stand on the page: the group's card is not drawn round them.
-  const grid = ruleAt(`${EITHER} #communities-screen .communities-grid`).body;
-  assert.match(grid, /background-color:\s*transparent;/);
-  assert.match(grid, /box-shadow:\s*none;/);
-  assert.match(ruleAt(`${EITHER} .communities-grid [data-home-community]`).body, /background-color:\s*var\(--bl-card\);/, 'each community is a card of its own');
   const home = JSON.parse(read('frontend', 'locales', 'en', 'home.json'));
-  assert.equal(home['communities.liveWeek_other'].text, '{{count}} changes went live');
-  assert.equal(home['communities.activeWeek_other'].text, '{{formatted}} active this week');
   assert.equal(home['communities.members_other'].text, '{{formatted}} members');
-  assert.equal(home['communities.quietWeek'].text, 'Quiet this week');
-  assert.match(ruleAt(`${EITHER} .communities-grid .home-community-quiet`).body, /color:\s*var\(--text-muted\);/, 'in the muted ink');
+  assert.equal(home['communities.activeWeek_other'].text, '{{formatted}} active this week');
+  assert.equal(home['communities.activeShort_other'].text, '{{formatted}} active');
+  assert.equal(home['communities.liveThisWeek_other'].text, '{{formatted}} changes live this week');
+  assert.equal(home['communities.quietWeek'], undefined, 'a quiet week says nothing');
 });
 
 test('the board is calm: Vote and what is running are the sky, and a vote under way is not purple', () => {
@@ -878,4 +878,65 @@ test('Messages on a phone is a white sheet with its rows flush on it', () => {
   assert.match(search, /background:\s*var\(--bl-page\);/, 'the search field is the page\'s cream on the white');
   assert.match(at('.messages-layout.messages-drawer .messages-search-input:focus').body, /border-color:\s*var\(--brand-line\);/);
   assert.match(read('frontend', 'src', 'features', 'messages', 'index.tsx'), /const drawerClass = drawer\.on \? ` messages-drawer/, 'the class the rules key on');
+});
+
+test('the vote picker is the look\'s white card, with a sun Yes and a sun send', () => {
+  // The picker that opens on Vote is one component in three places: a
+  // card's body-mounted popover, the phone's bottom sheet, and Needs you's
+  // vote sheet. Each host paints the same parts from the look's colours.
+  const HOST = ':is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form)';
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  // The popover is the look's card, not the shell's generic one.
+  const pop = at('.dev-vote-pop');
+  assert.ok(pop, 'one rule for the popover, in both modes');
+  assert.match(pop.body, /background:\s*var\(--bl-card\);/);
+  assert.match(pop.body, /border-color:\s*var\(--bl-edge\);/);
+  assert.match(pop.body, /box-shadow:\s*var\(--bl-lift-home\);/);
+  // The switch sits on the page's cream inside that card.
+  assert.match(at(`${HOST} .dev-vote-switch`).body, /background:\s*var\(--bl-page\);/);
+  assert.match(at(`${HOST} .dev-vote-switch-opt:not([aria-pressed="true"]):hover`).body,
+    /background:\s*var\(--bl-card\);/, 'hover is the card, not the shell\'s page fill');
+  // A picked Yes is the sun; the ink outline is light's alone, as every sun
+  // pill in this look is flat in dark.
+  const yes = at(`${HOST} .dev-vote-switch-yes[aria-pressed="true"]`);
+  assert.match(yes.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(yes.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(ruleAt(`${LIGHT} ${HOST} .dev-vote-switch-yes[aria-pressed="true"]`).body,
+    /box-shadow:\s*inset 0 0 0 1px var\(--bl-on-sun\);/);
+  assert.equal(ruleAt(`${DARK} ${HOST} .dev-vote-switch-yes[aria-pressed="true"]`), undefined,
+    'no dark rule: the sun is flat there');
+  // Its tally stays readable on the sun.
+  assert.match(at(`${HOST} .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n`).body,
+    /color:\s*var\(--bl-on-sun\);/);
+  // The send is the page's own Vote pill.
+  const send = at(`${HOST} .dev-vote-reason-send-yes`);
+  assert.match(send.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(send.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(send.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-reason-send-yes:not(:disabled):hover`).body,
+    /background:\s*var\(--bl-sun-lit\);/);
+  assert.match(at(`${HOST} .dev-vote-reason-send-yes:not(:disabled):active`).body,
+    /box-shadow:\s*var\(--bl-pill-edge-down\);/);
+  // The line box wears the page's field edge; the reason chips its raised.
+  assert.match(at(`${HOST} .dev-vote-reason-box`).body, /box-shadow:\s*var\(--bl-field-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-why-opt`).body, /box-shadow:\s*var\(--bl-raise-edge\);/);
+  assert.match(at(`${HOST} .dev-vote-why-opt[aria-checked="true"]`).body, /box-shadow:\s*none;/,
+    'the picked reason keeps its own fill and drops the edge');
+  // The quiet words above the parts read the look's label ink.
+  assert.match(at(`${HOST} :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label)`).body,
+    /color:\s*var\(--bl-label\);/);
+  // Paint only: the three hosts are all covered, no size, padding or type
+  // moves, and a No keeps the app's own red.
+  const pieces = ['.dev-vote-pop', '.dev-vote-sheet', '.dev-ws-vote-form', '.dev-vote-switch',
+    '.dev-vote-why', '.dev-vote-reason', '.dev-vote-uncounted'];
+  const picker = lookRules().filter((rule) => rule.selectors.some((sel) => pieces.some((piece) => sel.includes(piece))));
+  assert.ok(picker.length >= 10, 'the picker\'s rules are all in the block');
+  for (const rule of picker) {
+    for (const sel of rule.selectors) {
+      assert.ok(['.dev-vote-pop', '.dev-vote-sheet', '.dev-ws-vote-form'].some((host) => sel.includes(host)),
+        `"${sel}" is scoped to the picker's three hosts`);
+    }
+    assert.doesNotMatch(rule.body, /\bheight:|padding|font-size|font:/, `"${rule.selectors[0]}" changes no size or type`);
+    assert.doesNotMatch(rule.body, /--state-blocked/, `"${rule.selectors[0]}" leaves a No its own red`);
+  }
 });

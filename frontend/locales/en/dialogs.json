@@ -1895,6 +1895,10 @@
     "text": "invited",
     "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person was invited and has not accepted yet. Lower case."
   },
+  "members.collaborators.tag.offered": {
+    "text": "offered to build",
+    "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person is already in the project and was offered the right to build it, which they have not taken up yet. Lower case."
+  },
   "members.collaborators.revoke": {
     "text": "Revoke",
     "description": "Button on a row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app for someone who has not accepted yet: withdraws their invitation."
@@ -2958,6 +2962,10 @@
   "whoDecides.see.note": {
     "text": "Everyone who can see it can suggest changes. The rule below decides what goes live.",
     "description": "Note under the two visibility choices on the Who can see & change it sheet, where a project's visibility and approval rule are set. \"Suggest changes\" means propose them; \"the rule below\" is the approval rule picked next, which decides which changes go live."
+  },
+  "whoDecides.see.publicSource": {
+    "text": "Making this project public also publishes its source code, Git history, and branches.",
+    "description": "Shown when changing a managed project from private to public."
   },
   "whoDecides.see.limitedName": {
     "text": "Public, invite-only building",

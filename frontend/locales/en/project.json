@@ -511,6 +511,10 @@
     "text": "Its changes are ready for you to try and vote on.",
     "description": "Line on the Update card when it lists none of the original's changes by name."
   },
+  "hub.update.sent": {
+    "text": "Sent {{when}}",
+    "description": "Grey line under the title of the Update card on a version's hub: when the original's update was offered to this version. {{when}} is already worded, for example \"3d ago\", \"just now\" or \"Nov 2\"."
+  },
   "hub.update.bringsMore_one": {
     "text": "{{title}}, and {{count}} more",
     "description": "Line on the Update card: the first of the original's changes it brings, {{title}}, and how many more there are, {{count}}."
@@ -1014,6 +1018,10 @@
   "sidePanel.openAsPage": {
     "text": "Open as a page",
     "description": "Button at the top of the panel beside a project's Workshop lists: closes the panel and opens the same request, change or vote as a full page. Open is a verb."
+  },
+  "sidePanel.showList": {
+    "text": "Show thread list",
+    "description": "Accessible name and tooltip of the small round list button first in the header of a request's or change's page opened in the column beside the Homeroom bot tab's thread list while that list is hidden: brings the list back."
   },
   "workRow.name.change": {
     "text": "Change",
@@ -6359,6 +6367,10 @@
     "text": "No",
     "description": "Button on the Votes card of a proposal to close the request: vote no, keep it open."
   },
+  "topic.thread.close.sending": {
+    "text": "Sending…",
+    "description": "Label replacing Yes or No on the Votes card of a vote to close a request, or of a decision, while that vote is being sent."
+  },
   "topic.thread.close.note": {
     "text": "If it passes, every request here closes, and the changes up for a vote close with them.",
     "description": "Line under the Votes card of a proposal to close the request, before the person has voted: what happens if the vote passes."
@@ -6549,11 +6561,11 @@
   },
   "topic.request.fromThread": {
     "text": "Open the thread it came from",
-    "description": "Link under a request's words, shown only to the person whose private Homeroom bot design thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
+    "description": "Link under a request's words, shown only to the person whose private Homeroom bot artifact thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
   },
   "topic.request.openDesign": {
-    "text": "Open the design, version {{version}}",
-    "description": "Link beside \"Open the thread it came from\" under a request's words, shown only to the person whose plan on the request was made from a screen design in their private Homeroom bot thread. Opens that design itself, at the version the plan shows, beside the thread. {{version}} is the version's number."
+    "text": "Open the artifact, version {{version}}",
+    "description": "Link beside \"Open the thread it came from\" under a request's words, shown only to the person whose plan on the request was made from a screen in their private Homeroom bot thread. Opens that artifact itself, at the version the plan shows, beside the thread. {{version}} is the version's number."
   },
   "frame.hub.people": {
     "text": "People",

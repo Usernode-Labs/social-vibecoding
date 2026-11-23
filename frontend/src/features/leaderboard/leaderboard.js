@@ -97,7 +97,7 @@ const Leaderboard = {
   // re-opening the screen lands where you left it; a fresh page load
   // starts on Challenges (#2374) — the first tab of the strip, what you
   // can do next ahead of the ranking it feeds.
-  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges'
+  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges' | 'challenge-history'
   // Whether TopochainLeaderboard.open() / TopochainChallenges.open() have
   // run for this screen mount — each Topochain-domain pane loads lazily,
   // only once its tab is first shown, and so does the shared event bar
@@ -166,8 +166,8 @@ const Leaderboard = {
   // Every section. The strip's ORDER lives in the island's SECTION_TABS
   // (./index.tsx), Challenges first since #1917. The two that live in the Topochain event domain (i.e. the ones the shared
   // event bar applies to) are declared separately below.
-  SECTIONS: ['topochain', 'kudos', 'challenges'],
-  EVENT_SECTIONS: ['topochain', 'challenges'],
+  SECTIONS: ['topochain', 'kudos', 'challenges', 'challenge-history'],
+  EVENT_SECTIONS: ['topochain', 'challenges', 'challenge-history'],
 
   // Switch the screen's top-level section. Mirrors _setSub's contract:
   // validate, record, sync the hash, and only render/load when the
@@ -204,7 +204,9 @@ const Leaderboard = {
     const panes = {
       'leaderboard-root': Leaderboard.section === 'kudos',
       'topochain-leaderboard-root': Leaderboard.section === 'topochain',
-      'challenges-root': Leaderboard.section === 'challenges',
+      // #6967: History draws inside the challenges pane's host.
+      'challenges-root': Leaderboard.section === 'challenges'
+        || Leaderboard.section === 'challenge-history',
     };
     for (const [id, visible] of Object.entries(panes)) {
       const el = document.getElementById(id);
@@ -223,8 +225,8 @@ const Leaderboard = {
       Leaderboard._topoMounted = true;
       TopochainLeaderboard.open();
     }
-    if (Leaderboard.section === 'challenges' && !Leaderboard._challengesMounted
-        && window.TopochainChallenges?.open) {
+    if ((Leaderboard.section === 'challenges' || Leaderboard.section === 'challenge-history')
+        && !Leaderboard._challengesMounted && window.TopochainChallenges?.open) {
       Leaderboard._challengesMounted = true;
       TopochainChallenges.open();
     }
@@ -391,9 +393,11 @@ const Leaderboard = {
       ? '#leaderboard/topochain'
       : Leaderboard.section === 'challenges'
         ? '#leaderboard/challenges'
-        : Leaderboard.profileUser
-          ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
-          : `#leaderboard/${Leaderboard.sub}`;
+        : Leaderboard.section === 'challenge-history'
+          ? '#leaderboard/challenge-history'
+          : Leaderboard.profileUser
+            ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
+            : `#leaderboard/${Leaderboard.sub}`;
     if (location.hash.startsWith('#leaderboard') && location.hash !== target) {
       const pressed = Leaderboard._open
         && !(typeof App !== 'undefined' && App && App._isRestoring);

@@ -7,13 +7,20 @@
  *
  * WHAT IT SHOWS. One row per limit that is past its line
  * (services/platform-limits-view.js decides which, and in what order: worst
- * first). The app limit, the session limit, the bot's OpenRouter credit,
- * the shared database's connections, and the cluster's own: the database's
- * disk, each runtime namespace's quota and the nodes' volume pools
- * (services/platform-capacity.js). Each row is the figure in words, what
- * breaks, and ONE action to where it is fixed: Raise the limit (Admin ›
- * Limits), Add credit (OpenRouter's own page, a fixed address), Check again
- * (re-reads a figure that could not be read).
+ * first). The app limit, the session limit, the OpenRouter account's
+ * credit, Homeroom bot's weekly budget, the shared database's connections,
+ * and the cluster's own: the database's disk, each runtime namespace's quota
+ * and the nodes' volume pools (services/platform-capacity.js). Each row is
+ * the figure in words, what breaks, and ONE action to where it is fixed:
+ * Raise the limit (Admin › Limits), Add credit (OpenRouter's own page, a
+ * fixed address), Raise the budget (Admin › Homeroom bot › Settings), Check
+ * again (re-reads a figure that could not be read).
+ *
+ * CREDIT AND BUDGET ARE TWO ROWS. The credit row is the account's credit,
+ * with its $500 and $200 lines and its days estimate. The budget row is what
+ * the bot has used of its week, shown from 80% like a counted limit, and it
+ * says the day its week turns rather than how many days it lasts: an
+ * allowance that resets is not credit running out.
  *
  * NO DISMISS. There is no close button and no swipe: a row leaves only once
  * its figure is back under its line, by the same margin the alerts use. That
@@ -46,14 +53,14 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
   AppWindowIcon, ArchiveBoxIcon, ArrowPathIcon, ArrowTopRightOnSquareIcon, ArrowsRightLeftIcon, ChartBarIcon,
-  TerminalIcon, WalletIcon,
+  HomeroomBotIcon, TerminalIcon, WalletIcon,
 } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
 
 export type QuotaKey = 'quota_apps' | 'quota_workers' | 'quota_builds';
-export type LimitKey = 'apps' | 'sessions' | 'openrouter_credit' | 'db_connections'
+export type LimitKey = 'apps' | 'sessions' | 'openrouter_credit' | 'bot_budget' | 'db_connections'
   | 'db_disk' | 'node_pool' | QuotaKey;
 export type LimitState = 'over' | 'at' | 'out' | 'near' | 'unknown';
 
@@ -76,7 +83,12 @@ export interface LimitRow {
   turnedAway?: number | null;
   /** The cluster's limits: what the figure is about (the fullest volume or
    * node, or a quota's tightest resource and its own used and hard values). */
-  detail?: { volume?: string; node?: string; namespace?: string; resource?: string; used?: string; hard?: string } | null;
+  detail?: {
+    volume?: string; node?: string; namespace?: string; resource?: string; used?: string; hard?: string;
+    /** Homeroom bot's weekly budget: what is used of it and its size, in
+     * cents, and the instant its week turns (services/openrouter-credit.js). */
+    usedCents?: number; capCents?: number; resetsAt?: string | null;
+  } | null;
 }
 
 export interface LimitsPayload {
@@ -91,13 +103,15 @@ export const OPENROUTER_CREDITS_URL = 'https://openrouter.ai/settings/credits';
 export const LIMITS_HREF = '#admin/limits';
 /** Admin › Health & status, which shows the database's connections. */
 export const STATUS_HREF = '#admin/status';
+/** Admin › Homeroom bot › Settings, where the bot's weekly budget is set. */
+export const BUDGET_HREF = '#admin/homeroom-bot/settings';
 
 const READ_PATH = '/api/admin/platform-limits';
 const CHECK_PATH = '/api/admin/platform-limits/check';
 const POLL_MS = 5 * 60 * 1000;
 const FRESH_MS = 30 * 1000;
 const KEYS: ReadonlySet<string> = new Set([
-  'apps', 'sessions', 'openrouter_credit', 'db_connections',
+  'apps', 'sessions', 'openrouter_credit', 'bot_budget', 'db_connections',
   'db_disk', 'node_pool', 'quota_apps', 'quota_workers', 'quota_builds',
 ]);
 const STATES: ReadonlySet<string> = new Set(['over', 'at', 'out', 'near', 'unknown']);
@@ -300,7 +314,21 @@ function clock(iso: string | null | undefined): string | null {
 }
 
 export type RowTone = 'near' | 'broken' | 'unknown';
-export type RowAction = { kind: 'raise' | 'credit' | 'status' | 'check'; label: string; href: string | null; external: boolean };
+export type RowAction = { kind: 'raise' | 'credit' | 'budget' | 'status' | 'check'; label: string; href: string | null; external: boolean };
+
+/**
+ * The day a budget's week turns, by name ("Monday"), from the instant the
+ * row carries. Named in UTC, where the week turns (Monday 00:00 UTC), as the
+ * bell notice, the push and the text name it. Null when the row has none.
+ */
+function resetDay(iso: string | null | undefined): string | null {
+  const at = Date.parse(String(iso || ''));
+  if (!Number.isFinite(at)) return null;
+  // The language the shell is shown in (#6103), as the bell's rows read it.
+  const i18n = (globalThis as { PlatformI18n?: { dateLocale?: () => string } }).PlatformI18n;
+  const locale = typeof i18n?.dateLocale === 'function' ? i18n.dateLocale() : undefined;
+  return new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' }).format(new Date(at));
+}
 
 export interface RowView {
   key: LimitKey;
@@ -320,7 +348,8 @@ export function rowView(row: LimitRow, t: Translate): RowView {
   if (row.state === 'unknown') kicker = t('notifications:limits.kicker.unknown');
   else if (row.key === 'openrouter_credit') {
     kicker = row.state === 'near' ? t('notifications:limits.kicker.low') : t('notifications:limits.kicker.out');
-  } else if (row.state === 'over') kicker = t('notifications:limits.kicker.over');
+  } else if (row.key === 'bot_budget' && row.state !== 'near') kicker = t('notifications:limits.kicker.usedUp');
+  else if (row.state === 'over') kicker = t('notifications:limits.kicker.over');
   else if (row.state === 'near') kicker = t('notifications:limits.kicker.near');
   else kicker = t('notifications:limits.kicker.at');
   const meter = counted && row.state !== 'unknown' && Number.isFinite(row.percent as number)
@@ -343,6 +372,22 @@ export function rowView(row: LimitRow, t: Translate): RowView {
     sub = row.state === 'unknown' ? t('notifications:limits.unknown.read')
       : row.state === 'near' ? t('notifications:limits.sessions.near', { cap: figures.cap }) : t('notifications:limits.sessions.at');
     if (row.state === 'unknown') action = check;
+  } else if (row.key === 'bot_budget') {
+    // Homeroom bot's weekly budget (services/openrouter-credit.js budget):
+    // the figures are cents, and the row says the day its week turns, never
+    // how many days it lasts. Its action is where the budget is set.
+    const unknown = row.state === 'unknown';
+    const used = dollars(row.detail?.usedCents ?? row.used);
+    const cap = dollars(row.detail?.capCents ?? row.cap);
+    const day = resetDay(row.detail?.resetsAt);
+    const when = clock(row.measuredAt);
+    title = unknown ? t('notifications:limits.budget.titleUnknown') : t('notifications:limits.budget.title', { used, cap });
+    if (unknown) sub = when ? t('notifications:limits.unknown.stale', { time: when }) : t('notifications:limits.unknown.read');
+    else if (row.state === 'near') {
+      sub = day ? t('notifications:limits.budget.near', { cap, day }) : t('notifications:limits.budget.nearNoDay', { cap });
+    } else sub = day ? t('notifications:limits.budget.at', { day }) : t('notifications:limits.budget.atNoDay');
+    action = unknown ? check
+      : { kind: 'budget', label: t('notifications:limits.action.budget'), href: BUDGET_HREF, external: false };
   } else if (row.key === 'db_disk' || row.key === 'node_pool' || row.key in QUOTA_WORDS) {
     // The cluster's own (services/platform-capacity.js): what fixes them is
     // in the infrastructure, so the action is where the cluster is shown.
@@ -435,6 +480,7 @@ function RowIcon({ name }: { name: LimitKey }) {
   if (name === 'apps') return <AppWindowIcon aria-hidden="true" />;
   if (name === 'sessions') return <TerminalIcon aria-hidden="true" />;
   if (name === 'db_connections') return <ArrowsRightLeftIcon aria-hidden="true" />;
+  if (name === 'bot_budget') return <HomeroomBotIcon aria-hidden="true" />;
   if (name === 'db_disk' || name === 'node_pool') return <ArchiveBoxIcon aria-hidden="true" />;
   if (name === 'quota_apps' || name === 'quota_workers' || name === 'quota_builds') return <ChartBarIcon aria-hidden="true" />;
   return <WalletIcon aria-hidden="true" />;

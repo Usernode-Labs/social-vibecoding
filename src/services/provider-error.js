@@ -27,12 +27,18 @@ const MAX_REFUSAL_CHARS = 2000;
  * Pure: the code of a refused request. A 402 is out of credit
  * (`credit_out`), unless its body asks only for a shorter reply ("requires
  * more credits, or fewer max_tokens"), which stays the key's `billing`
- * refusal: a smaller request gets through. openrouter-credit.js creditOut is
+ * refusal: a smaller request gets through. A 403 that says the key's own
+ * spending limit is used up ("Key limit exceeded (weekly limit)") is
+ * `credit_out` too: the key works, and nothing it asks gets through until
+ * its limit resets or is raised, which is the same outage with another cause
+ * (openrouter-credit.js refusalCause says which). openrouter-credit.js is
  * the one classifier; `body` is the provider's own text, never a person's.
  */
 function refusalCode(status, body = '') {
   const text = String(body == null ? '' : body).slice(0, MAX_REFUSAL_CHARS);
-  if (status === 402 && require('./openrouter-credit').creditOut({ status, body: text })) return 'credit_out';
+  const credit = require('./openrouter-credit');
+  if (status === 402 && credit.creditOut({ status, body: text })) return 'credit_out';
+  if (status === 403 && credit.refusalCause(text) === 'budget') return 'credit_out';
   return providerErrorCode(status);
 }
 

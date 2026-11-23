@@ -504,4 +504,6 @@ module.exports = {
   findPage, routeOf, jobSpec, rewriteSheets, readPageFrame, readPageFailure,
   inlineSheets, readRenderFrames, readRenderFailure, renderDesign,
   ensureCopy, stopCopy, capturePage, selfApp, _reset,
+  // A (live-draft review): the draft bot's look at its preview runs the same job (preview-look.js).
+  runCaptureJob,
 };

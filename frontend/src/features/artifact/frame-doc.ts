@@ -47,7 +47,8 @@
  *             frame → { __artifact: 'picture', id, blob }  or  { ..., id, error }
  *             A picture of the shell leaves every frame out, so a frame
  *             draws its own (#6261): the vendored SnapDOM source is sent in
- *             the message and run on the frame's own body. Run mode only.
+ *             the message and run on the frame's own body. Running and
+ *             helper frames.
  *   size      shell → { __artifact: 'measure', selector }
  *             frame → { __artifact: 'size', height, hits: [{ x, y, w, h, href }] }
  *             On load, and each time either changes. `hits` are the boxes
@@ -69,12 +70,13 @@ import { cspFor, sandboxFor, type FrameMode } from './policy';
 
 /** Every frame this module's component draws carries it, with the mode it was drawn in. */
 export const ARTIFACT_FRAME_ATTR = 'data-artifact-frame';
-/** How the shell finds the running frames to ask for their own picture (../comment-pin/picture.ts). */
+/** How the shell finds the frames that draw their own picture (../comment-pin/picture.ts). */
 export const ARTIFACT_PICTURED_ATTR = 'data-artifact-pictured';
 
 // The frame's half (see above). Plain ES5 in a string: it runs inside the
 // page's document, before any of the page's own.
 const HELPER = `(function(F){
+var N=(document.currentScript&&document.currentScript.nonce)||'';
 var on=false,layer=null;
 function size(){var d=document.documentElement,b=document.body||d;return{w:Math.max(d.scrollWidth,b.scrollWidth,1),h:Math.max(d.scrollHeight,b.scrollHeight,1)};}
 function describe(el){if(!el||el===document.documentElement||el===document.body)return null;var t=el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('alt')||el.innerText||el.textContent||'';t=String(t).replace(/\\s+/g,' ').trim();if(t.length>60)t=t.slice(0,59).trim()+'\\u2026';return{tag:String(el.tagName||'').toLowerCase().slice(0,30),id:el.id?String(el.id).slice(0,60):'',text:t};}
@@ -89,7 +91,7 @@ function reply(id,blob,error){say({__artifact:'picture',id:id,blob:blob,error:er
 function snapshot(d){var id=String(d.id||'');if(!id||drawing[id])return;drawing[id]=true;
 function done(blob,error){delete drawing[id];reply(id,blob,error);}
 try{
-if(!snap){if(typeof d.lib!=='string'||!d.lib){done(null,'no picture');return;}var s=document.createElement('script');s.textContent=d.lib;(document.head||document.documentElement).appendChild(s);snap=window.snapdom;if(s.parentNode)s.parentNode.removeChild(s);}
+if(!snap){if(typeof d.lib!=='string'||!d.lib){done(null,'no picture');return;}var s=document.createElement('script');if(N)s.nonce=N;s.textContent=d.lib;(document.head||document.documentElement).appendChild(s);snap=window.snapdom;if(s.parentNode)s.parentNode.removeChild(s);}
 if(typeof snap!=='function'||!document.body){done(null,'no picture');return;}
 snap(document.body,{scale:Number(d.scale)||1,dpr:1,clip:{x:scrollX,y:scrollY,width:innerWidth,height:innerHeight},exclude:['[data-artifact-pins]'],excludeMode:'hide'}).then(function(c){return c.toCanvas();}).then(function(canvas){canvas.toBlob(function(blob){if(blob)done(blob,null);else done(null,'no picture');},'image/png');},function(){done(null,'no picture');});
 }catch(err){done(null,'no picture');}

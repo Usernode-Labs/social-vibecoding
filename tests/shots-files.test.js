@@ -675,3 +675,31 @@ test('a still\'s density is a whole multiple of its screen\'s width, else 1', ()
   }
   assert.deepEqual([shots.PHONE_DENSITY, shots.DESKTOP_DENSITY], [3, 3]);
 });
+
+test('an element shot\'s recorded box is kept only when it lies inside its screen shot', () => {
+  const desktop = { name: 'desktop', width: 1280, height: 800 };
+  const screen = { width: 1280, height: 800, media: 'png' };
+  // PR 6958's top bar, 1280 by 52 at the top of a 1280 by 800 screen.
+  assert.deepEqual(shots.elementFrame({ focus: '0,0,1280,52', focusPage: '0,0,1280,52' }, screen, desktop),
+    { x: 0, y: 0, w: 1280, h: 52 });
+  // Rounding may leave one pixel over the screen's edge: that pixel is cut.
+  assert.deepEqual(shots.elementFrame({ focus: '0,748,1281,53' }, screen, desktop), { x: 0, y: 748, w: 1280, h: 52 });
+  // A screen shot saved at 3x is measured in its CSS pixels.
+  assert.deepEqual(shots.elementFrame({ focus: '20,700,400,100' }, { width: 3840, height: 2400 }, desktop),
+    { x: 20, y: 700, w: 400, h: 100 });
+  // A full-page screen shot (taller than the screen) takes the page's box.
+  assert.deepEqual(shots.elementFrame({ focus: '20,100,400,60', focusPage: '20,1300,400,60' },
+    { width: 1280, height: 2000 }, desktop), { x: 20, y: 1300, w: 400, h: 60 });
+  // Anything else is dropped, and the element shot is saved without one.
+  for (const odd of [
+    {}, { focus: '' }, { focus: 'a,b,c,d' }, { focus: '1.5,0,10,10' }, { focus: '0,0,10' }, { focus: '0,0,10,10,10' },
+    { focus: '-4,0,100,52' }, { focus: '0,-1,100,52' }, { focus: '0,0,0,52' }, { focus: '0,0,100,0' },
+    { focus: '1200,0,100,52' }, { focus: '0,780,100,52' }, { focus: '1280,0,10,10' },
+    { focus: `${'1'.repeat(70)}` }, { focus: ['0,0,10,10'] },
+  ]) {
+    assert.equal(shots.elementFrame(odd, screen, desktop), null, JSON.stringify(odd));
+  }
+  // No screen shot of the same state to check it against: none.
+  assert.equal(shots.elementFrame({ focus: '0,0,1280,52' }, null, desktop), null);
+  assert.equal(shots.elementFrame({ focus: '0,0,1280,52' }, screen, null), null);
+});

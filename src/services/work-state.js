@@ -253,7 +253,12 @@ function queuedStep(row, now) {
     });
   }
   if (progress.replyWaits(row, { now })) return state('reading', { since: row.reply_at, line: { code: 'reply', soon: true } });
-  if (row.queue_reason === 'credit_wait') return state('building', { since, line: { code: 'credit_wait' } });
+  // `budget`: the wait is for the bot's weekly budget, not for credit (the
+  // stored outage's cause, stamped on the row when refresh reads its facts), and its
+  // line says the day the week turns (work-stages.json `valued`).
+  if (row.queue_reason === 'credit_wait') {
+    return state('building', { since, line: { code: 'credit_wait', ...(row.credit_budget === true ? { budget: true } : {}) } });
+  }
   if (progress.planFailed(row) || row.queue_reason === 'plan_retry') return state('planning', { since, line: { code: 'retry_plan' } });
   return state('reading', {
     since,
@@ -1016,6 +1021,21 @@ function says(item, opts) {
  * the requester's plan, an update on its way, and its place in the bot's
  * line on its project.
  */
+// The stored credit outage's cause (services/openrouter-credit.js KEY_STATE,
+// the same row the bot's lane reads): whether the bot's key is refused for
+// its weekly budget rather than for credit. False when there is no outage,
+// or the row cannot be read: the credit wording.
+async function creditWaitIsBudget(db) {
+  try {
+    const { rows: [row] = [] } = await db.query(
+      'SELECT value FROM platform_settings WHERE key = $1', [require('./openrouter-credit').KEY_STATE]);
+    const stored = JSON.parse((row && row.value) || 'null');
+    return !!stored && !!stored.outage && stored.outage.cause === 'budget';
+  } catch {
+    return false;
+  }
+}
+
 const REQUEST_FACTS_SQL = `
   WITH it AS (
     SELECT DISTINCT x.app_id, x.issue_number
@@ -1655,6 +1675,13 @@ async function refresh(db, items, { now = new Date(), touch = false, skipped = n
   if (requests.size) {
     const list = [...requests.values()];
     ({ rows } = await db.query(REQUEST_FACTS_SQL, [list.map((r) => r.appId), list.map((r) => r.issueNumber)]));
+    // A request waiting for building credit says which figure it waits for:
+    // the account's credit, or the bot's weekly budget, which starts again
+    // on Monday (the one stored outage's cause, openrouter-credit.js). Read
+    // once, and only when a row waits.
+    if (rows.some((row) => row.queue_reason === 'credit_wait') && await creditWaitIsBudget(db)) {
+      for (const row of rows) if (row.queue_reason === 'credit_wait') row.credit_budget = true;
+    }
     // Stored in one order everywhere (by project and number, then by
     // change), so two refreshes of the same rows never wait on each other.
     rows.sort((a, b) => Number(a.app_id) - Number(b.app_id) || Number(a.issue_number) - Number(b.issue_number));
@@ -2924,6 +2951,7 @@ module.exports = {
   says,
   busyNow,
   botWorkOf,
+  creditWaitIsBudget,
   forItems,
   derive,
   deriveChange,

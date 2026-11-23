@@ -83,6 +83,9 @@ function loadOpener({ panel = true, slug = 'notes-ab12' } = {}) {
         },
       },
       './back-stack': { pushDismissible: () => () => {} },
+      // #6981: the sheet claims the one-open-panel slot. The registry has its
+      // own suite (tests/open-surfaces.test.js); here it only has to exist.
+      './open-surfaces': { claimSurface: () => () => {} },
     },
     tail: 'window.__make = createSheetController;',
   });

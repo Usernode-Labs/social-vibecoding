@@ -39,6 +39,14 @@ export interface HomePin {
   iconEmoji: string | null;
   iconColor: string | null;
   member: boolean;
+  /**
+   * The picture its group chose for its card, and its dark twin, where it
+   * has one (services/home-pins.js `list`): the Communities page's card and
+   * the kit tile's band. Optional, so a pin kept before they were sent reads
+   * as one with no picture.
+   */
+  illustrationUrl?: string | null;
+  illustrationDarkUrl?: string | null;
 }
 
 export interface JoinedCommunity {
@@ -47,6 +55,8 @@ export interface JoinedCommunity {
   icon_url?: string | null;
   icon_emoji?: string | null;
   icon_color?: string | null;
+  /** How many are in it (the app list's count of community members): the compact card's second line. */
+  member_count?: number;
   demo?: boolean;
 }
 
@@ -200,7 +210,8 @@ export async function refreshHomePins({ force = false }: { force?: boolean } = {
 
 /**
  * WHAT IS GOING ON IN EACH OF YOUR COMMUNITIES (Drea's review of #6699), for
- * the cards the Communities page draws on a wide screen in the brand look:
+ * the cards the Communities page draws for the ones you pinned (the standard
+ * look from 768px, the brand look from 1280px; ../communities/card.tsx):
  * GET /api/me/home-pins/activity (services/home-pins.js `activity`), keyed
  * by slug, for the ones you pinned and the others you are in. Read only
  * where the cards are drawn, so a phone asks for nothing it does not show;

@@ -486,6 +486,16 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   assert.equal(copy('quota_apps_full:1000:1000').title, 'Cluster quota used up (apps)');
   assert.match(copy('quota_builds_full:1000:1000').body, /new image builds fail/);
   assert.equal(copy('node_pool_full:10000:10000').title, 'Node volume pool full');
+  // Homeroom bot's weekly budget, in cents (services/openrouter-credit.js
+  // budget). The day is the next week boundary, which is always a Monday.
+  assert.deepEqual(copy('bot_budget_warn:64800:80000'), {
+    title: "Homeroom bot's weekly budget is 81% used",
+    body: "$648 of $800 used. At $800 the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until Monday",
+  });
+  assert.deepEqual(copy('bot_budget_full:80000:80000'), {
+    title: "Homeroom bot's weekly budget is used up",
+    body: "Building, screenshots, sync with main and apps' AI features have stopped. They start again on Monday, or once the budget is raised",
+  });
   assert.match(copy('node_pool_warn:9000:10000').body, /^8\.8 of 9\.8 GiB of a node's volume pool is used/);
   // GitHub's hourly budget (services/github-budget.js).
   assert.deepEqual(copy('github_warn:4000:5000'), {
@@ -548,4 +558,17 @@ test('#2386: a friend request and its acceptance name the person and what to do'
   // The opaque data payload is unchanged by the kind.
   assert.equal(request.data.notification_id, '42');
   assert.equal(Object.keys(request.data).includes('source_username'), false);
+});
+
+test('the credit warnings are the account\'s credit, with days only when there is a rate', () => {
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_incident', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('credit:low:500:480:6'), {
+    title: 'OpenRouter credit is below $500',
+    body: '$480 left, about 6 days at the recent rate. Add credit before Homeroom bot stops building',
+  });
+  assert.equal(copy('credit:urgent:200:184:1').body, '$184 left, about 1 day at the recent rate. Add credit before Homeroom bot stops building');
+  assert.equal(copy('credit:low:500:480:0').body, '$480 left. Add credit before Homeroom bot stops building');
+  assert.equal(copy('credit:out').title, 'OpenRouter credit ran out');
 });

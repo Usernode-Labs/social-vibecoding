@@ -35,27 +35,28 @@ differs or the result is missing, expired, or unreadable, the release runs
 the two-server role and preview-copy tests. The single-server workflow and
 access tests run on pull requests.
 
-Each stable release rolls the platform, so the workflow spaces rollouts
-during bursts of merges. It runs one push to `main` at a time, and
-"Check branch tip before publishing" decides which runs publish:
+Worker and capture image reuse is keyed to the shared build action, the
+resolver that supplies the context, and each image's tracked inputs. Changes
+to the release scheduler leave those keys alone. Capture's Dockerfile-specific
+ignore file lists the inputs for both Docker and the reuse key, including the
+worker helpers copied into the image.
+For worker, the key includes the exact resolved Claude Code version. Switching
+to these keys causes one build per component to populate them. Use
+`force_rebuild` to refresh mutable upstream layers.
 
-- **Spacing.** A stable release goes out no sooner than
-  `RELEASE_MIN_GAP_MINUTES` (4) after the previous one. The gap is timed
-  from the end of the run that pushed the previous stable chart.
-- **The tip run waits.** The run for `main`'s tip waits inside that step for
-  the rest of the gap, then publishes. A newer merge landing during the wait
-  ends it: the waiting run skips, and the newer merge's run, queued behind it,
-  publishes once built. The newest merge is always released.
-- **Runs behind the tip** publish only when the newest release's revision
-  merged at least `RELEASE_EVERY_MINUTES` (15) before theirs, and they skip
-  inside the gap.
+The workflow allows overlapping image builds and serializes publication.
+After the image and PostgreSQL checks pass, the publisher gives the slot
+to a newer verified commit on `main`. It gives a newer build up to 90
+seconds to finish. If that build fails or the wait ends, the verified
+revision holding the slot can publish. After the oldest unpublished
+merge reaches 15 minutes, a verified revision can publish without waiting
+for further builds.
 
-On 7 October 2026 the platform rolled out four times in sixteen minutes
-(21:41:57 to 21:57:49 UTC) while approved proposals merged one after another;
-that is what the gap prevents.
-
-If the age of the previous release cannot be read, the run publishes as it
-did before the gap existed.
+Before a regular promotion, Argo CD must report the current OCI chart
+digest synced and healthy with a successful sync and no pending
+operation. The publisher polls for up to six minutes and fails the run if
+it cannot confirm that rollout. The `release` tag stays on its current
+digest in that case.
 
 **To release at once, for example an urgent fix,** run the workflow on
 `main` by hand:
@@ -64,9 +65,9 @@ did before the gap existed.
 gh workflow run build-kubernetes-images.yml --ref main
 ```
 
-A dispatched run never waits. A run that is waiting when the dispatched run
-is queued behind it skips in its favour, so `main` goes out as soon as the
-dispatched run has built, with one restart.
+A manual run still verifies the image digests and the database and can
+publish while Argo CD is unhealthy. If its checks have completed, an
+automatic run waiting on the same revision gives it the slot.
 
 Argo owns the platform Deployment, database, namespaces, service accounts and
 runtime permissions. The platform owns generated apps, previews, workers and
@@ -85,6 +86,34 @@ that can only get the platform Application. The role, mint procedure, and
 rotation live in the infra repository's
 `docs/22-social-vibecoding-runtime-operations.md`.
 
+The same workflow's **Observe Kubernetes rollout timings** job starts
+independently of the refresh. It reads the successful promotion step and
+resolves the immutable chart for that run and attempt. Its summary pairs
+Argo's recorded sync times with the first observed digest comparison,
+migration completion, healthy state, and exact source SHA from the public
+`/api/version`. It samples every ten seconds for up to four minutes.
+Short-lived or superseded states can be unobserved. Use the hard refresh
+timestamps in the refresh job to compare the time spent requesting refresh
+with the time spent waiting for the controller or rollout.
+
+The shared build-slot prototype runs offline against recorded job times:
+
+```bash
+node scripts/replay-kubernetes-build-queue.js tests/fixtures/kubernetes-release-queue-sample.json
+```
+
+The sample uses 36 runs starting with #6960, with one row per run and
+seconds relative to the first merge. Each row records the plan completion,
+the wall time of each required verification job, and the time the last check
+actually finished. Worker and capture use the fast path only if their
+resolved digest matched the release at verification time. Three shared
+slots moved the last required check for #6952 forward 182 seconds. Two
+shared slots delayed the cold #6954 run 151 seconds. The replay keeps
+observed job durations and models runner startup at two seconds. It covers
+verification queueing. Publisher batching, chart promotion and the rollout
+are governed by their existing policy. The release workflow still uses
+its fixed lanes.
+
 A merged platform PR is therefore "merged" on its card before it is running,
 and nothing in that chain reports back to the platform when a link fails. The
 platform watches the gap itself: `services/release-watch.js` compares the
@@ -95,11 +124,10 @@ commit, and once (per commit and verdict) records the stall on
 admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
-`RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
-so after a burst of merges the newest one's run waits for the others. The
-tip's run may also wait out the release gap above. So a run that has not
-finished is reported only once no run of the workflow on `main` has finished
-for the grace plus `RELEASE_MIN_GAP_MINUTES`. A run that succeeded gives the
+`RELEASE_GRACE_MS` (default ten minutes). After a burst of merges,
+ready runs can wait on the publication lock and the previous rollout. A run
+that has not finished is reported only once no run of the workflow on
+`main` has finished for the grace. A run that succeeded gives the
 rollout its own grace from when it finished. Re-running the failed workflow
 jobs, or the next merge, releases the commit; a build that already carries the recorded commit
 reads as resolved at once, and the poller clears the record on the new build's

@@ -2146,6 +2146,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // The project page's banner says so; every other project reads
         // false.
         codeChangesPaused: require('../services/github-pause').codeChangesPaused(appRow.repo_url),
+        sourceDownloadUrl: require('../services/project-source').privateApp(appRow)
+          ? `/api/apps/${encodeURIComponent(appRow.slug)}/source` : null,
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };
@@ -4580,6 +4582,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         },
         // #4666: who can see it, as the two columns say, for the sheet.
         visibility: { build: app.collab_visibility, view: app.view_visibility },
+        repo_visibility_follows_project: require('../services/project-repo-visibility').configured()
+          && !!require('../services/project-repo-visibility').managedApp(app),
         who_decides_change: pendingWhoDecides ? {
           session_id: pendingWhoDecides.id,
           pr_number: pendingWhoDecides.pr_number,

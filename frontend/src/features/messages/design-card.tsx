@@ -51,24 +51,27 @@ export function cardBox(design: { width: number; height: number } | null): { wid
 
 // One read of a thread's design and of each version, shared by its cards:
 // a design read again once a card names a version newer than it knew.
-const designs = new Map<number, { latest: number; read: Promise<DesignThread> }>();
+// 20 Nov 2026 (live-draft review, K): keyed by the artifact too; 0 is the
+// thread's first (a message from before names none).
+const designs = new Map<string, { latest: number; read: Promise<DesignThread> }>();
 const versions = new Map<string, Promise<{ version: number; html: string }>>();
 
-export function readDesign(rootId: number, version: number): Promise<DesignThread> {
-  const had = designs.get(rootId);
+export function readDesign(rootId: number, version: number, artifactId: number | null = null): Promise<DesignThread> {
+  const key = `${rootId}:${artifactId || 0}`;
+  const had = designs.get(key);
   if (had && had.latest >= version) return had.read;
-  const read = api.getDesign(rootId);
+  const read = api.getDesign(rootId, artifactId);
   const entry = { latest: version, read };
-  designs.set(rootId, entry);
-  read.then((d) => { entry.latest = Math.max(version, d.latest); }, () => { designs.delete(rootId); });
+  designs.set(key, entry);
+  read.then((d) => { entry.latest = Math.max(version, d.latest); }, () => { designs.delete(key); });
   return read;
 }
 
-export function readVersion(rootId: number, version: number): Promise<{ version: number; html: string }> {
-  const at = `${rootId}:${version}`;
+export function readVersion(rootId: number, version: number, artifactId: number | null = null): Promise<{ version: number; html: string }> {
+  const at = `${rootId}:${artifactId || 0}:${version}`;
   let read = versions.get(at);
   if (!read) {
-    read = api.getDesignVersion(rootId, version);
+    read = api.getDesignVersion(rootId, version, artifactId);
     versions.set(at, read);
     read.catch(() => { versions.delete(at); });
   }
@@ -81,12 +84,20 @@ export function designVersionOf(message: { sender?: { bot?: boolean }; metadata?
   return message?.sender?.bot && Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-export function DesignVersionCard({ conversationId, rootId, version, title = null }: {
+/** Pure (K): which of the thread's artifacts a bot message's version is of, or null for its first. */
+export function designArtifactOf(message: { metadata?: { homeroomBot?: { artifactId?: number } | null } | null }): number | null {
+  const n = Number(message?.metadata?.homeroomBot?.artifactId);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+export function DesignVersionCard({ conversationId, rootId, version, title = null, artifactId = null }: {
   conversationId: number;
   rootId: number;
   version: number;
   /** The design's name, as the message carries it. */
   title?: string | null;
+  /** K: which of the thread's artifacts; none is its first. */
+  artifactId?: number | null;
 }): ReactNode {
   const t = useMessages('messages');
   const [design, setDesign] = useState<DesignThread | null>(null);
@@ -95,21 +106,22 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
 
   useEffect(() => {
     let live = true;
-    readDesign(rootId, version).then((found) => {
+    readDesign(rootId, version, artifactId).then((found) => {
       if (!live) return;
       setDesign(found);
       // P8: the pictures it names, written in (../design/pictures.ts).
-      return readVersion(rootId, version).then((v) => inlinePictures(v.html)).then((html) => {
+      return readVersion(rootId, version, artifactId).then((v) => inlinePictures(v.html)).then((html) => {
         if (!live) return;
         setDoc({ html, sheets: found.surface === 'platform' ? currentSheets() : [], site: found.kind !== 'page' });
       });
     }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [rootId, version]);
+  }, [rootId, version, artifactId]);
 
   const box = cardBox(design);
   const named = title || design?.title || '';
-  const open = () => openPreview({ conversationId, rootId, version });
+  // I: the column opens on this artifact, at this version.
+  const open = () => openPreview({ conversationId, rootId, version, artifactId });
   return (
     <div className="messages-design-card mt-2 flex w-fit max-w-full flex-col gap-2" data-design-card={version}>
       <div

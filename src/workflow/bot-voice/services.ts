@@ -30,12 +30,21 @@ export function botVoiceServices({ config, pool }: Deps): Record<string, WorkHan
       leaseMs: 120 * 1000,
       async run({ input, key }): Promise<Json> {
         const turnKey = `${placeKey(Number(input.appId), input.place)}#${key}`;
+        // #6920: the messages a returned credit owes an answer, when the
+        // machine resumes a kept ask.
+        const heldIds = Array.isArray((input.resume as any)?.ids)
+          ? ((input.resume as any).ids as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n > 0) : null;
         // The one entry (thread-bot.js, step 5): the place's thread kind.
         const out = await legacy('services/thread-bot').answer(pool, config, {
           kind: legacy('services/bot-profiles').kindOfPlace(input.place),
           appId: Number(input.appId), place: input.place, through: Number(input.through) || 0, sorry: !!input.sorry, turnKey,
+          ...(heldIds ? { resume: { ids: heldIds } } : {}),
         });
-        return { outcome: out?.outcome ?? null, throughId: out?.throughId ?? null, replyId: out?.replyId ?? null };
+        return {
+          outcome: out?.outcome ?? null, throughId: out?.throughId ?? null, replyId: out?.replyId ?? null,
+          speakerIds: Array.isArray(out?.speakerIds) ? out.speakerIds : [],
+          held: out?.held || null,
+        };
       },
     },
 

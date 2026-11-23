@@ -770,7 +770,7 @@ test('the movement: the sheet leaves over the make screen\'s ground, then the ma
   // The cover paints the wallpaper the make screen stands on, over the same box.
   assert.match(sheet, /data-sign-in-sheet-cover=""/);
   assert.match(sheet, /style=\{\{ background: 'var\(--home-wallpaper\)' \}\}/);
-  assert.match(read('frontend/src/features/first-session/make.tsx'), /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
+  assert.match(read('frontend/src/features/first-session/make.tsx'), /style=\{\{ background: 'var\(--home-wallpaper, #fffeea\)' \}\}/);
   // The sheet goes only once the shell is ready to draw the make screen
   // (#4892), and the shell signs in once it has gone; a failure keeps it up.
   assert.match(sheet, /const toMake = \(await beforeFinish\?\.\(kind\)\) === true;\s+const opened = await confirmSession\(toMake \? handOff : undefined\);\s+if \(!opened\) setLeaving\(false\);/);

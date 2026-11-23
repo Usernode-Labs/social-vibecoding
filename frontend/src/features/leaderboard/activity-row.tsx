@@ -55,7 +55,7 @@ export function isDateOnly(date: Date): boolean {
 
 export function activityWhen(
   value: string | null | undefined,
-  opts: { now?: Date; precision?: ActivityTimePrecision | null } = {},
+  opts: { now?: Date; precision?: ActivityTimePrecision | null; dayOnly?: boolean } = {},
 ): ActivityWhen | null {
   if (value == null || value === '') return null;
   const date = new Date(value);
@@ -72,6 +72,10 @@ export function activityWhen(
     ? format(date, `day-${z}`, { ...zone, weekday: 'short', month: 'short', day: 'numeric' })
     : format(date, `day-year-${z}`, { ...zone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const fullDay = format(date, `full-${z}`, { ...zone, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  // #6967: a "Credited Thu, Nov 12" line wants the day alone even for an
+  // exact instant, so the caller can ask for it without cutting the time off
+  // a translated "{{day}} · {{time}}" string.
+  if (opts.dayOnly) return { text: day, title: fullDay, iso: date.toISOString() };
   if (dateOnly) return { text: day, title: fullDay, iso: date.toISOString() };
   // The hour unpadded, "4:14 AM", as every stamp is (lib/timestamp.ts).
   const time = format(date, `time-${z}`, { ...zone, hour: 'numeric', minute: '2-digit' });
@@ -94,15 +98,21 @@ export function activityWhen(
  *
  * `href` makes the reason a link (#3247): an in-app address the caller built,
  * never a URL from a payload.
+ *
+ * #6967 adds two optional lines for the challenge History tab: `note`, why an
+ * action did not count toward the challenge's progress, and `credited`, when
+ * the points were written. Both are absent everywhere else, so Standings and
+ * "What counted" draw exactly the markup they always did.
  */
-export function ActivityRow({ text, points, at, precision, reason, href }: {
+export function ActivityRow({ text, points, at, precision, reason, href, note, credited }: {
   text: string; points: string; at?: string | null; precision?: ActivityTimePrecision | null; reason?: string | null;
-  href?: string | null;
+  href?: string | null; note?: string | null; credited?: string | null;
 }): ReactNode {
   // Subscribed: the date line's separator is read by activityWhen.
   useMessages('leaderboard');
   const when = activityWhen(at, { precision });
   const why = typeof reason === 'string' ? reason.trim() : '';
+  const creditedWhen = activityWhen(credited, { dayOnly: true });
   return (
     <li className="flex items-start justify-between gap-3 text-xs">
       <span className="min-w-0">
@@ -111,6 +121,14 @@ export function ActivityRow({ text, points, at, precision, reason, href }: {
         ) : (
           <span className="block text-zinc-600 dark:text-zinc-300">{text}</span>
         )}
+        {note ? (
+          <span
+            className="block text-[0.6875rem] text-zinc-500 dark:text-zinc-400"
+            data-activity-note=""
+          >
+            {note}
+          </span>
+        ) : null}
         {why ? (
           <span
             className="block text-[0.6875rem] text-zinc-500 dark:text-zinc-400"
@@ -127,6 +145,16 @@ export function ActivityRow({ text, points, at, precision, reason, href }: {
             data-activity-when=""
           >
             {when.text}
+          </time>
+        ) : null}
+        {creditedWhen ? (
+          <time
+            className="block text-[0.6875rem] text-zinc-500 dark:text-zinc-400"
+            dateTime={creditedWhen.iso}
+            title={creditedWhen.title}
+            data-activity-credited=""
+          >
+            {translate('leaderboard:history.credited', { day: creditedWhen.text })}
           </time>
         ) : null}
       </span>

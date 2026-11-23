@@ -269,6 +269,7 @@ export type CommunityPayload = {
   approval: ApprovalPayload;
   /** #4666: who can see and build it, as the two columns say. */
   visibility?: { build: 'public' | 'private'; view: 'public' | 'private' } | null;
+  repo_visibility_follows_project?: boolean;
   /** #4666: a change to who can see and change it already up for a vote. */
   who_decides_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
   /**

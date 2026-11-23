@@ -3,15 +3,10 @@
 // The plan job's "Check whether this run can release" and "Select release
 // work" steps, run as they are written in
 // .github/workflows/build-kubernetes-images.yml against stand-ins for git, gh
-// and helm.
+// and the live chart lookup.
 //
-// Runs on main are queued one at a time, and a run whose commit is no longer
-// main's tip used to build all three images and then skip its publish. In a
-// burst of merges the run that would release waited behind builds nobody
-// used. A run behind the tip that the publish step could not let release
-// ahead of it now builds nothing: the newest release already contains it, or
-// that release's revision merged under RELEASE_EVERY_MINUTES before it. The
-// tip always builds, and anything unreadable builds, as before.
+// A behind run can still publish if a newer build fails, so only a revision
+// the promoted chart already carries can skip the build.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -27,13 +22,11 @@ const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/b
 const plan = workflow.jobs.plan.steps;
 const behindStep = plan.find((s) => s.name === 'Check whether this run can release');
 const selectStep = plan.find((s) => s.name === 'Select release work');
-const publishStep = workflow.jobs.release.steps.find((s) => s.name === 'Check branch tip before publishing');
 
 const sha = (c) => c.repeat(40);
 const OLD = sha('a'); // the newest release's revision
 const MINE = sha('b'); // this run's revision
 const TIP = sha('c'); // main's tip now
-const T0 = 1_791_200_000;
 
 const STUBS = {
   git: `#!/usr/bin/env bash
@@ -45,17 +38,19 @@ printf '%s\\t%s\\n' "$(cat "$STUB_TIP")" "$4"
 path="$2"
 case "$path" in
   */compare/*) pair="\${path##*/compare/}"; key="compare \${pair%%...*} \${pair##*...}";;
-  */commits/*) key="date \${path##*/commits/}";;
   *) exit 2;;
 esac
 value="$(sed -n "s/^$key //p" "$STUB_GH" | tail -n 1)"
 [ -n "$value" ] || exit 1
 echo "$value"
 `,
-  helm: `#!/usr/bin/env bash
-echo "$*" >> "$STUB_HELM_LOG"
-[ -s "$STUB_HELM" ] || exit 1
-cat "$STUB_HELM"
+  node: `#!/usr/bin/env bash
+[ "$*" = 'scripts/live-release.js --metadata' ] || exit 2
+echo "$*" >> "\${STUB_HELM_LOG:-/dev/null}"
+sha="$(sed -n 's/^appVersion: //p' "$STUB_HELM")"
+version="$(sed -n 's/^version: //p' "$STUB_HELM")"
+[ -n "$sha" ] && [ -n "$version" ] || exit 1
+printf '%s %s\\n' "$sha" "$version"
 `,
 };
 
@@ -80,7 +75,6 @@ function runBehind({ tip = TIP, gh = [], helm = `apiVersion: v2\nappVersion: ${O
         PATH: `${bin}:${process.env.PATH}`,
         GITHUB_REF: 'refs/heads/main', GITHUB_SHA: MINE, GITHUB_REPOSITORY: 'Usernode-Labs/social-vibecoding',
         GITHUB_REPOSITORY_OWNER: 'Usernode-Labs', GITHUB_OUTPUT: files.output,
-        RELEASE_EVERY_MINUTES: String(behindStep.env.RELEASE_EVERY_MINUTES),
         STUB_TIP: files.tip, STUB_GH: files.gh, STUB_HELM: files.helm, STUB_HELM_LOG: files.helmLog,
       },
     });
@@ -93,54 +87,36 @@ function runBehind({ tip = TIP, gh = [], helm = `apiVersion: v2\nappVersion: ${O
   }
 }
 
-// main moved on from this run's commit, the newest release is older than it,
-// and the two revisions merged `minutes` apart.
-const behind = (minutes) => [`compare ${OLD} ${MINE} ahead`, `date ${OLD} ${T0}`, `date ${MINE} ${T0 + minutes * 60}`];
-
-test('the step runs only for pushes to main, and its interval is the publish step\'s', () => {
+test('the step runs only for pushes on main, before work is selected', () => {
   assert.ok(behindStep && selectStep);
   assert.equal(workflow.jobs.plan.if, "github.ref == 'refs/heads/main'");
   assert.equal(behindStep.if, "github.event_name == 'push'");
-  assert.equal(String(behindStep.env.RELEASE_EVERY_MINUTES), String(publishStep.env.RELEASE_EVERY_MINUTES));
-  assert.ok(plan.indexOf(behindStep) < plan.indexOf(selectStep), 'decided before the release work is selected');
+  assert.ok(plan.indexOf(behindStep) < plan.indexOf(selectStep));
 });
 
 test('main\'s tip always builds', () => {
-  assert.equal(runBehind({ tip: MINE, gh: behind(1) }).skip, false);
+  const r = runBehind({ tip: MINE, gh: [`compare ${OLD} ${MINE} behind`] });
+  assert.equal(r.skip, false);
 });
 
-test('a run behind the tip that could not release ahead of it builds nothing', () => {
-  const r = runBehind({ gh: behind(5) });
-  assert.equal(r.skip, true);
-  assert.match(r.reason, /^No build: main is at c{40}, whose run releases b{40}, and the newest release \(a{40}\) is under 15 minutes older/);
-  assert.match(r.helmCalls, /show chart oci:\/\/ghcr\.io\/usernode-labs\/charts\/social-vibecoding-platform --version 0\.1\.\*/,
-    'the registry the publish step reads, with the owner lowercased');
-});
-
-test('a run whose commit the newest release already contains builds nothing', () => {
+test('a run whose commit the promoted release already contains builds nothing', () => {
   for (const status of ['behind', 'identical']) {
     const r = runBehind({ gh: [`compare ${OLD} ${MINE} ${status}`] });
     assert.equal(r.skip, true, status);
     assert.match(r.reason, /already contains b{40}/);
+    assert.match(r.helmCalls, /^scripts\/live-release\.js --metadata/m);
   }
 });
 
-test('a run behind the tip that may still release ahead of it builds, as the publish step allows', () => {
-  assert.equal(runBehind({ gh: behind(15) }).skip, false, 'at the interval itself');
-  assert.equal(runBehind({ gh: behind(66) }).skip, false);
-});
-
-test('anything that cannot be read builds, as before', () => {
-  for (const [why, opts] of [
-    ['tip unreadable', { tip: '', gh: behind(1) }],
-    ['registry unreadable', { gh: behind(1), helm: '' }],
-    ['no appVersion', { gh: behind(1), helm: 'apiVersion: v2\nversion: 0.1.1545001\n' }],
-    ['compare unreadable', { gh: [`date ${OLD} ${T0}`, `date ${MINE} ${T0 + 60}`] }],
-    ['diverged', { gh: [`compare ${OLD} ${MINE} diverged`, `date ${OLD} ${T0}`, `date ${MINE} ${T0 + 60}`] }],
-    ['merge times unreadable', { gh: [`compare ${OLD} ${MINE} ahead`] }],
-  ]) {
-    assert.equal(runBehind(opts).skip, false, why);
-  }
+test('a behind run can provide a verified fallback, and anything unreadable builds', () => {
+  for (const opts of [
+    { gh: [`compare ${OLD} ${MINE} ahead`] },
+    { tip: '' },
+    { helm: '' },
+    { helm: 'apiVersion: v2\nversion: 0.1.1545001\n' },
+    { gh: [`compare ${OLD} ${MINE} diverged`] },
+    {},
+  ]) assert.equal(runBehind(opts).skip, false);
 });
 
 function runSelect(env) {
@@ -156,19 +132,21 @@ function runSelect(env) {
     });
     assert.equal(res.status, 0, res.stderr);
     const out = fs.readFileSync(output, 'utf8');
-    return { shouldRelease: /should_release=true/.test(out), summary: fs.readFileSync(summary, 'utf8') };
+    return { shouldRelease: /should_release=true/.test(out), lane: /^build_lane=(\d+)$/m.exec(out)?.[1], summary: fs.readFileSync(summary, 'utf8') };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
 test('Select release work: a run that can release builds and publishes; one that cannot, neither', () => {
-  const normal = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'false' });
+  const normal = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'false', GITHUB_RUN_NUMBER: '1601' });
   assert.equal(normal.shouldRelease, true);
+  assert.equal(normal.lane, '1');
   const skipped = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'true', BEHIND_REASON: 'No build: main is at x.' });
   assert.equal(skipped.shouldRelease, false);
   assert.match(skipped.summary, /No build: main is at x\./);
-  const dispatched = runSelect({});
+  const dispatched = runSelect({ GITHUB_RUN_NUMBER: '1602' });
+  assert.equal(dispatched.lane, '0');
   assert.equal(dispatched.shouldRelease, true, 'a run dispatched by hand is never held back');
   const claude = workflow.jobs.plan.steps.find((step) => step.id === 'claude');
   assert.equal(claude.if, "steps.release.outputs.should_release == 'true'");

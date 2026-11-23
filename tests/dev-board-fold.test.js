@@ -1803,7 +1803,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // when progress was last counted and when the next count is due, on the
   // challenge's own detail panel — a state no other check opens. 703 leaves
   // 177 slots.
-  checkCap.assertPinned(DAPP.tests.length, 703);
+  // 703 → 704: +1 (request 6967) the Challenges screen's History tab, which
+  // says what earned each challenge's points, when each was credited and why,
+  // and how points work: its own route, which no existing check opens. 704
+  // leaves 176 slots.
+  checkCap.assertPinned(DAPP.tests.length, 704);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

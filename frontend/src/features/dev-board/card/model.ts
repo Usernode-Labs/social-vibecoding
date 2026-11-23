@@ -738,6 +738,12 @@ export interface DevWorkshopView {
           bMark: number[] | null;
           aMark: number[] | null;
         }[];
+        /**
+         * What each declared change on the screen is about: the element its
+         * shots agent shot, on each side, numbered as the regions are. The
+         * picture is cropped to these when there are any; never outlined.
+         */
+        frames?: { n: number; b: number[] | null; a: number[] | null }[];
         /** The changes this screen shows, by number. */
         changes: number[];
       }[];

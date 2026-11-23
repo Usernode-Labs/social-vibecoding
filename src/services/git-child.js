@@ -31,10 +31,14 @@
 const HELPER = '!f() { if [ "$1" = get ]; then printf "%s\\n" "username=$USERNODE_GIT_USERNAME" "password=$USERNODE_GIT_PASSWORD"; fi; }; f';
 
 function configArgs(credential) {
+  const helperKey = credential?.url ? `credential.${credential.url}.helper` : 'credential.helper';
   return [
     '-c', 'credential.helper=',
     '-c', 'core.hooksPath=/dev/null',
-    ...(credential ? ['-c', `credential.helper=${HELPER}`, '-c', 'http.followRedirects=false'] : []),
+    ...(credential ? [
+      '-c', `${helperKey}=${HELPER}`, '-c', 'http.followRedirects=false',
+      ...(credential.url ? ['-c', 'credential.useHttpPath=true'] : []),
+    ] : []),
   ];
 }
 

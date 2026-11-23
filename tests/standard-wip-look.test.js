@@ -28,11 +28,27 @@ const WIP_HIDES = [
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html:not([data-skin]) #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
-  'html[data-skin-wip][data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
+  'html:not([data-skin])[data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
   // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.
+  // Under this look alone: the standard look's door opens the overview, and its board keeps the line (20 Nov 2026).
   'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  // The end of a run shows a picture of the brand's where the little pile, or the tick, was (20 Nov 2026).
+  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-stack, .rf-end-mark)',
+  // Needs you does not carry the project's paused-changes notice: voting goes on (20 Nov 2026).
+  'html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice',
+  // From 1280px a project's Needs you shows what a change does beside it: no arrow to open it, no dimming behind it (20 Nov 2026).
+  'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim',
+  'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle',
+  // And the short claim over the picture: the full text is beside it, so it is said once.
+  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row',
+  // The Workshop's figures are four cards, each with a mark: the mark says what the label's dot said (asked 23 Nov 2026).
+  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot',
+  // Beside the open sidebar, on Homeroom's own pages, the bar shows the place alone: the panel's brand is the community's name already.
+  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) > #header-app-tile, html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(.header-place-name) > span > #header-title-name:has(> svg)',
+  // A request's page has no title of its own while the top bar names the place.
+  'html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title',
   // The project's preview is a card beside the hero from 1024px; narrower, the hero keeps the picture at its side (20 Nov 2026).
   'html:not([data-skin]) #dev-workshop .wip-hero-preview',
   // And where the card is there, the hero's own tilted copy of the picture is not.
@@ -55,8 +71,8 @@ const MENU_HIDES = [
   // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
   'html:not([data-skin]) #platform-tabs::before',
   'html:not([data-skin]) body #platform-header#platform-header::before',
-  // Folded, the menu is a strip of icons and logos: the mark heads it, so the top bar does not say the logo there either,
-  'html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
+  // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
+  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
   // and the words, counts, headings, pins and nested places are the open menu's (asked 20 Nov 2026).
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x)',
 ];
@@ -104,6 +120,43 @@ function topLevel(selector) {
   }
   out.push(selector.slice(from));
   return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Arithmetic on the menu's tokens, so a rule's measures can be held as what
+ * they come to, with the tokens as they are and with others (`given`, in px).
+ */
+function menuMath(all) {
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-row-h:/.test(r.body)).body;
+  const decl = (body, prop) => {
+    const m = body.match(new RegExp(`(?:^|[;{\\s])${prop}:\\s*([^;]+);`));
+    assert.ok(m, `it sets ${prop}`);
+    return m[1].trim();
+  };
+  const parts = (value) => {
+    const out = [];
+    let depth = 0;
+    let from = 0;
+    for (let i = 0; i <= value.length; i += 1) {
+      const ch = value[i];
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth -= 1;
+      else if ((ch === ' ' || ch === undefined) && depth === 0) { if (i > from) out.push(value.slice(from, i)); from = i + 1; }
+    }
+    return out;
+  };
+  const token = (name, given) => {
+    if (given && name in given) return given[name];
+    const m = tokens.match(new RegExp(`${name}:\\s*([0-9.]+)(px|rem);`));
+    assert.ok(m, `${name} is a length in the token rule`);
+    return Number(m[1]) * (m[2] === 'rem' ? 16 : 1);
+  };
+  const px = (expr, given) => {
+    const js = expr.replace(/var\((--wip-nav-[a-z0-9-]+)\)/g, (_, name) => `(${token(name, given)})`).replace(/calc\(/g, '(').replace(/(\d)px/g, '$1');
+    assert.match(js, /^[-+*/(). 0-9]+$/, `${expr} is arithmetic on the menu's tokens`);
+    return Function(`return (${js});`)();
+  };
+  return { decl, parts, token, px };
 }
 
 test('it is the standard look: the head sets data-skin-wip and no data-skin', () => {
@@ -179,6 +232,29 @@ test('the menu and the top bar: one block for the standard look and this one, ev
     /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*!document\.documentElement\?\.hasAttribute\('data-skin'\)\) return;/);
 });
 
+test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s, on every page (20 Nov 2026)', () => {
+  const all = rules(menuBlock());
+  const line = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header::after`);
+  assert.ok(line, 'the top bar ends in a line');
+  assert.match(line.body, /content: "";/);
+  assert.match(line.body, /position: absolute;/, 'on the bar itself, which is the positioned box');
+  assert.match(line.body, /inset-block-end: 0;/, 'at its foot');
+  assert.match(line.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'from the menu\'s edge, open or folded to its strip');
+  assert.match(line.body, /inset-inline-end: 0;/, 'to the window\'s');
+  assert.match(line.body, /height: 1px;/);
+  assert.match(line.body, /background: var\(--wip-nav-bar-line\);/, 'in the bar\'s own line');
+  assert.match(line.body, /pointer-events: none;/);
+  // Not scoped away from a project's page: the bar is the frame's on every page.
+  assert.doesNotMatch(line.selector, /data-community-tint/);
+  // From 768px, where the bar sits beside a sidebar: it is in the bar's own block of that query.
+  const css = read('public', 'css', 'app.css');
+  const at = css.indexOf('THE BAR HAS A FOOT');
+  assert.ok(at > 0);
+  const query = css.lastIndexOf('@media', at);
+  assert.equal(css.slice(query, css.indexOf('{', query)).trim(), '@media (min-width: 768px)');
+  assert.ok(css.indexOf('\n}\n', query) > at, 'inside that query, not after it');
+});
+
 test('on a community\'s page the Communities tab gives way to its row', () => {
   const block = menuBlock();
   const GIVE = 'html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"]';
@@ -209,13 +285,12 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   assert.ok(block.includes(`${STRIP} { display: flex; }`));
   assert.ok(block.includes(`${FOLDED} {\n    --platform-rail-full: var(--wip-nav-mini-w);\n    --platform-rail-w: var(--wip-nav-mini-w);`));
   assert.ok(block.includes(`${FOLDED} #app-view {\n    padding-inline-start: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));`));
-  // Homeroom's mark heads it, and a hairline parts the places from the communities' logos.
-  assert.ok(block.includes(`${STRIP}::before {`));
-  assert.match(block, /background: var\(--wip-nav-brand-mark\) center \/ contain no-repeat;/);
+  // The fold button heads it, so no brand is drawn in the strip (20 Nov 2026; it was Homeroom's mark), and a hairline parts the places from the communities' logos.
+  assert.ok(block.includes(`${STRIP}::before { content: none; }`));
   assert.ok(block.includes(`${STRIP} :is(.platform-rail-pinned, .platform-rail-communities)::before {`));
-  // The fold button: inside the panel at the end of the logo's line, and beside the strip, in the bar's ink, once folded.
-  assert.match(block, /#platform-header #sidebar-toggle \{\s*position: absolute;[^}]*inset-inline-start: calc\(var\(--wip-nav-w\) - var\(--wip-nav-fold-inset\) - var\(--wip-nav-fold\)\);[^}]*background: transparent;[^}]*color: var\(--wip-nav-ink\);/);
-  assert.ok(block.includes(`${FOLDED} #platform-header #sidebar-toggle {\n    position: static;\n    color: var(--wip-nav-bar-ink);`));
+  // The top bar starts beside the strip as it does beside the open menu, and says Homeroom there: only the open menu hides the bar's own brand.
+  assert.ok(block.includes(`${FOLDED} #platform-header { padding-inline-start: calc(var(--wip-nav-mini-w) + 1rem); }`));
+  assert.ok(!rules(block).some((r) => r.selector.startsWith(FOLDED) && r.selector.includes('#header-title')), 'folded, the top bar shows its own title');
   // Nothing slides away: the strip stays, so the rail's leaving slide is skipped where <html> has no data-skin.
   const slide = read('frontend', 'src', 'features', 'nav', 'rail-slide.ts');
   assert.match(slide, /const strip = !document\.documentElement\.hasAttribute\('data-skin'\);\s*if \(!open && !fromPeek && !strip\) bar\.classList\.add\('platform-tabs-leaving'\);/);
@@ -229,6 +304,175 @@ test('folded, the menu is a strip of icons and logos, and a medium display start
   assert.match(css, /html:not\(\[data-skin\]\) #platform-tabs \.platform-tab \{ height: calc\(var\(--wip-nav-bar-h\) - 2 \* var\(--wip-nav-tab-inset\)\);/);
 });
 
+test('the fold button leads the logo\'s line, on the same spot open and folded, with one glyph', () => {
+  const css = read('public', 'css', 'app.css');
+  const block = menuBlock();
+  const all = rules(block);
+  const RAIL = 'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden))';
+  // ONE RULE PLACES IT, whatever the menu's state: its glyph in the rows' icon column, on the logo's line.
+  assert.ok(block.includes(`${RAIL} #platform-header #sidebar-toggle {\n    position: absolute;\n`
+    + '    inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);\n'
+    + '    inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) - (var(--wip-nav-fold) - var(--wip-nav-ic-size)) / 2);'));
+  assert.deepEqual(all.filter((r) => r.selector.includes('#sidebar-toggle') && /folded|peek/.test(r.selector)).map((r) => r.selector), [],
+    'no rule moves or repaints it for the folded menu (it jumped 240px to the top bar\'s start there)');
+  // …and the strip centres its glyphs on that same column, which is what keeps the one rule true folded.
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-/.test(r.body));
+  const px = (name) => {
+    const m = tokens.body.match(new RegExp(`${name}: ([0-9.]+)px;`));
+    assert.ok(m, `${name} is a length in px`);
+    return Number(m[1]);
+  };
+  assert.equal((px('--wip-nav-mini-w') - px('--wip-nav-ic-size')) / 2, px('--wip-nav-pad') + px('--wip-nav-row-pad'),
+    'the strip\'s glyphs stand where the open rows\' do');
+  // The logotype starts where the rows' words do, after the button.
+  assert.match(block, /html:not\(\[data-skin\]\) #platform-tabs::before \{[^}]*inset-inline-start: calc\(var\(--wip-nav-pad\) \+ var\(--wip-nav-row-pad\) \+ var\(--wip-nav-ic-size\) \+ var\(--wip-nav-row-gap\)\);/);
+  // ONE GLYPH: the shell's own SidebarIcon, the same in both states, at the rows' weight; no drawing of the look's own.
+  assert.doesNotMatch(css, /--wip-nav-ic-(un)?fold\b/);
+  const glyph = all.find((r) => r.selector === 'html:not([data-skin]) #platform-header #sidebar-toggle > svg');
+  assert.ok(glyph, 'the look styles the icon the button renders');
+  assert.match(glyph.body, /stroke-width: var\(--wip-nav-fold-stroke\);/);
+  assert.doesNotMatch(glyph.body, /mask|background/, 'it is the icon itself, not a mask over it');
+  assert.match(tokens.body, /--wip-nav-fold-stroke: 1\.8;/);
+  assert.match(tokens.body, /--wip-nav-ic-home: url\("[^"]*stroke-width='1\.8'/, 'the weight the rows\' glyphs are drawn at');
+  const toggle = read('frontend', 'src', 'features', 'nav', 'sidebar-toggle.tsx');
+  assert.deepEqual(toggle.match(/<[A-Za-z]*(Icon|svg)\b[^>]*>/g), ['<SidebarIcon className="w-5 h-5" />']);
+});
+
+test('the page is a sheet tucked into the menu: its corners are rounded where it meets it (20 Nov 2026)', () => {
+  const all = rules(menuBlock());
+  const tokens = all.find((r) => r.selector === MENU_SCOPE && /--wip-nav-page-radius:/.test(r.body));
+  assert.ok(tokens, 'the corners\' radius is a token of the block');
+  assert.match(tokens.body, /--wip-nav-page-radius: 20px;/);
+  // The corners: a fixed layer on <body>, just past the menu's edge, while the menu is docked.
+  const docked = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#platform-header.hidden))::after';
+  const corners = all.find((r) => r.selector === `${MENU_SCOPE} ${docked}`);
+  assert.ok(corners, 'drawn while the menu is docked, beside a running app too (its frame is a card on the page); not while it peeks over the page, nor while an app has the whole window');
+  assert.match(corners.body, /position: fixed;/);
+  assert.match(corners.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'just past the menu\'s edge, open or folded to its strip');
+  assert.match(corners.body, /width: var\(--wip-nav-page-radius\);/);
+  assert.match(corners.body, /pointer-events: none;/, 'it takes no pointer from the page');
+  const quarter = /radial-gradient\(circle at [^,]+, transparent calc\(var\(--wip-nav-page-radius\) - 0\.5px\), var\(--wip-nav-bg\) var\(--wip-nav-page-radius\)\)/g;
+  assert.equal((corners.body.match(quarter) || []).length, 2, 'two quarter circles in the menu\'s own blue: the top corner and the bottom one');
+  assert.match(corners.body, /circle at 100% 100%[\s\S]*0 0 \/[\s\S]*circle at 100% 0[\s\S]*0 100% \//, 'the top corner at the top, the bottom one at the foot');
+  const rtl = all.find((r) => r.selector === `${MENU_SCOPE}[dir="rtl"] ${docked}`);
+  assert.ok(rtl, 'right to left the menu is on the right');
+  assert.match(rtl.body, /circle at 0 100%[\s\S]*circle at 0 0/, 'so the quarter circles open the other way');
+  // From 768px only, where the menu is a sidebar: a phone's is the bar at the screen's foot.
+  const css = read('public', 'css', 'app.css');
+  const at = css.indexOf('THE PAGE IS A SHEET TUCKED INTO THE MENU');
+  assert.ok(at > 0);
+  assert.match(css.slice(css.indexOf('*/', at) + 2, css.indexOf('*/', at) + 40), /^\n@media \(min-width: 768px\) \{/);
+});
+
+test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {
+  const block = menuBlock();
+  const all = rules(block);
+  const cogRule = (r) => /\.platform-rail-settings(?!-)/.test(r.selector);
+  // It is not a row. With a row's height and start padding it stood 5px above
+  // You and its glyph sat off centre, so its hover and lit fill poked out over
+  // the row's corner (20 Nov 2026).
+  const row = all.find((r) => /min-height: var\(--wip-nav-row-h\);/.test(r.body));
+  assert.ok(row, 'the rows share one rule');
+  assert.ok(!cogRule(row), 'Settings takes no row measure');
+  for (const r of all.filter(cogRule)) {
+    assert.doesNotMatch(r.body, /min-height:/, `${r.selector} gives it a row's height`);
+    for (const m of r.body.matchAll(/padding[a-z-]*:\s*([^;]+);/g)) {
+      assert.match(m[1].trim(), /^0( 0)*$/, `${r.selector} pads it, which moves its glyph off its centre`);
+    }
+  }
+  // Unpadded, the shell's own rule for the button puts the glyph in its middle.
+  const css = read('public', 'css', 'app.css');
+  const desk = css.indexOf('\n  .platform-rail-settings {\n    position: relative;\n    z-index: 2;');
+  assert.ok(desk > 0, 'the shell\'s rule for the button');
+  assert.match(css.slice(desk, css.indexOf('}', desk)), /display: inline-flex;\s*align-items: center;\s*justify-content: center;/);
+  // Its own box, every measure from the menu's tokens.
+  const COG = 'html:not([data-skin]) #platform-tabs .platform-rail-settings';
+  const cog = all.find((r) => r.selector === COG && /width:/.test(r.body));
+  assert.ok(cog, 'Settings has a box of its own in the menu block');
+  const { decl, parts, token, px } = menuMath(all);
+  assert.equal(decl(cog.body, 'width'), 'var(--wip-nav-settings)');
+  assert.equal(decl(cog.body, 'height'), 'var(--wip-nav-settings)');
+  assert.equal(token('--wip-nav-settings'), 32, 'a 32px square');
+  // The space it gives back is the menu's own space between rows.
+  assert.ok(block.includes(`${MENU_SCOPE} #platform-tabs.platform-tabs { padding-inline: var(--wip-nav-pad); gap: var(--wip-nav-row-space); }`));
+  // On the row's height as it is, and on a taller one: the margins follow the token.
+  for (const given of [{}, { '--wip-nav-row-h': 48 }]) {
+    const R = token('--wip-nav-row-h', given);
+    const S = px(decl(cog.body, 'width'), given);
+    const G = token('--wip-nav-row-space', given);
+    const [top, foot] = parts(decl(cog.body, 'margin-block')).map((v) => px(v, given));
+    const [start, end] = parts(decl(cog.body, 'margin-inline')).map((v) => px(v, given));
+    assert.equal(top + S + foot + G, 0, `row ${R}px: it takes no height, so You starts on its line`);
+    assert.equal(top + S / 2, R / 2, `row ${R}px: its centre is You's centre`);
+    assert.equal(start, 0);
+    assert.equal(end, top, `row ${R}px: the same air at the row's end as above and below it`);
+    assert.equal(px(decl(cog.body, 'border-radius'), given), token('--wip-nav-row-radius') - top, 'its corner runs beside the row\'s');
+  }
+  // Folded, the strip still puts it on a line of its own above You.
+  assert.ok(block.includes(`${MENU_SCOPE} #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-rail-settings { align-self: center; margin: 0 0 2px; }`));
+});
+
+test('open, You\'s row ends short of Settings, and on Settings only Settings is lit', () => {
+  const block = menuBlock();
+  const all = rules(block);
+  const { decl, parts, px } = menuMath(all);
+  // You's row ran on under Settings, so its lit, hover and focus grounds lay
+  // under the button; and on Settings, which lights You's tab too, two things
+  // were lit (20 Nov 2026).
+  const OPEN = `${MENU_SCOPE} #platform-tabs:not(.platform-tabs-folded)`;
+  const me = all.find((r) => r.selector === `${OPEN} #platform-tab-me`);
+  assert.ok(me, 'the open menu ends You\'s row before Settings');
+  const cog = all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs .platform-rail-settings` && /width:/.test(r.body));
+  assert.ok(cog, 'Settings\' own box');
+  // Both are measured in from the row's end: Settings' box starts its width and
+  // its end margin in, and You's ground stops at its own end margin. Between
+  // them is the menu's space between rows, as the tokens are and as they might be.
+  for (const given of [{}, { '--wip-nav-row-h': 48 }, { '--wip-nav-settings': 28 }, { '--wip-nav-row-space': 4 }]) {
+    const youEnd = px(decl(me.body, 'margin-inline-end'), given);
+    const width = px(decl(cog.body, 'width'), given);
+    const [start, cogEnd] = parts(decl(cog.body, 'margin-inline')).map((v) => px(v, given));
+    assert.equal(start, 0);
+    assert.equal(youEnd - (width + cogEnd), px('var(--wip-nav-row-space)', given),
+      `${JSON.stringify(given)}: the space between rows parts You's ground from Settings, and no more is left unpressable`);
+  }
+  // The open menu's rule, beside Settings' box; the folded strip keeps its own.
+  const at = block.indexOf(`${OPEN} #platform-tab-me {`);
+  const group = block.lastIndexOf('@media (min-width: 768px) {', at);
+  assert.ok(group > 0 && block.indexOf('\n}', group) > at, 'a wide display\'s rule');
+  assert.ok(group < block.indexOf(`${MENU_SCOPE} #platform-tabs .platform-rail-settings {\n    width:`), 'in the group that draws Settings\' box');
+  assert.ok(block.includes(`${MENU_SCOPE} #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) #platform-tab-me { padding-inline-end: 0; }`));
+
+  // On Settings, You's tab keeps `aria-current` (it is Settings' section), and
+  // its row steps back to rest: no ground, a resting row's ink and weight.
+  const GIVE = `${OPEN}:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]`;
+  const rest = all.find((r) => r.selector === GIVE);
+  assert.ok(rest, 'You\'s row gives up its light while Settings is current');
+  assert.equal(decl(rest.body, 'background'), 'transparent', 'the lit-row rule would otherwise paint it');
+  assert.equal(decl(rest.body, 'font-weight'), '600');
+  assert.match(block, /:is\(\.platform-tab, \.platform-rail-community\) \{ min-height: var\(--wip-nav-row-h\);[^}]*font-weight: 600; \}/, 'a resting row\'s weight');
+  assert.equal(decl(rest.body, 'color'), 'var(--text-primary)');
+  assert.match(read('public', 'css', 'app.css'), /\n {2}\.platform-tab \{\n {4}flex: none;\n {4}flex-direction: row;[^}]*color: var\(--text-primary\);/,
+    'the ink the shell\'s own row rule gives a resting row');
+  assert.match(all.find((r) => r.selector === `${MENU_SCOPE} #platform-tabs` && /--text-primary:/.test(r.body)).body, /--text-primary: var\(--wip-nav-ink-strong\);/);
+  const words = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-glyph, .platform-tab-label)`);
+  assert.ok(words, 'the glyph and the word stop wearing the lit row\'s on-ink');
+  assert.equal(decl(words.body, 'color'), 'inherit');
+  // It answers the pointer with a resting row's ground.
+  const hover = all.find((r) => r.selector === `${GIVE}:hover`);
+  assert.ok(hover, 'under the pointer it is a row at rest under the pointer');
+  const rowHover = all.find((r) => /\.platform-rail-settings, [^)]*\):not\(\[aria-current="page"\]\):hover$/.test(r.selector));
+  assert.ok(rowHover, 'the menu\'s hover rule');
+  assert.equal(decl(hover.body, 'background'), decl(rowHover.body, 'background'));
+  // Settings keeps the lit row's own rule, so it is the one thing lit.
+  const lit = all.find((r) => /^html:not\(\[data-skin\]\) #platform-tabs :is\(\.platform-tab, \.platform-rail-settings, .*\)\[aria-current="page"\]$/.test(r.selector) && /background:/.test(r.body));
+  assert.ok(lit, 'the lit-row rule lights Settings');
+  assert.equal(decl(lit.body, 'background'), 'var(--wip-nav-on-bg)');
+  assert.ok(block.indexOf(GIVE) > block.indexOf(lit.selector), 'after the lit-row rule, which it out-ranks');
+  // A wide display's rules, for the open menu: folded, the strip keeps its own
+  // drawing, and the phone's bar has no Settings.
+  assert.ok(block.includes(`@media (min-width: 768px) {\n  ${GIVE} {`), 'the give-way rules sit in a wide-display group of the menu block');
+});
+
 test('buttons: the Sticker drawing, one block for the standard look and this one, every value a token', () => {
   const css = read('public', 'css', 'app.css');
   const start = css.indexOf('── BUTTONS (20 Nov 2026)');
@@ -239,7 +483,7 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
       assert.ok(one.startsWith('html:not([data-skin])'), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|^html:not\(\[data-skin\]\)(\.dark)? \.(rf-pair|rf-morph|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
+      assert.match(one, /^html:not\(\[data-skin\]\)(\.dark)?$|#admin-screen \*|^html:not\(\[data-skin\]\) \.gc-vote-btn|^html:not\(\[data-skin\]\)(\.dark)? \.(rf-pair|rf-morph|rf-prev|rf-switch|platform-parked-pill)|#home-new-project-top/, `"${one}" leaves the admin console alone`);
     }
   }
   // Colours are written in the token rules alone, and every token a rule reads is declared there.
@@ -260,6 +504,29 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
 });
 
+test('New community wears the Communities page\'s typeface, not the buttons\' serif (21 Nov 2026)', () => {
+  const all = rules(wipBlock());
+  // Its own rule gives it the page's font, which is Geist in this look.
+  const rule = all.find((r) => r.selector === 'html:not([data-skin]) #communities-screen #communities-new-top');
+  assert.ok(rule, 'the page action\'s family is a rule of the look\'s own block');
+  assert.equal(rule.body.trim(), 'font-family: var(--wip-font);');
+  const token = all.find((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-font: 'Geist'/.test(r.body));
+  assert.ok(token, 'the page\'s font is the one the rest of the page reads');
+  // Two ids, so it outranks the BUTTONS block's shape (its classes are inside :where()).
+  assert.equal((rule.selector.match(/#/g) || []).length, 2, 'it beats the class rules and the one-id page top action rule');
+  // The buttons' serif is untouched, and the shared page top action rule names
+  // no family, so Home's New project keeps it.
+  const css = read('public', 'css', 'app.css');
+  const start = css.indexOf('── BUTTONS (20 Nov 2026)');
+  const end = css.indexOf('END OF BUTTONS.');
+  const buttons = rules(css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, ''));
+  const serif = buttons.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body))[0];
+  assert.match(serif.body, /--wip-btn-font: 'Source Serif 4',/);
+  const top = buttons.find((r) => r.selector === 'html:not([data-skin]) :is(#home-new-project-top, #communities-new-top)');
+  assert.ok(top, 'the page top action rule is still the buttons block\'s');
+  assert.doesNotMatch(top.body, /font-family/, 'Home\'s New project keeps the serif');
+});
+
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {
   const hidden = rules(wipBlock())
     .filter((r) => /display:\s*none|visibility:\s*hidden/.test(r.body))
@@ -268,6 +535,22 @@ test('nothing of the standard look is hidden under it but what WIP_HIDES lists',
     .map((r) => r.selector);
   assert.deepEqual(hidden.sort(), [...WIP_HIDES].sort(),
     'a section the look stops displaying is a decision: add it to WIP_HIDES with its reason');
+});
+
+test('no sheen: a pointer sends no band of light across a project\'s icon, a community\'s or the hub\'s filled action (20 Nov 2026)', () => {
+  assert.doesNotMatch(read('public', 'css', 'app.css'), /--wip-sheen/, 'its colour and its time went with it');
+  const all = rules(wipBlock());
+  for (const { selector } of all) {
+    for (const one of topLevel(selector)) {
+      // Nothing is laid over an icon's tile (the sheen was ::after, the gloss before it ::before) ...
+      assert.doesNotMatch(one, /\.app-icon-tile::(after|before)/, `"${one}" draws over an icon`);
+      // ... or over the hub's Open app and Join.
+      assert.doesNotMatch(one, /\[data-ws-community-(open-app|join)\]\)(:hover)?::(after|before)/, `"${one}" draws over the hub's filled action`);
+    }
+  }
+  // What the pointer does there stays: a community's tint deepens a step, and nothing moves.
+  assert.ok(all.some((r) => r.selector === 'html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) .communities-grid > :is(a, button):hover'
+    && /background-color: var\(--wip-soft-bg-on\);/.test(r.body)));
 });
 
 test('Home places what it does not name last, so a new standard section is drawn', () => {

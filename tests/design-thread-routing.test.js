@@ -2,7 +2,7 @@
 
 // #6683: a thread that holds a design answers like any other chat thread.
 //
-// Step 6 (19 Nov 2026, #6864): and every message there, the design's own
+// Step 6 (19 Nov 2026, #6864): and every message there, the artifact's own
 // included, is the chat's turn (homeroom-bot-mayor.js runDmTurn): a comment
 // pinned on the preview and a reply to one of its versions reach it too, told
 // the design, its project and its version (designThreadLines). The turn
@@ -153,9 +153,9 @@ test('a closed design still answers the thread: its own message too, and the tur
 
 test('the chat turn in a design thread is told the design, its project and its version, and that it draws it itself', () => {
   const prompt = mayor.systemPrompt({ username: 'ada', thread: { design: DESIGN }, designing: true });
-  assert.match(prompt, /This thread holds a design, "RecipeBot home screen", of the screen of project "recipebot"\./);
+  assert.match(prompt, /This thread holds an artifact, "RecipeBot home screen", of the screen of project "recipebot"\./);
   assert.match(prompt, /Its newest version is version 2\./);
-  assert.match(prompt, /You draw, change and redraw it yourself, here, with the design tools/);
+  assert.match(prompt, /You draw, change and redraw it yourself, here, with the artifact tools/);
   assert.match(prompt, /your one reply says the version you saved/);
   assert.doesNotMatch(prompt, /draw_screen|designer/);
   assert.match(prompt, /a request may\s+be offered on any project they can see/);
@@ -170,7 +170,7 @@ test('the chat turn in a design thread is told the design, its project and its v
   assert.doesNotMatch(mayor.systemPrompt({ username: 'ada', thread: { draft: null } }), /holds a design/);
 });
 
-test('start_design uses the design\'s title and refuses another project\'s screen', async () => {
+test('start_design uses the artifact\'s title and refuses another project\'s screen', async () => {
   const pool = {
     async query(sql, params) {
       if (/FROM apps/.test(sql)) {
@@ -185,20 +185,24 @@ test('start_design uses the design\'s title and refuses another project\'s scree
   const loadDesign = async (args) => { asked.push(args); return { ok: true, version: 3 }; };
   const ctx = { user: { id: 9 }, deps: { threadDesign: DESIGN }, loadDesign };
   const drawn = await mayor.startDesign(pool, ctx, { what: 'make the recipe cards bigger' });
-  assert.equal(drawn.ok, true, 'the design\'s own title is enough, so what alone is enough');
+  assert.equal(drawn.ok, true, 'the artifact\'s own title is enough, so what alone is enough');
   assert.deepEqual(asked, [{ app: null, title: 'RecipeBot home screen', brief: 'make the recipe cards bigger' }], 'it loads the design for this turn');
 
   const other = await mayor.startDesign(pool, { user: { id: 9 }, deps: { threadDesign: DESIGN }, loadDesign }, { what: 'a map screen', project: 'geneva-hikes' });
-  assert.equal(other.ok, false, 'a screen of another project is not drawn into this thread\'s design');
-  assert.match(other.error, /design is of RecipeBot/);
+  assert.equal(other.ok, false, 'a screen of another project is not drawn into this thread\'s artifact');
+  assert.match(other.error, /artifact is of RecipeBot/);
   assert.match(other.error, /new thread/);
 
   // Without a design, a title is still required, as anywhere else.
   const plain = await mayor.startDesign(pool, { user: { id: 9 }, deps: {}, loadDesign }, { what: 'a map screen' });
   assert.equal(plain.ok, false);
   assert.match(plain.error, /name the screen/);
-  // Loaded already: nothing is opened twice.
-  assert.match((await mayor.startDesign(pool, { ...ctx, caps: { design: {} } }, { what: 'x' })).note, /yours already/);
+  // A new screen this turn draws already: nothing is opened twice.
+  assert.match((await mayor.startDesign(pool, { ...ctx, caps: { design: { fresh: true, capability: 'design' } } }, { what: 'x' })).note, /yours already/);
+  // K (20 Nov 2026): with an artifact the thread holds open, it is a new screen beside it.
+  asked.length = 0;
+  assert.equal((await mayor.startDesign(pool, { ...ctx, caps: { design: { fresh: false, capability: 'design', artifactId: 1 } } }, { what: 'x' })).ok, true);
+  assert.equal(asked.length, 1, 'the turn opens a new one');
   // A first version's thread draws no screen.
   assert.match((await mayor.startDesign(pool, { user: { id: 9 }, deps: { threadKind: 'first_version' } }, { what: 'x', title: 'X' })).error,
     /No screen is drawn in a first version's thread/);
@@ -206,7 +210,7 @@ test('start_design uses the design\'s title and refuses another project\'s scree
 
 test('the design section says this one turn answers everything else in the thread', () => {
   const prompt = designBot.designPrompt({ username: 'ada', design: DESIGN, surface: 'app', version: 2, html: '<html></html>' });
-  assert.match(prompt, /^THIS THREAD'S DESIGN\n/);
+  assert.match(prompt, /^THIS THREAD'S ARTIFACT\n/);
   assert.match(prompt, /Anything else they ask here \(a request to file, a change to ask about, where someone's work stands\) you answer\nas in any other thread, with your other tools/);
   assert.match(prompt, /never say something cannot be done in this thread/);
   assert.match(prompt, /never\s+tell them to ask somewhere else or to do it themselves/);
@@ -293,7 +297,7 @@ test('a reply to one of its versions is told which version it answers', async ()
     message: { id: 81, content: 'what did this one have before?', threadRootId: 500, reply: { id: 600 } },
   });
   await turn.run;
-  assert.ok(turn.seen[0].some((m) => m.role === 'system' && /their message replies to version 1 of the design/.test(m.content)));
+  assert.ok(turn.seen[0].some((m) => m.role === 'system' && /their message replies to version 1 of the artifact/.test(m.content)));
   assert.equal(turn.versions.length, 0, 'nothing is saved when nothing changed');
   assert.equal(turn.sent[0].metadata.kind, 'chat');
 });

@@ -23,10 +23,15 @@ export {
   embeddedApi,
   sideRouteFrom,
   BESIDE_AI_QUERY,
+  EDGE_PROP,
+  BESIDE_AI_CLASS,
+  LIST_HIDDEN_CLASS,
+  showList,
   _resetForTests,
 } from '../../frontend/src/features/side-panel/controller';
 export { installEmbeddedRuntime } from '../../frontend/src/features/side-panel/embedded';
 export { panelHeadStore } from '../../frontend/src/features/side-panel/head-store';
+export * as listClosed from '../../frontend/src/features/ai/list-closed';
 export { sidePanelStore, sidePanelRefs, INITIAL } from '../../frontend/src/features/side-panel/store.js';
 export { headerTitleStore } from '../../frontend/src/features/header/header-title-store.js';
 export * as routes from '../../frontend/src/features/side-panel/routes';

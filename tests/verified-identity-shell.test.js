@@ -46,7 +46,7 @@ test('the Vote buttons open the verify sheet on identity_required, and vote agai
   const castVote = src.slice(src.indexOf('async castVote('), src.indexOf('async castIssueVote('));
   assert.match(castVote, /await AppView\.refreshDevData\('vote'\);\s+\/\/ A public app's vote[^\n]*\n[^\n]*\n\s+if \(data\.code === 'identity_required' && AppView\._verifyThenVote\(\s+\(\) => AppView\.castVote\(sessionId, vote, expectedEpoch, opts\)\)\) return false;/);
   const castIssueVote = src.slice(src.indexOf('async castIssueVote('));
-  assert.match(castIssueVote, /finish\(\);\s+\/\/ A public app's vote counts from a verified account \(castVote\)\.\s+if \(data\.code === 'identity_required' && AppView\._verifyThenVote\(\s+\(\) => AppView\.castIssueVote\(issueId, vote, opts\)\)\) \{\s+AppView\.refreshDevData\('vote'\);\s+return;\s+\}/);
+  assert.match(castIssueVote, /finish\(\);\s+\/\/ A public app's vote counts from a verified account \(castVote\)\.\s+if \(data\.code === 'identity_required' && AppView\._verifyThenVote\(\s+\(\) => AppView\.castIssueVote\(issueId, vote, opts\)\)\) \{\s+AppView\.refreshDevData\('vote'\);\s+return false;\s+\}/);
   // The bridge is published at module scope, imported by the entry.
   assert.match(read('frontend/src/main.tsx'), /\nimport '\.\/features\/auth\/verify-identity';/);
   assert.match(read('frontend/src/features/auth/verify-identity.tsx'), /bridge\.verifyIdentity = \{ ask: askToVerifyIdentity,/);

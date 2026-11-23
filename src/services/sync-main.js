@@ -368,9 +368,14 @@ async function runSyncWork(config, pool, {
     if (!result.syncResult && (result.fatalError || (result.exitCode != null && result.exitCode !== 0)
         || (result.ccExit != null && result.ccExit !== 0))) {
       await steps.once('after:spend', () => deps.limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100)));
-      throw Object.assign(new Error(result.fatalError
+      // The conflict turn is paid with the platform's key, which is the
+      // Homeroom bot's. When the provider refused it (its credit, or the
+      // bot's weekly budget), the sync says that, and when to sync again.
+      const pause = require('./bot-pause-words');
+      const refused = pause.platformTurnRefused(result, 'sync', { budget: await pause.budgetNow(pool) });
+      throw Object.assign(new Error(refused || (result.fatalError
         ? `The sync could not run: ${String(result.fatalError).slice(0, 200)}`
-        : `The sync turn ended without a result (exit ${result.exitCode}).`), { code: 'sync_turn_failed' });
+        : `The sync turn ended without a result (exit ${result.exitCode}).`)), { code: 'sync_turn_failed' });
     }
 
     return await steps.once('after', async () => {

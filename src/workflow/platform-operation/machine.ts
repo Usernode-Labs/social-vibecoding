@@ -15,8 +15,8 @@ export const OPERATIONS: ReadonlySet<string> = new Set([
   'manifest.propose', 'branch.ensure', 'revert.open', 'domain.check', 'domain.teardown', 'app.remove',
   'openrouter.provision', 'openrouter.sync', 'openrouter.disable', 'openrouter.remove',
   'previewProject.create', 'previewProject.build', 'previewProject.deploy', 'previewProject.restart', 'previewProject.remove',
-  // commits
-  'proposal.commit',
+  // commits (a live draft's Update proposal moves its proposal to the draft's head)
+  'proposal.commit', 'draft.update',
   // git-host flows: a version's suggestion to its original, its updates
   // down, the App bench studio's reference builds, demo mode's proposals
   'suggestBack.open', 'upstream.open', 'upstream.skip', 'bench.scaffold', 'bench.reference', 'demo.propose', 'demo.reset',

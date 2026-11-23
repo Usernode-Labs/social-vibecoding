@@ -1414,6 +1414,14 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       const limits = require('./limits');
       limits.invalidate();
     } catch {}
+    // That backstop is what OpenRouter refuses on, and the sync that moves
+    // it runs when a coding turn starts. While the bot is paused because its
+    // budget is used up at OpenRouter no turn starts, so a raised budget
+    // would not reach the key until the week turned. A saved budget is taken
+    // to the key now, and the figures read back: the pause lifts on that
+    // read, and the limits area's row follows.
+    await syncBudget(pool, config).catch((err) =>
+      log.warn('homeroom-bot', 'Could not take the saved weekly budget to the bot\'s key', { err: err.message }));
   }
   // More room for live work is used now, and a bot switched on rebuilds
   // its whole queue now (the lane: its grants and its refresh, soon). A
@@ -1431,6 +1439,30 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       log.warn('homeroom-bot', 'Could not release requests held for a week that got room', { err: err.message }));
   }
   return { ok: true };
+}
+
+/**
+ * A saved weekly budget, taken where OpenRouter enforces it: the bot key's
+ * own limit is brought in line (openrouter-managed-keys.js syncAllowance),
+ * the credit sweep reads the key back (lifting a pause whose cause was the
+ * budget, once the key can spend again), and the budget's limit is evaluated
+ * so its row and notice follow. Best-effort: the caller's save has already
+ * succeeded, and each step also happens later by itself.
+ */
+async function syncBudget(pool, config, deps = {}) {
+  const { rows: [botRow] = [] } = await pool.query(
+    'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME],
+  );
+  if (!botRow) return;
+  const managedOpenRouter = deps.managedOpenRouter || require('./openrouter-managed-keys');
+  if (managedOpenRouter.managedKeysEnabled(config)) {
+    await managedOpenRouter.syncAllowance({
+      pool, userId: botRow.id, config,
+      state: await managedOpenRouter.stateForUser(pool, botRow.id),
+    });
+  }
+  await (deps.credit || require('./openrouter-credit')).sweep(pool, config);
+  await (deps.limitAlerts || require('./platform-limit-alerts')).evaluate(pool, config, 'bot_budget');
 }
 
 // ── Identity ─────────────────────────────────────────────────────────────
@@ -7494,6 +7526,11 @@ async function recordUnstageable(pool, config, { app, bot, session, head, reason
       app: app.slug, sessionId: session.id, err: err.message,
     });
   }
+  // Only Homeroom's own copies get the ready-made demo states (shots-ready-
+  // states.js), so a state missing for another app's change is nothing the
+  // platform's board can add (requests 6985 and 6991 were filed that way).
+  // Its reason stays on the change itself, recorded above.
+  if (!(await platformAppSlugs(pool)).includes(app.slug)) return;
   const feedback = require('./feedback-reports');
   const title = `Before & after shots: no demo state for "${clip(reason, 90)}"`;
   try {
@@ -7888,7 +7925,9 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
       [runId],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record that a build waited for credit', { runId, err: err.message }));
     const credit = require('./openrouter-credit');
-    await credit.noteOutage(pool, { words: built.error || null });
+    // Which figure ran out (the outage's cause): the weekly budget's note
+    // says the day it starts again, here, in the chat and on the push.
+    const budget = require('./bot-pause-words').isBudget(await credit.noteOutage(pool, { words: built.error || null }));
     // Review B6: the write that brings the request back once credit is. It
     // was tried once, and its failure only logged, while the next line told
     // the person the bot "will pick this up again by itself". It is keyed by
@@ -7914,10 +7953,10 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
         where: 'queueing a build that waits for credit', cause: 'queue_write_failed',
         detail: { appId: app.id, issueNumber, runId },
       });
-      await say('build_failed', live.buildCreditText({ queued: false }), { dm: { reason: built.error || 'credit' } });
+      await say('build_failed', live.buildCreditText({ queued: false, budget }), { dm: { reason: built.error || 'credit', ...(budget ? { budget: true } : {}) } });
       return 'credit_wait';
     }
-    await say('build_failed', live.buildCreditText(), { dm: { reason: CREDIT_WAIT_REASON } });
+    await say('build_failed', live.buildCreditText({ budget }), { dm: { reason: CREDIT_WAIT_REASON, ...(budget ? { budget: true } : {}) } });
     return 'credit_wait';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
@@ -11657,6 +11696,9 @@ async function adminPayload(pool, config, {
       username: botRow.username,
       weeklyLimitCents: botRow.weekly_limit_cents ?? DEFAULT_WEEKLY_LIMIT_CENTS,
       weeklySpentCents,
+      // When that week turns: Monday 00:00 UTC, which is also the weekly
+      // reset of the bot's key at OpenRouter. The console names the day.
+      weeklyResetsAt: limits.weeklyResetAt(),
       hasIncludedKey,
       model: platformDefaultModel(settings, config),
       // #3654: each stage's setting, the default filled in. A build's plan
@@ -12238,7 +12280,7 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
     if (Number(item.priority) === 0) {
       await L.once('credit_note', () => postThreadNote({
         pool, ws: liveDeps(deps).ws, app, issueNumber: Number(item.issue_number), kind: 'credit_wait', bot,
-        text: live.buildCreditText(), version: `credit-${outageKey(outage)}`,
+        text: live.buildCreditText({ budget: require('./bot-pause-words').isBudget(outage) }), version: `credit-${outageKey(outage)}`,
       }).then(() => true).catch(() => false));
     }
     return { outcome: 'credit', words: String(creditWords).slice(0, 300), ...extra };
@@ -12860,6 +12902,7 @@ module.exports = {
   handOffConflict,
   tellDeployFailed,
   creditOutOf,
+  syncBudget,
   emptyReplyIsInfra,
   retryCardFor,
   liveBuildInput,

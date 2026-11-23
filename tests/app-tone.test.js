@@ -38,7 +38,7 @@ function fakeDocument({ withMeta = true } = {}) {
       },
     };
   };
-  const present = withMeta ? [makeMeta('#f4f2e4'), makeMeta('#0b0d1b')] : [];
+  const present = withMeta ? [makeMeta('#fffeea'), makeMeta('#0b0d1b')] : [];
   return {
     documentElement: {
       getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
@@ -65,7 +65,7 @@ test('toneOf splits page colours at the WCAG white-text threshold', async () => 
   const { toneOf, luminanceOf, DARK_LUMINANCE } = await loadTone();
   assert.equal(DARK_LUMINANCE, 0.179);
   // The platform's own two grounds sit far to either side.
-  assert.equal(toneOf('#f4f2e4'), 'light');
+  assert.equal(toneOf('#fffeea'), 'light');
   assert.equal(toneOf('#0b0d1b'), 'dark');
   // Stock black and white, and the greys either side of the line.
   assert.equal(toneOf('#000000'), 'dark');
@@ -96,7 +96,7 @@ test('anything that is not an opaque hex colour has no tone', async () => {
 test('the tone follows the frame store: on screen with a page colour, or nothing', async () => {
   const { toneForState } = await loadTone();
   assert.equal(toneForState(ON('#0b0d1b')), 'dark');
-  assert.equal(toneForState(ON('#f4f2e4')), 'light');
+  assert.equal(toneForState(ON('#fffeea')), 'light');
   // No opaque ground reported: nothing is known, so the shell's theme stands.
   assert.equal(toneForState(ON('')), null);
   // Parked (the Dev tab over the frame): the app is not what is under the bar.
@@ -217,7 +217,7 @@ test('force re-asserts the meta after the theme module rewrote it', async () => 
   publishAppTone(doc, ON('#0b0d1b'), {});
   // Theme.apply() ran (the viewer toggled the shell's mode) and put the
   // shell's colour back on the meta.
-  doc.metaAttrs.set('content', '#f4f2e4');
+  doc.metaAttrs.set('content', '#fffeea');
   publishAppTone(doc, ON('#0b0d1b'), {}, true);
   assert.equal(doc.metaAttrs.get('content'), TONE_GROUND.dark);
   // Force with no tone is still just a clear.
@@ -391,7 +391,7 @@ test('the two screenshot states mount a frame with the page colour of that tone'
     /frame\.mount\(\{ slug, cover: AppView\._coverDescriptor\(AppView\.appData\), faded: false \}\)/,
     'a pending frame WITH its launch cover (#2704): the cover is the surface whose ink the tone decides',
   );
-  assert.match(body, /frame\.setBackground\?\.\(dark \? '#0b0d1b' : '#f4f2e4'\)/, 'the page colour goes through the bridge path');
+  assert.match(body, /frame\.setBackground\?\.\(dark \? '#0b0d1b' : '#fffeea'\)/, 'the page colour goes through the bridge path');
   assert.doesNotMatch(body, /setSrc|\.src\s*=/, 'no document is loaded behind it');
   assert.match(body, /App\._setScreenVisible\('app-view', true\)/);
   // …and tells the nav store the app is the screen, or the tone (which now

@@ -289,6 +289,75 @@ function LiveDraftsCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+// 20 Nov 2026 (live-draft review, E): Homeroom bot's web search in its chat
+// (services/bot-web-search.js). On for everyone; this switch turns it off
+// for everyone at once, with no deploy.
+function WebSearchCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/bot-web-search');
+      if (alive.current && next && typeof next === 'object') setData(next);
+    })();
+  }, []);
+
+  const flip = async () => {
+    if (!data) return;
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/bot-web-search', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !data.enabled }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      setData(next);
+      setStatus({ text: next.enabled ? 'On. It applies within ten seconds.' : 'Off. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const usage = !data ? 'Loading…' : `${data.lastWeek} in the last 7 days`;
+  const who = data && data.updatedBy ? ` by @${data.updatedBy}` : '';
+  const when = data && data.updatedAt ? ` on ${String(data.updatedAt).slice(0, 10)}` : '';
+  return (
+    <div id="admin-bot-web-search" className={`${AdminUI.card} p-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>Web search in Homeroom bot's chat</h2>
+        <span id="admin-bot-web-search-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        In a person's chat with Homeroom bot, the bot may search the web when asked to research or look something
+        up: {data ? data.searchesPerTurn : 3} searches a turn at most, each about $0.007 on the bot's OpenRouter key,
+        through OpenRouter. Its reply links the pages it used. Switched off, the bot is not offered the search and
+        says it answers from what it knows.
+      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-bot-web-search-source" className="text-xs text-zinc-500 dark:text-zinc-400">
+          {!data ? '' : `${data.enabled ? 'On' : 'Off'}${who || when ? `: set${who}${when}.` : ' (the default is on).'}`}
+        </p>
+        {canWrite ? (
+          <button id="admin-bot-web-search-btn" type="button" className={data && data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
+            disabled={saving || !data} onClick={flip}>{data && !data.enabled ? 'Turn on' : 'Turn off'}</button>
+        ) : null}
+      </div>
+      <StatusLine id="admin-bot-web-search-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
+  );
+}
+
 // The platform-wide session limit (services/session-limit.js), the app
 // limit's twin: the admin's setting, else the deploy's MAX_GLOBAL_SESSIONS,
 // which on the Kubernetes deploy lives in the infra repository's chart. The
@@ -967,6 +1036,8 @@ function LimitsSection() {
       <PreviewProjectsCard canWrite={canWrite} />
 
       <VersionsCard canWrite={canWrite} />
+
+      <WebSearchCard canWrite={canWrite} />
 
       <LiveDraftsCard canWrite={canWrite} />
 

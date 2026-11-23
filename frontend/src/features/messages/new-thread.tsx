@@ -55,7 +55,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
-import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, ListBulletIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -70,6 +71,7 @@ import { closeThread, openThread } from './store';
 import { useStagedCard } from './composer';
 import { BOT_AVATAR, pendingObjectLabel } from './format';
 import { takeCarried } from './new-chat-carry';
+import { platformSlug } from './channel-hub';
 import type { MessageAttachment, SharedObjectReference, StagedObject } from './types';
 import { communityScopeStore, describe, loadCommunities } from '../workshop/community-scope';
 import { ProjectChip, ProjectPicker } from './project-picker';
@@ -95,18 +97,28 @@ export const NEW_THREAD_STARTS = [
 
 /**
  * A sixth start, drawn only once a project of its own is picked (never Any
- * project, never Homeroom itself): changing the project live. Homeroom bot
- * opens a live draft of it beside the chat (homeroom-bot-mayor.js
- * open_app_preview, services/live-drafts.js) and changes it as they talk.
- * Its kind is any: the thread is no particular kind of change.
+ * project; Homeroom itself only for its admins, #6961): changing the project
+ * live. Homeroom bot opens a live draft of it beside the chat
+ * (homeroom-bot-mayor.js open_app_preview, services/live-drafts.js) and
+ * changes it as they talk. Its kind is any: the thread is no particular kind
+ * of change.
  */
 export const LIVE_START = {
   key: 'live', kind: 'any', label: 'messages:newThread.starts.live.label', text: 'messages:newThread.starts.live.text', Icon: PlayIcon,
 } as const;
 
-/** Pure: whether the live start is offered for the picked project. */
-export function offersLive(project: string | null | undefined, info: Record<string, { selfHosted?: boolean } | undefined>): boolean {
+/**
+ * Pure: whether the live start is offered for the picked project: any
+ * project of its own, and Homeroom's own app (the platform's slug) only to
+ * an admin who can change it. Every other self-hosted app is never offered.
+ */
+export function offersLive(
+  project: string | null | undefined,
+  info: Record<string, { selfHosted?: boolean } | undefined>,
+  { platformSlug = null, isAdmin = false }: { platformSlug?: string | null; isAdmin?: boolean } = {},
+): boolean {
   if (!project) return false;
+  if (platformSlug && project === platformSlug) return !!isAdmin;
   return !info[project]?.selfHosted;
 }
 
@@ -177,6 +189,11 @@ export function startNewThread(conversationId: number, fresh?: NewThreadPreset |
   notify();
 }
 
+/** The chat a new chat is open in right now, else null: the live answer, for a caller that cannot wait for a render. */
+export function newThreadIn(): number | null {
+  return blankIn;
+}
+
 /** Close the new chat. */
 export function closeNewThread(): void {
   if (blankIn === null) return;
@@ -218,6 +235,9 @@ function key(): string {
 /** The new chat itself, in a thread pane's place. */
 export function NewThreadPanel({ conversationId }: { conversationId: number }): ReactNode {
   const t = useMessages('messages');
+  // #6963: the bot tab's list is hidden, and a new chat under its own head
+  // offers the same way back to it.
+  const showList = useShowListButton();
   const [project, setProject] = useState(() => preset?.project || '');
   const [picking, setPicking] = useState(false);
   const [words, setWords] = useState('');
@@ -265,8 +285,12 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const enterKey = useEnterSends();
   // The starts in the reader's language: what each writes, and what it is for.
   const scope = useSyncExternalStore(communityScopeStore.subscribe, communityScopeStore.get, communityScopeStore.get);
-  const offered = offersLive(project, scope.info as Record<string, { selfHosted?: boolean } | undefined>)
-    ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
+  // #6961: an admin may change Homeroom itself live; the mask "View as
+  // non-admin" leaves isAdmin false, so it hides the start as it hides the rest.
+  const offered = offersLive(project, scope.info as Record<string, { selfHosted?: boolean } | undefined>, {
+    platformSlug: platformSlug(),
+    isAdmin: typeof window !== 'undefined' && !!(window as any).App?.user?.isAdmin,
+  }) ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
   const starts = offered.map((start) => ({ ...start, text: t(start.text) }));
   const begun = startOf(words, starts);
   const drawing = begun?.kind === 'design';
@@ -475,6 +499,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
       <header className="messages-thread-header">
+        {showList ? (
+          <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
+            aria-label={t('messages:ai.list.show')} title={t('messages:ai.list.show')}
+            onClick={() => setListClosed(false)}>
+            <ListBulletIcon aria-hidden="true" />
+          </button>
+        ) : null}
         <div className="min-w-0 flex-1">
           <div className="messages-thread-name">{setup ? t('messages:newThread.builder.setup.title', { builder: ownName }) : t('messages:newThread.title')}</div>
           <div className="messages-thread-sub">

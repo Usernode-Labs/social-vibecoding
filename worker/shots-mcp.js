@@ -124,7 +124,28 @@ function savedScreenshot(file) {
     image,
     origin: boundary.screenshotOrigin(path.join(shotsDir, found.dir), name, image),
     density: deviceDensity ? (found.dir.endsWith('_phone') ? PHONE_DENSITY : DESKTOP_DENSITY) : 1,
+    dir: found.dir,
+    name,
   };
+}
+
+// Where an element shot's element is on its screen, as its browser measured
+// it right after the screenshot (shots-browser-observer.js measureElement):
+// "x,y,w,h" on the visible screen (`focus`) and on the whole page
+// (`focusPage`), for Homeroom to frame the change on. The measurement runs
+// before the agent's next browser call, so it is nearly always settled by
+// the time the shot is saved; this waits a little for one still under way,
+// and an element shot with no box is saved as before.
+const ELEMENT_BOX_WAIT_MS = 3000;
+async function elementBoxQuery(shot, { waitMs = ELEMENT_BOX_WAIT_MS } = {}) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const stamp = boundary.screenshotStamp(path.join(shotsDir, shot.dir), shot.name, shot.image);
+    if (!stamp?.boxPending || Date.now() >= deadline) {
+      return stamp?.box ? { focus: stamp.box.view.join(','), focusPage: stamp.box.page.join(',') } : {};
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 // The directory of the browser that shoots a change's screen: the persona's
@@ -400,12 +421,15 @@ server.registerTool('save_shot', {
     const { change, screen, side, kind = 'screen', theme, file, showsPrivate } = shots[index];
     const put = (entry) => { results[index] = entry; };
     try {
-      const { image, origin, density } = savedScreenshot(file);
+      const shot = savedScreenshot(file);
+      const { image, origin, density } = shot;
       pair = pair || await pairOrigins();
       requireOnApp(side, [origin], pair);
+      const box = kind === 'element' && theme !== 'dark' ? await elementBoxQuery(shot) : {};
       const query = new URLSearchParams({
         change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}), ...(density > 1 ? { density: String(density) } : {}),
         ...(typeof showsPrivate === 'boolean' ? { showsPrivate: showsPrivate ? '1' : '0' } : {}),
+        ...box,
       });
       const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
       put({ change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}), file, saved: true, result,

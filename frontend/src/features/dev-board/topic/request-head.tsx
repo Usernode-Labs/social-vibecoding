@@ -66,7 +66,7 @@ import { newestPlan, requestRail, type RailOpen } from './rail-model';
 import { requestFoot } from './card-model';
 import { closeStep, openStep, useLead, useOpenStep } from './step-store';
 import { PlanWords, StepLayer, ThreadBarTile, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy, threadProjectName } from './thread-card';
-import { ThreadExits } from './thread-exits';
+import { ThreadExits, ThreadShowList } from './thread-exits';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
 import { ThreadChanges, ChangeSectionSkeleton, letterOf } from './thread-changes';
 import { ballotOf, requestPill, threadLayout, type ThreadHere } from './thread-model';
@@ -131,8 +131,31 @@ function translatedWords(markdown: string): string {
   return `<div class="dev-issue-body">${mentions ? mentions(rendered) : rendered}</div>`;
 }
 
-/** Homeroom bot's summary, plain text, as the markup RequestWords draws: escaped, a paragraph per line. */
-function summaryWords(text: string): string {
+/**
+ * #6962: whether text carries any markdown worth rendering — a heading, a
+ * list item, a quote, bold or italic, code, or a link. A single `*` used as
+ * multiplication ("5 * 3") is not emphasis; emphasis needs a non-space after
+ * its opening mark and a closing mark.
+ */
+export function hasMarkdown(text: string): boolean {
+  if (!text) return false;
+  return /^\s*(?:#{1,6} |[-*+] |> |\d+[.)] )/m.test(text)
+    || /\*\*(?=\S)[\s\S]*?\S\*\*/.test(text)
+    || /(?<![\w*])__(?=\S)[\s\S]*?\S__(?![\w_])/.test(text)
+    || /(?:^|[^*\w])\*(?=\S)[^*\n]*?\S\*(?!\*)/.test(text)
+    || /(?:^|[^_\w])_(?=\S)[^_\n]*?\S_(?![\w_])/.test(text)
+    || /`[^`\n]+`/.test(text)
+    || /\[[^\]\n]+\]\([^)\s]+\)/.test(text);
+}
+
+/**
+ * Homeroom bot's summary, as the markup RequestWords draws. Text with
+ * formatting goes through the same renderer the asker's words do (#6962), so
+ * bold, lists and links read as such; plain text keeps its escaped,
+ * paragraph-per-line markup unchanged.
+ */
+export function summaryWords(text: string): string {
+  if (hasMarkdown(text)) return translatedWords(text);
   const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const paragraphs = text.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => `<p>${escape(line)}</p>`).join('');
   return `<div class="dev-issue-body">${paragraphs}</div>`;
@@ -181,6 +204,7 @@ export function RequestBar({ r, pill = null, threadMenu = false, title = null }:
   const where = dotLine([threadProjectName(), r.category]);
   return (
     <ThreadHeadCard
+      lead={<ThreadShowList />}
       tile={<ThreadBarTile />}
       line={pill ? (
         <div className="flex min-w-0 items-center gap-2">
@@ -700,7 +724,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const bodyHtml = useMemo(() => (shownBody == null ? r.bodyHtml : translatedWords(shownBody)), [shownBody, r.bodyHtml]);
   // The card look shows Homeroom bot's summary of the thread once there is
   // one, in place of the asker's words, which the timeline's first step
-  // still opens whole. Plain text, drawn as paragraphs.
+  // still opens whole. Text with no formatting, drawn as paragraphs; text
+  // with formatting, through the same renderer as the asker's words (#6962).
   const summary = !frame && r.summary?.text ? r.summary : null;
   const summaryHtml = useMemo(() => (summary ? summaryWords(summary.text) : ''), [summary]);
   // ⋯ "Edit request" asks for the editor by event, as a change page's
@@ -983,7 +1008,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
                   <span aria-hidden="true"> · </span>
                   <a
                     className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
-                    href={`#homeroom-bot/thread/${r.fromThread.rootId}/design/${r.fromThread.designVersion}`}
+                    href={`#homeroom-bot/thread/${r.fromThread.rootId}/design/${r.fromThread.designVersion}${r.fromThread.artifactId && r.fromThread.artifactId > 1 ? `?artifact=${r.fromThread.artifactId}` : ''}`}
                     data-request-design-door={r.fromThread.designVersion}
                   >
                     {t('project:topic.request.openDesign', { version: r.fromThread.designVersion })}

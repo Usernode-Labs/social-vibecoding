@@ -406,6 +406,101 @@ test('Back walks the pages opened in the panel, and a piece of work climbs no fu
   cleanup();
 });
 
+// ── #6970: the edge the frame's head card keeps clear of ────────────────
+
+/** A frame whose document root takes the published edge. */
+function fakeEdgeFrame() {
+  const props = new Map();
+  const root = {
+    style: {
+      getPropertyValue: (n) => (props.has(n) ? props.get(n) : ''),
+      setProperty: (n, v) => props.set(n, v),
+      removeProperty: (n) => props.delete(n),
+    },
+  };
+  api.sidePanelRefs.frame = { contentDocument: { documentElement: root } };
+  return props;
+}
+
+/** The top window's <html>, as the strip publishes it. */
+function topDocument({ side = null, corner = null, width = 0, dir = '' } = {}) {
+  const attrs = {};
+  if (side) attrs['data-side-strip'] = side;
+  if (corner) attrs['data-side-corner'] = corner;
+  const values = {
+    '--platform-strip-w': side ? `${width}px` : '',
+    '--platform-corner-w': corner ? `${width}px` : '',
+  };
+  globalThis.document = { documentElement: {
+    dir,
+    hasAttribute: (n) => Object.prototype.hasOwnProperty.call(attrs, n),
+    getAttribute: (n) => (Object.prototype.hasOwnProperty.call(attrs, n) ? attrs[n] : null),
+    style: { getPropertyValue: (n) => values[n] || '', setProperty() {}, removeProperty() {} },
+  } };
+}
+
+test('the panel document is handed the edge it must keep clear of (#6970)', () => {
+  topWindow();
+  api.take('app/notes-ab12/dev/issues/7');
+  const props = fakeEdgeFrame();
+  topDocument();
+  api.embeddedApi.ready('app/notes-ab12/dev/issues/7', 'Notes');
+  assert.equal(props.has(api.EDGE_PROP), false, 'a browser tab has no system column: nothing written');
+
+  topDocument({ side: 'right', width: 84 });
+  api.appPresence(true);
+  assert.equal(props.get(api.EDGE_PROP), '84px', 'the Duo held sideways: the column\'s width');
+
+  topDocument({ corner: 'right', width: 52 });
+  api.appPresence(true);
+  assert.equal(props.get(api.EDGE_PROP), '52px', 'folded: the corner\'s width');
+
+  topDocument({ side: 'right', width: 84, dir: 'rtl' });
+  api.appPresence(true);
+  assert.equal(props.has(api.EDGE_PROP), false,
+    'in Arabic the column is left of the panel: the head card already clears it');
+  cleanup();
+});
+
+test('the edge is on the frame before its page is shown, and follows the top root (#6970)', () => {
+  // One observer per top document, started as the first frame opens.
+  const callbacks = [];
+  globalThis.MutationObserver = class {
+    constructor(cb) { callbacks.push(cb); }
+    observe() {}
+    disconnect() {}
+  };
+  topWindow();
+  const props = fakeEdgeFrame();
+  api.take('app/notes-ab12/dev/issues/7');
+  assert.equal(callbacks.length, 1, 'a frame opening starts the one observer');
+  topDocument({ side: 'right', width: 84 });
+  // A page that arrives while the phone is already folded: the edge is
+  // written before the store says the panel is ready, never after.
+  let atReady = null;
+  const unsubscribe = api.sidePanelStore.subscribe(() => {
+    if (!api.sidePanelStore.get().loading && atReady === null) {
+      atReady = props.get(api.EDGE_PROP) || null;
+    }
+  });
+  api.embeddedApi.ready('app/notes-ab12/dev/issues/7', 'Notes');
+  unsubscribe();
+  assert.equal(atReady, '84px', 'shown with the edge already on it');
+
+  // Folded: `watchSideStrip` rewrites the top root, and the observer follows.
+  topDocument({ corner: 'right', width: 52 });
+  callbacks[0]();
+  assert.equal(props.get(api.EDGE_PROP), '52px');
+
+  // Unfolded, held upright: the band is a top inset, which the column's top
+  // already sits below, so the frame clears nothing.
+  topDocument();
+  callbacks[0]();
+  assert.equal(props.has(api.EDGE_PROP), false);
+  delete globalThis.MutationObserver;
+  cleanup();
+});
+
 test('Back never lands on a `#name` channel reference, which would only send it on again', () => {
   topWindow();
   api.take('app/notes-ab12/dev/proposals/12');
@@ -1244,12 +1339,13 @@ test('with a detail beside the page it holds, the panel\'s edge is that column\'
   // three; the panel's own island reads it and hands the divider the
   // thread's width key, its probe and the preview to watch.
   assert.match(SRC, /import \{ panelEdgeStore \} from '\.\/edge-store';/);
-  assert.match(SRC, /const edge = useStoreState\(panelEdgeStore\)\.slot;/);
-  assert.match(SRC, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+\/>/,
+  assert.match(SRC, /const edges = useStoreState\(panelEdgeStore\);\s+const edge = edges\.slot;/);
+  assert.match(SRC, /<SidePanelDivider\s+panelRef=\{rootRef\}\s+shown=\{s\.open && !!s\.frameSrc\}\s+widthKey=\{edge\?\.widthKey\}\s+probe=\{edge\?\.probe\}\s+watch=\{edge\?\.watch\}\s+collapsed=\{snap\?\.collapsed\}\s+onCollapse=\{snap\?\.onCollapse\}\s+onRestore=\{snap\?\.onRestore\}\s+\/>/,
     'passing undefined leaves the divider on its own defaults');
   // The store starts empty, so the island\'s first render is the prerender.
   const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
   assert.equal(panelEdgeStore.get().slot, null);
+  assert.equal(panelEdgeStore.get().snap, null, '#6973: no one-pane wiring until a page is the column');
   // Its edge is drawn where the panel begins, as the thread\'s is in three.
   assert.match(CSS, /body:has\(#ai-screen\[data-ai-preview="three"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+--divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
   assert.match(CSS, /body:has\(#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\):not\(\.hidden\)\) \.side-panel \{\n\s+width: var\(--ai-col-w\);\n\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
@@ -1444,8 +1540,11 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
   const divider = SRC.slice(SRC.indexOf('function SidePanelDivider('));
   assert.match(divider, /setPointerCapture\(e\.pointerId\)/);
-  assert.match(divider, /d\.width = set\(d\.startW \+ \(d\.startX - e\.clientX\) \* dirSign\(\), false\);/,
+  // #6963: the raw width is read first, so a drag can go past the floor and
+  // become the list's being hidden; what is applied is still clamped.
+  assert.match(divider, /const raw = d\.startW \+ \(d\.startX - e\.clientX\) \* dirSign\(\);/,
     'pinned to the right edge: moving left widens the panel, and nothing is stored mid-drag');
+  assert.match(divider, /d\.width = set\(raw, false\);/, 'the drag itself is still clamped');
   // 3 Nov 2026: this edge sets its own column's width — Main Chat's while the
   // bot page is up, the side panel's everywhere else — resolved at each use.
   assert.match(divider, /const resolveKey = useCallback\(\s*\(\) => widthKey \?\? \(aiPageUp\(\) \? AI_MAIN_WIDTH_KEY : WIDTH_KEY\),/,
@@ -1454,9 +1553,9 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   assert.match(divider, /applyWidth\(stored == null \? null : clampWidth\(stored, b\), undefined, key\);/);
   assert.match(divider, /applyWidth\(next, undefined, key\);/);
   assert.match(divider, /if \(persist\) writeStoredWidth\(next, undefined, key\);/);
-  assert.match(divider, /if \(d\.width != null\) writeStoredWidth\(d\.width, undefined, resolveKey\(\)\);/,
-    'a press that never moved is half of a double-click, not a choice');
-  assert.match(divider, /const onDoubleClick = \(\) => \{\s*clearStoredWidth\(undefined, resolveKey\(\)\);\s*settle\(\);/);
+  assert.match(divider, /if \(d\.width != null && !d\.collapsed\) writeStoredWidth\(d\.width, undefined, resolveKey\(\)\);/,
+    'a press that never moved is half of a double-click, not a choice, and a hidden list chose no width');
+  assert.match(divider, /const onDoubleClick = \(\) => \{[^}]*clearStoredWidth\(undefined, resolveKey\(\)\);\s*settle\(\);/);
   for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) assert.ok(divider.includes(`'${key}'`), key);
   assert.match(divider, /window\.addEventListener\('resize', settle\)/, 'a window that narrows gives the width back');
   const block = CSS.slice(CSS.indexOf('.side-panel-divider {'), CSS.indexOf('.side-panel-head {'));
@@ -1684,8 +1783,8 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
     'the divider comes after Copy link');
   assert.ok(menu.indexOf('data-side-panel-open-workshop') < menu.indexOf('side-panel-menu-sep'),
     'and after Open in workshop');
-  assert.match(menu, /data-side-panel-page-row=\{i\}/);
-  assert.match(menu, /controller\.runPanelMenuRow\(i, row\.label, e\.nativeEvent\)/);
+  assert.match(menu, /data-side-panel-page-row=\{row\.index\}/);
+  assert.match(menu, /controller\.runPanelMenuRow\(row\.index, row\.label, e\.nativeEvent\)/);
   assert.match(SRC, /setRows\(controller\.panelMenuRows\(\)\);/, 'read from the page as the menu opens');
 
   // The page's own ⋯ list, read off its AppView: a row that changed since the
@@ -1713,6 +1812,18 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   api.SidePanel.runPanelMenuRow(1, 'Notify me');
   assert.equal(following, true, 'the row ran in the page');
   assert.equal(api.SidePanel.panelMenuRows()[1].label, 'Mute', 'and the next opening says Mute');
+  // #7000: the page's ⋯ now opens with a Copy link row. The column keeps its
+  // own Copy link above the divider, so it drops the page's and each row that
+  // stays keeps its position in the page's full list, where it is run.
+  av._cardMenuItems = () => [
+    { label: 'Copy link', copyLink: true, act: () => {} },
+    { label: 'Build it with your own Claude Code', act: () => {} },
+    { label: 'Notify me', act: () => {} },
+  ];
+  assert.deepEqual(api.SidePanel.panelMenuRows().map((r) => r.label),
+    ['Build it with your own Claude Code', 'Notify me'], 'the page\'s copy row is left out');
+  assert.deepEqual(api.SidePanel.panelMenuRows().map((r) => r.index), [1, 2],
+    'each row still names its place in the page\'s list');
   // A page with no ⋯ key of its own, and one whose head is another page's,
   // list nothing.
   api.embeddedApi.head('app/x/dev/issues/6431', { kind: 'change', pill: null, menuKey: null });
@@ -1901,4 +2012,237 @@ test('Open in workshop leaves the item for the Workshop and opens it, and on a n
   assert.deepEqual(thread.pushed, []);
   assert.equal(api.sidePanelStore.get().route, 'messages/4242', 'the column stays where it was');
   cleanup();
+});
+
+// ── 9. Dragging the edge to the edge (#6963) ─────────────────────────────
+//
+// On the bot page the divider's neighbour is the thread list. Dragged past the
+// list's floor it stops being a width and becomes a choice: the list hides,
+// the thread takes the room, and the same edge (or the head's button, in
+// features/ai/list-closed) brings it back. The choice is this device's,
+// beside the width.
+
+test('the list hidden is this device\'s choice, stored beside the width', () => {
+  const { readListClosed, writeListClosed, AI_LIST_CLOSED_KEY, SNAP_PX } = api.resize;
+  const mem = new Map();
+  const store = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => { mem.set(k, String(v)); },
+    removeItem: (k) => { mem.delete(k); },
+  };
+  assert.equal(AI_LIST_CLOSED_KEY, 'usernode_ai_list_closed_v1');
+  assert.equal(SNAP_PX, 48, 'the distance past the floor that hides the list');
+  assert.equal(readListClosed(store), false, 'nothing chosen: the split, as today');
+  writeListClosed(true, store);
+  assert.equal(mem.get(AI_LIST_CLOSED_KEY), '1');
+  assert.equal(readListClosed(store), true);
+  writeListClosed(false, store);
+  assert.equal(mem.has(AI_LIST_CLOSED_KEY), false, 'a split is the default, so nothing is kept');
+  assert.equal(readListClosed(store), false);
+  const throwing = {
+    getItem() { throw new Error('SecurityError'); },
+    setItem() { throw new Error('QuotaExceededError'); },
+    removeItem() { throw new Error('SecurityError'); },
+  };
+  assert.equal(readListClosed(throwing), false);
+  assert.doesNotThrow(() => writeListClosed(true, throwing));
+  assert.doesNotThrow(() => writeListClosed(false, throwing));
+  assert.equal(readListClosed(null), false, 'no storage at all');
+});
+
+test('pulling the list back opens it at the width last chosen, never a sliver', () => {
+  const { reopenWidth, bounds } = api.resize;
+  const b = bounds({ innerWidth: 1440, appLeft: 0 });
+  assert.equal(reopenWidth(null, b), null, 'nothing chosen: the stylesheet\'s own split');
+  assert.equal(reopenWidth(120, b), 320, 'narrower than the pane may be: its floor');
+  assert.equal(reopenWidth(612, b), 612, 'the width that was left');
+  assert.equal(reopenWidth(5000, b), 960, 'and never wider than this window allows');
+});
+
+test('the chart: a drag past the list\'s floor hides it, and back out brings it back', () => {
+  const { SidePanelDivider } = loadTsx('frontend/src/features/side-panel/side-panel.tsx');
+  const inRender = (fn) => { let out; const Probe = () => { out = fn(); return null; }; require('./lib/render-tsx').renderToHtml(require('./lib/render-tsx').createElement(Probe)); return out; };
+
+  const width = 1280;
+  let paneLeft = 480;            // the pane is 800 wide here; 1000 at its floor
+  const neighbourMin = 280;      // the list's floor (--ai-list-min below 1024px)
+  const props = new Map();
+  const mem = new Map();
+  const classes = new Set();
+  const doc = {
+    documentElement: {
+      dir: 'ltr',
+      classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) },
+      style: { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) },
+    },
+    body: null,
+    getElementById: () => null,
+  };
+  globalThis.window = {
+    innerWidth: width,
+    localStorage: {
+      getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+      setItem: (k, v) => mem.set(k, String(v)),
+      removeItem: (k) => mem.delete(k),
+    },
+    document: doc,
+  };
+  globalThis.document = doc;
+  const panel = { getBoundingClientRect: () => ({ left: paneLeft, right: width, width: width - paneLeft }) };
+  const panelRef = { current: panel };
+  const measure = () => ({ innerWidth: width, appLeft: 0, neighbourMin });
+  // The floor here: a 1280px room less the list's 280px, so 1000 is as wide as
+  // the pane goes before the list's floor is passed.
+  const maxW = 1000;
+
+  const calls = [];
+  const draw = (collapsed) => inRender(() => SidePanelDivider({
+    panelRef, shown: true, id: 'ai-main-divider', controls: 'ai-main-pane',
+    widthKey: api.resize.AI_MAIN_WIDTH_KEY, probe: measure,
+    collapsed, onCollapse: () => calls.push('collapse'), onRestore: () => calls.push('restore'),
+  }));
+
+  const target = { setPointerCapture() {}, releasePointerCapture() {} };
+  const down = (x) => ({ button: 0, pointerId: 1, clientX: x, preventDefault() {}, currentTarget: target });
+  const move = (x) => ({ pointerId: 1, clientX: x, currentTarget: target });
+  const up = (x) => ({ pointerId: 1, clientX: x, currentTarget: target });
+  const key = (k) => ({ key: k, shiftKey: false, preventDefault() {} });
+
+  // A little past the floor is still the floor: the drag clamps, as it did.
+  let el = draw(false);
+  el.props.onPointerDown(down(500));
+  el.props.onPointerMove(move(300));           // raw 1000 + 0: at the floor
+  props.delete('--ai-main-chosen-w');
+  el.props.onPointerMove(move(260));           // raw 1040: 40 past, not 48
+  assert.deepEqual(calls, [], 'inside the snap distance the list stays, and the drag stops at its floor');
+  assert.equal(props.get('--ai-main-chosen-w'), '1000px');
+  el.props.onPointerUp(up(260));
+
+  // Past it by SNAP_PX, the list hides.
+  el.props.onPointerDown(down(500));
+  el.props.onPointerMove(move(200));           // raw 1100, 100 past
+  assert.deepEqual(calls, ['collapse'], 'the list snaps away past its floor');
+  assert.equal(props.get('--ai-main-chosen-w'), '1000px', 'a hidden list chose no width');
+  const chosenBefore = mem.get(api.resize.AI_MAIN_WIDTH_KEY);
+  el.props.onPointerUp(up(200));
+  assert.equal(mem.get(api.resize.AI_MAIN_WIDTH_KEY), chosenBefore, 'and none is written');
+
+  // The same drag back out brings it back at the width last chosen.
+  mem.set(api.resize.AI_MAIN_WIDTH_KEY, '620');
+  props.delete('--ai-main-chosen-w');
+  const draw2 = calls.length;
+  el = draw(true);
+  el.props.onPointerDown(down(200));
+  el.props.onPointerMove(move(230));           // 30 back out: not yet
+  assert.equal(calls.length, draw2, 'backing out starts at SNAP_PX');
+  el.props.onPointerMove(move(260));           // 60 back out
+  assert.deepEqual(calls.slice(draw2), ['restore'], 'and brings the list back');
+  assert.equal(props.get('--ai-main-chosen-w'), '620px', 'at the width last chosen, not a sliver');
+
+  // The keyboard: one widening press at the floor hides it, and the opposite
+  // arrow brings it back.
+  // At its floor: the pane is as wide as it goes before the list's is passed.
+  paneLeft = 280;
+  calls.length = 0;
+  el = draw(false);
+  el.props.onKeyDown(key('ArrowLeft'));
+  assert.deepEqual(calls, ['collapse'], 'Left at the list\'s floor hides it');
+  el = draw(true);
+  el.props.onKeyDown(key('ArrowLeft'));
+  assert.deepEqual(calls, ['collapse'], 'the widening arrow does nothing while hidden');
+  el.props.onKeyDown(key('ArrowRight'));
+  assert.deepEqual(calls, ['collapse', 'restore'], 'Right brings it back');
+  assert.equal(el.props['aria-valuetext'], 'Thread list hidden', 'a screen reader hears the list is hidden');
+  assert.equal(draw(false).props['aria-valuetext'], undefined, 'and nothing while it is shown');
+
+  // A double-click resets the split and brings the list back too.
+  calls.length = 0;
+  draw(true).props.onDoubleClick();
+  assert.deepEqual(calls, ['restore']);
+
+  // With no callbacks the edge is the panel's own width, clamped exactly as
+  // before this existed (the side panel beside a running app).
+  calls.length = 0;
+  el = inRender(() => SidePanelDivider({ panelRef, shown: true, id: 'side-panel-divider', controls: 'platform-side-panel', widthKey: api.resize.WIDTH_KEY, probe: measure }));
+  assert.equal(el.props.onCollapse, undefined);
+  el.props.onPointerDown(down(500));
+  el.props.onPointerMove(move(100));
+  assert.equal(props.get('--side-panel-w'), '1000px', 'still clamped at the list\'s floor');
+  assert.equal(calls.length, 0);
+
+  delete globalThis.window;
+  delete globalThis.document;
+});
+
+test('beside a request, change or decision page the same edge hides the list, and the frame is told (#6973)', () => {
+  // The page in the panel is another document: it cannot read the list store,
+  // so the controller marks its <html> (LIST_HIDDEN_CLASS) and app.css shows
+  // the page's own list button from that class. Its press comes back through
+  // the bridge as SidePanel.showList().
+  const classes = new Set();
+  const root = {
+    classList: {
+      toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); },
+      contains: (c) => classes.has(c),
+    },
+  };
+  topWindow();
+  api.sidePanelRefs.frame = { contentDocument: { documentElement: root } };
+  const { setListClosed, setDocked, isListClosed } = api.listClosed;
+
+  // Hidden, but no page docked: the frame is told nothing.
+  setDocked(false);
+  setListClosed(true);
+  api.appPresence(true);
+  assert.equal(isListClosed(), true);
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), false, 'no split, so no button on the page');
+
+  // A page is the column: the class follows the choice.
+  setDocked(true);
+  api.appPresence(true);
+  assert.equal(classes.has(api.BESIDE_AI_CLASS), true, 'the page knows it is beside the bot page');
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), true, 'and that the list is hidden');
+
+  // The page's button, through the bridge, brings the list back.
+  assert.equal(typeof api.SidePanel.showList, 'function');
+  api.SidePanel.showList();
+  assert.equal(isListClosed(), false);
+  api.appPresence(true);
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), false, 'the class goes with the list');
+
+  // The bot page leaves: nothing is marked, even with the choice still hidden.
+  setListClosed(true);
+  topWindow({ screen: null });
+  api.sidePanelRefs.frame = { contentDocument: { documentElement: root } };
+  api.appPresence(true);
+  assert.equal(classes.has(api.LIST_HIDDEN_CLASS), false, 'not beside the bot page');
+
+  const controller = read('frontend/src/features/side-panel/controller.ts');
+  assert.match(controller, /export const LIST_HIDDEN_CLASS = 'side-panel-list-hidden';/);
+  assert.match(controller, /subscribeListClosed\(markBeside\)/, 'the frame is re-marked when the list hides or comes back');
+  assert.match(controller, /export function showList\(\): void \{\s+setListClosed\(false\);\s+\}/);
+  assert.match(controller, /showList,/);
+  cleanup();
+});
+
+test('the page\'s list button is the same one a private thread draws, and only a panel with the list hidden shows it (#6973)', () => {
+  const exits = read('frontend/src/features/dev-board/topic/thread-exits.tsx');
+  assert.match(exits, /export function ThreadShowList\(\): ReactNode \{/);
+  assert.match(exits, /className="messages-thread-action messages-thread-back dev-thread-show-list"\s+data-thread-show-list=""\s+aria-label=\{t\('project:sidePanel\.showList'\)\}/,
+    'the round list button, named by its tooltip');
+  assert.match(exits, /onClick=\{\(\) => topPanel\(\)\?\.showList\?\.\(\)\}/,
+    'pressing it asks the top document\'s panel controller');
+  for (const file of ['request-head.tsx', 'change-head.tsx']) {
+    const src = read(`frontend/src/features/dev-board/topic/${file}`);
+    assert.match(src, /import \{ ThreadExits, ThreadShowList \} from '\.\/thread-exits';/);
+    assert.match(src, /<ThreadHeadCard\s+lead=\{<ThreadShowList \/>\}/,
+      `${file}: first in the head, before the tile`);
+  }
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'),
+    /\{showList \? \(\s+<button\s+type="button"\s+className="messages-thread-action messages-thread-back side-panel-show-list"[\s\S]*?onClick=\{\(\) => controller\.showList\(\)\}/,
+    'a decision\'s page keeps the column\'s row, so the button is there too');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-thread-show-list \{ display: none; \}/);
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai\.side-panel-list-hidden \.dev-thread-show-list \{ display: inline-flex; \}/,
+    'shown only in the panel, with the list hidden');
 });

@@ -15,7 +15,8 @@ const { drainGuard } = require('../services/lifecycle');
 //   POST /api/live-drafts {rootId}       open the thread's draft (or answer the one already open)
 //   POST /api/live-drafts/:id/preview    they opened its preview: bring it up to the draft's head
 //   POST /api/live-drafts/:id/propose    put it up for a vote, as their own change
-//   POST /api/live-drafts/:id/close      put it away
+//   POST /api/live-drafts/:id/update     move its proposal to the draft's head (20 Nov 2026, C)
+//   POST /api/live-drafts/:id/close      put it away (a proposal it made stays up for a vote)
 function liveDraftRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -43,8 +44,9 @@ function liveDraftRoutes(config) {
           [rootId, req.user.id],
         ),
       ]);
-      // Homeroom itself is changed from its own Workshop, never drafted here.
-      const draftable = !!project && !project.self_hosted && project.slug !== config.selfAppSlug;
+      // #6961: the same rule open() applies: any project the person can
+      // change, and Homeroom itself only for its admins.
+      const draftable = !!project && liveDrafts.draftableFor(config, project, req.user).ok;
       res.set('Cache-Control', 'no-store');
       res.json({ ok: true, enabled: on && draftable, draft: liveDrafts.describe(draft) });
     } catch (err) { failed(res, 'Read', err); }
@@ -66,7 +68,7 @@ function liveDraftRoutes(config) {
     try {
       const draft = id ? await liveDrafts.byId(pool, id, { userId: req.user.id }) : null;
       if (!draft) return res.status(404).json({ ok: false, error: 'no_draft' });
-      const synced = draft.state === 'open' ? await liveDrafts.syncPreview(pool, config, { draft }) : { ok: false };
+      const synced = liveDrafts.editable(draft) ? await liveDrafts.syncPreview(pool, config, { draft }) : { ok: false };
       res.json({ ok: true, synced: !!synced.synced, draft: liveDrafts.describe(await liveDrafts.byId(pool, id)) });
     } catch (err) { failed(res, 'Preview', err); }
   });
@@ -80,6 +82,19 @@ function liveDraftRoutes(config) {
       const out = await liveDrafts.propose(pool, config, { user: req.user, draftId: id, title });
       res.status(out.status).json(out.body);
     } catch (err) { failed(res, 'Propose', err); }
+  });
+
+  // 20 Nov 2026 (live-draft review, C): the edits made since Propose go into
+  // the same proposal, at its author's tap. Its votes are cleared and its
+  // checks run again (live-drafts.js updateProposal).
+  router.post('/api/live-drafts/:id/update', drainGuard, conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Sign in first' });
+    const id = idOf(req.params.id);
+    if (!id) return res.status(404).json({ ok: false, error: 'no_draft' });
+    try {
+      const out = await liveDrafts.updateProposal(pool, config, { user: req.user, draftId: id });
+      res.status(out.status).json(out.body);
+    } catch (err) { failed(res, 'Update', err); }
   });
 
   router.post('/api/live-drafts/:id/close', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {

@@ -781,11 +781,19 @@
   },
   "row.credit.low.label": {
     "text": "OpenRouter credit is below {{threshold}}",
-    "description": "First line of a notification sent to platform administrators: the credit that pays for Homeroom bot's building has dropped below a level it warns at. {{threshold}} is a dollar amount, such as $500."
+    "description": "First line of a notification sent to platform administrators: the credit in the OpenRouter account, which pays for Homeroom bot's building, has dropped below a level it warns at. {{threshold}} is a dollar amount, such as $500."
   },
-  "row.credit.low.body": {
-    "text": "{{balance}} left, about {{days}} days at this week's rate. Add credit before Homeroom bot stops building.",
-    "description": "Second line of that notification. {{balance}} is the credit left as a dollar amount, {{days}} how many days it lasts at this week's spending."
+  "row.credit.low.body_one": {
+    "text": "{{balance}} left, about a day at the recent rate. Add credit before Homeroom bot stops building.",
+    "description": "Second line of the \"OpenRouter credit is below\" notification, when the credit lasts about one day. {{balance}} is the OpenRouter account's credit left as a dollar amount. \"The recent rate\" is how fast that credit has been going down over the last few days."
+  },
+  "row.credit.low.body_other": {
+    "text": "{{balance}} left, about {{count}} days at the recent rate. Add credit before Homeroom bot stops building.",
+    "description": "Second line of the \"OpenRouter credit is below\" notification. {{balance}} is the OpenRouter account's credit left as a dollar amount, {{count}} how many days it lasts at the rate it has been going down over the last few days."
+  },
+  "row.credit.low.bodyNoDays": {
+    "text": "{{balance}} left. Add credit before Homeroom bot stops building.",
+    "description": "Second line of the \"OpenRouter credit is below\" notification when there is no estimate of how long the credit lasts. {{balance}} is the OpenRouter account's credit left as a dollar amount."
   },
   "row.credit.out.label": {
     "text": "OpenRouter credit ran out",
@@ -1696,8 +1704,8 @@
     "description": "Under a pending invitation to a private project. {{count}} is how many members the project has. \"It\" is the project."
   },
   "invite.alreadyIn": {
-    "text": "You're already in it",
-    "description": "Under a pending invitation to a project the viewer already belongs to (they joined through a link or the Join button while the invitation was still waiting). \"It\" is the project."
+    "text": "You joined it",
+    "description": "Under an invitation in the notifications sheet for a project the viewer already belongs to (they joined through a link or the Join button while the invitation to build was still waiting). \"It\" is the project."
   },
   "invite.meta.membersWhen": {
     "text": "<0>{{members}} · </0><1>{{when}}</1>",
@@ -1750,6 +1758,22 @@
   "invite.line.someoneBuildUnnamed": {
     "text": "<0>Someone</0> invited you to build <1>an app</1>",
     "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known invited the viewer to work on an app whose name is not known either. \"Build\" is a verb: make it together."
+  },
+  "invite.line.offer": {
+    "text": "<0>@{{username}}</0> offered to let you build <1>{{project}}</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project (by an invite link or the Join button) and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. {{username}} offered the viewer the right to build {{project}}, the project's name. Keep the @ before the username."
+  },
+  "invite.line.offerUnnamed": {
+    "text": "<0>@{{username}}</0> offered to let you build <1>an app</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. {{username}} offered the viewer the right to build an app whose name is not known. Keep the @ before the username."
+  },
+  "invite.line.someoneOffer": {
+    "text": "<0>Someone</0> offered to let you build <1>{{project}}</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. A person whose name is not known offered the viewer the right to build {{project}}, the project's name."
+  },
+  "invite.line.someoneOfferUnnamed": {
+    "text": "<0>Someone</0> offered to let you build <1>an app</1>",
+    "description": "Sentence on an invitation in the notifications sheet, shown when the viewer has already joined the project and the invitation to work on it is still waiting. The names in <0> and <1> are shown bold. A person whose name is not known offered the viewer the right to build an app whose name is not known either."
   },
   "invite.acceptFailed": {
     "text": "Accept failed (HTTP {{status}})",
@@ -2101,7 +2125,7 @@
   },
   "limits.credit.title": {
     "text": "OpenRouter credit: {{amount}} left",
-    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{amount}} is the credit left for Homeroom bot, in dollars, for example $184."
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{amount}} is the credit left in the OpenRouter account, which pays for Homeroom bot's building, as a dollar amount."
   },
   "limits.credit.titleOut": {
     "text": "OpenRouter credit: out",
@@ -2112,12 +2136,12 @@
     "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when the credit could not be read."
   },
   "limits.credit.near_one": {
-    "text": "Under {{line}}. At this week's spend that lasts about a day. At $0 the bot stops planning and building.",
-    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the credit left. {{line}} is the warning line in dollars, for example $500. English spells the one day out and leaves {{count}} out."
+    "text": "Under {{line}}. At the recent rate that lasts about a day. At $0 the bot stops planning and building.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the OpenRouter credit, when it lasts about one day. {{line}} is the dollar level it warns at. \"The recent rate\" is how fast the account's credit has been going down over the last few days."
   },
   "limits.credit.near_other": {
-    "text": "Under {{line}}. At this week's spend that lasts about {{count}} days. At $0 the bot stops planning and building.",
-    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the credit left. {{line}} is the warning line in dollars, for example $500; {{count}} is how many days the credit lasts at this week's spend."
+    "text": "Under {{line}}. At the recent rate that lasts about {{count}} days. At $0 the bot stops planning and building.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under the OpenRouter credit. {{line}} is the dollar level it warns at, {{count}} how many days the credit lasts at the rate it has been going down over the last few days."
   },
   "limits.credit.nearNoDays": {
     "text": "Under {{line}}. At $0 the bot stops planning and building.",
@@ -2327,6 +2351,38 @@
     "text": "New image builds are failing until old ones are cleared or the quota is raised.",
     "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), after the quota's tightest resource, when the quota of the namespace image builds run in is used up."
   },
+  "limits.kicker.usedUp": {
+    "text": "Used up",
+    "description": "Small coloured word over the Homeroom bot weekly budget row of the platform limits area (top of the notifications sheet, full admins only): the week's budget is all spent, so the bot has stopped building."
+  },
+  "limits.budget.title": {
+    "text": "Homeroom bot's weekly budget: {{used}} of {{cap}} used",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only). {{used}} is what Homeroom bot has spent on AI models this week and {{cap}} its weekly budget, both dollar amounts."
+  },
+  "limits.budget.titleUnknown": {
+    "text": "Homeroom bot's weekly budget",
+    "description": "Row title in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly spending could not be read."
+  },
+  "limits.budget.near": {
+    "text": "At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until {{day}} or until the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used. {{cap}} is the budget as a dollar amount, {{day}} the name of the day it starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.budget.nearNoDay": {
+    "text": "At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only), under Homeroom bot's weekly budget, when 80% or more of it is used and the day it starts again is not known. {{cap}} is the budget as a dollar amount. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.budget.at": {
+    "text": "The bot has stopped building, and screenshots, sync with main and apps' AI features have stopped with it. They start again on {{day}}, or as soon as the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent. {{day}} is the name of the day the budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.budget.atNoDay": {
+    "text": "The bot has stopped building, and screenshots, sync with main and apps' AI features have stopped with it. They start again as soon as the budget is raised.",
+    "description": "Row text in the platform limits area (top of the notifications sheet, full admins only) when Homeroom bot's weekly budget is all spent and the day it starts again is not known. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "limits.action.budget": {
+    "text": "Raise the budget",
+    "description": "Button on the Homeroom bot weekly budget row of the platform limits area (top of the notifications sheet, full admins only): opens Admin, Homeroom bot, Settings, where the weekly budget is set."
+  },
   "row.limit.connections.full.label": {
     "text": "Database connections used up",
     "description": "First line of a notification to an administrator: the shared database has no connections left for apps."
@@ -2430,5 +2486,21 @@
   "row.limit.quota.builds.full.body": {
     "text": "<0>{{percent}}% used.</0> New image builds fail until the quota is raised.",
     "description": "Second line of the \"Builds quota used up\" notification to an administrator. {{percent}} is how full the quota's tightest resource is."
+  },
+  "row.limit.botBudget.warn.label": {
+    "text": "Homeroom bot's weekly budget is {{percent}}% used",
+    "description": "First line of a notification to an administrator: Homeroom bot has used most of the money it may spend on AI models this week. {{percent}} is how much of the week's budget is used, from 80 to 99."
+  },
+  "row.limit.botBudget.warn.body": {
+    "text": "<0>{{used}} of {{cap}} used.</0> At {{cap}} the bot stops building, and screenshots, sync with main and apps' AI features stop with it, until {{day}}.",
+    "description": "Second line of the \"weekly budget is … used\" notification to an administrator. {{used}} and {{cap}} are dollar amounts: what Homeroom bot's key has spent this week and its weekly budget. {{day}} is the name of the day the budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
+  },
+  "row.limit.botBudget.full.label": {
+    "text": "Homeroom bot's weekly budget is used up",
+    "description": "First line of a notification to an administrator: Homeroom bot has spent all the money it may spend on AI models this week."
+  },
+  "row.limit.botBudget.full.body": {
+    "text": "The bot stopped building, and screenshots, sync with main and apps' AI features stopped with it. They start again on {{day}}, or once the budget is raised.",
+    "description": "Second line of the \"weekly budget is used up\" notification to an administrator. {{day}} is the name of the day the weekly budget starts again, such as Monday. The bot's key also pays for before and after screenshots of changes, for syncing a change with main, and for the AI features of people's apps, so they stop too."
   }
 }

@@ -146,6 +146,13 @@ function watch(target: () => Element | null, kind: Placement): void {
 export interface PlaceInput {
   /** The change's session id, for the column's own entry. */
   sessionId?: number | null;
+  /**
+   * The project and whether the preview is read only (20 Nov 2026), kept
+   * with the column's entry so the thread it stands beside can ask for it
+   * again when the person comes back to it (../ai/detail.ts reopenDetail).
+   */
+  slug?: string | null;
+  readOnly?: boolean;
   /** The preview answer's `wide`. */
   wide?: boolean;
   /**
@@ -174,7 +181,12 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
 
   let columnWidth: number | null = null;
   if (!phone && !wide && !besideApp) {
-    openDetail({ kind: 'preview', ref: { sessionId: Number(input.sessionId) || undefined }, version: null });
+    openDetail({
+      kind: 'preview',
+      ref: { sessionId: Number(input.sessionId) || undefined },
+      version: null,
+      payload: { staging: { slug: input.slug || null, readOnly: input.readOnly !== false } },
+    });
     await frames(2);
     if (mine !== generation) return 'full';
     const rect = rectOf(slotEl());
@@ -199,6 +211,8 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
     beside,
     liveSpot: beside ? liveSpot() : null,
     expanded: false,
+    // G, J (20 Nov 2026): which change this is, for a live draft's own controls.
+    sessionId: Number(input.sessionId) || null,
   });
   if (target && rect) watch(target, placement);
   if (waitForColumn) settleIntoColumn(mine);

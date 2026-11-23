@@ -307,13 +307,15 @@ test('the sweep checks every cap and one failure does not stop the others', asyn
   const out = await limits.sweep(pool, CONFIG, deps);
   assert.deepEqual(out.errors, ['apps: db down']);
   assert.deepEqual(out.results.map((r) => r.key),
-    ['sessions', 'connections', 'github_app', 'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool']);
+    ['sessions', 'connections', 'github_app', 'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool', 'bot_budget']);
   // A process that has not heard from GitHub yet records nothing: "ok"
   // would re-arm a crossing already told (each new leader used to).
   assert.deepEqual(out.results.slice(2, 3).map((r) => [r.level, r.unknown]), [[null, true]],
     'nothing known about GitHub records nothing');
   // Off Kubernetes, the cluster's own limits measure nothing and record nothing.
-  assert.ok(out.results.slice(3).every((r) => r.unknown && r.level === null), 'no cluster limit applies here');
+  assert.ok(out.results.slice(3, 8).every((r) => r.unknown && r.level === null), 'no cluster limit applies here');
+  // No bot account and nothing read from OpenRouter: no weekly budget to measure.
+  assert.deepEqual([out.results[8].unknown, out.results[8].level], [true, null]);
   assert.ok(!pool.state.queries.some((q) => /platform_limit_alerts/.test(q.sql) && /github/.test(JSON.stringify(q.params))),
     'no GitHub level is written');
   assert.deepEqual(calls.create, [{ detail: 'sessions_warn:60:75' }]);
@@ -761,7 +763,7 @@ test('refusals are recorded once a day and reported, against a real database', {
 });
 
 test('the detail format is spelled identically wherever it is parsed', () => {
-  const literal = String.raw`/^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
+  const literal = String.raw`/^(apps|sessions|connections|db_disk|quota_apps|quota_workers|quota_builds|node_pool|bot_budget|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
   for (const rel of [
     'src/services/platform-limit-alerts.js',
     'src/services/mobile-push-policy.js',
@@ -770,7 +772,7 @@ test('the detail format is spelled identically wherever it is parsed', () => {
     assert.ok(read(rel).includes(literal), `${rel} parses the same token`);
   }
   assert.deepEqual(limits.ALL_LIMITS.map((l) => l.key),
-    ['apps', 'sessions', 'connections', 'github_app', 'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool'],
+    ['apps', 'sessions', 'connections', 'github_app', 'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool', 'bot_budget'],
     'a new cap must be added to the token pattern in all three places');
   for (const limit of limits.ALL_LIMITS) {
     // A quota's figure is thousandths of its hard value, clamped to 9999.

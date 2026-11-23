@@ -34,7 +34,7 @@ test('in an iOS browser tab the glass bar has an opaque ground, so the strip fol
   const stripRoutes = /body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header,/.exec(rule)[1].replace(/\s+/g, ' ');
   assert.equal(stripRoutes, glassRoutes);
   // That layer is opaque: its washes end on the ground colour.
-  assert.match(APP_CSS, /rgba\(252, 219, 212, 0\) 250px\) 0 0 \/ 100% 100% no-repeat var\(--home-ground\);/);
+  assert.match(APP_CSS, /rgba\(253, 232, 228, 0\) 250px\) 0 0 \/ 100% 100% no-repeat var\(--home-ground\);/);
   assert.match(APP_CSS, /var\(--home-washes, var\(--dc-sheet-solid\)\);\n\}/);
   // The tinted bar keeps its colour: the rule above never matches it.
   assert.match(APP_CSS, /html\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header \{[^}]*background-color: var\(--community-tint\);/);

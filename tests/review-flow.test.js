@@ -519,6 +519,61 @@ test('at rest the vote is part of the page: Yes | No and Skip, no sheet', () => 
   assert.match(html, /class="rf-why rf-why-off"/, 'the room for a reason is kept, empty');
 });
 
+// #6919: a round back arrow at the start of the vote row, left of Yes | No,
+// which returns to the change shown just before this one. With nothing
+// behind it, it is greyed out and cannot be pressed.
+test('#6919: the back arrow sits left of Yes and No, and is grey with nothing behind', () => {
+  const off = sheetHtml({});
+  assert.ok(off.indexOf('data-rf-prev=""') > 0, 'the arrow is drawn on the change page');
+  assert.ok(off.indexOf('data-rf-prev=""') < off.indexOf('data-rf-vote="yes"'), 'left of the pair');
+  assert.match(off, /data-rf-prev="" disabled=""/, 'the first change has nothing to go back to');
+  assert.ok(off.includes(`aria-label="${message('communities:review.vote.prevLabel')}"`), 'named for a screen reader');
+  const on = sheetHtml({ hasPrev: true });
+  assert.doesNotMatch(on, /data-rf-prev="" disabled=""/, 'enabled once there is a change behind');
+  assert.equal(message('communities:review.vote.prevLabel'), 'Go back to the previous change');
+  // Only the resting row carries it: a help sheet's pair is not the change page.
+  assert.doesNotMatch(sheetHtml({ state: 'talk' }), /data-rf-prev/);
+  // The arrow's own tap goes back; the native disabled attribute keeps it out
+  // of the keyboard's order and the platform's disabled look fades it.
+  const vs = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.match(vs, /disabled=\{!hasPrev\}/);
+  assert.match(vs, /onClick=\{onPrev\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-prev \{ flex: none; display: grid; place-items: center; width: 52px; height: 52px;/, 'the size and fill of Skip');
+  assert.match(css, /\.rf-prev:disabled \{ opacity: \.4; cursor: default; scale: 1; \}/, 'greyed out, the platform\'s disabled look');
+});
+
+test('#6919: back then forward returns to the same change', () => {
+  const a = { key: 'a', kind: 'proposal' };
+  const g = { key: 'g', kind: 'governance' };
+  const b = { key: 'b', kind: 'proposal' };
+  const c = { key: 'c', kind: 'proposal' };
+  const run = [a, g, b, c];
+  assert.deepEqual(model.trailIndex(run, ['a', 'b']), { index: 2, rest: ['a'] }, 'the last change still in the run');
+  assert.deepEqual(model.trailIndex(run, ['a', 'gone']), { index: 0, rest: [] }, 'a change that left the run is passed over');
+  assert.deepEqual(model.trailIndex(run, ['g']), { index: -1, rest: [] }, 'a group decision is never shown in the run');
+  assert.deepEqual(model.trailIndex(run, []), { index: -1, rest: [] }, 'nothing behind: nothing to go back to');
+
+  const flow = read('frontend/src/features/review-flow/review-flow.tsx');
+  // Back puts the change on show onto the forward trail and goes to the one behind.
+  assert.match(flow, /const goBack = \(\) => \{[\s\S]*?setAhead\(\(cur\) => \[\.\.\.cur, item\.key\]\);\s*setBehind\(prev\.rest\);\s*slide\.current = -1;\s*goTo\(prev\.index\);/);
+  // Forward reads the trail it came back along before nextIndex, so the same
+  // change comes back; the one left behind joins the trail back.
+  assert.match(flow, /if \(dir === 1 && forward\.index >= 0\) n = forward\.index;/, 'forward reads the trail back first');
+  assert.match(flow, /if \(forward\.index >= 0\) setAhead\(forward\.rest\);/, 'the one left behind joins the trail back');
+  // The button is Done only when neither the trail ahead nor nextIndex has one.
+  assert.match(flow, /const onward = forward\.index >= 0 \? forward\.index : next;/);
+  assert.match(flow, /hasNext=\{onward >= 0\}/);
+  assert.match(flow, /const prev = trailIndex\(run, behind\);/);
+  assert.match(flow, /const hasPrev = prev\.index >= 0;/);
+  // The push multiplies both sides by which way the page goes.
+  assert.match(flow, /const sign = dirSign\(\) \* from\.dir;/);
+  assert.match(flow, /setFrom\(\{ index, view: views\.current\[item\.key\] \|\| SHEET_VIEW, dir \}\);/);
+  // Picking another kind of vote, or looking again, starts a fresh run.
+  assert.match(flow, /setDone\(false\);\s*setBehind\(\[\]\);\s*setAhead\(\[\]\);\s*\};/, 'Look again clears the trail');
+  assert.match(flow, /setIndex\(first >= 0 \? first : Math\.max\(0, nextRun\.findIndex[\s\S]*?setBehind\(\[\]\);\s*setAhead\(\[\]\);/, 'a vote kind starts a fresh run');
+});
+
 test('help is in the bar\'s card: Ask privately, Discussion and Try it, each opened over the page', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   for (const to of ['askq', 'talk', 'try']) assert.match(src, new RegExp(`data-rf-help="${to}" onClick=\\{\\(\\) => help\\('${to}'\\)\\}`));
@@ -823,12 +878,32 @@ test('an opened screen is framed on its declared change, at real size at most', 
 
 // ── 7. A wide window ─────────────────────────────────────────────────────
 
+// The vote card's hairline is drawn OUTSIDE its edge. Under the standard
+// look the page, its bar and the stage behind the picture are all the card's
+// own colour and fill the card, so an inset line is painted over on their
+// sides and only shows round the details panel. Just outside the rounded
+// edge nothing covers it, and the brand look draws its card line there too.
+test('the vote card\'s hairline is drawn outside its edge, so every side shows it', () => {
+  const css = read('public/css/app.css');
+  const rule = css.match(/^html:not\(\[data-skin\]\) #dev-workshop \.dev-ws\[data-ws-tab="needs"\] \.rf-page \{([^}]*)\}$/m);
+  assert.ok(rule, 'the standard look\'s Needs you vote card rule is there');
+  const shadow = (rule[1].match(/box-shadow:\s*([^;]*);/) || [])[1];
+  assert.equal(shadow && shadow.trim(), '0 0 0 1px var(--wip-card-line)',
+    'the line sits outside the card: its bar and stage are its own colour and would cover an inset line');
+  assert.doesNotMatch(rule[1], /inset 0 0 0 1px var\(--wip-card-line\)/);
+  // The card itself is unchanged: the look's corners and colour.
+  assert.match(rule[1], /border-radius: var\(--wip-card-radius\);/);
+  assert.match(rule[1], /background: var\(--wip-card-bg\);/);
+});
+
 test('on a wide window the run is one column as wide as the page', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   const css = read('public/css/app.css');
   const cap = Number((src.match(/^const COLUMN = (\d+);$/m) || [])[1]);
   assert.equal(cap, 520, 'the change page\'s own width');
-  assert.match(src, /setSize\(\{ w: Math\.min\(COLUMN, pr\.width\), h \}\)/);
+  assert.match(src, /setSize\(\{ w: stageW > 0 \? stageW : Math\.min\(COLUMN, pr\.width\), h \}\)/);
+  // Beside its details (a project's Needs you on a large screen) the change's column is wider, and the picture is the stage's own width.
+  assert.match(src, /const stageW = beside && stageRef\.current \? stageRef\.current\.getBoundingClientRect\(\)\.width : 0;/);
   assert.doesNotMatch(src, /Math\.min\(520\b/, 'one number, not two copies of it');
   const col = css.match(/\.rf-run, \.rf-feed-note \{([^}]*)\}/);
   assert.ok(col, 'the run\'s pane and its notes share one column rule');
@@ -959,4 +1034,84 @@ test('a long URL or word wraps in the change line and its card instead of runnin
   assert.match(css, /\n\.rf-desc-text \{[^}]*white-space: pre-line; overflow-wrap: anywhere; \}/);
   // The line keeps its two-line clamp; a long run wraps inside it and ends in the ellipsis.
   assert.match(css, /\n\.rf-claim \{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; \}/);
+});
+
+// ── Frames: what each change is about (PR 6958) ──────────────────────────
+//
+// The run publishes each change's frame (the element its shots agent shot,
+// services/shots-diff.js) beside the areas that differ. Every framing here
+// takes, best first, the frame, the declared areas, the undeclared ones, the
+// screen's top; outlines and the seam's soft stops stay on the areas.
+
+// PR 6958's desktop screen: the claim is the top bar's line; what differed
+// was two strips of card text far below, numbered for no change.
+const PR6958 = (over = {}) => ({
+  viewport: 'desktop', width: 1280, density: 1,
+  before: { url: 'b.png', height: 800 }, after: { url: 'a.png', height: 800 },
+  regions: [{ n: 0, b: [40, 615, 400, 12], a: [40, 615, 400, 12] }, { n: 0, b: [40, 671, 400, 12], a: [40, 671, 400, 12] }],
+  frames: [{ n: 1, b: [0, 0, 1280, 52], a: [0, 0, 1280, 52] }],
+  changes: [1],
+  ...over,
+});
+const insideTop = (b, label) => assert.ok(b.y <= 0 + 1 && b.y + b.h >= 52 - 1 && b.y + b.h < 600, `${label}: ${JSON.stringify(b)}`);
+// Where a placement puts the screen's top rows: on screen, inside the view.
+const showsTop = (place, view, label) => {
+  const top = place.ty; const foot = 52 * place.scale + place.ty;
+  assert.ok(top >= -1 && foot <= view.h + 1, `${label}: the top bar is in view (${top}..${foot})`);
+};
+
+test('every framing frames on the change\'s frame, not on what differs elsewhere', () => {
+  const s = PR6958();
+  insideTop(model.focusBox(s, ['before', 'after'], 16), 'focusBox');
+  assert.deepEqual(model.frameBox(s, ['after']), { x: 0, y: 0, w: 1280, h: 52 });
+  const title = model.titleCrop(s, { w: 300, h: 200 });
+  assert.ok(title.place.ty > -10, 'the title shot is the top of the screen');
+  const view = { w: 351, h: 360 };
+  const { place, cut } = model.openPlace(s, view, 1);
+  showsTop(place, view, 'openPlace');
+  assert.ok(cut && cut.y < 20 && cut.y + cut.h <= 53 && cut.w > 1200, `the landing dim's hole is the top bar (kept 4pt inside the picture): ${JSON.stringify(cut)}`);
+  const tile = model.tileCrop(s, 64, 1);
+  assert.ok(-tile.ty / tile.scale < 52, 'the tile starts in the top bar');
+  const [piece] = model.piecesOf([s]);
+  assert.ok(piece.box.y === 0 && piece.box.h >= 52, 'the sheet\'s piece is the top bar, widened to readable context');
+  assert.ok(model.mainPiece(s).box.y === 0);
+  const [mark] = model.pictoMarks(s, 14, 24);
+  assert.ok(mark.y === 0 && mark.w === 14, 'the pictogram points at the top bar, across the screen');
+  // The seam's soft stops are on what differs, never on the frame.
+  const stops = model.seamStops(s, { scale: 1, tx: 0, ty: 0 }, 1280);
+  assert.ok(stops.length > 0);
+  assert.ok(model.seamStops({ ...s, regions: [] }, { scale: 1, tx: 0, ty: 0 }, 1280).length === 0, 'a frame is no stop');
+});
+
+test('without a frame, the declared areas lead; then any area; then the screen\'s top', () => {
+  const declared = { n: 1, b: [20, 300, 200, 40], a: [20, 300, 240, 60] };
+  const other = { n: 0, b: [40, 615, 400, 12], a: [40, 615, 400, 12] };
+  const both = PR6958({ frames: [], regions: [other, declared] });
+  const box = model.focusBox(both, ['before', 'after'], 16);
+  assert.ok(box.y >= 280 && box.y + box.h <= 380, `the declared area: ${JSON.stringify(box)}`);
+  assert.ok(model.titleCrop(both, { w: 300, h: 200 }).place.ty < -200, 'the title shot moves to the declared area');
+  const undeclared = PR6958({ frames: [] });
+  const loose = model.focusBox(undeclared, ['after'], 16);
+  assert.ok(loose.y >= 590 && loose.y + loose.h <= 700, `any area: ${JSON.stringify(loose)}`);
+  assert.deepEqual(model.focusBox(PR6958({ frames: [], regions: [] }), ['after'], 16), { x: 0, y: 0, w: 1280, h: 800 }, 'the top');
+  // A frame with only its after side (something new) frames both sides there.
+  const fresh = PR6958({ frames: [{ n: 1, b: null, a: [20, 400, 300, 80] }] });
+  assert.deepEqual(model.frameBox(fresh, ['before']), { x: 20, y: 400, w: 300, h: 80 });
+  // A frame numbered for no change is not one.
+  assert.equal(model.frameBox(PR6958({ frames: [{ n: 0, b: [0, 0, 10, 10], a: [0, 0, 10, 10] }] }), ['after']), null);
+});
+
+test('the feed shapes a run\'s frames onto its screens, and outlines only its areas', () => {
+  const src = read('public/js/app-view.js');
+  const shape = src.slice(src.indexOf('  _workshopVisuals(visuals, shots = null) {'), src.indexOf('  _workshopExcerpt(text'));
+  assert.match(shape, /const frames = \(Array\.isArray\(screen\.frames\) \? screen\.frames : \[\]\)\.map\(\(f\) => \(\{\n\s+n: f && f\.story \? Math\.max\(0, numberOf\(f\.story\)\) : 0,/);
+  assert.match(shape, /\.\.\.\(frames\.length \? \{ frames \} : \{\}\),/);
+  // The legacy change page crops to the frame, and outlines its regions.
+  const view = src.slice(src.indexOf('const outlines = (screen, side) => {'), src.indexOf('const cropOf = (screen) => {'));
+  assert.doesNotMatch(view, /frames/, 'a frame is never drawn as an outline');
+  assert.match(src, /const framed = framesOn\(which\);\n\s+const rects = framed\.length \? framed :/);
+  // The Workshop's picture crops to frames first, and outlines regions only.
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(ws, /const rects = frameRects\.length \? frameRects : screen\.regions\.flatMap/);
+  assert.match(ws, /const outlines = \(which: Side\) => \(place \? screen\.regions\.map\(/);
 });

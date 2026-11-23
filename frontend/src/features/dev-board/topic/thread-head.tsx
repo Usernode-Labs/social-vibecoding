@@ -23,7 +23,9 @@ import { useRef, type HTMLAttributes, type ReactNode } from 'react';
 
 import { useThreadHeadFit } from './thread-head-fit';
 
-export function ThreadHeadCard({ tile, line = null, title, sub = null, menu = null, exits = null, attrs }: {
+export function ThreadHeadCard({ lead = null, tile, line = null, title, sub = null, menu = null, exits = null, attrs }: {
+  /** A button before the tile, where a phone draws its back arrow. */
+  lead?: ReactNode;
   /** The project's tile, or the other member's round face. */
   tile: ReactNode;
   /** The small line over the title: what the thread is, and where it stands. */
@@ -44,6 +46,7 @@ export function ThreadHeadCard({ tile, line = null, title, sub = null, menu = nu
   useThreadHeadFit(head, true);
   return (
     <header {...attrs} ref={head} className="messages-thread-header">
+      {lead}
       {tile}
       <div className="min-w-0 flex-1 dev-thread-bar-text">
         {line}

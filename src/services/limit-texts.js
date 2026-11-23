@@ -2,7 +2,8 @@
 
 // Text alerts for platform limits: the numbers a full admin adds in Admin ›
 // Limits ("Text alerts"), and the texts they get when a platform-wide limit
-// is near, reached or over, or the bot's credit runs out.
+// is near, reached or over, the OpenRouter account's credit runs low or out,
+// or Homeroom bot's weekly budget is nearly or wholly used.
 //
 // WHAT IS TEXTED. The same rows the admin limits area at the top of
 // Notifications shows (services/platform-limits-view.js), so the area and the
@@ -59,7 +60,7 @@ const MAX_CODE_ATTEMPTS = 5;
 const MAX_PHONES = 10;
 const MAX_LABEL = 60;
 const KEYS = Object.freeze([
-  'apps', 'openrouter_credit', 'sessions', 'db_connections',
+  'apps', 'openrouter_credit', 'bot_budget', 'sessions', 'db_connections',
   // The cluster's own (services/platform-capacity.js).
   'db_disk', 'quota_apps', 'quota_workers', 'quota_builds', 'node_pool',
 ]);
@@ -70,6 +71,7 @@ const NAMES = Object.freeze({
   apps: 'the app count',
   sessions: 'the session count',
   openrouter_credit: 'the OpenRouter credit',
+  bot_budget: 'the bot\'s weekly budget',
   db_connections: 'the database connections',
   db_disk: 'the database disk',
   quota_apps: 'the apps quota',
@@ -83,6 +85,16 @@ const QUOTA_TEXT = Object.freeze({
   quota_workers: { name: 'workers', near: 'new sessions and checks wait', at: 'New sessions and checks are waiting' },
   quota_builds: { name: 'builds', near: 'new image builds fail', at: 'New image builds are failing' },
 });
+
+// The day a budget's week turns, by name, from the instant its row carries
+// (limits.weeklyResetAt, the key's weekly reset: Monday 00:00 UTC). In UTC:
+// a text has no reader's time zone to say it in.
+function resetDay(iso) {
+  const at = Date.parse(iso || '');
+  return Number.isFinite(at)
+    ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(at))
+    : null;
+}
 
 // Whole MiB (the capacity limits' volume figures) as GiB.
 function gib(mib) {
@@ -219,6 +231,26 @@ function textFor(row, step, { site = origin() } = {}) {
     if (row.state === 'over') return `${lead}apps over the limit, ${figures}. New projects are being refused.${away} Raise the limit: ${limits}`;
     return `${lead}apps at ${figures}. New projects are being refused.${away} Raise the limit: ${limits}`;
   }
+  if (row.key === 'bot_budget') {
+    // Homeroom bot's weekly budget, in cents (openrouter-credit.js budget).
+    const settings = `${site}/#admin/homeroom-bot/settings`;
+    const used = dollars(row.detail?.usedCents ?? row.used);
+    const cap = dollars(row.detail?.capCents ?? row.cap);
+    const day = resetDay(row.detail?.resetsAt);
+    // What stops is more than the bot: its key also pays for before and
+    // after shots, Sync with main and apps' AI features. One SMS is 160
+    // characters, and the link has to arrive whole, so a budget with enough
+    // digits to push the list past that says only that building stops.
+    const until = day ? ` until ${day}` : '';
+    const oneSms = (full, brief) => (full.length <= 160 ? full : brief);
+    if (near) {
+      return oneSms(`${lead}bot budget ${used} of ${cap}, then builds, shots, sync and apps' AI stop${until}. Raise it: ${settings}`,
+        `${lead}bot budget ${used} of ${cap}. Building stops at ${cap}${until}. Raise it: ${settings}`);
+    }
+    if (step.action === 'reminder') return `${lead}bot budget used up. Builds, shots, sync and apps' AI stopped${until}. Raise it: ${settings}`;
+    return oneSms(`${lead}bot budget used up (${cap}). Builds, shots, sync and apps' AI stopped${until}. Raise it: ${settings}`,
+      `${lead}bot budget used up (${cap}). Building stopped${until}. Raise it: ${settings}`);
+  }
   if (row.key === 'sessions') {
     if (near) return `${lead}sessions at ${figures}, near the limit. Raise it: ${limits}`;
     return `${lead}sessions at ${figures}. New sessions are pausing idle ones or being refused. Raise the limit: ${limits}`;
@@ -242,6 +274,7 @@ function textFor(row, step, { site = origin() } = {}) {
     if (near) return `${lead}database connections at ${figures}, near the limit. Apps fail at ${row.cap}. See: ${status}`;
     return `${lead}database connections at ${figures}. Apps can't open new connections. See: ${status}`;
   }
+  // The OpenRouter account's credit (never what is left of the bot's budget).
   if (row.state === 'out') return `${lead}OpenRouter credit is out. The bot has stopped planning and building. Add credit: ${CREDITS_URL}`;
   return `${lead}OpenRouter credit is down to ${dollars(row.balanceCents)}. The bot stops at $0. Add credit: ${CREDITS_URL}`;
 }

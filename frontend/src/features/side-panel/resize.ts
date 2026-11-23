@@ -86,6 +86,17 @@ export const AI_PREVIEW_COLUMN_WIDTH_KEY = 'usernode_ai_preview_col_w_v1';
 /** The preview's own width beside the thread (#6359). */
 export const AI_PREVIEW_WIDTH_KEY = 'usernode_ai_preview_w_v1';
 
+/**
+ * Whether the bot page's thread list was left hidden (#6963), beside the
+ * width: dragging the divider past the list's floor puts the page in one
+ * pane, and that choice holds on this device the way the width does.
+ */
+export const AI_LIST_CLOSED_KEY = 'usernode_ai_list_closed_v1';
+
+/** How far past the list's floor a drag must go to hide it, and how far back
+ *  out the edge must be dragged to bring it back. */
+export const SNAP_PX = 48;
+
 /** The CSS property each key drives on <html>. */
 const WIDTH_PROPERTY: Record<string, string> = {
   [WIDTH_KEY]: '--side-panel-w',
@@ -197,6 +208,36 @@ export function clearStoredWidth(store: StorageLike | null = storage(), key: str
   } catch {
     /* nothing stored, or nowhere to store it: the default either way */
   }
+}
+
+/** Was the bot page's thread list left hidden on this device? */
+export function readListClosed(store: StorageLike | null = storage()): boolean {
+  try {
+    return !!store && store.getItem(AI_LIST_CLOSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function writeListClosed(closed: boolean, store: StorageLike | null = storage()): void {
+  try {
+    if (!store) return;
+    if (closed) store.setItem(AI_LIST_CLOSED_KEY, '1');
+    else store.removeItem(AI_LIST_CLOSED_KEY);
+  } catch {
+    /* a choice that does not survive a reload is the split next time */
+  }
+}
+
+/**
+ * The width the list's edge opens to when it is pulled back out: the width
+ * last chosen, never narrower than MIN_PANEL_W and never wider than this
+ * window allows. Null when nothing was chosen, so the stylesheet's own
+ * split answers.
+ */
+export function reopenWidth(stored: number | null, b: WidthBounds): number | null {
+  if (stored == null) return null;
+  return clampWidth(Math.max(stored, MIN_PANEL_W), b);
 }
 
 /**

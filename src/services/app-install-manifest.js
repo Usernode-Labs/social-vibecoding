@@ -34,11 +34,11 @@
 // The Tailwind stylesheet is compiled from public/index.html, public/js/**
 // and frontend/** only, so a page rendered from src/ cannot use utilities: the
 // page carries its own inline CSS, in the shell's zinc/violet palette on the
-// shell's own grounds (frontend/src/head.html GROUND: #f4f2e4 / #0b0d1b).
+// shell's own grounds (frontend/src/head.html GROUND: #fffeea / #0b0d1b).
 
 const emojiTile = require('./emoji-tile');
 
-const GROUND = '#f4f2e4';
+const GROUND = '#fffeea';
 const GROUND_DARK = '#0b0d1b';
 const SHORT_NAME_MAX = 30;
 const DESCRIPTION_MAX = 300;

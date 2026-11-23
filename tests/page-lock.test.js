@@ -175,7 +175,7 @@ test('app.css: in a phone browser on iOS the first-run screens\' ground runs on 
   // The make and made roots and the invite's held frame, not from Create (under the header).
   assert.equal(rule[1], 'html.un-ios.web-browser-chrome :is([data-first-session-make], [data-first-session-made], [data-first-session-welcome]):not(.platform-under-header)');
   // Straight up, 200px, the box's own size: nothing in the box moves.
-  assert.equal(rule[2], '0 -200px 0 0 var(--home-ground, #f4f2e4)');
+  assert.equal(rule[2], '0 -200px 0 0 var(--home-ground, #fffeea)');
   // Next to the toolbar rule it mirrors.
   assert.ok(APP_CSS.indexOf('/* THE MAKE AND MADE SCREENS RUN ON UNDER SAFARI\'S TOOLBAR') < APP_CSS.indexOf('/* AND OVER THEIR TOP, UNDER THE STATUS BAR'));
   // Those are the roots the screens draw.

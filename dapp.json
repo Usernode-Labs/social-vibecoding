@@ -185,6 +185,18 @@
       "description": "The non-admin account for GIT_HOST_READ_TOKEN. Defaults to GIT_HOST_USER when unset."
     },
     {
+      "key": "GIT_HOST_PRIVATE_PROJECTS",
+      "group": "Platform",
+      "default": "",
+      "description": "Comma-separated Forgejo repository names that use authenticated source delivery. Use * for all managed app repositories after the pilot."
+    },
+    {
+      "key": "GIT_HOST_PRIVATE_PROJECTS_WRITE",
+      "group": "Platform",
+      "default": "false",
+      "description": "When true, create private projects' selected Forgejo repositories as private and reconcile their visibility. Keep the source delivery selection when pausing writes."
+    },
+    {
       "key": "MAX_APPS",
       "group": "Scaling",
       "default": "50",
@@ -3618,6 +3630,11 @@
       "name": "Challenges: every card on the tab carries a labelled rail, block production included (#2492)",
       "path": "/#leaderboard/challenges",
       "expectSelector": "#challenges-root:not(.hidden) #tc-se-grid:has([role=progressbar]):not(:has([role=progressbar]:not([aria-valuetext])))"
+    },
+    {
+      "name": "Challenges: the History tab says what earned your points, or that nothing has yet (#6967)",
+      "path": "/#leaderboard/challenge-history",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has([data-standings-tab=\"challenge-history\"]) #challenges-root:not(.hidden) #tc-se-grid:has(#tc-se-history-how, [data-history-empty])"
     },
     {
       "name": "Challenge detail page is reachable by deep link and draws its rail (?shot=challenge-detail)",
