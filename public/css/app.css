@@ -7989,6 +7989,10 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     height: auto;
     padding: 0;
   }
+  /* Where the document scrolls (a touch tablet) the bar is sticky at 30 and
+     has a ground (THE TOP BAR HAS A GROUND, below), so the pill stands over
+     it: at 20 it was under the bar, seen only while the bar was clear. */
+  html:not([data-skin])[data-browser-scroller] body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice { z-index: 31; }
   /* Its width is the bar's beside the sidebar (the usable box), less the 12.5rem kept for the bell and account on its right and 11rem for the page's name ("Hub", "Workshop") on its left. It was min(36rem, 38vw), which cut the sentence at "moves off GitHu…" on a 1440px window with 300px of the bar empty beside it. */
   html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: calc(var(--platform-usable-w) - 12.5rem - 11rem); margin-top: 0; }
 }
@@ -8924,10 +8928,52 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
 }
 @media (min-width: 768px) {
   html:not([data-skin]) #platform-tabs {
-    top: 0;
-    padding-top: var(--wip-nav-brand-h);
+    /* UNDER THE STRIPS AND THE STATUS BAR (audit, 23 Nov 2026). The panel
+       starts below any strip a browser tab shows above the header ("Get the
+       app", offline), as the header does: from 0, on a tablet in a browser,
+       its Home row stood behind the header. Its brand's band starts below
+       the device's own status bar (an iPad in the app), as the top bar's
+       row does; the brand and the fold button below add the same inset. */
+    top: var(--browser-banner-h, 0px);
+    padding-top: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-h));
     z-index: 9; /* over the page, under the top bar (10), whose logo it frames */
     box-shadow: inset -1px 0 0 var(--wip-nav-line);
+  }
+  /* THE TOP BAR HAS A GROUND WHERE THE PAGE SCROLLS UNDER IT (audit, 23 Nov
+     2026). On a desktop the bar is transparent: the page scrolls in its own
+     box below the bar, and the panel reaches the window's top behind it.
+     A touch browser scrolls the document instead (lib/browser-scroll.ts),
+     on a tablet too, with this bar sticky over it, and on a project's
+     Workshop the cards' words ran under the logo and the bell. Safari gave
+     Home and the other plain screens a ground of their own (for its status
+     strip, above), but over the whole bar: it covered the panel's top, so
+     the fold button was white on white, and with the "Get the app" strip
+     up the Home row was behind the bar. So there, with the panel docked,
+     the bar is the page's solid plane from the panel's edge across, and
+     the page keeps its rounded corner at the panel's edge (THE PAGE IS A
+     SHEET TUCKED INTO THE MENU, below), drawn here as the layer there
+     draws it, because the bar lies over that layer. */
+  html:not([data-skin])[data-browser-scroller] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #platform-header,
+  html:not([data-skin]).un-ios.web-browser-chrome:not([data-community-tint]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+      #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+      #profile-proposals-screen):not(.hidden), #app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+    background-color: transparent;
+    background-image:
+      radial-gradient(circle at 100% 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
+      linear-gradient(to right, transparent var(--platform-rail-w, 0px), var(--dc-sheet-solid) 0);
+    background-position: var(--platform-rail-w, 0px) 0, 0 0;
+    background-size: var(--wip-nav-page-radius) var(--wip-nav-page-radius), auto;
+    background-repeat: no-repeat;
+  }
+  /* Right to left the panel is on the right. */
+  html:not([data-skin])[dir="rtl"][data-browser-scroller] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #platform-header,
+  html:not([data-skin])[dir="rtl"].un-ios.web-browser-chrome:not([data-community-tint]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+      #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+      #profile-proposals-screen):not(.hidden), #app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+    background-image:
+      radial-gradient(circle at 0 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
+      linear-gradient(to left, transparent var(--platform-rail-w, 0px), var(--dc-sheet-solid) 0);
+    background-position: right var(--platform-rail-w, 0px) top 0, 0 0;
   }
   html:not([data-skin]) body { --platform-rail-full: var(--wip-nav-w); }
   html:not([data-skin]) #platform-tabs .platform-tab-glyph { width: var(--wip-nav-ic-size); height: var(--wip-nav-ic-size); }
@@ -8970,7 +9016,7 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs::before {
     content: "";
     position: absolute;
-    inset-block-start: var(--wip-nav-brand-top);
+    inset-block-start: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-top));
     inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) + var(--wip-nav-ic-size) + var(--wip-nav-row-gap));
     width: var(--wip-nav-brand-w);
     height: var(--wip-nav-brand-tile);
@@ -8996,9 +9042,14 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
      rule for it. Its glyph is the shell's own SidebarIcon, a panel with
      its side column, the same in both states (the icon's note in
      @/components/ui/icons.tsx says why), drawn at the rows' weight. */
+  /* BELOW THE STATUS BAR (audit, 23 Nov 2026): on an iPad in the app this
+     button stood 16px from the screen's top, under the clock, while the top
+     bar's own row started 24px lower (the layout audit's
+     content-under-system warning on every iPad screen). It, the brand and
+     the panel's first row add the top inset, which is 0 in a browser tab. */
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
     position: absolute;
-    inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);
+    inset-block-start: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);
     inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) - (var(--wip-nav-fold) - var(--wip-nav-ic-size)) / 2);
     width: var(--wip-nav-fold);
     height: var(--wip-nav-fold);
