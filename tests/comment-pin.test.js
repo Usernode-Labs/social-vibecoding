@@ -100,9 +100,20 @@ test('the inset picture keeps its margin, keeps the screen\'s shape, and maps po
   assert.ok(Math.abs(headed.scale - (800 - 48 - 60) / 800) < 1e-9, 'the band is room the picture does not take');
   assert.ok(headed.y >= 60, 'the picture starts below the header band');
   assert.ok(Math.abs(headed.y + 800 * headed.scale - (800 - 24)) < 1e-9, 'the bottom margin is kept');
+  // The iPhone Duo's cover (phone review #135): what the system keeps of the
+  // right side is left out, and the picture is fitted and centred beside it,
+  // so its corner and the bar never go under the camera and the clock.
+  const cover = picture.insetFrame({ width: 466, height: 678 }, 12, 60, { left: 0, right: 84 });
+  assert.ok(Math.abs(cover.scale - (466 - 84 - 24) / 466) < 1e-9, 'the room beside the column binds');
+  assert.ok(Math.abs(cover.x - 12) < 1e-9, 'the margin from the left edge');
+  assert.ok(Math.abs(cover.x + 466 * cover.scale - (466 - 84 - 12)) < 1e-9, 'and the margin from the column');
+  const leftColumn = picture.insetFrame({ width: 466, height: 678 }, 12, 60, { left: 84, right: 0 });
+  assert.ok(Math.abs(leftColumn.x - (84 + 12)) < 1e-9, 'a column on the left is kept clear the same way');
+  assert.deepEqual(picture.insetFrame({ width: 1280, height: 800 }, 24, 60, { left: 0, right: 0 }), headed,
+    'no column, the same frame as before');
 });
 
-test('the close-up opens on the pin at zoom 2, and holds its zoom and pan to the picture', () => {
+test('the close-up holds its zoom and pan to the picture, and keeps the pan it is given', () => {
   const box = { width: 360, height: 150 };
   const shot = { width: 800, height: 600 };
   // The pin at the picture's middle opens centred on it.
@@ -121,7 +132,35 @@ test('the close-up opens on the pin at zoom 2, and holds its zoom and pan to the
   assert.deepEqual(edge.pan, { x: -171, y: -66 });
   const panned = picture.closeUpView({ pin: { x: 400, y: 300 }, box, picture: shot, zoom: 2, pan: { x: 500, y: 0 } });
   assert.deepEqual(panned.offset, { x: 0, y: -195 });
-  assert.deepEqual(panned.pan, { x: -320, y: 0 });
+  assert.deepEqual(panned.pan, { x: 180, y: 0 }, 'held at the picture\'s left edge: 180px of pan is as far as it goes');
+  // Inside the picture the pan comes back as it went in (phone review #7,
+  // 23 Nov 2026). It came back as 0, the clamp's correction rather than the
+  // pan, so a caller keeping it lost every drag on the next move.
+  const inside = picture.closeUpView({ pin: { x: 400, y: 300 }, box, picture: shot, zoom: 2, pan: { x: 40, y: -30 } });
+  assert.deepEqual(inside.pan, { x: 40, y: -30 });
+  assert.deepEqual(inside.offset, { x: -140, y: -225 });
+  let pan = { x: 0, y: 0 };
+  for (let i = 0; i < 5; i++) {
+    pan = picture.closeUpView({ pin: { x: 400, y: 300 }, box, picture: shot, zoom: 2, pan: { x: pan.x + 10, y: pan.y } }).pan;
+  }
+  assert.deepEqual(pan, { x: 50, y: 0 }, 'five small drags add up');
+});
+
+test('the close-up zooms out to the whole screen (phone review #6)', () => {
+  // A phone's picture is tall: at zoom 1 its width fits the box, and
+  // pinching out goes on until all of its height does too. It stopped at 1,
+  // an 18% band of the screen, and the whole page could never be seen.
+  const box = { width: 378, height: 200 };
+  const shot = { width: 804, height: 1748 };
+  const min = picture.closeUpMinZoom(box, shot);
+  const whole = picture.closeUpView({ pin: { x: 402, y: 874 }, box, picture: shot, zoom: 0.01, pan: { x: 0, y: 0 } });
+  assert.ok(Math.abs(whole.zoom - min) < 1e-9, 'held at the least zoom');
+  assert.ok(Math.abs(whole.size.height - 200) < 1e-6, 'the whole height in the box');
+  assert.ok(whole.size.width < 378 && Math.abs(whole.offset.x - (378 - whole.size.width) / 2) < 1e-6, 'centred across');
+  assert.equal(whole.offset.y, 0);
+  // A wide picture already fits at zoom 1, so it stops there.
+  assert.equal(picture.closeUpMinZoom({ width: 360, height: 150 }, { width: 1600, height: 400 }), 1);
+  assert.equal(picture.CLOSE_UP_MAX_ZOOM, 4);
 });
 
 test('the reworked mode: the bar as the view\'s header, the phone sheet, and the close-up', () => {
@@ -131,7 +170,7 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   // rides on the page. The old rest-on-the-picture's-bottom-edge default is
   // gone with it.
   assert.match(src, /const HEADER_BAND = 60;/);
-  assert.match(src, /INSET_MARGIN, band\)/);
+  assert.match(src, /INSET_MARGIN, band, side\)/);
   assert.doesNotMatch(src, /inset\.y \+ window\.innerHeight \* inset\.scale - barSize\.height/);
   // The handle that drags the bar belongs to the live-page fallback alone.
   assert.equal(message('devchat:commentPin.bar.move'), 'Move the bar: drag it anywhere, double-click to put it back');
@@ -143,7 +182,8 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   // On a phone the box is a bottom sheet, riding the keyboard, and while the
   // wait for the next pin is on it holds just that row.
   assert.match(src, /comment-sheet-in platform-kb-sheet/);
-  assert.match(src, /useKeyboardSurface\(boxRef, \{ ride: true \}\);/);
+  assert.match(src, /useKeyboardSurface\(boxRef, \{ ride: true, foot: '\.comment-sheet-actions', head: sheetHead \}\);/);
+  assert.match(src, /<div ref=\{sheetHeadRef\} className="comment-sheet-head">/, 'the pinned head is measured for it');
   assert.match(src, /phone && draft\.active == null \?/);
   assert.match(src, /nextPinRow\n          \) : \(/);
   // The close-up at the top of the sheet draws the pin's area of the picture
@@ -159,10 +199,18 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
   assert.match(closeUp, /\{t\('devchat:commentPin\.closeUp\.pinchHint'\)\}/);
-  assert.equal(message('devchat:commentPin.closeUp.pinchHint'), 'Pinch to zoom');
-  assert.match(closeUp, /Math\.min\(MAX_ZOOM, zPrev \* dist \/ g\.dist\)/, 'the pinch sets the zoom from the fingers');
+  assert.equal(message('devchat:commentPin.closeUp.pinchHint'), 'Drag to move, pinch to zoom');
+  // Phone review #6: zoom 1 (the picture's width across the box) about the
+  // pin, in a box of 200px, out to the whole screen and in to four times.
+  assert.match(closeUp, /export const CLOSE_UP_HEIGHT = 200;/);
+  assert.match(closeUp, /const START_ZOOM = 1;/);
+  assert.match(closeUp, /Math\.max\(zMin, Math\.min\(CLOSE_UP_MAX_ZOOM, zPrev \* dist \/ g\.dist\)\)/, 'the pinch sets the zoom from the fingers');
   assert.match(closeUp, /mid\.x - c\.x - \(g\.mid\.x - c\.x - panRef\.current\.x\) \* \(z \/ zPrev\)/,
     'the point under the fingers stays under them as the zoom changes');
+  assert.match(closeUp, /const c = \{ x: r\.left \+ boxWidth \/ 2, y: r\.top \+ HEIGHT \/ 2 \};/,
+    'the box\'s centre in the page\'s pixels, as the fingers are');
+  // Phone review #7: one finger moves the picture with it, the way the pinch does.
+  assert.match(closeUp, /x: panRef\.current\.x \+ \(now\.x - g\.last\.x\), y: panRef\.current\.y \+ \(now\.y - g\.last\.y\)/);
 });
 
 test('the pins can land in a change\'s staging preview, not only the running app', () => {
@@ -183,11 +231,11 @@ test('on a phone the bar sits under the status bar, where a finger can reach it'
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
   assert.match(src, /style=\{\{ height: 'var\(--platform-safe-top, 0px\)' \}\}/);
   assert.match(src, /const band = safeTop \+ HEADER_BAND;/);
-  assert.match(src, /insetFrame\(size, phone \? INSET_MARGIN_PHONE : INSET_MARGIN, band\)/);
+  assert.match(src, /insetFrame\(size, phone \? INSET_MARGIN_PHONE : INSET_MARGIN, band, side\)/);
   assert.match(src, /top: safeTop \+ Math\.max\(6, Math\.round\(\(HEADER_BAND - barSize\.height\) \/ 2\)\),/);
-  assert.match(src, /style=\{inset \? \{ top: band \+ 8 \} : \{ bottom: 'calc\(76px \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the first-use note too');
+  assert.match(src, /style=\{inset \? \{ left: midX, top: band \+ 8 \} : \{ left: midX, bottom: 'calc\(76px \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the first-use note too');
   assert.match(src, /return inset \? \{ x: at\.x, y: Math\.max\(at\.y, band \+ 8\) \} : at;/, 'and the box and the card');
-  assert.match(src, /: \{ bottom: 'calc\(1rem \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the live-page bar clears the home indicator');
+  assert.match(src, /: \{ left: midX, bottom: 'calc\(1rem \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the live-page bar clears the home indicator');
   assert.doesNotMatch(src, /top-\[68px\]|'bottom-4 left-1\/2/);
 });
 
@@ -220,7 +268,10 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   // The sheet: capped below the band, on the keys with them up, Post at its foot.
   assert.match(src, /'--comment-band' as string\]: `\$\{inset \? band : safeTop\}px`/);
   assert.match(src, /`comment-sheet comment-sheet-in platform-kb-sheet absolute inset-x-0 bottom-0 flex flex-col/);
-  assert.match(src, /\$\{phone \? ' comment-sheet-actions' : ''\}/);
+  // Post's row and the pictures' row are the sheet's sticky foot (#19).
+  assert.match(src, /'comment-sheet-actions flex flex-col gap-2 border-t border-black\/5 pt-3 dark:border-white\/10'/);
+  assert.match(src, /\{phone \? attachRow : null\}/);
+  assert.match(src, /\{phone \? null : attachRow\}/);
   const css = read('public/css/app.css');
   assert.match(css, /#comment-pin-box\.comment-sheet \{\s*--comment-sheet-pb: calc\(0\.75rem \+ var\(--platform-safe-bottom, 0px\)\);\s*max-height: min\(85%, calc\(100% - var\(--comment-band, 0px\) - 8px\)\);/);
   assert.match(css, /html\.platform-kb-open #comment-pin-box\.comment-sheet \{[^}]*max-height: calc\(100% - var\(--comment-band, 0px\) - 8px - var\(--platform-vv-top, 0px\) - var\(--platform-kb-cover, 0px\)\);/);
@@ -282,11 +333,11 @@ test('on a phone a tap leaves a small comment, and only its field opens the shee
   assert.match(src, /const PHONE_TOOL = 'grid h-11 w-11 /);
   assert.match(src, /onClick=\{collapse\}\s*className=\{PHONE_TOOL\}/);
   assert.match(src, /onClick=\{requestDiscard\}\s*className=\{PHONE_TOOL\}/);
-  const head = src.slice(src.indexOf('const head = draft && target ? ('), src.indexOf('const small = phone'));
+  const head = src.slice(src.indexOf('const head = discardAsk ?? (draft && target ? ('), src.indexOf('const small = phone'));
   const phoneHead = head.slice(head.indexOf('{phone ? ('), head.indexOf(') : (\n        <>'));
   assert.ok(phoneHead.includes('ChevronDownIcon'), 'the phone head is found');
   assert.doesNotMatch(phoneHead, /toForm/);
-  assert.match(src, /<div className="comment-sheet-head">\s*<div aria-hidden="true" className="comment-sheet-grabber" \/>/);
+  assert.match(src, /<div ref=\{sheetHeadRef\} className="comment-sheet-head">\s*<div aria-hidden="true" className="comment-sheet-grabber" \/>/);
   const css = read('public/css/app.css');
   assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-head \{\s*position: sticky;\s*top: -0\.75rem;/,
     'the head stays at the top while the sheet scrolls under it');
@@ -333,18 +384,18 @@ test('the close-up always zooms a full picture about its own pin', () => {
   assert.equal(picture.CROP_SHADE, '0 0 0 9999px rgba(0,0,0,0.45)');
 });
 
-test('the first picture animates out of the live page instead of a bare grey ground (#4665)', () => {
+test('the mode\'s frame comes in at once, and the first picture fills it (#4665, phone review #110)', () => {
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  // The first picture, nothing drawn yet: the live page shows through (the
-  // mode's layer above it already keeps every press off) and neither the
-  // grey ground nor the word that names the picture is drawn.
+  // The first picture, nothing drawn yet: the ground and the picture's
+  // place are up already, the place a plain card the picture fades into. It
+  // used to leave the live page on show and shrink the picture in from it
+  // (#4665); on a phone that was one to two seconds of plain Home after the
+  // tap. Leaving still grows the picture back over the page.
   assert.match(src, /viewShot\?\.state === 'drawing' && !viewShot\.url/,
     'the first picture: still drawing, with nothing to show');
-  assert.match(src, /shotIntro \? null : \(/);
-  // Once the picture lands it mounts with its ground and its word for the first
-  // time and shrinks from the full page into its frame; a degenerate scale
-  // skips the move.
-  assert.match(src, /inset\.scale > 0 \? 'comment-shot-in' : ''/);
+  assert.doesNotMatch(src, /shotIntro \? null : \(/);
+  assert.match(src, /data-comment-shot-waiting=""/);
+  assert.match(src, /inset\.scale > 0 \? 'comment-shot-in comment-shot-fill' : ''/);
   assert.match(src, /comment-shot-ground-in/);
   assert.match(src, /comment-shot-label-in/);
   assert.match(src, /--comment-shot-from/, 'the start of the move: the inverse of the inset frame');
@@ -364,16 +415,16 @@ test('the first picture animates out of the live page instead of a bare grey gro
 
 test('a slow first picture never leaves a screen that shows nothing and takes no press (#5834)', () => {
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  // The bar waits for the first picture only so long: an app that does not
-  // answer holds the picture for seconds, and the bar hidden for all of it
-  // left nothing to see and no way out on a phone.
-  assert.match(src, /const BAR_WAIT_MS = 600;/);
-  assert.match(src, /if \(!shotIntro\) return undefined;\s*const timer = setTimeout\(\(\) => setIntroSlow\(true\), BAR_WAIT_MS\);\s*return \(\) => clearTimeout\(timer\);/);
-  assert.match(src, /const barWaits = shotIntro && !introSlow;/);
-  assert.doesNotMatch(src, /shotIntro \? 'pointer-events-none opacity-0'/, 'never hidden for the whole wait');
+  // The bar no longer waits for the first picture at all (phone review
+  // #110): it comes in with the mode's frame on the first render. An app
+  // that does not answer holds the picture for seconds, and the bar hidden
+  // for any of it left nothing to see and no way out on a phone; a timer
+  // could not shorten the wait either, since the drawing holds the thread.
+  assert.doesNotMatch(src, /BAR_WAIT_MS|introSlow|barWaits/);
+  assert.doesNotMatch(src, /'pointer-events-none opacity-0'/, 'never hidden while the picture draws');
   // It says what is happening, on a phone too, where the words otherwise stay off.
   assert.match(src, /const hint = shotIntro \? t\('devchat:commentPin\.hint\.taking'\) : draft/);
-  assert.match(src, /\$\{shotIntro \? 'inline ps-1\.5 sm:ps-0' : 'hidden sm:inline'\} min-w-0 truncate[^`]*`\}>\{hint\}/);
+  assert.match(src, /\$\{shotIntro \? 'inline ps-1\.5 sm:ps-0' : 'hidden sm:inline'\} min-w-0 \$\{fingers \? 'whitespace-normal leading-tight' : 'truncate'\}[^`]*`\}>\{hint\}/);
   // Done works from then on, and leaving before the picture is immediate.
   assert.match(src, /onClick=\{requestExit\}/);
   assert.match(src, /if \(!inset \|\| shotIntro \|\| !viewShot\?\.url \|\| reducedMotion\(\)\) \{ finish\(\); return; \}/);
@@ -387,12 +438,19 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   // The first picture waits for the sheet the mode was opened from (the menu,
   // the form) to finish leaving, rather than landing on it mid-slide.
   assert.match(src, /void Promise\.all\(\[ahead, overlaysGone\(\)\]\)/, 'with or without a picture drawn ahead');
-  // Nothing of the mode is drawn over the live page before the first picture:
-  // the state starts as drawing, and the bar and the first-use note wait.
+  // The mode's frame is up on its first render (phone review #110): the
+  // state starts as drawing, and the ground, the bar and the picture's place
+  // come in together, the place filled when the picture lands. Only the
+  // first-use note waits for the picture.
   assert.match(src, /useState<ViewShot \| null>\(\{ url: '', view: 0, state: 'drawing' \}\)/);
-  assert.match(src, /barWaits \? 'pointer-events-none opacity-0' : 'comment-bar-in',/);
+  assert.match(src, /\{shotIntro \? \(\s*<div\s+aria-hidden="true"\s+data-comment-shot-waiting=""/);
+  assert.match(src, /\$\{inset\.scale > 0 \? 'comment-shot-in comment-shot-fill' : ''\}/);
+  assert.match(src, /\n\s+'comment-bar-in',\n/);
   assert.match(src, /\{intro && !confirm && !shotIntro \? \(/);
   assert.match(css, /\.comment-bar-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
+  assert.match(css, /\.comment-shot-in\.comment-shot-fill \{ animation: comment-shot-ground-in 200ms ease-out; \}/);
+  assert.ok(css.indexOf('.comment-shot-in.comment-shot-fill {') < css.indexOf('.comment-mode-leaving .comment-shot-in {'),
+    'leaving, which grows the picture back over the page, comes later and wins');
   // The picture is decoded before it goes up, or its first frame is a white box.
   assert.match(src, /decoded\.src = url;[\s\S]*?decoded\.decode\(\) : Promise\.resolve\(\)\)\.then\(show, show\);/);
   // Leaving plays the entrance backwards, then closes and opens what follows.
@@ -402,7 +460,7 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   assert.match(src, /className=\{leaving \? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'\}/);
   assert.match(src, /leave\(\(\) => \{\s*if \(post\) \{\s*handOver\(post\);/, 'Form opens after the mode has left');
   assert.match(src, /leave\(\(\) => handOver\(post\)\);/, 'and a failed post hands over the same way');
-  assert.match(src, /else leave\(\); \}\}/, 'the confirm\'s Discard on Done');
+  assert.match(src, /onClick=\{\(\) => leave\(\)\}/, 'the confirm\'s Discard on Done');
   assert.equal((src.match(/\bonClose\(\)/g) || []).length, 3, 'onClose only inside leave and on the cards\' links, which navigate (the sent card\'s link joins the marker card\'s, #5008)');
   assert.match(css, /\.comment-mode-leaving \.comment-shot-in \{ animation: comment-shot-out 200ms ease-in forwards; \}/);
   assert.match(css, /@keyframes comment-shot-out \{\s*to \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
@@ -516,8 +574,10 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
   // the question, then the usual one.
   assert.ok(label < bar.indexOf('{cropping && cropView ? ('), 'it leads the bar, before each of its states');
   assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
-  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate ps-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
+  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate ps-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm === 'exit' \? ' hidden sm:inline' : ''\}\$\{fingers \? ' sm:hidden' : ''\}`\}/,
     'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
+  // On a touch screen wide enough for the instruction, the word steps aside
+  // for it (phone review #78): beside each other neither fitted.
   // The same holds while the first picture draws and the bar says so (#5834).
   assert.match(src, /const barWords = shotLabel \|\| shotIntro;/);
   // On a phone the label takes the place of the mode's chat glyph, so the
@@ -1824,4 +1884,52 @@ test('with an entry left on the stack and no mark, the kit takes the key (the re
   const prevented = kit.press();
   assert.equal(kit.dismissed(), 1, 'the dialog behind closes');
   assert.equal(prevented, true, 'and comment mode never sees the press');
+});
+
+// ── The phone review of 23 Nov 2026 (proposal 2) ──────────────────────
+
+test('on a touch screen the bar and the box speak to a finger (phone review #10, #78)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /window\.matchMedia\('\(pointer: coarse\)'\)/);
+  // "Tap", and Post rather than Enter and Esc, which mean nothing without keys.
+  for (const id of ['hint.nextTouch', 'hint.writingTouch', 'hint.carryTouch', 'hint.anotherTouch', 'next.whereTouch']) {
+    assert.match(src, new RegExp(`t\\('devchat:commentPin\\.${id.replace('.', '\\.')}'\\)`), id);
+  }
+  assert.equal(message('devchat:commentPin.hint.writingTouch'), 'Post sends it.');
+  assert.equal(message('devchat:commentPin.hint.nextTouch'), 'Tap where the next comment goes');
+  // No Esc keycap inside Done on a touch screen.
+  assert.match(src, /\{fingers \? null : <kbd className="hidden rounded-\[5px\]/);
+});
+
+test('discarding a request is asked in its box, in a word (phone review #48)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.equal(message('devchat:commentPin.box.confirmDiscard'), 'Discard?');
+  assert.match(src, /const discardAsk = draft && confirm === 'discard' \? \(/);
+  assert.match(src, /const head = discardAsk \?\? \(draft && target \? \(/, 'in the box\'s head, beside its ✕');
+  assert.match(src, /\{discardAsk \? <div className="min-w-0 flex-1 ps-2"/, 'and in the phone\'s small box');
+  // The bar keeps only the question about leaving, and it wraps rather than
+  // being cut off beside its answers.
+  assert.match(src, /\) : confirm === 'exit' \? \(/);
+  assert.doesNotMatch(src, /commentPin\.bar\.confirmDiscard/);
+  assert.match(src, /min-w-0 whitespace-normal text-\[13px\] font-semibold leading-tight text-zinc-900 dark:text-white">\s*\{t\('devchat:commentPin\.bar\.confirmExit'\)\}/);
+});
+
+test('the box grows with its words, and the popover stays above the keys (phone review #111, #10)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /block max-h-\[160px\] w-full min-w-0 flex-1 resize-none bg-transparent text-\[15px\] leading-snug text-zinc-900 outline-none \[field-sizing:content\]/);
+  // The visible page's foot is read off the visual viewport, re-read as the
+  // keys move, and the box is placed and capped above it.
+  assert.match(src, /return Math\.round\(vv\.offsetTop \+ vv\.height\);/);
+  assert.match(src, /vv\.addEventListener\('resize', read\);\s*vv\.addEventListener\('scroll', read\);/);
+  assert.match(src, /height: Math\.max\(200, Math\.min\(size\.height - \(inset \|\| barAt \? 0 : BAR_SPACE\) - safeBottom, foot - 8\)\),/);
+  assert.match(src, /maxHeight: Math\.max\(160, viewport\(\)\.height - Math\.max\(8, inset \? band \+ 8 : 8\)\),\s*overflowY: 'auto',/);
+});
+
+test('comment mode keeps clear of the Duo\'s column (phone review #135, #8)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /style=\{\{ left: 0, width: 'var\(--platform-float-left, 0px\)' \}\}/);
+  assert.match(src, /style=\{\{ right: 0, width: 'var\(--platform-float-right, 0px\)' \}\}/);
+  assert.match(src, /const midX = side\.left \+ \(size\.width - side\.left - side\.right\) \/ 2;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-side-strip="right"\] #comment-pin-box\.comment-sheet \{\s*padding-right: calc\(var\(--platform-strip-w, 0px\) \+ 12px\);/);
 });

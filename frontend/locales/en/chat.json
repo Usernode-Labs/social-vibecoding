@@ -903,6 +903,10 @@
     "text": "A change",
     "description": "What the small vote card under a chat line about a change calls the change while neither its number nor its title is known yet."
   },
+  "group.voteCard.seeChange": {
+    "text": "See the change",
+    "description": "Button on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page, once that change is live and its vote is over: scrolls to that change’s section on the page. See is a verb."
+  },
   "group.voteCard.seeVote": {
     "text": "See the vote",
     "description": "Button on the line under Homeroom bot’s \"It’s up for a vote\" post on a request’s page, and on the small vote card about a change whose vote is over: scrolls to or opens that change’s Votes card. See is a verb."

@@ -25,6 +25,10 @@ const WIP_HIDES = [
   'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
   'html:not([data-skin]) #app-list .app-card-people',
+  // On a phone New project is the grid's last tile, not a button on the search row that waits under the header (phone review, 23 Nov 2026).
+  'html:not([data-skin]) #home-search-bar #home-new-project-top',
+  // While words are in the Communities page's search, New community gives the field its place, as New project does on Home (phone review, 23 Nov 2026).
+  'html:not([data-skin]) #communities-screen .communities-top:has(#communities-search-input:not(:placeholder-shown)) > #communities-new-top',
   // So it is beside the open sidebar up to 1280px, where the tile stays stacked: as a row its name had about 75px.
   'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
@@ -82,8 +86,11 @@ const MENU_HIDES = [
   'html:not([data-skin]) body #platform-header#platform-header::before',
   // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
-  // and the words, counts, headings, pins and nested places are the open menu's (asked 20 Nov 2026).
-  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x)',
+  // and the words, headings, pins and nested places are the open menu's (asked 20 Nov 2026); the counts on the
+  // places stay, on their glyphs' corners (phone review #81, 23 Nov 2026).
+  'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x)',
+  // On a phone's bar the lit tab is its own sun pill, so the sliding marker is not drawn as well (phone review #106).
+  'html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker',
 ];
 
 function menuBlock() {
@@ -249,7 +256,7 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   assert.ok(line, 'the top bar ends in a line');
   assert.match(line.body, /content: "";/);
   assert.match(line.body, /position: absolute;/, 'on the bar itself, which is the positioned box');
-  assert.match(line.body, /inset-block-end: 0;/, 'at its foot');
+  assert.match(line.body, /inset-block-end: 0\.5rem;/, 'at the page\'s top edge: the bar\'s -mb-2 overlap (#7048)');
   assert.match(line.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'from the menu\'s edge, open or folded to its strip');
   assert.match(line.body, /inset-inline-end: 0;/, 'to the window\'s');
   assert.match(line.body, /height: 1px;/);
@@ -265,6 +272,21 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   assert.equal(css.slice(query, css.indexOf('{', query)).trim(), '@media (min-width: 768px)');
   assert.ok(css.indexOf('\n}\n', query) > at, 'inside that query, not after it');
 
+  // THE PAGE STARTS AT THE FOOT (phone review #68, 23 Nov 2026): the bar no
+  // longer overlaps the page, the line stops at an iPhone Duo's column of
+  // system chrome, and a project's page keeps its gutter inside the box that
+  // clips it, so the clip is the line's own span.
+  const flush = all.find((r) => r.selector === `${MENU_SCOPE} body #platform-header#platform-header`);
+  assert.ok(flush && /margin-bottom: 0;/.test(flush.body), 'the page starts under the line');
+  const strip = all.find((r) => r.selector.includes('[data-side-strip="right"] body #platform-header#platform-header::after'));
+  assert.ok(strip, 'the line has a rule for the Duo\'s column');
+  assert.match(strip.body, /inset-inline-end: var\(--platform-strip-w, 0px\);/, 'and ends where the column starts');
+  const view = all.find((r) => r.selector.endsWith('#app-view[data-app-surface="platform"]:not(.hidden)'));
+  assert.ok(view, 'a project\'s page');
+  assert.match(view.body, /padding-inline: var\(--platform-rail-w, 0px\) 0;/, 'stands beside the menu with no gutter outside its clip');
+  const content = all.find((r) => r.selector.endsWith('#app-view[data-app-surface="platform"] > #app-content'));
+  assert.ok(content && /padding-inline: var\(--platform-gutter\);/.test(content.body), 'the gutter is inside the clip');
+
   // THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026): on Home and
   // Communities the bar paints the page's own ground again, so the search
   // field and the page's action pass behind it instead of showing through it
@@ -274,12 +296,12 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   assert.ok(under, 'Home and Communities paint the bar\'s layer');
   assert.match(under.body, /content: "" !important;/, 'it turns the layer back on against the content-none rule above');
   assert.match(under.body, /background: var\(--home-wallpaper\);/, 'with the page\'s own wallpaper, as the body paints it');
-  assert.match(under.body, /clip-path: inset\(0 0 0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\)\);/,
-    'clipped past the menu\'s edge and the rounded page corner');
+  assert.match(under.body, /clip-path: inset\(0 0 0\.5rem calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\)\);/,
+    'clipped past the menu\'s edge and the rounded page corner, and by the bar\'s -mb-2 at the foot');
   const rtlUnder = all.find((r) => r.selector === `${MENU_SCOPE}[dir="rtl"] body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before`);
   assert.ok(rtlUnder, 'right to left the menu is on the right');
-  assert.match(rtlUnder.body, /clip-path: inset\(0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\) 0 0\);/,
-    'so its strip is cut on the other side');
+  assert.match(rtlUnder.body, /clip-path: inset\(0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\) 0\.5rem 0\);/,
+    'so its strip is cut on the other side, and its foot by the bar\'s -mb-2');
   // Standard (WIP) makes the page and its frame one colour, so there the layer paints that colour.
   const wip = rules(wipBlock());
   const wipTokens = new Set();
@@ -307,7 +329,7 @@ test('on a community\'s page the Communities tab gives way to its row', () => {
   const glyph = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-glyph, .platform-tab-label)`);
   assert.ok(glyph, 'the glyph and the word stop wearing the lit row\'s on-ink');
   assert.match(glyph.body, /color: inherit;/);
-  const count = all.find((r) => r.selector === `${GIVE} .platform-tab-votes`);
+  const count = all.find((r) => r.selector === `${GIVE} :is(.platform-tab-votes, .platform-tab-badge)`);
   assert.ok(count, 'its count goes back to an unlit row\'s disc');
   assert.match(count.body, /background: var\(--wip-nav-count-bg\);/);
   assert.match(count.body, /color: var\(--wip-nav-count-ink\);/);
@@ -428,7 +450,7 @@ test('where the page scrolls under the top bar, the bar has a ground from the me
   // …and the page's top corner at that edge, drawn as the corner layer draws it, since the bar lies over that layer.
   assert.match(ltr.body, /radial-gradient\(circle at 100% 100%, transparent calc\(var\(--wip-nav-page-radius\) - 0\.5px\), var\(--wip-nav-bg\) var\(--wip-nav-page-radius\)\),\s*linear-gradient/, 'the corner is the top layer');
   assert.match(ltr.body, /background-position: var\(--platform-rail-w, 0px\) 0, 0 0;/);
-  assert.match(ltr.body, /background-size: var\(--wip-nav-page-radius\) var\(--wip-nav-page-radius\), auto;/);
+  assert.match(ltr.body, /background-size: var\(--wip-nav-page-radius\) var\(--wip-nav-page-radius\), 100% calc\(100% - 0\.5rem\);/, 'the plane ends at the line, 0.5rem above the box bottom (#7048)');
   assert.match(ltr.body, /background-repeat: no-repeat;/);
   assert.doesNotMatch(ltr.body, /radius: 0/, 'no corner is squared off');
   const rtl = all.find((r) => r.selector.startsWith(`${MENU_SCOPE}[dir="rtl"][data-browser-scroller] ${DOCKED} #platform-header,`));
@@ -444,6 +466,21 @@ test('where the page scrolls under the top bar, the bar has a ground from the me
   // The project's pause pill stands in the bar's row from 900px; where the bar is sticky at 30 with a ground, it rises over it.
   assert.match(css, /html:not\(\[data-skin\]\)\[data-browser-scroller\] body:has\(#platform-header \.header-place-name\) #dev-forum-scroll:has\([^{]*\) > #dev-code-pause-notice \{ z-index: 31; \}/);
   assert.match(css, /html\[data-browser-scroller\] :is\(#platform-header, #landing-header\) \{\s*position: sticky;\s*top: var\(--browser-banner-h\);\s*z-index: 30;/, 'the bar it rises over');
+});
+
+test('the All items head meets the top bar where the place bar is folded (asked 23 Nov 2026, #7050)', () => {
+  const css = read('public', 'css', 'app.css');
+  // The place bar is folded from 768px, so its height plus the column gap
+  // (`--dev-ws-head-top`, 10px) left a strip cards scrolled through above
+  // the pinned head. In that same block the All items head drops it and rests
+  // on the top bar's measured foot (`--ws-pin-top`), as the Hub's header does.
+  assert.match(css,
+    /html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] \.dev-ws-pane-head \{\s*top: var\(--ws-pin-top, 0px\);\s*\}/);
+  const fold = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar');
+  const head = css.indexOf('#dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head');
+  assert.ok(fold > 0 && head > fold, 'it goes in the 768px block that folds the bar, so it applies exactly when the bar is gone');
+  // The base rule keeps the measured gap for every other look and tab.
+  assert.match(css, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\)/);
 });
 
 test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {

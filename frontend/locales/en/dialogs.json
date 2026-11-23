@@ -2727,6 +2727,10 @@
     "text": "Click on the page to comment",
     "description": "Small line beside the Form / Comment switch at the top of the \"Suggest an improvement\" dialog: in comment mode a click on the page leaves the comment there."
   },
+  "feedback.mode.hintTouch": {
+    "text": "Tap the page to comment",
+    "description": "The same small line beside the Form / Comment switch of the \"Suggest an improvement\" dialog on a touch screen: in comment mode a tap on the page leaves the comment there."
+  },
   "topics.title": {
     "text": "Topics",
     "description": "Title of the Topics dialog, opened from a project's Settings & rules. A topic is one of the lasting conversations a project is organised by: a channel and a category of requests at once."

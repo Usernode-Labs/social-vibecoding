@@ -62,6 +62,10 @@ test('every kind is framed, and framed exactly once', () => {
         ? /you were let in from the waitlist and haven't signed in yet\. (We send one more reminder, then stop\.|This is the last reminder\.)/
         : activity
         ? /there was news on Homeroom for you and no phone to send it to\. Turn these emails off with the link above\./
+        : kind === 'app_slots_granted'
+          // #7043: a grant is about the person's own allowance, so its why
+          // line names that rather than a phone that could not take a push.
+          ? /an admin changed your app slots on Homeroom\. Turn these emails off with the link above\./
         : kind === 'content_report'
           ? /this address is Homeroom's compliance inbox for content reports\./
           : kind === 'release_hold'

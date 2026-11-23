@@ -74,7 +74,11 @@ test('D3: the stream tags a change\'s rows with it, and keeps a reply on it apar
   publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode' }, { id: 92, number: null }]);
   // #6236: each change's title rides along, for the line under the bot's
   // "It's up for a vote" post that names the change (vote-card.tsx VoteLine).
-  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null }, titles: { 91: 'Dark mode', 92: null } });
+  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get())), { number: 10, numbers: { 91: 6063, 92: null }, titles: { 91: 'Dark mode', 92: null }, live: {} });
+  // #116: a change that is live is marked, so its line says See the change.
+  publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode', state: 'merged' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(requestChangesStore.get().live)), { 91: true });
+  publishRequestChanges(10, [{ id: 91, number: 6063, title: 'Dark mode' }, { id: 92, number: null }]);
   const head = read(`${TOPIC}/request-head.tsx`);
   assert.match(head, /publishRequestChanges\(r\.number, layout\.changes\);/);
   assert.match(head, /GroupChat\?\.setThreadMembers\?\.\('issue', r\.number, layout\.changes\.map\(\(c\) => c\.id\)\)/);
@@ -592,7 +596,7 @@ test('D2: a change built for a request lands on the request\'s page, at it; one 
   const view = read('public/js/app-view.js');
   const sub = view.slice(view.indexOf('  async _renderTopicSubView(content, ref) {'), view.indexOf('    AppView._devTopic = ref.pr\n'));
   assert.match(sub, /if \(\(ref\.kind === 'proposal' \|\| ref\.kind === 'session'\) && ref\.id\) \{/, 'changes, proposals and shared addresses alike');
-  assert.match(sub, /const home = await AppView\._requestHomeOf\(ref\.id\);\s+if \(AppView\._devTopic !== asked\) return;\s+if \(home\) \{\s+AppView\._openChangeOnRequest\(home, ref\.id, \{ replaceRoute: true \}\);\s+return;/);
+  assert.match(sub, /const home = await AppView\._requestHomeOf\(ref\.id\);\s+if \(AppView\._devTopic !== asked\) return;\s+if \(home\) \{[\s\S]{0,900}?AppView\._openChangeOnRequest\(home, ref\.id, \{ replaceRoute: true \}\);\s+return;/);
   assert.match(view, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/change\/\$\{n\}\$\{AppView\._demoQS\(\)\}`\)/);
   const open = view.slice(view.indexOf('  _openChangeOnRequest(number, sessionId, options = {}) {'));
   assert.match(open, /window\.UsernodeReact\?\.devBoard\?\.showVotes\?\.\(sessionId\);/, 'with its Votes card in view');

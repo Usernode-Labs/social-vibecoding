@@ -329,13 +329,15 @@ function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt 
               el.addEventListener('pointerdown', (e) => e.stopPropagation());
             }}
             type="button"
-            className="app-card-remove absolute -top-1.5 -start-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
+            className="app-card-remove un-touch-target absolute -top-1.5 -start-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
             aria-label={t('home:edit.removeNamed', { app: app.name })}
             onClick={(e) => {
               e.stopPropagation();
               controller()?._editRemove?.(app.slug);
             }}
           >
+            {/* The badge is drawn at 20px and pressed at 44 (un-touch-target;
+                phone review, 23 Nov 2026: 20x20 was the whole target). */}
             {/* No MinusIcon in the kit's set: the glyph is the minus itself,
                 a text node at the badge's 20px scale. */}
             <span aria-hidden="true" className="text-[14px] leading-none font-semibold">&minus;</span>

@@ -401,6 +401,27 @@ const Home = {
     requestAnimationFrame(() => requestAnimationFrame(focus));
   },
 
+  // Home with these words in its search, as if typed (the Communities page's
+  // "Search communities to join", phone review 23 Nov 2026): Home's one search
+  // looks through the pinned apps, your communities and the ones to join. The
+  // value goes in through the input's own setter, so a field React draws
+  // (a look's kit page) takes it as typing too.
+  searchFor(words) {
+    if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
+    const run = () => {
+      // Home may not have drawn yet (a cold start on another page): wire its
+      // field first, so the words are searched and its × shows.
+      Home._wireSearch();
+      const input = Home._searchField();
+      if (!input) return;
+      const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')?.set;
+      if (set) set.call(input, String(words || '')); else input.value = String(words || '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      try { input.focus({ preventScroll: false }); } catch (err) { /* nothing to focus */ }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(run));
+  },
+
   // Home's Communities to join (One Home, #6361), the directory Discover
   // was: Home, scrolled to it once it is drawn.
   showCommunitiesToJoin() {
@@ -719,11 +740,13 @@ const Home = {
     // search row at every width, so its grid draws no tile. The brand look
     // ('brand') has the same button from 768px, where the search row is on
     // screen; a phone, whose search row waits to be pulled into view, keeps
-    // the tile. The standard look has the button at every width too since 20
-    // Nov 2026 (it takes Standard (WIP)'s top row), so its grid draws no tile
-    // either.
-    if (skin === 'wip' || skin === 'standard') return true;
-    if (skin !== 'brand') return false;
+    // the tile. The standard look takes Standard (WIP)'s top row (20 Nov
+    // 2026), and both now do as the brand look does (phone review, 23 Nov
+    // 2026): on a phone the button waited under the header with the search,
+    // so nothing on screen started a project until the page was pulled down.
+    // There the collapsed grid ends with the tile again, and the row is the
+    // field alone (app.css).
+    if (skin !== 'brand' && skin !== 'wip' && skin !== 'standard') return false;
     try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },
 

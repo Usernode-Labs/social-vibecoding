@@ -173,6 +173,28 @@ export function swatchFor(key: string): string {
  * icon is coloured at all: a black-and-white icon has no hue to lend.
  */
 export function deriveFromPixels(data: ArrayLike<number>): string | null {
+  const lab = dominantLab(data);
+  return lab ? fitLch(lab[0], Math.hypot(lab[1], lab[2]), Math.atan2(lab[2], lab[1]), SOFT) : null;
+}
+
+/**
+ * The same reading as `deriveFromPixels`, unfitted: the icon's main colour
+ * as it is drawn, for a card's band (`useIconMainColor`), which is washed
+ * out over the card's own ground rather than carrying white text. Null when
+ * the icon has little colour.
+ */
+export function mainColorFromPixels(data: ArrayLike<number>): string | null {
+  const lab = dominantLab(data);
+  if (!lab) return null;
+  let [L, a, b] = lab;
+  let lin = labToLin(L, a, b);
+  // A rounding step outside sRGB: pull the chroma in until it fits.
+  for (let i = 0; i < 40 && !inGamut(lin); i += 1) { a *= 0.95; b *= 0.95; lin = labToLin(L, a, b); }
+  return toHex(lin);
+}
+
+/** The OKLab average of an icon's heaviest hue and its two neighbours (see `deriveFromPixels`), or null. */
+function dominantLab(data: ArrayLike<number>): [number, number, number] | null {
   const BINS = 24;
   const weight = new Array<number>(BINS).fill(0);
   const px: Array<[number, number, number, number, number]> = [];
@@ -202,8 +224,7 @@ export function deriveFromPixels(data: ArrayLike<number>): string | null {
     if (d > 1) continue;
     sw += C; sL += L * C; sa += a * C; sb += b * C;
   }
-  const a = sa / sw; const b = sb / sw;
-  return fitLch(sL / sw, Math.hypot(a, b), Math.atan2(b, a), SOFT);
+  return [sL / sw, sa / sw, sb / sw];
 }
 
 /* ── the answer for a project ──────────────────────────────────────── */
@@ -324,4 +345,122 @@ export function useResolvedCommunityColor(src: ColorSource | null): string | nul
     return () => { live = false; };
   }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
   return color;
+}
+
+/* ── an icon's main colour, for a card with no picture ─────────────── */
+
+/**
+ * A COMMUNITY CARD WITH NO PICTURE (decided 23 Nov 2026) draws its icon as
+ * the picture, on a soft wash of the icon's MAIN colour: the colour itself,
+ * not a blur of the icon (a two-tone icon blurred into a blotch) and not the
+ * header's darkened fit. Where it comes from, in turn:
+ *
+ *   1. the colour dapp.json sets beside the icon, as it is;
+ *   2. the icon's own pixels, read once from a 64px canvas copy of the
+ *      same-origin image and kept under the icon's address
+ *      (`mainColorFromPixels`);
+ *   3. nothing, `'none'`, for an icon with little colour (black, white,
+ *      grey), an emoji, an initial or no icon: the card then wears one of the
+ *      brand's tints, chosen from the slug (`bandTint`).
+ *
+ * `null` means an image is still being read.
+ */
+export type MainColor = string | 'none' | null;
+
+const MAIN_PREFIX = 'communityMain:v1:';
+const mainMemo = new Map<string, string>();
+const mainInflight = new Map<string, Promise<string>>();
+
+/** A hex colour with enough colour in it to wash a band with, or null. */
+function colourful(hex: string | null | undefined): string | null {
+  const rgb = parseHex(hex);
+  if (!rgb) return null;
+  const [, a, b] = rgbToLab(rgb[0], rgb[1], rgb[2]);
+  return Math.hypot(a, b) >= 0.045 ? String(hex).trim().toLowerCase() : null;
+}
+
+function readMain(key: string): string | null {
+  if (mainMemo.has(key)) return mainMemo.get(key) || null;
+  try {
+    const v = window.localStorage.getItem(MAIN_PREFIX + key);
+    if (v && (v === 'none' || parseHex(v))) { mainMemo.set(key, v); return v; }
+  } catch { /* storage blocked: read it again */ }
+  return null;
+}
+
+function writeMain(key: string, value: string): void {
+  mainMemo.set(key, value);
+  try { window.localStorage.setItem(MAIN_PREFIX + key, value); } catch { /* best effort */ }
+}
+
+/** What can be said at once: the set colour, a kept reading, `'none'` without an image, or null while one has to be read. */
+export function iconMainColorNow(src: ColorSource): MainColor {
+  const set = colourful(src.color);
+  if (set) return set;
+  if (!src.iconUrl) return 'none';
+  return typeof window === 'undefined' ? null : readMain(src.iconUrl);
+}
+
+/** Read an icon's main colour once, and remember it. */
+export function deriveIconMainColor(src: ColorSource): Promise<string> {
+  const now = iconMainColorNow(src);
+  if (now) return Promise.resolve(now);
+  const key = src.iconUrl as string;
+  const running = mainInflight.get(key);
+  if (running) return running;
+  const job = new Promise<string>((resolve) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      const data = pixelsOf((ctx) => ctx.drawImage(img, 0, 0, 64, 64));
+      const value = (data && mainColorFromPixels(data)) || 'none';
+      writeMain(key, value);
+      mainInflight.delete(key);
+      resolve(value);
+    };
+    // Not kept: an icon that failed now may load next time.
+    img.onerror = () => { mainInflight.delete(key); resolve('none'); };
+    img.src = key;
+  });
+  mainInflight.set(key, job);
+  return job;
+}
+
+/** An icon's main colour as a hook: `null` while it is read, then a hex colour or `'none'`. A null source answers null. */
+export function useIconMainColor(src: ColorSource | null): MainColor {
+  const [main, setMain] = useState<MainColor>(() => (src ? iconMainColorNow(src) : null));
+  const sig = src ? `${src.color || ''}|${src.iconUrl || ''}` : '';
+  useEffect(() => {
+    if (!src) { setMain(null); return undefined; }
+    let live = true;
+    const now = iconMainColorNow(src);
+    setMain(now);
+    if (!now) void deriveIconMainColor(src).then((c) => { if (live) setMain(c); });
+    return () => { live = false; };
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  return main;
+}
+
+/** How many brand tints a card with no colour of its own picks from (app.css `--cm-tint-1` to `-5`). */
+export const BAND_TINTS = 5;
+
+/** The brand tint a community wears, 1 to BAND_TINTS: always the same one for the same slug. */
+export function bandTint(slug: string): number {
+  // FNV-1a, then mixed, so slugs a letter apart land apart.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < slug.length; i += 1) h = Math.imul(h ^ slug.charCodeAt(i), 0x01000193);
+  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12;
+  return ((h >>> 0) % BAND_TINTS) + 1;
+}
+
+/**
+ * What a band with no picture is washed with, as the attributes and style
+ * app.css reads: `--cm-wash` for an icon's own colour, `data-cm-tint` for a
+ * brand tint, and `data-cm-band="wait"` (the plain ground) while an image is
+ * read. `main` is `useIconMainColor`'s answer.
+ */
+export function bandWash(slug: string, main: MainColor): { attrs: Record<string, string>; style?: Record<string, string> } {
+  if (main === null) return { attrs: { 'data-cm-band': 'wait' } };
+  if (main === 'none') return { attrs: { 'data-cm-band': 'tint', 'data-cm-tint': String(bandTint(slug)) } };
+  return { attrs: { 'data-cm-band': 'wash' }, style: { '--cm-wash': main } };
 }

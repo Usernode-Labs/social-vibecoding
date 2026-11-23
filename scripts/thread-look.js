@@ -25,6 +25,12 @@
  *   - a rule that already names the thread keeps its selector.
  *   - a rule for <body>, for a direct child of <html>, or for another screen
  *     is left out: it could not match inside the thread.
+ *   - the vote picker is portaled out of the page (document.body, or the kit's
+ *     bottom sheet), so no scoped rule reaches it. The picker's frame carries
+ *     data-vote-look="thread" when its Vote button stands inside the page, and
+ *     each carried rule that names the picker (or the page's root, which
+ *     declares the look's tokens and typeface) is written a second time on
+ *     that marker, with :where adding no weight.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -65,6 +71,47 @@ function twin(one) {
   if (rest.includes('#dev-topic-thread') || rest.includes('#gc-thread')) return `${STD}${state} ${rest}`;
   if (rest.startsWith('body') || rest.startsWith('>') || rest.startsWith('#app-') || OTHER.test(rest)) return null;
   return `${STD}${state} ${SCOPE} ${rest}`;
+}
+
+/** What marks the portaled vote picker when its Vote button stands inside the thread page. */
+const VOTE = '[data-vote-look="thread"]';
+
+/** The state a standard-look selector carries after html:not([data-skin]), and the rest of it. */
+function splitStd(one) {
+  const t = one.trim();
+  if (!t.startsWith(STD)) return null;
+  let i = STD.length; let depth = 0;
+  for (; i < t.length; i += 1) {
+    const c = t[i];
+    if (c === '(' || c === '[') depth += 1;
+    else if (c === ')' || c === ']') depth -= 1;
+    else if (depth === 0 && (/\s/.test(c) || c === '>' || c === '+' || c === '~')) break;
+  }
+  return { state: t.slice(STD.length, i), rest: t.slice(i).trim() };
+}
+
+/**
+ * One carried selector, written again on the marked picker; null when it has
+ * nothing to do with it. The page's root rule (its tokens, its typeface) lands
+ * on the marker itself; a rule naming the picker's frame puts the marker on
+ * that frame, where the portaled element stands outside the page's scope.
+ */
+function voteTwin(one) {
+  const s = splitStd(one);
+  if (!s) return null;
+  if (s.rest === '#dev-topic-thread') return `${STD}${s.state} ${VOTE}`;
+  const rest = s.rest.startsWith(SCOPE) ? s.rest.slice(SCOPE.length).trim() : s.rest;
+  if (!rest) return null;
+  let i = 0; let depth = 0;
+  for (; i < rest.length; i += 1) {
+    const c = rest[i];
+    if (c === '(' || c === '[') depth += 1;
+    else if (c === ')' || c === ']') depth -= 1;
+    else if (depth === 0 && (/\s/.test(c) || c === '>' || c === '+' || c === '~')) break;
+  }
+  const first = rest.slice(0, i);
+  if (!/\.dev-vote-(pop|sheet)\b/.test(first)) return null;
+  return `${STD}${s.state} ${first}:where(${VOTE})${rest.slice(i)}`;
 }
 
 /** The rules of `css` (comments dropped), each with the at-rules around it. */
@@ -118,12 +165,15 @@ function generate(css) {
     const onRoot = twins.every((t) => t.endsWith(' #dev-topic-thread'));
     const body = onRoot ? r.body.split(';').filter((d) => !/^\s*background(-color|-image)?\s*:/.test(d)).join(';') : r.body;
     if (!body.trim()) continue;
-    lines.push(`${pad}${twins.join(`,\n${pad}`)} { ${tokenise(body.replace(/\s+/g, ' '), seen)} }`);
+    // The portaled vote picker is outside the page's scope, so the rules that paint it (and the page's own tokens and
+    // typeface) are written again on the marker its frame carries.
+    const all = [...twins, ...twins.map(voteTwin).filter(Boolean)];
+    lines.push(`${pad}${all.join(`,\n${pad}`)} { ${tokenise(body.replace(/\s+/g, ' '), seen)} }`);
   }
   if (open) lines.push('}'.repeat(open.split(' { ').length));
   lines.push(END);
   const names = [...seen.keys()].sort();
-  lines[1] = `/* The colours the carried rules wrote outright, each a token of the page, declared once. */\n${STD} #dev-topic-thread { ${names.map((n) => `${n}: ${seen.get(n)};`).join(' ')} }`;
+  lines[1] = `/* The colours the carried rules wrote outright, each a token of the page, declared once. */\n${STD} #dev-topic-thread, ${STD} ${VOTE} { ${names.map((n) => `${n}: ${seen.get(n)};`).join(' ')} }`;
   return { outside, block: lines.join('\n') };
 }
 
@@ -151,4 +201,4 @@ if (require.main === module) {
   } else if (next !== css) { fs.writeFileSync(CSS, next); console.log('[thread-look] wrote the block'); } else console.log('[thread-look] up to date');
 }
 
-module.exports = { build, generate, twin, START, END };
+module.exports = { build, generate, twin, voteTwin, VOTE, START, END };

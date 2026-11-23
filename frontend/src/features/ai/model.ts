@@ -586,7 +586,7 @@ function needKind(work: WorkState): string {
   if (work.why === 'needs_detail') return 'detail';
   // T2.10 (19 Nov 2026): a person verdict says what it waits on, from the
   // cause the server stored (services/bot-stop-cause.js handBackOf): never
-  // "Needs Reply" to a requester whose decision it is not.
+  // "Needs reply" to a requester whose decision it is not.
   if (work.why === 'decide' && work.cause && DECIDE_KINDS[work.cause]) return DECIDE_KINDS[work.cause];
   return 'decide';
 }
@@ -1145,10 +1145,14 @@ export function shortWords(t: AiThread): Phrase {
  */
 export function heroWords(needs: number, next: number, fresh = 0): Phrase | null {
   const anyFresh = fresh > 0;
-  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.bothFresh', values: { needs, fresh, next, count: fresh } };
-  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.needsFresh', values: { needs, fresh, count: fresh } };
-  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
-  if (needs > 0) return { id: 'messages:ai.hero.needs', values: { needs } };
+  // Phone review #22: "Needs you: 24" here beside "10 to vote" on a hub and
+  // "17 decisions" in the menu read as one count disagreeing with itself. It
+  // is the threads that ask something of you across every project, and says
+  // so ("24 threads need you"); the plural form follows that number.
+  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.threadsBothFresh', values: { needs, fresh, next, count: needs } };
+  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.threadsNeedsFresh', values: { needs, fresh, count: needs } };
+  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.threadsBoth', values: { needs, next, count: needs } };
+  if (needs > 0) return { id: 'messages:ai.hero.threadsNeeds', values: { needs, count: needs } };
   if (next > 0) return { id: 'messages:ai.hero.next', values: { next } };
   return null;
 }

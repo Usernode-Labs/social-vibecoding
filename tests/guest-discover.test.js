@@ -218,9 +218,9 @@ test('a card is the community card: its picture, its icon, its name over the mem
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: FACT_APPS }));
   const busy = cardOf(html, 'busy');
   // The picture first, a direct child, which the card-to-page morph grows from.
-  assert.match(busy, /^<article data-guest-(?:card|featured)="busy"[^>]*><span class="cm-card-pic" data-cm-scene="[1-6]" data-guest-card-cover="">/);
-  // Its own icon beside the name and the members, in words.
-  assert.match(busy, /<span class="cm-card-icon" data-icon="letter" aria-hidden="true">B<\/span><\/span><span class="cm-card-id"><a href="\/app\/busy" data-guest-card-link="" class="cm-card-name [^"]*">Busy<\/a><span class="cm-card-members" data-cm-members="">87 members<\/span>/);
+  // No picture of its own: its icon is the picture (an initial on its tile, over its tint), and the name stands alone over the members, in words.
+  assert.match(busy, /^<article data-guest-(?:card|featured)="busy"[^>]*><span class="cm-card-pic" data-cm-band="tint" data-cm-tint="[1-5]" data-guest-card-cover=""><span class="cm-band-face"><span class="cm-band-icon" data-icon="letter" aria-hidden="true">B<\/span><\/span>/);
+  assert.match(busy, /<span class="cm-card-body" data-cm-bare=""><span class="cm-card-head"><span class="cm-card-id"><a href="\/app\/busy" data-guest-card-link="" class="cm-card-name [^"]*">Busy<\/a><span class="cm-card-members" data-cm-members="">87 members<\/span>/);
   // This week: how many were active (the directory's active_users) and how many changes went live.
   assert.match(busy, /<span class="cm-week-in"><span>43 active<\/span><span class="cm-week-live">6 changes live this week<\/span><\/span>/);
   assert.match(cardOf(html, 'quiet'), /<span class="cm-week-in"><span>4 active this week<\/span><\/span>/, 'nothing went live: the active alone, with its week');
@@ -259,27 +259,28 @@ test('the cards are one grid that reflows, four across where four fit and two on
   }
   assert.match(card, /^<article [^>]*data-cm-lift=""/);
   assert.match(css, /\.cm-card\[data-cm-lift\]:hover \{ box-shadow: var\(--cm-edge-lift\); \}/);
-  assert.match(css, /\.cm-card\[data-cm-lift\]:hover \.cm-card-img \{ transform: scale\(1\.04\); \}/);
-  // A community with no picture wears one of the brand kit's backgrounds:
-  // no colour block, no glow, no large icon in the middle.
+  assert.match(css, /\.cm-card\[data-cm-lift\]:hover :is\(\.cm-card-img, \.cm-band-face\) \{ transform: scale\(1\.04\); \}/, 'the picture, or the band\'s icon, grows a little');
+  // A community with no picture draws its icon as the picture on a wash of
+  // its colour (23 Nov 2026), drawn by app.css: no stock background, no blur.
   const fresh = cardOf(html, 'fresh-one');
-  assert.match(fresh, /<span class="cm-card-pic" data-cm-scene="[1-6]" data-guest-card-cover="">/);
-  assert.doesNotMatch(html, /radial-gradient|blur-\[|style="background/);
+  assert.match(fresh, /<span class="cm-card-pic" data-cm-band="(?:wait|tint|wash)"[^>]* data-guest-card-cover=""><span class="cm-band-face"><span class="cm-band-icon"/);
+  assert.doesNotMatch(html, /data-cm-scene|radial-gradient|blur-\[|style="background/);
   // The arrow only shows under a pointer or keyboard focus.
   assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 end-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
-test('a project\'s picture that cannot load falls back to its brand background, never a broken image', () => {
+test('a project\'s picture that cannot load falls back to the card with no picture, never a broken image', () => {
   // #6784 review: the Home card showed a broken image when a project's
   // picture file was missing. The picture hears the browser's error, stops
-  // drawing it, and shows the background a project with no picture wears.
+  // drawing it, and shows the card a project with no picture wears: its icon as the picture.
   const src = read('frontend/src/features/communities/card.tsx');
   const at = src.indexOf('export function CommunityPicture(');
   const body = src.slice(at, src.indexOf('\nexport function ', at + 10));
   assert.ok(at > 0 && body, 'CommunityPicture is found');
   assert.equal(body.match(/onError=\{\(\) => setFailed\(true\)\}/g)?.length, 2, 'both pictures say when they cannot load');
   assert.match(body, /const picture = !!url && !failed;/, 'a failed picture is not drawn');
-  assert.match(body, /data-cm-scene=\{picture \? undefined : String\(cardScene\(community\.slug\)\)\}/, 'its background shows instead');
+  assert.match(body, /const wash = picture \? null : bandWash\(community\.slug, main\);/, 'the card with no picture shows instead');
+  assert.match(body, /\) : \(\s*<span className=\{faceClass \? `cm-band-face \$\{faceClass\}` : 'cm-band-face'\}>\s*<CommunityIcon community=\{community\} eager=\{eager\} band \/>/, 'its icon, as the picture');
   // A preview loop plays only over a picture that is shown.
   assert.match(read(DISCOVER), /\{shown && app\.preview_url \? <CardPreview src=\{app\.preview_url\} \/> : null\}/);
 });
@@ -467,7 +468,9 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // The kind chips fade at whichever edge has more chips, the AI page's own
   // rail, and a chosen kind names itself in Featured's heading (#6660).
   assert.match(src, /<FadeRail role="group" aria-label=\{ta\('auth:guest\.categories\.label'\)\}/);
-  assert.match(src, /kind \? t\('home:join\.featuredKind', \{ kind: ta\(`auth:guest\.category\.\$\{kind\}`\) \}\)\s*: wip \? t\('home:join\.featuredAppsCommunities'\) : t\('home:join\.featured'\)/);
+  // Featured is "Featured" in every look (phone review, 23 Nov 2026): no "Featured apps / communities" beside it.
+  assert.match(src, /kind \? t\('home:join\.featuredKind', \{ kind: ta\(`auth:guest\.category\.\$\{kind\}`\) \}\) : t\('home:join\.featured'\)\}/);
+  assert.doesNotMatch(src, /featuredAppsCommunities/);
   assert.equal(message('home:join.featuredKind', { kind: 'Games' }), 'Featured in Games');
   // Each featured card is the visitor's card, with no Join and no footer (#6609).
   assert.doesNotMatch(cardOf(html, 'game-corner'), /data-home-join=|data-guest-card-footer/);

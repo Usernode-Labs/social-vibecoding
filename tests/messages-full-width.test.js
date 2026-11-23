@@ -65,12 +65,16 @@ test('a conversation, a group and #general: at the right of the header, just bef
   const at = header.indexOf('<FullWidthToggle />');
   assert.ok(at > 0, 'the conversation header carries it');
   assert.equal(header.indexOf('<FullWidthToggle />', at + 1), -1, 'once');
-  assert.ok(at > header.indexOf('className="min-w-0 text-start flex-1"'), 'after the title, which takes the free width');
+  // Phone review #131 (23 Nov 2026): the discs are one fragment, drawn after
+  // the title in the page's row, or in the phone's bar beside the bell.
+  const row = header.slice(header.indexOf('<header className="messages-thread-header">'));
+  assert.ok(row.indexOf('{discs}') > row.indexOf('className="min-w-0 text-start flex-1"'), 'after the title, which takes the free width');
+  assert.match(header, /if \(discsInBar && barHost\) return createPortal\(discs, barHost\);/, 'or in the bar, on a phone');
   assert.equal(message('messages:header.groupMembers'), 'Group members');
   assert.ok(at > header.indexOf("aria-label={t('messages:header.groupMembers')}"), 'after a group\'s members disc');
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
   assert.equal(message('messages:header.actions'), 'Conversation actions');
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label=\{t\('messages:header\.actions'\)\}/,
+  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{toggleMenu\}[^>]*aria-label=\{t\('messages:header\.actions'\)\}/,
     'immediately before the ⋯ menu');
   // #3407: #general's way back to its hub leads the row; the toggle does not.
   assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');

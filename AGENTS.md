@@ -250,8 +250,9 @@ is no replay plan to write and nothing to verify locally.
   owns are **projects**. Use "project" in user-facing copy where the app is
   the thing being built; keep "app" where it is the thing being used (the
   App tab, Pinned apps).
-- **The phone's bar is Home · Communities · AI · Messages · You; the desktop
-  sidebar is Home, AI, Messages, Communities, then Recents and You** (#6019;
+- **The phone's bar is Home · Communities · AI · Messages · You, and the
+  desktop sidebar draws the same order, then Recents and You** (one order on
+  every layout since the phone review of 23 Nov 2026; #6019;
   One Home, #6361; the Communities tab came back on 18 Nov 2026). AI is the Homeroom bot's chat, which is not a row of Messages
   and is never drawn on the Messages screen: its page
   (`frontend/src/features/ai/`) is the lists, with **New chat**, a labelled
@@ -349,7 +350,9 @@ is no replay plan to write and nothing to verify locally.
   Communities page (`goToCommunity(null)`, `openCommunitiesPage` in
   `features/workshop/community-scope.ts`). The tab is a plain door to that
   page on both bars, lit there and on a community's own page. The markup
-  is the sidebar's order, and app.css orders the phone's five cells.
+  keeps the old sidebar order (Home, AI, Messages, Communities) for the
+  declared checks; app.css draws every layout in the one order with `order`,
+  and `tab-bar.tsx` hands screen readers and the Tab key that order.
   **Needs you** (`#needs`, `features/workshop/index.tsx`, the
   `#workshop-screen` root) is a page under Home, its header's arrow up to
   it: every decision owed across your projects

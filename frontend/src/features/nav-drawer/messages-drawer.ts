@@ -81,3 +81,18 @@ export function publishMessagesDrawer(next: MessagesDrawerState): void {
   if (was.on === next.on && was.level === next.level && was.title === next.title && was.sub === next.sub) return;
   messagesDrawerStore.set(next);
 }
+
+/**
+ * THE CONVERSATION'S DISCS IN THE BAR (phone review #131, 23 Nov 2026).
+ * In a conversation on the drawer the bar names it, and its members and ⋯
+ * discs sit in the bar beside the bell instead of floating over the first
+ * message (header-drawer.tsx ChatBarSlot renders the host, the thread's
+ * header portals its discs into it). Null whenever no conversation is open
+ * on the drawer, and so in the prerender.
+ */
+export const chatBarStore = createStore<{ host: HTMLElement | null }>({ host: null });
+
+export function publishChatBarHost(host: HTMLElement | null): void {
+  if (chatBarStore.get().host === host) return;
+  chatBarStore.set({ host });
+}

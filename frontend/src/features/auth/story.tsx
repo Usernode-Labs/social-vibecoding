@@ -373,8 +373,8 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
             <img
               src="/brand/landing-people.webp"
               alt=""
-              width={619}
-              height={434}
+              width={572}
+              height={410}
               draggable={false}
               className="h-auto w-[280px] max-w-full shrink-0 lg:w-[380px]"
             />
@@ -418,8 +418,8 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
         <img
           src="/brand/people.png"
           alt=""
-          width={816}
-          height={612}
+          width={576}
+          height={432}
           draggable={false}
           className={`mx-auto block h-auto ${s.picture} max-w-full`}
         />

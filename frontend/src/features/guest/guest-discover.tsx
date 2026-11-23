@@ -39,8 +39,8 @@
  * (the arrow only there and under keyboard focus, so a screen of cards at
  * rest carries no repeated marker); a press gives under the finger; and the
  * picture grows into the project page's band as it opens (./card-morph.ts).
- * A community with no picture of its own wears one of the brand kit's
- * backgrounds, always the same one (../communities/card.tsx `cardScene`).
+ * A community with no picture of its own draws its icon as the picture, on
+ * a wash of its colour (../communities/card.tsx, the card with no picture).
  *
  * Above the grid: the kinds of app the directory has. What an account adds
  * is the hero's to say
@@ -211,7 +211,7 @@ export function Card({ app, eager, featured = false, lead = false }: {
           <ProjectLink
             slug={app.slug}
             data-guest-card-link=""
-            className="cm-card-name outline-none after:absolute after:inset-0 after:z-[1] after:content-['']"
+            className="cm-card-name inline-flex min-h-11 items-center outline-none after:absolute after:inset-0 after:z-[1] after:content-['']"
           >
             {app.name}
           </ProjectLink>

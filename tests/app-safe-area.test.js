@@ -667,3 +667,46 @@ test('the panel\'s head card pads the edge the top window publishes', () => {
   assert.doesNotMatch(APP_CSS, /dev-request-scroll[^{}]*\{[^}]*--side-panel-edge/,
     'the cards, replies and composer below the head keep running under the column');
 });
+
+// ── The header over the frame's top (phone review #74, 23 Nov 2026) ──
+//
+// The header overlaps the frame by its 8px rounded foot, and on an iPhone
+// Duo held upright the header is the system's 80px top band itself, so the
+// frame started 7px inside the band and the app was told a 7px top inset
+// for a strip the header already covers.
+
+const DUO_UPRIGHT = { top: 80, right: 0, bottom: 34, left: 0 };
+const DUO_VIEWPORT = { width: 669, height: 951 };
+const box = (top, bottom, left = 0, right = 669) => ({ top, bottom, left, right, width: right - left, height: bottom - top });
+
+test('_frameRectBelowHeader: the part of the frame under the header is not the app\'s to pad', () => {
+  const frame = box(73, 951);
+  const header = box(0, 80);
+  const visible = AppView._frameRectBelowHeader(frame, header);
+  assert.equal(visible.top, 80, 'the frame is measured from the header\'s foot');
+  assert.equal(visible.bottom, 951);
+  assert.equal(visible.height, 871);
+  assert.deepEqual(AppView._frameInsets(DUO_UPRIGHT, visible, DUO_VIEWPORT), { top: 0, right: 0, bottom: 34, left: 0 });
+  // Before: the raw rect told the app a 7px top inset.
+  assert.equal(AppView._frameInsets(DUO_UPRIGHT, frame, DUO_VIEWPORT).top, 7);
+});
+
+test('_frameRectBelowHeader: a header that does not lie over the frame changes nothing', () => {
+  const frame = box(0, 951);
+  assert.equal(AppView._frameRectBelowHeader(frame, null), frame, 'no header (chromeless)');
+  const below = box(97, 844);
+  assert.equal(AppView._frameRectBelowHeader(below, box(0, 97)), below, 'a frame starting at the foot');
+  const beside = box(60, 650, 300, 900);
+  assert.equal(AppView._frameRectBelowHeader(beside, box(0, 70, 0, 280)), beside, 'a header beside the frame covers none of it');
+  assert.equal(AppView._frameRectBelowHeader(frame, box(0, 0)), frame, 'a header with no height');
+});
+
+test('safeAreaForFrame measures the frame below the header', () => {
+  const fn = APP_VIEW.slice(
+    APP_VIEW.indexOf('safeAreaForFrame(id) {'),
+    APP_VIEW.indexOf('// Post the current insets into every owned frame')
+  );
+  assert.match(fn, /const visible = AppView\._frameRectBelowHeader\(rect, AppView\._platformHeaderRect\(\)\);/);
+  assert.match(fn, /AppView\._frameInsets\(raw, visible, viewport\)/);
+  assert.match(fn, /AppView\._frameKeyboardInset\(visible, viewport, keyboard\)/);
+});
