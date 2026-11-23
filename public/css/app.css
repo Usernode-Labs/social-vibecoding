@@ -848,6 +848,8 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-state,
 .messages-empty,
 .messages-thread-empty,
+/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
+.messages-guide { display: none; }
 .messages-no-selection {
   display: flex;
   align-items: center;
@@ -7744,7 +7746,6 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
    project's channel is. It was the list alone in the middle of the page.
    The pane's own heading and line give way to the guide's. A phone's list
    is alone as before (its drawer never has `messages-list-page`). */
-.messages-guide { display: none; }
 @media (min-width: 768px) {
   html:not([data-skin]) .messages-layout.messages-list-page { gap: var(--wip-gutter); padding: 1rem var(--wip-gutter) var(--wip-gutter); }
   html:not([data-skin]) .messages-layout.messages-list-page > .messages-list-pane { flex: none; width: 26rem; max-width: 42%; margin: -0.5rem 0 0; }
