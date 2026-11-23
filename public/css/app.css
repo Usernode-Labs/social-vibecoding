@@ -31884,6 +31884,22 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
    title, as it is at the top of the page; only the sizes change, so nothing swaps places while the page scrolls. */
 html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { grid-row: 2; }
 html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is(.messages-thread-sub, .messages-thread-kicker, [data-change-status], [data-request-status]) { grid-row: 1; }
+/* A NARROW HEAD WRAPS ITS SMALL LINE (audit, 23 Nov 2026). The number and the status pill are `max-content` cells, so
+   where the head is narrow (a phone, a thread beside a list) a long pill ("Goes live in ~2d 22h · 1/2") ran over ⋯ and
+   off the card, and took the title's cell with it. The project and topic had already been squeezed to nothing there,
+   leaving their "·" at the start of the line. Under 340px of text a head with a pill makes its line the number and the
+   pill alone, and the pill drops under the number when the two do not fit; a pill wider than the line on its own (a
+   320px phone) ends in "…" there, never under ⋯. A head with no pill (a private thread's lock line) is left as it is. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) { container: thread-head-text / inline-size; }
+@container thread-head-text (max-width: 340px) {
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; grid-row: 1; grid-column: 1 / -1; min-width: 0; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > .messages-thread-sub { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) .messages-thread-kicker::before { content: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) :is([data-change-status], [data-request-status]) { margin-inline-start: 0; max-width: 100%; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) :is([data-change-status], [data-request-status]) .gc-vote-count-label { display: block; overflow: hidden; text-overflow: ellipsis; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { grid-row: 2; }
+  html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { grid-row: 1; }
+}
 /* A phone's head: the same card, a size down. */
 @media (max-width: 767px) {
   html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
