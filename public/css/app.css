@@ -7745,7 +7745,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
    screen. Not while the app has the whole window (the header is hidden). */
 @media (min-width: 768px) {
   html:not([data-skin]) body:not(:has(#platform-header.hidden)) #app-frame-host {
-    margin: 0.25rem var(--wip-gutter) var(--wip-gutter);
+    /* The app's view starts 8px under the bar's foot (the sheet tucked its round top there): the card clears the bar's line by its own 8px. */
+    margin: 1rem var(--wip-gutter) var(--wip-gutter);
     border: 1px solid var(--wip-card-line);
     border-radius: var(--wip-card-radius);
     box-shadow: var(--wip-card-shadow);
