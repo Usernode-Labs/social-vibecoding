@@ -3160,6 +3160,17 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
   --un-toast-bg: #1c1c2a;
 }
 
+/* AN ALERT OVER A DIALOG IS A CARD OF ITS OWN (23 Nov 2026). The kit's
+   alert has no edge: it stands out by the dimmed page behind it. But its
+   scrim is under an open dialog (9990 against the dialog's 9992), so "Leave
+   this group?" raised from Group members was a white card on a white card,
+   a hole in the dialog with its rows cut off on either side. The alert's
+   scrim comes over the dialog (the kit appends it just before the card, and
+   after any dialog), and the card has a hairline and a shadow wherever it
+   stands. */
+.un-backdrop:has(+ .un-alert) { z-index: 9992; }
+html:not([data-skin]) .un-alert { box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 18px 48px -18px rgb(0 0 0 / 0.45); }
+
 .platform-chat-header.un-scrolled,
 .un-navbar,
 .un-action-card,
