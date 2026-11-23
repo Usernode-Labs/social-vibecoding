@@ -134,6 +134,16 @@ test('on a phone, a Home icon is never wider than its cell, so large text sizes 
   assert.match(css, /html:not\(\[data-skin\]\) #app-list > \.app-card > \.relative > \.app-icon-tile \{ width: 100%; height: 100%; border-radius: min\(1\.25rem, 36%\); \}/);
 });
 
+test('the cascade self-check measures its probe against the root, so a large text size is not reported as broken', () => {
+  // A healthy probe is 0.65rem; one that lost the cascade inherits the body's
+  // size, which is the root's. Three quarters of the root sits between them
+  // at every text size, where a fixed 12px failed a healthy probe from 125%.
+  const src = headSrc();
+  assert.match(src, /var rootSize = parseFloat\(getComputedStyle\(document\.documentElement\)\.fontSize\) \|\| 16;/);
+  assert.match(src, /if \(!\(size > 0 && size < rootSize \* 0\.75\) \|\| weight !== '500' \|\| !tinted\)/);
+  assert.doesNotMatch(src, /size < 12\)/, 'no fixed 12px threshold');
+});
+
 // ── The slider's steps (#6510) ───────────────────────────────────────────
 
 // The head's Display module, run alone against a fake page.
