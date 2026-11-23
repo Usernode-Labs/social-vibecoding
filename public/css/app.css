@@ -8437,6 +8437,16 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     border: 0;
     box-shadow: none;
   }
+  /* THE ALL ITEMS HEAD KEEPS NO GAP OF THE FOLDED PLACE BAR (asked #7050).
+     `useStripInsets` still publishes the place bar's height plus the
+     column gap as `--dev-ws-head-top`, and the head rests on that. From
+     768px the bar above is folded to nothing, so that 10px was a strip
+     cards scrolled through. Scoped like the fold above: the head comes to
+     rest on the top bar's foot exactly when the bar it was spaced from is
+     gone, and every other look and Workshop page keeps its own offset. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head {
+    top: var(--ws-pin-top, 0px);
+  }
   html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }
   html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title { display: none; }
 }
