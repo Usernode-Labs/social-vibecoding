@@ -124,17 +124,22 @@ jobs:
             --jq '.jobs[] | select(.name == "Publish atomic Helm release" and .conclusion == "success") | .steps[] | select(.name == "Promote OCI release tag" and .conclusion == "success") | .completed_at // empty')"
           echo "completed_at=$completed_at" >> "$GITHUB_OUTPUT"
 
-      # The observer is from the trusted workflow revision. It never
-      # executes code from the triggering run or consumes its artifacts.
-      - uses: actions/checkout@v6
+      # Fetch the two scripts from the trusted workflow revision. Reading
+      # files directly also avoids checkout's submodule cleanup.
+      - name: Fetch the observer from the workflow revision
         if: steps.promotion.outputs.completed_at != ''
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/observe-kubernetes-rollout.js
-            scripts/promote-kubernetes-chart.js
-          sparse-checkout-cone-mode: false
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]]
+          observer_dir="$RUNNER_TEMP/observe-kubernetes-rollout"
+          mkdir -p "$observer_dir"
+          for script in observe-kubernetes-rollout.js promote-kubernetes-chart.js; do
+            gh api --method GET -H 'Accept: application/vnd.github.raw+json' \
+              "repos/$GITHUB_REPOSITORY/contents/scripts/$script" -f "ref=$WORKFLOW_SHA" > "$observer_dir/$script"
+            test -s "$observer_dir/$script"
+          done
 
       - name: Measure Argo sync, migration and live traffic
         if: steps.promotion.outputs.completed_at != ''
@@ -145,4 +150,4 @@ jobs:
           RELEASE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
           RELEASE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           PROMOTED_AT: ${{ steps.promotion.outputs.completed_at }}
-        run: node scripts/observe-kubernetes-rollout.js
+        run: node "$RUNNER_TEMP/observe-kubernetes-rollout/observe-kubernetes-rollout.js"
