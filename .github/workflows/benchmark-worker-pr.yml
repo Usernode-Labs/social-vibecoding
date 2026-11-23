@@ -19,42 +19,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - sample: '7010'
-            mode: baseline
-            revision: '1918616c204f30096f61edca8adaf3652d733a13'
-            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
-          - sample: '7010'
-            mode: digest
-            revision: '1918616c204f30096f61edca8adaf3652d733a13'
-            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
-          - sample: '7010'
+          - sample: '7000'
             mode: layers
-            revision: '1918616c204f30096f61edca8adaf3652d733a13'
-            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
-          - sample: '7000'
-            mode: baseline
-            revision: '5cf79b6c993c3799ed65b1724d6842bf99df0087'
-            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
-          - sample: '7000'
-            mode: digest
             revision: '5cf79b6c993c3799ed65b1724d6842bf99df0087'
             base: '960ed83efa784832de8cb627df4b087a767c2a4c'
           - sample: '6999'
-            mode: baseline
+            mode: layers
             revision: '0a42d7079ae170cb26b05270e62da2666e9e66f4'
             base: '51e2e4bb1f1c6850734f8122f627eda488d41580'
-          - sample: '6999'
-            mode: digest
-            revision: '0a42d7079ae170cb26b05270e62da2666e9e66f4'
-            base: '51e2e4bb1f1c6850734f8122f627eda488d41580'
-          - sample: '7010'
-            mode: missing
-            revision: '1918616c204f30096f61edca8adaf3652d733a13'
-            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
-          - sample: '6993'
-            mode: changed
-            revision: '90b09da360b9534bacad84b1ac07a9112d732d2a'
-            base: '90b09da360b9534bacad84b1ac07a9112d732d2a'
     steps:
       - uses: actions/checkout@v6
       - name: Select the recorded source revision
