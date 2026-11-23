@@ -1033,7 +1033,7 @@
   },
   "join.sort.label": {
     "text": "Sort communities",
-    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular and Most active."
+    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular, Most active and A to Z."
   },
   "join.sort.new": {
     "text": "New",
@@ -1046,6 +1046,10 @@
   "join.sort.active": {
     "text": "Most active",
     "description": "One choice of the sort menu in Communities to join on Home: the communities with the most people active lately first. It is the starting order."
+  },
+  "join.sort.name": {
+    "text": "A to Z",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities in alphabetical order by name."
   },
   "join.members_one": {
     "text": "{{count}} member",
