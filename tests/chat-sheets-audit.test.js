@@ -24,9 +24,9 @@ test('C03: the phone\'s Messages list keeps the rows\' own type and time', () =>
   assert.doesNotMatch(block, /\.messages-row-name \{ font-size: 15px; font-weight: 400; \}/, 'no 400-weight title');
   assert.doesNotMatch(block, /\.messages-row-preview \{ font-size: 12px;/, 'no 12px last line');
   assert.doesNotMatch(block, /\.messages-row-time[^{]*\{ display: none; \}/, 'the time stays');
-  // The house rule the column now inherits: 15 over 13 at 650.
-  assert.match(CSS, /\n\.messages-row-name \{ color: var\(--text-primary\); font-size: 15px; font-weight: 650;/);
-  assert.match(CSS, /\n\.messages-row-preview \{ margin-top: 2px; color: var\(--text-muted\); font-size: 13px;/);
+  // The house rule the column now inherits: 15 over 13 at 650, in rem so Text size scales it.
+  assert.match(CSS, /\n\.messages-row-name \{ color: var\(--text-primary\); font-size: 0\.9375rem; font-weight: 650;/);
+  assert.match(CSS, /\n\.messages-row-preview \{ margin-top: 2px; color: var\(--text-muted\); font-size: 0\.8125rem;/);
 });
 
 test('C06: an empty reply box on a request or a channel shows Send faded, as Messages does', () => {

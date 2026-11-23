@@ -695,7 +695,9 @@ carry most of them.
 
 - **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
   subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
-  same pair. A 17px bold row title makes every row a heading.
+  same pair. A 17px bold row title makes every row a heading. Write them in
+  rem (0.9375rem over 0.8125rem), as the primitives do: Settings' Text size
+  scales rem, and a size in px stays put when someone turns it up.
   **The Homeroom bot tab's lists are the one exception** (30 Oct 2026,
   `frontend/src/features/ai/lists.tsx`): every thread you are in across
   projects, so a row is one 14px line (a glyph, its number from 768px, its

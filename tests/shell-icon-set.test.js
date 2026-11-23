@@ -223,9 +223,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
-    // SwooshArrowIcon: the drawn arrow before Invite on a project's hub,
-    // under the Standard (WIP) look only, so never in the cold document.
-    'M0.9 15.1C5.6 9.1 12.4 8.3 18.2 11.1L17.7 12.7C12.4 10.3 6.4 10.8 0.9 15.1ZM22.3 13.3L18.9 9.4L18.4 11.8L16.3 13.6Z',
     // ── The Communities tab is a row of its own again (18 Nov 2026) ─────
     //
     // The sidebar's "All communities" row drew Squares2X2Icon in the static
@@ -382,9 +379,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // redesign (Nov 2026): How to test draws both chevrons, one hidden.
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
-    // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,
-    // whose rows render only after mount, so it is never in a cold document.
-    'M7 20l4-16m2 16l4-16M6 9h14M4 15h14',
+    // HashIcon ('M7 20l4-16m2 16l4-16M6 9h14M4 15h14') left this list with
+    // Messages' guide (#7040): the guide is in the empty pane's first render,
+    // so its "Looking for a project's chat?" row draws the glyph in the cold
+    // document. (#2802 had it only in the desktop rail's Recents, after mount.)
     'M7 3v5h8',
     'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
     // THE SPEECH BUBBLE, added by #2718's review. It was the leading glyph of

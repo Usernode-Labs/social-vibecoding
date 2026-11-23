@@ -10,6 +10,9 @@
  *   (what happened, and every item; 6 Nov 2026: it took Your work's place
  *   there) and the Discussion (#general and its last line, or "No messages
  *   yet."). ForYouCard.
+ *   TOPICS, a row for each live topic's channel. TopicsCard.
+ *   TOP CONTRIBUTORS, the people who took part most, this month or over
+ *   all time, each a name and a count in words. ContributorsCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after
  *   shot, its title, and who made it and when; before any has, the app
  *   itself and since when it has been live. RecentlyLive.
@@ -85,6 +88,7 @@ import { openFirstVersion } from '../../ai/where';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
+import { swatchFor } from '../../messages/format';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
 import {
@@ -869,6 +873,69 @@ export function TopicsCard({ data, onOpen }: {
             title={t('project:places.list.showMore', { count: more })}
           />
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+/** Below this many people over all time the hub has no Top contributors card: no list of one. */
+export const HUB_CONTRIBUTORS_MIN = 2;
+
+/**
+ * TOP CONTRIBUTORS (request 6837): the people who took part most in this
+ * project, up to five, the most first, each a face, a name and one count in
+ * words ("14 contributions": their changes that went live, their votes on
+ * changes and the requests they filed). The order is the ranking: no rank
+ * number, no medal, no chart, and nobody is listed at zero. The head's
+ * switch picks This month or All time; it opens on This month, or on All
+ * time while nobody has taken part yet this month. Rows are for reading and
+ * open nothing. No card until two people have taken part, so a project that
+ * is just yours shows no list of one. The names are the server's
+ * (GET /api/apps/:slug/community `contributors`); an answer without them
+ * draws nothing.
+ */
+export function ContributorsCard({ data }: { data: CommunityPayload | null }): ReactNode {
+  const t = useMessages('project');
+  const headId = useId();
+  const [picked, setPicked] = useState<'month' | 'all' | null>(null);
+  const month = data?.contributors?.month || [];
+  const allTime = data?.contributors?.all_time || [];
+  if (allTime.length < HUB_CONTRIBUTORS_MIN) return null;
+  const span = picked || (month.length ? 'month' : 'all');
+  const people = span === 'month' ? month : allTime;
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-contributors={span} aria-labelledby={headId}>
+      <div className="dev-ws-hub-sechead">
+        <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.contributors.title')}</SectionHeader>
+        <div className="dev-ws-contrib-span" role="group" aria-label={t('project:hub.contributors.span')}>
+          <button type="button" data-ws-contrib-span="month" aria-pressed={span === 'month'} onClick={() => setPicked('month')}>
+            {t('project:hub.contributors.month')}
+          </button>
+          <button type="button" data-ws-contrib-span="all" aria-pressed={span === 'all'} onClick={() => setPicked('all')}>
+            {t('project:hub.contributors.allTime')}
+          </button>
+        </div>
+      </div>
+      <div className="dev-ws-strip dev-ws-foryou">
+        {people.length ? people.map((person) => (
+          <ListRow
+            key={person.id}
+            as="div"
+            inset="none"
+            chevron={false}
+            className="dev-ws-foryou-row dev-ws-contrib-row"
+            data-ws-contributor={person.username}
+            leading={(
+              <span className="dev-ws-hero-face dev-ws-contrib-face" style={{ background: swatchFor(person.username) }} aria-hidden="true">
+                {(person.username || '?').charAt(0).toUpperCase()}
+              </span>
+            )}
+            title={person.username}
+            trailing={<span className="dev-ws-foryou-count">{t('project:hub.contributors.count', { count: person.n })}</span>}
+          />
+        )) : (
+          <p className="dev-ws-week-note" data-ws-contrib-none="">{t('project:hub.contributors.emptyMonth')}</p>
+        )}
       </div>
     </section>
   );

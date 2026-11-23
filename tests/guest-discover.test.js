@@ -372,6 +372,11 @@ test('an app open for a visitor is pinned from the landing\'s bar, to this devic
   assert.match(actions, /className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-\[15px\] font-semibold /);
   assert.equal(message('auth:landing.pinApp'), 'Pin');
   assert.equal(message('auth:landing.pinnedApp'), 'Pinned');
+  // Pin and Sign in sit over the bar's trailing box and are wider than the
+  // title's px-10 keeps clear, so while Pin is there the title keeps 112px
+  // at its end and the app's name ends before them (visual audit, Nov
+  // 2026). Pixels: a rem grows with the text size and the buttons hardly do.
+  assert.match(src, /id="landing-header-title"\s+className="flex-1 min-w-0 px-10 [^"]* \[#landing-header:has\(\[data-landing-pin-app\]\)_&\]:pe-\[112px\]"/);
   assert.equal(message('auth:landing.pinAppNamed', { app: 'Game Corner' }), 'Pin Game Corner to Home');
   // Pressing it writes this device's list, which Home's Pinned apps reads.
   const { renderToHtml, createElement } = require('./lib/render-tsx');
@@ -1094,6 +1099,28 @@ test('the search is put away until its button is pressed, and stays in the docum
   // finds the field.
   const manifest = JSON.parse(read('dapp.json'));
   assert.ok(manifest.tests.some((t) => /\[data-guest-discover\]:has\(\[data-guest-search\]\)/.test(t.expectSelector || '')));
+});
+
+test('a visitor\'s search that matches nothing says so, rather than leaving the page blank (visual audit, Nov 2026)', () => {
+  // The list is the visitor's whole page under the search, and it drew
+  // nothing for a search with no matches: the heading, filters and cards
+  // went and nothing took their place. Signed-in Home answers that itself,
+  // so the list stays empty unless it is handed a line to draw.
+  const { CommunitiesToJoin } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const line = () => createElement('p', { 'data-guest-empty': '' }, 'none');
+  const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: APPS, exclude: new Set(), signedIn: false, query: 'zzzzqqq', ...over,
+  }));
+  assert.equal(draw(), '', 'with no line given, still nothing');
+  assert.equal(draw({ emptyLine: line() }), '<p data-guest-empty="">none</p>');
+  assert.match(draw({ query: 'o', emptyLine: line() }), /data-guest-card=/, 'a search with matches draws them');
+  assert.doesNotMatch(draw({ query: 'o', emptyLine: line() }), /data-guest-empty/, 'and not the line');
+  // The visitor's page hands it the catalog's own line for this case.
+  const src = read(DISCOVER);
+  assert.match(src, /emptyLine=\{\(\s*<p data-guest-empty="" role="status" className="[^"]*">\s*\{t\('auth:guest\.empty'\)\}\s*<\/p>\s*\)\}/);
+  assert.equal(message('auth:guest.empty'), 'No apps match that yet.');
+  assert.doesNotMatch(read('frontend/src/features/home/home-join.tsx'), /emptyLine/, 'Home keeps its own answer');
 });
 
 

@@ -796,15 +796,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.messages-row-name { color: var(--text-primary); font-size: 15px; font-weight: 650; line-height: 20px; }
-.messages-row-preview { margin-top: 2px; color: var(--text-muted); font-size: 13px; line-height: 18px; }
+/* In rem, like everything a person reads in a conversation (a message, its
+   sender and time, the composer): Settings › Accessibility › Text size makes
+   text bigger everywhere by scaling rem, and these were fixed pixels, so at
+   150% the page's headings grew and the messages themselves did not. The
+   same 15 over 13 (and 17 in a conversation) at the default size. */
+.messages-row-name { color: var(--text-primary); font-size: 0.9375rem; font-weight: 650; line-height: 1.25rem; }
+.messages-row-preview { margin-top: 2px; color: var(--text-muted); font-size: 0.8125rem; line-height: 1.125rem; }
 /* An invitation's preview is the ACTION the row offers, so it takes the
    accent — the language's "actionable / yours". */
 .messages-row-preview-invited { color: var(--accent); font-weight: 500; }
 .messages-row-time {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
 }
 /* #18 of the 19 Oct polish board, ONE MEANING PER BADGE: the accent is
@@ -834,9 +839,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex: 0 0 auto;
   margin-inline-start: 8px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 650;
-  line-height: 18px;
+  line-height: 1.125rem;
   white-space: nowrap;
 }
 
@@ -848,6 +853,8 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-state,
 .messages-empty,
 .messages-thread-empty,
+/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
+.messages-guide { display: none; }
 .messages-no-selection {
   display: flex;
   align-items: center;
@@ -1091,12 +1098,15 @@ html.web-browser-chrome.platform-kb-short {
   gap: 0 8px;
   min-width: 0;
   min-height: 22px;
+  /* Never wider than the message's column: at a large text size a long
+     name pushed the time past the screen's edge. The name gives way. */
+  max-width: 100%;
   color: var(--text-primary);
-  font-size: 17px;
+  font-size: 1.0625rem;
   font-weight: 700;
 }
 .messages-message-head time,
-.messages-message-head time ~ span { color: var(--text-muted); font-size: 15px; font-weight: 400; white-space: nowrap; }
+.messages-message-head time ~ span { color: var(--text-muted); font-size: 0.9375rem; font-weight: 400; white-space: nowrap; }
 /* QA 2026-09-24 Q22: a long name gives way before the time does. The name
    takes what the line has left, up to its own width, and ends in an ellipsis
    rather than breaking at a hyphen; the time never wraps inside itself. The
@@ -1122,7 +1132,7 @@ html.web-browser-chrome.platform-kb-short {
    later in this file, which a bare .messages-markdown would lose to. */
 .messages-markdown.gc-msg-content {
   color: var(--text-primary);
-  font-size: 17px;
+  font-size: 1.0625rem;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -1210,7 +1220,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   padding: 10px 16px;
   color: var(--text-primary);
   background: var(--messages-surface);
-  font-size: 17px;
+  font-size: 1.0625rem;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -1764,7 +1774,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   padding: 9px 12px;
   color: var(--text-primary);
   background: var(--messages-surface);
-  font-size: 17px;
+  font-size: 1.0625rem;
   line-height: 1.3;
   /* `resize: vertical` stays: the grow is a floor on convenience, not a
      ceiling on choice, and a hand-dragged height is a deliberate act the next
@@ -1944,8 +1954,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   padding: 9px 4px;
   color: var(--text-primary);
   background: transparent;
-  font-size: 17px;
-  line-height: 22px;
+  font-size: 1.0625rem;
+  line-height: 1.375rem;
   outline: none;
   resize: none;
   /* #1408: lib/use-auto-grow.ts sets `height` to the content height, and
@@ -2567,12 +2577,12 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    and the composer and the inline editor come down with it, so what you type
    is the size it will be drawn at. Nothing new on the scale: 17 → 15 → 13. */
 @media (min-width: 768px) {
-  .messages-message-head { min-height: 20px; font-size: 15px; }
+  .messages-message-head { min-height: 20px; font-size: 0.9375rem; }
   .messages-message-head time,
-  .messages-message-head time ~ span { font-size: 13px; }
-  .messages-markdown.gc-msg-content { font-size: 15px; line-height: 1.4; }
-  .messages-composer-input { font-size: 15px; }
-  .messages-edit textarea { font-size: 15px; }
+  .messages-message-head time ~ span { font-size: 0.8125rem; }
+  .messages-markdown.gc-msg-content { font-size: 0.9375rem; line-height: 1.4; }
+  .messages-composer-input { font-size: 0.9375rem; }
+  .messages-edit textarea { font-size: 0.9375rem; }
 }
 
 /* A READABLE MEASURE (N14 of the 19 Oct polish board). A message's text ran
@@ -2725,8 +2735,10 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    Text size scales everything in rem — the primitives' text-[0.9375rem],
    Tailwind's text-xs…text-3xl, and the rem paddings and heights with them,
    so tap targets keep their proportion. Fixed-pixel text (font-size: Npx
-   rules and text-[Npx] classes) deliberately does not scale; converting it
-   is a later change. CSS zoom was ruled out: the shell is pinned to
+   rules and text-[Npx] classes) does not scale. Messages (its list, a
+   conversation and its composer, which a project's channel shares) is in
+   rem now; the rest, request and change pages among it, is a later change.
+   CSS zoom was ruled out: the shell is pinned to
    height:100dvh and zoom pushes the fixed bars off screen.
 
    High contrast deepens the existing ink and line tokens — every value
@@ -6580,6 +6592,17 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
   /* And the name is a size down there (four across leaves each about 85px):
      at the row's size a long name broke in the middle of a word. */
   html:not([data-skin]) #app-list .app-card-title { font-size: var(--wip-title-size-phone); line-height: 1.2; min-height: 2.4em; }
+  /* The icon is 3.5rem, and a quarter of a phone is about 80px: at the two
+     largest text sizes (the root at 137.5% and 150%) the icon outgrew its
+     cell, the four of a row met edge to edge and their lock and copy marks
+     were printed over each other. So the icon is never wider than its own
+     cell less 0.1875rem: with the tile's 2px sides and the grid's 0.375rem
+     gap, two icons are always more than the 0.5rem apart that their two
+     marks (each 0.25rem over the edge) need, and at the default size it is
+     still 3.5rem, even on a 320px phone. The corner keeps its proportion
+     when the icon is held smaller. */
+  html:not([data-skin]) #app-list > .app-card > .relative { width: min(3.5rem, calc(100% - 0.1875rem)); height: auto; aspect-ratio: 1 / 1; }
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { width: 100%; height: 100%; border-radius: min(1.25rem, 36%); }
 }
 @media (min-width: 1024px) {
   html:not([data-skin]) { --home-cell-h: var(--wip-tile-h); }
@@ -7029,65 +7052,26 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .d
   color: var(--wip-ink-muted);
   box-shadow: none;
 }
-/* INVITE ends the line about who is here: after the faces and the count,
-   an open seat (a dashed disc, a person and a plus) and the word. It reads
-   as the next thing in that sentence, "…234 members, invite". The pointer
-   fills the seat with the look's action colours. */
-.wip-hub-meta-invite {
+/* INVITE is the row's second button, beside Open app: as tall and as round,
+   in Open app's type, in the plain pills' outline, with the invite glyph
+   before the word. On Homeroom's own hub, which has no Open app, it stands
+   alone in the row. The pointer darkens its edge, as it does the ⋯'s. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
-  min-height: 1.75rem;
-  padding: 0 0.625rem 0 0.1875rem;
-  border-radius: var(--wip-radius-pill);
-  font-size: var(--wip-link-size);
-  font-weight: 650;
-  color: var(--wip-ink-action);
-  box-shadow: inset 0 0 0 1px var(--wip-card-line);
-  background-color: var(--wip-card-bg);
-  cursor: pointer;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  padding-inline: 1.125rem 1.375rem;
+  border: 0;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: inherit;
+  white-space: nowrap;
 }
-/* The arrow before it: one brush stroke that swells from nothing at its tail
-   to a sharp head, from the people to the seat. It leans a little, and nudges toward the seat when the pointer
-   is on the line. Not on a phone, where the line has no room for it. */
-.wip-hub-meta-arrow {
-  flex: none;
-  width: 2.5rem;
-  height: 2.5rem;
-  margin-block: -0.75rem;
-  margin-inline: -0.125rem -0.25rem;
-  color: var(--wip-ink);
-  transform: rotate(-4deg);
-  transition: transform 0.25s ease;
-}
-.wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg) translateX(3px); }
-html:not([data-skin])[dir="rtl"] .wip-hub-meta-arrow { transform: scaleX(-1) rotate(-4deg); }
-@media (max-width: 639.98px) {
-  .wip-hub-meta-arrow { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) .wip-hub-meta-arrow { transition: none; }
-  html:not([data-skin]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
-}
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta-arrow { transition: none; }
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
-.wip-hub-meta-seat {
-  flex: none;
-  width: 1.375rem;
-  height: 1.375rem;
-  display: grid;
-  place-items: center;
-  border: 1.5px dashed var(--wip-ink-muted);
-  border-radius: 50%;
-  color: var(--wip-ink-muted);
-}
-.wip-invite-glyph { width: 0.8125rem; height: 0.8125rem; }
-.wip-hub-meta-invite:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
-.wip-hub-meta-invite:is(:hover, :focus-visible) > .wip-hub-meta-seat {
-  border-color: transparent;
-  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
-  color: var(--wip-cta-ink);
-}
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] > svg { flex: none; width: 1.125rem; height: 1.125rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite]:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
 /* With nothing on the hero's last line but the ⋯ (which is in the corner,
    out of the line), the line takes no room: no empty band under the words. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
@@ -7121,6 +7105,8 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #d
 }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
+/* The ⋯ sits in the card's corner, out of the flow, and reaches 1.5rem into the words' column: a name of more than about fourteen letters ran under it on a phone. The name stops short of it and wraps instead. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary:has(.dev-ws-hero-actions > .dev-ws-plus) .dev-ws-hero-name { padding-inline-end: 1.75rem; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
   width: var(--wip-hub-icon);
   height: var(--wip-hub-icon);
@@ -7189,6 +7175,14 @@ html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is
 /* Its label heads the vote line alone here, so with no vote line (a project nobody else is in) there is no label. */
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
+/* Top contributors (request 6837) comes last, after Recently live, on the look's card, its switch from the look's tokens. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-foryou > * + * { border-top-color: var(--wip-soft-line); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .ui-lrow-t { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] :is(.dev-ws-foryou-count, .dev-ws-week-note) { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span { background-color: var(--wip-tray); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button { color: var(--wip-ink-soft); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button[aria-pressed="true"] { background-color: var(--wip-ink); color: var(--wip-card-bg); }
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
   border-top: 0;
@@ -7273,6 +7267,14 @@ html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-f
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
+}
+/* THREE DOORS NEED THREE COLUMNS' WORTH OF ROOM. Side by side from 768px, a door was 231px wide on a 1024px window beside the open sidebar: after its glyph, its count and its chevron it had 20px left for words, and read "N…" for Needs you and "Disc…" for Discussion. Below 1200px beside the open sidebar, and below 1020px beside the folded one, they are a list, one to a row, as on a phone. */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
+}
+@media (min-width: 1020px) and (max-width: 1199.98px) {
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; margin-top: 0; }
 }
 /* RECENTLY LIVE, as a list and not a wall of pictures. Each change is a row
    of Home's own kind: a small picture at its side (a thumbnail, not a
@@ -7452,6 +7454,8 @@ html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"]::after {
 }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] + .wip-hero-art .wip-hero-stage { animation: none; place-items: end center; padding-block-end: 6px; }
 .wip-hero-people { position: absolute; inset-block-end: 6px; inset-inline-end: 1.25rem; height: calc(100% - 14px); width: auto; max-width: none; }
+/* The people are as tall as the card, so their width followed its height, and where the words wrap (about 900 to 1200px) the card grew and the picture with it, out of the side kept for it and over the words. They stay inside that side, standing on the bottom edge, and are drawn smaller when it is narrow. */
+html:not([data-skin]) #dev-workshop .wip-hero-people { max-width: calc(100% - 1.25rem); object-fit: contain; object-position: bottom; }
 /* THE PROJECT'S PREVIEW STANDS BESIDE THE HERO (asked 20 Nov 2026), in its row from 1024px: the hero takes two of the
    hub's three columns and the preview the third, the two as tall as each other. Narrower, there is no card: the hero keeps the picture at its own side, tilted, as before. */
 html:not([data-skin]) #dev-workshop .wip-hero-preview { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: var(--wip-card-radius); box-shadow: inset 0 0 0 1px var(--wip-card-line); background-color: var(--wip-card-bg); }
@@ -7737,6 +7741,102 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
   }
 }
 
+/* ── Messages opens two-up, with a guide ────────────────────── */
+/* From 768px, with no conversation open, the list stands on the left and
+   the pane beside it is a card holding the guide (index.tsx MessagesGuide):
+   what Messages is for, the two ways to start a conversation and where a
+   project's channel is. It was the list alone in the middle of the page.
+   The pane's own heading and line give way to the guide's. A phone's list
+   is alone as before (its drawer never has `messages-list-page`). */
+@media (min-width: 768px) {
+  html:not([data-skin]) .messages-layout.messages-list-page { gap: var(--wip-gutter); padding: 1rem var(--wip-gutter) var(--wip-gutter); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-list-pane { flex: none; width: 26rem; max-width: 42%; margin: -0.5rem 0 0; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    margin: 0;
+    padding: 2rem;
+    border-radius: var(--wip-card-radius);
+    background-color: var(--wip-card-bg);
+    box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > :is(h2, p) { display: none; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > .messages-guide {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+    width: 100%;
+    max-width: 27.5rem;
+    text-align: center;
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-mark {
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin-bottom: 0.375rem;
+    border-radius: var(--wip-radius-inner);
+    background-color: var(--wip-mark-2-bg);
+    color: var(--wip-mark-2-ink);
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide :is(.messages-guide-mark, .messages-guide-glyph) > svg { width: 1.25rem; height: 1.25rem; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-title { margin: 0; font-size: 1.0625rem; font-weight: 700; color: var(--wip-ink); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-body { max-width: none; margin: 0 0 0.625rem; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-rows { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wip-tile-gap);
+    width: 100%;
+    min-height: 3.5rem;
+    padding: 0.75rem 0.875rem;
+    border: 0;
+    border-radius: var(--wip-radius-card);
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--wip-card-line);
+    font: inherit;
+    text-align: start;
+    text-decoration: none;
+    color: var(--wip-ink);
+    cursor: pointer;
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-row:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-row:focus-visible { outline: 2px solid var(--wip-ink-action); outline-offset: 2px; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-glyph {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 2.125rem;
+    height: 2.125rem;
+    border-radius: var(--wip-radius-inner);
+    background-color: var(--wip-ghost);
+    color: var(--wip-ink-soft);
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-text > b { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); line-height: 1.3; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-text > span { font-size: 0.8125rem; line-height: 1.4; color: var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-go { flex: none; width: 1rem; height: 1rem; color: var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-note { max-width: none; margin: 0.875rem 0 0; font-size: 0.78125rem; color: var(--wip-ink-muted); }
+}
+
+/* ── A running app is a card ────────────────────────────────── */
+/* From 768px the app's frame is one of the look's cards, with the page's
+   gutter on three sides and all four corners: it was a phone's sheet (round
+   at the top only, with a lifted edge, running off the right and the foot
+   of the window), which beside the sidebar read as a panel cut off by the
+   screen. Not while the app has the whole window (the header is hidden). */
+@media (min-width: 768px) {
+  html:not([data-skin]) body:not(:has(#platform-header.hidden)) #app-frame-host {
+    /* The app's view starts 8px under the bar's foot (the sheet tucked its round top there): the card clears the bar's line by its own 8px. */
+    margin: 1rem var(--wip-gutter) var(--wip-gutter);
+    border: 1px solid var(--wip-card-line);
+    border-radius: var(--wip-card-radius);
+    box-shadow: var(--wip-card-shadow);
+  }
+}
+
 /* ── A place's name is in the top bar ───────────────────────── */
 /* From 768px the bar that holds the look, the theme, the bell and the
    account names the page too, as a phone's header always did: the place's
@@ -7794,11 +7894,12 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     height: auto;
     padding: 0;
   }
-  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: min(36rem, 38vw); margin-top: 0; }
   /* Where the document scrolls (a touch tablet) the bar is sticky at 30 and
      has a ground (THE TOP BAR HAS A GROUND, below), so the pill stands over
      it: at 20 it was under the bar, seen only while the bar was clear. */
   html:not([data-skin])[data-browser-scroller] body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice { z-index: 31; }
+  /* Its width is the bar's beside the sidebar (the usable box), less the 12.5rem kept for the bell and account on its right and 11rem for the page's name ("Hub", "Workshop") on its left. It was min(36rem, 38vw), which cut the sentence at "moves off GitHu…" on a 1440px window with 300px of the bar empty beside it. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: calc(var(--platform-usable-w) - 12.5rem - 11rem); margin-top: 0; }
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
@@ -8278,12 +8379,14 @@ html:not([data-skin]) body > :is(.dev-ws-side) {
    tiles say less. */
 html:not([data-skin]) #app-list .app-card-opened { display: none; }
 /* THE STANDARD LOOK'S BOARD KEEPS ITS WALLPAPER (20 Nov 2026), so the head that stays put while the columns scroll
-   under it (the place's name, then the filter line and the columns' names) wears the card's colour, nearly solid, where
+   under it (the place's name, then the filter line and the columns' names) wears the card's colour, solid, where
    Standard (WIP) paints its flat page colour. No blur: the shell keeps none over a few pixels (tests/no-glass-one-scheme).
+   It was 90% (audit, 23 Nov 2026): with no blur, a card passing under the head was read through it, its title ghosting
+   across "All items", the search box and the columns' names. Nothing shows through a head that words scroll under.
    The place's bar wears it only once it is pinned (`data-ws-pinned`, workshop.tsx usePinnedStrip): at rest nothing is
    under it, and it sits on the page over its hairline as it does over the hub. */
 html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"][data-ws-pinned] > .dev-ws-placebar,
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: color-mix(in srgb, var(--wip-card-bg) 90%, transparent); }
+html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: var(--wip-card-bg); }
 /* THE STANDARD LOOK'S BOARD IS A PAGE UNDER THE WORKSHOP (20 Nov 2026): the Workshop's door opens its overview, and the
    board's head leads with the way back up to it and the page's name, "‹ All items", the page's one heading. So the
    place's name over it is the quiet name of where you are, as "Hub" is over the hub's hero, not a second title. */
@@ -8894,10 +8997,11 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
    open or folded to its strip: the panel's own blue is drawn round two
    quarter circles just past its edge, by a fixed layer on <body> that takes
    no pointer and sits in the panel's own layer, under the top bar. A
-   peeking menu floats over the page, and a running app fills the window
-   beside its menu, so neither gets the corners. */
+   peeking menu floats over the page, so it gets no corners. A running app
+   is a card on the page (below), so its page has them like any other; an
+   app that has the whole window (the top bar hidden) does not. */
 @media (min-width: 768px) {
-  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after {
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#platform-header.hidden))::after {
     content: "";
     position: fixed;
     inset-block: 0;
@@ -8910,7 +9014,7 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
       radial-gradient(circle at 100% 0, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)) 0 100% / var(--wip-nav-page-radius) var(--wip-nav-page-radius) no-repeat;
   }
   /* Right to left the panel is on the right, so the quarter circles open the other way. */
-  html:not([data-skin])[dir="rtl"] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after {
+  html:not([data-skin])[dir="rtl"] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#platform-header.hidden))::after {
     background-image:
       radial-gradient(circle at 0 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
       radial-gradient(circle at 0 0, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius));
@@ -21015,6 +21119,26 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
 .dev-ws-foryou-pill.dev-ws-foryou-pill-light { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
+/* TOP CONTRIBUTORS (ContributorsCard, request 6837): For you's card and
+   rows, read not pressed. A row is a face, a name and a muted count in
+   words. The head's switch (This month, All time) is the shell's selection
+   inversion, small: the picked one filled, the other plain. */
+.dev-ws-foryou .dev-ws-contrib-row { padding-block: 9px; }
+.dev-ws-contrib-face { width: 32px; height: 32px; margin: 0; flex: none; font-size: 12.5px; box-shadow: none; }
+.dev-ws-contrib-span {
+  margin-inline-start: auto; margin-top: 6px; display: inline-flex; gap: 2px;
+  padding: 2px; border-radius: 999px; background: var(--bg-tertiary);
+}
+.dev-ws-contrib-span > button {
+  min-height: 24px; padding: 3px 10px; border: 0; border-radius: 999px; background: transparent;
+  font-size: 12.5px; font-weight: 600; line-height: 18px; color: var(--text-secondary);
+  white-space: nowrap; cursor: pointer;
+}
+.dev-ws-contrib-span > button[aria-pressed="true"] { background: #18181b; color: #fff; }
+.dark .dev-ws-contrib-span > button[aria-pressed="true"] { background: #fafafa; color: #18181b; }
+@media (max-width: 767.98px) {
+  .dev-ws-contrib-span > button { min-height: 32px; padding-inline: 12px; }
+}
 /* The Discussion row's last line: the message gives way, the time stays
    whole (audit P04, 1 Nov 2026). */
 [data-ws-channel-last]:has(> [data-ws-channel-ago]) { display: flex; min-width: 0; }
@@ -22097,6 +22221,10 @@ a.dev-ws-hero-pending {
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
+  /* Top contributors (request 6837) goes under For you, and Topics beside
+     the two of them. Without Topics it keeps the full width. */
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics]:has(+ [data-ws-hub-contributors]) { grid-row: span 2; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] + [data-ws-hub-contributors] { grid-column: 1; }
 }
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
@@ -31935,6 +32063,22 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
    title, as it is at the top of the page; only the sizes change, so nothing swaps places while the page scrolls. */
 html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { grid-row: 2; }
 html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is(.messages-thread-sub, .messages-thread-kicker, [data-change-status], [data-request-status]) { grid-row: 1; }
+/* A NARROW HEAD WRAPS ITS SMALL LINE (audit, 23 Nov 2026). The number and the status pill are `max-content` cells, so
+   where the head is narrow (a phone, a thread beside a list) a long pill ("Goes live in ~2d 22h · 1/2") ran over ⋯ and
+   off the card, and took the title's cell with it. The project and topic had already been squeezed to nothing there,
+   leaving their "·" at the start of the line. Under 340px of text a head with a pill makes its line the number and the
+   pill alone, and the pill drops under the number when the two do not fit; a pill wider than the line on its own (a
+   320px phone) ends in "…" there, never under ⋯. A head with no pill (a private thread's lock line) is left as it is. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) { container: thread-head-text / inline-size; }
+@container thread-head-text (max-width: 340px) {
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; grid-row: 1; grid-column: 1 / -1; min-width: 0; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > .messages-thread-sub { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) .messages-thread-kicker::before { content: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) :is([data-change-status], [data-request-status]) { margin-inline-start: 0; max-width: 100%; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) :is([data-change-status], [data-request-status]) .gc-vote-count-label { display: block; overflow: hidden; text-overflow: ellipsis; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { grid-row: 2; }
+  html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { grid-row: 1; }
+}
 /* A phone's head: the same card, a size down. */
 @media (max-width: 767px) {
   html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }
