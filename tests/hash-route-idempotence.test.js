@@ -48,7 +48,8 @@ const manifest = JSON.parse(read('dapp.json'));
 const body = (src, start) => {
   const from = src.indexOf(start);
   assert.ok(from > -1, `${start} exists`);
-  return src.slice(from, from + 1400);
+  // A window over the function, wide enough for the whole of _routeFromHash.
+  return src.slice(from, from + 1800);
 };
 
 // ─── (a) The leaderboard's bare hash resets to Challenges ────────────────

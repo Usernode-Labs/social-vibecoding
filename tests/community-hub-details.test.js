@@ -146,8 +146,13 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
   assert.doesNotMatch(CARD_SRC, /HeroActivity|HeroPulse/, 'who is around is one row');
   // The people, Invite and the ⋯ lead the row; Join is across from them at
   // its far end. "Make it public" and Leave are the ⋯'s now (#4045), and
-  // Open app gives way to the First version card while it shows.
-  assert.match(CARD_SRC, /const appButton = data\.first_version \? null : openApp;/);
+  // Open app gives way to the First version card while that is being built,
+  // and is the hero's again once it is live (phone review #53).
+  assert.match(CARD_SRC, /const appLive = hubAppLive\(data\);\s*const appButton = appLive \? openApp : null;/);
+  const { hubAppLive } = loadTsx(CARD, LEGACY_HUB);
+  assert.equal(hubAppLive({ first_version: null }), true);
+  assert.equal(hubAppLive({ first_version: { line: 'building' } }), false);
+  assert.equal(hubAppLive({ first_version: { line: 'live' } }), true);
   const row = CARD_SRC.slice(CARD_SRC.indexOf('<div className="dev-ws-hero-row">'), CARD_SRC.indexOf('{data.audience_change ? ('));
   assert.doesNotMatch(row, /<MakePublic|data-ws-community-leave/);
   // How a change gets in is the last line of the Workshop's Overview card now.
@@ -668,7 +673,11 @@ test('every hub\'s Recently live ends with how many more went live this month, o
   let opened = 0;
   const live = (props) => renderToHtml(createElement(RecentlyLive, { slug: 'garden', rows, onAll() { opened++; }, ...props }));
   const html = live({ month: 39 });
-  assert.match(html, /<button type="button" class="dev-ws-recent-more" data-ws-recent-more="36"><span class="dev-ws-recent-more-n" aria-hidden="true">\+36<\/span><span class="dev-ws-recent-more-words">36 more live this month<\/span>/);
+  // Said once (phone review #91): no "+36" badge before "36 more…".
+  assert.match(html, /<button type="button" class="dev-ws-recent-more" data-ws-recent-more="36"><span class="dev-ws-recent-more-words">36 more live this month<\/span>/);
+  assert.doesNotMatch(html, /dev-ws-recent-more-n/);
+  // A count in the thousands is written as the reader's language writes it.
+  assert.match(live({ month: 1048 }), /data-ws-recent-more="1045"><span class="dev-ws-recent-more-words">1,045 more live this month<\/span>/);
   assert.ok(html.indexOf('</ul>') < html.indexOf('data-ws-recent-more'), 'under the pictures');
   assert.doesNotMatch(live({ month: 3 }), /data-ws-recent-more/, 'all of the month shown: nothing more to say');
   assert.doesNotMatch(live({}), /data-ws-recent-more/, 'an older server without the count');

@@ -990,6 +990,16 @@ export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef
   );
 }
 
+/**
+ * Whether the project's app is there to open: no first version on the way,
+ * or that first version is live. The hero's Open app is drawn then, and the
+ * First version card is not (./hub-cards.tsx FirstVersionCard). Pure.
+ */
+export function hubAppLive(data: Pick<CommunityPayload, 'first_version'> | null | undefined): boolean {
+  const fv = data ? data.first_version : null;
+  return !fv || fv.line === 'live';
+}
+
 export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false, platform = false }: {
   slug: string;
   /** Homeroom's own community: its hero wears the brand's own page (cream, the people, the three-colour rule). */
@@ -1239,10 +1249,13 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   // WHO IS AROUND is for a project with other people in it: never one that
   // is just yours, and not one nobody else has joined yet.
   const others = !solo && (Number(data.member_count) || 0) > 1;
-  // While its first version is on the way (or, in its first week, just
-  // went live) the First version card is the way into the app: Open app
-  // there, so not here too.
-  const appButton = data.first_version ? null : openApp;
+  // While its first version is on the way there is no app to open yet: the
+  // First version card says where its build stands. Once it is live, Open
+  // app is the hero's, as on every other hub (phone review #53: in a
+  // project's first week it moved to that card, under the project's name
+  // and tile a second time, with a full-width button of its own).
+  const appLive = hubAppLive(data);
+  const appButton = appLive ? openApp : null;
 
   // STILL DECIDING (the hand-off of 11 Nov 2026): signed in, not in it, and
   // not opened from an invite link (which leads with who invited them). The
@@ -1272,7 +1285,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           description={data.description}
           actions={(
             <>
-              {canOpenApp && !data.first_version ? (
+              {canOpenApp && appLive ? (
                 <button
                   type="button"
                   className={CARD_OPEN_BTN}

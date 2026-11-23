@@ -149,7 +149,18 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,500}sub=\{owed \?/,
     'the badge is the Workshop row\'s line under its label (audit D07: beside it, it cut the label)');
   assert.match(sheet, /id="app-menu-workshop-owed"/);
-  assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
+  assert.match(sheet, /aria-label=\{t\(owedLine \? owedLine\.id : 'agent:appContext\.row\.toVote', owedLine \? owedLine\.values : \{ count: owed \}\)\}/);
+  // Phone review #22: the figure is votes AND Homeroom bot's questions, so it
+  // says each in the hub's words ("10 to vote · 7 to answer"); the hub's own
+  // count is votes. Without the server's list of what it counts, the old words.
+  const { owedWords } = loadTsx('frontend/src/features/app-context/app-context-sheet.tsx');
+  const say = (w) => message(w.id, w.values);
+  const keys = (votes, questions) => [...Array.from({ length: votes }, (_, i) => `proposal:${i + 1}@0`), ...Array.from({ length: questions }, (_, i) => `question:${i + 1}`)];
+  assert.equal(say(owedWords('garden', 17, keys(10, 7))), '10 to vote · 7 to answer');
+  assert.equal(say(owedWords('garden', 3, keys(3, 0))), '3 to vote');
+  assert.equal(say(owedWords('garden', 2, keys(0, 2))), '2 to answer');
+  assert.equal(say(owedWords('garden', 9, keys(10, 2))), '7 to vote · 2 to answer', 'votes swiped past come off the votes');
+  assert.equal(owedWords('garden', 4, null), null, 'no list: the one figure keeps its words');
   // #5927 item 3: "3 to vote" did not say what was voted on, and read like a
   // notification. It says it in words.
   assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 decisions waiting on you');

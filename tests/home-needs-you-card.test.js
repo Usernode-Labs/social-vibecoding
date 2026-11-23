@@ -344,7 +344,7 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
   const css = read('public/css/app.css');
   // As tall and as round as Open app, in the plain pills' outline.
-  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws-hero-summary \.dev-ws-hero-actions \[data-ws-community-invite\] \{\s*display: inline-flex;[^}]*height: 2\.75rem;[^}]*font-size: 1rem;\s*font-weight: 700;/);
+  assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \.dev-ws-hero-summary \.dev-ws-hero-actions :is\(\[data-ws-community-invite\], \[data-ws-community-audience-change\]\) \{\s*display: inline-flex;[^}]*height: 2\.75rem;[^}]*font-size: 1rem;\s*font-weight: 700;/);
   assert.doesNotMatch(css, /\.wip-hub-meta-(?:invite|arrow|seat)\b/);
   assert.match(css, /html:not\(\[data-skin\]\) #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
   assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/, 'For you is three across from 768px');
