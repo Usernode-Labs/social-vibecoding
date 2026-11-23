@@ -669,6 +669,46 @@ async function activitySummary(pool, appId) {
 // How many of the week's people the hub names (its faces row).
 const ACTIVE_PEOPLE_SHOWN = 5;
 
+// How many people the hub's Top contributors card lists.
+const CONTRIBUTORS_SHOWN = 5;
+
+// The hub's Top contributors card (request 6837): the people who took part
+// most in this project, this calendar month and over all time, up to five
+// of each, the most first. A contribution is one of three things, one each:
+// a change of theirs that went live, a vote they cast on a change, a request
+// they filed. People only, by the same join the week's people use, so the
+// Homeroom bot is never listed. People with the same count are in the order
+// of who took part most recently. Each entry is a name and one number.
+async function contributorsSummary(pool, appId) {
+  const { rows } = await pool.query(
+    `WITH acts AS (
+       SELECT s.user_id, COALESCE(s.merged_at, s.created_at) AS at
+         FROM chat_sessions s
+        WHERE s.app_id = $1 AND s.status = 'merged' AND s.user_id IS NOT NULL
+       UNION ALL
+       SELECT v.user_id, v.created_at FROM pr_votes v
+         JOIN chat_sessions s ON s.id = v.session_id
+        WHERE s.app_id = $1 AND v.user_id IS NOT NULL
+       UNION ALL
+       SELECT i.created_by, i.created_at FROM issues i
+        WHERE i.app_id = $1 AND i.kind = 'general' AND i.created_by IS NOT NULL
+     )
+     SELECT u.id, u.username, u.display_name,
+            COUNT(*)::int AS all_time,
+            (COUNT(*) FILTER (WHERE a.at >= date_trunc('month', NOW())))::int AS month,
+            MAX(a.at) AS last_at
+       FROM acts a JOIN users u ON u.id = a.user_id AND u.is_synthetic IS NOT TRUE
+      GROUP BY u.id, u.username, u.display_name`,
+    [appId]
+  );
+  const top = (key) => rows
+    .filter((row) => row[key] > 0)
+    .sort((a, b) => b[key] - a[key] || new Date(b.last_at) - new Date(a.last_at) || a.id - b.id)
+    .slice(0, CONTRIBUTORS_SHOWN)
+    .map((row) => ({ id: row.id, username: row.username, display_name: row.display_name || null, n: row[key] }));
+  return { month: top('month'), all_time: top('all_time') };
+}
+
 // UNCHOSEN COMMUNITIES: the ones whose votes do not put a number on the
 // Communities tab for this viewer (5 Oct 2026).
 //
@@ -739,6 +779,7 @@ module.exports = {
   generalChannelSummary,
   activitySummary,
   activityCounts,
+  contributorsSummary,
   generalNeedsJoin,
   channelArchived,
   CHANNEL_MOVED,
