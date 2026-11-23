@@ -878,7 +878,9 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // Each native proposal up for a vote: one merged by hand on GitHub is
-    // recorded.
+    // recorded. The GitHub webhook (routes/github-webhook.js) is the fast
+    // path, running the same look the moment the delivery arrives; this
+    // six-hourly run is the fallback for a delivery that never came.
     name: 'merged-by-hand', everyMs: 6 * HOUR,
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR)),
     item: {
