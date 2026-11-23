@@ -152,15 +152,15 @@ test('the fake and the wallpaper paint the same washes', () => {
   // and cannot drift when the wallpaper changes: every wallpaper variant
   // (light, dark, phone, wide) draws its star and grain over --home-washes.
   const wallpapers = [...css.matchAll(/--home-wallpaper:\s*([\s\S]*?);/g)].map((m) => m[1]);
-  // Four standard variants, the star-less one a running app and New project
-  // draw so their header area stays clear of the star (polish N20), and the
-  // Sunrise template's own wallpaper (request #6984).
-  assert.equal(wallpapers.length, 6, 'five standard wallpapers and Sunrise\'s');
+  // Four standard variants, and the star-less one a running app and New
+  // project draw so their header area stays clear of the star (polish N20).
+  // Sunrise reuses that shape: it leaves the star out by setting the token
+  // to none, not by declaring a wallpaper of its own (request #6984).
+  assert.equal(wallpapers.length, 5, 'four wallpaper variants and the one without the star');
   for (const w of wallpapers) assert.match(w, /var\(--home-grain\)[^,]*,\s*var\(--home-washes\)$/);
-  assert.equal(wallpapers.filter((w) => !/home-star/.test(w)).length, 1,
-    'one leaves the star out (Sunrise sets its own star to none, keeping the shape)');
+  assert.equal(wallpapers.filter((w) => !/home-star/.test(w)).length, 1, 'one leaves the star out');
   const washes = [...css.matchAll(/--home-washes:\s*([\s\S]*?);/g)].map((m) => m[1]);
-  assert.equal(washes.length, 6, 'each variant defines its washes');
+  assert.equal(washes.length, 6, 'each variant defines its washes, and Sunrise adds a light and a dark pair');
   for (const w of washes) {
     assert.doesNotMatch(w, /home-star|home-grain/, 'no star or grain: a blur erased both');
     assert.match(w, /var\(--home-ground\)$/, 'the ground colour closes the list');
