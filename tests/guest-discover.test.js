@@ -372,6 +372,11 @@ test('an app open for a visitor is pinned from the landing\'s bar, to this devic
   assert.match(actions, /className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-\[15px\] font-semibold /);
   assert.equal(message('auth:landing.pinApp'), 'Pin');
   assert.equal(message('auth:landing.pinnedApp'), 'Pinned');
+  // Pin and Sign in sit over the bar's trailing box and are wider than the
+  // title's px-10 keeps clear, so while Pin is there the title keeps 112px
+  // at its end and the app's name ends before them (visual audit, Nov
+  // 2026). Pixels: a rem grows with the text size and the buttons hardly do.
+  assert.match(src, /id="landing-header-title"\s+className="flex-1 min-w-0 px-10 [^"]* \[#landing-header:has\(\[data-landing-pin-app\]\)_&\]:pe-\[112px\]"/);
   assert.equal(message('auth:landing.pinAppNamed', { app: 'Game Corner' }), 'Pin Game Corner to Home');
   // Pressing it writes this device's list, which Home's Pinned apps reads.
   const { renderToHtml, createElement } = require('./lib/render-tsx');
@@ -766,7 +771,7 @@ test('the overview it reads carries no names, and the page draws none', () => {
 
 // ─── the story's short version ────────────────────────────────────
 
-test('the short story heads Discover: the headline, the Wikipedia line on two lines, and one button, Explore apps', () => {
+test('the short story heads Discover: the headline, the Wikipedia line on two lines, and two buttons, Explore apps and the door to private communities', () => {
   const html = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
   assert.deepEqual(text(html), [
     'Welcome to Homeroom',
@@ -774,9 +779,11 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
     // Two sentences, a line each.
     'Community apps you can build together.', 'Like Wikipedia, but for software.',
     'Explore apps',
+    'How it works for private communities',
   ]);
   assert.equal(message('auth:guest.hero.headline'), 'The app library anyone can edit');
   assert.equal(message('auth:guest.hero.explore'), 'Explore apps');
+  assert.equal(message('auth:guest.hero.privateHow'), 'How it works for private communities');
   assert.match(html, /data-landing-story="" data-landing-story-compact=""/);
   // DREA'S HERO (17 Nov 2026), in the website's look: clouds edge to edge, one
   // white window on them with no strip of dots, the headline in the hero's
@@ -816,16 +823,18 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
   // "Welcome to Homeroom" is a wide screen's: on a phone the wordmark is
   // directly above the headline.
   assert.match(html, /<div class="[^"]* hidden md:block">Welcome to Homeroom<\/div><h1 /);
-  // ONE THING TO PRESS, and it makes no account (the bar's one button
-  // does): Explore apps brings the list under the hero to the top.
+  // TWO THINGS TO PRESS, and neither makes an account (the bar's one button
+  // does): Explore apps brings the list under the hero to the top, and the
+  // other is the door to the page about private communities.
   assert.equal([...html.matchAll(/<button /g)].length, 1);
-  assert.match(html, /<div data-landing-story-actions="" class="[^"]*"><button type="button" data-landing-story-explore="" class="[^"]*bg-\[var\(--site-sun\)\][^"]*">Explore apps<\/button><\/div>/);
+  assert.match(html, /<div data-landing-story-actions="" class="[^"]*"><button type="button" data-landing-story-explore="" class="[^"]*bg-\[var\(--site-sun\)\][^"]*">Explore apps<\/button><a href="\/communities" data-landing-story-private="" class="[^"]*bg-\[var\(--site-panel\)\][^"]*">How it works for private communities<\/a><\/div>/);
   assert.match(read(STORY), /let next = event\.currentTarget\.closest\('\[data-landing-story\]'\)\?\.nextElementSibling as HTMLElement \| null;/);
   assert.match(read(STORY), /next\.scrollIntoView\(\{ behavior: calm \? 'auto' : 'smooth', block: 'start' \}\);/);
   assert.doesNotMatch(html, /data-landing-story-join|data-landing-story-start|data-landing-story-how|data-landing-story-signin/);
   assert.doesNotMatch(read(STORY), /data-landing-story-join|noteSignUpFrom\('hero'\)/);
   assert.doesNotMatch(read(LANDING), /data-landing-story-sign-up/);
-  assert.doesNotMatch(html, /<a /, 'no link in the short story');
+  assert.deepEqual([...html.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]), ['/communities']);
+  assert.equal(loadTsx(STORY).COMMUNITIES_PATH, '/communities');
   // The pictures, for the eye only: the communities page beside the words
   // from lg, and from md the people on the window's bottom edge. No figures
   // until the directory's read has brought them.
@@ -882,9 +891,11 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
   assert.equal(newAccountsWait({}), true, 'an older server');
   assert.equal(newAccountsWait({ waitlist_enabled: true }), true);
   assert.equal(newAccountsWait({ waitlist_enabled: false }), false, 'only an explicit off');
-  // The frame and the email step read the same switch (one `waitlist`
-  // reader here: the landing's frame; the gated frame is gone with looks v2).
-  assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 1);
+  // The frame, the page about private communities and the email step read
+  // the same switch (two `waitlist` readers here: the landing's frame and
+  // that page; the gated frame is gone with looks v2).
+  assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 2);
+  assert.match(read(LANDING), /<GuestCommunities waitlist=\{accountsWait\} onStart=\{\(\) => setSheet\('start'\)\} \/>/);
   assert.match(read('frontend/src/features/auth/login.tsx'), /const accountsWait = newAccountsWait\(useWaitlistOptions\(mounted\)\);/);
   assert.match(read('frontend/src/features/auth/login.tsx'), /\{accountsWait \? t\('auth:login\.otp\.lead'\) : t\('auth:login\.otp\.leadOpen'\)\}/);
   assert.doesNotMatch(message('auth:login.otp.leadOpen'), /waitlist/i);
@@ -1060,12 +1071,18 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   assert.match(story.expectSelector, /\[data-guest-discover\] \[data-landing-story\] h1$/);
   assert.equal(story.expectText, 'The app library anyone can edit');
   // The bar's Sign in and its one filled button, and under the short story
-  // one thing to press, Explore apps, and no link.
-  const one = manifest.tests.find((t) => /^Landing has Sign in and one filled button in its bar, and under the story Explore apps and no link/.test(t.name));
+  // two things to press: Explore apps, and the door to the page about
+  // private communities.
+  const one = manifest.tests.find((t) => /^Landing has Sign in and one filled button in its bar, and under the story Explore apps and the door to private communities/.test(t.name));
   assert.ok(one);
-  assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story\] button\[data-landing-story-explore\]\):not\(:has\(\[data-landing-story\] a\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
+  assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story-explore\] \+ a\[data-landing-story-private\]\[href="\/communities"\]\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
   // Under the runner's selector cap (`MAX_TEST_SELECTOR_LEN`).
   assert.ok(one.expectSelector.length <= 256);
+  // And the page behind that door, at its own address, in Discover's place.
+  const groups = manifest.tests.find((t) => t.path === '/communities?shot=anon');
+  assert.ok(groups, 'the page about private communities has a declared check');
+  assert.match(groups.expectSelector, /^#auth-landing-screen:not\(\.hidden\):not\(:has\(\[data-guest-discover\]\)\) \[data-guest-groups\]:has\(\[data-guest-groups-demo\]\):has\(button\[data-guest-groups-start\]\)/);
+  assert.equal(groups.expectText, 'You or the group');
 });
 
 // ─── the search, behind a button ──────────────────────────────────
@@ -1094,6 +1111,28 @@ test('the search is put away until its button is pressed, and stays in the docum
   // finds the field.
   const manifest = JSON.parse(read('dapp.json'));
   assert.ok(manifest.tests.some((t) => /\[data-guest-discover\]:has\(\[data-guest-search\]\)/.test(t.expectSelector || '')));
+});
+
+test('a visitor\'s search that matches nothing says so, rather than leaving the page blank (visual audit, Nov 2026)', () => {
+  // The list is the visitor's whole page under the search, and it drew
+  // nothing for a search with no matches: the heading, filters and cards
+  // went and nothing took their place. Signed-in Home answers that itself,
+  // so the list stays empty unless it is handed a line to draw.
+  const { CommunitiesToJoin } = loadTsx(JOIN);
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const line = () => createElement('p', { 'data-guest-empty': '' }, 'none');
+  const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
+    apps: APPS, exclude: new Set(), signedIn: false, query: 'zzzzqqq', ...over,
+  }));
+  assert.equal(draw(), '', 'with no line given, still nothing');
+  assert.equal(draw({ emptyLine: line() }), '<p data-guest-empty="">none</p>');
+  assert.match(draw({ query: 'o', emptyLine: line() }), /data-guest-card=/, 'a search with matches draws them');
+  assert.doesNotMatch(draw({ query: 'o', emptyLine: line() }), /data-guest-empty/, 'and not the line');
+  // The visitor's page hands it the catalog's own line for this case.
+  const src = read(DISCOVER);
+  assert.match(src, /emptyLine=\{\(\s*<p data-guest-empty="" role="status" className="[^"]*">\s*\{t\('auth:guest\.empty'\)\}\s*<\/p>\s*\)\}/);
+  assert.equal(message('auth:guest.empty'), 'No apps match that yet.');
+  assert.doesNotMatch(read('frontend/src/features/home/home-join.tsx'), /emptyLine/, 'Home keeps its own answer');
 });
 
 

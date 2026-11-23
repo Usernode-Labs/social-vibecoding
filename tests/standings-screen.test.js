@@ -1319,11 +1319,13 @@ test('the season caption replaces the "nothing is running" caption', () => {
     'and the component draws it from that one field');
   assert.ok(!/_seasonDefault/.test(ctxJs),
     'the default-pick flag is gone — the selection is the single source of truth');
-  // The picker and the hero must not label the season event "(past)".
-  assert.match(ctxJs, /if \(isSeason\) return t\('leaderboard:eventBar\.option\.season', \{ event \}\);/, 'the option reads (season)');
-  assert.equal(message('leaderboard:eventBar.option.season', { event: 'Season 1' }), 'Season 1 (season)');
-  assert.match(ctxJs, /const statusLabel = isSeason \? t\('leaderboard:eventBar\.status\.season'\)/, 'so does the hero badge');
-  assert.equal(message('leaderboard:eventBar.status.season'), 'season');
+  // The picker and the hero must not label the season event "(past)". Its
+  // name already says what it is (phone review #109, 23 Nov 2026): the option
+  // is "Season 2", not "Season 2 (season)", and the hero draws no chip for it,
+  // since the whole-season caption says the same.
+  assert.match(ctxJs, /if \(isSeason\) return event;/, 'the option is the season\'s name alone');
+  assert.match(ctxJs, /const statusLabel = isSeason \? ''/, 'and the hero has no badge for it');
+  assert.match(barTsx, /\{hero\.statusLabel \? \(/, 'which the bar leaves out when there is none');
 });
 
 test('both #981 checks are declared and the reader keeps them', () => {

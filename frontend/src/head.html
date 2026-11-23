@@ -1116,7 +1116,14 @@
         var bg = s.backgroundColor;
         probe.remove();
         var tinted = bg && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(bg);
-        if (!(size > 0 && size < 12) || weight !== '500' || !tinted) {
+        // Measured against the root's own size, not a fixed 12px: Settings ›
+        // Accessibility › Text size raises the root to 20px, 22px and 24px at
+        // 125%, 137.5% and 150%, where a healthy 0.65rem is 13px to 15.6px,
+        // and this reported a broken cascade on every load for anyone who had
+        // picked them. A probe that lost the cascade inherits the body's size,
+        // which is the root's, so it still fails this at every text size.
+        var rootSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        if (!(size > 0 && size < rootSize * 0.75) || weight !== '500' || !tinted) {
           console.error(
             '[tailwind] compiled utilities are losing the cascade to app.css — '
             + '/css/tailwind.css must be the LAST stylesheet in <head>. Probe got '

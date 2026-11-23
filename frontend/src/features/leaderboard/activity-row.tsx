@@ -158,7 +158,10 @@ export function ActivityRow({ text, points, at, precision, reason, href, note, c
           </time>
         ) : null}
       </span>
-      <span className="shrink-0 font-mono text-zinc-500 dark:text-zinc-400">{points}</span>
+      {/* The page's own face, with figures of one width so a column of
+          amounts lines up (phone review #100, #108: "+250" in a monospace face
+          with slashed zeros beside "750 pts" in the page's sans). */}
+      <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400" data-activity-points="">{points}</span>
     </li>
   );
 }

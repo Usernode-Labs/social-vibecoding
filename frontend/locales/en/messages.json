@@ -6290,5 +6290,25 @@
   "previewPin.failed": {
     "text": "That comment wasn't sent. Try again.",
     "description": "Error in a pinned comment's box when posting it in the thread failed."
+  },
+  "guide.title": {
+    "text": "Your messages",
+    "description": "Heading of the guide shown beside the conversation list in Messages on a tablet or computer while no conversation is open."
+  },
+  "guide.body": {
+    "text": "Talk with people and groups, privately. Pick a conversation on the left, or start one.",
+    "description": "Text under \"Your messages\" in the guide beside the conversation list: what Messages is for and the two things to do next. The list is beside this text, on the side where reading starts."
+  },
+  "guide.channels.label": {
+    "text": "Looking for a project's chat?",
+    "description": "Title of a row in the guide beside the Messages list. Pressing it opens the Communities page. For somebody who came to Messages looking for a community's channel."
+  },
+  "guide.channels.hint": {
+    "text": "Channels like #general are on each community's page",
+    "description": "Second line of the \"Looking for a project's chat?\" row in the Messages guide: a community's channels, such as #general, are found on that community's own page."
+  },
+  "guide.bot": {
+    "text": "Homeroom bot has its own tab in the sidebar.",
+    "description": "Last line of the guide beside the Messages list: the chat with Homeroom bot is not in Messages, it is the Homeroom bot tab of the sidebar."
   }
 }

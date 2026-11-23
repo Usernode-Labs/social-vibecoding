@@ -111,15 +111,19 @@ jobs:
             CONTEXT="$RUNNER_TEMP/starter-source"
             DOCKERFILE="$CONTEXT/Dockerfile"
           fi
-          build_args=(--load --pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE")
+          build_args=(--pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE")
           if [ "$COMPONENT" = worker ] && [[ "$LIVE_WORKER_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
             # Import build layers only from the image promoted by main. The
             # candidate still builds locally and gets all of its own checks.
             build_args+=(--cache-from "type=registry,ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-worker@$LIVE_WORKER_DIGEST")
           fi
-          docker buildx build "${build_args[@]}" "$CONTEXT"
-          sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"
-          sh scripts/check-image-security.sh "security-$COMPONENT" "$out" "$out/sbom.spdx.json" "$COMPONENT"
+          if [ "$COMPONENT" = worker ]; then
+            sh scripts/check-pr-worker-image.sh "$out" "${build_args[@]}" "$CONTEXT"
+          else
+            docker buildx build --load "${build_args[@]}" "$CONTEXT"
+            sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"
+            sh scripts/check-image-security.sh "security-$COMPONENT" "$out" "$out/sbom.spdx.json" "$COMPONENT"
+          fi
       - name: Verify capture browser and media
         if: matrix.component == 'capture'
         timeout-minutes: 2

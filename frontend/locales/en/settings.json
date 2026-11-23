@@ -1216,7 +1216,7 @@
     "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): Homeroom's usual visual style with the changes still being tried on it, drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress. Translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
-    "text": "Try another look for Homeroom, in light and dark. One draws every page in the website's colours. The other is the usual look with changes still being tried on it, in the brand kit's colours and typefaces. Admins see this menu, and the same one beside the bell, while the looks are drawn. Kept for this browser.",
+    "text": "Try another look for Homeroom, in light and dark. One draws every page in the website's colours. The other is the usual look with changes still being tried on it, in the brand kit's colours and typefaces. Admins see this menu, and the same one beside the bell, while the looks are drawn. Kept for this device.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "theme.title": {
@@ -1224,7 +1224,7 @@
     "description": "Heading of the section in Settings where the person chooses a light or dark appearance."
   },
   "theme.intro": {
-    "text": "Light, dark, or follow your device. Applies everywhere on this browser.",
+    "text": "Light, dark, or follow your device. Applies everywhere on this device.",
     "description": "Explanation under the Theme heading in Settings."
   },
   "theme.controlName": {
@@ -1284,7 +1284,7 @@
     "description": "Heading of the Text size part of Settings > Accessibility."
   },
   "accessibility.textSize.intro": {
-    "text": "Makes text bigger everywhere on this browser, up to one and a half times the normal size.",
+    "text": "Makes text bigger everywhere on this device, up to one and a half times the normal size.",
     "description": "Line under the Text size heading in Settings > Accessibility, saying what the control does."
   },
   "accessibility.textSize.controlName": {
@@ -1486,6 +1486,14 @@
   "phones.unlinkFailed": {
     "text": "Couldn't unlink that phone. Try again in a moment.",
     "description": "Error on the Settings > Linked devices page when unlinking a phone failed; the phone stays in the list."
+  },
+  "phones.older_one": {
+    "text": "Older ({{count}})",
+    "description": "Folded line at the foot of a group in Settings > Linked devices: the devices of that group not used for 30 days, hidden until it is opened. {{count}} is how many."
+  },
+  "phones.older_other": {
+    "text": "Older ({{count}})",
+    "description": "Folded line at the foot of a group in Settings > Linked devices: the devices of that group not used for 30 days, hidden until it is opened. {{count}} is how many."
   },
   "phones.group.phones": {
     "text": "Phones",
@@ -2619,6 +2627,14 @@
     "text": "Unpin {{page}}",
     "description": "Tooltip and accessible name of the filled bookmark button on a pinned row of the Settings menu. Pressing it sends the page back to its usual group. {{page}} is the page's name."
   },
+  "nav.pin.pageAdd": {
+    "text": "Pin to the top",
+    "description": "Small button at the top of a Settings page on a phone, beside a bookmark icon. Pressing it puts this page in the Pinned group at the top of the Settings menu. Short: it shares its line with nothing else."
+  },
+  "nav.pin.pageRemove": {
+    "text": "Pinned",
+    "description": "The same button once the page is pinned, beside a filled bookmark icon: the page is in the Pinned group at the top of the Settings menu, and pressing it unpins it. Its accessible name says so in full."
+  },
   "nav.pin.up": {
     "text": "Move {{page}} up",
     "description": "Tooltip and accessible name of the up arrow on a pinned row of the Settings menu. Pressing it moves the page one place up among the pinned pages. {{page}} is the page's name."
@@ -2954,6 +2970,10 @@
   "connectors.progress.tickAria": {
     "text": "Step {{n}} done",
     "description": "Screen reader label of the toggle on a setup guide's step in Settings > Connectors, announced as pressed or not pressed. {{n}} is the step's number."
+  },
+  "connectors.row.sameName": {
+    "text": "{{name}} · {{number}}",
+    "description": "Title of a connection's row in Settings > Connectors when two or more connections on one card have the same name (two \"Claude\" rows, say). {{name}} is that name; {{number}} counts them in the card's order (1, 2, 3), so the rows can be told apart. The line under it says when each was connected and last used."
   },
   "connectors.row.unnamedClient": {
     "text": "Connected client",

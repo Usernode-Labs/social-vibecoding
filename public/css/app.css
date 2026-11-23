@@ -796,15 +796,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.messages-row-name { color: var(--text-primary); font-size: 15px; font-weight: 650; line-height: 20px; }
-.messages-row-preview { margin-top: 2px; color: var(--text-muted); font-size: 13px; line-height: 18px; }
+/* In rem, like everything a person reads in a conversation (a message, its
+   sender and time, the composer): Settings › Accessibility › Text size makes
+   text bigger everywhere by scaling rem, and these were fixed pixels, so at
+   150% the page's headings grew and the messages themselves did not. The
+   same 15 over 13 (and 17 in a conversation) at the default size. */
+.messages-row-name { color: var(--text-primary); font-size: 0.9375rem; font-weight: 650; line-height: 1.25rem; }
+.messages-row-preview { margin-top: 2px; color: var(--text-muted); font-size: 0.8125rem; line-height: 1.125rem; }
 /* An invitation's preview is the ACTION the row offers, so it takes the
    accent — the language's "actionable / yours". */
 .messages-row-preview-invited { color: var(--accent); font-weight: 500; }
 .messages-row-time {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
 }
 /* #18 of the 19 Oct polish board, ONE MEANING PER BADGE: the accent is
@@ -834,9 +839,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex: 0 0 auto;
   margin-inline-start: 8px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 650;
-  line-height: 18px;
+  line-height: 1.125rem;
   white-space: nowrap;
 }
 
@@ -848,6 +853,8 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-state,
 .messages-empty,
 .messages-thread-empty,
+/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
+.messages-guide { display: none; }
 .messages-no-selection {
   display: flex;
   align-items: center;
@@ -1015,6 +1022,19 @@ html.web-browser-chrome.platform-kb-short {
 .messages-invitation p { margin-top: 2px; color: var(--text-muted); }
 .messages-invitation [role="alert"] { display: block; margin-top: 4px; color: #dc2626; }
 .messages-invite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+/* THE WORDS KEEP A READING WIDTH (23 Nov 2026). The card is a row, and its
+   three buttons never gave way: in the thread pane beside the list (328px
+   at 1024, 584 at 1280) the words were laid out at zero width, one to a
+   line down a card taller than the window, with "Decline & block" printed
+   over them. The words take at least 18rem, and the buttons go under them
+   when the two do not fit side by side. From 768px only: under it the card
+   is already a column (the phone block further down), where a basis would
+   set the words' height instead. */
+@media (min-width: 768px) {
+  .messages-invitation { flex-wrap: wrap; }
+  .messages-invitation > div:first-child { flex: 1 1 min(18rem, 100%); }
+  .messages-invitation > .messages-invite-actions { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+}
 .messages-invite-decline,
 .messages-invite-block,
 .messages-invite-accept {
@@ -1091,12 +1111,15 @@ html.web-browser-chrome.platform-kb-short {
   gap: 0 8px;
   min-width: 0;
   min-height: 22px;
+  /* Never wider than the message's column: at a large text size a long
+     name pushed the time past the screen's edge. The name gives way. */
+  max-width: 100%;
   color: var(--text-primary);
-  font-size: 17px;
+  font-size: 1.0625rem;
   font-weight: 700;
 }
 .messages-message-head time,
-.messages-message-head time ~ span { color: var(--text-muted); font-size: 15px; font-weight: 400; white-space: nowrap; }
+.messages-message-head time ~ span { color: var(--text-muted); font-size: 0.9375rem; font-weight: 400; white-space: nowrap; }
 /* QA 2026-09-24 Q22: a long name gives way before the time does. The name
    takes what the line has left, up to its own width, and ends in an ellipsis
    rather than breaking at a hyphen; the time never wraps inside itself. The
@@ -1122,7 +1145,7 @@ html.web-browser-chrome.platform-kb-short {
    later in this file, which a bare .messages-markdown would lose to. */
 .messages-markdown.gc-msg-content {
   color: var(--text-primary);
-  font-size: 17px;
+  font-size: 1.0625rem;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -1210,7 +1233,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   padding: 10px 16px;
   color: var(--text-primary);
   background: var(--messages-surface);
-  font-size: 17px;
+  font-size: 1.0625rem;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -1764,7 +1787,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   padding: 9px 12px;
   color: var(--text-primary);
   background: var(--messages-surface);
-  font-size: 17px;
+  font-size: 1.0625rem;
   line-height: 1.3;
   /* `resize: vertical` stays: the grow is a floor on convenience, not a
      ceiling on choice, and a hand-dragged height is a deliberate act the next
@@ -1944,8 +1967,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   padding: 9px 4px;
   color: var(--text-primary);
   background: transparent;
-  font-size: 17px;
-  line-height: 22px;
+  font-size: 1.0625rem;
+  line-height: 1.375rem;
   outline: none;
   resize: none;
   /* #1408: lib/use-auto-grow.ts sets `height` to the content height, and
@@ -2567,12 +2590,12 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    and the composer and the inline editor come down with it, so what you type
    is the size it will be drawn at. Nothing new on the scale: 17 → 15 → 13. */
 @media (min-width: 768px) {
-  .messages-message-head { min-height: 20px; font-size: 15px; }
+  .messages-message-head { min-height: 20px; font-size: 0.9375rem; }
   .messages-message-head time,
-  .messages-message-head time ~ span { font-size: 13px; }
-  .messages-markdown.gc-msg-content { font-size: 15px; line-height: 1.4; }
-  .messages-composer-input { font-size: 15px; }
-  .messages-edit textarea { font-size: 15px; }
+  .messages-message-head time ~ span { font-size: 0.8125rem; }
+  .messages-markdown.gc-msg-content { font-size: 0.9375rem; line-height: 1.4; }
+  .messages-composer-input { font-size: 0.9375rem; }
+  .messages-edit textarea { font-size: 0.9375rem; }
 }
 
 /* A READABLE MEASURE (N14 of the 19 Oct polish board). A message's text ran
@@ -2725,8 +2748,10 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    Text size scales everything in rem — the primitives' text-[0.9375rem],
    Tailwind's text-xs…text-3xl, and the rem paddings and heights with them,
    so tap targets keep their proportion. Fixed-pixel text (font-size: Npx
-   rules and text-[Npx] classes) deliberately does not scale; converting it
-   is a later change. CSS zoom was ruled out: the shell is pinned to
+   rules and text-[Npx] classes) does not scale. Messages (its list, a
+   conversation and its composer, which a project's channel shares) is in
+   rem now; the rest, request and change pages among it, is a later change.
+   CSS zoom was ruled out: the shell is pinned to
    height:100dvh and zoom pushes the fixed bars off screen.
 
    High contrast deepens the existing ink and line tokens — every value
@@ -2973,9 +2998,64 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
    y -9 with its grabber clipped. */
 .platform-sheet-adopted#notifications-sheet {
   height: calc(100dvh - max(env(safe-area-inset-top, 0px), 12px)
-    - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))
-    - var(--un-kb-inset, 0px) - 2.25rem) !important;
+    - var(--un-kb-inset, 0px) - 25px) !important;
   max-height: none !important;
+}
+/* PHONE REVIEW #72 (23 Nov 2026): THE LIST RUNS TO THE SHEET'S FOOT. The kit
+   stood the sheet on the home indicator's inset and its body's 20px, so the
+   rows stopped 45pt above the bottom, cut mid-line, over an empty white
+   band. The bell's sheet now runs to the screen's edge (the 25px is the
+   kit's grabber, 21, and its body's top padding, 4) and its scroller keeps
+   the inset as padding at its end, so the last row scrolls clear of the
+   indicator and every row above it runs under it. */
+.un-sheet:has(#notifications-sheet) { padding-bottom: 0; }
+.un-sheet:has(#notifications-sheet) > .un-sheet-body { padding-bottom: 0; }
+.platform-sheet-adopted#notifications-sheet .platform-safe-scroll {
+  padding-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) !important;
+}
+html.un-kb .platform-sheet-adopted#notifications-sheet .platform-safe-scroll { padding-bottom: 0 !important; }
+/* PHONE REVIEW #15 (23 Nov 2026): THE YOU TAB'S CARDS STOP ABOVE ITS BAR.
+   Your feedback, Friends and App slots are the kit's centred card, and the
+   kit sizes one to the whole screen less 32px, so a long Your feedback ran
+   from under the Dynamic Island to behind the tab bar, its last row cut and
+   the bar painted over its foot, while its two siblings were short cards.
+   All three are now centred in the band between the status bar and the tab
+   bar and capped to it, so each is the same card and a long one scrolls
+   inside itself. The bar's height is the shell's own token
+   (--platform-tabs-h, 0 with the keyboard up). */
+.un-modal:has(> :is(#profile-feedback-sheet, #profile-friends-sheet, #profile-app-slots-sheet)) {
+  top: calc((max(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)), 12px) + 100dvh - var(--platform-tabs-h, 0px) - var(--un-kb-inset, 0px)) / 2);
+  max-height: calc(100dvh - max(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)), 12px) - var(--platform-tabs-h, 0px) - var(--un-kb-inset, 0px) - 24px);
+}
+/* PHONE REVIEW S17 (23 Nov 2026): IN THE STANDARD LOOK A SHEET OF ROWS WITH
+   GLYPHS IS A LIST, NOT A STACK OF CENTRED BUTTONS. The kit centres an
+   action sheet's labels in its accent, the iOS way, which drew Settings &
+   rules as eleven centred blue rows; the frame's looks already range them
+   left in the ink. These do the same here: the glyph at the left, the words
+   after it in the page's ink, a destructive row (Leave) still red. Cancel
+   (no glyph) stays centred. */
+html:not([data-skin]) .un-action-btn.un-has-icon {
+  justify-content: flex-start;
+  gap: 14px;
+  padding-inline: 20px;
+  text-align: start;
+  color: var(--text-primary);
+}
+html:not([data-skin]) .un-action-btn.un-has-icon .un-item-icon { opacity: 0.6; }
+html:not([data-skin]) .un-action-btn.un-has-icon.un-destructive { color: var(--un-action-danger); }
+html:not([data-skin]) .un-action-btn.un-has-icon.un-destructive .un-item-icon { opacity: 1; }
+/* PHONE REVIEW S19 (23 Nov 2026): FROM 768PX THE HEADER'S TWO MENUS ARE NOT
+   THE SCREEN'S WIDTH. On the Duo unfolded and held sideways the page is a
+   desktop (the rail, Messages in two columns) yet the Homeroom menu and the
+   bell rose as 951pt bottom sheets, a row stretched 890pt edge to edge. On
+   a touch screen the kit still presents them as its sheet, so the sheet is
+   capped at 520px and centred (over the usable box beside the Duo's column:
+   see THE SIDE STRIP's rule for the two). */
+@media (min-width: 768px) {
+  .un-sheet:is(:has(#notifications-sheet), :has(#apps-switcher-sheet)) {
+    max-width: 520px;
+    margin-inline: auto;
+  }
 }
 
 /* THE KIT'S DRAG WOULD OTHERWISE EAT THE SCROLL.
@@ -3146,6 +3226,17 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
   --un-navbar-bg: var(--bg-primary);
   --un-toast-bg: #1c1c2a;
 }
+
+/* AN ALERT OVER A DIALOG IS A CARD OF ITS OWN (23 Nov 2026). The kit's
+   alert has no edge: it stands out by the dimmed page behind it. But its
+   scrim is under an open dialog (9990 against the dialog's 9992), so "Leave
+   this group?" raised from Group members was a white card on a white card,
+   a hole in the dialog with its rows cut off on either side. The alert's
+   scrim comes over the dialog (the kit appends it just before the card, and
+   after any dialog), and the card has a hairline and a shadow wherever it
+   stands. */
+.un-backdrop:has(+ .un-alert) { z-index: 9992; }
+html:not([data-skin]) .un-alert { box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 18px 48px -18px rgb(0 0 0 / 0.45); }
 
 .platform-chat-header.un-scrolled,
 .un-navbar,
@@ -4399,23 +4490,24 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
 }
 
 /* ── THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES (13 Nov 2026) ────────────
-   The guest Discover (its story and its list) is a visitor's next click
-   after onhomeroom.com, so it is drawn in that site's own look: a sky band
-   with a white window in it, serif headlines, sun pills on an ink outline
-   and outlined cards. The app's own look starts once somebody is in.
+   The guest Discover (its story and its list) and the page about private
+   communities are a visitor's next click after onhomeroom.com, so they are
+   drawn in that site's own look: a sky band with a white window in it,
+   serif headlines, sun pills on an ink outline, outlined cards, and bands
+   of colour down the page. The app's own look starts once somebody is in.
 
-   The one component that is only ever drawn here
-   (frontend/src/features/auth/story.tsx's short story) spells every colour
-   as one of the variables below. The pieces the page shares with the
-   signed-in app (the bar's button, the search, the chips, the cards) keep
-   their classes and are repainted from here, by their own hooks, under
-   #auth-landing-screen only.
+   The two components that are only ever drawn here
+   (frontend/src/features/auth/story.tsx's short story and
+   ../guest/guest-communities.tsx) spell every colour as one of the
+   variables below. The pieces they share with the signed-in app (the bar's
+   button, the search, the chips, the cards) keep their classes and are
+   repainted from here, by their own hooks, under #auth-landing-screen only.
 
    The dark shell gets the same drawing on its own ground: the second rule
    moves the variables and nothing else. Sun keeps its ink words in both.
    Young Serif and Geist are the faces the new look (the last block of this
    sheet) declares; a browser downloads them only where a rule that names
-   them matches, which is now the new look and this page
+   them matches, which is now the new look and these two pages
    (tests/new-look.test.js). This block sits with the landing's own rules,
    well before the looks' hand-written blocks and generated section, which
    have to stay together and directly before the new look's. */
@@ -4433,9 +4525,19 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   --site-sun: #ffee6f;
   --site-sun-lit: #fff4a0;
   --site-sun-pale: #fff6ac;
+  --site-sky-pale: #cfe6ff;
+  --site-mint: #d9ecd0;
   --site-on-sun: #121a0e;
   --site-chosen: #121a0e;
   --site-chosen-ink: #fffeea;
+  /* The private page's: a hairline between rows, and its two tinted cards
+     with the words on them. */
+  --site-line-soft: rgba(18, 26, 14, 0.2);
+  --site-card-sky: #e5f0fc;
+  --site-card-leaf: #e8f3e2;
+  --site-card-words: #3f4650;
+  /* Words on its green and its soft sky, which are the same in both modes. */
+  --site-on-band: #000000;
 }
 .dark #auth-landing-screen {
   /* THE SITE AT NIGHT (17 Nov 2026). The same poster with the lights off:
@@ -4452,8 +4554,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   --site-ground: #0d1421;
   --site-panel: #182135;
   --site-sun-pale: transparent;
+  --site-sky-pale: #173560;
+  --site-mint: #2f4d2b;
   --site-chosen: #fffeea;
   --site-chosen-ink: #0d1421;
+  --site-line-soft: rgba(255, 254, 234, 0.18);
+  --site-card-sky: #173560;
+  --site-card-leaf: #2f4d2b;
+  --site-card-words: #c9ccb6;
 }
 /* One colour edge to edge, around content that keeps the column's width:
    the band's own fill, let out to both sides as a border image (a flat
@@ -4511,18 +4619,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   background-size: 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, auto;
   background-repeat: repeat;
 }
-/* The ground under the page is the site's cream, flat: the washes of
+/* The ground under the two pages is the site's cream, flat: the washes of
    the app's wallpaper are the app's. The bar's faked glass follows it. Not
    under a look (html[data-skin]), which paints its own ground and draws the
    landing in its own frame. */
-html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) {
+html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) {
   background: var(--site-ground);
 }
-html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-header {
+html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) #landing-header {
   --fake-glass-tint: var(--site-ground);
 }
-/* Words on the page are the site's sans. */
-#auth-landing-screen [data-guest-discover] {
+/* Words on the two pages are the site's sans. */
+#auth-landing-screen :is([data-guest-discover], [data-guest-groups]) {
   font-family: var(--site-sans);
 }
 /* DO THIS is a sun pill on an ink outline: the bar's button on every
@@ -4608,6 +4716,391 @@ html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-h
   font-weight: 400;
   letter-spacing: -0.005em;
 }
+/* ── THE PAGE ABOUT PRIVATE COMMUNITIES (the B3 design, 23 Nov 2026) ─────
+   frontend/src/features/guest/guest-communities.tsx. Top to bottom: the
+   hero (its words beside a walk through a community, played as four
+   scenes), what a group gets on the green with stars, who it is for, the
+   approval rules on the green again, and a closing band on a soft sky.
+
+   Its headings are the hero's serif at every size (--site-serif is Source
+   Serif 4 here; the landing's list keeps Young Serif).
+
+   THE WALK-THROUGH IS A PICTURE OF THE APP, so it keeps one palette of its
+   own in both modes, as a screenshot would: its window is white on a dark
+   page too. Its classes (hr-, hx-, sc-) are the design file's. */
+#auth-landing-screen [data-guest-groups] {
+  --site-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+}
+/* A picture edge to edge behind a band, laid as the clouds are. */
+#auth-landing-screen :is(.site-stars, .site-sky-soft) { position: relative; isolation: isolate; }
+#auth-landing-screen :is(.site-stars, .site-sky-soft)::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset-block: 0;
+  left: 50%;
+  width: var(--platform-usable-w);
+  transform: translateX(-50%);
+}
+#auth-landing-screen .site-stars::before { background: #a9cf97 url('/brand/groups/stars.webp') center / cover no-repeat; }
+#auth-landing-screen .site-sky-soft::before { background: #8ec3e6 url('/brand/bg/sky.webp') center / cover no-repeat; }
+
+/* The hero's three points, and the column the walk-through sits in. */
+#auth-landing-screen .hr-points { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin-top: 22px; font-family: var(--site-sans); font-size: 14px; line-height: 20px; color: var(--site-muted); }
+#auth-landing-screen .hr-points li { display: inline-flex; align-items: center; gap: 7px; }
+#auth-landing-screen .hr-points svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--site-ink); }
+#auth-landing-screen .hr-demo-col { min-width: 0; padding: 4px 12px 20px; }
+@media (min-width: 768px) {
+  #auth-landing-screen .hr-demo-col { padding: 8px 28px 32px; }
+}
+@media (min-width: 1024px) {
+  #auth-landing-screen .hr-points { flex-direction: column; justify-content: flex-start; }
+  #auth-landing-screen .hr-demo-col { display: flex; align-items: center; padding: 36px 32px; background: var(--site-ground); border-inline-start: 1px solid var(--site-line); }
+}
+
+/* THE WALK-THROUGH: an airy window of the app (soft white cards, blue and
+   sun touches) over the sky. */
+#auth-landing-screen .hr-demo {
+  --ink: #14161a; --mute: #5e6470; --faint: #9aa0aa; --line: rgba(20, 30, 50, 0.08); --wash: #f5f8fc;
+  --blue: #2f8fe3; --blue-ink: #1f6fc4; --blue-pale: #e5f0fc; --sun: #ffee6f; --sun-pale: #fff8d6; --green-pale: #e8f3e2;
+  --card-shadow: 0 0 0 1px rgba(20, 30, 50, 0.05), 0 1px 2px rgba(20, 30, 50, 0.05), 0 6px 18px -8px rgba(20, 30, 50, 0.12);
+  width: 100%; max-width: 600px; margin: 0 auto; font-family: var(--site-sans); color: var(--ink); text-align: start; letter-spacing: -0.01em;
+}
+#auth-landing-screen .hr-demo .hx-win { position: relative; overflow: hidden; border-radius: 16px; background: #fff; box-shadow: 0 0 0 1px rgba(20, 30, 50, 0.1), 0 2px 4px rgba(20, 30, 50, 0.05), 0 34px 70px -34px rgba(20, 40, 80, 0.45); }
+#auth-landing-screen .hr-demo .hx-body { display: grid; grid-template-columns: 156px minmax(0, 1fr); height: 488px; }
+
+/* Its sidebar. */
+#auth-landing-screen .hr-demo .hx-side { display: flex; flex-direction: column; gap: 1px; padding: 14px 8px 10px; background: #fff; border-inline-end: 1px solid var(--line); color: var(--ink); font-size: 12px; font-weight: 500; overflow: hidden; }
+#auth-landing-screen .hr-demo .hx-logo { height: 17px; width: auto; margin: 0 8px 12px; color: var(--ink); }
+#auth-landing-screen .hr-demo .hx-nav { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 8px; white-space: nowrap; transition: background 250ms, color 250ms; }
+#auth-landing-screen .hr-demo .hx-nav svg { width: 14px; height: 14px; flex-shrink: 0; color: #3b414b; }
+#auth-landing-screen .hr-demo .hx-nav em { margin-inline-start: auto; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--sun); color: var(--ink); font-size: 10px; font-weight: 600; font-style: normal; line-height: 16px; text-align: center; }
+#auth-landing-screen .hr-demo .hx-nav.is-on { background: var(--blue-pale); color: var(--ink); font-weight: 600; }
+#auth-landing-screen .hr-demo .hx-nav.is-on svg { color: var(--blue-ink); }
+#auth-landing-screen .hr-demo .hx-side small { margin: 10px 8px 4px; font-size: 10.5px; font-weight: 500; color: var(--faint); }
+#auth-landing-screen .hr-demo .hx-sep { height: 1px; margin: 6px 8px; background: var(--line); }
+#auth-landing-screen .hr-demo .hx-comm { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; font-weight: 600; white-space: nowrap; min-width: 0; }
+#auth-landing-screen .hr-demo .hx-comm span:last-child { overflow: hidden; text-overflow: ellipsis; }
+#auth-landing-screen .hr-demo .hx-tree { display: flex; flex-direction: column; gap: 1px; margin-inline-start: 17px; padding-inline-start: 5px; border-inline-start: 1px solid var(--line); }
+#auth-landing-screen .hr-demo .hx-tile { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 6px; background: var(--sun-pale); box-shadow: inset 0 0 0 1px rgba(20, 30, 50, 0.06); color: var(--ink); }
+#auth-landing-screen .hr-demo .hx-tile svg { width: 13px; height: 13px; }
+#auth-landing-screen .hr-demo .hx-tile.lg { width: 34px; height: 34px; border-radius: 10px; }
+#auth-landing-screen .hr-demo .hx-tile.lg svg { width: 20px; height: 20px; }
+
+/* Its main area: a soft sky at the top, fading to white. */
+#auth-landing-screen .hr-demo .hx-main {
+  position: relative; min-width: 0; overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0, rgba(255, 255, 255, 0.75) 70px, #fff 150px) 0 0 / 100% 100% no-repeat,
+    #ddebf8 url('/brand/sky.webp') center top / 160% auto no-repeat;
+}
+#auth-landing-screen .hr-demo .hx-top { position: absolute; z-index: 6; inset-inline: 0; top: 0; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px; }
+#auth-landing-screen .hr-demo .hx-search { display: flex; align-items: center; gap: 7px; flex: 1; max-width: 240px; height: 26px; margin-inline: auto; padding: 0 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.92); box-shadow: var(--card-shadow); font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; }
+#auth-landing-screen .hr-demo .hx-search svg { width: 12px; height: 12px; flex-shrink: 0; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-search kbd { margin-inline-start: auto; padding: 1px 5px; border-radius: 5px; background: var(--wash); font: 500 9.5px var(--site-sans); color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-bell { position: relative; display: flex; color: #3b414b; }
+#auth-landing-screen .hr-demo .hx-bell svg { width: 15px; height: 15px; }
+#auth-landing-screen .hr-demo .hx-bell i { position: absolute; top: -2px; inset-inline-end: -2px; width: 7px; height: 7px; border-radius: 999px; background: #f5b100; box-shadow: 0 0 0 1.5px #fff; }
+
+/* A scene, and the parts of it that arrive one step at a time (`on`). */
+#auth-landing-screen .hr-demo .hr-scene { position: absolute; inset: 44px 0 0 0; display: flex; flex-direction: column; gap: 10px; padding: 4px 18px 14px; opacity: 0; visibility: hidden; transform: translateY(6px); transition: opacity 380ms ease, transform 380ms ease, visibility 0s 380ms; }
+#auth-landing-screen .hr-demo .hr-scene.is-on { opacity: 1; visibility: visible; transform: none; transition: opacity 380ms ease, transform 380ms ease; }
+#auth-landing-screen .hr-demo .hx-title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+#auth-landing-screen .hr-demo .hx-title small { display: block; margin-top: 3px; font-size: 11px; font-weight: 500; letter-spacing: -0.01em; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-sub { margin-top: -6px; font-size: 11.5px; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-h { margin: 2px 0 -3px; font-size: 13px; font-weight: 700; letter-spacing: -0.02em; }
+#auth-landing-screen .hr-demo .hx-card { border-radius: 14px; background: #fff; box-shadow: var(--card-shadow); }
+#auth-landing-screen .hr-demo .hr-step { transition: opacity 420ms ease, transform 420ms cubic-bezier(0.22, 1, 0.36, 1), background 300ms, box-shadow 300ms; }
+#auth-landing-screen .hr-demo .hr-rise:not(.on) { opacity: 0; transform: translateY(8px); }
+#auth-landing-screen .hr-demo .hr-pop:not(.on) { opacity: 0; transform: scale(0.6); }
+#auth-landing-screen .hr-demo .hr-out.on { opacity: 0; transform: translateY(6px); pointer-events: none; }
+
+/* People. */
+#auth-landing-screen .hr-demo .hr-av { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 999px; background: #e9eef5 center / cover no-repeat; box-shadow: 0 0 0 1.5px #fff; font: 600 10px/1 var(--site-sans); color: var(--ink); letter-spacing: 0; }
+#auth-landing-screen .hr-demo .hr-av.lg { width: 28px; height: 28px; font-size: 11px; }
+#auth-landing-screen .hr-demo .hr-av.sm { width: 20px; height: 20px; font-size: 8.5px; }
+#auth-landing-screen .hr-demo .hr-av.k { background-color: var(--ink); color: #fffeea; }
+#auth-landing-screen .hr-demo .hr-av.k svg { width: 15px; height: 15px; }
+#auth-landing-screen .hr-demo .hr-av.y { background-color: var(--sun-pale); }
+#auth-landing-screen .hr-demo .hr-av.pic { color: transparent; }
+#auth-landing-screen .hr-demo .hr-av.av-f1 { background-image: url('/brand/groups/avatar-f1.webp'); }
+#auth-landing-screen .hr-demo .hr-av.av-f3 { background-image: url('/brand/groups/avatar-f3.webp'); }
+#auth-landing-screen .hr-demo .hr-av.av-f4 { background-image: url('/brand/groups/avatar-f4.webp'); }
+#auth-landing-screen .hr-demo .hr-av.av-m3 { background-image: url('/brand/groups/avatar-m3.webp'); }
+#auth-landing-screen .hr-demo .hr-av.av-m4 { background-image: url('/brand/groups/avatar-m4.webp'); }
+#auth-landing-screen .hr-demo .hr-av.av-kai { background-image: url('/brand/groups/avatar-kai.webp'); }
+#auth-landing-screen .hr-demo .hr-av.av-zoe { background-image: url('/brand/groups/avatar-zoe.webp'); }
+#auth-landing-screen .hr-demo .hx-stack { display: flex; }
+#auth-landing-screen .hr-demo .hx-stack .hr-av + .hr-av { margin-inline-start: -6px; }
+#auth-landing-screen .hr-demo .hr-av.hx-more { background: #fff; box-shadow: 0 0 0 1.5px #fff, inset 0 0 0 1px var(--line); font-size: 9.5px; color: var(--mute); }
+
+/* Buttons and pills. */
+#auth-landing-screen .hr-demo .hx-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 27px; padding: 0 12px; border-radius: 9px; background: var(--blue); color: #fff; font-size: 11.5px; font-weight: 600; white-space: nowrap; transition: transform 150ms, background 250ms, box-shadow 150ms, color 250ms; }
+#auth-landing-screen .hr-demo .hx-btn svg { width: 12px; height: 12px; }
+#auth-landing-screen .hr-demo .hx-btn.white { background: #fff; color: var(--ink); box-shadow: var(--card-shadow); }
+#auth-landing-screen .hr-demo .hx-btn.sun { background: var(--sun); color: var(--ink); box-shadow: 0 1px 0 rgba(20, 30, 50, 0.15); }
+#auth-landing-screen .hr-demo .hx-btn.line { background: #fff; color: var(--ink); box-shadow: inset 0 0 0 1px rgba(20, 30, 50, 0.14); }
+#auth-landing-screen .hr-demo .hx-pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+#auth-landing-screen .hr-demo .hx-pill.blue { background: var(--blue-pale); color: var(--blue-ink); }
+#auth-landing-screen .hr-demo .hx-pill.sun { background: var(--sun); color: var(--ink); }
+#auth-landing-screen .hr-demo .hx-pill.green { background: var(--green-pale); color: #2e6b1f; }
+#auth-landing-screen .hr-demo .hx-pill.grey { background: var(--wash); color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-pill svg { width: 11px; height: 11px; }
+
+/* The supper club's app: its own look, not Homeroom's. Sized in em, so one
+   drawing serves the small copies and the large one. */
+#auth-landing-screen .hr-demo .sc-app { --a: #ff5b2e; position: relative; display: flex; flex-direction: column; gap: 0.7em; padding: 1em 1.1em; background: #f2f1ee; color: #0e0e0e; font-family: var(--site-sans); overflow: hidden; letter-spacing: -0.02em; }
+#auth-landing-screen .hr-demo .sc-top { display: flex; align-items: center; gap: 0.45em; font-size: 0.78em; font-weight: 600; }
+#auth-landing-screen .hr-demo .sc-top .live { display: inline-flex; align-items: center; gap: 0.35em; padding: 0.25em 0.65em; border-radius: 999px; background: #fff; }
+#auth-landing-screen .hr-demo .sc-top .live::before { content: ""; width: 0.55em; height: 0.55em; border-radius: 999px; background: var(--a); }
+#auth-landing-screen .hr-demo .sc-top .meta { margin-inline-start: auto; color: #8a8984; font-weight: 500; }
+#auth-landing-screen .hr-demo .sc-h { font-size: 2.3em; font-weight: 800; line-height: 0.92; letter-spacing: -0.06em; }
+#auth-landing-screen .hr-demo .sc-chips { display: flex; gap: 0.35em; flex-wrap: wrap; }
+#auth-landing-screen .hr-demo .sc-chips span { padding: 0.28em 0.7em; border-radius: 999px; background: #fff; font-size: 0.74em; font-weight: 500; color: #4a4945; }
+#auth-landing-screen .hr-demo .sc-list { display: flex; flex-direction: column; gap: 0.35em; }
+#auth-landing-screen .hr-demo .sc-row { position: relative; display: flex; align-items: center; gap: 0.6em; padding: 0.55em 0.7em; border-radius: 0.8em; background: #fff; font-size: 0.82em; font-weight: 600; }
+#auth-landing-screen .hr-demo .sc-row .ini { display: inline-flex; align-items: center; justify-content: center; width: 1.7em; height: 1.7em; border-radius: 999px; background: #0e0e0e; color: #fff; font-size: 0.8em; font-weight: 600; letter-spacing: 0; }
+#auth-landing-screen .hr-demo .sc-row .who { margin-inline-start: auto; font-weight: 500; color: #8a8984; }
+#auth-landing-screen .hr-demo .sc-row.open { background: transparent; box-shadow: inset 0 0 0 1px #cfcdc6; }
+#auth-landing-screen .hr-demo .sc-row.open .ini { background: transparent; box-shadow: inset 0 0 0 1px #cfcdc6; color: #8a8984; }
+#auth-landing-screen .hr-demo .sc-row .claim { margin-inline-start: auto; padding: 0.25em 0.75em; border-radius: 999px; background: var(--a); color: #fff; font-size: 0.88em; font-weight: 600; }
+#auth-landing-screen .hr-demo .sc-row.hl.on { box-shadow: inset 0 0 0 1px #cfcdc6, 0 0 0 2px var(--blue); }
+
+/* Scene one: the hub. */
+#auth-landing-screen .hr-demo .hx-banner {
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 40%; gap: 12px; align-items: center; min-height: 112px; padding: 14px 14px 14px 16px; border-radius: 14px; overflow: hidden; color: #fff;
+  background: linear-gradient(90deg, rgba(31, 98, 170, 0.78) 0%, rgba(47, 143, 227, 0.45) 55%, rgba(47, 143, 227, 0.1) 100%), #3a8edb url('/brand/sky.webp') center / cover no-repeat;
+  box-shadow: var(--card-shadow);
+}
+#auth-landing-screen .hr-demo .hx-banner b { display: block; font-size: 17px; font-weight: 700; line-height: 1.1; letter-spacing: -0.03em; }
+#auth-landing-screen .hr-demo .hx-banner p { margin-top: 4px; font-size: 11px; line-height: 14px; opacity: 0.95; }
+#auth-landing-screen .hr-demo .hx-banner .hx-btns { display: flex; gap: 6px; margin-top: 9px; }
+#auth-landing-screen .hr-demo .hx-mini-app { border-radius: 9px; overflow: hidden; height: 92px; font-size: 5.4px; box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.35); }
+#auth-landing-screen .hr-demo .hx-mini-app .sc-app { height: 100%; }
+#auth-landing-screen .hr-demo .hx-active { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+#auth-landing-screen .hr-demo .hx-active div { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+#auth-landing-screen .hr-demo .hx-active b { font-size: 12px; font-weight: 600; }
+#auth-landing-screen .hr-demo .hx-active div span { font-size: 11px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#auth-landing-screen .hr-demo .hx-foryou { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+#auth-landing-screen .hr-demo .hx-tilecard { position: relative; display: flex; align-items: center; gap: 9px; padding: 10px; border-radius: 12px; transition: box-shadow 250ms, transform 200ms; }
+#auth-landing-screen .hr-demo .hx-tilecard.y { background: var(--sun-pale); }
+#auth-landing-screen .hr-demo .hx-tilecard.b { background: var(--blue-pale); }
+#auth-landing-screen .hr-demo .hx-tilecard .ico { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.75); color: var(--ink); }
+#auth-landing-screen .hr-demo .hx-tilecard .ico svg { width: 15px; height: 15px; }
+#auth-landing-screen .hr-demo .hx-tilecard div { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+#auth-landing-screen .hr-demo .hx-tilecard b { font-size: 12px; font-weight: 700; }
+#auth-landing-screen .hr-demo .hx-tilecard div span { font-size: 10.5px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#auth-landing-screen .hr-demo .hx-tilecard em { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--sun); color: var(--ink); font: 600 10px/18px var(--site-sans); font-style: normal; text-align: center; box-shadow: 0 0 0 1px rgba(20, 30, 50, 0.08); }
+#auth-landing-screen .hr-demo .hx-tilecard.press.on { box-shadow: 0 0 0 2px var(--blue); }
+#auth-landing-screen .hr-demo .hx-thread-row { display: flex; align-items: center; gap: 9px; padding: 8px 10px; }
+#auth-landing-screen .hr-demo .hx-thread-row .ico { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 7px; background: var(--green-pale); }
+#auth-landing-screen .hr-demo .hx-thread-row .ico svg { width: 13px; height: 13px; }
+#auth-landing-screen .hr-demo .hx-thread-row div { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+#auth-landing-screen .hr-demo .hx-thread-row b { font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#auth-landing-screen .hr-demo .hx-thread-row div span { font-size: 10.5px; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-count { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px; border-radius: 999px; background: var(--wash); font-size: 10.5px; font-weight: 600; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-count svg { width: 11px; height: 11px; }
+
+/* The pointer that does the pressing: a black arrow with a white edge. */
+#auth-landing-screen .hr-demo .hr-cursor {
+  position: absolute; z-index: 5; width: 17px; height: 17px; pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 3l14 8-6 1.6L9.6 19z' fill='%23000' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+  transition: opacity 300ms, transform 800ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+#auth-landing-screen .hr-demo .hr-cursor:not(.on) { opacity: 0; transform: translate(90px, 46px); }
+
+/* Scene two: a change up for the vote. */
+#auth-landing-screen .hr-demo .hx-prop { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+#auth-landing-screen .hr-demo .hx-by { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-by b { color: var(--ink); font-weight: 600; }
+#auth-landing-screen .hr-demo .hx-by .hx-pill { margin-inline-start: auto; }
+#auth-landing-screen .hr-demo .hx-prop h5 { font-size: 15px; font-weight: 700; line-height: 1.25; letter-spacing: -0.025em; }
+#auth-landing-screen .hr-demo .hx-pv { display: grid; grid-template-columns: 44% 1fr; gap: 12px; align-items: center; padding: 8px; border-radius: 11px; background: var(--wash); }
+#auth-landing-screen .hr-demo .hx-pv .frame { border-radius: 8px; overflow: hidden; font-size: 5.6px; height: 98px; box-shadow: 0 0 0 1px var(--line); }
+#auth-landing-screen .hr-demo .hx-pv .frame .sc-app { height: 100%; }
+#auth-landing-screen .hr-demo .hx-pv .note { display: flex; flex-direction: column; gap: 6px; font-size: 11px; line-height: 15px; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-pv .note b { color: var(--ink); font-size: 11.5px; font-weight: 700; }
+#auth-landing-screen .hr-demo .hx-pv .note .hx-btn { align-self: flex-start; height: 24px; font-size: 11px; }
+#auth-landing-screen .hr-demo .hx-tally { display: flex; align-items: center; gap: 9px; }
+#auth-landing-screen .hr-demo .hx-track { position: relative; flex: 1; height: 6px; border-radius: 999px; background: #e9eef5; overflow: hidden; }
+#auth-landing-screen .hr-demo .hx-fill { position: absolute; inset-block: 0; inset-inline-start: 0; border-radius: 999px; background: var(--blue); transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1); }
+#auth-landing-screen .hr-demo .hx-tally > span:last-child { font-size: 11px; font-weight: 700; min-width: 62px; text-align: end; }
+#auth-landing-screen .hr-demo .hx-acts { position: relative; display: flex; align-items: center; gap: 6px; }
+#auth-landing-screen .hr-demo .hx-acts .hx-btn.vote.on { transform: translateY(1px); background: var(--blue-ink); }
+#auth-landing-screen .hr-demo .hx-acts .hx-pill { margin-inline-start: auto; }
+
+/* Scene three: a comment left on the app itself. */
+#auth-landing-screen .hr-demo .hx-cm-bar { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 11px; background: #fff; box-shadow: var(--card-shadow); font-size: 11.5px; font-weight: 500; color: var(--mute); white-space: nowrap; }
+#auth-landing-screen .hr-demo .hx-cm-bar b { color: var(--ink); font-weight: 600; }
+#auth-landing-screen .hr-demo .hx-cm-bar .ico { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex-shrink: 0; border-radius: 7px; background: var(--blue-pale); color: var(--blue-ink); }
+#auth-landing-screen .hr-demo .hx-cm-bar .ico svg { width: 12px; height: 12px; }
+#auth-landing-screen .hr-demo .hx-cm-bar > span:nth-of-type(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#auth-landing-screen .hr-demo .hx-cm-bar .tog { margin-inline-start: auto; position: relative; width: 24px; height: 15px; flex-shrink: 0; border-radius: 999px; background: var(--blue); }
+#auth-landing-screen .hr-demo .hx-cm-bar .tog::after { content: ""; position: absolute; top: 2px; inset-inline-end: 2px; width: 11px; height: 11px; border-radius: 999px; background: #fff; }
+#auth-landing-screen .hr-demo .hx-cm-stage { position: relative; flex: 1; font-size: 11px; border-radius: 12px; box-shadow: var(--card-shadow); }
+#auth-landing-screen .hr-demo .hx-cm-stage .sc-app { height: 100%; border-radius: 12px; padding: 1.3em 1.5em; gap: 0.85em; }
+#auth-landing-screen .hr-demo .hx-pin { position: absolute; z-index: 3; inset-inline-end: 22%; top: -10px; width: 20px; height: 20px; border-radius: 999px 999px 999px 3px; background: var(--sun); box-shadow: 0 0 0 1.5px var(--ink), 0 3px 6px rgba(0, 0, 0, 0.2); }
+#auth-landing-screen .hr-demo .hx-compose-at { position: absolute; z-index: 4; inset-inline-end: 8px; top: calc(100% + 8px); }
+#auth-landing-screen .hr-demo .hx-compose { position: relative; width: 228px; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 18px 36px -14px rgba(20, 40, 80, 0.4); letter-spacing: -0.01em; }
+#auth-landing-screen .hr-demo .hx-compose .hd { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 500; color: var(--mute); }
+#auth-landing-screen .hr-demo .hx-compose .tx { min-height: 32px; padding: 6px 8px; border-radius: 8px; background: var(--wash); font-size: 12px; font-weight: 500; line-height: 16px; color: var(--ink); }
+#auth-landing-screen .hr-demo .hx-compose .tx:empty::before { content: attr(data-placeholder); color: var(--faint); }
+#auth-landing-screen .hr-demo .hx-compose .tx.typing::after { content: ""; display: inline-block; width: 1px; height: 13px; margin-inline-start: 1px; vertical-align: -2px; background: var(--ink); animation: hx-caret 0.9s steps(1) infinite; }
+@keyframes hx-caret { 50% { opacity: 0; } }
+#auth-landing-screen .hr-demo .hx-compose .ft { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; color: var(--faint); font-weight: 500; }
+#auth-landing-screen .hr-demo .hx-compose .send { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px; border-radius: 8px; background: var(--blue); color: #fff; font-size: 11px; font-weight: 600; transition: transform 150ms, background 150ms; }
+#auth-landing-screen .hr-demo .hx-compose .send svg { width: 11px; height: 11px; }
+#auth-landing-screen .hr-demo .hx-compose .send.on { transform: scale(0.95); background: var(--blue-ink); }
+#auth-landing-screen .hr-demo .hx-toast { position: absolute; z-index: 5; left: 50%; bottom: 14px; display: inline-flex; align-items: center; gap: 7px; padding: 8px 13px; border-radius: 11px; background: #fff; color: var(--ink); font-size: 11.5px; font-weight: 600; white-space: nowrap; transform: translateX(-50%); box-shadow: 0 0 0 1px var(--line), 0 14px 30px -12px rgba(20, 40, 80, 0.45); }
+#auth-landing-screen .hr-demo .hx-toast .ok { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; background: var(--green-pale); color: #2e6b1f; }
+#auth-landing-screen .hr-demo .hx-toast .ok svg { width: 11px; height: 11px; }
+#auth-landing-screen .hr-demo .hx-toast.hr-rise:not(.on) { transform: translate(-50%, 8px); }
+
+/* Scene four: the thread where the comment turns into a change. */
+#auth-landing-screen .hr-demo .hx-ws { display: flex; flex-direction: column; gap: 10px; flex: 1; padding: 12px; }
+#auth-landing-screen .hr-demo .hx-ws-head { display: flex; align-items: center; gap: 8px; }
+#auth-landing-screen .hr-demo .hx-ws-head h5 { font-size: 13.5px; font-weight: 700; letter-spacing: -0.02em; }
+#auth-landing-screen .hr-demo .hx-ws-head .hx-pill { margin-inline-start: auto; transition: background 300ms, color 300ms; }
+#auth-landing-screen .hr-demo .hx-ws-head .hx-pill.on { background: var(--sun); color: var(--ink); }
+#auth-landing-screen .hr-demo .hx-fb { display: flex; gap: 9px; padding: 10px; border-radius: 10px; background: var(--blue-pale); }
+#auth-landing-screen .hr-demo .hx-fb .tx { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; line-height: 15px; }
+#auth-landing-screen .hr-demo .hx-fb .tx > span { color: var(--mute); font-size: 10.5px; }
+#auth-landing-screen .hr-demo .hx-fb .tx > span b { color: var(--ink); font-weight: 600; }
+#auth-landing-screen .hr-demo .hx-thread { display: flex; flex-direction: column; gap: 10px; flex: 1; }
+#auth-landing-screen .hr-demo .hx-msg { display: flex; gap: 9px; font-size: 12px; line-height: 16px; }
+#auth-landing-screen .hr-demo .hx-msg div { min-width: 0; }
+#auth-landing-screen .hr-demo .hx-msg b { font-weight: 600; margin-inline-end: 5px; }
+#auth-landing-screen .hr-demo .hx-msg time { font-size: 10.5px; color: var(--faint); }
+#auth-landing-screen .hr-demo .hx-msg .bot { margin-inline: 0 5px; vertical-align: 1px; height: 16px; font-size: 9px; padding: 0 6px; }
+#auth-landing-screen .hr-demo .hx-msg .hx-btn { margin-top: 6px; height: 24px; font-size: 11px; }
+#auth-landing-screen .hr-demo .hx-reply { display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 10px; background: var(--wash); font-size: 11.5px; color: var(--faint); }
+#auth-landing-screen .hr-demo .hx-reply svg { width: 14px; height: 14px; margin-inline-start: auto; color: var(--blue); }
+
+/* The four tabs under the window: each one's bar fills while its scene
+   plays (--d is the scene's length), and a press jumps to it. */
+#auth-landing-screen .hr-demo .hr-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+#auth-landing-screen .hr-demo .hr-tab { display: flex; flex-direction: column; gap: 7px; padding: 0; text-align: start; font-family: var(--site-sans); font-size: 12.5px; font-weight: 500; line-height: 16px; color: var(--site-muted); background: none; white-space: nowrap; }
+#auth-landing-screen .hr-demo .hr-tab:active { transform: none; filter: none; }
+#auth-landing-screen .hr-demo .hr-tab:focus { outline: none; }
+#auth-landing-screen .hr-demo .hr-tab:focus-visible { outline: 2px solid var(--site-ink); outline-offset: 4px; border-radius: 4px; }
+#auth-landing-screen .hr-demo .hr-tab.is-on { color: var(--site-ink); font-weight: 600; }
+#auth-landing-screen .hr-demo .hr-tab .bar { position: relative; height: 3px; border-radius: 3px; background: var(--site-line-soft); overflow: hidden; }
+#auth-landing-screen .hr-demo .hr-tab .bar i { position: absolute; inset-block: 0; inset-inline-start: 0; width: 0; background: #2f8fe3; }
+#auth-landing-screen .hr-demo .hr-tab.done .bar i { width: 100%; opacity: 0.35; }
+#auth-landing-screen .hr-demo .hr-tab.is-on .bar i { animation: hr-prog var(--d, 6s) linear forwards; opacity: 1; }
+#auth-landing-screen .hr-demo.held .hr-tab.is-on .bar i { animation: none; width: 100%; }
+@keyframes hr-prog { to { width: 100%; } }
+
+@media (max-width: 560px) {
+  #auth-landing-screen .hr-demo .hx-body { grid-template-columns: minmax(0, 1fr); height: 470px; }
+  #auth-landing-screen .hr-demo .hx-side { display: none; }
+  #auth-landing-screen .hr-demo .hx-banner { grid-template-columns: 1fr; }
+  #auth-landing-screen .hr-demo .hx-mini-app { display: none; }
+  #auth-landing-screen .hr-demo .hx-foryou { grid-template-columns: 1fr; }
+  #auth-landing-screen .hr-demo .hr-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #auth-landing-screen .hr-demo .hr-scene, #auth-landing-screen .hr-demo .hr-step, #auth-landing-screen .hr-demo .hx-fill, #auth-landing-screen .hr-demo .hr-cursor { transition: none; }
+  #auth-landing-screen .hr-demo .hx-compose .tx.typing::after { animation: none; }
+  #auth-landing-screen .hr-demo .hr-tab.is-on .bar i { animation: none; width: 100%; }
+}
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) #auth-landing-screen .hr-demo .hr-scene, :where(html[data-motion="reduce"]) #auth-landing-screen .hr-demo .hr-step, :where(html[data-motion="reduce"]) #auth-landing-screen .hr-demo .hx-fill, :where(html[data-motion="reduce"]) #auth-landing-screen .hr-demo .hr-cursor { transition: none; }
+:where(html[data-motion="reduce"]) #auth-landing-screen .hr-demo .hx-compose .tx.typing::after { animation: none; }
+:where(html[data-motion="reduce"]) #auth-landing-screen .hr-demo .hr-tab.is-on .bar i { animation: none; width: 100%; }
+
+/* WHAT YOUR GROUP GETS: six short cards on the green, each led by a brand
+   drawing. Its words are black in both modes: the green does not move. */
+#auth-landing-screen .wg { display: flex; flex-direction: column; gap: 28px; padding: 64px 16px; color: #000; }
+#auth-landing-screen .hw-eyebrow { font-family: var(--site-sans); font-size: 13px; line-height: 18px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--site-ink); }
+#auth-landing-screen .wg .hw-eyebrow { color: #000; }
+#auth-landing-screen .wg-head { display: flex; flex-direction: column; gap: 10px; max-width: 720px; }
+#auth-landing-screen :is(.wg-head, .gr-head) h2 { font: 460 32px/36px var(--site-serif); letter-spacing: -0.035em; text-wrap: balance; }
+#auth-landing-screen .wg-head h2 { color: #000; }
+#auth-landing-screen .wg-grid { display: grid; gap: 12px; }
+#auth-landing-screen .wg-item { position: relative; display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 16px; background: #fffeea; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 14px 30px -20px rgba(30, 60, 20, 0.45); }
+/* Four of them show their part of the walk-through: the title is a button
+   whose press area is the whole card. */
+#auth-landing-screen .wg-item:has(.wg-go) { cursor: pointer; transition: transform 150ms, box-shadow 150ms; }
+#auth-landing-screen .wg-item:has(.wg-go):hover { transform: translateY(-2px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 18px 30px -18px rgba(30, 60, 20, 0.55); }
+#auth-landing-screen .wg-go { padding: 0; background: none; font: inherit; letter-spacing: inherit; color: inherit; text-align: start; }
+#auth-landing-screen .wg-go::after { content: ""; position: absolute; inset: 0; border-radius: 16px; }
+#auth-landing-screen .wg-go:active { transform: none; filter: none; }
+#auth-landing-screen .wg-go:focus { outline: none; }
+#auth-landing-screen .wg-go:focus-visible::after { outline: 2px solid #000; outline-offset: 3px; }
+#auth-landing-screen .wg-img { width: 56px; height: 56px; flex-shrink: 0; object-fit: contain; }
+#auth-landing-screen .wg-item > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+#auth-landing-screen .wg-item h3 { font: 460 20px/24px var(--site-serif); letter-spacing: -0.03em; color: #000; }
+#auth-landing-screen .wg-item p { font: 400 14px/20px var(--site-sans); color: #3c4136; }
+@media (min-width: 640px) {
+  #auth-landing-screen .wg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 768px) {
+  #auth-landing-screen .wg { padding: 84px 32px; gap: 40px; }
+  #auth-landing-screen :is(.wg-head, .gr-head) h2 { font-size: 48px; line-height: 50px; }
+}
+@media (min-width: 1024px) {
+  #auth-landing-screen .wg-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #auth-landing-screen .wg-item:has(.wg-go) { transition: none; }
+  #auth-landing-screen .wg-item:has(.wg-go):hover { transform: none; }
+}
+:where(html[data-motion="reduce"]) #auth-landing-screen .wg-item:has(.wg-go) { transition: none; }
+:where(html[data-motion="reduce"]) #auth-landing-screen .wg-item:has(.wg-go):hover { transform: none; }
+
+/* MADE FOR GROUPS LIKE YOURS: a photograph for friend groups beside two
+   tinted cards, then three more kinds of group as a line each. */
+#auth-landing-screen .gr { display: flex; flex-direction: column; gap: 28px; padding: 56px 16px 64px; }
+#auth-landing-screen .gr-head { display: flex; flex-direction: column; gap: 10px; }
+#auth-landing-screen .gr-head h2 { color: var(--site-ink); }
+#auth-landing-screen .gr-head p { font-family: var(--site-sans); font-size: 17px; line-height: 26px; color: var(--site-muted); }
+#auth-landing-screen .gr-grid { display: grid; gap: 16px; }
+#auth-landing-screen .gr-photo { position: relative; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; min-height: 380px; padding: 30px; border-radius: 22px; overflow: hidden; color: #fff; background: #2f8fe3 url('/brand/groups/friends.webp') 72% center / cover no-repeat; }
+#auth-landing-screen .gr-photo::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(20, 14, 8, 0.72) 0%, rgba(20, 14, 8, 0.4) 42%, rgba(20, 14, 8, 0) 70%), linear-gradient(0deg, rgba(20, 14, 8, 0.6) 0%, rgba(20, 14, 8, 0) 50%); }
+#auth-landing-screen .gr-photo > * { position: relative; }
+#auth-landing-screen .gr-photo h3 { font: 460 40px/44px var(--site-serif); letter-spacing: -0.035em; }
+#auth-landing-screen .gr-photo p { max-width: 340px; font: 400 17px/24px var(--site-sans); opacity: 0.95; }
+#auth-landing-screen .gr-tile { display: flex; align-items: center; justify-content: center; width: 52px; height: 52px; flex-shrink: 0; border-radius: 14px; color: #000; }
+#auth-landing-screen .gr-tile svg { width: 26px; height: 26px; }
+#auth-landing-screen .gr-photo .gr-tile { margin-bottom: 4px; background: var(--site-sun); }
+#auth-landing-screen .gr-go { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex-shrink: 0; border-radius: 999px; box-shadow: inset 0 0 0 1.5px currentColor; }
+#auth-landing-screen .gr-go svg { width: 18px; height: 18px; }
+#auth-landing-screen .gr-photo .gr-go { margin-top: 8px; }
+#auth-landing-screen .gr-side { display: grid; gap: 16px; }
+#auth-landing-screen .gr-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 28px; border-radius: 22px; color: var(--site-ink); }
+#auth-landing-screen .gr-card.blue { background: var(--site-card-sky); }
+#auth-landing-screen .gr-card.blue .gr-tile { background: #c9e0f8; }
+#auth-landing-screen .gr-card.green { background: var(--site-card-leaf); }
+#auth-landing-screen .gr-card.green .gr-tile { background: #cfe6c4; }
+#auth-landing-screen .gr-card h3 { font: 460 28px/32px var(--site-serif); letter-spacing: -0.03em; }
+#auth-landing-screen .gr-card p { margin-top: 6px; font: 400 16px/23px var(--site-sans); color: var(--site-card-words); }
+#auth-landing-screen .gr-more { display: grid; gap: 22px; padding-top: 26px; border-top: 1px solid var(--site-line-soft); }
+#auth-landing-screen .gr-more li { display: flex; flex-direction: column; gap: 6px; }
+#auth-landing-screen .gr-more h3 { display: flex; align-items: center; justify-content: space-between; gap: 10px; font: 460 24px/28px var(--site-serif); letter-spacing: -0.03em; color: var(--site-ink); }
+#auth-landing-screen .gr-more h3 svg { width: 18px; height: 18px; flex-shrink: 0; }
+#auth-landing-screen .gr-more p { font: 400 15px/22px var(--site-sans); color: var(--site-muted); }
+@media (max-width: 560px) {
+  #auth-landing-screen .gr-card { grid-template-columns: auto minmax(0, 1fr); padding: 22px; }
+  #auth-landing-screen .gr-card .gr-go { display: none; }
+  #auth-landing-screen .gr-photo { min-height: 320px; padding: 22px; }
+}
+@media (min-width: 768px) {
+  #auth-landing-screen .gr { padding: 76px 16px 84px; gap: 36px; }
+  #auth-landing-screen .gr-more { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; }
+  #auth-landing-screen .gr-more li { padding: 0 28px; }
+  #auth-landing-screen .gr-more li + li { border-inline-start: 1px solid var(--site-line-soft); }
+  #auth-landing-screen .gr-more li:first-child { padding-inline-start: 0; }
+  #auth-landing-screen .gr-more li:last-child { padding-inline-end: 0; }
+}
+@media (min-width: 1024px) {
+  #auth-landing-screen .gr-grid { grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); }
+}
+
+/* The closing band's one button: sun on a black outline, on the sky. */
+#auth-landing-screen .hr-cta { background: var(--site-sun); color: #000; font-family: var(--site-sans); box-shadow: inset 0 0 0 1px #000, 0 2px 0 #000; transition: background 150ms; }
+#auth-landing-screen .hr-cta:hover { background: var(--site-sun-lit); }
 /* the website's look on the signed-out pages: end */
 
 /* ── THE LANDING'S ACTIVITY RAIL LOOPS ─────────────────────────────────
@@ -6267,8 +6760,14 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
 @media (hover: hover) and (min-width: 640px) and (max-width: 1023.98px) {
   html:not([data-skin]) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li { box-shadow: none; }
 }
-@media (hover: hover) and (min-width: 1024px) {
+@media (hover: hover) and (min-width: 1280px) {
   html:not([data-skin]) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li + li + li { box-shadow: none; }
+}
+/* From 1024px to 1280px Home's lists are two across beside the open sidebar
+   (BESIDE THE OPEN SIDEBAR, below), so there the line is two rows on. */
+@media (hover: hover) and (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li + li + li { box-shadow: none; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #home-screen .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li { box-shadow: none; }
 }
 /* A panel: a card's inside, padded, for a list (Needs you). */
 .wip-panel { padding: var(--wip-card-pad); min-width: 0; }
@@ -6572,6 +7071,18 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
   html:not([data-skin]) { --home-cell-h: var(--wip-tile-h-stacked); }
   html:not([data-skin]) #app-list .app-card-title { margin-top: var(--wip-title-gap-stacked); font-size: var(--wip-title-size-mid); min-height: 2.5em; }
 }
+/* BESIDE THE OPEN SIDEBAR the tile stays stacked up to 1280px. As a row
+   (below), four across beside the sidebar left a name about 75px, and every
+   project on Home read "Stagi…". So between 1024px and 1280px with the
+   sidebar open a tile is as it is under 1024px, and so are Home's lists:
+   two across, where four cut every thread's and challenge's title. Folded,
+   the sidebar leaves the row its room, and the row starts at 1024px. */
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) { --home-cell-h: var(--wip-tile-h-stacked); }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #home-screen { --wip-cols: 2; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people { display: none; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-title { margin-top: var(--wip-title-gap-stacked); font-size: var(--wip-title-size-mid); min-height: 2.5em; }
+}
 /* On a phone the tile gives its side padding to the name: at this size a
    name needs every pixel of its quarter of the screen. */
 @media (max-width: 639.98px) {
@@ -6580,8 +7091,19 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
   /* And the name is a size down there (four across leaves each about 85px):
      at the row's size a long name broke in the middle of a word. */
   html:not([data-skin]) #app-list .app-card-title { font-size: var(--wip-title-size-phone); line-height: 1.2; min-height: 2.4em; }
+  /* The icon is 3.5rem, and a quarter of a phone is about 80px: at the two
+     largest text sizes (the root at 137.5% and 150%) the icon outgrew its
+     cell, the four of a row met edge to edge and their lock and copy marks
+     were printed over each other. So the icon is never wider than its own
+     cell less 0.1875rem: with the tile's 2px sides and the grid's 0.375rem
+     gap, two icons are always more than the 0.5rem apart that their two
+     marks (each 0.25rem over the edge) need, and at the default size it is
+     still 3.5rem, even on a 320px phone. The corner keeps its proportion
+     when the icon is held smaller. */
+  html:not([data-skin]) #app-list > .app-card > .relative { width: min(3.5rem, calc(100% - 0.1875rem)); height: auto; aspect-ratio: 1 / 1; }
+  html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { width: 100%; height: 100%; border-radius: min(1.25rem, 36%); }
 }
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   html:not([data-skin]) { --home-cell-h: var(--wip-tile-h); }
   html:not([data-skin]) #app-list > .app-card {
     flex-direction: row;
@@ -6595,6 +7117,27 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
   html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
   html:not([data-skin]) #app-list .app-card-people { justify-content: flex-start; }
   html:not([data-skin]) #app-list .app-card-title {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    min-height: 0;
+    text-align: start;
+  }
+}
+/* The same row from 1024px wherever the sidebar is not open beside it. */
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) { --home-cell-h: var(--wip-tile-h); }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card {
+    flex-direction: row;
+    align-items: center; /* a tile with no sentence keeps its two lines beside the icon's middle */
+    gap: var(--wip-tile-gap);
+    text-align: start;
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .min-w-0 { flex: 1 1 0; width: auto; }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .relative,
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .relative > .app-icon-tile { width: var(--wip-icon); height: var(--wip-icon); }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list .app-card-people { justify-content: flex-start; }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list .app-card-title {
     -webkit-line-clamp: 1;
     line-clamp: 1;
     min-height: 0;
@@ -6705,8 +7248,10 @@ html:not([data-skin]) #home-screen [data-home-join-featured] > h3 {
 /* The shell's own placeholders, drawn in this look's shapes while Home
    loads (the prerender does not know the look; these rules do, before the
    first paint), so what arrives takes the place its placeholder held.
-   Pinned projects, from 1024px: rows, an icon and two lines beside it. */
-@media (min-width: 1024px) {
+   Pinned projects, where a tile is a row (from 1280px, and from 1024px
+   unless the sidebar is open beside it): rows, an icon and two lines beside
+   it. */
+@media (min-width: 1280px) {
   html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div {
     flex-direction: row;
     align-items: center;
@@ -6729,6 +7274,36 @@ html:not([data-skin]) #home-screen [data-home-join-featured] > h3 {
   }
   html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :last-child > div { width: 55%; height: 0.75rem; }
   html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :last-child::after {
+    content: "";
+    width: 85%;
+    height: 0.625rem;
+    border-radius: var(--wip-radius-small);
+    background-color: var(--wip-skeleton);
+  }
+}
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--wip-tile-gap);
+    height: var(--wip-tile-h);
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :first-child {
+    width: var(--wip-icon);
+    height: var(--wip-icon);
+    border-radius: var(--wip-icon-radius);
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :last-child {
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0.5rem;
+    height: auto;
+    padding-top: 0;
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :last-child > div { width: 55%; height: 0.75rem; }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :last-child::after {
     content: "";
     width: 85%;
     height: 0.625rem;
@@ -6976,6 +7551,9 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { m
   font-size: var(--wip-link-size);
   color: var(--wip-ink-muted);
 }
+/* Phone review #52: the faces and the count are the roster's button. */
+.wip-hub-meta-people:is(button) { padding-block: 0.625rem; margin-block: -0.625rem; cursor: pointer; text-underline-offset: 3px; }
+.wip-hub-meta-people:is(button):hover { text-decoration: underline; color: var(--wip-ink); }
 .wip-hub-meta-people .dev-ws-hero-faces { display: inline-flex; }
 .wip-hub-meta-people .dev-ws-hero-face {
   width: 1.375rem;
@@ -7029,65 +7607,26 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .d
   color: var(--wip-ink-muted);
   box-shadow: none;
 }
-/* INVITE ends the line about who is here: after the faces and the count,
-   an open seat (a dashed disc, a person and a plus) and the word. It reads
-   as the next thing in that sentence, "…234 members, invite". The pointer
-   fills the seat with the look's action colours. */
-.wip-hub-meta-invite {
+/* INVITE is the row's second button, beside Open app: as tall and as round,
+   in Open app's type, in the plain pills' outline, with the invite glyph
+   before the word. On Homeroom's own hub, which has no Open app, it stands
+   alone in the row. The pointer darkens its edge, as it does the ⋯'s. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
-  min-height: 1.75rem;
-  padding: 0 0.625rem 0 0.1875rem;
-  border-radius: var(--wip-radius-pill);
-  font-size: var(--wip-link-size);
-  font-weight: 650;
-  color: var(--wip-ink-action);
-  box-shadow: inset 0 0 0 1px var(--wip-card-line);
-  background-color: var(--wip-card-bg);
-  cursor: pointer;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  padding-inline: 1.125rem 1.375rem;
+  border: 0;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: inherit;
+  white-space: nowrap;
 }
-/* The arrow before it: one brush stroke that swells from nothing at its tail
-   to a sharp head, from the people to the seat. It leans a little, and nudges toward the seat when the pointer
-   is on the line. Not on a phone, where the line has no room for it. */
-.wip-hub-meta-arrow {
-  flex: none;
-  width: 2.5rem;
-  height: 2.5rem;
-  margin-block: -0.75rem;
-  margin-inline: -0.125rem -0.25rem;
-  color: var(--wip-ink);
-  transform: rotate(-4deg);
-  transition: transform 0.25s ease;
-}
-.wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg) translateX(3px); }
-html:not([data-skin])[dir="rtl"] .wip-hub-meta-arrow { transform: scaleX(-1) rotate(-4deg); }
-@media (max-width: 639.98px) {
-  .wip-hub-meta-arrow { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-skin]) .wip-hub-meta-arrow { transition: none; }
-  html:not([data-skin]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
-}
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta-arrow { transition: none; }
-html:not([data-skin]):where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
-.wip-hub-meta-seat {
-  flex: none;
-  width: 1.375rem;
-  height: 1.375rem;
-  display: grid;
-  place-items: center;
-  border: 1.5px dashed var(--wip-ink-muted);
-  border-radius: 50%;
-  color: var(--wip-ink-muted);
-}
-.wip-invite-glyph { width: 0.8125rem; height: 0.8125rem; }
-.wip-hub-meta-invite:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
-.wip-hub-meta-invite:is(:hover, :focus-visible) > .wip-hub-meta-seat {
-  border-color: transparent;
-  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
-  color: var(--wip-cta-ink);
-}
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] > svg { flex: none; width: 1.125rem; height: 1.125rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite]:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
 /* With nothing on the hero's last line but the ⋯ (which is in the corner,
    out of the line), the line takes no room: no empty band under the words. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
@@ -7121,6 +7660,8 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #d
 }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
+/* The ⋯ sits in the card's corner, out of the flow, and reaches 1.5rem into the words' column: a name of more than about fourteen letters ran under it on a phone. The name stops short of it and wraps instead. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary:has(.dev-ws-hero-actions > .dev-ws-plus) .dev-ws-hero-name { padding-inline-end: 1.75rem; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
   width: var(--wip-hub-icon);
   height: var(--wip-hub-icon);
@@ -7189,6 +7730,14 @@ html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is
 /* Its label heads the vote line alone here, so with no vote line (a project nobody else is in) there is no label. */
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
+/* Top contributors (request 6837) comes last, after Recently live, on the look's card, its switch from the look's tokens. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-contributors] { order: 5; }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-foryou > * + * { border-top-color: var(--wip-soft-line); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .ui-lrow-t { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] :is(.dev-ws-foryou-count, .dev-ws-week-note) { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span { background-color: var(--wip-tray); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button { color: var(--wip-ink-soft); }
+html:not([data-skin]) #dev-workshop [data-ws-hub-contributors] .dev-ws-contrib-span > button[aria-pressed="true"] { background-color: var(--wip-ink); color: var(--wip-card-bg); }
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
 html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
   border-top: 0;
@@ -7273,6 +7822,14 @@ html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-f
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
+}
+/* THREE DOORS NEED THREE COLUMNS' WORTH OF ROOM. Side by side from 768px, a door was 231px wide on a 1024px window beside the open sidebar: after its glyph, its count and its chevron it had 20px left for words, and read "N…" for Needs you and "Disc…" for Discussion. Below 1200px beside the open sidebar, and below 1020px beside the folded one, they are a list, one to a row, as on a phone. */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
+}
+@media (min-width: 1020px) and (max-width: 1199.98px) {
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; margin-top: 0; }
 }
 /* RECENTLY LIVE, as a list and not a wall of pictures. Each change is a row
    of Home's own kind: a small picture at its side (a thumbnail, not a
@@ -7452,6 +8009,8 @@ html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"]::after {
 }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] + .wip-hero-art .wip-hero-stage { animation: none; place-items: end center; padding-block-end: 6px; }
 .wip-hero-people { position: absolute; inset-block-end: 6px; inset-inline-end: 1.25rem; height: calc(100% - 14px); width: auto; max-width: none; }
+/* The people are as tall as the card, so their width followed its height, and where the words wrap (about 900 to 1200px) the card grew and the picture with it, out of the side kept for it and over the words. They stay inside that side, standing on the bottom edge, and are drawn smaller when it is narrow. */
+html:not([data-skin]) #dev-workshop .wip-hero-people { max-width: calc(100% - 1.25rem); object-fit: contain; object-position: bottom; }
 /* THE PROJECT'S PREVIEW STANDS BESIDE THE HERO (asked 20 Nov 2026), in its row from 1024px: the hero takes two of the
    hub's three columns and the preview the third, the two as tall as each other. Narrower, there is no card: the hero keeps the picture at its own side, tilted, as before. */
 html:not([data-skin]) #dev-workshop .wip-hero-preview { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: var(--wip-card-radius); box-shadow: inset 0 0 0 1px var(--wip-card-line); background-color: var(--wip-card-bg); }
@@ -7491,6 +8050,412 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .w
 /* The place's own name bar spans the page too (on the hub as well), so the name starts where the cards do. */
 html:not([data-skin]) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) > .dev-ws-placebar,
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+
+/* ── A project's Workshop ───────────────────────────────────── */
+/* The Workshop is drawn as the hub is: the page's whole width on the
+   wallpaper, under its name in the band, every section a label over the
+   look's cards. Its figures are four cards of one shape, as the hub's For
+   you row is (a mark, the number over what it counts), with the bot's line
+   and the approval rule as two slim cards under them; "See all" stands at
+   the end of the Overview label's line. Under them, from 1280px (the sidebar takes 212 of them), What
+   happened and the viewer's own card stand side by side, each under its
+   label; narrower, and for a visitor, who has no card, the page is one
+   column in the order it is written. The pages under the Workshop (a week,
+   the bot's slots) keep the reading column they had. */
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="workshop"]) {
+  max-width: none;
+  font-family: var(--wip-font);
+  --accent: var(--wip-ink-action);
+}
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="workshop"]) {
+  border-radius: 0;
+  border-color: transparent;
+  background-color: var(--wip-page-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="workshop"]) { background-color: transparent; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:not(:has(> [data-ws-dashboard])) { width: 100%; max-width: 760px; margin-inline: auto; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]) { gap: 0.5rem var(--wip-card-gap); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-strip {
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+/* A section's label: Home's, from the same tokens; a section's room is over its label. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > h2[data-ws-part="overview"] { margin-top: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { display: block; }
+/* The label follows its card in the document and stands over it on the page. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { order: 1; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :has(+ .dev-ws-part-work) { order: 2; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work ~ * { order: 3; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody :is(h2[data-ws-part], .dev-ws-parthead > h2) {
+  padding: 0;
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-parthead { align-items: center; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody .dev-ws-since-clear { color: var(--wip-ink-muted); }
+/* The figures: no card of their own, four cards. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--wip-col-gap);
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head { position: absolute; inset-block-start: -1.75rem; inset-inline-end: 0.25rem; }
+/* The card's own heading is said, not shown: the four cards have no card to head, and "See all" follows it. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open { font-size: var(--wip-link-size); font-weight: 650; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-dash { display: contents; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--wip-tile-gap);
+  align-items: center;
+  width: 100%;
+  min-height: 4.5rem;
+  margin: 0;
+  padding: 0.875rem 1rem;
+  border: 0;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  font: inherit;
+  text-align: start;
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell[data-ws-dash-open] { cursor: pointer; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell[data-ws-dash-open]:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-mark {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--wip-radius-inner);
+  background-color: var(--wip-mark-2-bg);
+  color: var(--wip-mark-2-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="unclaimed"] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="votes"] > .dev-ws-dash-mark { background-color: var(--wip-mark-1-bg); color: var(--wip-mark-1-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="shipped"] > .dev-ws-dash-mark { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell > b {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  font-size: 1.5rem;
+  font-weight: 750;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--wip-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-label {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  display: block;
+  margin: 0;
+  font-size: var(--wip-link-size);
+  line-height: 1.3;
+  color: var(--wip-ink-muted);
+}
+/* The mark says what the dot said. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot { display: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; margin: 0; font-size: 0.75rem; white-space: nowrap; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="owed"] {
+  padding: 0.1875rem 0.625rem;
+  border-radius: var(--wip-radius-pill);
+  background: var(--wip-cta-from);
+  font-weight: 700;
+  color: var(--wip-cta-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="asof"] { grid-column: 2; grid-row: 3; white-space: normal; }
+/* Where the row of figures is narrow (a phone's two across, a small window's four), a card has no room for a third column: what hangs beside the figure goes under its label. The row is its own container (the Overview's `container-type`). */
+@container (max-width: 1000px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { grid-template-columns: auto minmax(0, 1fr); }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 2; grid-row: 3; justify-self: start; margin-top: 0.25rem; }
+}
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { padding: 0.75rem; }
+}
+/* The bot's line and the rule: two slim cards, each half the row. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) {
+  grid-column: 1 / -1;
+  align-items: center;
+  min-height: 3rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  font-size: var(--wip-link-size);
+  color: var(--wip-ink-soft);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > [data-ws-bot-slots-door]:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard]:has(> [data-ws-bot-slots-door]):has(> [data-ws-approval-rules]) > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) { grid-column: span 2; }
+}
+@media (min-width: 1280px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    align-items: start;
+  }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > * { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-parthead { grid-column: 1; order: 3; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-part-work { grid-column: 2; order: 4; align-self: center; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > [data-ws-happened] { grid-column: 1; order: 5; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > :has(+ .dev-ws-part-work) { grid-column: 2; order: 6; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > [data-ws-happened] ~ * { order: 7; }
+}
+/* What happened has no card around it (asked 23 Nov 2026): this week is a
+   card, and each week before it a card of its own, as the figures are; the
+   line that nothing is new and "Earlier weeks" stand on the page. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-happened] { gap: var(--wip-col-gap); padding: 0; border-radius: 0; background: none; box-shadow: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-none { margin: 0; padding: 0 0.25rem; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-hweek { padding: 0.75rem 1rem; border-radius: var(--wip-card-radius); background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-wlist { gap: var(--wip-col-gap); margin: 0; border: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] .dev-ws-week { padding: 0.875rem 1rem; border: 0; border-radius: var(--wip-card-radius); background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] .dev-ws-week:hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > [data-ws-weeks-more] { margin: 0; padding-block: 0.375rem; }
+/* The bot's slots, a page under the Workshop: on the wallpaper as its parent
+   is, with no frame of its own around its sections (its cards are the only
+   cards), in the reading column a list of rows wants. */
+html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="bot"]) {
+  max-width: none;
+  font-family: var(--wip-font);
+  --accent: var(--wip-ink-action);
+}
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="bot"]) {
+  border-radius: 0;
+  border-color: transparent;
+  background-color: var(--wip-page-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="bot"]) { background-color: transparent; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] > .dev-ws-tabbody { width: 100%; max-width: 760px; margin-inline: auto; padding-block-start: 0.75rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-page] { border-radius: 0; background: none; box-shadow: none; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-page] > .dev-ws-pagehead { margin-block-end: 0.5rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-body] > h2 {
+  padding: 0.75rem 0.25rem 0;
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-body] > .ui-glist {
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+/* The pause notice hangs into the name's band, as on the hub. */
+@media (min-width: 900px) {
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice {
+    position: relative;
+    z-index: 2;
+    height: 0;
+    padding: 0 var(--wip-gutter);
+    display: flex;
+    justify-content: flex-end;
+    overflow: visible;
+    pointer-events: none;
+  }
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] {
+    flex: none;
+    max-width: 62%;
+    margin-top: 0.9375rem;
+    align-self: flex-start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: var(--wip-radius-pill);
+    font-size: var(--wip-link-size);
+    pointer-events: auto;
+  }
+}
+
+/* ── Messages opens two-up, with a guide ────────────────────── */
+/* From 768px, with no conversation open, the list stands on the left and
+   the pane beside it is a card holding the guide (index.tsx MessagesGuide):
+   what Messages is for, the two ways to start a conversation and where a
+   project's channel is. It was the list alone in the middle of the page.
+   The pane's own heading and line give way to the guide's. A phone's list
+   is alone as before (its drawer never has `messages-list-page`). */
+@media (min-width: 768px) {
+  html:not([data-skin]) .messages-layout.messages-list-page { gap: var(--wip-gutter); padding: 1rem var(--wip-gutter) var(--wip-gutter); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-list-pane { flex: none; width: 26rem; max-width: 42%; margin: -0.5rem 0 0; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    margin: 0;
+    padding: 2rem;
+    border-radius: var(--wip-card-radius);
+    background-color: var(--wip-card-bg);
+    box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > :is(h2, p) { display: none; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > .messages-guide {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+    width: 100%;
+    max-width: 27.5rem;
+    text-align: center;
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-mark {
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin-bottom: 0.375rem;
+    border-radius: var(--wip-radius-inner);
+    background-color: var(--wip-mark-2-bg);
+    color: var(--wip-mark-2-ink);
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide :is(.messages-guide-mark, .messages-guide-glyph) > svg { width: 1.25rem; height: 1.25rem; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-title { margin: 0; font-size: 1.0625rem; font-weight: 700; color: var(--wip-ink); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-body { max-width: none; margin: 0 0 0.625rem; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-rows { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wip-tile-gap);
+    width: 100%;
+    min-height: 3.5rem;
+    padding: 0.75rem 0.875rem;
+    border: 0;
+    border-radius: var(--wip-radius-card);
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--wip-card-line);
+    font: inherit;
+    text-align: start;
+    text-decoration: none;
+    color: var(--wip-ink);
+    cursor: pointer;
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-row:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-row:focus-visible { outline: 2px solid var(--wip-ink-action); outline-offset: 2px; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-glyph {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 2.125rem;
+    height: 2.125rem;
+    border-radius: var(--wip-radius-inner);
+    background-color: var(--wip-ghost);
+    color: var(--wip-ink-soft);
+  }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-text > b { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); line-height: 1.3; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-text > span { font-size: 0.8125rem; line-height: 1.4; color: var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-go { flex: none; width: 1rem; height: 1rem; color: var(--wip-ink-muted); }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection .messages-guide-note { max-width: none; margin: 0.875rem 0 0; font-size: 0.78125rem; color: var(--wip-ink-muted); }
+}
+
+/* ── A running app is a card ────────────────────────────────── */
+/* From 768px the app's frame is one of the look's cards, with the page's
+   gutter on three sides and all four corners: it was a phone's sheet (round
+   at the top only, with a lifted edge, running off the right and the foot
+   of the window), which beside the sidebar read as a panel cut off by the
+   screen. Not while the app has the whole window (the header is hidden). */
+@media (min-width: 768px) {
+  html:not([data-skin]) body:not(:has(#platform-header.hidden)) #app-frame-host {
+    /* The app's view starts 8px under the bar's foot (the sheet tucked its round top there): the card clears the bar's line by its own 8px. */
+    margin: 1rem var(--wip-gutter) var(--wip-gutter);
+    border: 1px solid var(--wip-card-line);
+    border-radius: var(--wip-card-radius);
+    box-shadow: var(--wip-card-shadow);
+  }
+}
+
+/* ── A place's name is in the top bar ───────────────────────── */
+/* From 768px the bar that holds the look, the theme, the bell and the
+   account names the page too, as a phone's header always did: the place's
+   name under the community's, small (header-title.tsx draws it beside the sidebar
+   as well; it is hidden wherever no look asks for it). The band that said
+   it in the page is folded to nothing while the bar says it, so no page
+   says its name twice; the h2 stays in the document. Homeroom's own pages
+   beside the open sidebar show the place alone: the panel's brand is the
+   community's name already. The pause notice, which hung into the band,
+   is a pill in the bar from 900px. */
+@media (min-width: 768px) {
+  /* Beside the community's name the two are a phone's header: the name over the place, small. */
+  html:not([data-skin]) #platform-header #header-title:has(.header-place-name) { overflow: visible; }
+  html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: 1.15;
+  }
+  html:not([data-skin]) #platform-header #header-title > span > span:has(> .header-place-name) > #header-title-name { max-width: 100%; font-size: 1.0625rem; font-weight: 650; letter-spacing: -0.01em; }
+  html:not([data-skin]) #platform-header .header-place-name {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--wip-ink);
+    opacity: 0.78;
+  }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) { display: inline-flex; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) > #header-app-tile,
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(.header-place-name) > span > #header-title-name:has(> svg) { display: none; }
+  /* Alone, the place is the bar's title. */
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg) .header-place-name { font-size: 1.25rem; font-weight: 700; line-height: 1.4; letter-spacing: -0.01em; opacity: 1; }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar {
+    height: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    box-shadow: none;
+  }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }
+  html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title { display: none; }
+}
+@media (min-width: 900px) {
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice {
+    position: fixed;
+    inset-block-start: calc(var(--browser-banner-h, 0px) + var(--platform-safe-top, 0px) + 0.5625rem);
+    inset-inline-end: 12.5rem;
+    z-index: 20;
+    height: auto;
+    padding: 0;
+  }
+  /* Where the document scrolls (a touch tablet) the bar is sticky at 30 and
+     has a ground (THE TOP BAR HAS A GROUND, below), so the pill stands over
+     it: at 20 it was under the bar, seen only while the bar was clear. */
+  html:not([data-skin])[data-browser-scroller] body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice { z-index: 31; }
+  /* Its width is the bar's beside the sidebar (the usable box), less the 12.5rem kept for the bell and account on its right and 11rem for the page's name ("Hub", "Workshop") on its left. It was min(36rem, 38vw), which cut the sentence at "moves off GitHu…" on a 1440px window with 300px of the bar empty beside it. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: calc(var(--platform-usable-w) - 12.5rem - 11rem); margin-top: 0; }
+}
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
   display: grid;
@@ -7969,12 +8934,14 @@ html:not([data-skin]) body > :is(.dev-ws-side) {
    tiles say less. */
 html:not([data-skin]) #app-list .app-card-opened { display: none; }
 /* THE STANDARD LOOK'S BOARD KEEPS ITS WALLPAPER (20 Nov 2026), so the head that stays put while the columns scroll
-   under it (the place's name, then the filter line and the columns' names) wears the card's colour, nearly solid, where
+   under it (the place's name, then the filter line and the columns' names) wears the card's colour, solid, where
    Standard (WIP) paints its flat page colour. No blur: the shell keeps none over a few pixels (tests/no-glass-one-scheme).
+   It was 90% (audit, 23 Nov 2026): with no blur, a card passing under the head was read through it, its title ghosting
+   across "All items", the search box and the columns' names. Nothing shows through a head that words scroll under.
    The place's bar wears it only once it is pinned (`data-ws-pinned`, workshop.tsx usePinnedStrip): at rest nothing is
    under it, and it sits on the page over its hairline as it does over the hub. */
 html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"][data-ws-pinned] > .dev-ws-placebar,
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: color-mix(in srgb, var(--wip-card-bg) 90%, transparent); }
+html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: var(--wip-card-bg); }
 /* THE STANDARD LOOK'S BOARD IS A PAGE UNDER THE WORKSHOP (20 Nov 2026): the Workshop's door opens its overview, and the
    board's head leads with the way back up to it and the page's name, "‹ All items", the page's one heading. So the
    place's name over it is the quiet name of where you are, as "Hub" is over the hub's hero, not a second title. */
@@ -8053,6 +9020,10 @@ html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; 
    (asked 21 Nov 2026). Two ids, so it outranks the BUTTONS block's shape. */
 html:not([data-skin]) #communities-screen #communities-new-top { font-family: var(--wip-font); }
 html:not([data-skin]) #communities-search-input { border-radius: var(--wip-radius-inner); }
+/* Beside New community a phone leaves this box about 100px of words, and its
+   prompt was cut mid-word ("Search your com"), as Home's was ("Search apps
+   and co"). Both end in an ellipsis. */
+html:not([data-skin]) :is(#communities-search-input, #home-search-input) { text-overflow: ellipsis; }
 /* A group's label is Home's: one row gap above every group after the first, the config's label tokens. */
 html:not([data-skin]) #communities-screen section ~ section > .home-area-label { padding-top: var(--wip-row-gap); }
 html:not([data-skin]) #communities-screen .home-area-label > span:first-child {
@@ -8277,6 +9248,7 @@ html:not([data-skin]) {
   --wip-nav-ink-strong: #ffffff;
   --wip-nav-mut: rgb(255 255 255 / 0.72);
   --wip-nav-faint: rgb(255 255 255 / 0.32);
+  --wip-nav-tile-letter: var(--text-faint); /* a community's initial on its white tile: the page's faint grey (resolved here, outside the panel), not the panel's faint white */
   --wip-nav-hover: rgb(255 255 255 / 0.16);
   --wip-nav-line: transparent;
   --wip-nav-accent: transparent;        /* a bar at the start of the place you are on */
@@ -8286,6 +9258,7 @@ html:not([data-skin]) {
   --wip-nav-count-ink: #121a0e;
   --wip-nav-on-count-bg: #121a0e;
   --wip-nav-on-count-ink: #ffffff;
+  --wip-nav-on-badge-bg: color-mix(in srgb, var(--wip-nav-on-ink) 14%, transparent); /* the grey "new to read" count on the lit row: a tint of the row's own ink */
   --wip-nav-row-h: 2.5rem;
   --wip-nav-row-radius: 0.75rem;
   --wip-nav-bar-h: 56px;         /* the phone's bar, as the shell reserves it (--platform-bar-h) */
@@ -8382,6 +9355,13 @@ html:not([data-skin]) #platform-tabs [aria-current="page"] :is(.platform-rail-vo
   background: var(--wip-nav-on-count-bg);
   color: var(--wip-nav-on-count-ink);
 }
+/* The grey "new to read" count takes the panel's faint white for its fill, which on the lit row's sun left white numerals on yellow (1.13:1). There it is the row's own ink on a tint of it: still the quiet count, and readable. */
+html:not([data-skin]) #platform-tabs [aria-current="page"] .platform-tab-badge {
+  background: var(--wip-nav-on-badge-bg);
+  color: var(--wip-nav-on-ink);
+}
+/* A letter tile's face is the page's white, not the panel's blue, so its initial takes the page's faint grey (as on Home) and not the panel's faint white, which drew a blank square. Dark tiles are the page's dark grey, where the panel's faint white reads. */
+html:not([data-skin]):not(.dark) #platform-tabs :is(.app-icon-tile[data-icon="letter"], .app-icon-wait) { color: var(--wip-nav-tile-letter); }
 html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { color: var(--wip-nav-mut); }
 html:not([data-skin]) #platform-tab-home { --wip-nav-ic: var(--wip-nav-ic-home); }
 html:not([data-skin]) #platform-tab-ai { --wip-nav-ic: var(--wip-nav-ic-spark); }
@@ -8408,10 +9388,52 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
 }
 @media (min-width: 768px) {
   html:not([data-skin]) #platform-tabs {
-    top: 0;
-    padding-top: var(--wip-nav-brand-h);
+    /* UNDER THE STRIPS AND THE STATUS BAR (audit, 23 Nov 2026). The panel
+       starts below any strip a browser tab shows above the header ("Get the
+       app", offline), as the header does: from 0, on a tablet in a browser,
+       its Home row stood behind the header. Its brand's band starts below
+       the device's own status bar (an iPad in the app), as the top bar's
+       row does; the brand and the fold button below add the same inset. */
+    top: var(--browser-banner-h, 0px);
+    padding-top: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-h));
     z-index: 9; /* over the page, under the top bar (10), whose logo it frames */
     box-shadow: inset -1px 0 0 var(--wip-nav-line);
+  }
+  /* THE TOP BAR HAS A GROUND WHERE THE PAGE SCROLLS UNDER IT (audit, 23 Nov
+     2026). On a desktop the bar is transparent: the page scrolls in its own
+     box below the bar, and the panel reaches the window's top behind it.
+     A touch browser scrolls the document instead (lib/browser-scroll.ts),
+     on a tablet too, with this bar sticky over it, and on a project's
+     Workshop the cards' words ran under the logo and the bell. Safari gave
+     Home and the other plain screens a ground of their own (for its status
+     strip, above), but over the whole bar: it covered the panel's top, so
+     the fold button was white on white, and with the "Get the app" strip
+     up the Home row was behind the bar. So there, with the panel docked,
+     the bar is the page's solid plane from the panel's edge across, and
+     the page keeps its rounded corner at the panel's edge (THE PAGE IS A
+     SHEET TUCKED INTO THE MENU, below), drawn here as the layer there
+     draws it, because the bar lies over that layer. */
+  html:not([data-skin])[data-browser-scroller] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #platform-header,
+  html:not([data-skin]).un-ios.web-browser-chrome:not([data-community-tint]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+      #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+      #profile-proposals-screen):not(.hidden), #app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+    background-color: transparent;
+    background-image:
+      radial-gradient(circle at 100% 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
+      linear-gradient(to right, transparent var(--platform-rail-w, 0px), var(--dc-sheet-solid) 0);
+    background-position: var(--platform-rail-w, 0px) 0, 0 0;
+    background-size: var(--wip-nav-page-radius) var(--wip-nav-page-radius), auto;
+    background-repeat: no-repeat;
+  }
+  /* Right to left the panel is on the right. */
+  html:not([data-skin])[dir="rtl"][data-browser-scroller] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #platform-header,
+  html:not([data-skin])[dir="rtl"].un-ios.web-browser-chrome:not([data-community-tint]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+      #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+      #profile-proposals-screen):not(.hidden), #app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+    background-image:
+      radial-gradient(circle at 0 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
+      linear-gradient(to left, transparent var(--platform-rail-w, 0px), var(--dc-sheet-solid) 0);
+    background-position: right var(--platform-rail-w, 0px) top 0, 0 0;
   }
   html:not([data-skin]) body { --platform-rail-full: var(--wip-nav-w); }
   html:not([data-skin]) #platform-tabs .platform-tab-glyph { width: var(--wip-nav-ic-size); height: var(--wip-nav-ic-size); }
@@ -8454,7 +9476,7 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs::before {
     content: "";
     position: absolute;
-    inset-block-start: var(--wip-nav-brand-top);
+    inset-block-start: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-top));
     inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) + var(--wip-nav-ic-size) + var(--wip-nav-row-gap));
     width: var(--wip-nav-brand-w);
     height: var(--wip-nav-brand-tile);
@@ -8480,9 +9502,14 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
      rule for it. Its glyph is the shell's own SidebarIcon, a panel with
      its side column, the same in both states (the icon's note in
      @/components/ui/icons.tsx says why), drawn at the rows' weight. */
+  /* BELOW THE STATUS BAR (audit, 23 Nov 2026): on an iPad in the app this
+     button stood 16px from the screen's top, under the clock, while the top
+     bar's own row started 24px lower (the layout audit's
+     content-under-system warning on every iPad screen). It, the brand and
+     the panel's first row add the top inset, which is 0 in a browser tab. */
   html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header #sidebar-toggle {
     position: absolute;
-    inset-block-start: calc(var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);
+    inset-block-start: calc(var(--platform-safe-top, 0px) + var(--wip-nav-brand-top) + (var(--wip-nav-brand-tile) - var(--wip-nav-fold)) / 2);
     inset-inline-start: calc(var(--wip-nav-pad) + var(--wip-nav-row-pad) - (var(--wip-nav-fold) - var(--wip-nav-ic-size)) / 2);
     width: var(--wip-nav-fold);
     height: var(--wip-nav-fold);
@@ -8530,6 +9557,30 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
   /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
+  /* THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026). Home and Communities
+     are the two pages whose search row is pulled up towards the bar; scrolling
+     them a little ran the search field and the New project (New community)
+     button into the bar, where they showed through it and the foot line was
+     drawn across them. Every other page keeps the layer off, above. Here the
+     bar paints the page's own ground again, so what scrolls up disappears at
+     its edge and the line stays unbroken over it. The position, `inset: 0`,
+     `z-index: -1` and `pointer-events: none` are the shared faked layer's
+     ("THE ONE FAKED LAYER"), and the header's own `clip-path` keeps it to the
+     bar. Its clip starts past the menu's edge and the rounded page corner, so
+     the panel and the corner are untouched. The ::after line above paints
+     over this layer, so it stays on the bar's edge. */
+  html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before {
+    content: "" !important;
+    background: var(--home-wallpaper);
+    clip-path: inset(0 0 0 calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)));
+  }
+  html:not([data-skin])[dir="rtl"] body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before {
+    clip-path: inset(0 calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)) 0 0);
+  }
+  /* Standard (WIP) gives the page and its frame one colour, so there the
+     layer paints that colour rather than the wallpaper the standard look has. */
+  html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)) #platform-header#platform-header::before { background: var(--wip-page-bg); }
+  html[data-skin-wip][data-wip-tokens] body:has(#communities-screen:not(.hidden)) #platform-header#platform-header::before { background: var(--wip-page-bg-communities); }
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
 }
 /* THE PAGE IS A SHEET TUCKED INTO THE MENU (asked 20 Nov 2026, from the
@@ -8538,10 +9589,11 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
    open or folded to its strip: the panel's own blue is drawn round two
    quarter circles just past its edge, by a fixed layer on <body> that takes
    no pointer and sits in the panel's own layer, under the top bar. A
-   peeking menu floats over the page, and a running app fills the window
-   beside its menu, so neither gets the corners. */
+   peeking menu floats over the page, so it gets no corners. A running app
+   is a card on the page (below), so its page has them like any other; an
+   app that has the whole window (the top bar hidden) does not. */
 @media (min-width: 768px) {
-  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after {
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#platform-header.hidden))::after {
     content: "";
     position: fixed;
     inset-block: 0;
@@ -8554,7 +9606,7 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
       radial-gradient(circle at 100% 0, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)) 0 100% / var(--wip-nav-page-radius) var(--wip-nav-page-radius) no-repeat;
   }
   /* Right to left the panel is on the right, so the quarter circles open the other way. */
-  html:not([data-skin])[dir="rtl"] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after {
+  html:not([data-skin])[dir="rtl"] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#platform-header.hidden))::after {
     background-image:
       radial-gradient(circle at 0 100%, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius)),
       radial-gradient(circle at 0 0, transparent calc(var(--wip-nav-page-radius) - 0.5px), var(--wip-nav-bg) var(--wip-nav-page-radius));
@@ -8634,20 +9686,22 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
    keeps `aria-current` there, and its row was lit beside the lit button.
    In the open menu its row is at rest instead: a resting row's ink
    (--text-primary, as the shell's own row rule reads it), weight and no
-   ground, and it answers the pointer as a resting row does. Folded, the
-   strip keeps its own drawing, and the phone's bar has no Settings. */
+   ground, and it answers the pointer as a resting row does. The folded
+   strip too (phone review #80, 23 Nov 2026): there Settings' square and
+   You's tile stand one above the other, and both were lit. The phone's bar
+   has no Settings. */
 @media (min-width: 768px) {
-  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] {
+  html:not([data-skin]) #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] {
     background: transparent;
     box-shadow: none;
     color: var(--text-primary);
     font-weight: 600;
   }
-  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]:hover {
+  html:not([data-skin]) #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]:hover {
     background: var(--wip-nav-hover);
     color: var(--wip-nav-ink-strong);
   }
-  html:not([data-skin]) #platform-tabs:not(.platform-tabs-folded):has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
+  html:not([data-skin]) #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
     color: inherit;
   }
 }
@@ -8656,7 +9710,11 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
    sheet, option A, for the standard look and the brand kit's drawing of it
    (html:not([data-skin])). A button is a pill with a thin dark outline and
    a hard edge under it; a press pushes it down onto the edge. Its label is
-   in the serif.
+   in the page's own typeface (phone review S2, 23 Nov 2026: the serif was
+   the only serif on every page it stood on, and New community had already
+   been taken off it on request; the face is set once here, so every
+   button follows). In dark the edge is darker than the ground (S8): a pale
+   one read as a second outline out of register.
      Level 1, the main action: yellow.        (.bg-violet-600, the kit's .wip-cta)
      Level 2, the secondary action: white.    (the grey, white and outlined buttons)
      Destructive: white, in red.              (the red buttons)
@@ -8669,15 +9727,16 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
    the menu and the admin console are not these buttons.
    EVERY VALUE IS A TOKEN, --wip-btn-*, declared once here in light and dark. */
 html:not([data-skin]) {
-  --wip-btn-font: 'Source Serif 4', 'Iowan Old Style', Georgia, serif;
-  --wip-btn-weight: 400;
-  --wip-btn-track: -0.01em;
+  --wip-btn-font: var(--wip-font);
+  --wip-btn-weight: 600;
+  --wip-btn-track: 0;
   --wip-btn-size: 16px;
   --wip-btn-size-small: 13px;
   --wip-btn-radius: 9999px;
   --wip-btn-line: #121a0e;                              /* the outline, and the edge under */
   --wip-btn-edge: 2px 2px 0 0 var(--wip-btn-line);
   --wip-btn-edge-small: 1.5px 1.5px 0 0 var(--wip-btn-line);
+  --wip-btn-bad-edge: 2px 2px 0 0 var(--wip-btn-bad-line);
   --wip-btn-press: translate(2px, 2px);
   --wip-btn-off: 0.45;
   --wip-btn-focus: #3090e1;
@@ -8700,6 +9759,10 @@ html:not([data-skin]) {
 }
 html:not([data-skin]).dark {
   --wip-btn-line: rgb(255 254 234 / 0.55);
+  --wip-btn-shade: rgb(0 0 0 / 0.7);
+  --wip-btn-edge: 2px 2px 0 0 var(--wip-btn-shade);
+  --wip-btn-edge-small: 1.5px 1.5px 0 0 var(--wip-btn-shade);
+  --wip-btn-bad-edge: 2px 2px 0 0 var(--wip-btn-shade);
   --wip-btn-1-line: #ffee6f;
   --wip-btn-2-bg: #171715;
   --wip-btn-2-ink: #fffeea;
@@ -8752,7 +9815,7 @@ html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(:is(.bg
 html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
   border-color: var(--wip-btn-bad-line);
   background: var(--wip-btn-bad-bg);
-  box-shadow: 2px 2px 0 0 var(--wip-btn-bad-line);
+  box-shadow: var(--wip-btn-bad-edge);
   color: var(--wip-btn-bad-ink);
 }
 html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-bad-hover); }
@@ -9242,6 +10305,14 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
     gap: 8px;
   }
 }
+/* Joined from 768px: two compact cards across, three from 1280px, so each
+   has room for its week on one line. */
+@media (min-width: 768px) {
+  .cm-grid[data-cm-grid="joined"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .cm-grid[data-cm-grid="joined"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 .cm-card {
   position: relative;
   display: flex;
@@ -9496,9 +10567,11 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   .cm-grid[data-cm-grid="join"] .cm-card-skel-body { height: 110px; }
 }
 /* The compact card: the icon smaller, on a dark hairline (it sits on the
-   card's own white), beside the name and the members, centred. */
-.cm-card[data-cm-size="compact"] { padding: 12px; }
-.cm-card[data-cm-size="compact"] .cm-card-head { align-items: center; }
+   card's own white), beside the name and its week, centred, with room round
+   them: 16px in, 14px from the icon to the words, 5px between the lines,
+   the small words 13px on 18px. */
+.cm-card[data-cm-size="compact"] { padding: 16px; }
+.cm-card[data-cm-size="compact"] .cm-card-head { align-items: center; gap: 14px; }
 .cm-card[data-cm-size="compact"] .cm-card-face { margin-top: 0; }
 .cm-card[data-cm-size="compact"] .cm-card-icon {
   width: 44px;
@@ -9507,7 +10580,35 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   box-shadow: 0 0 0 1px var(--cm-icon-edge);
   font-size: 24px;
 }
-.cm-card[data-cm-size="compact"] .cm-card-id { padding-top: 0; }
+.cm-card[data-cm-size="compact"] .cm-card-id { gap: 5px; padding-top: 0; }
+.cm-card[data-cm-size="compact"] :is(.cm-card-members, .cm-card-live) { font-size: 13px; line-height: 18px; }
+/* Its first line ("34 members, 6 active this week") wraps between its two
+   facts, never inside one; a fact longer than the card ends in an ellipsis. */
+.cm-card[data-cm-size="compact"] .cm-card-members { white-space: normal; }
+.cm-card-fact {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+/* What went live this week, under it: a tick and the words in the link's
+   blue, the one coloured thing on the card. */
+.cm-card-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--cm-link);
+}
+.cm-card-live-tick {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
 
 /* THE COMMUNITIES TAB'S PAGE (features/communities/index.tsx, `#communities`).
    The communities you pinned and the others you are in, as the tiles Home's
@@ -12190,10 +13291,16 @@ html[data-browser-scroller="settings-screen"] #settings-screen:has(#settings-sec
   display: flex;
   flex-direction: column;
 }
+/* THE SHEET HUGS WHAT IT HOLDS (phone review #121, 23 Nov 2026). It took
+   the rest of the height and ran under the tab bar, so Appearance (a
+   heading, a sentence and three segments) was a card from the top bar to
+   behind the tab bar, 550pt of it empty, with its foot cut off. It is as
+   tall as its content now, its four corners round, and the screen's own
+   safe-scroll padding keeps it clear of the tab bar. */
 #settings-content-col > .settings-sheet {
-  flex: 1 0 auto;
-  margin-bottom: calc(-1 * max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
-  padding-bottom: calc(32px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
+  flex: 0 0 auto;
+  border-end-end-radius: 1.75rem;
+  border-end-start-radius: 1.75rem;
 }
 /* Keyboard up: the screen's safe-scroll padding is 0 (see
    `html.un-kb .platform-safe-scroll`), so there is nothing to spend. */
@@ -12207,6 +13314,22 @@ html.un-kb #settings-content-col > .settings-sheet {
    `md:pt-5` (8 for the header's notch, 12 of air) is the step for both. */
 @media (min-width: 1024px) {
   #settings-content-col > .settings-sheet { margin-top: 0; }
+}
+/* A PRESSED MENU ROW IS ITS FILL (phone review S9, 23 Nov 2026). The kit
+   shrinks every button to 97% on press (native.css, "Touch polish"), so a
+   Settings row's press fill stood a few points in from the card's edges, a
+   grey slab inside the rounded card. The row keeps its size; its fill, the
+   card's whole width, clipped by the card's radius, is the feedback. */
+#settings-mobile-menu-host .settings-menu-row:active {
+  transform: none;
+  filter: none;
+}
+/* AIR UNDER SIGN OUT (phone review #120, 23 Nov 2026). Under the phone's
+   menu Sign out is the page's last control, and it ended with its shadow on
+   the tab bar. The page's own section gap stands under it now. From lg the
+   footer is in the sidebar, which has its own end padding. */
+@media (max-width: 1023px) {
+  #settings-footer { padding-bottom: 24px; }
 }
 /* THE SECTION LIST IS A SHEET TOO (UX audit, 20 Oct 2026). It was drawn
    straight on the strip while the pane rose beside it, so one screen had two
@@ -12283,6 +13406,17 @@ html.un-kb #settings-content-col > .settings-sheet {
   font-size: 17px;
   line-height: 1.3;
   letter-spacing: 0;
+}
+/* ONE HEADING SIZE ON A PHONE (phone review #126, 23 Nov 2026). Below lg the
+   top bar names the page, so every heading in a pane is a part's heading,
+   at the part size: a one-part page's heading was 22px and a several-part
+   page's 17px, so Appearance and AI usage opened at two different sizes. */
+@media (max-width: 1023px) {
+  .settings-sheet h3 {
+    font-size: 17px;
+    line-height: 1.3;
+    letter-spacing: 0;
+  }
 }
 @media (min-width: 1024px) {
   .settings-sheet:has(> [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden) > :not(.hidden)) > .settings-page-title {
@@ -12387,6 +13521,16 @@ html.un-kb #settings-content-col > .settings-sheet {
 .notifications-stack > .notifications-row-slot + .notifications-row-slot { margin-top: 6px; }
 .notifications-stack .notifications-row-slot .notifications-row::after { content: none; }
 .notifications-stack .notifications-card .un-swipe { border-radius: 20px; }
+/* PHONE REVIEW #46 (23 Nov 2026): A SWIPED CARD SLIDES WHOLE. The kit's wrap
+   clips what it holds (it is how its Clear tray waits out of sight), and it
+   was as wide as the card, 12px in from the sheet, so a swipe slid the card
+   under that clip: its left edge and corner, its tile, its unread dot and
+   the first letter of each line were cut 28px in from the screen's edge. On
+   a phone the card's slot spans the sheet and the wrap holds the 12px as
+   padding instead, so the whole card, its hairline included, slides and is
+   clipped where the sheet ends, and the tray waits past the sheet's edge. */
+.notifications-stack > .notifications-row-slot.notifications-card:not([data-stack-behind]):has(> .un-swipe) { margin-inline: 0; }
+.notifications-stack > .notifications-row-slot.notifications-card:not([data-stack-behind]) > .un-swipe { padding-inline: 12px; border-radius: 0; }
 .notifications-stack > .notifications-row-slot > *,
 .notifications-stack [data-notif-swipe],
 .notifications-stack [data-notif-swipe] > * { transition: opacity 0.3s ease, background-color 0.4s ease; }
@@ -20034,6 +21178,13 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    have. A row, New chat or a link opens it, and the list gives the lane up
    again. */
 #ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
+/* WITH A THREAD OPEN BESIDE IT (23 Nov 2026) the list is about 270px wide,
+   and from 1024px each row still kept a 48px column for a request's number
+   (and its gap), empty on most rows: a title had 60 to 130px and read
+   "Staging …" twice in a row. The number's column goes while a thread is
+   open beside the list, as it does on every screen under 1024px; the
+   number is on the thread's own head. */
+#ai-screen[data-ai-docked][data-ai-open] [data-ai-line-number] { display: none; }
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
    a column inside centres. Here Main is the far edge, with no gutter, so the
@@ -20659,6 +21810,26 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
 .dev-ws-foryou-pill.dev-ws-foryou-pill-light { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
+/* TOP CONTRIBUTORS (ContributorsCard, request 6837): For you's card and
+   rows, read not pressed. A row is a face, a name and a muted count in
+   words. The head's switch (This month, All time) is the shell's selection
+   inversion, small: the picked one filled, the other plain. */
+.dev-ws-foryou .dev-ws-contrib-row { padding-block: 9px; }
+.dev-ws-contrib-face { width: 32px; height: 32px; margin: 0; flex: none; font-size: 12.5px; box-shadow: none; }
+.dev-ws-contrib-span {
+  margin-inline-start: auto; margin-top: 6px; display: inline-flex; gap: 2px;
+  padding: 2px; border-radius: 999px; background: var(--bg-tertiary);
+}
+.dev-ws-contrib-span > button {
+  min-height: 24px; padding: 3px 10px; border: 0; border-radius: 999px; background: transparent;
+  font-size: 12.5px; font-weight: 600; line-height: 18px; color: var(--text-secondary);
+  white-space: nowrap; cursor: pointer;
+}
+.dev-ws-contrib-span > button[aria-pressed="true"] { background: #18181b; color: #fff; }
+.dark .dev-ws-contrib-span > button[aria-pressed="true"] { background: #fafafa; color: #18181b; }
+@media (max-width: 767.98px) {
+  .dev-ws-contrib-span > button { min-height: 32px; padding-inline: 12px; }
+}
 /* The Discussion row's last line: the message gives way, the time stays
    whole (audit P04, 1 Nov 2026). */
 [data-ws-channel-last]:has(> [data-ws-channel-ago]) { display: flex; min-width: 0; }
@@ -21741,6 +22912,10 @@ a.dev-ws-hero-pending {
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
   html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
+  /* Top contributors (request 6837) goes under For you, and Topics beside
+     the two of them. Without Topics it keeps the full width. */
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics]:has(+ [data-ws-hub-contributors]) { grid-row: span 2; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] + [data-ws-hub-contributors] { grid-column: 1; }
 }
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
@@ -24611,6 +25786,14 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
 .platform-under-header {
   top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top));
 }
+/* BESIDE THE SIDEBAR, NOT OVER IT. From 768px the standard look's sidebar
+   reaches the top of the window beside the top bar. The make and made
+   screens ran the window's width from the bar's foot down, so they covered
+   the sidebar from there and left its top 52px (the fold button and the
+   logo on blue) standing alone in the corner. They start at its edge. */
+@media (min-width: 768px) {
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) .platform-under-header { inset-inline-start: var(--platform-rail-w, 0px); }
+}
 @media (max-width: 767px) {
   html.platform-kb-open .platform-kb-surface.platform-under-header {
     padding-top: max(0px, calc(var(--platform-vv-top, 0px) - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top)));
@@ -25037,6 +26220,22 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
+/* EACH SEAT IS AS WIDE AS ITS WORD (visual audit, Nov 2026). The seats above are fixed shares of the bar, measured to
+   fit the labels at 11px on a 360 to 390px phone, with the two long labels let out of their seats where they did not.
+   So at 320px, and on any phone whose system text size is turned up (an Android WebView scales the text, not the bar),
+   "Communities" ran out of its lit pill and into "Homeroom bot", and that into "Messages". In the standard look a seat
+   now starts from its own label and the bar's spare room is shared out evenly, so a pill always holds its word; and if
+   the five words together are wider than the bar, the longest end in an ellipsis instead of being printed over their
+   neighbours. Only the word is cut: the tab itself stays unclipped, so the count on its glyph's corner is whole. Not the
+   side strip, which stacks its tabs and has its own rules. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs { grid-template-columns: repeat(5, auto); }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 5px; }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label { overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 374.98px) {
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 3px; }
+}
 
 /* TWO ORDERS, ONE MARKUP (Evan, 29 Oct 2026). The tabs' markup is the
    desktop sidebar's order, Home, AI, Messages, Communities, then you, so a
@@ -25261,11 +26460,34 @@ html[data-side-strip="left"] #platform-header {
    the Duo's wider inner screen, where the sheet docks as a side panel,
    the panel keeps its 26rem width and its content gets the padding
    instead. */
-html[data-side-strip="right"] #notifications-sheet {
+html[data-side-strip="right"] #notifications-sheet:not(.platform-sheet-adopted) {
   padding-right: var(--platform-strip-w, 0px);
 }
-html[data-side-strip="left"] #notifications-sheet {
+html[data-side-strip="left"] #notifications-sheet:not(.platform-sheet-adopted) {
   padding-left: var(--platform-strip-w, 0px);
+}
+/* PHONE REVIEW #69 (23 Nov 2026): EVERY KIT SHEET KEEPS ITS CONTENT BESIDE
+   THE COLUMN. Only the bell's sheet did: the Homeroom menu and its About
+   pane ran under the clock on the Duo's cover, where About's own Close
+   (x 402 to 438 of a usable 382) could not be seen. One rule for them all,
+   on the kit's sheet itself: its ground still spans the screen, and what is
+   on it (the grabber, the head, every row) stops at the column, by the
+   strip's width. The bell's sheet takes it from here when the kit holds it,
+   and pads itself only on the path where it is not a kit sheet. (A dialog
+   the kit presents is not one of these.) */
+html[data-side-strip="right"] .un-sheet { padding-right: var(--platform-strip-w, 0px); }
+html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0px); }
+/* S19's capped header menus (from 768px) are centred over the usable box
+   instead, which leaves the column clear without the padding. */
+@media (min-width: 768px) {
+  html[data-side-strip="right"] .un-sheet:is(:has(#notifications-sheet), :has(#apps-switcher-sheet)) {
+    right: var(--platform-strip-w, 0px);
+    padding-right: 0;
+  }
+  html[data-side-strip="left"] .un-sheet:is(:has(#notifications-sheet), :has(#apps-switcher-sheet)) {
+    left: var(--platform-strip-w, 0px);
+    padding-left: 0;
+  }
 }
 
 /* The strip's own pieces (features/nav/strip-back.tsx, side-apps.tsx)
@@ -28033,6 +29255,8 @@ html.in-side-panel body {
    says itself shorter where the CARD is narrow ("Goes live when …"), on a
    phone or beside the side panel, not only where the window is. */
 .dev-ws-strip[data-ws-dashboard] { container-type: inline-size; }
+/* A figure's mark, and the label over the viewer's own card: drawn only by a look that asks for them (the Workshop in the standard look). */
+.dev-ws-dash-mark, .dev-ws-part-work { display: none; }
 .dev-ws-dash-sub {
   display: flex; align-items: center; gap: 3px; margin-top: 1px;
   font-size: 11.5px; line-height: 1.3; color: var(--text-muted);
@@ -31859,6 +33083,22 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
    title, as it is at the top of the page; only the sizes change, so nothing swaps places while the page scrolls. */
 html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text > .messages-thread-name { grid-row: 2; }
 html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text :is(.messages-thread-sub, .messages-thread-kicker, [data-change-status], [data-request-status]) { grid-row: 1; }
+/* A NARROW HEAD WRAPS ITS SMALL LINE (audit, 23 Nov 2026). The number and the status pill are `max-content` cells, so
+   where the head is narrow (a phone, a thread beside a list) a long pill ("Goes live in ~2d 22h · 1/2") ran over ⋯ and
+   off the card, and took the title's cell with it. The project and topic had already been squeezed to nothing there,
+   leaving their "·" at the start of the line. Under 340px of text a head with a pill makes its line the number and the
+   pill alone, and the pill drops under the number when the two do not fit; a pill wider than the line on its own (a
+   320px phone) ends in "…" there, never under ⋯. A head with no pill (a private thread's lock line) is left as it is. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) { container: thread-head-text / inline-size; }
+@container thread-head-text (max-width: 340px) {
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; grid-row: 1; grid-column: 1 / -1; min-width: 0; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > .messages-thread-sub { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) .messages-thread-kicker::before { content: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) :is([data-change-status], [data-request-status]) { margin-inline-start: 0; max-width: 100%; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) :is([data-change-status], [data-request-status]) .gc-vote-count-label { display: block; overflow: hidden; text-overflow: ellipsis; }
+  html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { grid-row: 2; }
+  html:not([data-skin]) #dev-topic-thread .dev-request[data-thread-head-tight]:has(.dev-thread-card) :is(#gc-thread-bar, .dev-request-bar) .dev-thread-bar-text:has(> div > :is([data-change-status], [data-request-status])) > div:has(> .messages-thread-kicker) { grid-row: 1; }
+}
 /* A phone's head: the same card, a size down. */
 @media (max-width: 767px) {
   html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { gap: 10px; padding: 12px 10px 12px 12px; }

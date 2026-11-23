@@ -511,6 +511,10 @@
     "text": "Its changes are ready for you to try and vote on.",
     "description": "Line on the Update card when it lists none of the original's changes by name."
   },
+  "hub.update.sent": {
+    "text": "Sent {{when}}",
+    "description": "Grey line under the title of the Update card on a version's hub: when the original's update was offered to this version. {{when}} is already worded, for example \"3d ago\", \"just now\" or \"Nov 2\"."
+  },
   "hub.update.bringsMore_one": {
     "text": "{{title}}, and {{count}} more",
     "description": "Line on the Update card: the first of the original's changes it brings, {{title}}, and how many more there are, {{count}}."
@@ -1871,6 +1875,34 @@
     "text": "Topics",
     "description": "Small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under or beside the For you card. Pressing a row opens that topic's channel."
   },
+  "hub.contributors.title": {
+    "text": "Top contributors",
+    "description": "Small heading over the card on a project's Hub that lists the up to five people who took part most in the project, most first. Not the platform's points Leaderboard."
+  },
+  "hub.contributors.span": {
+    "text": "Time span",
+    "description": "Spoken name, for screen readers, of the two-button switch beside the Top contributors heading on a project's Hub: This month or All time."
+  },
+  "hub.contributors.month": {
+    "text": "This month",
+    "description": "First button of the small switch beside the Top contributors heading on a project's Hub: the list counts contributions since the first day of the current calendar month."
+  },
+  "hub.contributors.allTime": {
+    "text": "All time",
+    "description": "Second button of the small switch beside the Top contributors heading on a project's Hub: the list counts every contribution since the project began."
+  },
+  "hub.contributors.count_one": {
+    "text": "{{count}} contribution",
+    "description": "Quiet count at the end of a person's row in the Top contributors card on a project's Hub: how many times they took part (a change of theirs that went live, a vote on a change, or a request they filed)."
+  },
+  "hub.contributors.count_other": {
+    "text": "{{count}} contributions",
+    "description": "Quiet count at the end of a person's row in the Top contributors card on a project's Hub: how many times they took part (a change of theirs that went live, a vote on a change, or a request they filed)."
+  },
+  "hub.contributors.emptyMonth": {
+    "text": "Nobody has taken part yet this month.",
+    "description": "Line shown inside the Top contributors card on a project's Hub when This month is picked and nobody has had a change go live, voted or filed a request since the month began."
+  },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
@@ -2246,6 +2278,10 @@
   "communityCard.people.members_other": {
     "text": "{{count}} members",
     "description": "Line beside the members' faces at the top of a project's Hub, when the audience's name is not known: how many members the community has."
+  },
+  "communityCard.people.open": {
+    "text": "See who is in it",
+    "description": "Tooltip of the members' faces and count at the top of a project's Hub, which open the list of its members."
   },
   "communityCard.people.audienceMembers_one": {
     "text": "<0>{{audience}}</0> · {{count}} member",
@@ -4596,12 +4632,12 @@
     "description": "Second line of the 'Build it now' row in a project's ⋯ menu: the person works with an AI coding agent, then puts the result up for the community's approval."
   },
   "menu.importPr.title": {
-    "text": "Import Feature from a PR",
+    "text": "Import a feature from a PR",
     "description": "Row in a project's ⋯ menu, shown to people who may build the project: brings in a feature that already exists as a GitHub pull request (PR), so it becomes a proposal here."
   },
   "menu.importPr.sub": {
     "text": "Your computer · your own tools. You have already built it, so there is no chat for this one",
-    "description": "Second line of the 'Import Feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
+    "description": "Second line of the 'Import a feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
   },
   "menu.settings.title": {
     "text": "Settings & rules",
@@ -4614,6 +4650,18 @@
   "menu.settings.back": {
     "text": "Back to the menu",
     "description": "Accessible name of the heading button at the top of the settings panel in a project's ⋯ menu: returns from the settings rows to the menu's first list."
+  },
+  "menu.settings.group.people": {
+    "text": "People and rules",
+    "description": "Small heading in a project's Settings & rules menu, over who can see and change it, its members and its topics."
+  },
+  "menu.settings.group.look": {
+    "text": "Look",
+    "description": "Small heading in a project's Settings & rules menu, over its name and its featured illustration: how it looks to others."
+  },
+  "menu.settings.group.advanced": {
+    "text": "Advanced",
+    "description": "Small heading in a project's Settings & rules menu, over the rows few people need: its settings, its web address, its secrets and its versions."
   },
   "menu.leave.named": {
     "text": "Leave {{project}}",
@@ -4636,35 +4684,35 @@
     "description": "The same row once the community is pinned: lets it move with the rest of the desktop sidebar's Recents again. It stays one of the person's communities."
   },
   "menu.homeApp.add": {
-    "text": "Pin app to Home",
-    "description": "Row in a project's ⋯ menu on its hub: puts the project's app among Home's Pinned apps, where its tile opens the app. Pinning does not join."
+    "text": "Pin to Home",
+    "description": "Row in a project's ⋯ menu: puts the project's app on the viewer's Home as a tile. The second line says the tile opens the app; the community has its own pin, to Communities."
   },
   "menu.homeApp.sub": {
     "text": "Its tile opens the app",
     "description": "Second line under Pin app to Home in the project's ⋯ menu, saying what the pinned tile does."
   },
   "menu.homeApp.remove": {
-    "text": "Unpin app from Home",
-    "description": "The same row once the app is pinned: takes the app's tile off Home's Pinned apps. Membership does not change."
+    "text": "Unpin from Home",
+    "description": "Row in a project's ⋯ menu: takes the project's app off the viewer's Home. Names the place it is pinned to, as the Communities pin's row does."
   },
   "menu.homeCommunity.add": {
-    "text": "Pin community",
-    "description": "Row in a project's ⋯ menu on its hub: puts the community in the Pinned group of the Communities page, where its tile opens this hub. Pinning does not join."
+    "text": "Pin to Communities",
+    "description": "Row in a project's ⋯ menu: pins the community to the top of the viewer's Communities page. Names the place, as the Home pin's row does."
   },
   "menu.homeCommunity.sub": {
     "text": "Its tile opens this hub",
     "description": "Second line under Pin community in the project's ⋯ menu, saying what the pinned tile does."
   },
   "menu.homeCommunity.remove": {
-    "text": "Unpin community",
-    "description": "The same row once the community is pinned: takes its tile out of the Pinned group of the Communities page. Membership does not change."
+    "text": "Unpin from Communities",
+    "description": "Row in a project's ⋯ menu: takes the community off the Pinned part of the viewer's Communities page. Names the place, as the Home pin's row does."
   },
   "menu.appSettings.title": {
-    "text": "App settings",
+    "text": "Project settings",
     "description": "Row among a project's settings, shown to those who manage it: opens the dialog for who can use and build the app, and for deleting it."
   },
   "menu.appSettings.sub": {
-    "text": "Manage who can use and build this app",
+    "text": "Manage who can use and build this project",
     "description": "Second line of the 'App settings' row in a project's settings. 'Build' is a verb, to work on the app's code."
   },
   "menu.domain.title": {
@@ -4696,11 +4744,11 @@
     "description": "Row among a project's settings: opens the dialog listing the project's collaborators and admins and the rule for approving proposals."
   },
   "menu.members.sub": {
-    "text": "Manage collaborators, app admins and proposal approvals",
+    "text": "Manage members, admins and proposal approvals",
     "description": "Second line of the 'Members & approvals' row in a project's settings. Collaborators are people allowed to build the project; a proposal is a change put up for a vote."
   },
   "menu.rename.title": {
-    "text": "App display name",
+    "text": "Project name",
     "description": "Row among a project's settings: opens the dialog for proposing a new name for the app, the name people see."
   },
   "menu.rename.sub": {
@@ -4708,7 +4756,7 @@
     "description": "Second line of the 'App display name' row in a project's settings: a new name is itself a change put up for a vote, and takes effect only when the vote passes."
   },
   "menu.secrets.appTitle": {
-    "text": "App secrets",
+    "text": "Project secrets",
     "description": "Row among a project's settings: opens the dialog for the app's secret values, such as API keys its server reads. A short status may follow this title."
   },
   "menu.secrets.appSub": {

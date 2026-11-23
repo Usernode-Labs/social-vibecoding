@@ -253,8 +253,12 @@ export function FeedbackDialog() {
         <p id="feedback-target-label" className="mb-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
           {t('dialogs:feedback.target.label')}
         </p>
+        {/* Each option's wrapper may shrink below its text (`min-w-0`), so
+            the two share the row evenly and a long project name is cut with
+            an ellipsis. Without it the app's name set the first option's
+            width and pushed Homeroom off the sheet ("Homeroo / The platfor"). */}
         <div id="feedback-target" className="flex gap-2 mb-3" role="radiogroup" aria-labelledby="feedback-target-label">
-          <div className="flex-1 flex flex-col items-center">
+          <div className="flex-1 min-w-0 flex flex-col items-center">
             <button
               type="button"
               role="radio"
@@ -270,7 +274,7 @@ export function FeedbackDialog() {
               <span id="feedback-target-app-sub" className="block truncate text-xs opacity-75">{t('dialogs:feedback.target.appSub')}</span>
             </button>
           </div>
-          <div className="flex-1 flex flex-col items-center">
+          <div className="flex-1 min-w-0 flex flex-col items-center">
             <button
               type="button"
               role="radio"

@@ -44,9 +44,12 @@ const ui = loadTsx('tests/fixtures/about-pane-api.ts');
 test('a contributor\'s row says Creator, how many of theirs are live, both, or nothing', () => {
   const note = (row) => model.contributorNote(model.contributorView(row));
   assert.equal(note({ username: 'ada', merged_count: 0, is_creator: true }), 'Creator');
-  assert.equal(note({ username: 'ada', merged_count: 3, is_creator: true }), 'Creator · 3 live');
-  assert.equal(note({ username: 'ada', merged_count: 1, is_creator: true }), 'Creator · 1 live');
-  assert.equal(note({ username: 'cy', merged_count: 6 }), '6 live');
+  // Phone review #119: "changes live", the number grouped as the cards group theirs.
+  assert.equal(note({ username: 'ada', merged_count: 3, is_creator: true }), 'Creator · 3 changes live');
+  assert.equal(note({ username: 'ada', merged_count: 1, is_creator: true }), 'Creator · 1 change live');
+  assert.equal(note({ username: 'cy', merged_count: 6 }), '6 changes live');
+  assert.equal(note({ username: 'cy', merged_count: 2027 }), `${(2027).toLocaleString()} changes live`);
+  assert.equal(model.formatCount(7984), (7984).toLocaleString());
   assert.equal(note({ username: 'cy', merged_count: 0 }), null, 'a zero says nothing');
   assert.equal(model.appNote, undefined, 'no line about how it is built');
   assert.equal(model.platformNote, undefined);
@@ -64,7 +67,7 @@ test('the pill, the cards, the rows and the Open button say what the design says
   assert.equal(model.shortVersionOf({ version: { shortSha: 'abc1234' } }), 'abc1234');
   assert.equal(model.shortVersionOf({ main_sha: 'abc1234def' }), 'abc1234');
   assert.deepEqual(model.statCards({ apps: 1, members: 2, merged: 0 }).map((c) => [c.key, c.value, c.label]),
-    [['apps', '1', 'app'], ['members', '2', 'members'], ['merged', '0', 'live']]);
+    [['apps', '1', 'project'], ['members', '2', 'members'], ['merged', '0', 'changes live']]);
   assert.equal(model.taglineOf({ manifest_snapshot: { description: '  Sketch\n together. ' } }), 'Sketch together.');
   assert.equal(model.taglineOf({ manifest_snapshot: {} }), null);
   assert.deepEqual(model.contributorView({ username: 'dana', merged_count: '6' }), { who: 'dana', initial: 'D', merged: 6, creator: false });

@@ -199,6 +199,8 @@ const INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
 const INCIDENT_PRIVATE_RE = /^private:(\d{1,10})$/;
 // #6867: services/openrouter-credit.js detailToken().
 const INCIDENT_CREDIT_RE = /^credit:(low|urgent):(\d{1,7}):(\d{1,7}):(\d{1,4})$/;
+// services/homeroom-bot-verified-auto.js detailToken().
+const INCIDENT_VERIFY_RE = /^verify:(on|near):(u|s):(\d{1,8}):(\d{1,8})$/;
 
 function platformIncidentCopy(detail) {
   if (detail === 'credit:out') {
@@ -217,6 +219,20 @@ function platformIncidentCopy(detail) {
       title: `OpenRouter credit is below $${Number(threshold).toLocaleString('en-US')}`,
       body: `$${Number(balance).toLocaleString('en-US')} left${about}. Add credit before Homeroom bot stops building`,
     };
+  }
+  // Homeroom bot's automatic switch to verified accounts only fired, or a
+  // figure passed 80% of its threshold.
+  const verify = INCIDENT_VERIFY_RE.exec(detail);
+  if (verify) {
+    const [, kind, figure, value, threshold] = verify;
+    const spend = figure === 's';
+    const shown = (n) => (spend ? `$${Number(n).toLocaleString('en-US')}` : Number(n).toLocaleString('en-US'));
+    const what = spend
+      ? `AI spend over the last 30 days is ${shown(value)}`
+      : `${shown(value)} people were active in the last 30 days`;
+    return kind === 'on'
+      ? { title: 'Homeroom bot now works for verified accounts only', body: `It switched by itself: ${what}, and it switches at ${shown(threshold)}` }
+      : { title: 'Homeroom bot may soon switch to verified accounts only', body: `${what}. It switches at ${shown(threshold)}` };
   }
   const signal = INCIDENT_SIGNAL_RE.exec(detail);
   if (signal) {

@@ -300,11 +300,13 @@ const TopochainEventContext = {
   // standings are the whole season's, so "(past)" is both wrong and — since it
   // is the default selection — the first thing a reader sees. Its own window
   // has usually closed while the season is still the dataset everyone means.
+  // Its name already says it is a season ("Season 2"), so it gets no suffix
+  // at all: "Season 2 (season)" said it twice (phone review #109).
   _labelFor(ev) {
     const isSeason = !!(window.TopochainEvents
       && TopochainEvents.isSeasonAggregate(ev));
     const event = `${ev.name}`;
-    if (isSeason) return t('leaderboard:eventBar.option.season', { event });
+    if (isSeason) return event;
     if (ev.is_current) return t('leaderboard:eventBar.option.current', { event });
     return ev.is_active ? event : t('leaderboard:eventBar.option.past', { event });
   },
@@ -338,7 +340,7 @@ const TopochainEventContext = {
         : (ev.is_active
           ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
           : 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400'));
-    const statusLabel = isSeason ? t('leaderboard:eventBar.status.season')
+    const statusLabel = isSeason ? ''
       : (ev.is_current ? t('leaderboard:eventBar.status.activeNow')
         : (ev.is_active ? t('leaderboard:eventBar.status.active') : t('leaderboard:eventBar.status.past')));
     const fmt = (iso) => (iso
@@ -353,11 +355,12 @@ const TopochainEventContext = {
         statusClass,
         description: ev.description ? String(ev.description) : null,
         // An en dash between the two dates, as the `&ndash;` entity drew.
-        // One line: the dates, and how many take part when that is known.
-        dates: ev.users_count != null
-          ? t('leaderboard:eventBar.datesTakingPart',
-            { start: fmt(ev.starts_at), end: fmt(ev.ends_at), count: Number(ev.users_count) })
-          : t('leaderboard:eventBar.dates', { start: fmt(ev.starts_at), end: fmt(ev.ends_at) }),
+        // The dates alone (phone review #109): the event's own head count
+        // ("159 taking part") counted something other than the standing
+        // card's "of 163 ranked" and the table's last rank, so the screen
+        // gave three different numbers for one crowd. The standing card
+        // keeps the one count, and says what it counts.
+        dates: t('leaderboard:eventBar.dates', { start: fmt(ev.starts_at), end: fmt(ev.ends_at) }),
         seasonNote: isSeason,
         fallbackNote: !!TopochainEventContext._endedFallback,
       },

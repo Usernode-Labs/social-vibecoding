@@ -97,7 +97,7 @@ test('App settings is an access surface for app managers, not only deleters (#23
   const settings = FRAME.slice(FRAME.indexOf('data-plus="app-settings"') - 300);
   assert.match(settings.slice(0, 700), /appData\?\.can_manage && !selfHosted/);
   assert.match(settings.slice(0, 900), /sub=\{t\('project:menu\.appSettings\.sub'\)\}/);
-  assert.equal(message('project:menu.appSettings.sub'), 'Manage who can use and build this app');
+  assert.equal(message('project:menu.appSettings.sub'), 'Manage who can use and build this project');
   assert.match(FRAME, /title=\{t\('project:menu\.members\.title'\)\}/);
   assert.equal(message('project:menu.members.title'), 'Members & approvals');
   assert.doesNotMatch(FRAME, /title="Members &amp; visibility"/);
@@ -146,10 +146,10 @@ test('See what visitors see leads the menu on a member\'s public project, plain,
   assert.ok(menu.indexOf('data-plus="visitor-view"') < menu.indexOf('data-plus="issue"'), 'first, ahead of Suggest an improvement');
   const row = menu.slice(menu.indexOf('{visitorView ? ('), menu.indexOf('data-plus="issue"'));
   assert.match(row, /<PlusRow\s+data-plus="visitor-view"\s+icon=\{<EyeIcon className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/);
-  assert.doesNotMatch(row, /^\s+lit$/m, 'plain: Suggest an improvement stays the one lit row');
+  assert.doesNotMatch(row, /^\s+lit$/m, 'plain, as every row is (phone review #129)');
   assert.match(row, /onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); setVisiting\(true\); \}\}/);
   // With it above, Suggest an improvement takes the divider.
-  assert.match(menu, /data-plus="issue"\s+lit[\s\S]*?dividerCls=\{visitorView \? PLUS_ROW_DIVIDER_CLS : ''\}/);
+  assert.match(menu, /data-plus="issue"[\s\S]*?dividerCls=\{visitorView \? PLUS_ROW_DIVIDER_CLS : ''\}/);
   // The page, portalled like the menu's other sheets.
   assert.match(FRAME, /\{visiting && visitorView \? createPortal\(<VisitorView key=\{visitorView\.slug\} slug=\{visitorView\.slug\} onClose=\{\(\) => setVisiting\(false\)\} \/>, document\.body\) : null\}/);
   // A member's, on a public project: a private one has no page for

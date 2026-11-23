@@ -159,6 +159,11 @@ test('App slots says how much room is free, and always opens the allowance card'
   const html = renderToHtml(createElement(mod.AccountPanel, { rows: { challenges: null, kudos: null } }));
   assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 app slot free of 2/);
   assert.match(html, /id="profile-account"/);
+  // Phone review #125: with no limit the row says so and opens no card.
+  store.seedAppAllowance({ appCreationQuota: { used: 23, limit: null, remaining: null } });
+  const open = renderToHtml(createElement(mod.AccountPanel, { rows: { challenges: null, kudos: null } }));
+  assert.match(open, /<div[^>]*id="profile-row-app-slots"[\s\S]*?23 apps made · no limit/);
+  assert.doesNotMatch(open, /href="#profile\?slots"/);
   assert.match(html, /id="profile-row-friends"/, 'Friends sits in the Account group with it');
 });
 
@@ -175,7 +180,9 @@ test('with no slot free the App allowance card says so, and offers Request more 
   const spent = renderToHtml(createElement(sheet.AppSlotsSheet, {}));
   assert.match(spent, /id="profile-app-slots-sheet"/);
   assert.match(spent, /id="profile-app-slots-close"/);
-  assert.match(spent, /App allowance/);
+  // Phone review #125: one name, the row's.
+  assert.match(spent, /App slots/);
+  assert.doesNotMatch(spent, /App allowance/);
   assert.match(spent, /data-quota-state="spent"/);
   assert.match(spent, /2 of 2 app slots used/);
   assert.match(spent, /Request more/);
