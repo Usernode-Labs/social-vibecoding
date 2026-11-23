@@ -7806,7 +7806,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     height: auto;
     padding: 0;
   }
-  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: min(36rem, 38vw); margin-top: 0; }
+  /* Its width is the bar's beside the sidebar (the usable box), less the 12.5rem kept for the bell and account on its right and 11rem for the page's name ("Hub", "Workshop") on its left. It was min(36rem, 38vw), which cut the sentence at "moves off GitHu…" on a 1440px window with 300px of the bar empty beside it. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: calc(var(--platform-usable-w) - 12.5rem - 11rem); margin-top: 0; }
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {

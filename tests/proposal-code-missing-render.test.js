@@ -164,7 +164,7 @@ test('the change\'s page: the notice above Votes and Testing, in the project pag
     `<div data-change-code-missing="" class="rounded-lg border border-amber-500/40 bg-amber-500/10 text-sm text-amber-800 dark:text-amber-300 px-3 py-2 mt-3"><span>${SENTENCE}</span></div>`);
   // The same notice the project page draws for paused code changes.
   const frame = read('frontend', 'src', 'features', 'dev-board', 'board-frame.tsx');
-  assert.match(frame, /<Alert variant="notice" density="compact" data-code-pause="github">/);
+  assert.match(frame, /<Alert variant="notice" density="compact" data-code-pause="github" title=\{t\('project:codePause\.notice'\)\}>/);
   const src = read(head);
   // The stacked-change notice (tests/proposal-stacked-render.test.js) sits
   // between the two.
