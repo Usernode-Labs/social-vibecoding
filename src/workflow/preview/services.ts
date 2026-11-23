@@ -17,11 +17,10 @@
 // the transitions' (src/workflow/pushes.ts); the build and the run still
 // stream their own progress (checks_progress and its events) as they go.
 
-import { createHash } from 'node:crypto';
 import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { HandedBack, LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { PREPARE_CLAIMS, WORK } from './machine.ts';
+import { PREPARE_CLAIMS, WORK, previewUuid } from './machine.ts';
 import { parseRepoAddress } from '../rules/github-url.ts';
 
 interface Deps { config: any; pool: Pool }
@@ -43,26 +42,19 @@ const CONCURRENCY = 10;
 const repoOf = (url: unknown) => parseRepoAddress(url);
 const cancelled = (ctx: WorkContext, err: unknown) => ctx.signal.aborted || err instanceof LeaseLost;
 
-// A UUID derived from `text` (version 4's layout, as check_runs' key and the
-// Jobs' run-id label take it).
-function uuidOf(text: string): string {
-  const h = createHash('sha256').update(text).digest('hex');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
-
 // The id one claim of a checks run gives its Jobs and its check_runs row:
 // one per claim, so a claim that runs again never meets the Jobs of the one
 // before under the same names. The run itself is known by the work item's
 // key (`runKey`), which its manifest carries and its media are held under.
 export function claimRunId(sessionId: number, runKey: string, claim: number): string {
-  return uuidOf(`preview-run:${sessionId}:${runKey}:${claim}`);
+  return previewUuid(`preview-run:${sessionId}:${runKey}:${claim}`);
 }
 
 // The run id of attempt n's early unit suite: known from the attempt alone to
 // the launcher, the checks run that reads it and the retirements that remove
 // it, so none of them has to be told.
 export function unitEarlyRunId(sessionId: number, n: number): string {
-  return uuidOf(`preview-unit-early:${sessionId}:${n}`);
+  return previewUuid(`preview-unit-early:${sessionId}:${n}`);
 }
 
 export function previewServices({ config, pool }: Deps): Record<string, WorkHandler> {
@@ -310,13 +302,18 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     // them from the cluster instead of running them again, and runs them
     // again only when there is nothing to read.
     [WORK.run]: {
+      eligibleWork: () => legacy('services/checks-queue').readyWork(pool, config, unitEarlyRunId),
       maxAttempts: RUN_ATTEMPTS,
       leaseMs: PREPARE_LEASE_MS,
-      concurrency: CONCURRENCY,
+      concurrency: legacy('services/checks-queue').CHECKS_RUN_CONCURRENCY,
       async run(ctx): Promise<Json> {
         const { input, attempt, signal } = ctx;
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         if (!row || !a) return { outcome: 'blocked', reason: 'The proposal or its app no longer exists' };
+        if (input.admissionId && (row.check_state !== 'pending' || row.checks_commit_sha !== input.head
+          || !['active', 'paused', 'promoted', 'merging'].includes(row.status))) {
+          return { outcome: 'blocked', reason: 'The session stopped waiting on this commit before its checks started.' };
+        }
         // The place in the checks queue an earlier claim had: the run asks
         // for its slot as of then, not from the back of the line.
         let queuedSince: string | null = null;
@@ -352,7 +349,8 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           trigger: input.trigger,
           workflow: {
             runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal,
-            unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince, report,
+            unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince, report, admissionId: input.admissionId,
+            workId: ctx.workId, attempt,
           },
         }).catch((err: unknown) => {
           if (!cancelled(ctx, err) && legacy('services/db-retry').handBackOnDrain(err)) {

@@ -64,6 +64,8 @@ const checkRuns = require('./check-runs');
 const { CHECKS_QUEUE_LOCK } = require('./advisory-locks');
 
 const DEFAULT_MAX_CONCURRENT_RUNS = 4;
+const CHECKS_RUN_CONCURRENCY = 10;
+const UNCLAIMED_GRANT_MS = 30_000;
 const POLL_MS = Math.max(250, Number(process.env.CHECKS_QUEUE_POLL_MS) || 3000);
 // Dead main and early-unit rows stop counting well before cleanup.
 const ADMISSION_ROW_RETENTION_MS = 60 * 60 * 1000;
@@ -197,15 +199,17 @@ function recordSlotGranted(pool, {
 // archived or is gone.
 const QUEUE_SQL = `
   SELECT cr.run_id, cr.kind, cr.session_id, cr.app_id, cr.commit_sha, cr.owner,
-         cr.queued_at, cr.admitted_at, cr.heartbeat_at,
+         cr.queued_at, cr.admitted_at, cr.heartbeat_at, cr.manifest ? 'readyKey' AS ready_work,
          (cr.manifest->>'earlyUnit' = 'true') AS early_unit,
-         (cr.heartbeat_at >= NOW() - ($1::int * INTERVAL '1 millisecond')) AS alive,
+         ((cr.kind = 'preview-ready' OR cr.heartbeat_at >= NOW() - ($1::int * INTERVAL '1 millisecond'))
+           AND (NOT cr.manifest ? 'readyKey' OR cr.admitted_at IS NOT NULL
+             OR (cs.status IN ('active', 'paused', 'promoted', 'merging') AND cs.checks_commit_sha = cr.commit_sha))) AS alive,
          (cr.admitted_at IS NOT NULL
            AND cr.admitted_at >= NOW() - ($2::int * INTERVAL '1 millisecond')) AS within_deadline,
          (cr.heartbeat_at < NOW() - ($3::int * INTERVAL '1 millisecond')) AS expired,
          (cr.owner LIKE '%:exited') AS exited,
          (cr.manifest->>'settled' = 'true') AS lingering,
-         (cr.kind = 'proposal' AND (cs.id IS NULL OR cs.status IN ('merged', 'archived'))) AS session_ended,
+         (cr.kind IN ('proposal', 'preview-ready') AND (cs.id IS NULL OR cs.status IN ('merged', 'archived'))) AS session_ended,
          wk.status AS run_status,
          (wk.status IN ('reported', 'settled') AND (NOT wk.cancelled OR wk.cancel_done)) AS run_finished,
          CASE
@@ -228,10 +232,21 @@ const QUEUE_SQL = `
                         AND c.work_key = 'cancel:' || w.work_key
                         AND c.status IN ('reported', 'settled')) AS cancel_done
         FROM wf_work w
-       WHERE cr.kind = 'proposal' AND cr.manifest->>'workflow' = 'true'
+       WHERE cr.kind IN ('proposal', 'preview-ready') AND cr.manifest->>'workflow' = 'true'
          AND w.machine = 'preview' AND w.key = 'session:' || cr.session_id::text
-         AND w.kind = 'checks.run' AND w.work_key = cr.manifest->>'runKey'
+         AND w.kind = 'checks.run' AND w.work_key = COALESCE(cr.manifest->>'runKey', cr.manifest->>'readyKey')
     ) wk ON TRUE
+   WHERE NOT EXISTS (
+     SELECT 1 FROM check_runs ready
+      WHERE ready.session_id = cr.session_id AND ready.manifest ? 'readyKey'
+        AND ready.admitted_at IS NOT NULL
+        -- After the handler reports, #7054's physical lingering row owns
+        -- any Jobs still stopping. Expose it in this same admission pass.
+        AND EXISTS (SELECT 1 FROM wf_work w WHERE w.machine = 'preview'
+          AND w.key = 'session:' || ready.session_id::text AND w.kind = 'checks.run'
+          AND w.work_key = ready.manifest->>'readyKey' AND w.status IN ('queued', 'running'))
+        AND (ready.run_id::text = cr.manifest->>'readyId'
+          OR cr.run_id::text = ready.manifest->>'unitRunId'))
    ORDER BY class, cr.queued_at, cr.run_id`;
 
 // Pure: is the run a row stands for known to be over? Its work item says so
@@ -354,9 +369,10 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
 // left to it.
 // `self` also refreshes that run's heartbeat in the same transaction, so a
 // waiter is never mistaken for dead by its own pass. Returns the plan.
-async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
-  const capacity = await require('./kubernetes').checkPoolCapacity();
+async function admit(pool, { cap = maxConcurrentRuns(), self = null, capacity = null } = {}) {
+  capacity ??= await require('./kubernetes').checkPoolCapacity();
   cap = Math.min(cap, capacity.cap);
+  const readyGrants = [];
   const plan = await withAdmissionLock(pool, async (client) => {
     if (self) {
       await client.query(
@@ -364,13 +380,16 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
         [self, checkRuns.selfOwner()]
       );
     }
-    const rows = await queueRows(client);
+    const rows = await dispatchableRows(client);
     const plan = planAdmission(rows, { cap, self, available: capacity.available });
     if (plan.admit.length) {
       await client.query(
         'UPDATE check_runs SET admitted_at = NOW() WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL',
         [plan.admit]
       );
+    }
+    for (const row of rows) {
+      if (row.ready_work && plan.admit.includes(row.run_id)) readyGrants.push(row);
     }
     if (plan.expired.length) {
       await client.query(
@@ -382,7 +401,7 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
     }
     if (plan.sweep.length) {
       const { rows: gone } = await client.query(
-        `DELETE FROM check_runs WHERE run_id = ANY($1::uuid[]) AND kind = 'proposal' RETURNING run_id`,
+        `DELETE FROM check_runs WHERE run_id = ANY($1::uuid[]) AND kind IN ('proposal', 'preview-ready') RETURNING run_id`,
         [plan.sweep.map((s) => s.runId)]
       );
       const removed = new Set(gone.map((r) => r.run_id));
@@ -395,6 +414,7 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
       removed: plan.swept.length, runs: plan.swept,
     });
   }
+  for (const row of readyGrants) recordReadyGrant(pool, row);
   if (plan.admit.length) {
     log.info('checks-queue', 'Admitted checks runs', {
       runs: plan.runs.filter((r) => plan.admit.includes(r.runId))
@@ -425,6 +445,43 @@ async function queueRows(client) {
   const { rows } = await client.query(QUEUE_SQL,
     [Math.round(checkRuns.ORPHAN_MS), Math.round(jobHoldMs()), ADMISSION_ROW_RETENTION_MS]);
   return rows;
+}
+
+// The old release can have all ten checks.run leases waiting for a slot.
+// Leave capacity to those handlers when no handler could take a ready grant.
+// Count already granted tickets still waiting for their lease as well.
+async function dispatchRoom(client) {
+  const { rows: [row] } = await client.query(
+    `SELECT count(*)::int AS used FROM wf_work w
+      LEFT JOIN check_runs ready ON ready.run_id = (w.input->>'admissionId')::uuid
+      WHERE w.kind = 'checks.run' AND w.status IN ('queued', 'running')
+        AND ((w.status = 'running' AND w.lease_until > NOW()) OR ready.admitted_at IS NOT NULL)`);
+  return Math.max(0, CHECKS_RUN_CONCURRENCY - row.used);
+}
+
+async function dispatchableRows(client) {
+  let rows = await queueRows(client);
+  if (!rows.some((r) => r.ready_work)) return rows;
+  // A process can stop between a grant and its claim. Restore the original
+  // place when no handler took it. A live claim, including preview wake, and
+  // a physical run awaiting harvest keep their admission.
+  if (rows.some((r) => r.ready_work && r.admitted_at)) {
+    const expired = await client.query(
+      `UPDATE check_runs r SET admitted_at = NULL
+        WHERE r.kind = 'preview-ready' AND r.admitted_at < NOW() - ($1::int * INTERVAL '1 millisecond')
+          AND NOT r.manifest ? 'claimed' AND NOT EXISTS (
+            SELECT 1 FROM wf_work w WHERE w.kind = 'checks.run' AND w.status = 'running'
+             AND w.lease_until > NOW() AND w.input->>'admissionId' = r.run_id::text)`, [UNCLAIMED_GRANT_MS]);
+    if (expired.rowCount) rows = await queueRows(client);
+  }
+  if (!rows.some((r) => r.ready_work && !r.admitted_at && r.alive)) return rows;
+  let room = await dispatchRoom(client);
+  return rows.map((row) => {
+    if (!row.ready_work || row.admitted_at || !row.alive) return row;
+    if (room <= 0) return { ...row, alive: false };
+    room--;
+    return row;
+  });
 }
 
 // Reserve one whole proposal slot for an early unit suite only when the
@@ -466,7 +523,7 @@ async function takeEarlyUnitSlot(pool, { runId, sessionId, commitSha, manifest, 
       `UPDATE check_runs SET run_id = $1, owner = $2, manifest = $3,
           queued_at = NOW(), heartbeat_at = NOW(), admitted_at = NOW()
         WHERE run_id = $4 AND session_id = $5 AND commit_sha = $6
-          AND kind = 'proposal' AND manifest->>'earlyUnit' = 'true'
+          AND kind = 'proposal' AND manifest->>'earlyUnit' = 'true' AND NOT manifest ? 'readyOwner'
           AND admitted_at >= NOW() - ($7::int * INTERVAL '1 millisecond')
         RETURNING queued_at`,
       [runId, checkRuns.selfOwner(), JSON.stringify({ ...manifest, unitRunId: earlyRunId }),
@@ -475,8 +532,128 @@ async function takeEarlyUnitSlot(pool, { runId, sessionId, commitSha, manifest, 
   });
 }
 
-// Stamp a run admitted without a pass: the fail-open path, so a run that
-// goes ahead without a slot is still counted while it runs.
+function recordReadyGrant(pool, row) {
+  recordSlotGranted(pool, { runId: row.run_id, kind: 'proposal', cls: row.class,
+    sessionId: row.session_id, appId: row.app_id, waitedMs: Date.now() - new Date(row.queued_at).getTime() });
+}
+
+// An early suite already occupies one whole slot. Once all its Jobs exist,
+// let the ready work use that slot. Keep the early row as evidence of the
+// Jobs until their launcher retires it; QUEUE_SQL charges the pair once.
+async function admitReadyEarly(pool, { admissionId, sessionId, commitSha, earlyRunId }) {
+  const grant = await withAdmissionLock(pool, async (client) => {
+    const before = (await queueRows(client)).find((row) => row.run_id === admissionId);
+    if (!before || (!before.admitted_at && await dispatchRoom(client) === 0)) return null;
+    const { rowCount } = await client.query(
+      `UPDATE check_runs ready SET admitted_at = COALESCE(ready.admitted_at, NOW()),
+              manifest = ready.manifest || jsonb_build_object('unitRunId', early.run_id)
+         FROM check_runs early
+        WHERE ready.run_id = $1 AND ready.manifest ? 'readyKey' AND NOT ready.manifest ? 'claimed'
+          AND ready.session_id = $2 AND ready.commit_sha = $3 AND early.run_id = $4
+          AND early.session_id = ready.session_id AND early.commit_sha = ready.commit_sha
+          AND early.manifest->>'earlyUnit' = 'true'
+          AND (NOT early.manifest ? 'readyOwner' OR early.manifest->>'readyOwner' = ready.run_id::text)
+          AND early.admitted_at >= NOW() - ($5::int * INTERVAL '1 millisecond')`,
+      [admissionId, sessionId, commitSha, earlyRunId, Math.round(jobHoldMs())]);
+    if (rowCount) await client.query(
+      `UPDATE check_runs SET manifest = manifest || jsonb_build_object('readyOwner', $2::text) WHERE run_id = $1`,
+      [earlyRunId, admissionId]);
+    return rowCount && !before.admitted_at ? before : null;
+  });
+  if (grant) recordReadyGrant(pool, grant);
+}
+
+// One pass for every ready proposal, before the kernel claims checks.run.
+// The exact work item stays queued without a handler or process heartbeat.
+// Old work items keep their own admission/recovery path during rollout.
+async function readyWork(pool, config, earlyId) {
+  const due = `SELECT w.id, w.input, early.run_id AS early_id,
+      (cs.status IN ('active', 'paused', 'promoted', 'merging') AND cs.check_state = 'pending'
+       AND cs.checks_commit_sha = w.input->>'head') IS TRUE AS wanted
+    FROM wf_work w LEFT JOIN check_runs r ON r.run_id::text = w.input->>'admissionId'
+    LEFT JOIN chat_sessions cs ON cs.id = r.session_id
+    LEFT JOIN check_runs early ON early.session_id = r.session_id AND early.commit_sha = r.commit_sha
+      AND early.manifest->>'earlyUnit' = 'true'
+      AND (NOT early.manifest ? 'readyOwner' OR (r.admitted_at IS NULL AND early.manifest->>'readyOwner' = r.run_id::text))
+    WHERE w.machine = 'preview' AND w.kind = 'checks.run'
+      AND ((w.status = 'queued' AND w.due_at <= now()) OR (w.status = 'running' AND w.lease_until <= now()))`;
+  let ungated = [];
+  try {
+    const { rows } = await pool.query(due);
+    const ready = rows.filter((r) => r.input.admissionId && r.wanted);
+    if (!ready.length) return rows.map((row) => row.id);
+    // Work whose session moved on only reports that outcome. It needs no slot.
+    ungated = rows.filter((r) => !r.input.admissionId || !r.wanted).map((r) => r.id);
+    const k = require('./kubernetes');
+    const capacity = await k.checkPoolCapacity(config);
+    if (!capacity.available) return ungated;
+    for (const row of ready) {
+      const { admissionId, sessionId, n, head } = row.input;
+      if (!row.early_id || row.early_id !== earlyId(sessionId, n)) continue;
+      const jobs = await k.findCheckJobs(config, { sessionId, previewRunId: row.early_id }).catch(() => null);
+      if (jobs?.unitSuites?.length >= (jobs.unitShards || 1)) {
+        await admitReadyEarly(pool, { admissionId, sessionId, commitSha: head, earlyRunId: row.early_id });
+      }
+    }
+    const plan = await admit(pool, { capacity });
+    const waiting = ready.map((row) => plan.byRun.get(row.input.admissionId)).filter((run) => run?.waiting);
+    if (waiting.length) await publishReadyPositions(pool, waiting).catch((err) => {
+      log.warn('checks-queue', 'Could not publish ready checks positions', { err: err.message });
+    });
+    return [...ungated, ...ready.filter((r) => plan.byRun.get(r.input.admissionId)?.holding).map((r) => r.id)];
+  } catch (err) {
+    log.warn('checks-queue', 'Ready checks admission unavailable; work stays queued', { err: err.message });
+    return ungated;
+  }
+}
+
+// Update only changed positions, preserving any build progress on the row.
+async function publishReadyPositions(pool, waiting) {
+  const positions = waiting.map((r) => ({ id: r.runId, ahead: r.ahead, since: r.queuedAt }));
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions cs SET checks_progress = COALESCE(cs.checks_progress, '{}'::jsonb)
+        || jsonb_build_object('queue', p.value - 'id')
+       FROM jsonb_array_elements($1::jsonb) p(value), check_runs ready
+      WHERE ready.run_id = (p.value->>'id')::uuid AND ready.session_id = cs.id
+        AND ready.admitted_at IS NULL AND cs.checks_commit_sha = ready.commit_sha
+        AND cs.check_state = 'pending' AND cs.check_phase = 'queued'
+        AND cs.checks_progress->'queue' IS DISTINCT FROM (p.value - 'id')
+      RETURNING cs.id, cs.checks_commit_sha, cs.check_trigger, cs.checks_progress`, [JSON.stringify(positions)]);
+  for (const row of rows) require('./visuals').notifyChecksProgress(row.id, row.checks_commit_sha,
+    row.checks_progress, 'queued', row.check_trigger);
+}
+
+// Fence job creation against cancellation/replacement. Once this write
+// commits the claim's row continues to count even if the machine removes
+// its logical reservation before this claim sees its cancellation.
+async function beginReadyClaim(pool, { admissionId, runId, sessionId, commitSha, manifest, workId, attempt }) {
+  const { rows } = await pool.query(
+    `WITH ticket AS (
+       UPDATE check_runs SET manifest = manifest || '{"claimed": true}'::jsonb
+        WHERE run_id = $1 AND session_id = $3 AND commit_sha = $4
+          AND manifest->>'readyKey' = $6 AND admitted_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM wf_work w WHERE w.id = $8 AND w.kind = 'checks.run'
+            AND w.input->>'admissionId' = $1::text AND w.status = 'running'
+            AND w.attempt_count = $9 AND w.lease_until > NOW())
+          AND EXISTS (SELECT 1 FROM chat_sessions cs WHERE cs.id = $3 AND cs.check_state = 'pending'
+            AND cs.checks_commit_sha = $4 AND cs.status IN ('active', 'paused', 'promoted', 'merging'))
+       RETURNING *
+     ), claimed AS (INSERT INTO check_runs (run_id, session_id, app_id, commit_sha, owner, manifest, queued_at, admitted_at)
+       SELECT $2, session_id, app_id, commit_sha, $7, $5::jsonb ||
+         jsonb_strip_nulls(jsonb_build_object('readyId', run_id, 'unitRunId', manifest->>'unitRunId',
+           'proposalOverflow', manifest->'proposalOverflow')),
+         queued_at, NOW() FROM ticket RETURNING run_id),
+     transferred AS (
+       DELETE FROM check_runs early USING ticket, claimed
+        WHERE early.run_id::text = ticket.manifest->>'unitRunId'
+          AND early.manifest->>'readyOwner' = ticket.run_id::text)
+     SELECT ticket.queued_at, ticket.admitted_at, ticket.manifest->>'unitRunId' AS early_id
+       FROM ticket, claimed`,
+    [admissionId, runId, sessionId, commitSha, JSON.stringify(manifest), manifest.runKey, checkRuns.selfOwner(), workId, attempt]);
+  return rows[0] || null;
+}
+
+// Stamp a legacy run admitted without a pass so it still counts while running.
 async function markAdmitted(pool, runId) {
   try {
     await pool.query(
@@ -726,7 +903,10 @@ module.exports = {
   sweepReason,
   admit,
   reserveEarlyUnitSlot,
+  CHECKS_RUN_CONCURRENCY,
   takeEarlyUnitSlot,
+  readyWork,
+  beginReadyClaim,
   markAdmitted,
   waitForSlot,
   slotFreed,

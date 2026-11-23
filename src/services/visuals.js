@@ -1891,7 +1891,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           workflow: true, runKey: workflow.runKey },
       };
       let place = null;
-      if (requiredPool && workflow.unitRunId && config.workerRuntime === 'kubernetes') {
+      if (workflow.admissionId) {
+        const ready = await checksQueue.beginReadyClaim(pool, { ...provisional, admissionId: workflow.admissionId,
+          workId: workflow.workId, attempt: workflow.attempt });
+        if (!ready) {
+          settledRun = true;
+          return { outcome: 'blocked', reason: 'The preview no longer holds this checks slot.' };
+        }
+        adoptedEarlyUnit = ready.early_id;
+        const waitedMs = new Date(ready.admitted_at).getTime() - new Date(ready.queued_at).getTime();
+        traceStep('queue', 'Waited for a checks slot', { durationMs: waitedMs, outcome: 'admitted' });
+      } else if (requiredPool && workflow.unitRunId && config.workerRuntime === 'kubernetes') {
         // Transfer only once the whole suite exists; if the launcher is
         // already gone or has written only some Jobs, it keeps its slot.
         const jobs = await kubernetes.findCheckJobs(config, {
@@ -1909,10 +1919,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           }
         }
       }
-      if (!place && checksQueue.isEnabled()) {
+      if (!workflow.admissionId && !place && checksQueue.isEnabled()) {
         place = await checksQueue.enqueue(pool, { ...provisional, queuedSince: workflow.queuedSince || null });
       }
-      if (!place) await checkRuns.record(pool, provisional);
+      if (!workflow.admissionId && !place) await checkRuns.record(pool, provisional);
       stopHeartbeat = checkRuns.startHeartbeat(pool, runId);
       if (place) {
         const slot = await waitForChecksSlot(pool, {
@@ -2443,6 +2453,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           ...(reusedUnit ? { unitReused: { row: reusedUnit.row, earned: reusedUnit.earned || null, snapshot: reusedUnit.snapshot } } : {}),
           workflow: true,
           runKey: workflow.runKey,
+          ...(workflow.admissionId ? { readyId: workflow.admissionId } : {}),
         },
       });
       // This run is now the one the session waits on. The Jobs of its runs

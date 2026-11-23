@@ -740,7 +740,7 @@ test('a refused verdict starts the run the person asked for; only an observed pa
   // The preview machine's side, behaviourally: tests/unit-suite-reuse-machine-postgres.test.js.
   const machine = read('src/workflow/preview/machine.ts');
   assert.match(machine, /const owed = !!f\.session && f\.session\.unitFreshSha === run\.head;\s+const answer = store\.unitAnswer\(\{ state, results, unitSuiteAbsent \}\);\s+const refused = owed && \(state === 'error' \? answer\.reused : answer\.unanswered\);/);
-  assert.match(machine, /if \(refused && d0\.trigger !== 'manual-recheck' && d0\.serving && d0\.serving\.head === run\.head\) \{\s+return startRun\(\{ name: 'checking', data: \{ \.\.\.d0, run: null \} \}, 'manual-recheck', ctx, \{ writes: \[settle\] \}\);/);
+  assert.match(machine, /if \(refused && d0\.trigger !== 'manual-recheck' && d0\.serving && d0\.serving\.head === run\.head\) \{\s+return startRun\(\{ name: 'checking', data: \{ \.\.\.d0, run: null \} \}, 'manual-recheck', ctx, deps, \{ writes: \[settle\] \}\);/);
   assert.match(machine, /await store\.markUnitPassObserved\(tx, \{ appId: w\.appId, sessionId: w\.sessionId, commitSha: w\.head \}\);/);
 });
 

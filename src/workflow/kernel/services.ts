@@ -118,6 +118,8 @@ export interface ClaimResult {
 export async function claim(opts: ServiceOptions, kind: string, room: number): Promise<ClaimResult> {
   const handler = opts.handlers.get(kind)!;
   const leaseMs = handler.leaseMs ?? DEFAULTS.leaseMs;
+  const eligible = handler.eligibleWork ? await handler.eligibleWork() : null;
+  if (eligible && !eligible.length) return { items: [], full: true, freeInMs: 3000, busy: false };
   const client = await checkout(opts.pool);
   try {
     await client.query(`BEGIN; SET LOCAL lock_timeout = ${millis(opts.lockTimeoutMs)};`
@@ -142,7 +144,7 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
          SELECT w.id, w.claim_id FROM wf_work w
            LEFT JOIN wf_instances i ON i.machine = w.machine AND i.key = w.key
            LEFT JOIN unnest($4::text[], $5::int[]) AS m(machine, version) ON m.machine = w.machine
-          WHERE w.kind = $1
+          WHERE w.kind = $1 AND ($8::uuid[] IS NULL OR w.id = ANY($8::uuid[]))
             AND ((w.status = 'queued' AND w.due_at <= now()) OR (w.status = 'running' AND w.lease_until <= now()))
             AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)
             -- A kind claimed only by its own release (WorkHandler.ownRelease).
@@ -157,7 +159,7 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
          FROM due WHERE w.id = due.id
        RETURNING w.id, w.machine, w.key, w.kind, w.work_key, w.input, w.checkpoint,
                  w.attempt_count, w.lost_attempts, w.claim_id, due.claim_id AS previous_claim`,
-      [kind, take, leaseMs, [...opts.versions.keys()], [...opts.versions.values()], opts.releaseKinds, opts.release ?? '']);
+      [kind, take, leaseMs, [...opts.versions.keys()], [...opts.versions.values()], opts.releaseKinds, opts.release ?? '', eligible]);
     for (const r of rows) {
       if (r.previous_claim) {
         // An attempt still 'running' when its item is claimed again lapsed
@@ -172,6 +174,8 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
         [r.claim_id, r.id, opts.serviceId, r.attempt_count]);
     }
     await client.query('COMMIT');
+    // A concurrent claimant may have taken every externally eligible item.
+    if (eligible && !rows.length) return { items: [], full: true, freeInMs: 3000, busy: false };
     return { items: rows, full: live!.n + rows.length >= limit, freeInMs: live!.ms == null ? null : Number(live!.ms), busy: false };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});

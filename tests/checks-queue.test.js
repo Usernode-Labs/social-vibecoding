@@ -191,7 +191,7 @@ test('the admission pass deletes the swept rows, proposal rows only, and says ho
   const logged = [];
   t.mock.method(require('../src/services/logger'), 'info', (scope, msg, data) => logged.push({ msg, data }));
   const plan = await checksQueue.admit({ async connect() { return client; } });
-  const sweep = statements.find((s) => /DELETE FROM check_runs WHERE run_id = ANY\(\$1::uuid\[\]\) AND kind = 'proposal'/.test(s.sql));
+  const sweep = statements.find((s) => /DELETE FROM check_runs WHERE run_id = ANY\(\$1::uuid\[\]\) AND kind IN \('proposal', 'preview-ready'\)/.test(s.sql));
   assert.ok(sweep, 'one delete, under the admission lock');
   assert.deepEqual(sweep.params[0], [finished.run_id]);
   assert.ok(statements.findIndex((s) => /pg_advisory_xact_lock/.test(s.sql)) < statements.indexOf(sweep));
@@ -203,7 +203,7 @@ test('the admission pass deletes the swept rows, proposal rows only, and says ho
 test('QUEUE_SQL reads a preview run against its work item by its identity key, and the cancel that follows a cancel', () => {
   const src = stripComments(read('src/services/checks-queue.js'));
   const sql = src.slice(src.indexOf('const QUEUE_SQL = `'), src.indexOf('function runOver('));
-  assert.match(sql, /w\.machine = 'preview' AND w\.key = 'session:' \|\| cr\.session_id::text\s+AND w\.kind = 'checks\.run' AND w\.work_key = cr\.manifest->>'runKey'/,
+  assert.match(sql, /w\.machine = 'preview' AND w\.key = 'session:' \|\| cr\.session_id::text\s+AND w\.kind = 'checks\.run' AND w\.work_key = COALESCE\(cr\.manifest->>'runKey', cr\.manifest->>'readyKey'\)/,
     'machine, key, kind and work key: wf_work\'s unique identity, one index lookup a row');
   assert.match(sql, /\(wk\.status IN \('reported', 'settled'\) AND \(NOT wk\.cancelled OR wk\.cancel_done\)\) AS run_finished/);
   assert.match(sql, /c\.kind = 'checks\.cancel'\s+AND c\.work_key = 'cancel:' \|\| w\.work_key/);
@@ -394,7 +394,7 @@ test('captureForSession waits for its slot after the preview is up and before an
   assert.ok(unit > wait && capture > wait, 'no Job exists, so no Job deadline runs, while it waits');
   assert.match(live, /if \(slot\.outcome === 'superseded'\) \{[\s\S]{0,300}traceStatus = 'superseded';\s+settledRun = true;\s+return \{ outcome: 'blocked', reason: /,
     'a superseded waiting run leaves with no verdict; its finally clears its row');
-  assert.match(live, /if \(!place && checksQueue\.isEnabled\(\)\) \{\s+place = await checksQueue\.enqueue\(pool, \{ \.\.\.provisional, queuedSince: workflow\.queuedSince \|\| null \}\);\s+\}\s+if \(!place\) await checkRuns\.record\(pool, provisional\);/,
+  assert.match(live, /if \(!workflow\.admissionId && !place && checksQueue\.isEnabled\(\)\) \{\s+place = await checksQueue\.enqueue\(pool, \{ \.\.\.provisional, queuedSince: workflow\.queuedSince \|\| null \}\);\s+\}\s+if \(!workflow\.admissionId && !place\) await checkRuns\.record\(pool, provisional\);/,
     'the queue row is the provisional manifest; without the queue it is written as before');
 });
 

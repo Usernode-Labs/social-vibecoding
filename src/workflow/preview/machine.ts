@@ -78,7 +78,7 @@ export interface Served extends Attempt {
   since?: string;                // when it started serving (absent: before version 8)
   lost?: boolean;                // lost again soon after it started (lostAgain): it serves nothing to check
 }
-export interface Run { key: string; n: number; head: string }
+export interface Run { key: string; n: number; head: string; admissionId?: string }
 // What serves `head` and can be checked: not one that was lost (lostAgain),
 // which stays the serving record only so the rebuild retires it.
 const servesHead = (d: Data, head: string | null) => !!d.serving && !d.serving.lost && d.serving.head === head;
@@ -284,6 +284,7 @@ export interface Deps {
   // A preview nobody has used for this long is given back (config
   // stagingIdleTeardownMs; 0 or absent: never).
   idleMs?: number;
+  readyAdmission?: boolean;
 }
 
 // How long checks the row owes wait before the machine runs them itself
@@ -414,7 +415,7 @@ function retire(d: Data, a: Attempt, ctx: TransitionContext, deps: Deps, cancell
 const unitEarlyKey = (n: number) => `unit-early:${n}`;
 const earlyOf = (a: Attempt): WorkRef => ({ kind: WORK.unitEarly, key: unitEarlyKey(a.n) });
 
-const pendingWrite = (d: Data, head: string, phase: 'building' | 'testing', trigger: string | null): DomainWrite =>
+const pendingWrite = (d: Data, head: string, phase: 'building' | 'queued' | 'testing', trigger: string | null): DomainWrite =>
   ({ type: 'pending', sessionId: d.sessionId, head, phase, trigger });
 
 // The machine's data without the no-checks mark (begin, on a proposal's revision).
@@ -468,21 +469,31 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
   });
 }
 
+// A UUID derived from `text` (version 4's layout, as check_runs' key and the
+// Jobs' run-id label take it).
+export function previewUuid(text: string): string {
+  const h = createHash('sha256').update(text).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
 // Start a checks run against the serving attempt.
-function startRun(s: Live, trigger: string | null, ctx: TransitionContext,
+function startRun(s: Live, trigger: string | null, ctx: TransitionContext, deps: Deps,
   extra: { work?: WorkRequest[]; data?: Partial<Data>; writes?: DomainWrite[]; push?: Push[] } = {}): Outcome<PState> {
   const d0 = { ...s.data, ...(extra.data || {}) };
   const served = d0.serving!;
   const key = `run-${served.n}-${ctx.version + 1}`;   // a Kubernetes label value (the Jobs carry it)
-  const d: Data = { ...d0, trigger, run: { key, n: served.n, head: served.head }, verdict: null };
+  const admissionId = deps.readyAdmission ? previewUuid(`checks-ready:${d0.sessionId}:${key}`) : null;
+  const phase = admissionId ? 'queued' : 'testing';
+  const d: Data = { ...d0, trigger, run: { key, n: served.n, head: served.head,
+    ...(admissionId ? { admissionId } : {}) }, verdict: null };
   return step({
     name: 'checking', data: d,
-    writes: [...(extra.writes || []), pendingWrite(d, served.head, 'testing', trigger)],
+    writes: [...(extra.writes || []), pendingWrite(d, served.head, phase, trigger)],
     work: [...(extra.work || []), { kind: WORK.run, key, input: {
-      sessionId: d.sessionId, appId: d.appId, n: served.n, head: served.head, runId: key, trigger,
+      sessionId: d.sessionId, appId: d.appId, n: served.n, head: served.head, runId: key, trigger, ...(admissionId ? { admissionId } : {}),
       runtimeName: served.runtimeName, runtimeKind: served.runtimeKind, url: served.url,
     } }],
-    push: [...(extra.push || []), ...checksPending(d, ctx, served.head, 'testing', trigger)],
+    push: [...(extra.push || []), ...checksPending(d, ctx, served.head, phase, trigger)],
     timer: null,
   });
 }
@@ -660,7 +671,7 @@ function fromRow(d: Data, f: Facts, head: string, trigger: string | null, ctx: T
   const owed = f.session!.unitFreshSha === head;
   const verdict = checks.commitSha === head && !owed ? verdictOf(checks.state) : null;
   if (verdict) return step({ name: 'settled', data: { ...d, head, verdict }, timer: null });
-  return startRun({ name: 'settled', data: { ...d, head } }, owed ? 'manual-recheck' : trigger, ctx);
+  return startRun({ name: 'settled', data: { ...d, head } }, owed ? 'manual-recheck' : trigger, ctx, deps);
 }
 
 // Where an adopted row stands, without starting anything (an operation's
@@ -850,7 +861,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       const head = trigger === 'manual-recheck' ? requestedHead(s, f) ?? d.head! : d.head!;
       // Nothing serves the head: build it.
       if (head !== d.head || !servesHead(d, d.head)) return begin(s, head, trigger, ctx, deps);
-      return startRun(s, trigger, ctx);
+      return startRun(s, trigger, ctx, deps);
     },
   };
 
@@ -893,7 +904,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       const wanted = trigger === 'manual-recheck' ? f.session?.pin ?? s.data.run!.head : s.data.run!.head;
       if (wanted !== s.data.run!.head) return begin(s, wanted, 'manual-recheck', ctx, deps);
       const old = obsolete(s.data, ctx, deps);
-      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, trigger, ctx,
+      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, trigger, ctx, deps,
         { work: old.work });
       return { ...o, cancel: old.cancel };
     },
@@ -1026,7 +1037,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
         if (buildBrokenHead(s.data, s.data.head)) return step({ name: s.name, data: s.data, timer: null });
         return begin(s, s.data.head, 'stuck-sweep', ctx, deps);
       }
-      return startRun(s, 'stuck-sweep', ctx);
+      return startRun(s, 'stuck-sweep', ctx, deps);
     },
   };
   const adminRetry: Entry = {
@@ -1039,7 +1050,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       const head = requestedHead(s, f) ?? s.data.head;
       return head !== s.data.head || s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
         ? begin(s, head, 'manual-recheck', ctx, deps)
-        : startRun(s, 'manual-recheck', ctx);
+        : startRun(s, 'manual-recheck', ctx, deps);
     },
   };
   // A build or run that never answers ends as if it had failed.
@@ -1116,7 +1127,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
         }
         return begin(s, owed.head, trigger, ctx, deps);
       }
-      return startRun(s, trigger, ctx);
+      return startRun(s, trigger, ctx, deps);
     },
   };
   // Built with another build's environment: a vote-backed preview is built
@@ -1213,7 +1224,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       RecheckFolded: folded,
       ConflictResolved: {
         guard: (s, e) => (e.payload.head === s.data.head ? ok() : reject('not_deferred_head')),
-        to: (s, e, f, ctx) => startRun(s, 'conflict-resolved', ctx),
+        to: (s, e, f, ctx) => startRun(s, 'conflict-resolved', ctx, deps),
       },
       ChecksCleared: cleared,
       PreviewLost: lost,
@@ -1431,7 +1442,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
         timer: null,
       });
     }
-    return told(startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {
+    return told(startRun({ name: 'preparing', data: d }, d0.trigger, ctx, deps, {
       writes: [{ type: 'published', sessionId: d.sessionId, appId: d.appId, served: served as unknown as Json, note: true }],
       work: [...(gone ? [gone.work] : []), ...dropped],
       push: up,
@@ -1623,7 +1634,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     ...(answersFresh ? { answersFresh: true } : {}),
   };
   if (refused && d0.trigger !== 'manual-recheck' && d0.serving && d0.serving.head === run.head) {
-    return startRun({ name: 'checking', data: { ...d0, run: null } }, 'manual-recheck', ctx, { writes: [settle] });
+    return startRun({ name: 'checking', data: { ...d0, run: null } }, 'manual-recheck', ctx, deps, { writes: [settle] });
   }
   if (refused) {
     return step({
@@ -1704,7 +1715,8 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // (lostAgain), counted by `losses`, which an older Pod would neither keep
     // nor read: it would rebuild such a preview every time it is lost.
     // 9: request-triggered wakes are conductor work, including route repair.
-    version: 9,
+    // 10: only a runtime that understands ready admission may claim its work.
+    version: 10,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
     // What web appends: a revision or a preview asked for, a recheck, what the
@@ -1744,6 +1756,23 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     },
     transitions: transitions(deps) as any,
     writes: WRITES,
+    async project(tx, before, after) {
+      const old = before.name === NONE ? null : (before as Live).data.run;
+      const d = after.name === NONE ? null : (after as Live).data;
+      const next = d?.run;
+      if (old?.admissionId && old.admissionId !== next?.admissionId) {
+        // On cancellation any physical Job manifests (including an early
+        // suite) resume accounting for their own slots until cleanup ends.
+        await tx.query('DELETE FROM check_runs WHERE run_id = $1', [old.admissionId]);
+      }
+      if (next?.admissionId && next.admissionId !== old?.admissionId) {
+        await tx.query(
+          `INSERT INTO check_runs (run_id, session_id, app_id, commit_sha, owner, manifest, admitted_at, heartbeat_at, kind)
+           VALUES ($1, $2, $3, $4, 'preview-workflow', $5::jsonb, NULL, 'epoch', 'preview-ready')`,
+          [next.admissionId, d!.sessionId, d!.appId, next.head,
+            JSON.stringify({workflow: true, readyKey: next.key, attempt: next.n})]);
+      }
+    },
     reply: async (tx, event, after) => {
       if (after.name === NONE) return null;
       const d = (after as Live).data;

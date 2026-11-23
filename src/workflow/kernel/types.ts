@@ -193,6 +193,9 @@ export interface WorkContext {
 
 export interface WorkHandler {
   run(ctx: WorkContext): Promise<Json | void>;
+  // External capacity can restrict which durable items may acquire a lease.
+  // null leaves all due items eligible. Runs before checking out a claim connection.
+  eligibleWork?: () => Promise<string[] | null>;
   maxAttempts?: number;                   // default 5; an error with `permanent: true` is not retried
   backoffMs?: (attempt: number) => number;
   concurrency?: number;                   // per kind, across every process (default 4)
