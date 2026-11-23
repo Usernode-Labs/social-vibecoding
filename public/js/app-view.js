@@ -13710,12 +13710,26 @@ const AppView = {
    * through the vote queue lands on the digest every time otherwise. Stored
    * per browser rather than per account: it is a reading position, not a
    * setting, and the same mechanism the grouping already uses.
+   *
+   * PER PROJECT (phone review #43, 23 Nov 2026). It was one place for every
+   * project on the device: a project whose Workshop had never been opened
+   * came back from its app on "Group challenge · Workshop", because the
+   * Workshop was the last place shown in ANOTHER project. Each project now
+   * remembers its own (`devWorkshopTab:<slug>`), and one with nothing
+   * remembered opens on its Hub. `slug` is the current project unless named;
+   * a switch (place-store.ts landKeepingPlace) still reads the page it is
+   * leaving, so it keeps the place you were on.
    */
-  _workshopTab() {
+  _workshopTabStoreKey(slug) {
+    const at = slug || (typeof App !== 'undefined' && App && App.currentApp) || '';
+    return at ? `${AppView.WORKSHOP_TAB_KEY}:${at}` : null;
+  },
+  _workshopTab(slug) {
     const url = AppView._workshopTabParam();
     if (url) return url;
     try {
-      const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
+      const key = AppView._workshopTabStoreKey(slug);
+      const stored = key ? window.localStorage.getItem(key) : null;
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
       if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
@@ -13794,6 +13808,7 @@ const AppView = {
       .slice(0, limit);
     return rows.map((m) => {
       const pictures = AppView._workshopVisuals(null, m.shots || null);
+      const thumb = AppView._recentLiveThumb(m.shots || null, pictures);
       const dep = m.deployment_state;
       const going = dep === 'pending' || dep === 'deploying' || (dep !== 'deployed' && m.live_at === null);
       const raw = AppView._devCardAuthor('merged', m);
@@ -13805,9 +13820,34 @@ const AppView = {
         who: AppView._botBuilt(m) ? PlatformI18n.t('changes:workshop.row.byBot') : (raw || null),
         at: going ? null : (m.live_at || m.merged_at || m.created_at || null),
         going,
-        picture: pictures && pictures.after ? pictures.after : null,
+        picture: thumb.picture,
+        frame: thumb.frame,
       };
     });
+  },
+  // RECENTLY LIVE'S SMALL PICTURE (phone review #41, 23 Nov 2026). It was the
+  // change's first after still, the whole screen, cropped to a 96 × 60 slot
+  // at random: a white box with words cut at its edge, a blurred strip, and on
+  // a dark page a bright slab, one of them blank. Now it shows what changed or
+  // nothing:
+  //   frame    the after screen framed on the element its claim is about,
+  //            as the shots run recorded it (#6966 `frames`), in the page's
+  //            mode: { url, width, height, box: [x, y, w, h] } in CSS px.
+  //   picture  else the run's element shot (a `focus` still), drawn whole.
+  // Neither, and the row draws the project's tile.
+  _recentLiveThumb(shots, pictures) {
+    const none = { picture: null, frame: null };
+    if (!pictures) return none;
+    for (const screen of (Array.isArray(pictures.screens) ? pictures.screens : [])) {
+      const f = (screen.frames || []).find((one) => one && one.n > 0 && Array.isArray(one.a) && one.a[2] > 0 && one.a[3] > 0);
+      if (f && screen.after && screen.after.url && screen.width > 0 && screen.after.height > 0) {
+        return { picture: null, frame: { url: screen.after.url, width: screen.width, height: screen.after.height, box: f.a.slice(0, 4) } };
+      }
+    }
+    const after = pictures.after || null;
+    const element = after && Array.isArray(shots && shots.artifacts)
+      && shots.artifacts.some((a) => a && a.url === after && a.variant === 'focus');
+    return element ? { picture: after, frame: null } : none;
   },
 
   // #6825: a still's smaller copies (services/shots-view.js `sizes`) as one
@@ -14027,13 +14067,16 @@ const AppView = {
     return `${(at > max * 0.6 ? cut.slice(0, at) : cut).trim()}…`;
   },
 
-  _setWorkshopTab(key) {
+  _setWorkshopTab(key, slug) {
     // The plan is gone once it is built, so the page reopens on the hub.
     const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
-    try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+    // Remembered for that project alone (#43, see _workshopTab).
+    const store = AppView._workshopTabStoreKey(slug);
+    if (!store) return;
+    try { window.localStorage.setItem(store, next); } catch {}
   },
   /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
@@ -14289,14 +14332,14 @@ const AppView = {
     if (AppView._historyWorkshopTab()) return false;
     const slug = (typeof App !== 'undefined' && App && App.currentApp) || null;
     if (!slug || !AppView._onProjectPage(slug)) return false;
-    return AppView._stampWorkshopTab(slug, AppView._workshopTab());
+    return AppView._stampWorkshopTab(slug, AppView._workshopTab(slug));
   },
   // Show an entry's tab after a traversal. Remembered the way a press is (so
   // the page mounts on it), and told to a page already up as a TRAVERSAL, so
   // the page switches without pushing an entry of its own.
   _showHistoryWorkshopTab(slug, tab) {
     if (!AppView._isWorkshopPlace(tab)) return;
-    AppView._setWorkshopTab(tab);
+    AppView._setWorkshopTab(tab, slug);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab, traversal: true } }));
     } catch {}
@@ -14321,7 +14364,7 @@ const AppView = {
   _landOnTab(slug, tab) {
     const key = AppView._isWorkshopPlace(tab) ? tab : 'status';
     AppView._notePlaceDecided(slug);
-    AppView._setWorkshopTab(key);
+    AppView._setWorkshopTab(key, slug);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}

@@ -4574,7 +4574,7 @@ const App = {
     // tab (one a door's navigation just made) is given the one it opens on.
     const pageTab = typeof AppView !== 'undefined' && AppView._historyWorkshopTab
       ? AppView._historyWorkshopTab() : null;
-    if (pageTab) AppView._setWorkshopTab(pageTab.tab);
+    if (pageTab) AppView._setWorkshopTab(pageTab.tab, pageTab.slug);
     App.restoreFromHash();
     if (pageTab) AppView._showHistoryWorkshopTab(pageTab.slug, pageTab.tab);
     else if (typeof AppView !== 'undefined' && AppView._stampArrivedWorkshopTab) AppView._stampArrivedWorkshopTab();
@@ -9623,6 +9623,12 @@ const App = {
     if (App.currentApp !== slug) {
       return App.navigateToApp(slug, tab, ref, subTab);
     } else {
+      // #43: leaving the project page for its app (Open app on the hub), the
+      // entry being left is stamped with the place on show, so the app's ✕
+      // and Back return to that place, never to one remembered elsewhere.
+      if (tab === 'app' && typeof AppView !== 'undefined' && AppView._stampWorkshopTab && AppView._onProjectPage?.(slug)) {
+        AppView._stampWorkshopTab(slug, AppView._workshopTab(slug));
+      }
       // Same app: switchTab normalizes legacy names, re-renders, and
       // syncs the clean route — idempotent when nothing changed, a forced
       // refresh when the target equals the current view.

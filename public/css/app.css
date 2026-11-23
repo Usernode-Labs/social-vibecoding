@@ -7546,7 +7546,10 @@ html:not([data-skin]) .dev-ws-hero-summary:hover .wip-hero-art-pic { transform: 
 html:not([data-skin]) .dev-ws-hero-summary:hover .wip-hero-art-icon { transform: rotate(3deg) scale(1.05); }
 @media (min-width: 900px) {
   .wip-hero-stage { display: grid; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: min(30%, 20rem); }
+  /* The words stop a gap short of the picture's side (phone review #76): they
+     ended exactly at its edge, so the names of who was around ran into the
+     drawing. */
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: calc(min(30%, 20rem) + 1.5rem); }
 }
 @media (prefers-reduced-motion: reduce) {
   html:not([data-skin]) .wip-hero-wash::before { animation: none; }
@@ -7606,7 +7609,9 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { m
   box-shadow: 0 0 0 2px var(--wip-card-bg);
 }
 .wip-hub-meta-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
-/* "Make it public", beside the main action: the same height, a plain pill. */
+/* "Make it public", beside the main action: the same height, a plain pill, in
+   Invite's type (INVITE below, phone review #53): the look's serif button face
+   made it a third style in one row. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { height: 2.75rem; padding-inline: 1.125rem; font-size: 0.9375rem; font-weight: 600; }
 /* THE QUESTION "Make it public" asks hangs under its button, which is at
    the hero's start here: so it opens from the button's own start edge and
@@ -7649,7 +7654,7 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .d
    in Open app's type, in the plain pills' outline, with the invite glyph
    before the word. On Homeroom's own hub, which has no Open app, it stands
    alone in the row. The pointer darkens its edge, as it does the ⋯'s. */
-html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is([data-ws-community-invite], [data-ws-community-audience-change]) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7664,7 +7669,8 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [d
   white-space: nowrap;
 }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] > svg { flex: none; width: 1.125rem; height: 1.125rem; }
-html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite]:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { padding-inline: 1.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is([data-ws-community-invite], [data-ws-community-audience-change]):is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
 /* With nothing on the hero's last line but the ⋯ (which is in the corner,
    out of the line), the line takes no room: no empty band under the words. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
@@ -7922,10 +7928,13 @@ html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
   box-shadow: inset 0 1px 0 var(--wip-card-line);
   color: var(--wip-ink);
 }
-html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-n { min-width: 0; height: 1.5rem; padding: 0 0.5rem; border-radius: var(--wip-radius-pill); background-color: var(--wip-count-bg); color: var(--wip-count-ink); font-size: 0.75rem; }
 html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-words { font-size: var(--wip-link-size); font-weight: 600; }
+/* Side by side only where each change keeps a readable line (phone review
+   #139): three across on a 951px window gave a title 106px, cut after two
+   words, and broke "Homeroom bot · 24m ago" over two lines. A change takes
+   at least 300px, so two share a row where three would not fit. */
 @media (min-width: 768px) {
-  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 18.75rem), 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
   html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
@@ -22017,6 +22026,12 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
    not how many wait on them: the accent's light tint, not its fill. */
 .dev-ws-foryou-pill.dev-ws-foryou-pill-light { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+/* The pill on the title line (hub-cards.tsx pillTitle, phone review #91): the
+   name first, cut short before the pill when it must be, the pill at the
+   line's end, and the line under them the row's whole width. */
+.dev-ws-foryou-title { display: flex; align-items: center; gap: 8px; }
+.dev-ws-foryou-title > .dev-ws-foryou-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-ws-foryou-title > .dev-ws-foryou-pill { margin-inline-start: auto; }
 .dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
 /* TOP CONTRIBUTORS (ContributorsCard, request 6837): For you's card and
    rows, read not pressed. A row is a face, a name and a muted count in
@@ -22057,12 +22072,6 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
   background: transparent; color: var(--accent);
   box-shadow: inset 0 1px 0 var(--app-sheet-line);
   -webkit-tap-highlight-color: transparent;
-}
-.dev-ws-recent-more-n {
-  flex: none; min-width: 56px; height: 32px; padding: 0 8px; box-sizing: border-box;
-  display: inline-grid; place-items: center; border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
-  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
 .dev-ws-recent-more-words { flex: 1; min-width: 0; font-size: 15px; font-weight: 650; }
 @media (hover: hover) {
@@ -22106,6 +22115,11 @@ button.dev-ws-recent-card {
   object-fit: cover; object-position: top center;
 }
 .dev-ws-recent-glyph { width: 26px; height: 26px; color: var(--text-muted); opacity: .6; }
+/* What changed, not a slice of a screen (phone review #41): the after screen
+   framed on the claim's element (hub-cards.tsx FramedShot), or the run's
+   element shot drawn whole, on the slot's own ground. */
+.dev-ws-recent-pic > img.dev-ws-recent-frame { position: absolute; inset: 0 auto auto 0; height: auto; max-width: none; object-fit: fill; }
+.dev-ws-recent-pic[data-ws-recent-pic="shot"] > img { object-fit: contain; object-position: center; }
 /* A change with no picture, and the app's own card: the project's tile on its
    community's colour, the band's own `--community-tint` (polish board N13),
    where a grey box with a check was. */
@@ -22168,7 +22182,6 @@ button.dev-ws-recent-card {
   border: 0; background: none; cursor: pointer;
   font: inherit; font-size: 15px; font-weight: 500; white-space: nowrap; color: var(--accent);
 }
-.dev-ws-hub-first .dev-ws-hub-first-open { width: 100%; height: 40px; justify-content: center; font-size: 16px; font-weight: 600; }
 
 /* The plan, for the people who joined (plan-page.tsx, #4074): a page under
    the Hub. Its head is the disc back to the Hub and Homeroom bot's face and

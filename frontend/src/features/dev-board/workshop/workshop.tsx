@@ -206,8 +206,9 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  * The tab the page should open on now (AppView._workshopTab: a `?ws=` link,
  * else the one last chosen), or null where AppView is not there to ask.
  */
-export function freshTab(): TabKey | null {
-  const tab = callAppView('_workshopTab');
+export function freshTab(slug?: string | null): TabKey | null {
+  // #43: the place THIS project remembers, never another project's.
+  const tab = callAppView('_workshopTab', slug || undefined);
   return isPlaceKey(tab) ? tab : null;
 }
 
@@ -3154,7 +3155,7 @@ export function DevWorkshop(): ReactNode {
   // The Workshop's door opens the board under Standard (WIP) alone (below). The standard look took the kit's board and
   // not its door: there the Workshop opens on its overview, and the board is the page under it (asked 20 Nov 2026).
   const boardDoor = useLiveSkin() === 'wip';
-  const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
+  const [tab, setTab] = useState<TabKey>(() => freshTab(v.slug) || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -3179,7 +3180,7 @@ export function DevWorkshop(): ReactNode {
   tabRef.current = tab;
   const openTab = (next: TabKey) => {
     setTab(next);
-    callAppView('_setWorkshopTab', next);
+    callAppView('_setWorkshopTab', next, v.slug);
     const was = tabRef.current;
     const up = (was === 'all' || was === 'bot') && next === pageParent(was) && !!callAppView('_upWorkshopTab', v.slug, next);
     if (!up) callAppView('_pushWorkshopTab', v.slug, was, next);
@@ -3208,7 +3209,7 @@ export function DevWorkshop(): ReactNode {
     const was = tabRef.current;
     const next = pageParent(was);
     setTab(next);
-    callAppView('_setWorkshopTab', next);
+    callAppView('_setWorkshopTab', next, v.slug);
     callAppView('_pushWorkshopTab', v.slug, was, next);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
@@ -3241,7 +3242,7 @@ export function DevWorkshop(): ReactNode {
   // changes for the life of the page, while `_rerenderWorkshop()` republishes
   // on every data change: without the guard each republish would yank a
   // reader who had tapped another tab back to the deep-linked one.
-  const deepTabApplied = useRef<boolean>(!!v.tab || !!freshTab());
+  const deepTabApplied = useRef<boolean>(!!v.tab || !!freshTab(v.slug));
   useEffect(() => {
     if (deepTabApplied.current || !v.tab) return;
     deepTabApplied.current = true;
@@ -3286,7 +3287,7 @@ export function DevWorkshop(): ReactNode {
     if (!v.slug) return;
     const was = tabSlug.current;
     tabSlug.current = v.slug;
-    if (was && was !== v.slug) setTab(freshTab() || 'status');
+    if (was && was !== v.slug) setTab(freshTab(v.slug) || 'status');
   }, [v.slug]);
   // STANDARD (WIP): THE WORKSHOP'S DOOR OPENS ITS BOARD. Under that look a
   // way into the Workshop (the places list, the hub's card, a
@@ -3319,7 +3320,7 @@ export function DevWorkshop(): ReactNode {
     if (traversed.current) { traversed.current = false; return; }
     cameFrom.current = 'all';
     setTab('all');
-    callAppView('_setWorkshopTab', 'all');
+    callAppView('_setWorkshopTab', 'all', v.slug);
   }, [tab, boardDoor]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the

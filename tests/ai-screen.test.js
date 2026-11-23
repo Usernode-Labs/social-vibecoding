@@ -348,10 +348,10 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   });
   assert.deepEqual(rows.map((r) => [r.threadId, r.unread]), [[41, 2], [42, 0], [7, 1], [null, 0]]);
   const hero = heroWords(13, 7, 4);
-  assert.equal(hero.id, 'messages:ai.hero.bothFresh');
-  assert.equal(words(hero), 'Needs you: 13 · <0>4 new</0> · In progress: 7', 'the count sits between the two');
-  assert.equal(heroWords(13, 7, 0).id, 'messages:ai.hero.both', 'nothing new says nothing');
-  assert.equal(heroWords(13, 0, 2).id, 'messages:ai.hero.needsFresh');
+  assert.equal(hero.id, 'messages:ai.hero.threadsBothFresh');
+  assert.equal(words(hero), '13 threads need you · <0>4 new</0> · In progress: 7', 'the count sits between the two');
+  assert.equal(heroWords(13, 7, 0).id, 'messages:ai.hero.threadsBoth', 'nothing new says nothing');
+  assert.equal(heroWords(13, 0, 2).id, 'messages:ai.hero.threadsNeedsFresh');
 
   // Rendered: the dot, the bold title, the Earlier line, both pills and the
   // chip number show; a zero shows nothing.
@@ -825,10 +825,12 @@ test('each In progress and Waiting row says its stage and its second line, in th
   // A decision up for a vote has no number.
   assert.equal(words(nextWords(thread(1, null, 'vote', { kind: 'decision' }))), 'Garden club · Up for a vote');
   assert.equal(message('messages:ai.busy.title', { count: 2 }), 'Waiting & in progress · 2');
-  assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
+  // Phone review #22: the count is threads, across every project, and says so.
+  assert.equal(words(heroWords(2, 3)), '2 threads need you · In progress: 3');
+  assert.equal(words(heroWords(1, 3)), '1 thread needs you · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
   // Y03: a zero says nothing, and with neither there is no line.
-  assert.equal(words(heroWords(2, 0)), 'Needs you: 2');
+  assert.equal(words(heroWords(2, 0)), '2 threads need you');
   assert.equal(heroWords(0, 0), null);
 });
 

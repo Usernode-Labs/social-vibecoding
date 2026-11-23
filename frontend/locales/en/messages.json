@@ -4963,6 +4963,38 @@
     "text": "{{count}} new",
     "description": "The AI tab's Needs you list: a small pill beside its heading or a project's name, saying how many threads there have a message the person has not read. Shown only above zero."
   },
+  "ai.hero.threadsBoth_one": {
+    "text": "{{needs}} thread needs you · In progress: {{next}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{next}} is how many of their pieces of work are being worked on."
+  },
+  "ai.hero.threadsBoth_other": {
+    "text": "{{needs}} threads need you · In progress: {{next}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{next}} is how many of their pieces of work are being worked on."
+  },
+  "ai.hero.threadsNeeds_one": {
+    "text": "{{needs}} thread needs you",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. Shown when nothing of theirs is in progress."
+  },
+  "ai.hero.threadsNeeds_other": {
+    "text": "{{needs}} threads need you",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. Shown when nothing of theirs is in progress."
+  },
+  "ai.hero.threadsBothFresh_one": {
+    "text": "{{needs}} thread needs you · <0>{{fresh}} new</0> · In progress: {{next}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{fresh}} is how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
+  },
+  "ai.hero.threadsBothFresh_other": {
+    "text": "{{needs}} threads need you · <0>{{fresh}} new</0> · In progress: {{next}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{fresh}} is how many of those threads have a message they have not read yet (the number in colour), {{next}} how many of their pieces of work are being worked on."
+  },
+  "ai.hero.threadsNeedsFresh_one": {
+    "text": "{{needs}} thread needs you · <0>{{fresh}} new</0>",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{fresh}} is how many of those threads have a message they have not read yet (the number in colour)."
+  },
+  "ai.hero.threadsNeedsFresh_other": {
+    "text": "{{needs}} threads need you · <0>{{fresh}} new</0>",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. The line at the top of the page, beside the search and New chat buttons. {{needs}} is how many threads in its Needs you list, across every project, ask something of the person (a vote, an answer, a Build it): threads, not votes, so it can differ from a project's \"to vote\" count. The plural form follows {{needs}}. {{fresh}} is how many of those threads have a message they have not read yet (the number in colour)."
+  },
   "ai.work.earlier": {
     "text": "Earlier",
     "description": "The AI tab's Needs you list: a small line inside a project, between the threads with something new and the ones the person has already seen."

@@ -3324,7 +3324,7 @@ test('reaching the retired Board takes one answer: the All items tab, which is t
   // every hop above.
   assert.equal(at(loc('?view=kanban&ws=needs')), 'needs', 'an explicit tab wins');
   assert.equal(at({
-    localStorage: { devViewMode: 'kanban', devWorkshopTab: 'needs' },
+    localStorage: { devViewMode: 'kanban', 'devWorkshopTab:demo-app': 'needs' },
   }), 'needs', 'and a choice they have actually made wins over the migration');
 });
 
@@ -4186,11 +4186,11 @@ test('the ?ws= deep link survives arriving AFTER the first paint', () => {
   // just set the tab — opened on a tab the viewer had since left. The
   // publish stays the fallback, and the late-arrival effect stays for a
   // mount where AppView is not there to ask.
-  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\);/,
+  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => freshTab\(v\.slug\) \|\| v\.tab \|\| 'status'\);/,
     'the seed still paints the right tab on the first frame when the view is already there');
   assert.match(
     WORKSHOP,
-    /const deepTabApplied = useRef<boolean>\(!!v\.tab \|\| !!freshTab\(\)\);\s*useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/,
+    /const deepTabApplied = useRef<boolean>\(!!v\.tab \|\| !!freshTab\(v\.slug\)\);\s*useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/,
     'and an effect applies it when the publish lands later',
   );
   // The ref is not decoration. `v.tab` reads the URL, so it never changes for
@@ -4313,17 +4313,17 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   assert.match(WORKSHOP, /onAll=\{\(\) => openTab\('workshop'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
-  const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next, v\.slug\);/);
+  const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key, slug) {'));
   const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
-  assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
+  assert.match(setTabBody, /localStorage\.setItem\(store, next\)/);
   assert.ok(!/_rewirePlusMenu|_repaintDevBody|_rerenderWorkshop/.test(setTabBody),
     'the tab is persisted, not repainted');
   // And a deep-linked or remembered `ws=all` reaches a cold Workshop through
   // the late-arrival effect on `v.tab`: a state update raised inside a
   // passive effect is scheduled at default priority, so the pane lands a task
   // AFTER the synchronous publish the module's call follows.
-  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
+  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => freshTab\(v\.slug\) \|\| v\.tab \|\| 'status'\)/);
   assert.match(WORKSHOP, /useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/);
   // So the ⋯ asks for itself, from its OWN mount effect. It rode on the
   // filter row's effect while it lived at the end of that row; it is its own
@@ -4792,26 +4792,29 @@ test('the project page opens on the page you last used', () => {
   // the digest every single visit. Stored per browser: it is a reading
   // position, not a setting, and it reuses the mechanism the grouping has.
   assert.match(APP_VIEW_SRC, /WORKSHOP_TAB_KEY: 'devWorkshopTab',/);
-  const read = /_workshopTab\(\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  // Per project (phone review #43): `devWorkshopTab:<slug>`, so one project's
+  // last place never opens another's page.
+  assert.match(APP_VIEW_SRC, /_workshopTabStoreKey\(slug\) \{\s*const at = slug \|\| \(typeof App !== 'undefined' && App && App\.currentApp\) \|\| '';\s*return at \? `\$\{AppView\.WORKSHOP_TAB_KEY\}:\$\{at\}` : null;/);
+  const read = /_workshopTab\(slug\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
   assert.ok(read, '_workshopTab resolves it');
   // ORDER MATTERS: the deep link wins, then what you chose, then the default.
   // A declared check runs against an empty localStorage, so `?ws=` losing to
   // a stored value would make every one of them assert the wrong tab.
   assert.match(read[1], /const url = AppView\._workshopTabParam\(\);\s*if \(url\) return url;/);
-  assert.match(read[1], /localStorage\.getItem\(AppView\.WORKSHOP_TAB_KEY\)/);
+  assert.match(read[1], /const key = AppView\._workshopTabStoreKey\(slug\);\s*const stored = key \? window\.localStorage\.getItem\(key\) : null;/);
   assert.match(read[1], /return 'status';/);
   // And an explicit tap retires the URL override, exactly as the grouping
   // does — otherwise `?ws=` would keep winning over every later press.
-  const write = /_setWorkshopTab\(key\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  const write = /_setWorkshopTab\(key, slug\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
   assert.ok(write, '_setWorkshopTab stores it');
   assert.match(write[1], /AppView\._workshopTabUrlOverride = null;/);
-  assert.match(write[1], /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
+  assert.match(write[1], /const store = AppView\._workshopTabStoreKey\(slug\);\s*if \(!store\) return;\s*try \{ window\.localStorage\.setItem\(store, next\); \} catch \{\}/);
   // The view model publishes the RESOLVED tab, not the raw parameter.
   assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
   assert.match(WORKSHOP, /onNeeds=\{\(\) => openTab\('needs'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next, v\.slug\);/);
 });
 
 test('a category card is raised off the pane it sits on', () => {
@@ -5740,20 +5743,20 @@ test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch
   };
   const loc = (search = '', hash = '#app/garden/workshop') => ({ search, hash, href: `http://localhost/${search}${hash}` });
   // 1. A link, with the Hub remembered: the Workshop, remembered from now on.
-  const linked = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  const linked = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'status' } });
   assert.equal(arrive(linked, loc()), true);
-  assert.equal(linked._workshopTab(), 'workshop');
+  assert.equal(linked._workshopTab('garden'), 'workshop');
   // 2. A door: _landOnHub decides first, and the router takes it.
-  const door = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  const door = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'workshop' } });
   door._landOnHub('garden');
   assert.equal(arrive(door, loc()), false);
-  assert.equal(door._workshopTab(), 'status');
+  assert.equal(door._workshopTab('garden'), 'status');
   assert.equal(door._takePlaceDecision('garden'), false, 'spent on the arrival it was made for');
   // …for its own project only.
   const other = makeAppView({ localStorage: {} });
   other._landOnTab('elsewhere', 'needs');
   assert.equal(arrive(other, loc()), true);
-  assert.equal(other._workshopTab(), 'workshop');
+  assert.equal(other._workshopTab('garden'), 'workshop');
   // …and not long after: a decision a page turned in place is not a later link's.
   const stale = makeAppView({ localStorage: {} });
   stale._landOnTab('garden', 'needs');
@@ -5763,10 +5766,10 @@ test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch
   const named = makeAppView({ localStorage: {} });
   assert.equal(arrive(named, loc('?ws=needs')), false);
   // 4. Back, Forward or a reload: the entry names its place.
-  const traversed = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  const traversed = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'status' } });
   traversed._historyWorkshopTab = () => ({ slug: 'garden', tab: 'status' });
   assert.equal(arrive(traversed, loc()), false);
-  assert.equal(traversed._workshopTab(), 'status');
+  assert.equal(traversed._workshopTab('garden'), 'status');
   // 5. The Communities tab reopening the page you left keeps its place.
   assert.match(appSrc, /AppView\?\._notePlaceDecided\?\.\(view\.slug\);\s*\} catch[^\n]*\n\s*try \{\s*history\.pushState\(null, '', `\$\{view\.path\}/);
 });
@@ -5775,13 +5778,13 @@ test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the 
   const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
   const at = appSrc.indexOf('  _placeAddress(parts) {');
   const body = appSrc.slice(at + '  _placeAddress(parts) {'.length, appSrc.indexOf('\n  },', at));
-  const view = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  const view = makeAppView({ localStorage: { 'devWorkshopTab:garden': 'workshop' } });
   // eslint-disable-next-line no-new-func
   const placeAddress = new Function('AppView', `return (function (parts) {${body}\n})`)(view);
   const parts = ['app', 'garden', 'dev', 'hub'];
   assert.equal(placeAddress(parts), true);
   assert.deepEqual(parts, ['app', 'garden', 'workshop'], 'rewritten to the page\'s own address');
-  assert.equal(view._workshopTab(), 'status', 'on its Hub');
+  assert.equal(view._workshopTab('garden'), 'status', 'on its Hub');
   assert.equal(view._takePlaceDecision('garden'), true, 'a decision the /workshop link rule then honours');
   // With no project, Home: the communities are Home's (One Home, #6361).
   assert.match(appSrc, /_hubHref\(slug\) \{\s*(?:\/\/[^\n]*\n\s*)*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '\/';/);

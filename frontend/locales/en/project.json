@@ -1995,21 +1995,13 @@
     "text": "Going live now",
     "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
   },
-  "hub.recent.morePill_one": {
-    "text": "+{{count}}",
-    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
-  },
-  "hub.recent.morePill_other": {
-    "text": "+{{count}}",
-    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
-  },
   "hub.recent.moreThisMonth_one": {
-    "text": "{{count}} more live this month",
-    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+    "text": "{{shown}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the latest changes: how many more went live in the last thirty days. {{shown}} is that number written with the reader's digit grouping (1,045); the plural form follows the real count. Opens the Workshop."
   },
   "hub.recent.moreThisMonth_other": {
-    "text": "{{count}} more live this month",
-    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+    "text": "{{shown}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the latest changes: how many more went live in the last thirty days. {{shown}} is that number written with the reader's digit grouping (1,045); the plural form follows the real count. Opens the Workshop."
   },
   "hub.recent.own.today": {
     "text": "Live since today",
