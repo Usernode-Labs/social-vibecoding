@@ -454,6 +454,58 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   padding-bottom: 0;
 }
 
+/* THE SHELL HOLDS STILL WHEN THE KEYS RISE (phone review, 23 November 2026:
+   #1 a running app, #14 Settings, #13 Home's search).
+
+   A chat reserves the keyboard on its own column (above). These three
+   screens reserved nothing: the page stayed its full height behind the keys,
+   so iOS revealed a tapped field the only way left to it, by panning the
+   visual viewport up inside the layout viewport, by as much as the keys are
+   tall. The header went off the top of the glass with Close, the bell and
+   the menu on it, a running app's first lines were drawn under the clock,
+   and nothing under the keys could be scrolled up from behind them. A field
+   in an app's frame is another origin's, so its tap cannot be taken and
+   focused without the pan, as a chat's is.
+
+   So while the kit reports the keys (`html.un-kb`) the shell is laid on the
+   band of the page that is seen, whatever the pan: the header starts at the
+   pan (`--platform-vv-top`, lib/visual-viewport.ts) and the screen ends
+   where the keys begin, the keyboard's height (`--un-kb-inset`) less that
+   pan. The two always add up to the keyboard, so the screen is shorter by
+   exactly the keys: the frame, or the page's own scroller, ends on them, and
+   nothing is left behind them to pan to. With no pan (Android, or a tap
+   Settings took itself, lib/keyboard-surface.ts) the header does not move
+   at all. Margins, not a transform: a transform would make the screen the
+   containing block of every fixed thing inside it.
+
+   The bounded shell only (the Homeroom app, an installed app, and any
+   running app): there the body is one fixed column of header and screen.
+   The frame's own share of the keyboard is then nothing, and AppView
+   forwards it as such (`_frameKeyboardInset` measures against the same
+   band). An app that hid the header (chromeless) takes the pan itself. */
+html.un-kb:not([data-browser-scroller]) body:has(> :is(#app-view[data-app-surface="app"], #settings-screen, #home-screen):not(.hidden)) > #platform-header {
+  margin-top: var(--platform-vv-top, 0px);
+}
+html.un-kb:not([data-browser-scroller]) body:has(> #platform-header.hidden) > #app-view[data-app-surface="app"]:not(.hidden),
+html.un-kb.web-browser-chrome.platform-kb-short:not([data-browser-scroller]) body > :is(#app-view[data-app-surface="app"], #settings-screen, #home-screen):not(.hidden) {
+  margin-top: var(--platform-vv-top, 0px);
+}
+html.un-kb:not([data-browser-scroller]) body > :is(#app-view[data-app-surface="app"], #settings-screen, #home-screen):not(.hidden) {
+  margin-bottom: max(0px, calc(var(--un-kb-inset, 0px) - var(--platform-vv-top, 0px)));
+}
+/* In a phone browser Home and Settings are the document (#1518), which
+   cannot be made shorter. Its end is padded by the keys instead, so the last
+   of a form or of a search's results scrolls up from behind them, and the
+   sticky header follows the pan when iOS makes one. `!important` and the id:
+   `html.un-kb .platform-safe-scroll` zeroes this padding the same way. */
+html.un-kb[data-browser-scroller="settings-screen"] #settings-screen,
+html.un-kb[data-browser-scroller="home-screen"] #home-screen {
+  padding-bottom: var(--un-kb-inset, 0px) !important;
+}
+html.un-kb:is([data-browser-scroller="settings-screen"], [data-browser-scroller="home-screen"]) #platform-header {
+  translate: 0 var(--platform-vv-top, 0px);
+}
+
 /* ── A chat's foot ────────────────────────────────────────
    Under every transcript with a reply box, four siblings in one flex column:
    the transcript's scroller (`.chat-transcript`), Jump to latest hung from
@@ -726,6 +778,35 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      and carried scrollTop with it, which read as the list jerking back
      several rows under a trackpad scroll. */
   overflow-anchor: none;
+}
+/* "OLDEST CHATS" HAS A LANE OF ITS OWN, AND THE KEYS END THE LIST (phone
+   review #98, 23 Nov 2026: Duo cover, iPhone 17, Duo inner sideways). The
+   pill (./inbox-to-end.tsx) floats 12px over the tab bar and was drawn
+   across a row's name and preview; scrolled to the end, the last preview
+   sat on the bar with nothing under it; and with the keys up the list ran
+   on behind them, so its last results could not be scrolled above them.
+
+   - The list ends a lane past the bar: the pill's 36px and 12px each side,
+     so the last row stops clear of where the pill floats and of the bar.
+     The second class outranks `.platform-safe-scroll`, which this restates
+     with the lane added.
+   - While the pill is up the list fades out across that lane, as a
+     transcript does under Jump to latest (B11 above), so it rests on a
+     clear band and never on words; scrolling brings them back out.
+   - With the keys up the bar is gone and the list ends on the keys, by the
+     keyboard's height (the kit's two keyboard-up rules zero this padding,
+     hence the weight), and the pill rides on them (its own `bottom`). */
+.messages-list-scroll.platform-safe-scroll {
+  --inbox-lane: 60px;
+  padding-bottom: calc(max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)) + var(--inbox-lane)) !important;
+}
+html:is(.un-kb, .platform-kb-open) .messages-list-scroll.platform-safe-scroll {
+  padding-bottom: calc(var(--un-kb-inset, 0px) + var(--inbox-lane)) !important;
+}
+.messages-list-scroll:has(+ [data-inbox-to-end] button:not([inert])) {
+  --inbox-foot: calc(var(--platform-tabs-h, 0px) + var(--un-kb-inset, 0px));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--inbox-foot) - 72px), transparent calc(100% - var(--inbox-foot) - 48px), transparent calc(100% - var(--inbox-foot) - 6px), #000 calc(100% - var(--inbox-foot)));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--inbox-foot) - 72px), transparent calc(100% - var(--inbox-foot) - 48px), transparent calc(100% - var(--inbox-foot) - 6px), #000 calc(100% - var(--inbox-foot)));
 }
 /* THE HISTORY ABOVE A COMPOSER reserves no band at its foot, only the
    transcript's own 12px end: `.chat-transcript`, under "A chat's foot"
@@ -10022,6 +10103,16 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
 }
 #home-search-bar[data-revealed="false"]:not(:focus-within) {
   opacity: 0;
+}
+/* A SEARCH SHOWS WHAT IT FOUND, AND ONLY THAT (phone review #13, 23 Nov
+   2026). Typing "tier" filtered the projects and the communities, and the
+   matching communities came three sections down, under Recent threads and
+   Next challenges, which a search does not filter; with the keys up they
+   could not be reached. While the box has text those two step aside, so the
+   communities follow the projects. The placeholder is always set
+   (search-hint.ts), so `:placeholder-shown` is exactly an empty box. */
+#home-screen:has(#home-search-input[placeholder]:not([placeholder=""]):not(:placeholder-shown)) :is(#home-aside, #home-challenges-section) {
+  display: none;
 }
 
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it

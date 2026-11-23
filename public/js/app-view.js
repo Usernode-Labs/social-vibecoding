@@ -32067,10 +32067,22 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
-    const viewport = { width: window.innerWidth, height: window.innerHeight };
     // The keyboard is read once and used twice: beside the edges below, and
     // in the root-bottom decision (#4545) as its guard.
     const keyboard = AppView._keyboardInset();
+    // With the keys up, what is on screen is the band of the LAYOUT viewport
+    // from iOS's pan down to the keys (phone review #1, 23 Nov 2026), and the
+    // shell lays the frame on that band (app.css, "THE SHELL HOLDS STILL").
+    // So the frame is measured against the band: its top against the pan,
+    // where the status bar now is, and the keyboard against the band's foot,
+    // which the frame ends on. `innerHeight` cannot stand in for the layout
+    // viewport there: iOS collapses it to the visual viewport (the kit's
+    // #1938 table), and the keyboard read off it came out as nearly the
+    // whole frame. At rest nothing here changes.
+    const pan = keyboard > 0 ? AppView._viewportPan() : 0;
+    const layout = keyboard > 0 ? (AppView._layoutViewportHeight() || window.innerHeight) : window.innerHeight;
+    const viewport = { width: window.innerWidth, height: layout };
+    const seen = pan > 0 ? AppView._shiftRect(rect, -pan) : rect;
     const raw = AppView._readRootInsets();
     raw.bottom = AppView._rootBottomInset({
       bottom: raw.bottom,
@@ -32078,12 +32090,35 @@ const AppView = {
       androidStandalone: AppView._isAndroidStandalone(),
       keyboard,
     });
-    const insets = AppView._frameInsets(raw, rect, viewport);
+    const insets = AppView._frameInsets(raw, seen, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, keyboard);
+    insets.keyboard = AppView._frameKeyboardInset(seen, viewport, keyboard);
     return insets;
+  },
+
+  // Pure. A DOMRect-alike moved down by `dy` px (up when negative).
+  _shiftRect(rect, dy) {
+    const d = Number(dy) || 0;
+    return {
+      top: rect.top + d, bottom: rect.bottom + d,
+      left: rect.left, right: rect.right,
+      width: rect.width, height: rect.height,
+    };
+  },
+
+  // How far iOS has panned the visual viewport down the layout viewport to
+  // reveal a focused field, in whole px. 0 while pinch-zoomed (a zoom's
+  // offset is not a pan) and wherever nothing pans. The same reading
+  // lib/visual-viewport.ts publishes as `--platform-vv-top`.
+  _viewportPan() {
+    if (typeof window === 'undefined' || !window.visualViewport) return 0;
+    const vv = window.visualViewport;
+    const scale = Number(vv.scale);
+    if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return 0;
+    const top = Number(vv.offsetTop);
+    return Number.isFinite(top) && top > 0 ? Math.round(top) : 0;
   },
 
   // Post the current insets into every owned frame whose value changed.
@@ -33264,6 +33299,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('orientationchange', onViewportChange, { passive: true });
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportChange, { passive: true });
+    // iOS's pan arrives in its own event, after the resize, and moves where
+    // the shell lays the frame (safeAreaForFrame).
+    window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
   }
 }
 

@@ -31,6 +31,10 @@
     "text": "Pinned projects",
     "description": "Heading over the grid of project tiles on the Home screen under the Standard (WIP) look: the projects this person keeps a tile for. It replaces \"Pinned apps\" there."
   },
+  "grid.headingSearch": {
+    "text": "Your projects",
+    "description": "Heading over the project tiles on the Home screen while something is typed in its search field: every project of the viewer's that matches, pinned to Home or not. Pairs with \"Your communities\", the heading over the matching communities further down."
+  },
   "grid.seeLess": {
     "text": "Show less",
     "description": "Link beside Edit in the heading over the grid of project tiles on the Home screen (the Standard (WIP) look), shown once See all has unfolded the grid: it folds the grid back to its first rows."

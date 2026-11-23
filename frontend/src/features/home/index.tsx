@@ -429,7 +429,11 @@ export function HomeScreen() {
                 thing to press, which unfolds the grid and folds it again.
                 Down while rows are held back; up once they are out and
                 folding would hide some; plain words when neither. */}
-            {wip && moreCount > 0 ? (
+            {/* A search lists every project of yours that matches, pinned
+                or not (Home.isYours), so its heading says that (phone
+                review #13): "Pinned projects" over an unpinned one was
+                wrong, beside "Your communities" under it. */}
+            {grid.view === 'search' ? t('home:grid.headingSearch') : wip && moreCount > 0 ? (
               <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} pill={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
                 {t('home:grid.headingProjects')}
               </WipHeadMore>
