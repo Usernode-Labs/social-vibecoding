@@ -1149,10 +1149,10 @@ export function heroWords(needs: number, next: number, fresh = 0): Phrase | null
   // "17 decisions" in the menu read as one count disagreeing with itself. It
   // is the threads that ask something of you across every project, and says
   // so ("24 threads need you"); the plural form follows that number.
-  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.bothFresh', values: { needs, fresh, next, count: needs } };
-  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.needsFresh', values: { needs, fresh, count: needs } };
-  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.both', values: { needs, next, count: needs } };
-  if (needs > 0) return { id: 'messages:ai.hero.needs', values: { needs, count: needs } };
+  if (needs > 0 && anyFresh && next > 0) return { id: 'messages:ai.hero.threadsBothFresh', values: { needs, fresh, next, count: needs } };
+  if (needs > 0 && anyFresh) return { id: 'messages:ai.hero.threadsNeedsFresh', values: { needs, fresh, count: needs } };
+  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.threadsBoth', values: { needs, next, count: needs } };
+  if (needs > 0) return { id: 'messages:ai.hero.threadsNeeds', values: { needs, count: needs } };
   if (next > 0) return { id: 'messages:ai.hero.next', values: { next } };
   return null;
 }

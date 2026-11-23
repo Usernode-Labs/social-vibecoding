@@ -348,10 +348,10 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   });
   assert.deepEqual(rows.map((r) => [r.threadId, r.unread]), [[41, 2], [42, 0], [7, 1], [null, 0]]);
   const hero = heroWords(13, 7, 4);
-  assert.equal(hero.id, 'messages:ai.hero.bothFresh');
+  assert.equal(hero.id, 'messages:ai.hero.threadsBothFresh');
   assert.equal(words(hero), '13 threads need you · <0>4 new</0> · In progress: 7', 'the count sits between the two');
-  assert.equal(heroWords(13, 7, 0).id, 'messages:ai.hero.both', 'nothing new says nothing');
-  assert.equal(heroWords(13, 0, 2).id, 'messages:ai.hero.needsFresh');
+  assert.equal(heroWords(13, 7, 0).id, 'messages:ai.hero.threadsBoth', 'nothing new says nothing');
+  assert.equal(heroWords(13, 0, 2).id, 'messages:ai.hero.threadsNeedsFresh');
 
   // Rendered: the dot, the bold title, the Earlier line, both pills and the
   // chip number show; a zero shows nothing.
