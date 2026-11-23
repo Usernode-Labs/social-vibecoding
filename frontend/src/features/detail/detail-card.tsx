@@ -33,6 +33,7 @@ import {
 } from '../ai/detail';
 import { openPreview } from '../ai/preview';
 import { readDesign } from '../messages/design-card';
+import { messageStamp } from '../../lib/timestamp';
 import { liveDraftShown, openLivePreview, readLiveDraft, type LiveDraft } from '../messages/live-draft-bar';
 import type { DesignThread } from '../messages/api';
 
@@ -71,6 +72,14 @@ export function useDetailLabel(label: DetailLabel | null): void {
   const title = label?.title ?? '';
   const line = label?.line ?? null;
   useEffect(() => { say(title ? { title, line } : null); }, [say, title, line]);
+}
+
+/**
+ * Phone review #132 (23 Nov 2026): what a version says in a picker: its note,
+ * else when it was made, so no version stands bare among described ones.
+ */
+export function versionWords(v: { note: string | null; at?: string | null }): string | null {
+  return v.note || messageStamp(v.at ?? null).text || null;
 }
 
 const GLYPH: Record<DetailKind, typeof AppWindowIcon> = {
@@ -221,6 +230,9 @@ export function DetailPicker({ entry, label, className, anchor, children }: {
       >
         {children}
       </button>
+      {/* Phone review #132: on a phone the page under the list is dimmed
+          (app.css), so the list reads as over the artifact, not part of it. */}
+      {menu && at && typeof document !== 'undefined' ? createPortal(<div className="detail-card-scrim" aria-hidden="true" />, document.body) : null}
       {menu && at && typeof document !== 'undefined' ? createPortal(
         <div
           ref={list}
@@ -385,7 +397,7 @@ function pickRows(
         open: () => openPreview({ conversationId, rootId: design.rootId, version: null, artifactId }),
         versions: showing && full ? full.versions.map((v) => ({
           version: v.version,
-          note: v.note,
+          note: versionWords(v),
           current: at === v.version,
           open: () => openPreview({ conversationId, rootId: design.rootId, version: v.version, artifactId }),
         })) : undefined,

@@ -944,6 +944,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 html.platform-kb-short :is(.messages-thread-header, .dev-request-back) {
   display: none;
 }
+/* Phone review S6 (23 Nov 2026): except a private thread's own way back on
+   the Homeroom bot tab, in the two card looks, where it is a disc inside the
+   head card and takes no room of the page's. Folded with the keys up it went
+   and the title stayed indented past the gap it left, with the strip's tabs
+   hidden as well, so there was no way back on screen. */
+html.platform-kb-short:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .dev-request:has(.dev-thread-card) > .dev-request-back:not(:empty) {
+  display: flex;
+}
 html.web-browser-chrome.platform-kb-short #platform-header {
   display: none;
 }
@@ -4851,6 +4859,18 @@ html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-h
      brighter of the two hairline tokens in dark mode (see above), so
      the faint-hairline intent needs --border here. */
   border-color: var(--border);
+}
+/* Phone review #92 (23 Nov 2026): a ring over every app's icon in dark, its
+   picture included. A black icon (Homeroom's own) filled its tile edge to
+   edge, so on the near-black thread and card grounds the tile went and only
+   its white mark was left, smaller than and out of line with people's discs.
+   An outline is drawn over the picture, where the tile's border is under it,
+   and it follows the corners. Homeroom bot's face is the same picture drawn
+   outside a tile (a thread's head, its messages, Your work), so it is ringed
+   here too; the header's own mark keeps its look. */
+.dark :is(.app-icon-tile, img[src$="/brand/homeroom-mark.png"]:not(.platform-mark-tile)) {
+  outline: 1px solid rgba(255, 255, 255, 0.14);
+  outline-offset: -1px;
 }
 /* Drag-reorderable starred cards (issue #191): a long-press must
    pick the card up, not select its title text or pop the mobile
@@ -20967,6 +20987,31 @@ html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-preview-pane :is(
   background: var(--detail-card);
   box-shadow: var(--detail-card-edge);
 }
+/* AN ARTIFACT ON A PHONE (phone review #132, 23 Nov 2026). It was in a
+   white card, in the column's grey ground, in its own white card, so its
+   column was 64% of the screen and a phone mock-up in it was drawn smaller
+   than life. On a phone it is drawn edge to edge under the head card, and
+   the head keeps to one row: Back is a disc, as on every other page, and
+   Comment is a glyph beside the title, not a row of its own. While the
+   picker is open the page under it is dimmed. Comment's glyph is drawn only
+   here; beside a thread it keeps its word. */
+.detail-card-glyph, .detail-card-scrim { display: none; }
+#ai-screen[data-ai-preview="full"] .detail-card-head { flex-wrap: nowrap; }
+#ai-screen[data-ai-preview="full"] .detail-card-pick { flex: 1 1 0; }
+#ai-screen[data-ai-preview="full"] .detail-card-disc[data-detail-close="back"] { background: var(--dc-raised); color: var(--text-primary); }
+#ai-screen[data-ai-preview="full"] .detail-card-acts > [data-design-comment] { width: 36px; padding-inline: 0; }
+#ai-screen[data-ai-preview="full"] .detail-card-acts > [data-design-comment] > .detail-card-glyph { display: block; }
+#ai-screen[data-ai-preview="full"] .detail-card-acts > [data-design-comment] > .detail-card-word {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+html #ai-screen[data-ai-preview="full"] .ai-preview-pane .detail-card-body[data-detail-body="design"] {
+  margin-inline: -12px; margin-bottom: -8px; border-radius: 0; background: none; box-shadow: none;
+}
+html #ai-screen[data-ai-preview="full"] .detail-card-body[data-detail-body="design"] .messages-design-stage { padding: 0; }
+html #ai-screen[data-ai-preview="full"] .detail-card-body[data-detail-body="design"] .messages-design-stage > div { border-radius: 0; box-shadow: none; }
+@media (max-width: 767px) {
+  .detail-card-scrim { display: block; position: fixed; inset: 0; z-index: 59; background: rgba(0, 0, 0, 0.32); }
+}
 /* A running preview's frame stands over the card's body (its frame never
    moves: features/staging/placement.ts), so it wears the card's corners. */
 html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] {
@@ -20992,14 +21037,20 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
   /* #6838: a guard only: the list scrolls up and down, never sideways. */
   overflow-x: hidden;
 }
+/* Phone review #117 (23 Nov 2026): no hairline down the thread's inline
+   start. The drawer is a phone's alone, and with the thread in view that line
+   ran the whole height of the screen's edge; the shadow marks the edge while
+   it slides. */
 .ai-drawer-thread {
   position: absolute; top: 0; bottom: 0; inset-inline-start: 85%; width: 100%;
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--home-ground);
-  border-inline-start: 1px solid var(--app-sheet-line);
   box-shadow: calc(-8px * var(--rtl-sign)) 0 24px rgba(0, 0, 0, 0.08);
 }
-.ai-drawer-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* And its head card stands clear of the top bar's foot, as a request's does
+   on its page (#dev-topic-thread's 12px over its sheet): it started at the
+   bar's lower edge, its border and corners under it. */
+.ai-drawer-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: 14px; }
 .ai-drawer-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
 .ai-drawer-thread .messages-thread-pane { border-radius: 0; border-top: 0; box-shadow: none; }
 /* On the list a thread's arrow has nowhere to go: it arrives as the thread
@@ -21026,7 +21077,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
    with the slide. */
 .ai-drawer:not([data-peek]) .ai-drawer-list { width: 100%; }
 .ai-drawer:not([data-peek]) .ai-drawer-thread { inset-inline-start: 100%; }
-.ai-drawer:not([data-peek])[data-level="0"]:not([data-panning]) .ai-drawer-thread { box-shadow: none; border-inline-start-color: transparent; }
+.ai-drawer:not([data-peek])[data-level="0"]:not([data-panning]) .ai-drawer-thread { box-shadow: none; }
 /* Where the window has the room, the feed takes a project's stage width
    (720px) out of the screen's 672px column, as far as that column's own
    margins go. */

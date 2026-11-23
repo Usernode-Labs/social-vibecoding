@@ -31,10 +31,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
-import { ChevronLeftIcon, XIcon } from '@/components/ui/icons';
+import { ChatIcon, ChevronLeftIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { DetailActions, useDetailCard, useDetailLabel } from '../detail/detail-card';
+import { DetailActions, useDetailCard, useDetailLabel, versionWords } from '../detail/detail-card';
 import { ArtifactFrame } from '../artifact/frame';
 import { currentSheets, type FramePin } from '../artifact/frame-doc';
 import { inlinePictures } from '../design/pictures';
@@ -297,9 +297,18 @@ export function DesignPane({ conversationId, rootId, artifactId = null, view, on
   const latest = design?.latest || 0;
   const what = draft?.element?.text || draft?.element?.tag || '';
   // Its two buttons: in its own header, or the head card's beside a thread.
+  // Phone review #132: in the head card it has a glyph too, and on a phone
+  // the glyph alone (app.css, `.detail-card-word`), so it stays on the
+  // title's row instead of taking a row of its own.
+  const commentWord = commenting ? t('messages:design.pane.commentDone') : t('messages:design.pane.comment');
   const commentButton = open ? (
-    <button type="button" className={commenting ? FILLED : QUIET} aria-pressed={commenting} onClick={() => { setCommenting((on) => !on); setDraft(null); }} data-design-comment="">
-      {commenting ? t('messages:design.pane.commentDone') : t('messages:design.pane.comment')}
+    <button type="button" className={commenting ? FILLED : QUIET} aria-pressed={commenting} onClick={() => { setCommenting((on) => !on); setDraft(null); }} data-design-comment="" {...(card ? { 'aria-label': commentWord, title: commentWord } : {})}>
+      {card ? (
+        <>
+          <ChatIcon className="detail-card-glyph h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+          <span className="detail-card-word">{commentWord}</span>
+        </>
+      ) : commentWord}
     </button>
   ) : null;
   const proposeButton = postable ? <button type="button" className={FILLED} onClick={() => setProposing(true)} disabled={!latest} data-design-propose="">{t('messages:design.pane.propose')}</button> : null;
@@ -327,7 +336,7 @@ export function DesignPane({ conversationId, rootId, artifactId = null, view, on
               >
                 {design.versions.map((v) => (
                   <option key={v.version} value={v.version}>
-                    {v.note ? t('messages:design.pane.versionNote', { version: v.version, note: v.note }) : t('messages:design.pane.versionOption', { version: v.version })}
+                    {versionWords(v) ? t('messages:design.pane.versionNote', { version: v.version, note: versionWords(v) }) : t('messages:design.pane.versionOption', { version: v.version })}
                   </option>
                 ))}
               </select>

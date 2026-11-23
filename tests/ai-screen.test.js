@@ -2955,3 +2955,28 @@ test('a page in the column hands the panel\'s own edge the one-pane wiring (#697
     /collapsed=\{snap\?\.collapsed\}\s+onCollapse=\{snap\?\.onCollapse\}\s+onRestore=\{snap\?\.onRestore\}/,
     'its own divider reads it');
 });
+
+test('phone review #5 and #11: leaving the page holds the thread\'s detail, and a layout switch keeps the thread', () => {
+  const page = read('frontend/src/features/ai/index.tsx');
+  // #5: a request's or a change's page draws whatever the detail store holds,
+  // so the artifact a thread showed is held for it when the page is left.
+  assert.match(page, /if \(!visible\) \{\s+ownerWas\.current = null;\s+const entry = detailEntry\(\);\s+if \(!entry\?\.owner \|\| entry\.kind === 'preview'\) return;/);
+  assert.match(page, /if \(entry\.owner === was \|\| ofThisChat\) holdDetail\(entry\.owner\);/);
+  // #11: one reading of both widths, so the drawer and the docked column swap
+  // in one render and never both mount a chat …
+  assert.match(page, /function useWidths\(\): \{ phone: boolean; wide: boolean \}/);
+  assert.match(page, /const \{ phone, wide \} = useWidths\(\);/);
+  assert.doesNotMatch(page, /usePhone\(\)/);
+  assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /export const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
+  // … and the thread open before the switch is asked for again in the layout
+  // arrived at, slid in on a phone, the lists kept where they were scrolled.
+  assert.match(page, /if \(openRoot\) \{\s+const next = \{ threadRootId: openRoot, focusMessageId: null \};\s+setAt\(next\);\s+embed\(botId, next, \{ threadsOnly: true \}\);\s+if \(layoutNow === 'phone'\) setLevel\(1\);/);
+  assert.match(page, /const scroller = layoutNow === 'phone' \? screen\.querySelector<HTMLElement>\('\.ai-drawer-list'\) : screen;/);
+});
+
+test('phone review #117: the drawer\'s thread has no edge line and its head clears the top bar', () => {
+  const css = read('public/css/app.css');
+  const rule = css.match(/\n\.ai-drawer-thread \{[^}]*\}/)[0];
+  assert.doesNotMatch(rule, /border-inline-start/);
+  assert.match(css, /\.ai-drawer-pane \{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: 14px; \}/);
+});

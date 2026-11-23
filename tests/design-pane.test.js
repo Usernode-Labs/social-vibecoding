@@ -159,3 +159,29 @@ test('the design routes are the owner\'s taps: same-origin and limited, and a pi
   assert.match(routes, /delete input\.design_pin;/, 'nothing else of the pin reaches the message');
   assert.match(read('server.js'), /req\.path === '\/api\/conversations\/homeroom-bot\/designs'\) \{\n\s+return express\.json\(\{ limit: '1mb' \}\)/);
 });
+
+test('phone review #132: on a phone the artifact is edge to edge, the head is one row, and a version is never bare', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /html #ai-screen\[data-ai-preview="full"\] \.ai-preview-pane \.detail-card-body\[data-detail-body="design"\] \{\s+margin-inline: -12px; margin-bottom: -8px; border-radius: 0; background: none; box-shadow: none;\s+\}/);
+  assert.match(css, /html #ai-screen\[data-ai-preview="full"\] \.detail-card-body\[data-detail-body="design"\] \.messages-design-stage \{ padding: 0; \}/);
+  assert.match(css, /#ai-screen\[data-ai-preview="full"\] \.detail-card-head \{ flex-wrap: nowrap; \}/);
+  assert.match(css, /#ai-screen\[data-ai-preview="full"\] \.detail-card-disc\[data-detail-close="back"\] \{ background: var\(--dc-raised\);/);
+  assert.match(css, /\.detail-card-scrim \{ display: block; position: fixed; inset: 0; z-index: 59;/);
+  // Comment keeps its word beside a thread and is a glyph with that word as its name on a phone.
+  const pane = read('frontend/src/features/messages/design-pane.tsx');
+  assert.match(pane, /<ChatIcon className="detail-card-glyph h-\[18px\] w-\[18px\] shrink-0" aria-hidden="true" \/>\s+<span className="detail-card-word">\{commentWord\}<\/span>/);
+  // A version with no note says when it was made, in both pickers.
+  const { versionWords } = loadTsx('frontend/src/features/detail/detail-card.tsx');
+  assert.equal(versionWords({ note: 'A darker title', at: '2026-11-20T10:00:00Z' }), 'A darker title');
+  assert.ok(versionWords({ note: null, at: '2026-11-20T10:00:00Z' }), 'a date in place of a note');
+  assert.equal(versionWords({ note: null, at: null }), null);
+  assert.match(pane, /versionWords\(v\) \? t\('messages:design\.pane\.versionNote', \{ version: v\.version, note: versionWords\(v\) \}\)/);
+  assert.match(read('frontend/src/features/detail/detail-card.tsx'), /note: versionWords\(v\),/);
+  assert.match(read('frontend/src/features/messages/api.ts'), /at: text\(pick\(row, 'at'\)\) \|\| null,/);
+});
+
+test('phone review #92 and S6: a ring on every app icon in dark, and a private thread keeps its way back while typing', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dark :is\(\.app-icon-tile, img\[src\$="\/brand\/homeroom-mark\.png"\]:not\(\.platform-mark-tile\)\) \{\s+outline: 1px solid rgba\(255, 255, 255, 0\.14\);\s+outline-offset: -1px;\s+\}/);
+  assert.match(css, /html\.platform-kb-short:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.dev-request:has\(\.dev-thread-card\) > \.dev-request-back:not\(:empty\) \{\s+display: flex;\s+\}/);
+});
