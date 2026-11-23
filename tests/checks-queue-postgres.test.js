@@ -52,6 +52,19 @@ const CHECK_RUNS_DDL = (() => {
   const end = schema.indexOf(';', schema.indexOf(last, start)) + 1;
   return schema.slice(start, end);
 })();
+// The preview machine's work items, which QUEUE_SQL reads a run against.
+const WORK_DDL = (() => {
+  const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
+  const start = schema.indexOf('CREATE TABLE IF NOT EXISTS wf_work (');
+  return schema.slice(start, schema.indexOf(';', schema.indexOf('CONSTRAINT wf_work_claim_shape', start)) + 1);
+})();
+// Main watch's verdicts, which a running check of main reads to tell
+// whether its own is still wanted (main-watch.js verdictUnread).
+const VERDICTS_DDL = (() => {
+  const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
+  const start = schema.indexOf('CREATE TABLE IF NOT EXISTS main_watch_verdicts (');
+  return schema.slice(start, schema.indexOf(';', start) + 1);
+})();
 const DDL = `
   CREATE TABLE apps (
     id SERIAL PRIMARY KEY, slug TEXT, name TEXT, repo_url TEXT, main_sha TEXT,
@@ -76,6 +89,8 @@ const DDL = `
     machine TEXT NOT NULL, key TEXT NOT NULL, data JSONB NOT NULL, PRIMARY KEY (machine, key)
   );
   ${CHECK_RUNS_DDL}
+  ${WORK_DDL}
+  ${VERDICTS_DDL}
 `;
 
 let pg;
@@ -126,7 +141,7 @@ async function fresh(t, { cap } = {}) {
   const pool = processPool();
   // Ids keep counting across tests: a run another test left in flight in
   // this process must never share a session id with this one's.
-  await pool.query('TRUNCATE check_runs, chat_sessions, apps, wf_instances CASCADE');
+  await pool.query('TRUNCATE check_runs, chat_sessions, apps, wf_instances, wf_work CASCADE');
   const saved = process.env.CHECKS_MAX_CONCURRENT_RUNS;
   if (cap !== undefined) process.env.CHECKS_MAX_CONCURRENT_RUNS = String(cap);
   t.after(() => {
@@ -187,6 +202,31 @@ async function until(fn, { timeoutMs = 5000, everyMs = 50 } = {}) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const { waitFor, within } = require('./lib/wait-for');
+
+// The preview machine's work item for a run (its checks.run, under the
+// run's key), or the checks.cancel that follows a cancel.
+async function work(pool, sessionId, workKey, { kind = 'checks.run', status = 'running', result = null } = {}) {
+  const running = status === 'running';
+  await pool.query(
+    `INSERT INTO wf_work (machine, key, kind, work_key, input, status, claim_id, lease_until, result, settled_at)
+     VALUES ('preview', $1, $2, $3, '{}', $4, $5, $6, $7::jsonb, $8)
+     ON CONFLICT (machine, key, kind, work_key) DO UPDATE
+       SET status = EXCLUDED.status, claim_id = EXCLUDED.claim_id, lease_until = EXCLUDED.lease_until,
+           result = EXCLUDED.result, settled_at = EXCLUDED.settled_at`,
+    [`session:${sessionId}`, kind, workKey, status, running ? crypto.randomUUID() : null,
+      running ? new Date(Date.now() + 60_000) : null, result == null ? null : JSON.stringify(result),
+      status === 'settled' ? new Date() : null]);
+}
+
+// A preview machine's run, admitted: its row as captureForSession writes it.
+async function admitted(pool, s, runKey, extra = {}) {
+  const runId = await ask(pool, s, { manifest: { launched: true, workflow: true, runKey }, ...extra });
+  await pool.query('UPDATE check_runs SET admitted_at = NOW() WHERE run_id = $1', [runId]);
+  return runId;
+}
+
+const present = async (pool, runId) => (await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [runId])).rows.length === 1;
 
 // ── Two processes, one cap ──────────────────────────────────────────────
 
@@ -499,6 +539,9 @@ test('a run waiting when its process died keeps its place: the retry of its work
   await checksQueue.admit(pool);
   const s = await session(pool, appId, { check_phase: 'queued' });
   const dying = await as('old-pod', () => ask(pool, s, { manifest: { launched: false, workflow: true, runKey: 'run-1-1' } }));
+  // Its work item is outstanding: the claim after the lost one comes back
+  // for the row (its place), so no admission pass may clear it.
+  await work(pool, s.id, 'run-1-1', { status: 'queued' });
   await sleep(20);
   const later = await as('live-pod', async () => ask(pool, await session(pool, appId)));
   const { rows: [before] } = await pool.query('SELECT queued_at FROM check_runs WHERE run_id = $1', [dying]);
@@ -508,6 +551,7 @@ test('a run waiting when its process died keeps its place: the retry of its work
   let plan = await checksQueue.admit(pool);
   assert.equal(plan.byRun.get(later).ahead, 0, 'a dead run does not hold up the line');
   assert.equal(plan.byRun.get(dying).ahead, null);
+  assert.ok(await present(pool, dying), 'handed over, but its work item will come back for it');
   const { rows: [orphaned] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id]);
   assert.equal(stagingRecovery.checkRunOverdue(orphaned, { staleMs: 0 }), false,
     'nor is it overdue by clock: the machine\'s retry of its work item has it');
@@ -597,4 +641,170 @@ test('main-watch: a run waiting when its process died runs again in its place', 
   assert.equal((await out).state, 'skipped');
   assert.equal(suite.mock.callCount(), 1);
   assert.deepEqual(await admittedIds(pool), [p1], 'its slot went back');
+});
+
+// ── A finished run's slot ───────────────────────────────────────────────
+//
+// 23 Nov 2026: PR 7029's checks.run was claimed at 17:12 and its one attempt
+// succeeded at 17:27, but its row, admitted at 17:18, was still there, owned
+// by a conductor that had drained for a release at about 17:22. The queue
+// counted it until 17:36, with four slots in all, and ten rows like it were
+// still in the table, the oldest 39 days.
+
+test('a run whose work item settled frees its slot at the next pass, and its row is cleared', async (t) => {
+  const env = await fresh(t, { cap: 1 });
+  if (!env) return;
+  const { pool, appId } = env;
+  const s = await session(pool, appId);
+  const holder = await as('conductor-6b85:7', () => admitted(pool, s, 'run-2-6'));
+  await work(pool, s.id, 'run-2-6', { status: 'running' });
+  await as('conductor-6b85:7', () => checkRuns.release(pool));
+  const waiting = await ask(pool, await session(pool, appId));
+  let plan = await checksQueue.admit(pool);
+  assert.deepEqual(plan.admit, [], 'handed over while its run went on: its Jobs may still run, so it holds');
+  assert.ok(await present(pool, holder));
+
+  // The run settles on the draining process; its delete is lost.
+  await work(pool, s.id, 'run-2-6', { status: 'settled', result: { outcome: 'verdict' } });
+  plan = await checksQueue.admit(pool);
+  assert.deepEqual(plan.admit, [waiting], 'the slot is free at once, not when the deadline runs out');
+  assert.deepEqual(plan.swept, [{ runId: holder, sessionId: s.id, why: 'finished' }]);
+  assert.equal(await present(pool, holder), false);
+});
+
+test('a run the machine cancelled holds its slot until the clean-up that stops its Jobs has run', async (t) => {
+  const env = await fresh(t, { cap: 1 });
+  if (!env) return;
+  const { pool, appId } = env;
+  const s = await session(pool, appId);
+  const holder = await admitted(pool, s, 'run-3-9');
+  await pool.query("UPDATE check_runs SET owner = 'gone-pod:1:exited', heartbeat_at = 'epoch' WHERE run_id = $1", [holder]);
+  // The kernel's cancel: settled, `cancelled` in its result, and the
+  // checks.cancel item queued to run once the claim has stopped.
+  await work(pool, s.id, 'run-3-9', { status: 'settled', result: { cancelled: true } });
+  await work(pool, s.id, 'cancel:run-3-9', { kind: 'checks.cancel', status: 'queued' });
+  const waiting = await ask(pool, await session(pool, appId));
+  let plan = await checksQueue.admit(pool);
+  assert.deepEqual(plan.admit, []);
+  assert.ok(await present(pool, holder), 'its Jobs are still to be stopped');
+
+  // The clean-up ran but its delete was lost too: the row goes now.
+  await work(pool, s.id, 'cancel:run-3-9', { kind: 'checks.cancel', status: 'settled', result: { cancelled: true } });
+  plan = await checksQueue.admit(pool);
+  assert.deepEqual(plan.admit, [waiting]);
+  assert.equal(await present(pool, holder), false);
+});
+
+test('the leftovers are swept: finished, ended, abandoned and past their deadline; a run still going is kept', async (t) => {
+  const env = await fresh(t, { cap: 4 });
+  if (!env) return;
+  const { pool, appId } = env;
+  const exited = 'social-vibecoding-conductor-6b85dbfff4-fzm94:7:exited';
+  const row = async (s, { runKey = null, owner = exited, admittedAgo = '3 days', heartbeat = "'epoch'", extra = {} } = {}) => {
+    const runId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO check_runs (run_id, session_id, kind, commit_sha, owner, manifest, started_at, heartbeat_at, queued_at, admitted_at)
+       VALUES ($1, $2, 'proposal', $3, $4, $5::jsonb, NOW() - $6::interval, ${heartbeat}, NOW() - $6::interval, NOW() - $6::interval)`,
+      [runId, s.id, s.checks_commit_sha, owner,
+        JSON.stringify({ launched: true, workflow: true, ...(runKey ? { runKey } : {}), ...extra }), admittedAgo]);
+    return runId;
+  };
+  // Days old, handed over on exit, its work item long settled.
+  const a = await session(pool, appId);
+  const settled = await row(a, { runKey: 'run-2-6' });
+  await work(pool, a.id, 'run-2-6', { status: 'settled', result: {} });
+  // 39 days old, its work item already purged.
+  const purged = await row(await session(pool, appId), { runKey: 'run-1-2', admittedAgo: '39 days' });
+  // A merged proposal's, its owner gone, admitted a minute ago; the retire
+  // cancelled its run and stops the session's Jobs.
+  const merged = await session(pool, appId, { status: 'merged' });
+  const ended = await row(merged, { runKey: 'run-4-1', owner: 'pod-z:1', admittedAgo: '1 minute', heartbeat: "NOW() - INTERVAL '5 minutes'" });
+  await work(pool, merged.id, 'run-4-1', { status: 'settled', result: { cancelled: true } });
+  // An archived one's whose run is still outstanding: its next claim comes
+  // back for the row, so it stays, though it holds no slot.
+  const archived = await session(pool, appId, { status: 'archived' });
+  const closing = await row(archived, { runKey: 'run-4-2', owner: 'pod-z:1', admittedAgo: '1 minute', heartbeat: "NOW() - INTERVAL '5 minutes'" });
+  await work(pool, archived.id, 'run-4-2', { status: 'running' });
+  // A settled run whose early unit Jobs would not stop, past their deadline.
+  const lingered = await row(await session(pool, appId), { runKey: 'run-5-1', admittedAgo: '1 hour', extra: { settled: true } });
+
+  // Kept: its work item's retry will come back for it.
+  const b = await session(pool, appId);
+  const retrying = await row(b, { runKey: 'run-6-2' });
+  await work(pool, b.id, 'run-6-2', { status: 'queued' });
+  // Kept: handed over a moment ago, its Jobs may still run.
+  const c = await session(pool, appId);
+  const recent = await row(c, { runKey: 'run-7-1', admittedAgo: '2 minutes' });
+  await work(pool, c.id, 'run-7-1', { status: 'running' });
+  // Kept: lingering within its Jobs' deadline.
+  const lingering = await row(await session(pool, appId), { runKey: 'run-8-1', admittedAgo: '1 minute', extra: { settled: true } });
+  // Kept: a live run.
+  const live = await admitted(pool, await session(pool, appId), 'run-9-1');
+  // Kept: main-watch's, whatever its age (its next attempt adopts it; the
+  // hour-long expiry of a silent one is main-watch's own rule).
+  const main = await askMain(pool, appId, 'a'.repeat(40));
+  await pool.query(`UPDATE check_runs SET owner = $2, heartbeat_at = NOW() - INTERVAL '5 minutes',
+                           admitted_at = NOW() - INTERVAL '3 days' WHERE run_id = $1`, [main, exited]);
+
+  const plan = await checksQueue.admit(pool);
+  const why = Object.fromEntries((plan.swept || []).map((x) => [x.runId, x.why]));
+  assert.deepEqual(why, { [settled]: 'finished', [purged]: 'abandoned', [ended]: 'ended', [lingered]: 'deadline' });
+  for (const id of [settled, purged, ended, lingered]) assert.equal(await present(pool, id), false);
+  for (const id of [retrying, recent, closing, lingering, live, main]) assert.ok(await present(pool, id), id);
+  assert.deepEqual(plan.holding, { main: 0, proposal: 3 }, 'the recent hand-over, the lingering run and the live one');
+});
+
+// ── A check of main a newer merge made pointless ────────────────────────
+
+test('main-watch: a running check is stopped once a newer merge has passed, never while its green may be read', async (t) => {
+  const env = await fresh(t, { cap: 1 });
+  if (!env) return;
+  const { pool, appId } = env;
+  const saved = process.env.MAIN_WATCH_STOP_POLL_MS;
+  process.env.MAIN_WATCH_STOP_POLL_MS = '100';
+  t.after(() => { if (saved === undefined) delete process.env.MAIN_WATCH_STOP_POLL_MS; else process.env.MAIN_WATCH_STOP_POLL_MS = saved; });
+  const config = { workerRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
+  const deleted = [];
+  t.mock.method(require('../src/services/kubernetes'), 'deleteRunCheckJobs', async (cfg, args) => { deleted.push(args); return 1; });
+  let release = null;
+  t.mock.method(unitSuite, 'maybeRunUnitSuite', (opts) => new Promise((resolve, reject) => {
+    release = () => resolve(null);
+    opts.signal?.addEventListener('abort', () => reject(opts.signal.reason), { once: true });
+  }));
+  const app = { id: appId, slug: 'demo', repo_url: 'https://github.com/org/demo' };
+  const [A, B, C, OLD] = ['a', 'b', 'c', 'f'].map((ch) => ch.repeat(40));
+  // A green recorded before this run started is an older run's, never a newer one's.
+  await pool.query(
+    `INSERT INTO main_watch_verdicts (app_id, sha, state, created_at) VALUES ($1, $2, 'passing', NOW() - INTERVAL '1 minute')`,
+    [appId, OLD]);
+  await pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, A]);
+  // The run's own pool, counting the times its watch asks whether it is read.
+  let asked = 0;
+  const watched = {
+    query: (sql, params) => {
+      if (/SELECT a\.main_check_sha,/.test(String(sql))) asked += 1;
+      return pool.query(sql, params);
+    },
+    connect: () => pool.connect(),
+  };
+  t.after(() => { if (release) release(); });
+  const running = mainWatch.runMainSuite(config, watched, { app, sha: A, phase: 'first' });
+  const row = await until(async () => (await pool.query(
+    "SELECT run_id FROM check_runs WHERE kind = 'main' AND app_id = $1 AND admitted_at IS NOT NULL", [appId])).rows[0]);
+
+  // A newer merge claims the row; another superseded run passes. Neither
+  // says this run's green would go unread: a later red may still need it.
+  await pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, B]);
+  await pool.query(`INSERT INTO main_watch_verdicts (app_id, sha, state, superseded) VALUES ($1, $2, 'passing', TRUE)`, [appId, C]);
+  const before = asked;
+  await waitFor(() => asked >= before + 3, { label: 'the watch asking three times after the newer merge' });
+  assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [row.run_id])).rows.length, 1, 'it runs on');
+  assert.deepEqual(deleted, []);
+
+  // The newer merge's own run passes (it copied a pass of its tree).
+  await pool.query(`INSERT INTO main_watch_verdicts (app_id, sha, state) VALUES ($1, $2, 'passing')`, [appId, B]);
+  const out = await within(running, 5000, 'the check of main a newer green made pointless');
+  assert.equal(out.state, 'superseded');
+  assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [row.run_id])).rows.length, 0, 'its slot is free');
+  assert.deepEqual(deleted, [{ sessionId: `main-${appId}`, previewRunId: row.run_id }], 'and its Jobs deleted');
 });

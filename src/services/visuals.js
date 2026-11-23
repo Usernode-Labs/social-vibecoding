@@ -2712,16 +2712,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // A run that did not settle keeps its row: the retry of its work item
     // collects its Jobs by it, and the machine's cancel clears it.
     if (harvestable && settledRun) {
-      // Some capture paths (including shots-only) settle without reading
-      // the adopted suite. Keep accounting for its Pods until they stop.
-      try {
-        if (adoptedEarlyUnit) {
-          await kubernetes.cancelPreviewChecks(config, session.id, adoptedEarlyUnit, { includeEarly: true });
-        }
-        await checkRuns.finish(pool, runId);
-      } catch (err) {
-        log.warn('visuals', 'Keeping the checks slot until early unit Jobs stop or expire', { runId, err: err.message });
-      }
+      await giveBackSettledSlot(config, pool, { sessionId: session.id, runId, adoptedEarlyUnit });
     }
     // ...and so do its Jobs, once it settled: with the row gone nothing will
     // read them, and the Job TTL would hold the worker namespace's Job slots
@@ -2732,6 +2723,29 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       releaseCheckJobs(config, session.id, adoptedEarlyUnit || earlyUnitRunId);
     }
   }
+}
+
+// A settled run gives its checks slot back (its check_runs row). Some
+// capture paths (shots-only among them) settle without reading the early
+// unit suite the run adopted, so its Pods are stopped first: they use the
+// slot's share of the check pool until they stop. When they cannot be
+// stopped now, the row stays counted only until those Jobs' own deadline
+// (check-runs.linger), and the checks queue's admission pass deletes it
+// then; it used to stay until somebody deleted it by hand. Resolves
+// 'freed' or 'lingering'; never throws.
+async function giveBackSettledSlot(config, pool, { sessionId, runId, adoptedEarlyUnit = null }) {
+  if (adoptedEarlyUnit) {
+    try {
+      await kubernetes.cancelPreviewChecks(config, sessionId, adoptedEarlyUnit, { includeEarly: true });
+    } catch (err) {
+      log.warn('visuals', 'Early unit Jobs still stopping; the checks slot counts until their deadline', {
+        runId, err: err.message,
+      });
+      if (await checkRuns.linger(pool, runId)) return 'lingering';
+    }
+  }
+  await checkRuns.finish(pool, runId);
+  return 'freed';
 }
 
 // 23 Nov 2026: a run that could not get a database connection in time (a
@@ -3681,6 +3695,8 @@ module.exports = {
   kubernetesCaptureOrigin,
   sessionEventEnvelope,
   captureForSession,
+  // How a settled run's slot goes back (exported for tests).
+  giveBackSettledSlot,
   CHECKS_DATABASE_BUSY,
   databaseBusyResult,
   // The settlement half of a run, for the retry of a machine's work item

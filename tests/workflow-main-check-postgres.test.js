@@ -19,7 +19,7 @@ const { Pool } = require('pg');
 
 // main-watch's run and filings, and main-red-fix's request, faked before
 // services.ts reaches them through the shared require cache (legacy.ts).
-const suite = { calls: [], scripts: new Map(), reuse: [] };
+const suite = { calls: [], scripts: new Map(), reuse: [], phases: [] };
 const filings = [];
 const fixes = [];
 const stub = (rel, exports) => {
@@ -33,6 +33,7 @@ stub('../src/services/main-watch', {
   async runMainSuite(config, pool, args) {
     suite.calls.push({ appId: args.app.id, slug: args.app.slug, sha: args.sha, resumeRunId: args.resumeRunId });
     suite.reuse.push([args.sha, args.reuse]);
+    suite.phases.push([args.app.id, args.sha, args.phase]);
     const next = (suite.scripts.get(args.app.id) || []).shift();
     if (next === undefined) throw new Error(`no run scripted for app ${args.app.id}`);
     const answer = typeof next === 'function' ? await next(args) : next;
@@ -465,6 +466,24 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
       'a red again is kept confirmed, as the run would have stored it');
     assert.deepEqual(fixedFor(b), [], 'a superseded red is sent to nobody');
     assert.deepEqual(await kicks(b), ['main-post-green'], 'the green lifts the hold the confirmation had');
+  });
+
+  // 23 Nov 2026: a run whose verdict nobody reads is stopped by its own
+  // process (main-watch.js watchVerdict) and reports 'superseded'.
+  await t.test('an older run stopped as pointless leaves no verdict, and the newer run\'s stands', async () => {
+    const bySha = (answers) => (args) => answers.get(args.sha);
+    const a = await app();
+    const run = bySha(new Map([[S1, { state: 'superseded', detail: {} }], [S2, green]]));
+    script(a, run, run);
+    await ask(rt, a, S1);
+    await ask(rt, a, S2);
+    await settle();
+    const r = await row(a);
+    assert.deepEqual([r.state, r.sha, r.paused], ['passing', S2, null]);
+    assert.deepEqual(await verdicts(a), [[S2, 'passing', false, null, false]], 'nothing recorded for the stopped run');
+    assert.deepEqual((await inst(a)).data.older, [], 'and it is no longer waited for');
+    assert.deepEqual(suite.phases.filter(([id]) => id === a.id).map(([, sha, phase]) => [sha, phase]).sort(),
+      [[S1, 'first'], [S2, 'first']], 'the work tells the run its phase, which is how a superseded recheck knows it is unread');
   });
 
   // Review round 2 (2026-10-17).
