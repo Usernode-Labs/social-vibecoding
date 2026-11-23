@@ -123,6 +123,17 @@ test('Messages\' words are sized in rem, so Text size reaches them, at the same 
   assert.match(cssRule(css, '.messages-message-head'), /max-width: 100%;/);
 });
 
+test('on a phone, a Home icon is never wider than its cell, so large text sizes cannot make icons meet', () => {
+  const css = cssSrc();
+  const at = css.indexOf('html:not([data-skin]) #app-list > .app-card > .relative { width: min(');
+  assert.ok(at >= 0, 'the phone grid bounds the icon by its cell');
+  assert.ok(css.lastIndexOf('@media (max-width: 639.98px) {', at) > css.lastIndexOf('\n}\n', at),
+    'inside the phone block, not the wider grids\'');
+  assert.match(css.slice(at), /^[^}]*width: min\(3\.5rem, calc\(100% - 0\.1875rem\)\); height: auto; aspect-ratio: 1 \/ 1; \}/,
+    '3.5rem at the default size, and less only when the cell is narrower');
+  assert.match(css, /html:not\(\[data-skin\]\) #app-list > \.app-card > \.relative > \.app-icon-tile \{ width: 100%; height: 100%; border-radius: min\(1\.25rem, 36%\); \}/);
+});
+
 // ── The slider's steps (#6510) ───────────────────────────────────────────
 
 // The head's Display module, run alone against a fake page.
