@@ -3,18 +3,29 @@ set -eu
 image=$1
 out=$2
 component=${4:?image component required}
+source_type=${5:-standard}
+layout=${6:-}
+case "$source_type" in
+  standard|archive|oci) ;;
+  *) exit 2 ;;
+esac
 mkdir -p "$out"
 phase='image inventory'
 assessment_done=0
 archive_dir=
 db_pid=
+inventory_pid=
+image_scan_pid=
+image_load_pid=
 finish() {
   result=$?
   if [ "$assessment_done" != 1 ]; then
     node scripts/security-findings.js --unavailable "$out" "$component" "$phase failed; retry or review this assessment" || true
     [ "$result" != 0 ] || result=1
   fi
-  [ -z "$db_pid" ] || wait "$db_pid" || true
+  for pid in "$db_pid" "$inventory_pid" "$image_scan_pid" "$image_load_pid"; do
+    [ -z "$pid" ] || wait "$pid" || true
+  done
   [ -z "$archive_dir" ] || rm -rf "$archive_dir"
   exit "$result"
 }
@@ -23,14 +34,16 @@ rm -f "$out/assessment.json" "$out/vulnerabilities.json" "$out/image-vulnerabili
   "$out/playwright-browsers.json" "$out/playwright-browser-query.cdx.json" \
   "$out/playwright-browser-advisories.json" "$out/browser-vulnerabilities.json"
 printf '%s\n' "$image" > "$out/image-reference.txt"
-case "$image" in
-  *@sha256:*) ;;
-  *) docker image inspect --format '{{.Id}}' "$image" > "$out/image-reference.txt" ;;
-esac
+if [ "$source_type" != oci ]; then
+  case "$image" in
+    *@sha256:*) ;;
+    *) docker image inspect --format '{{.Id}}' "$image" > "$out/image-reference.txt" ;;
+  esac
+fi
 # The release pipeline passes BuildKit's attached SPDX SBOM, covering OS and
 # global tools as well as lockfile packages. Local builds may pass a Syft SBOM.
 sbom=$3
-test -s "$sbom"
+[ "$source_type" != standard ] || test -s "$sbom"
 
 # BASELINE_IMAGE (the live image of this component, by digest) makes the gate
 # block only what this image introduces: a finding on a package the live image
@@ -53,9 +66,55 @@ fi
 
 # Fetch the public database without project files while the runner pulls
 # and probes the exact image. Wait before any offline scanner opens the DB.
-docker run --rm -v social-security-trivy-db:/root/.cache/trivy \
-  aquasec/trivy:0.76.1 image --download-db-only &
-db_pid=$!
+if [ "$source_type" = standard ]; then
+  docker run --rm -v social-security-trivy-db:/root/.cache/trivy \
+    aquasec/trivy:0.76.1 image --download-db-only &
+  db_pid=$!
+else
+  phase='prepare shared scan input'
+  test "$component" = worker
+  test -z "$live"
+  test "${SECURITY_TRIVY_DB_READY:-}" = 1
+  if [ "$source_type" = archive ]; then
+    archive_dir=$(mktemp -d)
+    started=$(date +%s)
+    docker image save -o "$archive_dir/image.tar" "$image"
+    echo "Shared worker archive saved in $(( $(date +%s) - started ))s"
+    mount_dir=$archive_dir
+    syft_source=docker-archive:/image/image.tar
+    trivy_input=/image/image.tar
+  else
+    mount_dir=$layout
+    syft_source=oci-dir:/image
+    trivy_input=/image
+    manifest=$(jq -er '.manifests | select(length == 1) | .[0].digest | select(test("^sha256:[0-9a-f]{64}$"))' "$layout/index.json")
+    config=$(jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))' "$layout/blobs/sha256/${manifest#sha256:}")
+    jq -e '.os == "linux" and .architecture == "amd64"' "$layout/blobs/sha256/${config#sha256:}" >/dev/null
+    # Stream the OCI directory into Docker for the unchanged runtime probes.
+    # Both scanners can read the layout while the local import is running.
+    bash -eo pipefail -c '
+      tar -C "$1" -cf - . | docker image load
+      test "$(docker image inspect --format "{{.Id}}" "$2")" = "$2"
+      docker image tag "$2" "$3"
+    ' _ "$layout" "$config" "$image" &
+    image_load_pid=$!
+  fi
+  docker run --rm --network none -e SYFT_CHECK_FOR_APP_UPDATE=false -v "$mount_dir:/image:ro" \
+    anchore/syft:v1.55.0 "$syft_source" -o spdx-json > "$sbom" &
+  inventory_pid=$!
+  docker run --rm --network none -v "$mount_dir:/image:ro" \
+    -v "$(cd "$out" && pwd):/output" -v social-security-trivy-db:/root/.cache/trivy \
+    aquasec/trivy:0.76.1 image --skip-db-update --offline-scan --cache-backend memory \
+    --input "$trivy_input" --scanners vuln --format json --output /output/image-vulnerabilities.json &
+  image_scan_pid=$!
+fi
+
+if [ -n "$image_load_pid" ]; then
+  phase='OCI runtime image import'
+  wait "$image_load_pid"
+  image_load_pid=
+  docker image inspect --format '{{.Id}}' "$image" > "$out/image-reference.txt"
+fi
 
 if [ -z "$live" ]; then
   phase='runtime probes'
@@ -69,9 +128,17 @@ if [ -z "$live" ]; then
   docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
     --entrypoint node "$image" < scripts/playwright-browsers-inventory.js > "$out/playwright-browsers.json"
 fi
-phase='vulnerability database download'
-wait "$db_pid"
-db_pid=
+if [ -n "$db_pid" ]; then
+  phase='vulnerability database download'
+  wait "$db_pid"
+  db_pid=
+fi
+if [ -n "$inventory_pid" ]; then
+  phase='image inventory'
+  wait "$inventory_pid"
+  inventory_pid=
+  test -s "$sbom"
+fi
 # Keep complete reports, including unfixed and lower-severity findings.
 phase='SBOM scan'
 docker run --rm --network none -v "$(cd "$(dirname "$sbom")" && pwd):/input:ro" \
@@ -80,7 +147,12 @@ docker run --rm --network none -v "$(cd "$(dirname "$sbom")" && pwd):/input:ro" 
   --scanners vuln --format json --output /output/vulnerabilities.json \
   "/input/$(basename "$sbom")"
 test -s "$out/vulnerabilities.json"
-if [ -z "$live" ]; then
+if [ -n "$image_scan_pid" ]; then
+  phase='full-image scan'
+  wait "$image_scan_pid"
+  image_scan_pid=
+  test -s "$out/image-vulnerabilities.json"
+elif [ -z "$live" ]; then
   phase='image archive'
   # A third-party SPDX document can lose distro metadata. Scan the actual
   # image too, independently of the complete global-npm SBOM inventory.

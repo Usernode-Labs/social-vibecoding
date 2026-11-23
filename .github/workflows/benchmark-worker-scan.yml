@@ -1,0 +1,72 @@
+name: Benchmark fresh worker scan
+
+on:
+  push:
+    branches: [codex/worker-pr-scan-benchmark]
+    paths:
+      - .github/workflows/benchmark-worker-scan.yml
+      - .github/benchmarks/worker-scan.sh
+      - scripts/check-image-security.sh
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ${{ matrix.sample }} / ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: ['7010', '7000', '6999']
+        mode: [standard, archive, oci]
+        include:
+          - sample: '7010'
+            revision: '1918616c204f30096f61edca8adaf3652d733a13'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '7000'
+            revision: '5cf79b6c993c3799ed65b1724d6842bf99df0087'
+            base: '960ed83efa784832de8cb627df4b087a767c2a4c'
+          - sample: '6999'
+            revision: '0a42d7079ae170cb26b05270e62da2666e9e66f4'
+            base: '51e2e4bb1f1c6850734f8122f627eda488d41580'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Materialize the recorded worker context
+        env:
+          SAMPLE_REVISION: ${{ matrix.revision }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$SAMPLE_REVISION"
+          mkdir -p "$RUNNER_TEMP/worker-source"
+          git archive "$SAMPLE_REVISION" worker | tar -x -C "$RUNNER_TEMP/worker-source"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Time fresh build and the existing security checks
+        env:
+          BENCHMARK_MODE: ${{ matrix.mode }}
+          SECURITY_BASELINE_REVISION: ${{ matrix.base }}
+          SECURITY_SCAN_PLATFORM: linux/amd64
+        run: bash .github/benchmarks/worker-scan.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-scan-${{ matrix.sample }}-${{ matrix.mode }}
+          path: ${{ runner.temp }}/worker-scan-result/
+          if-no-files-found: error
+          retention-days: 7
