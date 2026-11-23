@@ -162,6 +162,7 @@ export function CommunitiesScreen() {
       name: pin.name,
       iconUrl: pin.iconUrl,
       iconEmoji: pin.iconEmoji,
+      iconColor: pin.iconColor,
       pictureUrl: pin.illustrationUrl,
       pictureDarkUrl: pin.illustrationDarkUrl,
       members: week ? week.members : joinedMembers.get(pin.slug),

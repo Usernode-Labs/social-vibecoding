@@ -42,7 +42,7 @@ import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
 
 import { PlusIcon, SpeechCheckIcon } from '@/components/ui/icons';
 
-import { useCommunityColor } from '../../lib/community-color';
+import { bandWash, useCommunityColor, useIconMainColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
@@ -101,8 +101,10 @@ const LOGO_SCENES = 6;
 
 /**
  * A community's scene, 1 to LOGO_SCENES: always the same one for the same
- * community. Its kit tile's band (app.css) and its card's background where
- * it has no picture (../communities/card.tsx `cardScene`) are drawn from it.
+ * community. Only the project page's hero still draws it
+ * (../dev-board/workshop/community-card.tsx): since 23 Nov 2026 no card or
+ * tile wears a stock background, and one with no picture is washed in its
+ * icon's colour instead (lib/community-color.ts `bandWash`).
  */
 export function communityScene(slug: string): number {
   // FNV-1a, so slugs that differ by a letter land on different scenes.
@@ -137,8 +139,8 @@ function cssUrl(url?: string | null): string | null {
 
 /**
  * The band's picture on a kit tile: the community's own (its dark twin in
- * the dark theme), as custom properties app.css lays over the tile's brand
- * background, which shows where there is none or it does not load.
+ * the dark theme), as custom properties app.css lays over the band's wash,
+ * which shows where there is none or it does not load.
  */
 function bandStyle(pin: { illustrationUrl?: string | null; illustrationDarkUrl?: string | null }): CSSProperties | undefined {
   const light = cssUrl(pin.illustrationUrl);
@@ -147,27 +149,46 @@ function bandStyle(pin: { illustrationUrl?: string | null; illustrationDarkUrl?:
   return { ['--cm-pic' as string]: light, ...(dark ? { ['--cm-pic-dark' as string]: dark } : {}) };
 }
 
+/**
+ * The kit tile's band under (or instead of) its picture: the wash of the
+ * community's icon colour, or its brand tint (the card with no picture,
+ * ../communities/card.tsx). No icon is drawn in it: the tile's own large
+ * icon stands right under the band, and a second would repeat it. Read only
+ * for a tile drawn as the kit's; `null` asks for nothing.
+ */
+/** The tile's custom properties, or none at all (no empty style attribute). */
+function tileStyle(...parts: Array<Record<string, string> | CSSProperties | undefined>): CSSProperties | undefined {
+  const merged = Object.assign({}, ...parts.filter(Boolean));
+  return Object.keys(merged).length ? merged as CSSProperties : undefined;
+}
+
+function useTileWash(pin: Omit<HomePin, 'member'> | null): { attrs: Record<string, string>; style?: Record<string, string> } | null {
+  const main = useIconMainColor(pin ? { color: pin.iconColor, iconUrl: pin.iconUrl, iconEmoji: pin.iconEmoji, key: pin.slug } : null);
+  return pin ? bandWash(pin.slug, main) : null;
+}
+
 export function PinTile({ pin, votes, editing, faded = false, community = false, onUnpin, onPin }: {
   pin: Omit<HomePin, 'member'>;
   votes: number;
   editing: boolean;
   faded?: boolean;
-  /** Draw the kit's tile: the community's picture on its band (a brand background where it has none) and its own icon over it. */
+  /** Draw the kit's tile: the community's picture on its band (its icon's wash where it has none) and its own icon over it. */
   community?: boolean;
   onUnpin?: () => void;
   onPin?: () => void;
 }) {
   const t = useMessages('home');
   const tc = useMessages('communities');
+  const wash = useTileWash(community ? pin : null);
   return (
     <a
       href={`/app/${encodeURIComponent(pin.slug)}/workshop`}
       className={faded ? `${TILE} opacity-60` : TILE}
       data-home-community={pin.slug}
       data-home-community-pinned={faded ? undefined : ''}
-      data-home-community-scene={community ? String(communityScene(pin.slug)) : undefined}
+      {...wash?.attrs}
       data-home-community-picture={community && bandStyle(pin) ? '' : undefined}
-      style={community ? bandStyle(pin) : undefined}
+      style={community ? tileStyle(wash?.style, bandStyle(pin)) : undefined}
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, pin.slug); }}
     >
       {/* z-[1] (#6372): the tile's own hit area (un-touch-target's ::after)

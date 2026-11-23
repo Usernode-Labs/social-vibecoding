@@ -8464,8 +8464,20 @@ const App = {
     const panel = typeof AppView !== 'undefined' && AppView._panelAddress;
     if (panel && currentFull === panel.to && screenIdOf(newUrl) === screenIdOf(panel.from)) return;
     const sameScreen = screenIdOf(currentFull) === screenIdOf(newUrl);
+    // #7045: a change's address the page has just forwarded to its request's
+    // (AppView._renderTopicSubView) is not somewhere to go back to: the
+    // router's second pass for the same link writes it in place too.
+    const fwd = typeof AppView !== 'undefined' ? AppView._forwardedChange : null;
+    // Compared as the change they name: the two passes may spell its address
+    // differently (with or without its session after the number).
+    const changeOf = (value) => {
+      const m = /^\/app\/[^/?#]+\/dev\/(?:changes|proposals|shared)\/\d+/.exec(String(value || ''));
+      return m ? m[0] : null;
+    };
+    const forwarded = !!fwd && Date.now() - fwd.at < 5000
+      && !!changeOf(fwd.from) && changeOf(fwd.from) === changeOf(newUrl);
 
-    if (opts.replace || sameScreen) {
+    if (opts.replace || sameScreen || forwarded) {
       history.replaceState(null, '', newUrl);
     } else {
       history.pushState(null, '', newUrl);

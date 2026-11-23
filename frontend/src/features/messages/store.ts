@@ -1569,6 +1569,15 @@ export function open(conversationId?: number | null): void {
   if (validId(conversationId) && conversationId === botConversationId()) { goBotAddress(botNewAddress(null)); return; }
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
   if (sidePanelTakes(target)) return;
+  // #7045: BACK TO THE LIST IS A STEP BACK WHEN THE LIST IS THE ENTRY BELOW
+  // (App._stepBackTo, the rule the header's arrow follows, #3620). A phone's
+  // drawer wrote `#messages` on top instead, every time: list, chat, list,
+  // chat, list, and the device's Back then reopened the chat just left.
+  if (!validId(conversationId) && window.location.hash !== target) {
+    try {
+      if ((window as { App?: { _stepBackTo?: (href: string) => boolean } }).App?._stepBackTo?.(target)) return;
+    } catch { /* no router to ask: write the address as before */ }
+  }
   if (window.location.hash === target) route(conversationId || null);
   else window.location.hash = target;
 }

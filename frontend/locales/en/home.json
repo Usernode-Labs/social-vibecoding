@@ -985,11 +985,11 @@
   },
   "communities.activeWeek_one": {
     "text": "{{formatted}} active this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). On a phone the line is a people glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.activeWeek_other": {
     "text": "{{formatted}} active this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). On a phone the line is a people glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), when no change went live: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.activeShort_one": {
     "text": "{{formatted}} active",
@@ -1001,11 +1001,11 @@
   },
   "communities.liveThisWeek_one": {
     "text": "{{formatted}} change live this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. On a phone the line is a tick glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.liveThisWeek_other": {
     "text": "{{formatted}} changes live this week",
-    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. On a phone the line is a tick glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.compactMembersActive_one": {
     "text": "<0>{{members}},</0> <1>{{formatted}} active this week</1>",

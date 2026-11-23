@@ -446,6 +446,21 @@ test('where the page scrolls under the top bar, the bar has a ground from the me
   assert.match(css, /html\[data-browser-scroller\] :is\(#platform-header, #landing-header\) \{\s*position: sticky;\s*top: var\(--browser-banner-h\);\s*z-index: 30;/, 'the bar it rises over');
 });
 
+test('the All items head meets the top bar where the place bar is folded (asked 23 Nov 2026, #7050)', () => {
+  const css = read('public', 'css', 'app.css');
+  // The place bar is folded from 768px, so its height plus the column gap
+  // (`--dev-ws-head-top`, 10px) left a strip cards scrolled through above
+  // the pinned head. In that same block the All items head drops it and rests
+  // on the top bar's measured foot (`--ws-pin-top`), as the Hub's header does.
+  assert.match(css,
+    /html:not\(\[data-skin\]\) body:has\(#platform-header \.header-place-name\) #dev-workshop \.dev-ws\[data-ws-tab="all"\] \.dev-ws-pane-head \{\s*top: var\(--ws-pin-top, 0px\);\s*\}/);
+  const fold = css.indexOf('body:has(#platform-header .header-place-name) #dev-workshop .dev-ws > .dev-ws-placebar');
+  const head = css.indexOf('#dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head');
+  assert.ok(fold > 0 && head > fold, 'it goes in the 768px block that folds the bar, so it applies exactly when the bar is gone');
+  // The base rule keeps the measured gap for every other look and tab.
+  assert.match(css, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\)/);
+});
+
 test('open, Settings is a square at the end of You\'s row, centred on its line, its glyph in the middle', () => {
   const block = menuBlock();
   const all = rules(block);

@@ -174,7 +174,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
     'Overview (All items and the rule), Your work, then What happened');
   assert.ok(!/<WorkshopNotices|data-ws-notices/.test(ws), 'and no Lately in this project panel');
   assert.ok(!/data-ws-since=""|data-ws-weeks=""|<ApprovalRules/.test(ws), 'Since your last visit, Week by week and the rules card are gone');
-  assert.match(ws, /\{slug && v\.mine && v\.mine\.viewer \? <YourWorkCard slug=\{slug\} name=\{projectName\} \/> : null\}/,
+  assert.match(ws, /\{slug && v\.mine && v\.mine\.viewer \? \(\n\s+<YourWorkCard\n\s+slug=\{slug\}\n\s+name=\{projectName\}\n\s+solo=\{community\?\.audience === 'solo'\}\n\s+live=\{[^\n]+\}\n\s+\/>\n\s+\) : null\}/,
     'your work is one row, for a signed-in viewer');
   assert.ok(!/data-ws-mine=|data-ws-fresh|data-ws-part="happening"/.test(ws), 'and What\'s happening is gone');
   assert.match(ws, /act=\{freshAct\}/, 'What happened\'s new requests end with Build it');

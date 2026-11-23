@@ -506,18 +506,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    chosen by the control's own state (shown is `inert`-free), so nothing
    is written to the scroller, which public/js/group-chat.js owns in the
    group chat. The foot's control hangs from the box right after the
-   scroller, the top's from the box right before it. */
+   scroller, the top's from the box right before it. Since the phone
+   review's #26 (23 Nov 2026) the foot's pill sits on the reply box's edge,
+   half over it, so only the last 28px fade. */
 :has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent calc(100% - 2px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent calc(100% - 2px));
 }
 [data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + * {
   -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
   mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
 }
 [data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + :has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 28px), transparent calc(100% - 2px));
+  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 28px), transparent calc(100% - 2px));
 }
 /* WHO IS TYPING TAKES NO ROOM UNTIL SOMEBODY TYPES (1 November 2026). The
    line held 18px open between the transcript and the reply box whether or
@@ -850,11 +852,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    conversation" (desktop only — below 768px the list IS the screen until you
    pick a row) is the same words standing on the strip where the sheet would
    be, because a card there would read as a conversation with nothing in it. */
+/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
+.messages-guide { display: none; }
+/* A rule of its own (phone review, 23 Nov 2026, #44): written inside the list
+   below, it hid every state with it, and a search that found nothing left a
+   blank page. */
 .messages-state,
 .messages-empty,
 .messages-thread-empty,
-/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
-.messages-guide { display: none; }
 .messages-no-selection {
   display: flex;
   align-items: center;
@@ -1200,6 +1205,14 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-grouped:hover .messages-message-gutter { visibility: visible; }
 @media (hover: none) {
   .messages-message-gutter { visibility: visible; }
+  /* PHONE REVIEW #57 (23 Nov 2026): IN A CONVERSATION'S BUBBLES THE RUN'S
+     HEAD CARRIES THE TIME, on touch. Shown on every continuation it was a
+     second clock in a second format beside the head's ("Nov 18, 12:05 AM"
+     over "12:05 AM"), hard against both screen edges. Their side's column
+     stays, empty, so the bubble keeps its line under the first; yours has
+     no face to line up with, so it goes, and your bubbles keep one edge. */
+  .messages-message-bubble > .messages-message-gutter { visibility: hidden; }
+  .messages-message-bubble.messages-message-self > .messages-message-gutter { display: none; }
 }
 
 /* ── A conversation has sides (#5680) ───────────────────────────────────
@@ -1538,6 +1551,23 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 
 /* The phone's sheet: a scrim, and a sheet rising from the bottom edge. */
 .msgx-sheet-layer { position: fixed; z-index: 2100; inset: 0; }
+/* PHONE REVIEW #20 (23 Nov 2026): a hold opens this sheet and nothing else.
+   iOS also selected the word under the finger and laid its own Copy · Look
+   Up · Translate callout over the sheet's "Reply in thread", with handles
+   on a word in it. So the system's long press is off on the row while a
+   finger is held on it (useLongPress sets `data-press-armed`, and takes it
+   away on the lift, so text can be selected as before) and on the sheet
+   itself, whose rows are buttons; a field in it (the emoji search) keeps
+   its text. */
+[data-press-armed],
+[data-press-armed] *,
+.msgx-sheet-layer,
+.msgx-sheet-layer * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.msgx-sheet-layer :is(input, textarea) { -webkit-user-select: text; user-select: text; }
 .msgx-sheet-scrim { position: absolute; inset: 0; border: 0; background: rgba(0, 0, 0, 0.32); }
 .msgx-sheet {
   position: absolute;
@@ -2626,6 +2656,14 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   .messages-invite-actions { justify-content: stretch; }
   .messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
   .messages-message { padding-inline-end: 12px; padding-inline-start: 12px; }
+  /* #57: the continuation's clock borrows 8px of this row's 12px, not the
+     12px it borrows of a wide window's 16px, so it starts 4px in from the
+     edge instead of on it (and on your side ends 4px in, not shaved). The
+     column is 4px narrower to match, so the words stay under the name:
+     12 - 8 + 44 + 12 = 12 + 36 + 12. At 10px "12:45 PM" is about 42px,
+     so the clock never runs past its column. */
+  .messages-message-gutter { flex-basis: 44px; width: 44px; margin-inline-start: -8px; font-size: 10px; }
+  .messages-message-bubble.messages-message-self > .messages-message-gutter { margin-inline-start: 0; margin-inline-end: -8px; }
   .messages-attachment img { width: 112px; }
 }
 
@@ -8087,7 +8125,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-stri
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
 /* A section's label: Home's, from the same tokens; a section's room is over its label. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > h2[data-ws-part="overview"] { margin-top: 0.25rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { display: block; }
 /* The label follows its card in the document and stands over it on the page. */
@@ -8119,13 +8157,25 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head { position: absolute; inset-block-start: -1.75rem; inset-inline-end: 0.25rem; }
 /* The card's own heading is said, not shown: the four cards have no card to head, and "See all" follows it. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open { font-size: var(--wip-link-size); font-weight: 650; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open {
+  /* Home's way to all of a section (.wip-head-more): the label's own type and ink, its chevron in the action colour (phone review #63). */
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open:hover { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open > svg { color: var(--wip-ink-action); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-dash { display: contents; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   column-gap: var(--wip-tile-gap);
-  align-items: center;
+  /* From the top, every card alike (phone review #64): centred, a card with a third line (4 on you, from 3 last week) held its mark and number lower than its neighbour's. */
+  align-items: start;
+  align-content: start;
   width: 100%;
   min-height: 4.5rem;
   margin: 0;
@@ -8153,10 +8203,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="unclaimed"] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="votes"] > .dev-ws-dash-mark { background-color: var(--wip-mark-1-bg); color: var(--wip-mark-1-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="shipped"] > .dev-ws-dash-mark { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+/* A zero wears no colour (phone review #64): a green tick over "0 live this week" read as good news. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell][data-zero] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell > b {
   grid-column: 2;
   grid-row: 1;
-  align-self: end;
   font-size: 1.5rem;
   font-weight: 750;
   line-height: 1.1;
@@ -8175,8 +8226,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 }
 /* The mark says what the dot said. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot { display: none; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; margin: 0; font-size: 0.75rem; white-space: nowrap; color: var(--wip-ink-muted); }
+/* It wraps (phone review #23): "from 3 by this time last week" on one line needed 173px of a 193px card and ran off it and off the screen, and on the Duo sideways it let the page be dragged sideways. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; min-width: 0; margin: 0; font-size: 0.75rem; color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="owed"] {
+  justify-self: start;
+  white-space: nowrap;
   padding: 0.1875rem 0.625rem;
   border-radius: var(--wip-radius-pill);
   background: var(--wip-cta-from);
@@ -8193,7 +8247,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { padding: 0.75rem; }
 }
 /* The bot's line and the rule: two slim cards, each half the row. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules], [data-ws-dash-none]) {
   grid-column: 1 / -1;
   align-items: center;
   min-height: 3rem;
@@ -8436,6 +8490,16 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     overflow: hidden;
     border: 0;
     box-shadow: none;
+  }
+  /* THE ALL ITEMS HEAD KEEPS NO GAP OF THE FOLDED PLACE BAR (asked #7050).
+     `useStripInsets` still publishes the place bar's height plus the
+     column gap as `--dev-ws-head-top`, and the head rests on that. From
+     768px the bar above is folded to nothing, so that 10px was a strip
+     cards scrolled through. Scoped like the fold above: the head comes to
+     rest on the top bar's foot exactly when the bar it was spaced from is
+     gone, and every other look and Workshop page keeps its own offset. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head {
+    top: var(--ws-pin-top, 0px);
   }
   html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }
   html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title { display: none; }
@@ -8721,6 +8785,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-card 
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-tray);
   box-shadow: none;
+}
+/* ONE COLUMN, NO TRAY (phone review #89): where the board is one column its
+   cards stand on the page, as the Workshop's do, at the head's own edges.
+   The desktop's tray inside a white head read as frames nested in frames,
+   the head 394px wide over a 358px grey column. The head is a card of its
+   own then, rounded at its foot too. */
+@container ws-board (max-width: 975.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-kanban-card { padding: 0; background-color: transparent; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-ws-pane-body { padding-inline: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-ws-board { padding-inline: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]):not([data-ws-head-pinned]) .dev-ws-pane-head { border-radius: var(--wip-card-radius); }
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-step { gap: 0.5rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-step-tile {
@@ -9132,19 +9207,24 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
   box-shadow: inset 0 0 0 1px var(--wip-soft-line);
 }
 /* THE BAND: the community's own picture (pinned-communities.tsx `bandStyle`,
-   its dark twin in the dark), over one of the brand kit's six backgrounds
-   (the sky, the halftone sun, the dream, the stars, the ruled paper, the
-   torn collage; public/brand/bg, whose README says where they came from),
-   which shows where it has none or the picture does not load. Each
-   community has its own background (`communityScene`, three on), so a
-   reordered grid keeps every tile's. */
+   its dark twin in the dark), over the wash of its icon's colour or its
+   brand tint (the card with no picture, "A COMMUNITY'S CARD"), which shows
+   where it has none or the picture does not load. The tile's own large icon
+   stands right under the band, so the band draws no icon of its own: a
+   second would repeat it. No stock background (23 Nov 2026). */
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community] {
   position: relative;
   isolation: isolate;
   overflow: hidden;
   padding-top: calc(var(--wip-scene-band) + var(--wip-cell-pad));
-  --cm-scene: var(--wip-scene-1);
+  --cm-band-wash: radial-gradient(farthest-corner at 50% 45%, color-mix(in oklab, var(--cm-wash) var(--cm-band-near), var(--wip-card-bg)), color-mix(in oklab, var(--cm-wash) var(--cm-band-far), var(--wip-card-bg)));
 }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-cm-band="wait"] { --cm-band-wash: linear-gradient(var(--cm-pic-ground), var(--cm-pic-ground)); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-cm-tint="1"] { --cm-wash: var(--cm-tint-1); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-cm-tint="2"] { --cm-wash: var(--cm-tint-2); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-cm-tint="3"] { --cm-wash: var(--cm-tint-3); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-cm-tint="4"] { --cm-wash: var(--cm-tint-4); }
+html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-cm-tint="5"] { --cm-wash: var(--cm-tint-5); }
 html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community]::before {
   content: "";
   position: absolute;
@@ -9152,17 +9232,11 @@ html:not([data-skin]) #communities-body #communities-pinned-section .communities
   z-index: -1;
   height: var(--wip-scene-band);
   pointer-events: none;
-  background: var(--cm-pic, none) center / cover no-repeat, var(--cm-scene) center / cover no-repeat;
+  background: var(--cm-pic, none) center / cover no-repeat, var(--cm-band-wash) center / cover no-repeat;
 }
 html:not([data-skin]).dark #communities-body #communities-pinned-section .communities-grid > [data-home-community]::before {
-  background-image: var(--cm-pic-dark, var(--cm-pic, none)), var(--cm-scene);
+  background-image: var(--cm-pic-dark, var(--cm-pic, none)), var(--cm-band-wash);
 }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="1"] { --cm-scene: var(--wip-scene-4); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="2"] { --cm-scene: var(--wip-scene-5); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="3"] { --cm-scene: var(--wip-scene-6); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="4"] { --cm-scene: var(--wip-scene-1); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="5"] { --cm-scene: var(--wip-scene-2); }
-html:not([data-skin]) #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="6"] { --cm-scene: var(--wip-scene-3); }
 @media (hover: hover) {
   html:not([data-skin]) #communities-screen #communities-body:not([data-editing]) #communities-pinned-section .communities-grid > :is(a, button):hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
 }
@@ -9175,10 +9249,15 @@ html:not([data-skin]) #communities-screen .communities-grid [data-home-community
   box-shadow: 0 0 0 1.5px var(--cm-icon-outline);
   overflow: hidden;
 }
-/* An emoji or an initial is on a white tile, which a white card would hide: it takes the compact card's dark hairline. */
-html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo:not([data-icon="image"]) {
-  background-color: var(--cm-icon-tile);
-  box-shadow: 0 0 0 1px var(--cm-icon-edge);
+/* An emoji or an initial is on a white tile, which a white card would hide
+   (phone review #90: it read as a bare glyph): it wears the tile Home's
+   Pinned apps give it, the look's tile colour on its hairline and soft
+   shadow. Spelled as the face's own path (`> span:first-child > `), so it
+   outranks the rule above that takes every community face's shadow off,
+   which is what left the tile with no edge. */
+html:not([data-skin]) #communities-screen .communities-grid [data-home-community] > span:first-child > .home-community-logo:not([data-icon="image"]) {
+  background-color: var(--wip-icon-tile);
+  box-shadow: inset 0 0 0 1px var(--wip-icon-edge), var(--wip-icon-shadow);
 }
 html:not([data-skin]) #communities-screen .communities-grid [data-home-community] .home-community-logo > img {
   display: block;
@@ -10027,6 +10106,17 @@ html:not([data-skin]) :is(#platform-header, .platform-parked, .nav-drawer-untint
 html:not([data-skin]) .messages-layout.messages-drawer {
   background-color: var(--wip-card-bg);
 }
+/* PHONE REVIEW #133 (23 Nov 2026): THE CARD RUNS UP UNDER THE BAR'S FOOT,
+   SQUARE, as the Homeroom bot tab's ground does. It kept the lift's 28px
+   top corners (and so did the conversation laid over it), so where the
+   bar's own rounded foot met them the wallpaper showed through two small
+   gaps: a blue wedge on the left and a purple one on the right in the dark,
+   cream on cream (and unseen) in the light. The drawer is a phone's alone. */
+html:not([data-skin]) .messages-layout.messages-drawer,
+html:not([data-skin]) .messages-layout.messages-drawer > .messages-thread-pane {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
 /* In a conversation the other side's bubble is cream; yours keeps its tint. */
 html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,
 html:not([data-skin]) .gc-bubble:not(.gc-bubble-self) {
@@ -10057,6 +10147,18 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request,
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) { max-width: none; margin-inline: 0; padding-inline: var(--wip-gutter); }
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(#gc-thread-head:empty) .dev-request-sheet { background: none; border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* A DECISION'S DISCUSSION LINES UP WITH THE POST ABOVE IT (asked 23 Nov 2026, #7052): a request's and a change's
+   replies run the page's width, with no card (the rule at "The stream: no sheet of its own", further down). A
+   decision kept the base card's 900px cap and centred it, so on the widened page it floated in the middle under a
+   post that filled the width. Here it takes the post's own edges: its text column on the left (the post's 16px
+   padding, the 36px avatar and the 12px gap, `.messages-message`) and its 16px on the right. Phones, a side panel,
+   the page with the reader open, and the other looks keep the centred card. */
+@media (min-width: 768px) {
+  html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request.dev-decision #gc-thread-messages {
+    max-width: none;
+    margin-inline: calc(16px + 36px + 12px) 16px;
+  }
+}
 /* THE PAGE'S TITLE (asked 20 Nov 2026): the other places open under their name ("Hub", "Needs you", "Workshop"), and
    this page opened under nothing. It says the place it is under, in the band and at the size the others have theirs.
    The standard look alone, from 768px, on the page: a phone's header says it, and a side panel has its own head. */
@@ -10251,13 +10353,14 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
 
 /* ── A COMMUNITY'S CARD ("New, lighter", approved 20 Nov 2026) ────────────
    frontend/src/features/communities/card.tsx draws it wherever a community
-   is a card. The big card: its picture first, edge to edge and 16:9 (one of
-   the brand kit's six backgrounds where it has none, `data-cm-scene`), the
+   is a card. The big card: its picture first, edge to edge and 16:9, the
    icon standing mostly below the picture's lower edge on a thin light
    outline, the name over how many members beside it, what it says it is in
-   two lines at most, then this week on one line, which follows the words.
-   The compact card (`data-cm-size="compact"`) is the same card with the
-   picture taken off. Every value a look may draw its own way is a --cm-*
+   two lines at most, then this week in words at the card's foot. A card
+   with no picture draws its icon as the picture, on a wash of the icon's
+   colour (THE CARD WITH NO PICTURE, below). The compact card
+   (`data-cm-size="compact"`) is the same card with the picture taken off.
+   Every value a look may draw its own way is a --cm-*
    token set on <html>: these are the shell's own, and the standard look and
    the brand look each set theirs. */
 :root {
@@ -10285,6 +10388,22 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   --cm-icon-tile: #ffffff;
   /* What a picture stands on while it loads. */
   --cm-pic-ground: rgb(0 0 0 / 0.05);
+  /* A card with no picture (23 Nov 2026): its icon in the band, how much of
+     the icon's colour the wash takes at the band's middle and at its edges
+     (mixed into the card's own ground, so every look's card keeps its
+     ground), and the brand tints a card with no colour of its own wears,
+     one per community (lib/community-color.ts `bandTint`). */
+  --cm-band-icon: 64px;
+  --cm-band-icon-radius: 16px;
+  --cm-band-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 8px 18px -6px rgb(0 0 0 / 0.3);
+  --cm-band-tile: #ffffff;
+  --cm-band-near: 20%;
+  --cm-band-far: 38%;
+  --cm-tint-1: #f5c518;
+  --cm-tint-2: #4f9be8;
+  --cm-tint-3: #8a90f2;
+  --cm-tint-4: #3fb68b;
+  --cm-tint-5: #f08a5d;
 }
 @media (min-width: 640px) { :root { --cm-cols: 2; } }
 @media (min-width: 1024px) { :root { --cm-cols: 4; } }
@@ -10292,6 +10411,17 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   --cm-icon-edge: rgb(255 255 255 / 0.14);
   --cm-icon-tile: #2a2a2d;
   --cm-pic-ground: rgb(255 255 255 / 0.08);
+  /* In the dark the wash is a breath of the colour and the tints are dimmed
+     (a bright yellow band was the loudest thing on the dark page). */
+  --cm-band-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.35), 0 8px 18px -6px rgb(0 0 0 / 0.6);
+  --cm-band-tile: #2a2a2d;
+  --cm-band-near: 18%;
+  --cm-band-far: 32%;
+  --cm-tint-1: #b89a2e;
+  --cm-tint-2: #3f78b8;
+  --cm-tint-3: #6b6fc0;
+  --cm-tint-4: #2f8a6b;
+  --cm-tint-5: #b8674a;
 }
 /* A row gives each card at least --cm-card-min and holds no more than
    --cm-cols: four where four fit, fewer as it narrows. The cards of a row
@@ -10346,12 +10476,56 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   overflow: hidden;
   background: var(--cm-pic-ground) center / cover no-repeat;
 }
-.cm-card-pic[data-cm-scene="1"] { background-image: url('/brand/bg/sky.webp'); }
-.cm-card-pic[data-cm-scene="2"] { background-image: url('/brand/bg/halftone.webp'); }
-.cm-card-pic[data-cm-scene="3"] { background-image: url('/brand/bg/dream.webp'); }
-.cm-card-pic[data-cm-scene="4"] { background-image: url('/brand/bg/stars.webp'); }
-.cm-card-pic[data-cm-scene="5"] { background-image: url('/brand/bg/collage.webp'); }
-.cm-card-pic[data-cm-scene="6"] { background-image: url('/brand/bg/stripes.webp'); }
+/* THE CARD WITH NO PICTURE (decided 23 Nov 2026; phone review #39, #66,
+   #134, S10): the band is the icon, large and centred, on a soft wash of its
+   main colour (`data-cm-band="wash"`, `--cm-wash` set on the band), or of the
+   community's brand tint where the icon has little colour or is an emoji or
+   a letter (`data-cm-band="tint"`, `data-cm-tint`). While an icon's colour is
+   read the band is the plain ground (`data-cm-band="wait"`). No stock
+   background: nothing to load, and no two neighbours alike. */
+.cm-card-pic[data-cm-band] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cm-card-pic[data-cm-tint="1"] { --cm-wash: var(--cm-tint-1); }
+.cm-card-pic[data-cm-tint="2"] { --cm-wash: var(--cm-tint-2); }
+.cm-card-pic[data-cm-tint="3"] { --cm-wash: var(--cm-tint-3); }
+.cm-card-pic[data-cm-tint="4"] { --cm-wash: var(--cm-tint-4); }
+.cm-card-pic[data-cm-tint="5"] { --cm-wash: var(--cm-tint-5); }
+.cm-card-pic:is([data-cm-band="wash"], [data-cm-band="tint"]) {
+  background: radial-gradient(farthest-corner at 50% 45%, color-mix(in oklab, var(--cm-wash) var(--cm-band-near), var(--cm-bg)), color-mix(in oklab, var(--cm-wash) var(--cm-band-far), var(--cm-bg)));
+}
+/* The band's icon and what is drawn on it (the votes waiting, the edit discs). */
+.cm-band-face {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+}
+.cm-band-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cm-band-icon);
+  height: var(--cm-band-icon);
+  overflow: hidden;
+  border-radius: var(--cm-band-icon-radius);
+  box-shadow: var(--cm-band-icon-shadow);
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cm-muted);
+}
+/* An emoji or an initial: the glyph large on a white tile. */
+.cm-band-icon:not([data-icon="image"]) { background-color: var(--cm-band-tile); }
+.cm-band-icon > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
+}
+.cm-band-icon > span:not(.app-icon-wait) { font-size: inherit; }
 .cm-card-img {
   position: absolute;
   inset: 0;
@@ -10413,6 +10587,9 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   min-width: 0;
   padding-top: 6px;
 }
+/* Nothing beside the name: it starts at the card's left edge, a little
+   under the band. */
+.cm-card-body[data-cm-bare] .cm-card-id { padding-top: 10px; }
 .cm-card-name {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -10446,14 +10623,17 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   line-height: var(--cm-small-line);
   color: var(--cm-body);
 }
-/* This week, 12px under the words. The dot between its two parts is drawn
-   before each, in the 14px before it; the line starts 14px early and its
-   box cuts that off, so a line (the first, or one that wraps) never starts
-   with a dot. */
+/* This week, at the card's foot, at least 12px under the words, so every
+   card of a row has it on one line (phone review S3: it sat under the name
+   on one card and at the foot of its neighbour). The dot between its two
+   parts is drawn before each, in the 14px before it; the line starts 14px
+   early and its box cuts that off, so a line (the first, or one that wraps)
+   never starts with a dot. */
 .cm-card-week {
   display: block;
   overflow: hidden;
-  margin-top: 12px;
+  margin-top: auto;
+  padding-top: 12px;
   font-size: var(--cm-small);
   line-height: var(--cm-small-line);
   font-variant-numeric: tabular-nums;
@@ -10480,29 +10660,6 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   font-weight: 600;
   color: var(--cm-link);
 }
-/* Under 640px: two glyphs and their numbers, 12px apart, always one line. */
-.cm-week-glyphs {
-  display: none;
-  align-items: center;
-  gap: 12px;
-}
-.cm-week-glyphs > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.cm-week-glyph {
-  flex: none;
-  width: 14px;
-  height: 14px;
-}
-@media (max-width: 639.98px) {
-  .cm-card .cm-week-words { display: none; }
-  .cm-card .cm-week-glyphs { display: flex; }
-}
-@media (min-width: 640px) {
-  .cm-week-sr { display: none; }
-}
 /* FEATURED'S FIRST ROW, LARGER (asked 20 Nov 2026), signed in or out:
    features/communities/card.tsx `useLeadCount` decides how many (one fewer
    than a row of the rest, three at most; the whole width on a phone) and
@@ -10522,6 +10679,12 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
 .cm-card[data-cm-size="lead"] .cm-card-name { font-size: 18px; line-height: 22px; }
 .cm-card[data-cm-size="lead"] :is(.cm-card-members, .cm-card-desc, .cm-card-week) { font-size: 14px; line-height: 20px; }
 .cm-card[data-cm-size="lead"] .cm-card-desc { margin-top: 10px; }
+.cm-card[data-cm-size="lead"] .cm-band-icon {
+  --cm-band-icon: 80px;
+  --cm-band-icon-radius: 20px;
+  font-size: 42px;
+}
+.cm-card[data-cm-size="lead"] .cm-card-body[data-cm-bare] .cm-card-id { padding-top: 14px; }
 /* A PHONE (under 640px): two cards to a row, 12px apart, each a size down
    (the icon 44px, 11px over the picture's edge, the name 14px); Featured's
    first card the whole width, its icon 60px. */
@@ -10539,6 +10702,7 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
     font-size: 24px;
   }
   .cm-grid[data-cm-grid="join"] .cm-card-id { gap: 1px; padding-top: 5px; }
+  .cm-grid[data-cm-grid="join"] .cm-card-body[data-cm-bare] .cm-card-id { padding-top: 9px; }
   .cm-grid[data-cm-grid="join"] .cm-card-name { font-size: 14px; line-height: 17px; }
   .cm-card[data-cm-size="lead"] .cm-card-face { margin-top: -15px; }
   .cm-card[data-cm-size="lead"] .cm-card-icon {
@@ -10553,15 +10717,15 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
    its picture growing a little; still for anyone who asks for less motion. */
 @media (hover: hover) {
   .cm-card[data-cm-lift]:hover { box-shadow: var(--cm-edge-lift); }
-  .cm-card[data-cm-lift] .cm-card-img { transition: transform 300ms ease-out; }
-  .cm-card[data-cm-lift]:hover .cm-card-img { transform: scale(1.04); }
+  .cm-card[data-cm-lift] :is(.cm-card-img, .cm-band-face) { transition: transform 300ms ease-out; }
+  .cm-card[data-cm-lift]:hover :is(.cm-card-img, .cm-band-face) { transform: scale(1.04); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cm-card[data-cm-lift] .cm-card-img { transition: none; }
-  .cm-card[data-cm-lift]:hover .cm-card-img { transform: none; }
+  .cm-card[data-cm-lift] :is(.cm-card-img, .cm-band-face) { transition: none; }
+  .cm-card[data-cm-lift]:hover :is(.cm-card-img, .cm-band-face) { transform: none; }
 }
-:where(html[data-motion="reduce"]) .cm-card[data-cm-lift] .cm-card-img { transition: none; }
-:where(html[data-motion="reduce"]) .cm-card[data-cm-lift]:hover .cm-card-img { transform: none; }
+:where(html[data-motion="reduce"]) .cm-card[data-cm-lift] :is(.cm-card-img, .cm-band-face) { transition: none; }
+:where(html[data-motion="reduce"]) .cm-card[data-cm-lift]:hover :is(.cm-card-img, .cm-band-face) { transform: none; }
 /* A card held in place while the list is read: the card's ground, its
    picture's shape, and about as tall as a card's words. */
 .cm-card-skel .cm-card-pic { background-color: var(--cm-pic-ground); }
@@ -12102,6 +12266,8 @@ span.gc-vote-btn-icon { cursor: default; }
    "Checks failing · 3" red on the folded row and near-black on the open
    card. Where there is no fill the label inherits the tone. */
 .gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+/* (#102, phone review 23 Nov 2026) A pill's spinner had 1px before its word: "Building" touched the arc. */
+.gc-vote-count-label > .dc-status-icon { margin-inline-end: 5px; }
 .dev-status-pill-block:not(:has(> .gc-vote-fill)) .gc-vote-count-label { color: inherit; }
 /* The pill absorbed the standalone pulsing "Vote" badge, the advisory
    chip and the explicit-approval chip. Their glyphs ride inside the
@@ -13453,6 +13619,14 @@ html.un-kb #settings-content-col > .settings-sheet {
 @media (max-width: 1023px) {
   #settings-mobile-menu-host { padding: 4px 0 0; }
 }
+/* While "Find a setting" holds a query, the list is its results alone
+   (phone review, 23 Nov 2026, #61). The footer under the menu (the wallet
+   and node group of the phone app, then Sign out) is no page the search
+   reads, so it stood under the results as if it matched; Sign out is still
+   offered as a result when the words ask for it (settings-nav.tsx
+   matchesSignOut). settings.js moves the footer between the two columns, so
+   the rule follows it to whichever one holds the results. */
+:is(#settings-sidebar-col, #settings-content-col):has([data-settings-filter-results]) > #settings-footer { display: none; }
 
 /* ── The bell's sheet on the ladder ─────────────────────────────────────
    #notifications-sheet wears `.dc-lift dc-lift-panel` (features/notifications/
@@ -16374,6 +16548,23 @@ button.attr-chip { cursor: pointer; }
     min-width: 0;
   }
   .dev-kanban-col.dev-kanban-col-active { display: block; }
+}
+/* ONE COLUMN UNTIL THE FOUR FIT WHOLE (phone review #77). All items' pane
+   is a container, and below 976px of it (four 220px columns, their three
+   gaps and the board's 36px of padding; room for three of 300px) the board
+   is the phone's: one column, the strip its tabs. At the 640px line alone, the iPhone Duo's
+   inner screen (669pt) got columns of about 220px: two and a half, the third
+   cut mid-button, a title ten letters a line, a byline over three lines.
+   The pane and not the window, because the sidebar takes 212px of a window
+   from 768px up. Not while an item is open beside the board: there its
+   columns keep their 316px and scroll sideways (THE BOARD BESIDE THE
+   PANEL). card/dev-kanban.tsx reads which of the two CSS drew
+   (`useBoardOneColumn`), so the strip and the deferred columns follow. */
+#dev-workshop .dev-ws-pane { container: ws-board / inline-size; }
+@container ws-board (max-width: 975.98px) {
+  .dev-ws:not([data-ws-side-open]) #dev-kanban { display: block; overflow-x: hidden; }
+  .dev-ws:not([data-ws-side-open]) #dev-kanban > .dev-kanban-col { display: none; min-width: 0; }
+  .dev-ws:not([data-ws-side-open]) #dev-kanban > .dev-kanban-col.dev-kanban-col-active { display: block; }
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -19389,8 +19580,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   position: absolute;
   box-sizing: border-box;
   width: max-content;
-  max-width: max(120px, min(240px, calc(100% - var(--pin-x) - 34px)));
-  padding: 6px 10px;
+  max-width: min(calc(100% - 8px), max(120px, min(240px, calc(100% - var(--pin-x) - 34px))));
+  /* (#60, phone review 23 Nov 2026) The 6px above and below are a
+     transparent border, not padding: a line clamp clips at the padding
+     box, so padding showed the top of a seventh line under the ellipsis.
+     The border is outside that box, and the ground still paints under it. */
+  padding: 0 10px;
+  border: 6px solid transparent;
+  border-inline-width: 0;
   border-radius: 12px;
   background: var(--dc-sheet);
   color: var(--text-primary);
@@ -19408,10 +19605,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 /* Right of the pin, or left of the point in the picture's right part; its
    foot level with the point, or its head there near the picture's top. */
-.pin-shot-mark[data-side="right"] .pin-shot-note { left: calc(var(--pin-x) + 30px); }
+/* (#60) Never past the picture's edge: where the room beside the pin is
+   narrower than the note's least width (120px), the note moves in to end
+   4px inside the picture instead of hanging over the page. */
+.pin-shot-mark[data-side="right"] .pin-shot-note { left: max(4px, min(calc(var(--pin-x) + 30px), calc(100% - 124px))); }
 .pin-shot-mark[data-side="left"] .pin-shot-note {
-  right: calc(100% - var(--pin-x) + 6px);
-  max-width: max(120px, min(240px, calc(var(--pin-x) - 10px)));
+  right: max(4px, min(calc(100% - var(--pin-x) + 6px), calc(100% - 124px)));
+  max-width: min(calc(100% - 8px), max(120px, min(240px, calc(var(--pin-x) - 10px))));
 }
 .pin-shot-mark[data-rise="up"] .pin-shot-note { bottom: calc(100% - var(--pin-y)); }
 .pin-shot-mark[data-rise="down"] .pin-shot-note { top: var(--pin-y); }
@@ -19582,11 +19782,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-self > .min-w-0 { background: transparent; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-username-self { color: inherit; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { gap: 8px; margin-bottom: 0; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { column-gap: 8px; row-gap: 0; margin-bottom: 0; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 17px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 15px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug { font-size: 17px; line-height: 1.3; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > [aria-hidden="true"] {
+/* (#112, phone review 23 Nov 2026) Homeroom bot's logo is an <img>, not an
+   aria-hidden tile, so it kept its 44px and its words started 8px further in
+   than everyone else's. Every sender's face is the same 36px here. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > :is([aria-hidden="true"], [data-bot-avatar]) {
   width: 36px;
   height: 36px;
   font-size: 13px;
@@ -19623,9 +19826,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--text-muted);
 }
 .dev-request-event-glyph { flex: 0 0 36px; text-align: center; font-size: 15px; }
-.dev-request-event-text { min-width: 0; overflow-wrap: anywhere; }
+.dev-request-event-text { min-width: 0; overflow-wrap: anywhere; text-wrap: wrap; }
 .dev-request-event-text b { color: var(--text-primary); font-weight: 600; }
-.dev-request-event-time { white-space: nowrap; }
+/* (#116) The time, and the change it was on, under the sentence. */
+.dev-request-event-time { display: block; font-size: 0.8125rem; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-request-event-link {
   appearance: none;
   border: 0;
@@ -22753,6 +22957,12 @@ button.dev-ws-recent-card {
   .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { padding-inline: 12px; }
   .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { padding-inline: 0; }
 }
+/* The Workshop and All items keep the hub's 16px too (phone review #63,
+   #89): their cards ran to 4px from the screen's edge, a phone's All items
+   head was wider than the list under it, and the labels started at 4 and 8. */
+@media (max-width: 767.98px) {
+  .dev-ws:is([data-ws-tab="workshop"], [data-ws-tab="all"]) > .dev-ws-tabbody { padding-inline: 12px; }
+}
 .dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
@@ -23360,6 +23570,25 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     max-width: 100%; overflow: hidden; text-overflow: ellipsis;
     font-size: 12px; font-weight: 600; opacity: 0.78;
   }
+  /* PHONE REVIEW #131 (23 Nov 2026): A CONVERSATION'S DISCS ARE THE BAR'S.
+     Its members and ⋯ (portalled from the thread's header, ChatBarSlot)
+     wear the bar's own discs, as the bell does: 28px, no fill at rest, the
+     header's ink. The look picker's Look and Theme fold away meanwhile
+     (both are in Settings), so the name and who it is with keep the width. */
+  .nav-drawer-chat-actions { display: flex; align-items: center; gap: 10px; }
+  .nav-drawer-chat-actions .messages-thread-action {
+    width: 28px; height: 28px; position: relative;
+    background: transparent; box-shadow: none;
+    color: var(--brand-ink);
+  }
+  .nav-drawer-chat-actions .messages-thread-action:hover { background: var(--brand-tint); }
+  .nav-drawer-chat-actions .messages-thread-action svg { width: 20px; height: 20px; }
+  /* The bar's discs reach 44px for a finger, as un-touch-target makes them. */
+  .nav-drawer-chat-actions .messages-thread-action::after { content: ''; position: absolute; inset: -8px; }
+  /* Its ⋯ menu is laid over the page under the disc (the bar clips what it
+     holds to its rounded foot), above the transcript and below a sheet. */
+  .messages-thread-menu.messages-thread-menu-bar { position: fixed; z-index: 60; color: var(--text-primary); }
+  #platform-header:has(.nav-drawer-chat-actions) :is([data-look-picker="shell"], [data-look-theme="shell"]) { display: none; }
 }
 /* ── MESSAGES ON THE SAME DRAWER (features/messages/phone-drawer.tsx) ──
    Evan's design (18 Oct 2026), on a phone: the conversation list at 85% of
@@ -23402,10 +23631,14 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > :first-child {
     flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
   }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
-    position: static; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
+  /* PHONE REVIEW S21 (23 Nov 2026): a group is its members' two faces here
+     too, as in the wide window's list and in the conversation's own head,
+     at the column's size: two 20px faces in the 28px tile, the second over
+     the first's corner. It was the first face alone, a square letter tile,
+     so turning a Duo redrew every group's picture. */
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > * {
+    width: 20px; height: 20px; border-radius: 6px; font-size: 9px;
   }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child { display: none; }
   /* AUDIT C03 (2 Nov 2026): the column keeps the rows' own type, 15 over
      13 at the house weight, and their time: a 400-weight title and a 12px
      line with no time made the same list two designs, upright and
@@ -25852,6 +26085,63 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
   html.un-ios.web-browser-chrome :is([data-first-session-make], [data-first-session-made], [data-first-session-welcome]):not(.platform-under-header) {
     box-shadow: 0 -200px 0 0 var(--home-ground, #fffeea);
   }
+}
+/* THE NEW PROJECT PAGE ON A PHONE (phone review, 23 Nov 2026, iPhone 17 and
+   iPhone Duo; first-session/make.tsx).
+
+   IT STOPS AT THE SYSTEM'S COLUMN (#9). The page is a fixed box, so it is
+   not in the body's content box and the strip's padding never reached it:
+   on the Duo's cover the form was centred on the whole 466pt of glass, with
+   a 57pt gutter on its left and the idea cards' right edge under the camera
+   and the clock. It pads itself by the column, as the signed-out shell
+   does (THE SIDE STRIP, below): its ground still fills the screen, its
+   content does not. */
+/* direction: physical — the column is a side of the HARDWARE, named by
+   `data-side-strip`, and must not mirror in a right-to-left language. */
+html[data-side-strip="right"] [data-first-session-make] {
+  padding-right: var(--platform-strip-w, 0px);
+}
+html[data-side-strip="left"] [data-first-session-make] {
+  padding-left: var(--platform-strip-w, 0px);
+}
+/* direction: logical */
+/* WHAT SCROLLS GOES UNDER THE ✕, FADING (#9). From Create the ✕ stood in a
+   48px band above the scroller, which clipped at the band's foot: scrolled a
+   little, the heading was cut in half along a straight line beside the ✕.
+   The ✕ floats over the scroller's head now. The head is padding, so the
+   page rests exactly where it did, and what scrolls up into it thins out to
+   nothing at the top (the ground is the wallpaper, so the fade is a mask on
+   the scroller, not a wash of colour over it). make.tsx's MAKE_HEAD is the
+   same 48px. */
+[data-first-session-make].platform-under-header:not([data-make-kit]) > [data-first-session-make-scroll] {
+  padding-top: 3rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 4px, #000 3rem);
+  mask-image: linear-gradient(to bottom, transparent 4px, #000 3rem);
+}
+/* THE KEYS SHORTEN IT WHEREVER THEY COVER IT (#16). The padding above is
+   the phone layout's (`platform-kb-open`, under 768px, measured against the
+   page at rest). The Duo unfolded and sideways is 951pt wide, so the page
+   kept its full height under the keys: the box being typed in showed a line
+   and a half, and Make it sat 200pt below the keys with 58pt left to
+   scroll. And folded to the cover with the field already focused, "at rest"
+   was measured with the keys up, the class never came on, and the field was
+   left behind them. The kit's own inset (`un-kb`, `--un-kb-inset`,
+   native.js) is the covered foot of the page at any width and however the
+   screen got there, so wherever the phone's class is not on, the page ends
+   at that instead; its scroller ends at the keys, and the focused field is
+   revealed in it (lib/keyboard-surface.ts; make.tsx after a fold or a
+   turn). Where the web view is resized for the keys both are 0. */
+html.un-kb:not(.platform-kb-open) [data-first-session-make] {
+  padding-bottom: var(--un-kb-inset, 0px);
+}
+/* ITS MAIN BUTTONS ARE IN THE PAGE'S SANS (S7). The look draws a button's
+   label in the serif (BUTTONS, above); on this page, where the tiles, the
+   two questions and the rule line are all in the sans, Make it read as a
+   line from another page. Make it, Import it and the rule sheet's Done keep
+   the button's fill, outline and edge, and take the face of the text around
+   them (`inherit`, so they follow the page whatever face it is given). */
+html:not([data-skin]) :is([data-first-session-make] button[type="submit"], [data-make-rule-done]) {
+  font-family: inherit;
 }
 
 .platform-tabs {
@@ -29271,6 +29561,9 @@ html.in-side-panel body {
 /* "4 on you" asks something of the viewer, so it is the accent; "from 382"
    is green going up, muted otherwise, its glyph turned over going down. */
 .dev-ws-dash-sub[data-ws-dash-sub="owed"] { color: var(--accent-wash-ink); }
+/* Nothing open, nobody waiting, nothing live this week: one line in place of
+   four zeros (phone review #64, workshop.tsx DashTiles). */
+.dev-ws-dash-none { margin: 0; font-size: 14px; line-height: 1.4; color: var(--text-secondary); }
 .dev-ws-dash-sub[data-dir="up"] { color: var(--state-ok); }
 .dev-ws-dash-trend { flex: none; width: 10px; height: 10px; }
 .dev-ws-dash-sub[data-dir="down"] .dev-ws-dash-trend { transform: rotate(180deg); }
@@ -29292,6 +29585,8 @@ html.in-side-panel body {
   box-shadow: 0 0 0 1.5px var(--dc-sheet-solid, var(--bg-primary));
 }
 .dev-ws-ov-face + .dev-ws-ov-face { margin-inline-start: -4px; }
+/* The faces and the first name, one run (phone review #64). */
+.dev-ws-ov-glued { white-space: nowrap; }
 .dev-ws-ov-narrow { display: none; }
 @container (max-width: 520px) {
   .dev-ws-ov-wide { display: none; }
@@ -29322,7 +29617,14 @@ html.in-side-panel body {
 .dev-ws-hlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .dev-ws-hrow {
   position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
-  padding: 8px 2px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px;
+  padding: 8px 2px; border-radius: 10px;
+}
+/* The divider is its own straight line (phone review #37): drawn as the
+   row's border-top, it bent round the corners meant for the press fill, and
+   every row read as half a card. Only the fill is rounded. */
+.dev-ws-hrow::before {
+  content: ''; position: absolute; inset-inline: 0; top: 0; height: 1px;
+  background: var(--app-sheet-line); pointer-events: none;
 }
 .dev-ws-hrow:hover { background: var(--state-neutral-bg); }
 .dev-ws-hrow[data-on] { background: var(--lit-tint); }
@@ -29542,7 +29844,10 @@ body {
 .dev-ws-brow .dev-ws-wrow-link { -webkit-line-clamp: 3; text-wrap: pretty; }
 /* `pretty`: a wrapped line in words ends on more than "ago" or "now"
    (a browser without it wraps as it did). */
-.dev-ws-brow .dev-ws-wrow-sub { white-space: normal; overflow: visible; text-wrap: pretty; }
+/* One line, cut with an ellipsis (phone review #77): wrapped, a narrow
+   column broke "staging-tester · 1d ago · R#900009" over three lines, each
+   starting with a stray "·". */
+.dev-ws-brow .dev-ws-wrow-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-ws-brow .dev-ws-wrow-status { margin-top: 6px; gap: 5px; }
 .dev-ws-brow > .dev-ws-row-band {
   position: relative; z-index: 1; flex: 1 0 100%; min-width: 0; margin-top: 8px; pointer-events: none;
@@ -29666,6 +29971,52 @@ body {
   .dev-ws-allbar #dev-filter-chips { flex: 0 1 auto; margin-inline-start: auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
+/* Where the board is one column (the container query above) the steps are
+   the tabs, as on a phone (#77). */
+@container ws-board (max-width: 975.98px) {
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-stages {
+    display: flex; gap: 6px; padding: 0 0 2px; margin-top: 2px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-stages::-webkit-scrollbar { display: none; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step {
+    flex: none; min-height: 40px; padding-block: 6px 6px; padding-inline: 7px 13px; gap: 7px; cursor: pointer;
+    border-radius: 999px; background: var(--state-neutral-bg);
+  }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] { background: var(--lit-tint); box-shadow: inset 0 0 0 1px var(--lit-line); }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] :is(.dev-kanban-step-name, .dev-kanban-step-tile) { color: var(--lit-ink); }
+  .dev-ws:not([data-ws-side-open]) :is(.dev-kanban-step-tile, .dev-kanban-step-tile[data-kind="done"]) { width: 22px; height: 22px; border-radius: 999px; background: transparent; }
+  .dev-ws:not([data-ws-side-open]) :is(.dev-kanban-step-name, .dev-kanban-step-n) { font-size: 14px; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step-arrow { display: none; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-card { padding: 2px 12px 6px; }
+}
+/* THE TABS SAY THERE ARE MORE (phone review #89): they ran off the head's
+   edge cut mid-pill, "Underway 24" sliced and "Done 5,021" out of sight with
+   nothing to say so. The end that runs on fades (StageStrip sets which). */
+.dev-kanban-stages[data-more-end] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages[data-more-start] { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px); mask-image: linear-gradient(to right, transparent, #000 32px); }
+.dev-kanban-stages[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages:dir(rtl)[data-more-end] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages:dir(rtl)[data-more-start] { -webkit-mask-image: linear-gradient(to left, transparent, #000 32px); mask-image: linear-gradient(to left, transparent, #000 32px); }
+.dev-kanban-stages:dir(rtl)[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to left, transparent, #000 32px, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+/* ONE WAY BACK ON A PHONE (phone review #89): the header's back disc goes
+   up to the Workshop too (header-drawer.tsx upFromPlace), 60px from this
+   one. Below 768px, where the header draws it, the page's own is put away
+   and its name stays as the page's heading. */
+@media (max-width: 767.98px) {
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar [data-ws-page-back] { display: none; }
+}
+/* S12: below 700px, where the chips are glyphs alone, one Filters button, in
+   words, opening the sheet that holds every filter, the two of yours among
+   them (kanban-filters.tsx). Three bare glyphs said nothing of what the two
+   people did or which was on. */
+@media (max-width: 699.98px) {
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-filters-btn .sr-only.dev-chip-word {
+    position: static; width: auto; height: auto; margin: 0; padding: 0;
+    overflow: visible; clip: auto; white-space: nowrap;
+  }
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-filters-btn .dev-chip-count { display: none; }
+}
 @media (max-width: 640px) {
   .dev-ws-wrow { gap: 10px; }
   .dev-ws-wrow-tile { width: 30px; height: 30px; border-radius: 9px; }
@@ -29782,11 +30133,25 @@ body {
    are the heavy thing on the page, so it has no fill and one line of type.
    Open (⌄, the title, or the line under the bar), the title wraps in full
    and a card under the bar holds what the change does (.rf-desc). */
-.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+/* (#36, phone review 23 Nov 2026) No status-bar inset of its own: the card
+   is drawn in the page, under the shell's header, which already clears the
+   status bar (.rf-page's height counts both). The inset written for a
+   full-screen card put a blank 62px band above the title on a phone. */
+.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: 0 16px 0 4px; min-height: 44px; background: var(--rf-page); }
 /* #6199: the vote-type chips sit under the bar's title row, so the folded
    bar's measurement includes them. */
 .rf-bar .needs-vote-chips { flex-basis: 100%; }
 .rf-back { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* (S4, phone review 23 Nov 2026) One way out of the card on a phone: the
+   shell's header, whose back already leaves Needs you, so the card's own
+   back beside the title steps aside (it stays in the document, and from
+   768px, where the header has none, it is the way back). The previous
+   change keeps its own control beside Yes / No, drawn as a step back
+   through the run rather than as a third Back. */
+@media (max-width: 767px) {
+  .rf-bar > .rf-back[data-rf-back] { display: none; }
+  .rf-bar:has(> .rf-back[data-rf-back]) { padding-inline-start: 16px; }
+}
 .rf-bar-title { flex: 1; min-width: 0; margin: 0; padding: 11px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; line-height: 22px; letter-spacing: -0.015em; }
 .rf-bar-title-btn { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: inherit; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rf-bar[data-open] .rf-bar-title { white-space: normal; text-wrap: pretty; padding-bottom: 4px; }
@@ -29847,12 +30212,21 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-closeup { position: absolute; display: block; max-width: none; pointer-events: none; }
 .rf-seam { position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 2px; margin-inline-start: -1px; background: var(--rf-black); z-index: 3; pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1), width .15s ease-out; }
 .rf-dragging .rf-seam { width: 1px; opacity: .5 !important; }
-/* Each side's caption is printed on its own picture, under a short shade
-   that keeps it legible on any shot, and the seam wipes it with the picture. */
-.rf-cap { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; height: 84px; background: linear-gradient(rgba(12,12,14,.62) 0%, rgba(12,12,14,.55) 18%, rgba(12,12,14,.45) 33%, rgba(12,12,14,.35) 46%, rgba(12,12,14,.26) 57%, rgba(12,12,14,.18) 67%, rgba(12,12,14,.11) 76%, rgba(12,12,14,.06) 84%, rgba(12,12,14,.025) 91%, rgba(12,12,14,0) 100%); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
-.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: #fffeea; text-shadow: 0 1px 2px rgba(12,12,14,.35); white-space: nowrap; }
-.rf-cap-after .rf-cap-line { inset-inline-end: 22px; }
-.rf-cap-before .rf-cap-line { inset-inline-start: 22px; }
+/* Each side's caption is on a solid strip across the top of the picture,
+   and the seam wipes it with the picture (phone review #27, 23 Nov 2026:
+   printed over the screenshot under a shade, it collided with the shot's own
+   heading). The switch is on a strip across the foot. compare.tsx places the
+   screen between the two (CAP_STRIP, FOOT_STRIP), so neither covers it. The
+   strips are the card's own ground, so they read as the picture's frame.
+   No z-index: they paint in the slider's order, the After strip under the
+   Before layer (whose own strip wipes over it) and the foot over both. */
+.rf-compare { --rf-strip: var(--rf-page, var(--messages-surface, #ffffff)); }
+.rf-cap { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; height: 30px; background: var(--rf-strip); box-shadow: 0 1px 0 var(--rf-line, var(--app-sheet-line)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-cap-line { position: absolute; top: 10px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--rf-ink, var(--text-primary)); white-space: nowrap; }
+.rf-foot { position: absolute; inset-inline-start: 0; inset-inline-end: 0; bottom: 0; height: 64px; background: var(--rf-strip); box-shadow: 0 -1px 0 var(--rf-line, var(--app-sheet-line)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-compare[data-rf-strips] .rf-seam { top: 30px; bottom: 64px; }
+.rf-cap-after .rf-cap-line { inset-inline-end: 16px; }
+.rf-cap-before .rf-cap-line { inset-inline-start: 16px; }
 .rf-cap-dim { opacity: .72; }
 /* The switch: Before on its left, After on its right, its knob on the side
    most of the window shows, carrying that side's mark. Flat and inked, like
@@ -29965,7 +30339,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-prev, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-foot, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-prev, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
   .rf-lens { animation: none; }
   .rf-claim { animation: none; }
 }
@@ -29974,6 +30348,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 :where(html[data-motion="reduce"]) .rf-scrim,
 :where(html[data-motion="reduce"]) .rf-seam,
 :where(html[data-motion="reduce"]) .rf-cap,
+:where(html[data-motion="reduce"]) .rf-foot,
 :where(html[data-motion="reduce"]) .rf-switch,
 :where(html[data-motion="reduce"]) .rf-knob,
 :where(html[data-motion="reduce"]) .rf-knob-icon,
@@ -33198,6 +33573,24 @@ html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build]:active {
   transform: translateY(2px);
 }
 html[data-motion="reduce"] [data-bot-plan] button[data-bot-plan-build]:active { transform: none; }
+
+/* (#102, phone review 23 Nov 2026) In dark the page is one card ground:
+   the ask's "Building" band was 9% sun mixed into navy, a slate grey, and the
+   timeline's current step sat in a near-black box on the navy card. Both are
+   the card now, the step outlined by its hairline. The yellow is the accent
+   the lit tab and every level-1 button wear, not a second, greener one.
+   The generated block below (scripts/thread-look.js) carries the brand
+   look's own dark sun and card tokens, so the brand look keeps them; these
+   rules are written outside it and outweigh it (an id, and `body`), so the
+   generator leaves them alone. */
+html:not([data-skin]).dark:not([data-app-tone="light"]) body #dev-topic-thread { --bl-sun: var(--wip-btn-1-bg, #ffee6f); --bl-sun-lit: var(--wip-btn-1-hover, #fff59f); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-request { --thread-foot: var(--bl-card); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-rail { --rail-now-box: var(--bl-card); }
+/* (#113, phone review 23 Nov 2026) One face for a thread card's buttons:
+   Preview and Vote are the page's sans, so "Suggest a change privately" and
+   the quick replies under Homeroom bot's message are too, instead of the
+   look's serif button label. */
+html:not([data-skin]) #dev-topic-thread :is([data-work-with-bot], [data-gc-bot-suggest]) :is(button, a) { font-family: inherit; font-weight: 600; letter-spacing: normal; }
 /* ── THE THREAD PAGE IN THE STANDARD LOOK (generated by scripts/thread-look.js; do not edit by hand) ── */
 /* The colours the carried rules wrote outright, each a token of the page, declared once. */
 html:not([data-skin]) #dev-topic-thread, html:not([data-skin]) [data-vote-look="thread"] { --thread-000000: #000000; --thread-0d1421: #0d1421; --thread-121a0e: #121a0e; --thread-182135: #182135; --thread-243047: #243047; --thread-2a3125: #2a3125; --thread-303e5a: #303e5a; --thread-41483c: #41483c; --thread-425270: #425270; --thread-4d5347: #4d5347; --thread-595f52: #595f52; --thread-838da1: #838da1; --thread-858a7c: #858a7c; --thread-a0a9bb: #a0a9bb; --thread-c3cad8: #c3cad8; --thread-dfe5ef: #dfe5ef; --thread-e3dfc1: #e3dfc1; --thread-ece8cc: #ece8cc; --thread-eef2f8: #eef2f8; --thread-f4f1dc: #f4f1dc; --thread-ff8a78: #ff8a78; --thread-ffffff: #ffffff; }

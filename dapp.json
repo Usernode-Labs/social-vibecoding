@@ -2558,9 +2558,9 @@
       "expectText": "Discussion"
     },
     {
-      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and a Private badge, last on the tab",
+      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and no Private pill of its own (the heading says it), last on the tab",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"] [data-private-badge]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"]:not(:has([data-private-badge])) svg",
       "expectText": "Staging demo private request"
     },
     {

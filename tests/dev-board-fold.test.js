@@ -211,7 +211,10 @@ test('the view carries what the open card needs, and reads ?cards=open per build
 test('the board unfolds nothing in place: ?cards=open draws the fold’s open sheet, and the Workshop draws rows', () => {
   // #4486: a tap on a row opens the item's page, so the column keeps no
   // open-row state; `?cards=open` hands every card to the fold, open.
-  assert.ok(!/useState/.test(KANBAN), 'no open row to remember');
+  // The one useState is the stage strip's fade (which ends of its tabs run
+  // past it, phone review #89), never a row's.
+  assert.equal((KANBAN.match(/\buseState[<(]/g) || []).length, 1, 'no open row to remember');
+  assert.match(KANBAN, /const \[more, setMore\] = useState<\{ start: boolean; end: boolean \}>\(\{ start: false, end: false \}\);/);
   assert.match(KANBAN, /open: true,\s*onToggle: \(\) => \{\},/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);

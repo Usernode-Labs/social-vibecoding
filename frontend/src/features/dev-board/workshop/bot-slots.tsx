@@ -139,7 +139,8 @@ export function BotSlotsDoor({ slug, onOpen }: { slug: string; onOpen: () => voi
       data-ws-bot-slots-door-votes={voting}
       onClick={onOpen}
     >
-      <span className="min-w-0 flex-1 truncate">{doorWords(view)}</span>
+      {/* It wraps (phone review #63): cut to one line, "… 9 waiting for v…" lost its last word on a phone. */}
+      <span className="min-w-0 flex-1 text-pretty">{doorWords(view)}</span>
       <ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
     </button>
   );

@@ -419,7 +419,10 @@ test('#4457, After-Workshop-B: the approval rule is one line: its checks pass, a
   assert.deepEqual(say({ policy: 'anyone', electorate: 1, required: 1 }, { audience: 'solo', is_member: true }, null), [`${L}you approve it.`, null]);
   // The names' faces lead them, then the names in bold, in both wordings.
   const words = renderToHtml(createElement(RuleWords, { line: ruleSentence({ policy: 'invited', approvals_required: null, electorate: 2, required: 1 }, member, ['evan', 'snait']) }));
-  assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span class="dev-ws-ov-faces" aria-hidden="true"><span class="dev-ws-ov-face" style="background:[^"]+">E<\/span><span class="dev-ws-ov-face" style="background:[^"]+">S<\/span><\/span><b class="dev-ws-ov-names">evan or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span class="dev-ws-ov-faces"/);
+  // Phone review #64: the faces and the first name are one run that does
+  // not break, so a narrow card never ends a line on the faces.
+  assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces" aria-hidden="true"><span class="dev-ws-ov-face" style="background:[^"]+">E<\/span><span class="dev-ws-ov-face" style="background:[^"]+">S<\/span><\/span>evan<\/span> or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span><\/span><b class="dev-ws-ov-names"><span class="dev-ws-ov-glued"><span class="dev-ws-ov-faces"/);
+  assert.match(CSS, /\.dev-ws-ov-glued \{ white-space: nowrap; \}/);
   // Polish board #13: the names come with the community record, so the line
   // is drawn once; only an older server's record, without them, asks their
   // own route.

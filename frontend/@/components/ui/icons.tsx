@@ -943,6 +943,17 @@ export const FaceSmileIcon = stroked('FaceSmileIcon', [
   'M9 9.75h.01M15 9.75h.01',
 ]);
 
+/**
+ * A step back through a run of items: the arrow that turns back on itself.
+ * Needs you's "previous change" beside Yes / No (phone review S4, 23 Nov
+ * 2026), which read as a third Back when it was the same chevron as the
+ * header's and the card's.
+ */
+export const StepBackIcon = directional('StepBackIcon', stroked('StepBackIcon', [
+  'M9 14 4 9l5-5',
+  'M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+]));
+
 /** Reply — the curved arrow back, Discord's glyph for quoting a message. */
 export const ReplyArrowIcon = directional('ReplyArrowIcon', stroked('ReplyArrowIcon', [
   'M9 17l-5-5 5-5',

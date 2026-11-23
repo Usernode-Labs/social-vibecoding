@@ -165,7 +165,7 @@ test('a person\'s words in a list row keep their own direction in Arabic, and no
   } finally {
     globalThis.document = before;
   }
-  assert.match(read('frontend/src/features/messages/index.tsx'), /ownDirection\(preview \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)/);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /ownDirection\(botLine \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)/);
 });
 
 test('an arrow key moves to what is on that side of the screen, in every language', () => {
