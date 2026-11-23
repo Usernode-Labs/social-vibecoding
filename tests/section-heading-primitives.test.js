@@ -1,3 +1,4 @@
+// test:changed: when frontend/src/ frontend/@/ public/js/ (the heading scan walks all three; scripts/test-changed.js)
 // "A label over a group" has TWO spellings in this product, and the audit
 // (#2383 / request #2447) found six.
 //

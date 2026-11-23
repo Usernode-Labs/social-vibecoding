@@ -1,3 +1,4 @@
+// test:changed: when src/workflow/ (tsc type-checks the whole tree; scripts/test-changed.js)
 'use strict';
 
 // The workflow foundation is plain TypeScript loaded through Node's type

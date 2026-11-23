@@ -1,3 +1,4 @@
+// test:changed: when frontend/src/ frontend/@/ (both bars are read from the rendered shell; scripts/test-changed.js)
 // Header height parity (#909) — the shell's top bar is the same height on
 // every screen.
 //
