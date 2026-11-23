@@ -315,14 +315,6 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   );
 }
 
-function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`data-${string}`, string>): ReactNode {
-  return (
-    <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500" {...rest}>
-      {children}
-    </div>
-  );
-}
-
 /**
  * #6785: one row of the Recent threads tab. It is the tab's whole content:
  * the project's own tile on the left (the tile notification rows from
@@ -1925,7 +1917,6 @@ export function NotificationsSheetView() {
   const needsCount = unreadNow.filter((view) => view.needsYou).length + (snap.invites || []).length;
   const entries: Entry[] = shown.map((view) => (
     { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
-  const { today, earlier } = splitToday(entries);
   // #5405: the query narrows what the open tab already drew — the same
   // `entries`. Whitespace-only is no query
   // at all. While it is active the headings, the pinned sections and the
@@ -2039,6 +2030,12 @@ export function NotificationsSheetView() {
       </div>
     </Fragment>
   );
+  // Phone review #118 (23 Nov 2026): All was a second list, flat rows ruled
+  // edge to edge with their dots outside the column, beside Unread's cards.
+  // It is the same cards now, in the same Today / Yesterday / Last 7 days /
+  // Older sections as Unread's older rows, each naming its project; a
+  // search's matches are those cards too.
+  const allSections = tab === 'all' && !searching ? groupOlderByTime(rows, t) : [];
   const renderEntry = (entry: Entry): ReactNode => (
     <ScreenRow
       key={entry.key}
@@ -2047,6 +2044,10 @@ export function NotificationsSheetView() {
       removes={tab === 'unread'}
       held={tab === 'unread' && !entry.view.unread && !olderShown}
       onRelease={held.release}
+      card={{
+        groupName: entry.view.appId != null ? entry.view.appName || entry.view.appLine : '',
+        leadsWithProject: true,
+      }}
     />
   );
   // #5580: a card in a project's stack, which only collapsed Unread draws:
@@ -2119,7 +2120,9 @@ export function NotificationsSheetView() {
         <h2 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {t('notifications:sheet.title')}
         </h2>
-        {tab === 'unread' ? (
+        {/* Phone review #118: on All too, whose cards carry the same unread
+            dots, so the pill does not come and go as the tabs change. */}
+        {tab !== 'threads' ? (
           <button
             id="notifications-screen-mark-all"
             type="button"
@@ -2242,7 +2245,9 @@ export function NotificationsSheetView() {
               key={key}
               id={`notifications-kind-${key}`}
               size="bar"
-              className="px-4"
+              // Phone review #118: an unlit chip is white on the white sheet,
+              // so the row read as plain words; a hairline draws each chip.
+              className={kindFilter === key ? 'px-4' : 'px-4 ring-1 ring-inset ring-zinc-300 dark:ring-zinc-700'}
               selected={kindFilter === key}
               onClick={(event) => {
                 event.stopPropagation();
@@ -2297,7 +2302,7 @@ export function NotificationsSheetView() {
               {t('notifications:sheet.search.noMatches', { query: query.trim() })}
             </p>
           )
-        ) : matches.length ? matches.map(renderEntry) : (
+        ) : matches.length ? <div className="notifications-stack">{matches.map(renderEntry)}</div> : (
           <p id="notifications-search-empty" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-500 text-center">
             {t('notifications:sheet.search.noMatches', { query: query.trim() })}
           </p>
@@ -2313,26 +2318,7 @@ export function NotificationsSheetView() {
           {renderAppGroups()}
           {olderSections.map(renderOlderSection)}
         </>
-      ) : (
-        <>
-          {today.length ? (
-            <>
-              <SectionHead>
-                {t('notifications:sheet.today')}
-              </SectionHead>
-              {today.map(renderEntry)}
-            </>
-          ) : null}
-          {earlier.length ? (
-            <>
-              <SectionHead>
-                {t('notifications:sheet.earlier')}
-              </SectionHead>
-              {earlier.map(renderEntry)}
-            </>
-          ) : null}
-        </>
-      ))}
+      ) : allSections.map(renderOlderSection))}
       {!searching && !isThreads && !entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? t('notifications:sheet.empty.unread')

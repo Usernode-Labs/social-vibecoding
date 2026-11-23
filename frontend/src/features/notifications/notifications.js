@@ -2952,8 +2952,10 @@ function botMomentLine(detail, message) {
     meta = t('notifications:row.bot.metaRequest', { project: d.appName, number: d.issueNumber });
   } else if (d.appName) meta = t('notifications:row.bot.meta', { project: d.appName });
   // #5929: a needs-you asks the reader for something, except the one that
-  // says it waits on somebody else.
-  const needsYou = d.moment === 'needs_you' && d.said !== 'decide_others';
+  // says it waits on somebody else. Phone review #101 (23 Nov 2026): so does
+  // "Ready to try", which asks the reader to try what they asked for, as the
+  // change_ready row with the same words does: one label, one drawing.
+  const needsYou = (d.moment === 'needs_you' && d.said !== 'decide_others') || d.moment === 'ready';
   const noteId = d.moment === 'on_hold' && Object.prototype.hasOwnProperty.call(BOT_ON_HOLD_NOTE_IDS, d.said)
     ? BOT_ON_HOLD_NOTE_IDS[d.said] : null;
   return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
@@ -3291,7 +3293,7 @@ function rowWords(n) {
     // Homeroom bot's needs-you (botMomentLine), a friend request still to
     // answer. A project's group holding one comes first on Unread
     // (groupUnreadByApp in ./notifications-sheet.tsx).
-    needsYou: (VOTE_ASK_KINDS.has(n.kind) && n.kind !== 'stale_pr') || n.kind === 'build_needs_you',
+    needsYou: (VOTE_ASK_KINDS.has(n.kind) && n.kind !== 'stale_pr') || n.kind === 'build_needs_you' || n.kind === 'build_ready',
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
     // The kind line. Every branch below overwrites it; '' would render a

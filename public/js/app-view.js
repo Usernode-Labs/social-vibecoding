@@ -10788,6 +10788,8 @@ const AppView = {
       return {
         label: rowLabel(titleEl, node),
         iconEl: glyph || undefined,
+        // Phone review #115: Leave is red in the sheet as in the menu.
+        destructive: node.hasAttribute('data-plus-destructive'),
         handler: () => node.click(),
       };
     });
@@ -10931,8 +10933,9 @@ const AppView = {
         // a sheet of their own, headed with the row's name.
         // The owner, 7 Oct: a second sheet of the same kind, titled, whose
         // last card is Back rather than Cancel. Back brings the menu back.
+        // S17: with its group labels, which sheetActions makes headings.
         const rows = settingsPanel
-          ? Array.from(settingsPanel.querySelectorAll('button[data-plus]')) : [];
+          ? Array.from(settingsPanel.querySelectorAll('button[data-plus], div[data-plus-group]')) : [];
         Promise.resolve(PlatformUI.actionSheet({
           title: PlatformI18n.t('changes:board.plusMenu.settingsTitle'), cancelLabel: PlatformI18n.t('core:common.back'), actions: sheetActions(rows),
         })).then((picked) => { if (!picked && btn.isConnected) btn.click(); });

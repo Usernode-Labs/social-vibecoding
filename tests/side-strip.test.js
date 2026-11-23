@@ -582,10 +582,14 @@ test('the header runs across the strip; its controls stay beside it', () => {
 // screen while its content — the close disc, Mark all read, the search, the
 // tabs and every row — stops beside the column.
 test('the bell\'s sheet keeps its ground and moves its content beside the strip', () => {
-  assert.match(block, /html\[data-side-strip="right"\] #notifications-sheet \{\s*padding-right: var\(--platform-strip-w, 0px\);/,
+  assert.match(block, /html\[data-side-strip="right"\] #notifications-sheet:not\(\.platform-sheet-adopted\) \{\s*padding-right: var\(--platform-strip-w, 0px\);/,
     'the sheet\'s content stops left of the column');
-  assert.match(block, /html\[data-side-strip="left"\] #notifications-sheet \{\s*padding-left: var\(--platform-strip-w, 0px\);/,
+  assert.match(block, /html\[data-side-strip="left"\] #notifications-sheet:not\(\.platform-sheet-adopted\) \{\s*padding-left: var\(--platform-strip-w, 0px\);/,
     'mirrored when the column is on the left');
+  // Phone review #69: every kit sheet does the same, once, on the kit's sheet
+  // (the Homeroom menu and its About pane ran under the clock).
+  assert.match(block, /html\[data-side-strip="right"\] \.un-sheet \{ padding-right: var\(--platform-strip-w, 0px\); \}/);
+  assert.match(block, /html\[data-side-strip="left"\] \.un-sheet \{ padding-left: var\(--platform-strip-w, 0px\); \}/);
 });
 
 test('a sheet screen\'s strip wears the sheet, opaque, under the header', () => {

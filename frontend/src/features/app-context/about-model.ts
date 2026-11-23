@@ -68,6 +68,15 @@ export function versionRowText(version: string | null, deploying: boolean, platf
 
 export interface StatCard { key: 'apps' | 'members' | 'merged'; value: string; label: string }
 
+/**
+ * A count as the pane prints it, grouped the reader's way ("7,984"). Phone
+ * review #119 (23 Nov 2026): the cards grouped thousands and a contributor's
+ * row did not ("2027 live" beside "7,984 live"); both read this.
+ */
+export function formatCount(value: number): string {
+  return value.toLocaleString();
+}
+
 /** About Homeroom's three cards, in the design's order. */
 export function statCards(stats: { apps?: number; members?: number; merged?: number } | null): StatCard[] {
   const n = (v: unknown) => {
@@ -79,9 +88,9 @@ export function statCards(stats: { apps?: number; members?: number; merged?: num
   const members = n(s.members);
   const merged = n(s.merged);
   return [
-    { key: 'apps', value: apps.toLocaleString(), label: t('agent:appContext.about.stat.apps', { count: apps }) },
-    { key: 'members', value: members.toLocaleString(), label: t('agent:appContext.about.stat.members', { count: members }) },
-    { key: 'merged', value: merged.toLocaleString(), label: t('agent:appContext.about.stat.live', { count: merged }) },
+    { key: 'apps', value: formatCount(apps), label: t('agent:appContext.about.stat.apps', { count: apps }) },
+    { key: 'members', value: formatCount(members), label: t('agent:appContext.about.stat.members', { count: members }) },
+    { key: 'merged', value: formatCount(merged), label: t('agent:appContext.about.stat.live', { count: merged }) },
   ];
 }
 
@@ -105,10 +114,10 @@ export function contributorView(c: AppRow | null | undefined): ContributorView {
 export function contributorNote(c: ContributorView): string | null {
   if (c.creator) {
     return c.merged > 0
-      ? t('agent:appContext.about.contributor.creatorLive', { count: c.merged })
+      ? t('agent:appContext.about.contributor.creatorLive', { count: c.merged, number: formatCount(c.merged) })
       : t('agent:appContext.about.contributor.creator');
   }
-  return c.merged > 0 ? t('agent:appContext.about.contributor.live', { count: c.merged }) : null;
+  return c.merged > 0 ? t('agent:appContext.about.contributor.live', { count: c.merged, number: formatCount(c.merged) }) : null;
 }
 
 /**

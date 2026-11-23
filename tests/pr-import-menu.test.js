@@ -117,7 +117,7 @@ test('import-pr item renders for a collaborator', () => {
   const gated = FRAME_SRC.slice(start, end);
   assert.ok(gated.includes('data-plus="import-pr"'), 'import-pr item present');
   assert.ok(gated.includes("title={t('project:menu.importPr.title')}"), 'label present');
-  assert.equal(message('project:menu.importPr.title'), 'Import Feature from a PR');
+  assert.equal(message('project:menu.importPr.title'), 'Import a feature from a PR');
   // The group heading is NOT the row's to hide. #1490 gated heading and row
   // together, because import was the group's only action once New change
   // started in Improve; #1900 put File an issue back beside it, ungated, so
