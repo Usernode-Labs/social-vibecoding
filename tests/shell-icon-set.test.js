@@ -223,9 +223,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
-    // SwooshArrowIcon: the drawn arrow before Invite on a project's hub,
-    // under the Standard (WIP) look only, so never in the cold document.
-    'M0.9 15.1C5.6 9.1 12.4 8.3 18.2 11.1L17.7 12.7C12.4 10.3 6.4 10.8 0.9 15.1ZM22.3 13.3L18.9 9.4L18.4 11.8L16.3 13.6Z',
     // ── The Communities tab is a row of its own again (18 Nov 2026) ─────
     //
     // The sidebar's "All communities" row drew Squares2X2Icon in the static

@@ -75,7 +75,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, SwooshArrowIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
@@ -723,9 +723,8 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
         <h1 className="dev-ws-hero-name" data-ws-community-name="">{name}</h1>
         <span className="dev-ws-hero-id-sub" data-ws-members-cell="members">
           {wipLook ? (
-            // One line that ends in its own next step: what kind of
-            // community, who is in it, and the open seat that invites the
-            // next person (the hero's Invite, for a member).
+            // One line: what kind of community, and who is in it. Invite is
+            // the action row's (CommunityCard).
             <span className="wip-hub-meta">
               <span className="wip-hub-meta-kind" data-audience={data.audience}>
                 <AudienceGlyph audience={data.audience} />
@@ -738,16 +737,6 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
                   <HeroFaces members={data.members} />
                   {t('project:communityCard.people.members', { count })}
                 </span>
-              ) : null}
-              {member ? (
-                // A drawn arrow, for show: it swoops from the people to the open seat.
-<SwooshArrowIcon className="wip-hub-meta-arrow" aria-hidden="true" />
-              ) : null}
-              {member ? (
-                <button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title={t('project:communityCard.invite.title')} onClick={openInviteLinks}>
-                  <span className="wip-hub-meta-seat" aria-hidden="true"><UserPlusIcon className="wip-invite-glyph" /></span>
-                  {t('project:communityCard.invite.button')}
-                </button>
               ) : null}
             </span>
           ) : solo || !data.audience_label ? (
@@ -1383,11 +1372,11 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
         {appButton}
-        {/* Standard (WIP): "Make it public" beside Open app (WipHeroPublic). */}
-        {wipLook ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
-        {/* Standard (WIP) has Invite on the line about who is here (HeroIdentity). */}
-        {wipLook ? null : (
-          <>
+        {/* Standard (WIP): Invite is a full-size button beside Open app, its
+            outlined second, with the invite glyph; on Homeroom's own hub,
+            which has no Open app, it stands alone in the row. It was a small
+            pill at the end of the line about who is here, with a drawn arrow
+            to it that was left pointing at nothing once the pill wrapped. */}
         {member && !(inviteCard && showsInviteHero(data) && !inviteClosed) ? (
           <Button
             type="button"
@@ -1398,11 +1387,12 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
             title={t('project:communityCard.invite.title')}
             onClick={openInviteLinks}
           >
+            {wipLook ? <UserPlusIcon aria-hidden="true" /> : null}
             {t('project:communityCard.invite.button')}
           </Button>
         ) : null}
-          </>
-        )}
+        {/* Standard (WIP): "Make it public" after them (WipHeroPublic). */}
+        {wipLook ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
         {menuFor('hero')}
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
