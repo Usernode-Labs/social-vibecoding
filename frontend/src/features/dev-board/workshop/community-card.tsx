@@ -1877,20 +1877,36 @@ export function ruleSentence(
  * card's (app.css shows one): the named approvers' faces, then their names
  * in bold, where the sentence names them.
  */
+/**
+ * The approvers' names in bold, their faces before them, and the faces held
+ * on the line of the first name (phone review #64): drawn apart, a narrow
+ * card broke the line between them, "…checks pass and (E)(S)" over "evan or
+ * snait says yes". The first name is a username, one word, so the faces and
+ * it are one unbreakable run and the rest of the list wraps as words do.
+ */
+function NamesWithFaces({ names, children }: { names: string[] | null; children?: ReactNode }) {
+  const faces = names && names.length ? (
+    <span className="dev-ws-ov-faces" aria-hidden="true">
+      {names.map((name) => (
+        <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
+          {(name || '?').charAt(0).toUpperCase()}
+        </span>
+      ))}
+    </span>
+  ) : null;
+  const text = typeof children === 'string' ? children
+    : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+  const first = names && names.length ? names[0] : '';
+  if (faces && text !== null && first && text.startsWith(first)) {
+    return <b className="dev-ws-ov-names"><span className="dev-ws-ov-glued">{faces}{first}</span>{text.slice(first.length)}</b>;
+  }
+  return <b className="dev-ws-ov-names">{faces}{children}</b>;
+}
+
 export function RuleWords({ line }: { line: RuleSentence }) {
   useMessages('project');
-  const parts = [
-    line.names ? (
-      <span className="dev-ws-ov-faces" aria-hidden="true">
-        {line.names.map((name) => (
-          <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
-            {(name || '?').charAt(0).toUpperCase()}
-          </span>
-        ))}
-      </span>
-    ) : <span />,
-    <b className="dev-ws-ov-names" />,
-  ];
+  // <0></0> is where the faces were drawn; they ride with the names now.
+  const parts = [<span />, <NamesWithFaces names={line.names} />];
   return (
     <>
       <span className="dev-ws-ov-wide"><RichMessage id={line.long} values={line.values} components={parts} /></span>

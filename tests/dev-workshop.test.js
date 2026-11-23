@@ -610,8 +610,11 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   quiet._merged = [];
   quiet._mergedTotal = 0;
   const calm = workshopHtml(quiet, 'workshop');
-  assert.match(calm, /data-ws-dash-cell="votes"[^>]*><b>0<\/b>/);
-  assert.match(calm, /data-ws-dash-cell="shipped"[^>]*><b>0<\/b>/);
+  // Phone review #64: when all four are zero they are one line, not four
+  // zeros, and the bot's line goes with them.
+  assert.match(calm, /<p class="dev-ws-dash-none" data-ws-dash-none="">Nothing open\. Ask Homeroom bot for a change\.<\/p>/);
+  assert.ok(!calm.includes('data-ws-dash-cell='), 'no tiles of zeros');
+  assert.ok(!calm.includes('data-ws-bot-slots-door'), 'and no "building 0 of 5"');
   assert.ok(!/dev-ws-dash-cell-(good|warn)/.test(calm), 'no tone on a resting figure');
   assert.ok(!calm.includes('dev-ws-dash-dot'), 'and no mark either');
   assert.ok(!calm.includes('data-ws-dash-sub'), 'and a zero says nothing under it');
@@ -4489,7 +4492,7 @@ test('This week shows its new rows, then a few seen ones, then All of this week,
   assert.ok(rows.slice(0, THIS_WEEK_NEW_MAX).every((m) => m[2]) && rows.slice(THIS_WEEK_NEW_MAX).every((m) => !m[2]), 'new first, then seen');
   assert.deepEqual(rows.slice(THIS_WEEK_NEW_MAX).map((m) => m[1]), ['seen:merged:200', 'seen:merged:201', 'seen:merged:202'], 'each newest first');
   // A live change's row: a green check, its title, when it moved.
-  assert.match(week, /<li class="dev-ws-hrow" data-ws-row="since:merged:100" data-ws-kind="live" data-ws-open="proposal:100" data-new=""><span class="dev-ws-hrow-dot" role="img" aria-label="New"><\/span><span class="dev-ws-hrow-glyph" data-kind="live" aria-hidden="true"><svg[\s\S]*?<\/svg><\/span><span class="dev-ws-hrow-main"><a class="dev-ws-hrow-link" href="#app\/demo-app\/dev\/proposals\/100">Fresh 0<\/a><span class="dev-ws-hrow-meta"><time class="dev-ws-hrow-ago" dateTime="[^"]+" title="[^"]+">2h ago<\/time><\/span><\/span><\/li>/);
+  assert.match(week, /<li class="dev-ws-hrow" data-ws-row="since:merged:100" data-ws-kind="live" data-ws-open="proposal:100" data-new=""><span class="dev-ws-hrow-dot" role="img" aria-label="New"><\/span><span class="dev-ws-hrow-glyph" data-kind="live" role="img" aria-label="Live" title="Live"><svg[\s\S]*?<\/svg><\/span><span class="dev-ws-hrow-main"><a class="dev-ws-hrow-link" href="#app\/demo-app\/dev\/proposals\/100">Fresh 0<\/a><span class="dev-ws-hrow-meta"><time class="dev-ws-hrow-ago" dateTime="[^"]+" title="[^"]+">2h ago<\/time><\/span><\/span><\/li>/);
   assert.ok(!week.includes('dev-ws-hrow-you'), 'nobody else\'s row says You');
   // THE REST OF THE WEEK IS ITS PAGE: All of this week opens it, as an
   // earlier week's row opens its own.
@@ -5096,7 +5099,8 @@ test('14 Nov 2026: under Your work, New chat about the project opens a new chat 
   assert.match(src, /href=\{botNewAddress\(\{ project: slug \}\)\}/, 'the tab\'s own address for a new chat (ai/door.ts)');
   // The first-change card keeps its own rows: its Homeroom bot row is this
   // same door, so the new row is not drawn beside it.
-  assert.match(src, /if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;\n\s+return \(\n\s+<section className="dev-ws-strip dev-ws-desk" data-ws-desk="">\n\s+<YourWorkRow [^\n]+\n\s+<div [^\n]+\n\s+<NewChatRow slug=\{slug\} name=\{name\} className="rounded-\[14px\] px-1 py-2" \/>\n\s+<\/section>/);
+  assert.match(src, /if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} solo=\{solo\} live=\{live\} \/>;/);
+  assert.match(src, /function DeskRows\(\{ slug, name \}: \{ slug: string; name: string \}\): ReactNode \{\n\s+return \(\n\s+<section className="dev-ws-strip dev-ws-desk" data-ws-desk="">\n\s+<YourWorkRow [^\n]+\n\s+<div [^\n]+\n\s+<NewChatRow slug=\{slug\} name=\{name\} className="rounded-\[14px\] px-1 py-2" \/>\n\s+<\/section>/);
   assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/first-change.tsx'), /NewChatRow|desk\.newChat/);
   // No Homeroom bot row under a project in the sidebar or its places list.
   assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/project-places.tsx'), /botNewAddress|desk\.newChat/);
@@ -5151,9 +5155,30 @@ test('10 Nov 2026: somebody who has made nothing here is asked who should build,
   const DAPP_CHECKS = JSON.parse(read('dapp.json')).tests;
   assert.ok(DAPP_CHECKS.some((check) => /\?demo=1&ws=workshop#app\//.test(check.path) && /\[data-ws-dashboard\] \+ \[data-ws-desk\]/.test(check.expectSelector || '')),
     'the demo Workshop\'s Your work has a declared check');
-  assert.match(src, /return \{ show: !closed && !readOnly && firstChangeFor\(desk, made\), close \};/);
+  assert.match(src, /return \{ show: !closed && !readOnly && !settledLate && firstChangeFor\(desk, read\), close, decided, likely: empty \};/);
   assert.match(read('frontend/src/features/dev-board/workshop/your-work.tsx'),
-    /const first = useFirstChange\(slug, useDesk\(slug\)\);\n\s+if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;/);
+    /const first = useFirstChange\(slug, desk\);\n\s+if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} solo=\{solo\} live=\{live\} \/>;/);
+
+  // Phone review #123: which card it is, is decided before either is drawn.
+  // Until then its place is held, empty and inert, at the likelier card's
+  // height, so nothing is swapped under a finger.
+  const decided = (d, read, closed = false, readOnly = false) => first.firstChangeDecided(d, read, closed, readOnly);
+  assert.equal(decided(desk({ ready: false }), false), false, 'the desk unread: not yet');
+  assert.equal(decided({ ...desk({ ready: false }), settled: true }, false), true, 'a desk read that failed is an answer: Your work');
+  assert.equal(decided(desk({ needs: 2 }), false), true, 'work of theirs here: Your work, without asking History');
+  assert.equal(decided(desk(), false), false, 'nothing here now: History is still to answer');
+  assert.equal(decided(desk(), true), true);
+  assert.equal(decided(desk({ ready: false }), false, true), true, 'closed for good: Your work');
+  const card = read('frontend/src/features/dev-board/workshop/your-work.tsx');
+  assert.match(card, /if \(!first\.decided\) \{\n\s+return \(\n\s+<div className="invisible" data-ws-desk-held="" aria-hidden="true" inert>\n\s+\{first\.likely \? <FirstChangeCard [^\n]+ : <DeskRows slug=\{slug\} name=\{name\} \/>\}/);
+  assert.match(src, /const HOLD_MS = 4000;/, 'and never held for ever');
+  // Phone review #130: its words fit the project.
+  const solo = renderToHtml(createElement(first.FirstChangeCard, { slug: 'demo-app', onClose() {}, solo: true, live: true }));
+  assert.ok(solo.includes(message('project:workshop.first.textSolo')), 'a Just you project: you approve what it makes');
+  assert.ok(!solo.includes(message('project:workshop.first.text')), 'not "to the group for a vote"');
+  assert.match(solo, new RegExp(`<span class="dev-ws-head-title">${message('project:workshop.first.titleLive')}</span>`), 'and not "first" once changes are live');
+  assert.equal(message('project:workshop.first.titleLive'), 'Make a change here');
+  assert.equal(message('project:workshop.first.textSolo'), 'Pick who does the building. You approve what it makes.');
   assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'invite' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
   assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/ai\/history', async \(req, res\) => \{/);
 });
@@ -5905,4 +5930,18 @@ test('T2.5: a change row whose stored row is not up for a vote draws that row\'s
   // The row draws it in place of the card's pill.
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'frontend/src/features/dev-board/workshop/work-row.tsx'), 'utf8');
   assert.match(src, /<Votes card=\{card\} pill=\{b\.pill \|\| null\} \/>/);
+});
+
+// Phone review of 23 Nov 2026, the Workshop's overview (#23, #37, #63, #64).
+test('the overview keeps the hub\'s gutter and one label inset, its lines wrap, and its dividers run straight', () => {
+  const P = 'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody';
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(CSS, /@media \(max-width: 767\.98px\) \{\n  \.dev-ws:is\(\[data-ws-tab="workshop"\], \[data-ws-tab="all"\]\) > \.dev-ws-tabbody \{ padding-inline: 12px; \}\n\}/, '#63: 16pt, as the hub');
+  assert.ok(CSS.includes(`${P} > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0; }`), '#63: one label inset');
+  assert.match(CSS, new RegExp(`${esc(P)} > \\[data-ws-dashboard\\] \\.dev-ws-dash-sub \\{ grid-column: 3; grid-row: 1 / span 2; min-width: 0; margin: 0; font-size: 0\\.75rem; color: var\\(--wip-ink-muted\\); \\}`), '#23: the line wraps');
+  assert.match(CSS, new RegExp(`${esc(P)} > \\[data-ws-dashboard\\] \\[data-ws-dash-cell\\] \\{[^}]*align-items: start;\\n  align-content: start;`), '#64: the cards read from the top');
+  assert.ok(CSS.includes(`${P} > [data-ws-dashboard] [data-ws-dash-cell][data-zero] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }`), '#64: a zero wears no colour');
+  assert.match(CSS, /\.dev-ws-hrow \{\n  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;\n  padding: 8px 2px; border-radius: 10px;\n\}\n[\s\S]{0,300}\.dev-ws-hrow::before \{\n  content: ''; position: absolute; inset-inline: 0; top: 0; height: 1px;/, '#37: the divider is its own straight line');
+  const slots = read('frontend/src/features/dev-board/workshop/bot-slots.tsx');
+  assert.match(slots, /<span className="min-w-0 flex-1 text-pretty">\{doorWords\(view\)\}<\/span>/, '#63: the bot\'s line wraps');
 });

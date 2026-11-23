@@ -253,6 +253,14 @@ function WeekLive({ live }: { live: { count: number; partial: boolean } }): Reac
   );
 }
 
+/** What a row of What happened is, in a word (its glyph's name). */
+const KIND_WORD: Record<keyof typeof TILE, string> = {
+  request: 'project:happened.kind.request',
+  change: 'project:happened.kind.change',
+  live: 'project:happened.kind.live',
+  vote: 'project:happened.kind.vote',
+};
+
 /** A merge still rolling out to the people using the app (statusPillState's keys). */
 const GOING_LIVE = new Set(['deploying', 'delivery_pending', 'merging']);
 
@@ -303,7 +311,10 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, act = null }
       {fresh
         ? <span className="dev-ws-hrow-dot" role="img" aria-label={t('project:happened.row.new')} />
         : <span className="dev-ws-hrow-dot" aria-hidden="true" />}
-      <span className="dev-ws-hrow-glyph" data-kind={b.kind} aria-hidden="true">
+      {/* What the row is, in words, for a screen reader and the pointer: a
+          request and the change built for it share a title, and the glyph
+          alone told them apart (phone review #37). */}
+      <span className="dev-ws-hrow-glyph" data-kind={b.kind} role="img" aria-label={t(KIND_WORD[b.kind])} title={t(KIND_WORD[b.kind])}>
         {going ? <span className="dc-status-spinner-arc" /> : <Glyph />}
       </span>
       <span className="dev-ws-hrow-main">

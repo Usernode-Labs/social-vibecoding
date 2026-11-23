@@ -8029,7 +8029,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-stri
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
 /* A section's label: Home's, from the same tokens; a section's room is over its label. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > h2[data-ws-part="overview"] { margin-top: 0.25rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { display: block; }
 /* The label follows its card in the document and stands over it on the page. */
@@ -8061,13 +8061,25 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head { position: absolute; inset-block-start: -1.75rem; inset-inline-end: 0.25rem; }
 /* The card's own heading is said, not shown: the four cards have no card to head, and "See all" follows it. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open { font-size: var(--wip-link-size); font-weight: 650; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open {
+  /* Home's way to all of a section (.wip-head-more): the label's own type and ink, its chevron in the action colour (phone review #63). */
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open:hover { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open > svg { color: var(--wip-ink-action); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-dash { display: contents; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   column-gap: var(--wip-tile-gap);
-  align-items: center;
+  /* From the top, every card alike (phone review #64): centred, a card with a third line (4 on you, from 3 last week) held its mark and number lower than its neighbour's. */
+  align-items: start;
+  align-content: start;
   width: 100%;
   min-height: 4.5rem;
   margin: 0;
@@ -8095,10 +8107,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="unclaimed"] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="votes"] > .dev-ws-dash-mark { background-color: var(--wip-mark-1-bg); color: var(--wip-mark-1-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="shipped"] > .dev-ws-dash-mark { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+/* A zero wears no colour (phone review #64): a green tick over "0 live this week" read as good news. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell][data-zero] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell > b {
   grid-column: 2;
   grid-row: 1;
-  align-self: end;
   font-size: 1.5rem;
   font-weight: 750;
   line-height: 1.1;
@@ -8117,8 +8130,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 }
 /* The mark says what the dot said. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot { display: none; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; margin: 0; font-size: 0.75rem; white-space: nowrap; color: var(--wip-ink-muted); }
+/* It wraps (phone review #23): "from 3 by this time last week" on one line needed 173px of a 193px card and ran off it and off the screen, and on the Duo sideways it let the page be dragged sideways. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; min-width: 0; margin: 0; font-size: 0.75rem; color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="owed"] {
+  justify-self: start;
+  white-space: nowrap;
   padding: 0.1875rem 0.625rem;
   border-radius: var(--wip-radius-pill);
   background: var(--wip-cta-from);
@@ -8135,7 +8151,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { padding: 0.75rem; }
 }
 /* The bot's line and the rule: two slim cards, each half the row. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules], [data-ws-dash-none]) {
   grid-column: 1 / -1;
   align-items: center;
   min-height: 3rem;
@@ -8663,6 +8679,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-card 
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-tray);
   box-shadow: none;
+}
+/* ONE COLUMN, NO TRAY (phone review #89): where the board is one column its
+   cards stand on the page, as the Workshop's do, at the head's own edges.
+   The desktop's tray inside a white head read as frames nested in frames,
+   the head 394px wide over a 358px grey column. The head is a card of its
+   own then, rounded at its foot too. */
+@container ws-board (max-width: 975.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-kanban-card { padding: 0; background-color: transparent; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-ws-pane-body { padding-inline: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-ws-board { padding-inline: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]):not([data-ws-head-pinned]) .dev-ws-pane-head { border-radius: var(--wip-card-radius); }
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-step { gap: 0.5rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-step-tile {
@@ -16294,6 +16321,23 @@ button.attr-chip { cursor: pointer; }
   }
   .dev-kanban-col.dev-kanban-col-active { display: block; }
 }
+/* ONE COLUMN UNTIL THE FOUR FIT WHOLE (phone review #77). All items' pane
+   is a container, and below 976px of it (four 220px columns, their three
+   gaps and the board's 36px of padding; room for three of 300px) the board
+   is the phone's: one column, the strip its tabs. At the 640px line alone, the iPhone Duo's
+   inner screen (669pt) got columns of about 220px: two and a half, the third
+   cut mid-button, a title ten letters a line, a byline over three lines.
+   The pane and not the window, because the sidebar takes 212px of a window
+   from 768px up. Not while an item is open beside the board: there its
+   columns keep their 316px and scroll sideways (THE BOARD BESIDE THE
+   PANEL). card/dev-kanban.tsx reads which of the two CSS drew
+   (`useBoardOneColumn`), so the strip and the deferred columns follow. */
+#dev-workshop .dev-ws-pane { container: ws-board / inline-size; }
+@container ws-board (max-width: 975.98px) {
+  .dev-ws:not([data-ws-side-open]) #dev-kanban { display: block; overflow-x: hidden; }
+  .dev-ws:not([data-ws-side-open]) #dev-kanban > .dev-kanban-col { display: none; min-width: 0; }
+  .dev-ws:not([data-ws-side-open]) #dev-kanban > .dev-kanban-col.dev-kanban-col-active { display: block; }
+}
 
 /* ────────────────────────────────────────────────────────────────────────
    Admin console — folded-in section styles (#860)
@@ -22671,6 +22715,12 @@ button.dev-ws-recent-card {
 @media (max-width: 767.98px) {
   .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { padding-inline: 12px; }
   .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { padding-inline: 0; }
+}
+/* The Workshop and All items keep the hub's 16px too (phone review #63,
+   #89): their cards ran to 4px from the screen's edge, a phone's All items
+   head was wider than the list under it, and the labels started at 4 and 8. */
+@media (max-width: 767.98px) {
+  .dev-ws:is([data-ws-tab="workshop"], [data-ws-tab="all"]) > .dev-ws-tabbody { padding-inline: 12px; }
 }
 .dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
 .dev-ws-hero-actions:empty { display: none; }
@@ -29167,6 +29217,9 @@ html.in-side-panel body {
 /* "4 on you" asks something of the viewer, so it is the accent; "from 382"
    is green going up, muted otherwise, its glyph turned over going down. */
 .dev-ws-dash-sub[data-ws-dash-sub="owed"] { color: var(--accent-wash-ink); }
+/* Nothing open, nobody waiting, nothing live this week: one line in place of
+   four zeros (phone review #64, workshop.tsx DashTiles). */
+.dev-ws-dash-none { margin: 0; font-size: 14px; line-height: 1.4; color: var(--text-secondary); }
 .dev-ws-dash-sub[data-dir="up"] { color: var(--state-ok); }
 .dev-ws-dash-trend { flex: none; width: 10px; height: 10px; }
 .dev-ws-dash-sub[data-dir="down"] .dev-ws-dash-trend { transform: rotate(180deg); }
@@ -29188,6 +29241,8 @@ html.in-side-panel body {
   box-shadow: 0 0 0 1.5px var(--dc-sheet-solid, var(--bg-primary));
 }
 .dev-ws-ov-face + .dev-ws-ov-face { margin-inline-start: -4px; }
+/* The faces and the first name, one run (phone review #64). */
+.dev-ws-ov-glued { white-space: nowrap; }
 .dev-ws-ov-narrow { display: none; }
 @container (max-width: 520px) {
   .dev-ws-ov-wide { display: none; }
@@ -29218,7 +29273,14 @@ html.in-side-panel body {
 .dev-ws-hlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .dev-ws-hrow {
   position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
-  padding: 8px 2px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px;
+  padding: 8px 2px; border-radius: 10px;
+}
+/* The divider is its own straight line (phone review #37): drawn as the
+   row's border-top, it bent round the corners meant for the press fill, and
+   every row read as half a card. Only the fill is rounded. */
+.dev-ws-hrow::before {
+  content: ''; position: absolute; inset-inline: 0; top: 0; height: 1px;
+  background: var(--app-sheet-line); pointer-events: none;
 }
 .dev-ws-hrow:hover { background: var(--state-neutral-bg); }
 .dev-ws-hrow[data-on] { background: var(--lit-tint); }
@@ -29438,7 +29500,10 @@ body {
 .dev-ws-brow .dev-ws-wrow-link { -webkit-line-clamp: 3; text-wrap: pretty; }
 /* `pretty`: a wrapped line in words ends on more than "ago" or "now"
    (a browser without it wraps as it did). */
-.dev-ws-brow .dev-ws-wrow-sub { white-space: normal; overflow: visible; text-wrap: pretty; }
+/* One line, cut with an ellipsis (phone review #77): wrapped, a narrow
+   column broke "staging-tester · 1d ago · R#900009" over three lines, each
+   starting with a stray "·". */
+.dev-ws-brow .dev-ws-wrow-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-ws-brow .dev-ws-wrow-status { margin-top: 6px; gap: 5px; }
 .dev-ws-brow > .dev-ws-row-band {
   position: relative; z-index: 1; flex: 1 0 100%; min-width: 0; margin-top: 8px; pointer-events: none;
@@ -29561,6 +29626,52 @@ body {
      so the line reads as two groups. It still scrolls when it overflows. */
   .dev-ws-allbar #dev-filter-chips { flex: 0 1 auto; margin-inline-start: auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
+}
+/* Where the board is one column (the container query above) the steps are
+   the tabs, as on a phone (#77). */
+@container ws-board (max-width: 975.98px) {
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-stages {
+    display: flex; gap: 6px; padding: 0 0 2px; margin-top: 2px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-stages::-webkit-scrollbar { display: none; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step {
+    flex: none; min-height: 40px; padding-block: 6px 6px; padding-inline: 7px 13px; gap: 7px; cursor: pointer;
+    border-radius: 999px; background: var(--state-neutral-bg);
+  }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] { background: var(--lit-tint); box-shadow: inset 0 0 0 1px var(--lit-line); }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] :is(.dev-kanban-step-name, .dev-kanban-step-tile) { color: var(--lit-ink); }
+  .dev-ws:not([data-ws-side-open]) :is(.dev-kanban-step-tile, .dev-kanban-step-tile[data-kind="done"]) { width: 22px; height: 22px; border-radius: 999px; background: transparent; }
+  .dev-ws:not([data-ws-side-open]) :is(.dev-kanban-step-name, .dev-kanban-step-n) { font-size: 14px; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step-arrow { display: none; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-card { padding: 2px 12px 6px; }
+}
+/* THE TABS SAY THERE ARE MORE (phone review #89): they ran off the head's
+   edge cut mid-pill, "Underway 24" sliced and "Done 5,021" out of sight with
+   nothing to say so. The end that runs on fades (StageStrip sets which). */
+.dev-kanban-stages[data-more-end] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages[data-more-start] { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px); mask-image: linear-gradient(to right, transparent, #000 32px); }
+.dev-kanban-stages[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages:dir(rtl)[data-more-end] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages:dir(rtl)[data-more-start] { -webkit-mask-image: linear-gradient(to left, transparent, #000 32px); mask-image: linear-gradient(to left, transparent, #000 32px); }
+.dev-kanban-stages:dir(rtl)[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to left, transparent, #000 32px, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+/* ONE WAY BACK ON A PHONE (phone review #89): the header's back disc goes
+   up to the Workshop too (header-drawer.tsx upFromPlace), 60px from this
+   one. Below 768px, where the header draws it, the page's own is put away
+   and its name stays as the page's heading. */
+@media (max-width: 767.98px) {
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar [data-ws-page-back] { display: none; }
+}
+/* S12: below 700px, where the chips are glyphs alone, one Filters button, in
+   words, opening the sheet that holds every filter, the two of yours among
+   them (kanban-filters.tsx). Three bare glyphs said nothing of what the two
+   people did or which was on. */
+@media (max-width: 699.98px) {
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-filters-btn .sr-only.dev-chip-word {
+    position: static; width: auto; height: auto; margin: 0; padding: 0;
+    overflow: visible; clip: auto; white-space: nowrap;
+  }
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-filters-btn .dev-chip-count { display: none; }
 }
 @media (max-width: 640px) {
   .dev-ws-wrow { gap: 10px; }

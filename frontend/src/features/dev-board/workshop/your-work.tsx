@@ -71,15 +71,22 @@ export function YourWorkRow({ slug, name, className = '', ...hooks }: {
       {...hooks}
       leading={<img src={BOT_AVATAR} alt="" className="h-[34px] w-[34px] shrink-0 rounded-[10px] object-cover" />}
       title={t('project:workshop.desk.title')}
-      subtitle={line ? <span data-ws-desk-line={desk.first ? 'next' : 'empty'}>{t(line.id, line.values)}</span> : undefined}
-      trailing={words ? (
-        <span className="shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400" data-ws-desk-count="">
-          <RichMessage
-            id={words.id}
-            values={words.values}
-            components={[<strong className="font-semibold text-violet-700 dark:text-violet-300" />]}
-          />
-        </span>
+      // The counts are the row's third line, under its next step (phone
+      // review #25): beside the title they could not shrink, and on the
+      // iPhone Duo's cover they left 59pt for it, "Your w…" over "Next: Ad…".
+      subtitle={line || words ? (
+        <>
+          {line ? <span className="block truncate" data-ws-desk-line={desk.first ? 'next' : 'empty'}>{t(line.id, line.values)}</span> : null}
+          {words ? (
+            <span className="block truncate" data-ws-desk-count="">
+              <RichMessage
+                id={words.id}
+                values={words.values}
+                components={[<strong className="font-semibold text-violet-700 dark:text-violet-300" />]}
+              />
+            </span>
+          ) : null}
+        </>
       ) : undefined}
     />
   );
@@ -110,12 +117,43 @@ export function NewChatRow({ slug, name, className = '' }: { slug: string; name:
   );
 }
 
-/** The Workshop's Your work: the row and, under it, New chat about the project, in a card of their own under Overview. */
-export function YourWorkCard({ slug, name }: { slug: string; name: string }): ReactNode {
+/**
+ * The Workshop's Your work: the row and, under it, New chat about the
+ * project, in a card of their own under Overview.
+ *
+ * NOTHING IS SWAPPED UNDER A FINGER (phone review #123). Which of the two
+ * cards this is waits on the desk and, for somebody with nothing here now,
+ * on History (useFirstChange). It drew Your work first and swapped in the
+ * taller first-change card a few seconds later, pushing everything under it
+ * down, so a tap aimed at What happened landed on something else. Until the
+ * answer is in, the card's place is held, empty and inert, at the height of
+ * the card it most likely is: Your work's while the desk is read, the
+ * first-change card's once the desk says there is nothing of theirs here.
+ */
+export function YourWorkCard({ slug, name, solo = false, live = false }: {
+  slug: string;
+  name: string;
+  /** A Just you project: what gets made is the person's own to approve. */
+  solo?: boolean;
+  /** The project has had a change go live, so this is not its first. */
+  live?: boolean;
+}): ReactNode {
   // The desk is read once for every row on screen (../../ai/desk.ts), so
   // asking here as well as in the row costs no second read.
-  const first = useFirstChange(slug, useDesk(slug));
-  if (first.show) return <FirstChangeCard slug={slug} onClose={first.close} />;
+  const desk = useDesk(slug);
+  const first = useFirstChange(slug, desk);
+  if (first.show) return <FirstChangeCard slug={slug} onClose={first.close} solo={solo} live={live} />;
+  if (!first.decided) {
+    return (
+      <div className="invisible" data-ws-desk-held="" aria-hidden="true" inert>
+        {first.likely ? <FirstChangeCard slug={slug} onClose={() => {}} solo={solo} live={live} /> : <DeskRows slug={slug} name={name} />}
+      </div>
+    );
+  }
+  return <DeskRows slug={slug} name={name} />;
+}
+
+function DeskRows({ slug, name }: { slug: string; name: string }): ReactNode {
   return (
     <section className="dev-ws-strip dev-ws-desk" data-ws-desk="">
       <YourWorkRow slug={slug} name={name} className="rounded-[14px] px-1 py-2" />
