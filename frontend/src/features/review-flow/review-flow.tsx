@@ -1088,7 +1088,17 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
             {appName ? <p className="rf-desc-app">{appName}</p> : null}
             <p className="rf-desc-text">{item.summary || item.line}</p>
             {item.author ? <p className="rf-desc-by">{t('communities:review.desc.by', { name: item.author })}</p> : null}
-            <div className="rf-desc-foot">
+            <div
+              className="rf-desc-foot"
+              // #7045: a change opened from Needs you (every community's, `#needs`) goes back here: its page's chip reads the origin noted as the link is followed.
+              onClickCapture={(event) => {
+                try {
+                  if ((event.target as HTMLElement).closest('.rf-desc-go') && window.location.hash === '#needs') {
+                    (window as unknown as { Improve?: { enterTopicFrom?: (href: string) => void } }).Improve?.enterTopicFrom?.('#needs');
+                  }
+                } catch { /* the page opens all the same */ }
+              }}
+            >
               {item.app ? (
                 <a className="rf-desc-go" href={changeHref(item.app.slug, item.id, item.number)}>{t('communities:review.more.open')}</a>
               ) : null}

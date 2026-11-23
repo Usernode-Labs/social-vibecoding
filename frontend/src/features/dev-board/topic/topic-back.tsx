@@ -133,6 +133,8 @@ export function placeChip(workshopTab: string | null): { to: ChipKey; handle?: s
 export function chipFor(href: string, workshopTab: string | null, stepsBack = false): { to: ChipKey; handle?: string } {
   if (href.startsWith('#messages')) return { to: 'messages' };
   if (backsToBot(href)) return { to: 'bot' };
+  // #7045: opened from Needs you (every community's decisions, `#needs`), it goes back there.
+  if (href === '#needs') return { to: 'needs' };
   return /\/workshop$/.test(href) && stepsBack ? placeChip(workshopTab) : { to: 'workshop' };
 }
 

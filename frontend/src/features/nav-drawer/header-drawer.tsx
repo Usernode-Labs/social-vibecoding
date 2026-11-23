@@ -115,7 +115,8 @@ export function upFromPlace(slug: string | null, place: string): void {
   if (!slug) return;
   const key = place as PlaceKey;
   const lit = litPlace(key);
-  openPlace(slug, lit !== key ? lit : 'status');
+  // #7045: up, not across: a step Back when the parent is the entry below, so Back from it does not return here.
+  openPlace(slug, lit !== key ? lit : 'status', { up: true });
 }
 
 /**
