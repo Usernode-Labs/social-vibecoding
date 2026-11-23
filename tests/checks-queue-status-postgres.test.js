@@ -30,7 +30,8 @@ const DSN = process.env.TEST_DATABASE_URL
 const SCHEMA = `checks_queue_status_pg_${process.pid}`;
 const SCOPED = `${DSN}${DSN.includes('?') ? '&' : '?'}options=${encodeURIComponent(`-c search_path=${SCHEMA}`)}`;
 
-// check_runs and events exactly as schema.sql declares them.
+// check_runs, events and wf_work (whose checks.run items QUEUE_SQL reads a
+// preview run against) exactly as schema.sql declares them.
 const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
 function slice(first, last) {
   const start = schema.indexOf(first);
@@ -38,6 +39,7 @@ function slice(first, last) {
 }
 const QUEUE_DDL = slice('CREATE TABLE IF NOT EXISTS check_runs', 'CREATE INDEX IF NOT EXISTS idx_check_runs_app');
 const EVENTS_DDL = slice('CREATE TABLE IF NOT EXISTS events (', 'CREATE INDEX IF NOT EXISTS idx_events_type_created');
+const WORK_DDL = slice('CREATE TABLE IF NOT EXISTS wf_work (', 'CONSTRAINT wf_work_claim_shape');
 const DDL = `
   CREATE TABLE users (id SERIAL PRIMARY KEY);
   CREATE TABLE apps (id SERIAL PRIMARY KEY, slug TEXT, name TEXT, repo_url TEXT);
@@ -48,6 +50,7 @@ const DDL = `
   );
   ${QUEUE_DDL}
   ${EVENTS_DDL}
+  ${WORK_DDL}
 `;
 
 let pg;
@@ -88,7 +91,7 @@ async function fresh(t, { cap = 1 } = {}) {
   const ready = await setUp();
   if (ready !== true) { t.skip(ready); return null; }
   pool = pool || new pg.Pool({ connectionString: SCOPED, max: 4 });
-  await pool.query('TRUNCATE check_runs, events, chat_sessions, apps CASCADE');
+  await pool.query('TRUNCATE check_runs, events, wf_work, chat_sessions, apps CASCADE');
   const saved = process.env.CHECKS_MAX_CONCURRENT_RUNS;
   process.env.CHECKS_MAX_CONCURRENT_RUNS = String(cap);
   t.after(() => {

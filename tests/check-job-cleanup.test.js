@@ -146,7 +146,10 @@ test('a live run deletes its Jobs only once it has settled and its manifest is c
   // itself settled: there are no Jobs, and its row leaves the line.)
   assert.ok(live.indexOf('settledRun = true;', settle) > settle, 'set after the settlement returns');
   const fin = live.lastIndexOf('} finally {');
-  const finish = live.indexOf('await checkRuns.finish(', fin);
+  // The slot goes back through giveBackSettledSlot, which ends in finish.
+  const finish = live.indexOf('await giveBackSettledSlot(config, pool, { sessionId: session.id, runId, adoptedEarlyUnit });', fin);
+  const give = src.slice(src.indexOf('async function giveBackSettledSlot('), src.indexOf('function workflowOperation('));
+  assert.match(give, /await checkRuns\.finish\(pool, runId\);/);
   const release = live.indexOf('if (harvestable && settledRun) releaseCheckJobs(config, session.id, runId);', fin);
   assert.ok(finish !== -1 && release > finish, 'the manifest a harvest reads the Jobs by goes first');
   assert.match(src, /function releaseCheckJobs\(config, sessionId, runId\) \{\n\s+kubernetes\.deleteSettledCheckJobs\(config, \{ sessionId, previewRunId: runId \}\)\n\s+\.catch\(/,

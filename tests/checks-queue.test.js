@@ -91,6 +91,131 @@ test('a dead admitted run holds its slot only while its Jobs may still be runnin
   assert.equal(plan.admit.length, 1, 'so the waiting run takes the second slot');
 });
 
+// 23 Nov 2026: PR 7029's run settled at 17:27 (its preview work item
+// succeeded), but its row's delete was lost on a draining conductor. The
+// row, admitted at 17:18, counted until its Jobs' deadline ran out at about
+// 17:36, nine minutes of one slot in four, and then sat in the table.
+test('a row whose preview work item reported holds no slot, alive or within its deadline', () => {
+  const settled = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'settled', run_finished: true });
+  const reported = promoted({ admitted: true, alive: true, run_status: 'reported', run_finished: true });
+  const running = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'running', run_finished: false });
+  const waiting = promoted();
+  const plan = checksQueue.planAdmission([settled, reported, running, waiting], { cap: 2 });
+  assert.equal(plan.byRun.get(settled.run_id).holding, false, 'its run is over: nobody reads its Jobs');
+  assert.equal(plan.byRun.get(reported.run_id).holding, false, 'a heartbeat not yet stale says nothing once the handler returned');
+  assert.equal(plan.byRun.get(running.run_id).holding, true, 'a run still going holds until its deadline, as before');
+  assert.deepEqual(plan.admit, [waiting.run_id], 'so the waiting run takes the freed slot');
+
+  // The machine cancelled the run, and the clean-up that stops its Jobs
+  // (checks.cancel) has not run yet: QUEUE_SQL leaves run_finished false.
+  const cancelled = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'settled', run_finished: false });
+  assert.equal(checksQueue.planAdmission([cancelled], { cap: 1 }).byRun.get(cancelled.run_id).holding, true,
+    'its Jobs may still be on the cluster');
+
+  // A row of a finished run waiting in line (its finally lost the delete) is not in line.
+  const left = promoted({ run_status: 'settled', run_finished: true });
+  const behind = promoted();
+  const line = checksQueue.planAdmission([left, behind], { cap: 1 });
+  assert.equal(line.byRun.get(left.run_id).ahead, null);
+  assert.deepEqual(line.admit, [behind.run_id]);
+});
+
+test('a row of a merged or archived session holds no slot once its owner is gone', () => {
+  const dead = promoted({ admitted: true, alive: false, withinDeadline: true, session_ended: true });
+  const live = promoted({ admitted: true, alive: true, session_ended: true });
+  const plan = checksQueue.planAdmission([dead, live, promoted()], { cap: 2 });
+  assert.equal(plan.byRun.get(dead.run_id).holding, false, 'the retire stops an ended session\'s Jobs');
+  assert.equal(plan.byRun.get(live.run_id).holding, true, 'a run its owner is still running holds until it ends');
+  assert.equal(plan.admit.length, 1);
+});
+
+test('a settled run whose early unit Jobs are still stopping counts only until their deadline', () => {
+  const lingering = promoted({ admitted: true, alive: false, withinDeadline: true, lingering: true, run_finished: true });
+  const past = promoted({ admitted: true, alive: false, withinDeadline: false, lingering: true });
+  const plan = checksQueue.planAdmission([lingering, past], { cap: 4 });
+  assert.equal(plan.byRun.get(lingering.run_id).holding, true, 'its work item reported, but its Pods may still run');
+  assert.equal(plan.byRun.get(past.run_id).holding, false);
+  assert.deepEqual(plan.sweep.map((s) => [s.runId, s.why]), [[past.run_id, 'deadline']],
+    'and the pass deletes it then, not before');
+});
+
+test('the sweep takes finished, ended and abandoned rows, and never a live, waiting or main-watch one', () => {
+  const finished = promoted({ admitted: true, alive: true, run_status: 'settled', run_finished: true });
+  const ended = draft({ admitted: true, alive: false, withinDeadline: true, session_ended: true });
+  const leftover = promoted({
+    admitted: true, alive: false, withinDeadline: false, owner: 'conductor-6b85:7:exited', exited: true,
+    run_status: null, run_finished: null,
+  });
+  const silent = promoted({ admitted: true, alive: false, withinDeadline: false, expired: true });
+  const kept = [
+    // A run under way, admitted or waiting in line.
+    promoted({ admitted: true, alive: true, run_status: 'running', run_finished: false }),
+    promoted({ alive: true, run_status: 'running', run_finished: false }),
+    // Dead, but its work item will come back for it: the retry collects its
+    // Jobs, or asks for a slot in its place.
+    promoted({ admitted: true, alive: false, withinDeadline: false, exited: true, run_status: 'queued' }),
+    promoted({ alive: false, exited: true, run_status: 'running' }),
+    promoted({ admitted: true, alive: false, withinDeadline: true, session_ended: true, run_status: 'running' }),
+    // Handed over moments ago: its Jobs may still be running.
+    promoted({ admitted: true, alive: false, withinDeadline: true, exited: true, run_status: null }),
+    // Dead a while, but neither handed over nor silent for long.
+    promoted({ admitted: true, alive: false, withinDeadline: false }),
+    // main-watch's: its next attempt adopts it.
+    main({ admitted: true, alive: false, withinDeadline: false, exited: true, expired: true }),
+  ];
+  const self = promoted({ run_status: 'settled', run_finished: true });
+  const plan = checksQueue.planAdmission([finished, ended, leftover, silent, ...kept, self], { cap: 4, self: self.run_id });
+  assert.deepEqual(plan.sweep.map((s) => [s.runId, s.why]), [
+    [finished.run_id, 'finished'], [ended.run_id, 'ended'], [leftover.run_id, 'abandoned'], [silent.run_id, 'abandoned'],
+  ]);
+  assert.equal(plan.sweep[0].sessionId, finished.session_id, 'the log names the proposal');
+  for (const r of kept) assert.equal(checksQueue.sweepReason(r, r.alive), null, JSON.stringify(r));
+});
+
+test('the admission pass deletes the swept rows, proposal rows only, and says how many', async (t) => {
+  t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity', async () => ({ available: true, cap: 4 }));
+  const finished = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'settled', run_finished: true });
+  const running = promoted({ admitted: true, alive: true, run_status: 'running', run_finished: false });
+  const statements = [];
+  const client = {
+    async query(sql, params) {
+      statements.push({ sql: String(sql), params });
+      if (/FROM check_runs cr/.test(sql)) return { rows: [finished, running] };
+      if (/^DELETE FROM check_runs WHERE run_id = ANY/.test(String(sql).trim())) {
+        return { rows: params[0].map((run_id) => ({ run_id })), rowCount: params[0].length };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  const logged = [];
+  t.mock.method(require('../src/services/logger'), 'info', (scope, msg, data) => logged.push({ msg, data }));
+  const plan = await checksQueue.admit({ async connect() { return client; } });
+  const sweep = statements.find((s) => /DELETE FROM check_runs WHERE run_id = ANY\(\$1::uuid\[\]\) AND kind = 'proposal'/.test(s.sql));
+  assert.ok(sweep, 'one delete, under the admission lock');
+  assert.deepEqual(sweep.params[0], [finished.run_id]);
+  assert.ok(statements.findIndex((s) => /pg_advisory_xact_lock/.test(s.sql)) < statements.indexOf(sweep));
+  assert.deepEqual(plan.swept, [{ runId: finished.run_id, sessionId: finished.session_id, why: 'finished' }]);
+  const line = logged.find((l) => l.msg === 'Cleared the checks rows of runs that are over');
+  assert.equal(line.data.removed, 1);
+});
+
+test('QUEUE_SQL reads a preview run against its work item by its identity key, and the cancel that follows a cancel', () => {
+  const src = stripComments(read('src/services/checks-queue.js'));
+  const sql = src.slice(src.indexOf('const QUEUE_SQL = `'), src.indexOf('function runOver('));
+  assert.match(sql, /w\.machine = 'preview' AND w\.key = 'session:' \|\| cr\.session_id::text\s+AND w\.kind = 'checks\.run' AND w\.work_key = cr\.manifest->>'runKey'/,
+    'machine, key, kind and work key: wf_work\'s unique identity, one index lookup a row');
+  assert.match(sql, /\(wk\.status IN \('reported', 'settled'\) AND \(NOT wk\.cancelled OR wk\.cancel_done\)\) AS run_finished/);
+  assert.match(sql, /c\.kind = 'checks\.cancel'\s+AND c\.work_key = 'cancel:' \|\| w\.work_key/);
+  assert.match(sql, /cs\.status IN \('merged', 'archived'\)\)\) AS session_ended/);
+  // The preview machine's names for them.
+  const machine = read('src/workflow/preview/machine.ts');
+  assert.match(machine, /run: 'checks\.run',/);
+  assert.match(machine, /cancel: 'checks\.cancel',/);
+  assert.match(machine, /\{ kind: WORK\.cancel, key: `cancel:\$\{d\.run\.key\}`/);
+  assert.match(machine, /\{ kind: WORK\.run, key, input: \{\s+sessionId: d\.sessionId, appId: d\.appId, n: served\.n, head: served\.head, runId: key,/);
+});
+
 test('an unavailable dedicated pool queues proposals and main-watch without revoking running work', () => {
   const running = promoted({ admitted: true });
   const waiting = [main(), promoted(), draft()];
@@ -284,7 +409,7 @@ test('a run the machine cancels while it waits leaves the line at once', () => {
 
 test('every run\'s row going wakes this process\'s waiters', () => {
   const src = stripComments(read('src/services/check-runs.js'));
-  assert.match(src, /async function finish\(pool, runId\) \{[\s\S]{0,400}\} finally \{\s+require\('\.\/checks-queue'\)\.slotFreed\(\);/);
+  assert.match(src, /async function finish\(pool, runId, \{[^}]*\} = \{\}\) \{[\s\S]{0,900}\} finally \{\s+require\('\.\/checks-queue'\)\.slotFreed\(\);/);
 });
 
 test('a retried run asks for its slot in the place its earlier claim had in line', () => {
