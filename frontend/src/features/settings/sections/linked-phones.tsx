@@ -19,7 +19,9 @@
  * that signs you out here and the page starts again signed out.
  *
  * A device not used for more than 30 days says "Not used since …" instead
- * of "Last used …", so a forgotten one reads as forgotten.
+ * of "Last used …", so a forgotten one reads as forgotten, and it is folded
+ * under "Older" at the foot of its group (phone review S16), unless it is
+ * the device in hand.
  *
  * The lists and the actions live on the server (src/services/linked-phones.js
  * with GET /api/me/phones and DELETE /api/me/phones/:id, which the mobile app
@@ -36,6 +38,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
+import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
@@ -68,7 +71,20 @@ const GROUP_HEAD = 'ui-cap text-xs font-semibold text-zinc-700 dark:text-zinc-30
 const GROUP_NOTE = 'ui-note text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1 leading-relaxed';
 const ROW_FIRST = 'ui-row flex items-start justify-between gap-3 py-2.5';
 const ROW_NEXT = `${ROW_FIRST} border-t border-zinc-200 dark:border-zinc-800`;
-const UNLINK_CLASS = 'ui-link ui-link-bad shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32 disabled:opacity-50';
+// Unlink and Sign out are NEUTRAL until pressed (phone review S16, 23 Nov
+// 2026): a red button on each of twenty-five rows made the page read as an
+// alarm. The first press asks on the row, and only then is the button red,
+// as the one that does it.
+// A text button in the muted ink, with no fill (a fill would make it the
+// look's large outlined button on every row).
+const UNLINK_CLASS = 'ui-link ui-link-mut shrink-0 rounded px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors touch-target-32 disabled:opacity-50';
+const UNLINK_ASKING_CLASS = 'ui-link ui-link-bad shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32 disabled:opacity-50';
+// "Older": the devices not used for 30 days, folded under one line at the
+// foot of their group (S16), so months-old installs do not stand among
+// today's. A native <details>, so the rows are in the page (and found by
+// search) and the browser opens and closes it.
+const OLDER = 'border-t border-zinc-200 dark:border-zinc-800';
+const OLDER_SUMMARY = 'ui-link ui-link-mut flex min-h-[44px] cursor-pointer list-none items-center gap-1.5 py-2.5 text-sm font-medium text-zinc-600 dark:text-zinc-300 [&::-webkit-details-marker]:hidden';
 const CANCEL_CLASS = 'ui-link ui-link-mut shrink-0 rounded px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 transition-colors touch-target-32 disabled:opacity-50';
 
 function parse(value: unknown): LinkedPhone[] | null {
@@ -186,11 +202,45 @@ function DeviceRow({ first, name, here, detail, asking, busy, actionLabel, cance
             {cancelLabel}
           </button>
         ) : null}
-        <button type="button" className={UNLINK_CLASS} disabled={busy} onClick={onAction}>
+        <button type="button" className={asking ? UNLINK_ASKING_CLASS : UNLINK_CLASS} disabled={busy} onClick={onAction}>
           {actionLabel}
         </button>
       </div>
     </div>
+  );
+}
+
+/** A device in hand is never folded away, however long ago it was used. */
+function isOlder(device: { lastUsedAt: string | null; current: boolean }): boolean {
+  return !device.current && stale(device.lastUsedAt);
+}
+
+/**
+ * One group's rows: the recent ones, then the ones not used for 30 days
+ * folded under "Older (N)". `render(device, first)` draws one row. A plain
+ * function rather than a component, so the rows stay this pane's own
+ * children.
+ */
+function deviceGroup<T extends { id: string; lastUsedAt: string | null; current: boolean }>(
+  devices: T[],
+  render: (device: T, first: boolean) => JSX.Element,
+  olderLabel: (count: number) => string,
+) {
+  const recent = devices.filter((d) => !isOlder(d));
+  const older = devices.filter(isOlder);
+  return (
+    <>
+      {recent.map((device, index) => render(device, index === 0))}
+      {older.length ? (
+        <details className={recent.length ? OLDER : undefined} data-linked-older="">
+          <summary className={OLDER_SUMMARY}>
+            <ChevronRightIcon className="h-4 w-4 shrink-0 transition-transform [details[open]>summary>&]:rotate-90" aria-hidden="true" />
+            <span>{olderLabel(older.length)}</span>
+          </summary>
+          {older.map((device) => render(device, false))}
+        </details>
+      ) : null}
+    </>
   );
 }
 
@@ -286,6 +336,8 @@ export function LinkedPhonesSection() {
     }
   };
 
+  const olderLabel = (count: number) => t('settings:phones.older', { count });
+
   const browserName = (browser: LinkedBrowser): string => {
     const os = browser.os ? t(OS_LABEL[browser.os]) : '';
     if (browser.browser) {
@@ -307,14 +359,14 @@ export function LinkedPhonesSection() {
           {phones && !phones.length ? (
             <p className="ui-empty text-xs text-zinc-500 dark:text-zinc-400 py-2.5">{t('settings:phones.empty')}</p>
           ) : null}
-          {(phones || []).map((phone, index) => {
+          {deviceGroup(phones || [], (phone, first) => {
             const asking = confirming === phone.id;
             const lastUsed = day(phone.lastUsedAt);
             const linked = day(phone.linkedAt);
             return (
               <DeviceRow
                 key={phone.id}
-                first={index === 0}
+                first={first}
                 attrs={{ 'data-linked-phone': phone.id }}
                 name={t(phone.platform ? PLATFORM_LABEL[phone.platform] : 'settings:phones.platform.unknown')}
                 here={phone.current ? t('settings:phones.thisPhone') : null}
@@ -329,7 +381,7 @@ export function LinkedPhonesSection() {
                 onCancel={() => setConfirming(null)}
               />
             );
-          })}
+          }, olderLabel)}
         </div>
         <h4 className={`${GROUP_HEAD} mt-5`}>{t('settings:phones.group.browsers')}</h4>
         <p className={GROUP_NOTE}>{t('settings:phones.browsers.note')}</p>
@@ -337,14 +389,14 @@ export function LinkedPhonesSection() {
           {browsers && !browsers.length ? (
             <p className="ui-empty text-xs text-zinc-500 dark:text-zinc-400 py-2.5">{t('settings:phones.browsers.empty')}</p>
           ) : null}
-          {(browsers || []).map((browser, index) => {
+          {deviceGroup(browsers || [], (browser, first) => {
             const asking = confirming === browser.id;
             const lastUsed = day(browser.lastUsedAt);
             const signedIn = day(browser.signedInAt);
             return (
               <DeviceRow
                 key={browser.id}
-                first={index === 0}
+                first={first}
                 attrs={{ 'data-linked-browser': browser.id }}
                 name={browserName(browser)}
                 here={browser.current ? t('settings:phones.browsers.thisBrowser') : null}
@@ -359,7 +411,7 @@ export function LinkedPhonesSection() {
                 onCancel={() => setConfirming(null)}
               />
             );
-          })}
+          }, olderLabel)}
         </div>
         {error ? (
           <p id="settings-phones-status" role="status" className="text-xs mt-3 text-red-700 dark:text-red-400">

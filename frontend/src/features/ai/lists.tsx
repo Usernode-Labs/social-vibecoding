@@ -172,8 +172,9 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
       {/* Not on a phone, where the drawer's list is 85% of the screen: the
           title needs the room more, and the tooltip still says the number.
           1 Nov 2026: nor under 1024px, where the column beside the list
-          leaves it about as narrow. */}
-      <span className="hidden lg:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+          leaves it about as narrow. 23 Nov 2026: nor at any width while a
+          thread is open beside the list (app.css, `data-ai-line-number`). */}
+      <span className="hidden lg:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-ai-line-number="">
         {line.number ? t(line.pr ? 'messages:ai.live.numberPr' : 'messages:ai.live.number', { number: line.number }) : ''}
       </span>
       <span className="min-w-0 flex-1">

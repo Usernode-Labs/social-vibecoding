@@ -418,13 +418,13 @@ function PanelMore({ route }: { route: string | null }): ReactNode {
               key={`${i}:${row.label}`}
               type="button"
               role="menuitem"
-              data-side-panel-page-row={i}
+              data-side-panel-page-row={row.index}
               title={row.title || undefined}
               disabled={row.disabled}
               onClick={(e) => {
                 btnRef.current?.focus({ preventScroll: true });
                 setOpen(false);
-                controller.runPanelMenuRow(i, row.label, e.nativeEvent);
+                controller.runPanelMenuRow(row.index, row.label, e.nativeEvent);
               }}
             >
               {row.label}

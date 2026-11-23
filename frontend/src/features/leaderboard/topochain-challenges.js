@@ -1421,6 +1421,19 @@ const TopochainChallenges = {
     return !!(by && by.measure === 'INVITES_JOINED');
   },
 
+  // Whether a list row is scored by accepting a proposal ("Get a proposal
+  // accepted"): the server's `counted_by` names the rule's measure, the same
+  // key _isInvites keys on.
+  //
+  // #6986: an accepted merge counts for its author and for the person who
+  // filed the request it was built for, so a challenge that sat at 0 while
+  // the Homeroom bot built their request needs the rule said plainly under
+  // the rail.
+  _isProposalAccepted(c) {
+    const by = c && c.counted_by;
+    return !!(by && by.measure === 'PROPOSAL_ACCEPTED');
+  },
+
   // Whether a list row is scored by connected accounts ("Connect X and
   // GitHub"): the server's `counted_by` names the rule's measure, the same
   // key _isInvites keys on.
@@ -1672,7 +1685,11 @@ const TopochainChallenges = {
       const linked = c && typeof c.app_slug === 'string' && c.app_slug
         && Number.isInteger(c.session_id) && c.session_id > 0;
       return {
-        text: str((linked && c.title) || a.description),
+        // #6986: a filer's credit says "Your request went live on ..." — the
+        // ledger's own sentence — even when it links to the change, whose
+        // title names work they did not do. The author's credit keeps the
+        // change's title, as it always has.
+        text: str((a.via === 'request' && a.description) || (linked && c.title) || a.description),
         points: Number(a.points) || 0,
         at: a.activity_at,
         precision: a.activity_time_precision,
@@ -1757,6 +1774,12 @@ const TopochainChallenges = {
       // other challenge both are absent, so the page is exactly as it was.
       invitesNote: TopochainChallenges._isInvites(challenge)
         ? PlatformI18n.t('leaderboard:challenges.invites.note')
+        : null,
+      // #6986: what makes an accepted proposal count, so a counter that has
+      // not moved is not a mystery. The bot's change from the viewer's own
+      // request counts for them too.
+      proposalsNote: TopochainChallenges._isProposalAccepted(challenge)
+        ? PlatformI18n.t('leaderboard:challenges.proposals.note')
         : null,
       invites: TopochainChallenges._isInvites(challenge)
         ? TopochainChallenges.invitesView()

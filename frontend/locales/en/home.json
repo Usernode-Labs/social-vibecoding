@@ -1007,6 +1007,22 @@
     "text": "{{formatted}} changes live this week",
     "description": "This week's line on a community's big card (the Communities page's pinned communities; Featured and Communities to join on Home, the Communities page and the visitor's page), in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one, after how many were active and a dot when there were any. On a phone the line is a tick glyph and the number, and these words are what a screen reader hears. {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
+  "communities.compactMembersActive_one": {
+    "text": "<0>{{members}},</0> <1>{{formatted}} active this week</1>",
+    "description": "Line under a community's name on its compact card (the Communities page's Joined list), in grey: how many people are in the community, then how many took part in it in the last seven days (talked in its channel, started a change or voted). Shown only when somebody took part; otherwise the line is the member count alone. {{members}} is the member count already worded, for example \"34 members\" (communities.members). <0> and <1> each hold one of the two facts, which a narrow card keeps whole and puts on two lines rather than break one: keep each tag round its fact, with this language's own joining punctuation inside <0>. {{formatted}} is the number active with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.compactMembersActive_other": {
+    "text": "<0>{{members}},</0> <1>{{formatted}} active this week</1>",
+    "description": "Line under a community's name on its compact card (the Communities page's Joined list), in grey: how many people are in the community, then how many took part in it in the last seven days (talked in its channel, started a change or voted). Shown only when somebody took part; otherwise the line is the member count alone. {{members}} is the member count already worded, for example \"34 members\" (communities.members). <0> and <1> each hold one of the two facts, which a narrow card keeps whole and puts on two lines rather than break one: keep each tag round its fact, with this language's own joining punctuation inside <0>. {{formatted}} is the number active with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.compactLive_one": {
+    "text": "{{formatted}} change live this week",
+    "description": "Second line under a community's name on its compact card (the Communities page's Joined list), after a tick, in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
+  "communities.compactLive_other": {
+    "text": "{{formatted}} changes live this week",
+    "description": "Second line under a community's name on its compact card (the Communities page's Joined list), after a tick, in the link's blue: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one. {{formatted}} is the number with digit grouping; {{count}} is the same number and only selects the plural form."
+  },
   "join.heading": {
     "text": "Communities to join",
     "description": "Heading over the cards of public communities at the bottom of Home that the viewer has not joined."

@@ -4339,6 +4339,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         };
       }
       const activity = await communities.activitySummary(pool, app.id);
+      // Top contributors (request 6837): read by whoever this route
+      // answers, as the names of the week's people are. Best-effort: a list
+      // that cannot be read is a hub without the card, never a failed hub.
+      let contributors = null;
+      try {
+        contributors = await communities.contributorsSummary(pool, app.id);
+      } catch (err) {
+        log.warn('apps', 'Could not read contributors', { slug: app.slug, message: err.message });
+      }
       // WHO IT IS FOR, AS SOMETHING TO CHANGE. Opening a project up (or
       // closing it to a group) is the visibility PR the settings dialog
       // opens, offered on the hero to the people POST /visibility-pr lets
@@ -4542,6 +4551,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         channel,
         places: placesPayload,
         activity,
+        contributors,
         can_manage: !!canManage,
         audience_change: pendingAudience ? {
           session_id: pendingAudience.id,

@@ -205,8 +205,8 @@ test('Standard (WIP) draws the page as Home is: its ground, the community cards,
   assert.match(page, /const pinCards = wip \? wideCards : brand && brandCards;/);
   assert.match(page, /const joinCards = wip \|\| \(brand && brandCards\);/);
   assert.match(page, /const wideCards = useMinWidth\(768\);/);
-  // The members are read only where a pinned card is drawn.
-  assert.match(page, /if \(pinCards && shown && state\.ready && pinKey\) void loadHomePinsActivity\(\);/);
+  // The week is read only where a card is drawn: a pin's, or a joined community's compact card.
+  assert.match(page, /if \(shown && state\.ready && \(\(pinCards && pinKey\) \|\| \(joinCards && joinedKey\)\)\) void loadHomePinsActivity\(\);/);
   // A group folds to three rows of four; its label unfolds the rest and folds it back.
   assert.match(page, /const FOLD_AT = 12;/);
   assert.match(page, /const folds = wip && !q && !editing;/, 'a search or an edit shows all of a group');
@@ -235,8 +235,10 @@ test('Pinned: the community cards wrap onto rows from 768px, four where four fit
   // The cards' grid (A COMMUNITY'S CARD): each card at least --cm-card-min wide, and no more in a row than --cm-cols.
   assert.match(css, /\.cm-grid \{\s*display: grid;\s*grid-template-columns: repeat\(auto-fill, minmax\(max\(var\(--cm-card-min\), \(100% - \(var\(--cm-cols\) - 1\) \* var\(--cm-gap\)\) \/ var\(--cm-cols\)\), 1fr\)\);\s*gap: var\(--cm-gap\);\s*\}/);
   assert.doesNotMatch(css, /\.cm-grid\[data-cm-grid="pinned"\] \{ grid-auto-rows: 1fr; \}/, 'a row is as tall as its own tallest card');
-  // Joined on a phone: one compact card to a line, 8px apart.
+  // Joined on a phone: one compact card to a line, 8px apart; two across from 768px, three from 1280px.
   assert.match(css, /@media \(max-width: 767\.98px\) \{\s*\.cm-grid\[data-cm-grid="joined"\] \{\s*grid-template-columns: minmax\(0, 1fr\);\s*gap: 8px;/);
+  assert.match(css, /@media \(min-width: 768px\) \{\s*\.cm-grid\[data-cm-grid="joined"\] \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}\s*\}/);
+  assert.match(css, /@media \(min-width: 1280px\) \{\s*\.cm-grid\[data-cm-grid="joined"\] \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}\s*\}/);
   // Under 768px a pin is the small tile: as many as fit, three on a phone.
   const P = 'html:not\\(\\[data-skin\\]\\) #communities-body #communities-pinned-section \\.communities-grid';
   assert.match(css, new RegExp(`${P} \\{\\s*display: grid;\\s*grid-template-columns: repeat\\(auto-fill, minmax\\(var\\(--wip-pin-tile\\), 1fr\\)\\);\\s*grid-auto-rows: 1fr;\\s*gap: var\\(--wip-card-gap\\);\\s*padding: 0;\\s*\\}`));
@@ -310,9 +312,25 @@ test('from 768px a pin is the big card and a joined community the compact card, 
   assert.match(joined, /<div class="cm-grid" data-cm-grid="joined">/);
   assert.doesNotMatch(joined, /class="wip-card"/, 'the compact cards stand on the page, no group card round them');
   assert.match(joined, /<a href="\/app\/orchard\/workshop" class="cm-card" data-cm-size="compact" data-home-community="orchard" data-home-community-pinned=""><span class="cm-card-head"><span class="cm-card-face"><span class="cm-card-icon" data-icon="emoji"/);
-  assert.match(joined, /<span class="cm-card-name">Orchard<\/span><span class="cm-card-members" data-cm-members="">34 members<\/span>/, 'the joined list\'s own count');
+  assert.match(joined, /<span class="cm-card-name">Orchard<\/span><span class="cm-card-members" data-cm-members="">34 members<\/span>/, 'the joined list\'s own count, until its week is read');
   assert.match(joined, /data-home-community-votes="1"/);
-  assert.doesNotMatch(joined, /cm-card-pic|cm-card-week|cm-card-desc/, 'no picture, no sentence, no week');
+  assert.doesNotMatch(joined, /cm-card-pic|cm-card-week|cm-card-desc|cm-card-live/, 'no picture, no sentence, no week yet');
+});
+
+test('a joined community\'s compact card says its week once it is read: its members and who was active, then what went live', () => {
+  for (const [wide, skin] of [[1440, 'standard'], [393, 'standard'], [1440, 'brand']]) {
+    const html = withCards(wide, skin, { ready: true, pins: PICTURED, joined: JOINED_COUNTED, owed: {} }, (mod) => {
+      mod.homePinsActivityStore.set({ ready: true, bySlug: {
+        tide: { members: 93, liveWeek: 5, activeWeek: 33, people: [], description: 'Tides for the bay.' },
+        orchard: { members: 35, liveWeek: 2, activeWeek: 6, people: [{ username: 'ann', avatarUrl: null }], description: 'Apples.' },
+      } });
+      return renderToHtml(createElement(mod.CommunitiesScreen, {}));
+    });
+    const orchard = section(html, 'communities-joined-section');
+    // The members are the joined list's own count; the week is the activity read's.
+    assert.match(orchard, /<span class="cm-card-name">Orchard<\/span><span class="cm-card-members" data-cm-members=""><span class="cm-card-fact">34 members,<\/span> <span class="cm-card-fact">6 active this week<\/span><\/span><span class="cm-card-live" data-cm-live="">[\s\S]*?<span class="cm-card-fact">2 changes live this week<\/span><\/span>/, `${skin} at ${wide}px`);
+    assert.doesNotMatch(orchard, /cm-card-desc|Apples|cm-card-week|ann/, 'no description and no faces on the compact card');
+  }
 });
 
 test('under 768px the standard look keeps the small tiles, with the picture on the band and the real icon on it', () => {

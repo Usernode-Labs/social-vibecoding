@@ -444,6 +444,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/openrouter-credit').sweep(pool, config),
   },
   {
+    // Homeroom bot's automatic switch to verified accounts only: the two
+    // figures read, and the switch made once either reaches its threshold
+    // (services/homeroom-bot-verified-auto.js).
+    name: 'bot-verified-auto',
+    everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/homeroom-bot-verified-auto').sweep(pool, config),
+  },
+  {
     // The unexpected-events digest and the hourly pile-up alert.
     name: 'incident-alerts', everyMs: 5 * MIN,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/platform-incident-alerts').sweep(pool),
@@ -878,7 +886,9 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // Each native proposal up for a vote: one merged by hand on GitHub is
-    // recorded.
+    // recorded. The GitHub webhook (routes/github-webhook.js) is the fast
+    // path, running the same look the moment the delivery arrives; this
+    // six-hourly run is the fallback for a delivery that never came.
     name: 'merged-by-hand', everyMs: 6 * HOUR,
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR)),
     item: {

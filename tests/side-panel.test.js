@@ -1783,8 +1783,8 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
     'the divider comes after Copy link');
   assert.ok(menu.indexOf('data-side-panel-open-workshop') < menu.indexOf('side-panel-menu-sep'),
     'and after Open in workshop');
-  assert.match(menu, /data-side-panel-page-row=\{i\}/);
-  assert.match(menu, /controller\.runPanelMenuRow\(i, row\.label, e\.nativeEvent\)/);
+  assert.match(menu, /data-side-panel-page-row=\{row\.index\}/);
+  assert.match(menu, /controller\.runPanelMenuRow\(row\.index, row\.label, e\.nativeEvent\)/);
   assert.match(SRC, /setRows\(controller\.panelMenuRows\(\)\);/, 'read from the page as the menu opens');
 
   // The page's own ⋯ list, read off its AppView: a row that changed since the
@@ -1817,6 +1817,18 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(following, true, 'the row ran in the page');
   assert.equal(api.SidePanel.panelMenuRows()[1].label, 'Mute', 'and the next opening says Mute');
+  // #7000: the page's ⋯ now opens with a Copy link row. The column keeps its
+  // own Copy link above the divider, so it drops the page's and each row that
+  // stays keeps its position in the page's full list, where it is run.
+  av._cardMenuItems = () => [
+    { label: 'Copy link', copyLink: true, act: () => {} },
+    { label: 'Build it with your own Claude Code', act: () => {} },
+    { label: 'Notify me', act: () => {} },
+  ];
+  assert.deepEqual(api.SidePanel.panelMenuRows().map((r) => r.label),
+    ['Build it with your own Claude Code', 'Notify me'], 'the page\'s copy row is left out');
+  assert.deepEqual(api.SidePanel.panelMenuRows().map((r) => r.index), [1, 2],
+    'each row still names its place in the page\'s list');
   // A page with no ⋯ key of its own, and one whose head is another page's,
   // list nothing.
   api.embeddedApi.head('app/x/dev/issues/6431', { kind: 'change', pill: null, menuKey: null });

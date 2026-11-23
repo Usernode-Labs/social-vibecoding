@@ -48,6 +48,8 @@ export interface WalletSheetState {
   /** The drawer row. Present for every native top frame. */
   visible: boolean;
   balanceLabel: string;
+  /** False while the wallet has no balance to show ("— UT"), so the row can say why. */
+  balanceKnown: boolean;
   address: string | null;
   shortAddress: string;
   /** False on app versions without `getWalletState` — an inline note, not a hole. */
@@ -72,6 +74,7 @@ export interface WalletSheetState {
 export const WALLET_EMPTY: WalletSheetState = {
   visible: false,
   balanceLabel: '',
+  balanceKnown: false,
   address: null,
   shortAddress: '—',
   walletSupported: false,

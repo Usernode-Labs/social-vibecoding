@@ -1343,6 +1343,16 @@ const Notifications = {
       }
       return;
     }
+    // The automatic switch to verified accounts only opens where it is set.
+    if (signal && signal.type === 'botVerified') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('homeroom-bot');
+      } else {
+        window.location.hash = '#admin/homeroom-bot';
+      }
+      return;
+    }
     if (item.kind === 'platform_incident') {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
@@ -2440,6 +2450,11 @@ const PLATFORM_INCIDENT_PRIVATE_RE = /^private:(\d{1,10})$/;
 // dollars, the balance's and the days it lasts ("credit:low:500:480:6").
 const PLATFORM_INCIDENT_CREDIT_RE = /^credit:(low|urgent):(\d{1,7}):(\d{1,7}):(\d{1,4})$/;
 const PLATFORM_INCIDENT_CREDIT_OUT_RE = /^credit:out$/;
+// services/homeroom-bot-verified-auto.js detailToken(): the automatic switch
+// to verified accounts only fired (on) or a figure passed 80% of its
+// threshold (near); the figure (u: people active in 30 days, s: AI spend in
+// whole dollars), its value and its threshold ("verify:on:u:512:500").
+const PLATFORM_INCIDENT_VERIFY_RE = /^verify:(on|near):(u|s):(\d{1,8}):(\d{1,8})$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
@@ -2448,6 +2463,13 @@ function parsePlatformIncidentDetail(detail) {
   const priv = PLATFORM_INCIDENT_PRIVATE_RE.exec(s);
   if (priv) return { type: 'private', privateRequestId: Number(priv[1]) };
   if (PLATFORM_INCIDENT_CREDIT_OUT_RE.test(s)) return { type: 'creditOut' };
+  const verify = PLATFORM_INCIDENT_VERIFY_RE.exec(s);
+  if (verify) {
+    return {
+      type: 'botVerified', fired: verify[1] === 'on', figure: verify[2] === 's' ? 'aiSpend' : 'activeUsers',
+      value: Number(verify[3]), threshold: Number(verify[4]),
+    };
+  }
   const credit = PLATFORM_INCIDENT_CREDIT_RE.exec(s);
   if (credit) {
     return {
@@ -2579,6 +2601,11 @@ const INVITE_LINE_IDS = {
     'notifications:invite.line.someoneJoin', 'notifications:invite.line.someoneJoinUnnamed'],
   build: ['notifications:invite.line.build', 'notifications:invite.line.buildUnnamed',
     'notifications:invite.line.someoneBuild', 'notifications:invite.line.someoneBuildUnnamed'],
+  // #7027: a build invitation whose person is already in the project (they
+  // came in by a link or the Join button) is no longer a waiting invitation
+  // to join: it is an offer to build what they can already see.
+  offer: ['notifications:invite.line.offer', 'notifications:invite.line.offerUnnamed',
+    'notifications:invite.line.someoneOffer', 'notifications:invite.line.someoneOfferUnnamed'],
 };
 function inviteView(inv) {
   const isApprover = inv.kind === 'approver';
@@ -2591,7 +2618,7 @@ function inviteView(inv) {
     icon: isApprover ? '🗳️' : '✉️',
     who: inv.invitedBy ? `@${inv.invitedBy}` : t('notifications:invite.someone'),
     inviter: inv.invitedBy || '',
-    line: INVITE_LINE_IDS[isApprover ? 'approve' : inv.joins ? 'join' : 'build'][
+    line: INVITE_LINE_IDS[isApprover ? 'approve' : inv.inCommunity ? 'offer' : inv.joins ? 'join' : 'build'][
       (inv.invitedBy ? 0 : 2) + (project ? 0 : 1)],
     appName: project,
     note: !isApprover && inv.note ? String(inv.note) : '',
@@ -3626,6 +3653,29 @@ function rowWords(n) {
           v: alert.days > 0
             ? t('notifications:row.credit.low.body', { balance: dollars(alert.balanceCents), count: alert.days })
             : t('notifications:row.credit.low.bodyNoDays', { balance: dollars(alert.balanceCents) }),
+        }],
+      };
+    }
+    // Homeroom bot's automatic switch to verified accounts only
+    // (services/homeroom-bot-verified-auto.js): it fired, or a figure is
+    // close to its threshold.
+    if (alert && alert.type === 'botVerified') {
+      const shown = (n) => (alert.figure === 'aiSpend' ? `$${n.toLocaleString('en-US')}` : n.toLocaleString('en-US'));
+      const spend = alert.figure === 'aiSpend';
+      const figures = spend
+        ? { spend: shown(alert.value), threshold: shown(alert.threshold) }
+        : { people: shown(alert.value), threshold: shown(alert.threshold) };
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: alert.fired ? '\u{1F512}' : '\u26A0\uFE0F',
+        label: alert.fired ? t('notifications:row.botVerified.on.label') : t('notifications:row.botVerified.near.label'),
+        segments: [{
+          t: 'text',
+          v: alert.fired
+            ? (spend ? t('notifications:row.botVerified.on.bodySpend', figures) : t('notifications:row.botVerified.on.bodyUsers', figures))
+            : (spend ? t('notifications:row.botVerified.near.bodySpend', figures) : t('notifications:row.botVerified.near.bodyUsers', figures)),
         }],
       };
     }

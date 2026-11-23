@@ -862,8 +862,8 @@ test('the browser sends the line, and re-reads the roster once the vote lands', 
   const at = view.indexOf('  async castIssueVote(issueId, vote, opts = null) {');
   assert.ok(at > -1, 'castIssueVote takes an options bag');
   const fn = view.slice(at, view.indexOf('\n  },\n', at));
-  assert.match(fn, /reason = await AppView\._resolveVoteReason\(vote === 'down' \? 'no' : 'yes', opts\);/,
-    'castVote\'s own resolver: a string is the line, null asks nothing, an absent key prompts');
+  assert.match(fn, /reason = await AppView\._awaitVoteReason\(vote === 'down' \? 'no' : 'yes', opts\);/,
+    '#6987: castVote\'s own resolver, bounded so a box that never opens cannot strand the vote');
   assert.match(fn, /body: JSON\.stringify\(\{ vote, \.\.\.\(reason \? \{ reason \} : \{\}\) \}\)/);
   assert.match(fn, /PlatformUI\.toast\(PlatformI18n\.errorText\(data\) \|\|/,
     'a refused vote says so in the server\'s words');

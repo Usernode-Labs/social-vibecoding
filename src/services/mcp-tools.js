@@ -1309,6 +1309,23 @@ function proposalRefSentence(proposalId, prNumber) {
   return ref ? ref.charAt(0).toUpperCase() + ref.slice(1) : 'This proposal';
 }
 
+// WHICH ADDRESS A PERSON IS GIVEN (23 Nov 2026). An answer about a proposal
+// carries two: `link`, its page on Homeroom, where somebody reads it and
+// votes, and `prUrl`, the pull request on the git host. The output schema
+// says so on `link` ("Link people here, never to prUrl"), but an agent acts
+// on the RESULT, which carries the two addresses side by side and none of
+// the schema's words, and an agent used to pull requests reaches for prUrl:
+// one reported a new proposal to its user with the GitHub address, where
+// that user can neither read the summary nor vote. So the rule travels in
+// nextStep, with the address in it, on every answer that has both. Nothing
+// is added where there is no pull request: there is only one address then.
+function personLinkStep(link, prUrl) {
+  return link && prUrl
+    ? ` When you tell the user about it, link its page on Homeroom, ${link}: that is where they read it and vote. `
+      + 'Do not link the GitHub pull request (prUrl).'
+    : '';
+}
+
 // A promote answered 202: accepted, and GitHub has not answered yet. It goes
 // up without another ask, or is refused, and get_proposal reports which.
 function goingUpSentence(ref) {
@@ -1718,6 +1735,8 @@ function shapeProposal(session, origin, viewerId = null) {
   const checks = shapeChecks(session);
   const step = shapeNextStep(session, checks, viewerId);
   const skipStep = shotsSkipStep(session, shapeBranch(session));
+  // The page a person reads and votes on it at; prUrl is the git host's.
+  const link = session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null;
   return {
     proposalId: session.id,
     appSlug: session.app_slug || null,
@@ -1738,15 +1757,16 @@ function shapeProposal(session, origin, viewerId = null) {
     linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
-    // The page a person reads and votes on it at; prUrl is the git host's.
-    link: session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null,
+    link,
     stagingUrl: session.staging_url || null,
     checkState: session.check_state || null,
     checks,
     // Where the head lives and who may move it. Everything an agent needs to
     // revise this proposal without guessing.
     branch: shapeBranch(session),
-    nextStep: skipStep ? `${step} ${skipStep}` : step,
+    // The address for the person comes straight after what to do, ahead of
+    // the note about shots that could not be taken, which only ever follows.
+    nextStep: step + personLinkStep(link, session.pr_url) + (skipStep ? ` ${skipStep}` : ''),
     // A true value says capture used the app root because neither an explicit
     // route nor a matching named scenario supplied something more specific.
     captureDefaultedToRoot: detail.media !== false
@@ -2042,7 +2062,14 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
     behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
     mergeability: session.mergeability || null,
-    nextStep: changeNextStep(session, checks, liveState, kind),
+    // An outside agent reports a change to its user from this answer as
+    // readily as from get_proposal, so it carries the same sentence about
+    // which address to give. Homeroom bot links changes its own way
+    // (homeroom-bot-voice.js changeMd) and is told nothing new.
+    nextStep: changeNextStep(session, checks, liveState, kind)
+      + (kind === 'external'
+        ? personLinkStep(session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null, session.pr_url)
+        : ''),
     webPath: session.app_slug ? changeWebPath(origin, session.app_slug, session.id) : null,
   };
 }
@@ -6800,7 +6827,9 @@ function registerTools(server, ctx) {
         nextStep: attempt.status === 202 ? goingUpSentence(proposalRefSentence(proposalId, promotedPr))
           : `${proposalRefSentence(proposalId, promotedPr)} is now UP FOR THE GROUP'S VOTE as it stood: `
           + 'nothing was pushed and no code moved. Checks and the staging preview build automatically where '
-          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.',
+          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.'
+          + personLinkStep(promotedSlug ? changeLink(origin, promotedSlug, proposalId, promotedPr) : null,
+            typeof promotedBody.prUrl === 'string' ? promotedBody.prUrl : ((row && row.pr_url) || null)),
       });
     }
     // #4263: or a patch, with the taskId of the proposal's update work order.
@@ -7233,7 +7262,9 @@ function registerTools(server, ctx) {
           ? changeWebPath(origin, result.appSlug, result.proposalId)
           : appWebPath(origin, result.appSlug),
         nextStep: (result.unchanged ? resubmitStep : landedStep)
-          + rejectedNote + titleNote + descNote + summaryNote + proposeNote,
+          + rejectedNote + titleNote + descNote + summaryNote + proposeNote
+          + personLinkStep(result.proposalId && result.appSlug
+            ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null, result.prUrl),
       });
     }
 
@@ -7323,7 +7354,9 @@ function registerTools(server, ctx) {
         nextStep: 'That work was already submitted — most likely the coding agent submitted it itself through '
           + 'its own connector. Nothing was duplicated. It is up for the group\'s vote'
           + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}; `
-          + 'use get_proposal to follow it.',
+          + 'use get_proposal to follow it.'
+          + personLinkStep(result.proposalId && result.appSlug
+            ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null, result.prUrl),
       });
     }
 
@@ -7372,6 +7405,8 @@ function registerTools(server, ctx) {
         // Submitting is never its author's yes (governance-rules.ts,
         // "PROPOSING IS NOT A YES"), so say where theirs is cast.
         + ' Submitting it is not a vote: tell the user their own yes counts once they tap Yes on it on Homeroom.'
+        + personLinkStep(result.proposalId && result.appSlug
+          ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null, result.prUrl)
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
     });
@@ -9151,10 +9186,14 @@ function registerTools(server, ctx) {
       worksFor: z.enum(['everyone', 'verified']).optional(),
       verifiedSignals: z.array(z.enum(['phone', 'x', 'github', 'zkpassport', 'oauth', 'email'])).min(1).max(6).optional(),
       verifiedGrandfather: botSwitch,
+      // The automatic switch to verified accounts only: armed or not, and its thresholds (people active in 30 days; the platform's AI spend over them, in cents).
+      verifiedAuto: botSwitch,
+      verifiedAutoUsers: z.number().int().min(1).max(10_000_000).optional(),
+      verifiedAutoSpendCents: z.number().int().min(100).max(1_000_000_000).optional(),
     };
     server.registerTool('set_homeroom_bot_settings', {
       title: 'Homeroom bot: change its settings',
-      description: 'Admin only. Change the Homeroom bot\'s settings as the console\'s Save does (Admin, Homeroom bot, Settings): only the fields you pass change, and each is checked by the same rules, so a value the console would refuse is refused here with its reason. mode "on" (it acts on every app but pausedApps) or "off"; pausedApps, the whole list of app slugs it leaves alone; models, the per-stage settings (triage, spec, build, followup) a stage runs on only where no bot configuration is current (the configurations decide every stage; change those with save_bot_config), blank or null for the platform default; defaultModel, the platform default itself, which every new agent chat runs on too, blank for the deployment\'s; helperModel, the model the short helper calls (titles, the plan at Make it, reads of a chat message to the bot, quick replies, the content review) ask first, blank for the built-in GLM 5.3 Flash, and any model but GLM is asked with its thinking off. A model must be one the OpenRouter catalog lists that can call tools. Budgets are cents a week: weeklyLimitCents the bot\'s own, userWeeklyCents a person\'s, adminWeeklyCents an admin\'s (0 for no limit on those two). appCaps sets one project\'s own numbers, keyed by its app id or slug: building, the builds it may have waiting or under way there at once (1 to 10), and waiting, its changes up for a vote there at once (1 to 100); null for a number, or for the project, is the default (get_homeroom_bot\'s buildsPerApp and waitingPerApp), and projects you do not name keep theirs. readsPerApp is how many of one project\'s requests it reads at once (1 to 6), each on a triage session of its own; reads count toward liveAtOnce and perPerson as before. creditWarnCents and creditUrgentCents are the OpenRouter credit levels, in cents, at which the full admins are warned once each ($500 and $200 by default; the urgent level is never above the first), so they can be moved without a deploy. worksFor is who the bot works for: "everyone" who is let in, or "verified" accounts only, which hold any one of verifiedSignals (phone, x, github, zkpassport, oauth for a Google or Apple sign-in, email for a confirmed address; at least one); admins always have it, and with verifiedGrandfather true members let in before the rule was switched on keep it. The rest are the console\'s clocks, limits and switches by the names get_homeroom_bot reports them. A change applies to every app at once, with no deploy: read get_homeroom_bot first, ask the person, and say each change back with its old and new value before you call this. Recorded under your connector user. It changes no app\'s code.',
+      description: 'Admin only. Change the Homeroom bot\'s settings as the console\'s Save does (Admin, Homeroom bot, Settings): only the fields you pass change, and each is checked by the same rules, so a value the console would refuse is refused here with its reason. mode "on" (it acts on every app but pausedApps) or "off"; pausedApps, the whole list of app slugs it leaves alone; models, the per-stage settings (triage, spec, build, followup) a stage runs on only where no bot configuration is current (the configurations decide every stage; change those with save_bot_config), blank or null for the platform default; defaultModel, the platform default itself, which every new agent chat runs on too, blank for the deployment\'s; helperModel, the model the short helper calls (titles, the plan at Make it, reads of a chat message to the bot, quick replies, the content review) ask first, blank for the built-in GLM 5.3 Flash, and any model but GLM is asked with its thinking off. A model must be one the OpenRouter catalog lists that can call tools. Budgets are cents a week: weeklyLimitCents the bot\'s own, userWeeklyCents a person\'s, adminWeeklyCents an admin\'s (0 for no limit on those two). appCaps sets one project\'s own numbers, keyed by its app id or slug: building, the builds it may have waiting or under way there at once (1 to 10), and waiting, its changes up for a vote there at once (1 to 100); null for a number, or for the project, is the default (get_homeroom_bot\'s buildsPerApp and waitingPerApp), and projects you do not name keep theirs. readsPerApp is how many of one project\'s requests it reads at once (1 to 6), each on a triage session of its own; reads count toward liveAtOnce and perPerson as before. creditWarnCents and creditUrgentCents are the OpenRouter credit levels, in cents, at which the full admins are warned once each ($500 and $200 by default; the urgent level is never above the first), so they can be moved without a deploy. worksFor is who the bot works for: "everyone" who is let in, or "verified" accounts only, which hold any one of verifiedSignals (phone, x, github, zkpassport, oauth for a Google or Apple sign-in, email for a confirmed address; at least one); admins always have it, and with verifiedGrandfather true members let in before the rule was switched on keep it. verifiedAuto arms the automatic switch to verified accounts only: while armed and worksFor is "everyone", the first time people active on Homeroom in the last 30 days reach verifiedAutoUsers (500 by default) or the platform\'s AI spend over the last 30 days (platform key plus system tokens, a person\'s own key left out, the figures Admin, Analytics shows) reaches verifiedAutoSpendCents ($5,000 by default), a sweep within 15 minutes switches worksFor to "verified" as this save would, disarms itself, and tells the full admins; it never switches back to everyone, and armed while a figure is already over its threshold it fires on the next sweep. get_homeroom_bot\'s verifiedAutoFigures and verifiedAutoFired say what it last read and when and why it fired. The rest are the console\'s clocks, limits and switches by the names get_homeroom_bot reports them. A change applies to every app at once, with no deploy: read get_homeroom_bot first, ask the person, and say each change back with its old and new value before you call this. Recorded under your connector user. It changes no app\'s code.',
       inputSchema: BOT_SETTINGS_INPUT,
       outputSchema: { changed: z.array(z.string()), settings: z.any(), weeklyLimitCents: z.number().nullable(), nextStep: z.string() },
       annotations: writeAnnotations,

@@ -105,6 +105,7 @@ import {
 import {
   FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
 } from './hub-cards';
+import { ContributorsCard } from './hub-cards';
 import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
@@ -1009,6 +1010,7 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
         const tappable = !waiting && c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
         const onTap = c.key === 'votes' ? onVotes : () => onStage && onStage(c.key as DashStage);
         const cls = !waiting && c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
+        const Mark = c.key === 'open' ? Squares2X2Icon : c.key === 'unclaimed' ? UserIcon : c.key === 'votes' ? BallotIcon : CheckIcon;
         const content = (
           <>
             <b>{waiting ? <CountSkeleton /> : c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
@@ -1021,6 +1023,8 @@ function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: numb
             </span>
             {waiting ? null : c.sub}
             {c.key === 'votes' && asOf ? <span className="dev-ws-dash-sub" data-ws-dash-sub="asof">{asOf}</span> : null}
+            {/* The figure's mark, last so the number stays the cell's first word: drawn only where a look makes each figure a card of its own (app.css, the Workshop in the standard look), which places it. */}
+            <i className="dev-ws-dash-mark" aria-hidden="true"><Mark className="h-5 w-5" /></i>
           </>
         );
         if (tappable && c.key === 'votes') {
@@ -4277,6 +4281,12 @@ export function DevWorkshop(): ReactNode {
           and Topics side by side (app.css, "THE HUB IN TWO COLUMNS"). See
           ./hub-cards.tsx TopicsCard. */}
       {slug ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
+      {/* TOP CONTRIBUTORS (request 6837): who took part most, by name and a
+          count in words. After Topics in the page, so For you and Topics
+          stay a pair; a wide window puts it under For you, beside Topics
+          (app.css, "THE HUB IN TWO COLUMNS"). Nothing until two people have
+          taken part. See ./hub-cards.tsx ContributorsCard. */}
+      {slug ? <ContributorsCard data={community} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its
           last update went down. Nothing on a project nobody has made a
@@ -4425,6 +4435,10 @@ export function DevWorkshop(): ReactNode {
           new requests nobody has picked up end with Build it). Not for a
           visitor, who has no work here. */}
       {slug && v.mine && v.mine.viewer ? <YourWorkCard slug={slug} name={projectName} /> : null}
+      {/* Its label, for a look that stands the card beside What happened, where each of the two needs a name over it (app.css hides it everywhere else). AFTER the card in the document, which the declared checks read as Overview's next sibling; the look that shows it orders it over the card. */}
+      {slug && v.mine && v.mine.viewer ? (
+        <SectionHeader className="dev-ws-part-work px-1.5 pb-0 pt-3.5" data-ws-part="work">{t('project:hub.forYou.title')}</SectionHeader>
+      ) : null}
 
       {/* ── WHAT HAPPENED ──
           One card for what was Since your last visit and Week by week:

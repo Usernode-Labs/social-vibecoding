@@ -97,6 +97,11 @@ async function migrate(config) {
   // take part in, with a vote waiting that the capture member can see and
   // cannot cast. Obviously fake, staging only.
   await seedStagingCollabOnlyVote(pool);
+  // #7027's shots: an invitation to build that its person answered by
+  // joining the project another way, so the bell row reads as an offer and
+  // the member list tags them "offered to build". Obviously fake, staging
+  // only.
+  await seedStagingJoinedBuildOffer(pool);
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
@@ -1990,6 +1995,85 @@ async function seedStagingCollabOnlyVote(pool) {
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging collaborator-only vote seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// #7027's shots: an invitation to build is not a waiting invitation once its
+// person is in the project. Two obviously fake projects, one per screen:
+//
+//   * someone else's, where the capture member already joined the community
+//     and still has an unread invitation to build it, so the bell's Invites
+//     row reads "@inviter offered to let you build …" and "You joined it";
+//   * the capture member's own, where a fake person joined the community and
+//     was offered building, so Members & approvals tags them "offered to
+//     build" instead of "invited".
+//
+// Rows are for the fixture account and fake people; nothing here is a signal
+// the code reads to decide anything, and the invitation's status is the one a
+// real join leaves behind. Idempotent by slug, a no-op outside staging.
+async function seedStagingJoinedBuildOffer(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return; }
+    const inviter = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-offer-inviter', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+    const offered = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-offer-builder', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+
+    // Someone else's project, which the capture member has already joined.
+    await tx.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       SELECT 'Staging demo: Page Turners', 'staging-demo-build-offer', 'running', $1, 'public', 'private'
+        WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-build-offer')`, [inviter.id]);
+    const theirs = (await tx.query(
+      "SELECT id, community_id FROM apps WHERE slug = 'staging-demo-build-offer'")).rows[0];
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW()) ON CONFLICT DO NOTHING`, [theirs.id, inviter.id]);
+    await tx.query(
+      `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+       ON CONFLICT DO NOTHING`, [theirs.community_id, member.id]);
+    // The invitation to build, still waiting, though they are in the project.
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
+       VALUES ($1, $2, 'invited', $3) ON CONFLICT DO NOTHING`, [theirs.id, member.id, inviter.id]);
+    await tx.query(
+      `INSERT INTO notifications (user_id, app_id, source_user_id, kind, created_at, read_at)
+       SELECT $1, $2, $3, 'collab_invite', NOW() - INTERVAL '2 days', NOW()
+        WHERE NOT EXISTS (SELECT 1 FROM notifications
+                           WHERE user_id = $1 AND app_id = $2 AND kind = 'collab_invite')`,
+      [member.id, theirs.id, inviter.id]);
+
+    // The capture member's own project, with a fake person in it who was
+    // offered building and has not taken it up.
+    await tx.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       SELECT 'Staging demo: Reading Club', 'staging-demo-members-offer', 'running', $1, 'public', 'private'
+        WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-members-offer')`, [member.id]);
+    const own = (await tx.query(
+      "SELECT id, community_id FROM apps WHERE slug = 'staging-demo-members-offer'")).rows[0];
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW()) ON CONFLICT DO NOTHING`, [own.id, member.id]);
+    await tx.query(
+      `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+       ON CONFLICT DO NOTHING`, [own.community_id, offered.id]);
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
+       VALUES ($1, $2, 'invited', $3) ON CONFLICT DO NOTHING`, [own.id, offered.id, member.id]);
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging build-offer seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 
@@ -16685,39 +16769,86 @@ async function seedStagingCountedCredit(pool, config) {
        ON CONFLICT (id) DO NOTHING`,
       [EVENT_SEASON_ID]
     );
-    const branch = 'staging-fixture/counted-credit';
-    const { rows: found } = await pool.query(
-      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1', [apps[0].id, branch]
-    );
-    const session = found[0] || (await pool.query(
-      `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, pr_title, session_title, status,
-          merged_at, live_at, created_at)
-       VALUES ($1, $2, $3, 9043, '[Staging demo] Show the reason beside each challenge credit',
-               '[Staging demo] Show the reason beside each challenge credit', 'merged',
-               NOW(), NOW(), NOW() - INTERVAL '1 day')
-       RETURNING id`,
-      [apps[0].id, member, branch]
-    )).rows[0];
-    const { rows: merged } = await pool.query(
-      `SELECT id FROM events WHERE session_id = $1 AND event_type = 'pr_merged' LIMIT 1`, [session.id]
-    );
-    const event = merged[0] || (await pool.query(
-      `INSERT INTO events (user_id, app_id, session_id, event_type, created_at)
-       VALUES ($1, $2, $3, 'pr_merged', NOW()) RETURNING id`,
-      [member, apps[0].id, session.id]
-    )).rows[0];
+    // The rule that scores it, so the page can say what counts (#6986) and
+    // how often it is counted. Before this the fixture challenge had no rule
+    // at all, so the card carried no `counted_by` and the page could not
+    // state the proposal rule. Times filled only when absent, like the
+    // invite challenge's rule above.
     await pool.query(
-      `INSERT INTO user_activities
-         (user_id, season_event_id, activity_type, points, description, metadata, activity_at,
-          challenge_id, created_at, updated_at)
-       VALUES ($1, $2, 'challenge_completion', 500, 'Accepted proposal on Homeroom', $3::jsonb, NOW(),
-               900724, NOW(), NOW())
-       ON CONFLICT (challenge_id, user_id, (metadata->>'source_key'))
-         WHERE metadata->>'source_key' IS NOT NULL
-       DO UPDATE SET activity_at = NOW()`,
-      [member, EVENT_SEASON_ID, JSON.stringify({ source_key: `merged:${event.id}` })]
+      `INSERT INTO challenge_scoring_rules
+         (id, name, measure, challenge_template_id, challenge_id, target,
+          points, interval_minutes, last_scored_at, enabled, notes, created_at, updated_at)
+       VALUES (900901, 'Staging demo: get two proposals accepted',
+               'PROPOSAL_ACCEPTED', NULL, 900724, 2, 500, 10,
+               NOW() - INTERVAL '4 minutes', TRUE,
+               'Staging demo: backs the accepted-proposal challenge''s count and note.',
+               NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         challenge_id = EXCLUDED.challenge_id, measure = EXCLUDED.measure,
+         target = EXCLUDED.target, points = EXCLUDED.points, enabled = TRUE,
+         interval_minutes = COALESCE(challenge_scoring_rules.interval_minutes, EXCLUDED.interval_minutes),
+         last_scored_at = COALESCE(challenge_scoring_rules.last_scored_at, EXCLUDED.last_scored_at)`
     );
+    // The change is the Homeroom bot's, built from a request the capture
+    // account filed — the exact shape #6986 was reported in, so the credit
+    // reads "Your request went live on Homeroom" and resolving it to the
+    // change goes through the request, not the session's author.
+    const { rows: botRows } = await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE
+       RETURNING id`
+    );
+    const fileNumber = 9043;
+    // Two of them, so the page shows the counter off 0 the way the request
+    // reported it (0 of 2, now 2 of 2) rather than a single credit.
+    const builds = [
+      { number: fileNumber, pr: 9043, title: '[Staging demo] Show the reason beside each challenge credit',
+        branch: 'staging-fixture/counted-credit' },
+      { number: fileNumber + 1, pr: 9044, title: '[Staging demo] Say what counts under the challenge',
+        branch: 'staging-fixture/counted-credit-2' },
+    ];
+    for (const build of builds) {
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, state, created_by, source)
+         VALUES ($1, $2, $3, 'Staging demo fixture for the accepted-proposal challenge.',
+                 'closed', $4, 'homeroom')
+         ON CONFLICT (app_id, number) DO NOTHING`,
+        [apps[0].id, build.number, build.title, member]
+      );
+      const { rows: found } = await pool.query(
+        'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+        [apps[0].id, build.branch]
+      );
+      const session = found[0] || (await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, session_title, status,
+            linked_issues, created_from_issue_number, merged_at, live_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $5, 'merged',
+                 ARRAY[$6]::int[], $6, NOW(), NOW(), NOW() - INTERVAL '1 day')
+         RETURNING id`,
+        [apps[0].id, botRows[0].id, build.branch, build.pr, build.title, build.number]
+      )).rows[0];
+      const { rows: merged } = await pool.query(
+        `SELECT id FROM events WHERE session_id = $1 AND event_type = 'pr_merged' LIMIT 1`, [session.id]
+      );
+      const event = merged[0] || (await pool.query(
+        `INSERT INTO events (user_id, app_id, session_id, event_type, created_at)
+         VALUES ($1, $2, $3, 'pr_merged', NOW()) RETURNING id`,
+        [botRows[0].id, apps[0].id, session.id]
+      )).rows[0];
+      await pool.query(
+        `INSERT INTO user_activities
+           (user_id, season_event_id, activity_type, points, description, metadata, activity_at,
+            challenge_id, created_at, updated_at)
+         VALUES ($1, $2, 'challenge_completion', 500, 'Your request went live on Homeroom', $3::jsonb, NOW(),
+                 900724, NOW(), NOW())
+         ON CONFLICT (challenge_id, user_id, (metadata->>'source_key'))
+           WHERE metadata->>'source_key' IS NOT NULL
+         DO UPDATE SET activity_at = NOW()`,
+        [member, EVENT_SEASON_ID, JSON.stringify({ source_key: `merged:${event.id}`, via: 'request' })]
+      );
+    }
   } catch (err) {
     log.warn('db', 'Staging counted credit seed skipped', { message: err.message });
   }

@@ -464,6 +464,27 @@ test('invite links against a real PostgreSQL', async (t) => {
       await pool.query(`UPDATE apps SET view_visibility = 'private' WHERE id = 2`);
     });
 
+    await t.test('#7022: its maker changes a link\'s note after it was made, and clearing it takes it away', async () => {
+      const group = await app('book-club');
+      const made = await invites.createInvite(pool, { app: group, user: ADA, note: 'Come read' });
+      // A note typed after the link was made goes onto it, as the link stores it.
+      const changed = await invites.setInviteNote(pool, { inviteId: made.link.id, user: ADA, note: '  Come  read on Sunday! ' });
+      assert.deepEqual(changed, { ok: true, note: 'Come read on Sunday!' });
+      assert.equal((await invites.preview(pool, made.link.token)).note, 'Come read on Sunday!');
+      // Clearing the box sets null, and the page shows no note.
+      assert.deepEqual(await invites.setInviteNote(pool, { inviteId: made.link.id, user: ADA, note: '   ' }),
+        { ok: true, note: null });
+      assert.equal((await invites.preview(pool, made.link.token)).note, null);
+      // Only its maker may: somebody else is told it does not exist.
+      assert.equal((await invites.setInviteNote(pool, { inviteId: made.link.id, user: as(2, 'bo', true), note: 'Mine now' })).status, 404);
+      // A control character is refused, as createInvite refuses one.
+      assert.equal((await invites.setInviteNote(pool, { inviteId: made.link.id, user: ADA, note: 'Hi\u0007there' })).status, 400);
+      // A bad id, and a link that was turned off: not found.
+      assert.equal((await invites.setInviteNote(pool, { inviteId: 'not-an-id', user: ADA, note: 'Hi' })).status, 404);
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
+      assert.equal((await invites.setInviteNote(pool, { inviteId: made.link.id, user: ADA, note: 'Still here?' })).status, 404);
+    });
+
     await t.test('WP-D: a link that works until it is turned off, for anyone it reaches', async () => {
       const arena = await app('arena');
       await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES (11, 'hal', TRUE), (12, 'ivy', TRUE)`);

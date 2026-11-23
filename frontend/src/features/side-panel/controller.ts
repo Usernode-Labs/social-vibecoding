@@ -694,6 +694,8 @@ export interface PanelMenuRow {
   label: string;
   title: string | null;
   disabled: boolean;
+  /** Its position in the page's own list, which `runPanelMenuRow` indexes. */
+  index: number;
 }
 
 /**
@@ -709,10 +711,17 @@ export function panelMenuRows(): PanelMenuRow[] {
   try {
     const list = av._cardMenuItems(key, null);
     return (Array.isArray(list) ? list : [])
-      .map((it: any) => ({
+      .map((it: any, index: number) => ({ it, index }))
+      // #7000: the column opens with its own Copy link (side-panel.tsx
+      // `pageLinkFor`), so the page's copy row would be the same row twice.
+      // The rows that stay keep their `index`, so each still runs the item it
+      // stands for in the page's full list.
+      .filter(({ it }) => !(it && it.copyLink))
+      .map(({ it, index }) => ({
         label: String((it && it.label) || ''),
         title: it && it.title ? String(it.title) : null,
         disabled: !!(it && (it.disabled || typeof it.act !== 'function')),
+        index,
       }))
       .filter((row) => !!row.label);
   } catch {

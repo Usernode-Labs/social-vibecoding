@@ -192,6 +192,9 @@ type DetailView = {
   // #3650: the invite challenge's plain-language line under the rail, and
   // the per-person list of who the viewer invited and why each counts.
   invitesNote?: string | null;
+  // #6986: on the "Get a proposal accepted" challenge, what counts, under the
+  // rail: the viewer's own change, or one built for a request they filed.
+  proposalsNote?: string | null;
   invites?: {
     state: 'loading' | 'error' | 'ready';
     people?: { key: string; name: string; word: string; reason: string }[];
@@ -265,6 +268,7 @@ function Card({ view }: { view: CardView }): ReactNode {
     <ChallengeCard
       view={view}
       className={'tc-se-card' + (view.featured ? CARD_FEATURED : '')}
+      wrapTitle
       onClick={() => controller()?._openIdx(view.idx)}
     />
   );
@@ -650,6 +654,9 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {/* #3650: what makes an invite count, in plain words, right under the
           rail that shows the count. */}
       {view.invitesNote ? <p className={PROSE}>{view.invitesNote}</p> : null}
+      {/* #6986: the same for an accepted proposal, whose count also comes
+          from a request the viewer filed that somebody else built. */}
+      {view.proposalsNote ? <p className={PROSE}>{view.proposalsNote}</p> : null}
       {/* #4036: the same for a feedback report, whose own project and
           scheduled, graded count are what a stuck rail is usually about. */}
       {view.feedbackNote ? <p className={PROSE}>{view.feedbackNote}</p> : null}
