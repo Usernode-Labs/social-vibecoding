@@ -7121,6 +7121,8 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #d
 }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
+/* The ⋯ sits in the card's corner, out of the flow, and reaches 1.5rem into the words' column: a name of more than about fourteen letters ran under it on a phone. The name stops short of it and wraps instead. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary:has(.dev-ws-hero-actions > .dev-ws-plus) .dev-ws-hero-name { padding-inline-end: 1.75rem; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
   width: var(--wip-hub-icon);
   height: var(--wip-hub-icon);
@@ -7452,6 +7454,8 @@ html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"]::after {
 }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] + .wip-hero-art .wip-hero-stage { animation: none; place-items: end center; padding-block-end: 6px; }
 .wip-hero-people { position: absolute; inset-block-end: 6px; inset-inline-end: 1.25rem; height: calc(100% - 14px); width: auto; max-width: none; }
+/* The people are as tall as the card, so their width followed its height, and where the words wrap (about 900 to 1200px) the card grew and the picture with it, out of the side kept for it and over the words. They stay inside that side, standing on the bottom edge, and are drawn smaller when it is narrow. */
+html:not([data-skin]) #dev-workshop .wip-hero-people { max-width: calc(100% - 1.25rem); object-fit: contain; object-position: bottom; }
 /* THE PROJECT'S PREVIEW STANDS BESIDE THE HERO (asked 20 Nov 2026), in its row from 1024px: the hero takes two of the
    hub's three columns and the preview the third, the two as tall as each other. Narrower, there is no card: the hero keeps the picture at its own side, tilted, as before. */
 html:not([data-skin]) #dev-workshop .wip-hero-preview { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: var(--wip-card-radius); box-shadow: inset 0 0 0 1px var(--wip-card-line); background-color: var(--wip-card-bg); }
