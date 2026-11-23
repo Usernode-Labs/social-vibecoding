@@ -8582,6 +8582,7 @@ html:not([data-skin]) {
   --wip-nav-ink-strong: #ffffff;
   --wip-nav-mut: rgb(255 255 255 / 0.72);
   --wip-nav-faint: rgb(255 255 255 / 0.32);
+  --wip-nav-tile-letter: var(--text-faint); /* a community's initial on its white tile: the page's faint grey (resolved here, outside the panel), not the panel's faint white */
   --wip-nav-hover: rgb(255 255 255 / 0.16);
   --wip-nav-line: transparent;
   --wip-nav-accent: transparent;        /* a bar at the start of the place you are on */
@@ -8693,6 +8694,8 @@ html:not([data-skin]) #platform-tabs [aria-current="page"] .platform-tab-badge {
   background: var(--wip-nav-on-badge-bg);
   color: var(--wip-nav-on-ink);
 }
+/* A letter tile's face is the page's white, not the panel's blue, so its initial takes the page's faint grey (as on Home) and not the panel's faint white, which drew a blank square. Dark tiles are the page's dark grey, where the panel's faint white reads. */
+html:not([data-skin]):not(.dark) #platform-tabs :is(.app-icon-tile[data-icon="letter"], .app-icon-wait) { color: var(--wip-nav-tile-letter); }
 html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { color: var(--wip-nav-mut); }
 html:not([data-skin]) #platform-tab-home { --wip-nav-ic: var(--wip-nav-ic-home); }
 html:not([data-skin]) #platform-tab-ai { --wip-nav-ic: var(--wip-nav-ic-spark); }
