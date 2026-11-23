@@ -21,6 +21,9 @@ const ORPHANS = [
   ['groupChatAttachments', 'chat_message_attachments', 'message_id'],
   // A conversation upload never sent.
   ['conversationAttachments', 'conversation_message_attachments', 'message_id'],
+  // A website archive uploaded from Create (#6994) whose project was never
+  // made. Linked ones are kept until the project has read them, below.
+  ['projectArchives', 'app_archive_uploads', 'app_id'],
 ];
 
 async function sweep(pool, config) {
@@ -35,6 +38,18 @@ async function sweep(pool, config) {
       failed ||= err;
       log.warn('upload-retention', 'An orphaned-upload sweep failed', { table, err: err.message });
     }
+  }
+  try {
+    // #6994: a project's own archive, once its setup has finished with it.
+    // Kept a week so a Retry after a late failure can still read it.
+    const { rowCount } = await pool.query(
+      `DELETE FROM app_archive_uploads u USING apps a
+        WHERE u.app_id = a.id AND a.status <> 'creating'
+          AND u.created_at < NOW() - INTERVAL '7 days'`);
+    out.projectArchivesReady = rowCount || 0;
+  } catch (err) {
+    failed ||= err;
+    log.warn('upload-retention', 'The archive upload sweep failed', { err: err.message });
   }
   try {
     // Uploads from staging previews are test data (#752): object first, row

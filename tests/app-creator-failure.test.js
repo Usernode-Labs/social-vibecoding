@@ -22,7 +22,7 @@ function workContext() {
   return { signal: new AbortController().signal, steps: (o = {}) => makeSteps({ resumeFrom: kept.value, checkpoint: async (v) => { kept.value = v; }, ...o }) };
 }
 
-function loadAppCreator({ githubStubs = {}, forkerStubs = {}, app }) {
+function loadAppCreator({ githubStubs = {}, forkerStubs = {}, app, archive = null, templateFiles = [] }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
@@ -39,6 +39,8 @@ function loadAppCreator({ githubStubs = {}, forkerStubs = {}, app }) {
     async query(sql, params) {
       queries.push({ sql: String(sql), params });
       if (/SELECT \* FROM apps WHERE id = \$1/.test(sql)) return { rows: [app] };
+      // #6994: the upload a project was made from, when one is set up.
+      if (/SELECT filename, data FROM app_archive_uploads/.test(sql)) return { rows: archive ? [archive] : [] };
       return { rows: [], rowCount: 1 };
     },
   };
@@ -57,7 +59,13 @@ function loadAppCreator({ githubStubs = {}, forkerStubs = {}, app }) {
     ...githubStubs,
   });
   stub(ids.dbManager, { appDbName: (slug) => `app_${slug}`, createDatabase: async () => ({ password: 'pw' }), connectionUrl: () => 'postgres://x' });
-  stub(ids.template, { getTemplateFiles: () => [], getConnectorScaffoldFiles: () => [], getCanonicalRepoFile: () => null });
+  stub(ids.template, {
+    getTemplateFiles: () => templateFiles,
+    getConnectorScaffoldFiles: () => [],
+    getCanonicalRepoFile: () => null,
+    // #6994: an uploaded archive's index.html gets this before </head>.
+    DEV_CONSOLE_FORWARDER: '<script>/* usernode-dev-console@1 */</script>',
+  });
   stub(ids.sketch, { drawFor: async () => null, markCommitted: async () => {}, taglineOf: () => null });
   stub(ids.forker, {
     findForkSource: async () => null,
@@ -263,4 +271,88 @@ test('a project that is no longer being made is not set up', async () => {
   const { appCreator, pool } = loadAppCreator({ app: row({ status: 'running' }) });
   const out = await appCreator.setUp({}, pool, 42, workContext());
   assert.match(out.failed.reason, /no longer being set up/);
+});
+
+// ── #6994: a project made from an uploaded website archive ──────────────
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function makeZip(entries) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const data = Buffer.from(entry.data ?? '');
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    locals.push(local, name, data);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE((3 << 8) | 20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+    centrals.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+
+test('an archive project commits the scaffold plus its public/ files, byte for byte', async () => {
+  let files = null;
+  const logo = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+  const { appCreator, pool } = loadAppCreator({
+    app: row(),
+    archive: { filename: 'ghost-site.zip', data: makeZip([
+      { name: 'index.html', data: '<html><head><title>Mine</title></head><body>Mine</body></html>' },
+      { name: 'logo.png', data: logo },
+    ]) },
+    templateFiles: [
+      { path: 'dapp.json', content: '{"secrets":[]}' },
+      { path: 'public/index.html', content: 'the starter screen' },
+    ],
+    githubStubs: { pushFiles: async (_owner, _repo, pushed) => { files = pushed; return { sha: 'c'.repeat(40) }; } },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.ok(!out.failed, out.failed && out.failed.reason);
+  const byPath = Object.fromEntries(files.map((file) => [file.path, file.content]));
+  assert.equal(byPath['dapp.json'], '{"secrets":[]}', 'the scaffold keeps its dapp.json');
+  assert.equal(byPath['public/index.html'] instanceof Buffer, true, 'the archive page is bytes');
+  assert.match(byPath['public/index.html'].toString('utf8'), /<title>Mine<\/title>/);
+  assert.match(byPath['public/index.html'].toString('utf8'), /usernode-dev-console@1/, 'the Dev console forwarder is in it');
+  assert.deepEqual(byPath['public/logo.png'], logo, 'the image is kept byte for byte');
+});
+
+test('an archive that can no longer be read fails the setup with stage repo', async () => {
+  const { appCreator, pool } = loadAppCreator({
+    app: row(),
+    archive: { filename: 'ghost-site.zip', data: Buffer.from('not an archive') },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed.stage, 'repo');
+  assert.match(out.failed.reason, /uploaded archive is no longer available/);
 });

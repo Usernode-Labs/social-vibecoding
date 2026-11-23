@@ -555,6 +555,11 @@
       "id": "bot-cards-draft-offers",
       "sha256": "fa9305d5a65bd1f86c297de24e91da44b73cd3a0a92a70480308126a4cd8da3e",
       "schemaSha256": "31a9051336203261d90f0775a1a45e60f18c7586c20e93f107afac657bc513bb"
+    },
+    {
+      "id": "app-archive-uploads",
+      "sha256": "cf9eb841b856e594d2ce6ca0e6f01c8d99821d47770aef7e6597049c956d9043",
+      "schemaSha256": "054408e014272c5eedcec6122d5cbf848347b133ad75410ef7a5af043296d36c"
     }
   ]
 }

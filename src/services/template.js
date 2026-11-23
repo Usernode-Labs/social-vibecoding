@@ -1859,6 +1859,9 @@ function escapeHtml(str) {
 
 module.exports = {
   getTemplateFiles,
+  // The Dev console forwarder a scaffolded page carries; an uploaded
+  // archive's own index.html gets it too (services/archive-import.js).
+  DEV_CONSOLE_FORWARDER,
   fillAppName,
   fillPage,
   getConnectorScaffoldFiles,

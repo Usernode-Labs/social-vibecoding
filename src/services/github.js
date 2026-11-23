@@ -586,12 +586,20 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
   const { data: baseCommit } = await octokit.rest.git.getCommit({ owner, repo, commit_sha: latestCommitSha });
   const baseTreeSha = baseCommit.tree.sha;
 
-  const tree = files.map((f) => ({
-    path: f.path,
-    mode: '100644',
-    type: 'blob',
-    content: f.content,
-  }));
+  // An uploaded archive's files arrive as Buffers (#6994): those go through
+  // a blob first, base64-encoded, so an image or a font is kept byte for
+  // byte. Text entries are unchanged.
+  const tree = [];
+  for (const f of files) {
+    if (Buffer.isBuffer(f.content)) {
+      const { data: blob } = await octokit.rest.git.createBlob({
+        owner, repo, content: f.content.toString('base64'), encoding: 'base64',
+      });
+      tree.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha });
+    } else {
+      tree.push({ path: f.path, mode: '100644', type: 'blob', content: f.content });
+    }
+  }
 
   const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, tree, base_tree: baseTreeSha });
 

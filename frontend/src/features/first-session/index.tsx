@@ -999,7 +999,7 @@ export type Mode =
   // `app`: handed to the app an invite opened (welcome), and down once it is drawn.
   | { kind: 'held'; app?: string }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
-  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience; threadRootId?: number | null }
+  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; startArchive?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience; threadRootId?: number | null }
   | { kind: 'made'; made: Made; entry?: MakeEntry }
   | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number; moments?: boolean };
 
@@ -1216,16 +1216,20 @@ export function openCreate(
   setMode: Dispatch<SetStateAction<Mode>>,
   startImport = false,
   start: { idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience; threadRootId?: number | null } = {},
+  startArchive = false,
 ): boolean {
   // #6781: a name handed in is a new start, as a brief is: the form left
   // from Create does not come back under it (make.tsx forgetKeptDraft).
-  if (!startImport && start.name) forgetKeptDraft();
+  if (!startImport && !startArchive && start.name) forgetKeptDraft();
   let opened = false;
   flushSync(() => setMode((prev) => {
-    const turning = prev.kind === 'make' && prev.entry === 'create' && !!prev.startImport !== startImport;
+    const asked = startImport ? 'import' : startArchive ? 'archive' : null;
+    const turning = prev.kind === 'make' && prev.entry === 'create'
+      && (prev.startImport ? 'import' : prev.startArchive ? 'archive' : null) !== asked;
     if (prev.kind !== 'none' && !turning) return prev;
     opened = true;
     if (startImport) return { kind: 'make', entry: 'create', startImport: true };
+    if (startArchive) return { kind: 'make', entry: 'create', startArchive: true };
     // #6019 follow-up: a private thread's New project starts from its words,
     // for the audience the person chose. #6781: with the name the bot
     // suggested, when it named one.
@@ -1470,7 +1474,7 @@ export function FirstSession() {
       // The Create button (App.showCreateModal): the one front door for a
       // new project, for every signed-in viewer; `import` opens it on
       // importing a GitHub repo.
-      create(opts?: { import?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }): boolean {
+      create(opts?: { import?: boolean; archive?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }): boolean {
         const audience = opts?.audience === 'solo' || opts?.audience === 'invited' || opts?.audience === 'open'
           ? opts.audience : undefined;
         const idea = typeof opts?.idea === 'string' ? opts.idea.slice(0, 4000) : null;
@@ -1486,8 +1490,8 @@ export function FirstSession() {
         // thread's words (#6019), never a waitlist answer: only the first
         // session's own make screen says "from your waitlist answer".
         const ideaSource: IdeaSource = opts?.ideaSource === 'search' ? 'search' : 'thread';
-        if (threadRootId) return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience, threadRootId });
-        return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience });
+        if (threadRootId) return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience, threadRootId }, !!opts?.archive);
+        return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience }, !!opts?.archive);
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -1659,10 +1663,11 @@ export function FirstSession() {
       <MakeScreen
         // Turned by the address (openCreate), the screen opens afresh on the
         // asked-for form, as a cold load of that address does.
-        key={mode.startImport ? 'import' : 'make'}
+        key={mode.startImport ? 'import' : mode.startArchive ? 'archive' : 'make'}
         who={viewerName()}
         entry="create"
         startImport={!!mode.startImport}
+        startArchive={!!mode.startArchive}
         idea={mode.idea ?? null}
         name={mode.name ?? null}
         ideaSource={mode.ideaSource ?? 'thread'}

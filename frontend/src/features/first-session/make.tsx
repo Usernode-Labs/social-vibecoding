@@ -157,6 +157,7 @@ import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
 import { descriptionOf, firstChoice, FRONT, MORE, OWN, readyMadeOf, sentence, starterOf, suggestedName, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
+import { ArchiveForm, type ArchiveUploaded } from './archive-upload';
 import { MoreSheet } from './more-sheet';
 import { TierChart } from './tier-chart';
 
@@ -182,6 +183,8 @@ export type Made = {
   conversationId: number | null;
   /** Imported from a GitHub repo (./import-repo.tsx): nothing is built from a description. */
   imported?: boolean;
+  /** Started from an uploaded website archive (./archive-upload.tsx, #6994). */
+  archived?: boolean;
   /** One of Homeroom's ready-made apps (examples.ts `readyMadeOf`): nothing is built, it is ready once it runs. */
   readyMade?: boolean;
   /**
@@ -349,6 +352,18 @@ export type IdeaSource = 'waitlist' | 'search' | 'thread';
 /** The import form's heading and line (./import-repo.tsx), as message ids. */
 export const IMPORT_TITLE = 'onboarding:firstSession.import.title';
 export const IMPORT_LINE = 'onboarding:firstSession.import.line';
+export const ARCHIVE_TITLE = 'onboarding:firstSession.archive.title';
+export const ARCHIVE_LINE = 'onboarding:firstSession.archive.line';
+
+/** The heading and its line, as the standard form draws them under the bar. */
+function formHead(title: string, line: string) {
+  return (
+    <div className="text-center">
+      <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{title}</h1>
+      <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{line}</p>
+    </div>
+  );
+}
 
 /**
  * N9 (polish board, 19 Oct 2026): A REVEAL NEVER STOPS INSIDE THE HEADING.
@@ -416,7 +431,7 @@ export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-c
 export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
 
 export function MakeScreen({
-  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null, name: startName = null, ideaSource = 'waitlist',
+  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, startArchive = false, underHeader = false, idea = null, name: startName = null, ideaSource = 'waitlist',
   audience = 'invited', threadRootId = null,
 }: {
   who: string;
@@ -428,6 +443,8 @@ export function MakeScreen({
   onClose?: () => void;
   /** From Create: open on the import form (#create/import). */
   startImport?: boolean;
+  /** From Create: open on the archive upload form (#create/archive). */
+  startArchive?: boolean;
   /** From Create, with the platform header showing: below it, not over it (MAKE_ROOT). */
   underHeader?: boolean;
   /**
@@ -472,7 +489,7 @@ export function MakeScreen({
   // #6842: `reason` says which limit it is, so the line names it truthfully.
   const { blocked: quotaBlocks, reason: quotaReason } = useAppAllowance();
   // Make it, or (from Create only) Import it.
-  const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
+  const [mode, setMode] = useState<'make' | 'import' | 'archive'>(fromCreate && startImport ? 'import' : fromCreate && startArchive ? 'archive' : 'make');
   // N9: Create's form as it was last left (keptDraft), read once at mount.
   // An idea handed in (a private thread's) wins over a kept draft; a name
   // handed in drops it before the screen mounts (forgetKeptDraft).
@@ -801,6 +818,26 @@ export function MakeScreen({
     });
     return null;
   }, [entry, onMade]);
+  // #6994: an uploaded website archive, through the same request: a private
+  // community, made from the archive the server already checked. Nothing is
+  // built: the archive's files are the first version.
+  const createFromArchive = useCallback(async ({ archive, name: archiveName }: ArchiveUploaded) => {
+    const reply = await postCreateApp({ name: archiveName, audience: 'invited', archive, from: entry });
+    const data = (reply.ok ? reply.data : {}) as { app?: { slug?: string; name?: string } };
+    if (!reply.ok || !data.app?.slug) return reply.ok ? translate('onboarding:firstSession.archive.error.network') : reply.error;
+    madeRef.current = true;
+    onMade({
+      slug: data.app.slug,
+      name: data.app.name || archiveName,
+      emoji: null,
+      description: null,
+      example: null,
+      conversationId: null,
+      imported: true,
+      archived: true,
+    });
+    return null;
+  }, [entry, onMade]);
   const formClass = `mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] md:max-w-xl ${motion}`;
   // From Create, the allowance when it bears on Make it (the New project
   // dialog's quiet row, #23): a returning maker can be at their limit, a new
@@ -871,12 +908,22 @@ export function MakeScreen({
             onDescribe={() => { setMode('make'); setTimeout(() => briefRef.current?.focus({ preventScroll: true }), 0); }}
             allowance={allowance}
           />
+        ) : mode === 'archive' ? (
+          <ArchiveForm
+            className={formClass}
+            header={formHead(t(ARCHIVE_TITLE), t(ARCHIVE_LINE))}
+            submit={createFromArchive}
+            blocked={quotaBlocks}
+            onDescribe={() => { setMode('make'); setTimeout(() => briefRef.current?.focus({ preventScroll: true }), 0); }}
+            allowance={allowance}
+          />
         ) : (
           <MakeFrame
             motion={motion}
             title={makeTitle(entry, who)}
             onSubmit={() => { void make(); }}
             onImport={() => setMode('import')}
+            onArchive={() => setMode('archive')}
             onClose={onClose ? leave : null}
             busy={busy}
             off={dictating || busy || quotaBlocks}
@@ -982,13 +1029,17 @@ export function MakeScreen({
         {mode === 'import' ? (
           <ImportForm
             className={formClass}
-            header={(
-              <div className="text-center">
-                <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{t(IMPORT_TITLE)}</h1>
-                <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{t(IMPORT_LINE)}</p>
-              </div>
-            )}
+            header={formHead(t(IMPORT_TITLE), t(IMPORT_LINE))}
             submit={importRepo}
+            blocked={quotaBlocks}
+            onDescribe={() => { setMode('make'); setTimeout(() => briefRef.current?.focus({ preventScroll: true }), 0); }}
+            allowance={allowance}
+          />
+        ) : mode === 'archive' ? (
+          <ArchiveForm
+            className={formClass}
+            header={formHead(t(ARCHIVE_TITLE), t(ARCHIVE_LINE))}
+            submit={createFromArchive}
             blocked={quotaBlocks}
             onDescribe={() => { setMode('make'); setTimeout(() => briefRef.current?.focus({ preventScroll: true }), 0); }}
             allowance={allowance}
@@ -1227,17 +1278,29 @@ export function MakeScreen({
             {busy ? t('onboarding:firstSession.make.making') : t('onboarding:firstSession.make.submit')}
           </Button>
           {fromCreate ? (
-            // Small, under Make it: the one other way to start a project.
-            <p className="mt-3 text-center">
-              <button
-                type="button"
-                data-make-import-link=""
-                onClick={() => setMode('import')}
-                className="text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
-              >
-                {t('onboarding:firstSession.make.importLink')}
-              </button>
-            </p>
+            // Small, under Make it: the other ways to start a project.
+            <>
+              <p className="mt-3 text-center">
+                <button
+                  type="button"
+                  data-make-import-link=""
+                  onClick={() => setMode('import')}
+                  className="text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
+                >
+                  {t('onboarding:firstSession.make.importLink')}
+                </button>
+              </p>
+              <p className="mt-2 text-center">
+                <button
+                  type="button"
+                  data-make-archive-link=""
+                  onClick={() => setMode('archive')}
+                  className="text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
+                >
+                  {t('onboarding:firstSession.make.archiveLink')}
+                </button>
+              </p>
+            </>
           ) : (
             <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
               <RichMessage

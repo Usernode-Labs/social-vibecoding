@@ -419,7 +419,9 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
   const parent = await resolve(dir, branch);
   if (!parent) throw notFound(`Branch ${branch} not found`);
   const writes = [];
-  for (const f of files) writes.push({ path: f.path, sha: await writeBlob(dir, String(f.content ?? '')), mode: '100644' });
+  // A Buffer (an uploaded archive's image, #6994) goes to hash-object as it
+  // is, exactly as createRootCommit's; text is unchanged.
+  for (const f of files) writes.push({ path: f.path, sha: await writeBlob(dir, Buffer.isBuffer(f.content) ? f.content : String(f.content ?? '')), mode: '100644' });
   const tree = await buildTree(dir, `${parent}^{tree}`, { writes });
   const sha = await commitTree(dir, tree, [parent], message);
   await moveRef(owner, repo, dir, branch, parent, sha);

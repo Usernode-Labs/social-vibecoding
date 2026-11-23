@@ -76,6 +76,20 @@ test('new app repositories are made on the git host, with a first commit to buil
   assert.equal(await github.getCloneUrl('apps', 'todo-1'), `file://${root}/host/apps/todo-1.git`);
 });
 
+test('a Buffer file is written byte for byte, as createRootCommit already does', async (t) => {
+  stubCreateApi(t);
+  await github.createRepo('apps', 'bin-1');
+  const bytes = Buffer.from([0x00, 0xff, 0x10, 0x80, 0x0a]);
+  const pushed = await github.pushFiles('apps', 'bin-1', [
+    { path: 'public/logo.png', content: bytes },
+    { path: 'public/index.html', content: '<html></html>' },
+  ], { message: 'Start from the archive' });
+  assert.equal(await gitHost.readRef('bin-1', 'main'), pushed.sha);
+  const raw = execFileSync('git', ['--git-dir', path.join(root, 'host', 'apps', 'bin-1.git'), 'cat-file', '-p', 'main:public/logo.png']);
+  assert.deepEqual(Buffer.from(raw), bytes);
+  assert.equal(await github.getFileContent('apps', 'bin-1', 'public/index.html', 'main'), '<html></html>');
+});
+
 test('branches: created, compared, advanced only forward, forced, and a bench branch deleted', async (t) => {
   stubCreateApi(t);
   await github.createRepo('apps', 'br-1');
