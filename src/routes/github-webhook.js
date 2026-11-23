@@ -25,6 +25,13 @@ const repoRef = require('../services/repo-ref');
 // So there is exactly one implementation of "a head moved", and the sweep
 // still heals anything a delivery misses.
 //
+// A `closed` delivery also settles a NATIVE proposal merged by hand on
+// GitHub: it runs the same `lookMergedByHand` the merged-by-hand clock runs
+// (services/proposal-scans.js), which re-reads the PR and records the merge.
+// Without it that merge waits for the clock, every six hours, and the
+// change's row stays in In progress until then (#7013). The clock is kept as
+// the fallback for a delivery that never arrives.
+//
 // MOUNTED BEFORE THE JSON PARSER, and before authMiddleware. The signature
 // is over the RAW bytes, so a parsed-and-restringified body would not
 // verify; and the caller is GitHub, which has no session cookie.
@@ -93,10 +100,35 @@ async function findProposals(pool, { fullName, prNumber }) {
   return rows.filter((row) => repoKey(row.repo_url) === wanted);
 }
 
+/**
+ * The native proposals up for a vote this event could be about (#7013).
+ *
+ * Same match as `findProposals` (the PR number and the app's repository),
+ * over the rows `mergedByHandTargets` lists: a native proposal still
+ * `promoted`. A proposal Homeroom is merging itself is already `merging` or
+ * `merged`, so it is never matched and gets no second `Merged`.
+ */
+async function findNativeProposals(pool, { fullName, prNumber }) {
+  const { rows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+       FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id
+      WHERE cs.source IS DISTINCT FROM 'imported'
+        AND cs.status = 'promoted'
+        AND cs.pr_number = $1
+      ORDER BY cs.id DESC
+      LIMIT 10`,
+    [prNumber],
+  );
+  const wanted = String(fullName || '').toLowerCase();
+  return rows.filter((row) => repoKey(row.repo_url) === wanted);
+}
+
 function githubWebhookRoutes(config, deps = {}) {
   const router = Router();
   const pool = deps.pool || getPool(config);
   const prImportSync = deps.prImportSync || require('../services/pr-import-sync');
+  const proposalScans = deps.proposalScans || require('../services/proposal-scans');
   const secret = config.githubWebhookSecret || '';
 
   // `express.raw` with a wildcard type: GitHub sends application/json, but a
@@ -144,8 +176,7 @@ function githubWebhookRoutes(config, deps = {}) {
     try {
       const proposals = await findProposals(pool, { fullName, prNumber });
       if (!proposals.length) {
-        log.info('github-webhook', 'No live proposal for this pull request', { fullName, prNumber, action });
-        return;
+        log.info('github-webhook', 'No live imported proposal for this pull request', { fullName, prNumber, action });
       }
       for (const session of proposals) {
         // eslint-disable-next-line no-await-in-loop
@@ -153,6 +184,21 @@ function githubWebhookRoutes(config, deps = {}) {
         log.info('github-webhook', 'Pull request event applied', {
           sessionId: session.id, app: session.app_slug, prNumber, action, synced,
         });
+      }
+      // A native proposal merged by hand on GitHub (#7013): the same look the
+      // merged-by-hand clock makes, run now. The delivery's `merged` flag is
+      // not read: lookMergedByHand re-reads the PR, does nothing for a close
+      // without a merge, respects the GitHub budget, and prLooked removes a
+      // duplicate when the clock reads the same merge afterwards.
+      if (action === 'closed') {
+        const natives = await findNativeProposals(pool, { fullName, prNumber });
+        for (const session of natives) {
+          // eslint-disable-next-line no-await-in-loop
+          const looked = await proposalScans.lookMergedByHand(pool, session.id);
+          log.info('github-webhook', 'Closed pull request looked at for a native merge', {
+            sessionId: session.id, app: session.app_slug, prNumber, looked,
+          });
+        }
       }
     } catch (err) {
       // The sweep is still the safety net, so a failure here is a delay and
@@ -173,6 +219,7 @@ module.exports = {
   signatureMatches,
   repoKey,
   findProposals,
+  findNativeProposals,
   HANDLED_ACTIONS,
   MAX_BODY_BYTES,
 };

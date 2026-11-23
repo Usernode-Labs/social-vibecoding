@@ -460,10 +460,10 @@ async function aggregateEvent(pool, event, now) {
 // Rank and persist one event's rows. Shared by both scoring paths so a
 // points-only board is written, pruned and ranked exactly like any other
 // — the two paths differ in how the numbers are worked out, never in
-// what a snapshot row means.
+// what a snapshot row means. Ties are broken by account id only, matching
+// standings.js, so later block data cannot reorder a tie.
 async function writeSnapshots(pool, event, rows, now) {
   rows.sort((a, b) => b.total_points - a.total_points
-    || b.event_total_produced_blocks - a.event_total_produced_blocks
     || a.user_id - b.user_id);
   const ranked = assignSharedRanks(rows);
 

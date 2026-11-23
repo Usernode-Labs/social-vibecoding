@@ -141,7 +141,10 @@ function collaboratorRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT ac.user_id, ac.status, ac.created_at, ac.accepted_at,
-                u.username, inv.username AS invited_by
+                u.username, inv.username AS invited_by,
+                EXISTS (SELECT 1 FROM community_members m
+                          JOIN apps a2 ON a2.community_id = m.community_id
+                         WHERE a2.id = ac.app_id AND m.user_id = ac.user_id) AS in_community
            FROM app_collaborators ac
            JOIN users u ON u.id = ac.user_id
            LEFT JOIN users inv ON inv.id = ac.invited_by
@@ -158,6 +161,10 @@ function collaboratorRoutes(config) {
           isCreator: r.user_id === app.created_by,
           createdAt: r.created_at,
           acceptedAt: r.accepted_at,
+          // #7027: already one of the project's people (joined by an invite
+          // link or the Join button) while the build invitation waits, so the
+          // tag says "offered to build" rather than "invited".
+          inCommunity: !!r.in_community,
         })),
         collabVisibility: app.collab_visibility,
         viewVisibility: app.view_visibility,

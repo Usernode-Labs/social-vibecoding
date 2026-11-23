@@ -236,6 +236,58 @@ test('an invite by username joins a group the way its link does, against the ful
     assert.deepEqual(got.body, { ok: true, appSlug: 'open-library' }, 'already in its community: no "You joined"');
   });
 
+  await t.test('joining marks a waiting invite read, and it stays an offer to build', async () => {
+    const owner = await user('finn');
+    const lib = await project('open-shelf', { createdBy: owner.id, view: 'public', collab: 'private' });
+    const reader = await user('shelf_reader');
+    const sent = await call(owner, 'POST', `/api/apps/${lib.slug}/invites`, { username: 'shelf_reader' });
+    assert.equal(sent.status, 201);
+    const bell = async () => (await pool.query(
+      `SELECT read_at FROM notifications WHERE user_id = $1 AND kind = 'collab_invite'`, [reader.id])).rows[0];
+    assert.equal((await bell()).read_at, null, 'the invitation is news in the bell');
+
+    // The Join button (routes/apps.js POST /:slug/membership → communities.join).
+    await communities.join(pool, lib, reader.id);
+    assert.ok((await bell()).read_at, 'joining is accepting: the bell stops counting it');
+    const pending = await notifications.listPendingInvites(pool, reader.id);
+    assert.equal(pending.length, 1, 'building is still something they have not taken up');
+    assert.equal(pending[0].inCommunity, true);
+    assert.equal(await communities.isMember(pool, lib.id, reader.id), true);
+  });
+
+  await t.test('an invite link into a private project clears its bell row as it leaves the list', async () => {
+    const owner = await user('gina');
+    const room = await project('reading-room', { createdBy: owner.id });
+    const guest = await user('room_guest');
+    const sent = await call(owner, 'POST', `/api/apps/${room.slug}/invites`, { username: 'room_guest' });
+    assert.equal(sent.status, 201);
+    const readAt = async () => (await pool.query(
+      `SELECT read_at FROM notifications WHERE user_id = $1 AND app_id = $2 AND kind = 'collab_invite'`,
+      [guest.id, room.id])).rows[0].read_at;
+    assert.equal(await readAt(), null);
+    const link = await invites.createInvite(pool, { app: room, user: { id: owner.id, isAdmin: false }, days: 0, maxUses: 0 });
+    const joined = await invites.redeem(pool, { token: link.link.token, user: { id: guest.id, isAdmin: false, hasPlatformAccess: true } });
+    assert.equal(joined.status, 'joined');
+    assert.ok(await readAt(), 'being let in by the link made the invitation read');
+    assert.deepEqual(await notifications.listPendingInvites(pool, guest.id), [], 'and it left the Invites section');
+  });
+
+  await t.test('an invitation to a project they have not joined stays unread', async () => {
+    const owner = await user('hana');
+    const away = await project('far-project', { createdBy: owner.id });
+    const invited = await user('not_joined');
+    await call(owner, 'POST', `/api/apps/${away.slug}/invites`, { username: 'not_joined' });
+    // A platform release cleans up every project they ARE in; it must not
+    // touch one they are not in.
+    await pool.query('UPDATE users SET has_platform_access = FALSE WHERE id = $1', [invited.id]);
+    const waitlist = require('../src/services/waitlist');
+    assert.equal(await waitlist.grantPlatformAccess(pool, invited.id), true);
+    const { rows: [row] } = await pool.query(
+      `SELECT read_at FROM notifications WHERE user_id = $1 AND app_id = $2 AND kind = 'collab_invite'`,
+      [invited.id, away.id]);
+    assert.equal(row.read_at, null, 'the offer is still news: they never joined');
+  });
+
   // First-session run-through, 5 October 2026. A test account
   // (services/test-accounts.js) is made ahead of time by an admin, so its
   // created_at said it was not new, and "You're in" gave it the welcome for

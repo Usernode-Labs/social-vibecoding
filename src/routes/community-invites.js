@@ -15,6 +15,8 @@
  *                                                  guard paused again
  *   POST   /api/invite-links/:id/shared            it went out: copied or
  *                                                  shared from the pane
+ *   POST   /api/invite-links/:id/note              its note, changed after it
+ *                                                  was made (its maker only)
  *   GET    /api/public/invites/:token              the preview, signed out
  *   GET    /api/public/invites/:token/picture      the project's picture, when
  *                                                  it is an after-shot
@@ -185,6 +187,20 @@ function communityInviteRoutes(config) {
       return res.json({ ok: true });
     } catch (err) {
       log.error('invites', 'Marking an invite link sent failed', { id: req.params.id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The invite sheet's note box: a note typed after the link was made goes
+  // onto that link, so its page and its preview show what was last sent.
+  router.post('/api/invite-links/:id/note', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const done = await invites.setInviteNote(pool, { inviteId: req.params.id, user: req.user, note: req.body?.note });
+      if (!done.ok) return res.status(done.status).json({ error: done.error });
+      return res.json({ ok: true, note: done.note });
+    } catch (err) {
+      log.error('invites', 'Saving an invite link\'s note failed', { id: req.params.id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -63,9 +63,12 @@
  * username yet, and the joining rule is the project's business later (both
  * taken out after Evan's run-through, 5 October 2026). The link it makes
  * has no end date and no limit of people (LINK_DAYS, LINK_USES), like every
- * new link, and the sheet says so. A note they wrote themselves and shared (the share sheet, not Copy
- * link) is also the maker's first message in the group's chat (the sheet
- * says so, #4238), so the people it brings find it waiting there. The note is
+ * new link, and the sheet says so. The note in the box is saved onto the
+ * link on every press, so a note typed or changed after the link was made
+ * still reaches the people who open it. A note they wrote themselves is also
+ * the maker's first message in the group's chat, whether they shared it or
+ * copied it (the sheet says so, #4238), so the people it brings find it
+ * waiting there. The note is
  * kept per project on this device
  * (noteKey), else read back from the maker's own newest link.
  *
@@ -505,14 +508,23 @@ export function openingNote(slug: string, example: string | null | undefined): s
 }
 
 /**
- * Whether a note goes in the group chat as the maker's first message
- * (#4238): only when the share sheet took the link (a copy may never be
- * pasted anywhere), and only a note they wrote themselves, never the
- * untouched default or the example's preset one.
+ * A note as a link stores it: whitespace collapsed and trimmed, null when
+ * there is nothing left (services/community-invites.js cleanNote). What the
+ * sheet compares the box with the link's own note to know whether it changed.
  */
-export function notePostable(how: SentHow, note: string, example: string | null | undefined): boolean {
+export function storedNote(note: string): string | null {
+  const text = note.replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
+/**
+ * Whether a note goes in the group chat as the maker's first message
+ * (#4238): whether the link was shared or copied, and only a note they wrote
+ * themselves, never the untouched default or the example's preset one.
+ */
+export function notePostable(note: string, example: string | null | undefined): boolean {
   const text = note.trim();
-  if (how !== 'shared' || !text) return false;
+  if (!text) return false;
   return text !== noteDefault() && text !== (example || '').trim();
 }
 
@@ -622,7 +634,9 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   const shareGoneAt = useRef(0);
   // Which button leads, read once as the sheet opens (inviteActions).
   const [actions] = useState(() => inviteActions(onTouch(), hasShareSheet()));
-  const linkRef = useRef<string | null>(null);
+  // The link this sheet made: its id (to change its note) and the note on it
+  // as last sent, so a note typed after it was made goes onto it.
+  const linkRef = useRef<{ id: number; url: string; note: string | null } | null>(null);
   // Whether the note in the box is theirs from this device (kept, or typed
   // here); until it is, a note on one of their own links replaces it.
   const ownNote = useRef(keptNote(made.slug) !== null);
@@ -681,9 +695,9 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   }, [copied]);
 
   // The maker's note, as their first message in the group's chat, once,
-  // when they shared a note of their own (notePostable).
-  const postNote = useCallback(async (how: SentHow) => {
-    if (!notePostable(how, note, exampleNote)) return;
+  // when they sent a note of their own (notePostable).
+  const postNote = useCallback(async () => {
+    if (!notePostable(note, exampleNote)) return;
     const text = note.trim();
     try { if (localStorage.getItem(postedKey(made.slug))) return; } catch { /* post it */ }
     const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/messages`, {
@@ -695,8 +709,29 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     if (res && res.ok) { try { localStorage.setItem(postedKey(made.slug), '1'); } catch { /* once is best effort */ } }
   }, [note, made.slug, exampleNote]);
 
+  // A note typed or changed after the link was made goes onto that link, so
+  // the invite page shows what was last sent. Never awaited before the share
+  // sheet or the copy (the press keeps its user activation); a failure is
+  // swallowed and tried again on the next press.
+  const syncNote = useCallback(async () => {
+    const held = linkRef.current;
+    if (!held) return;
+    const wanted = storedNote(note);
+    if (wanted === held.note) return;
+    const res = await fetch(`/api/invite-links/${held.id}/note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ note: wanted }),
+    }).catch(() => null);
+    if (!res || !res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    if (linkRef.current !== held) return;
+    linkRef.current = { ...held, note: data?.ok ? (data.note ?? null) : held.note };
+  }, [note]);
+
   const link = useCallback(async (): Promise<string | null> => {
-    if (linkRef.current) return linkRef.current;
+    if (linkRef.current) return linkRef.current.url;
     const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/invite-links`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -705,18 +740,18 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.link) { setError(data.error || translate('onboarding:firstSession.invite.error.noLink')); return null; }
-    linkRef.current = `${location.origin}${data.link.path}`;
-    return linkRef.current;
+    linkRef.current = { id: data.link.id, url: `${location.origin}${data.link.path}`, note: data.link.note ?? null };
+    return linkRef.current.url;
   }, [made.slug, note]);
 
   // The link went out, shared or copied: said on the sheet, which stays
   // open; the note kept, posted once as their first message in the group
-  // chat when it was shared (postNote), and the made screen told.
+  // chat (postNote), and the made screen told.
   const sent = useCallback(async (how: SentHow) => {
     setStatus(sentStatus(how));
     setOut(true);
     keepNote(made.slug, note);
-    await postNote(how);
+    await postNote();
     onSent(how);
   }, [made.slug, note, postNote, onSent]);
 
@@ -725,8 +760,11 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     setBusy(true); setError(null);
     try {
       // A link already made is shared from inside the press; one still to
-      // make is waited on first (see the header).
-      const url = linkRef.current || await link();
+      // make is waited on first (see the header). A note typed since it was
+      // made is saved onto it in the background (syncNote).
+      const held = linkRef.current;
+      if (held) void syncNote();
+      const url = held ? held.url : await link();
       if (!url) return;
       const title = inviteLine(me, made.name);
       const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
@@ -757,7 +795,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     } finally {
       setBusy(false);
     }
-  }, [busy, link, me, made.name, note, sent]);
+  }, [busy, link, me, made.name, note, sent, syncNote]);
 
   // Copy link: the note and the link, put on the clipboard inside the press
   // even while the link is still being made (copyText: Safari copies nothing
@@ -767,7 +805,8 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     setBusy(true); setError(null);
     try {
       const ready = linkRef.current;
-      const outcome = await copyText(ready ? inviteText(note, withVia(ready, 'copied'))
+      if (ready) void syncNote();
+      const outcome = await copyText(ready ? inviteText(note, withVia(ready.url, 'copied'))
         : link().then((url) => (url ? inviteText(note, withVia(url, 'copied')) : null)));
       if (outcome === 'no-link') { setError((was) => was || translate('onboarding:firstSession.invite.error.noLink')); return; }
       if (outcome === 'refused') { setError(translate('onboarding:firstSession.invite.error.notCopied')); return; }
@@ -778,7 +817,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     } finally {
       setBusy(false);
     }
-  }, [busy, link, note, sent]);
+  }, [busy, link, note, sent, syncNote]);
 
   const tile = made.emoji || made.name.slice(0, 1);
   return (

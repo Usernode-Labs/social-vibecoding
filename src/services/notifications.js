@@ -1683,6 +1683,28 @@ async function markInviteNotificationsRead(pool, userId, appId) {
   return rowCount || 0;
 }
 
+// #7027: an invitation stops being unread once its person is IN the project,
+// however they got in — an invite link, the Join button, an acceptance, or a
+// queued redemption the platform-access trigger applied. The row (and the
+// notification's own history entry) is only ever marked read: app_collaborators
+// is untouched, so an invitation to build still needs Accept. With no `appId`
+// every project's unread invite for this person is cleared, which is what a
+// waitlist release needs. Idempotent; returns how many rows it marked.
+async function markJoinedInviteNotificationsRead(pool, userId, appId = null) {
+  if (!userId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications n SET read_at = NOW()
+       FROM apps a
+       JOIN community_members m
+         ON m.community_id = a.community_id AND m.user_id = $1
+      WHERE n.user_id = $1 AND n.app_id = a.id
+        AND n.kind = 'collab_invite' AND n.read_at IS NULL
+        AND ($2::int IS NULL OR a.id = $2)`,
+    [userId, appId ?? null]
+  );
+  return rowCount || 0;
+}
+
 // Same for approver_invite rows (issue #646) — accepted, declined,
 // revoked, or auto-resolved by the app's policy flipping back to
 // 'anyone'. Idempotent.
@@ -2531,6 +2553,7 @@ module.exports = {
   createApproverInviteAcceptedNotification,
   listPendingInvites,
   markInviteNotificationsRead,
+  markJoinedInviteNotificationsRead,
   markApproverInviteNotificationsRead,
   filterToCollaborators,
   listForUser,

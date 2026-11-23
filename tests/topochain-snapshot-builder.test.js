@@ -417,6 +417,40 @@ test('builder: persists one ranked snapshot per scoring user, shared-rank rule a
   }
 });
 
+test('builder: equal points keep account order whatever the block counts', async () => {
+  // carol also reaches 2350 (1250 blocks + 1100 bug_report) with more
+  // produced blocks and a higher id than bob. Blocks arrive late and move
+  // between snapshots, so they must never decide a tie: carol stays below
+  // bob, exactly as standings.js orders equal points.
+  db.userActivities.push({ user_id: 3, season_event_id: 100, activity_type: 'bug_report', points: 1100 });
+  const result = await buildSnapshots(currentMockPool, { seasonEventId: 100, now: new Date() });
+
+  assert.equal(result.events.length, 1);
+  const rows = db.leaderboardSnapshots;
+  assert.equal(rows.length, 4);
+
+  const alice = byUser(rows, 1);
+  const bob = byUser(rows, 2);
+  const carol = byUser(rows, 3);
+  const dave = byUser(rows, 4);
+
+  assert.deepEqual(
+    { total_points: bob.total_points, blocks: bob.event_total_produced_blocks, rank: bob.rank },
+    { total_points: 2350, blocks: 8, rank: 1 }
+  );
+  assert.deepEqual(
+    { total_points: carol.total_points, blocks: carol.event_total_produced_blocks, rank: carol.rank },
+    { total_points: 2350, blocks: 10, rank: 2 }
+  );
+  assert.equal(alice.rank, 1);
+  assert.equal(alice.total_points, 2500);
+  assert.equal(dave.rank, 3);
+  assert.equal(dave.total_points, 500);
+
+  // The write order is what readers serve: bob above carol.
+  assert.deepEqual(rows.map((r) => r.user_id), [1, 2, 3, 4]);
+});
+
 test('builder: golden-vector columns for one user (points, offchain, metrics, challenge_details)', async () => {
   await buildSnapshots(currentMockPool, { seasonEventId: 100, now: new Date() });
   const bob = byUser(db.leaderboardSnapshots, 2);
