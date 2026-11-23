@@ -28,6 +28,14 @@ const SRC = read(HOME_FRAME);
 // A store the way lib/plain-store.js shapes one, holding `state` for good.
 const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
 const matchesQuery = (query, ...fields) => !query || fields.some((f) => typeof f === 'string' && f.toLowerCase().includes(query.toLowerCase()));
+// The rule use-home-query.ts applies, so the stub ranks as the real module does.
+const rankCommunities = (rows, query) => {
+  if (!query) return [...rows];
+  const q = query.trim().toLowerCase();
+  const matches = rows.filter((r) => [r.name, r.slug].some((f) => typeof f === 'string' && f.toLowerCase().includes(q)));
+  const exact = (r) => [r.name, r.slug].some((f) => typeof f === 'string' && f.trim().toLowerCase() === q);
+  return [...matches.filter(exact), ...matches.filter((r) => !exact(r))];
+};
 
 // The modules HomeFrame reads, stubbed by the specifier it imports them as.
 function homeStubs({ pins = [], joined = [], owed = {}, apps = [], grid = {}, moreCount = 0, needs = 0, challenges = null, query = '', live = [] } = {}) {
@@ -42,7 +50,7 @@ function homeStubs({ pins = [], joined = [], owed = {}, apps = [], grid = {}, mo
       scrollParent: () => null,
     },
     '../add-apps-sheet': { openAddAppsSheet() {} },
-    '../use-home-query': { useHomeQuery: () => query, useSettledHomeQuery: () => query, matchesQuery },
+    '../use-home-query': { useHomeQuery: () => query, useSettledHomeQuery: () => query, matchesQuery, rankCommunities },
     '../panels-store': { panelsStore: fixedStore({ painted: true, challenges }) },
     '../../app-frame/live-apps': { useLiveAppSlugs: () => live, liveAppLabel: () => 'Still open' },
     '../../workshop/community-scope': { communityScopeStore: fixedStore({ slug: null, list: [], badgeNeeds: needs }) },

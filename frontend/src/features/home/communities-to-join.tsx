@@ -49,7 +49,7 @@ import { CommunityCardSkeleton, LEAD_MAX, useLeadCount } from '../communities/ca
 import { Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
 import { featuredApps, presentCategories, sortApps, type GuestApp, type GuestSort } from '../guest/guest-data';
 import { SectionHeading } from './panels/ui';
-import { matchesQuery } from './use-home-query';
+import { rankCommunities } from './use-home-query';
 
 /** How many cards a page brings. */
 export const JOIN_PAGE = 8;
@@ -115,9 +115,15 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     // already shows them (#6597). When every community of the kind is
     // featured, nothing is left and the list is empty.
     const lead = new Set(featured.map((a) => a.slug));
-    return (query ? joinOrder(pool, sort) : sortApps(pool, sort).filter((a) => !lead.has(a.slug)))
-      .filter((a) => !kind || a.category === kind)
-      .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
+    // Ranked last, never sorted after: the join order (featured, then the
+    // chosen sort) is what ties keep, and a later sort would undo the lead
+    // (#7021, guest-data.ts says the same).
+    return rankCommunities(
+      (query ? joinOrder(pool, sort) : sortApps(pool, sort).filter((a) => !lead.has(a.slug)))
+        .filter((a) => !kind || a.category === kind),
+      query,
+      { description: true },
+    );
   }, [pool, kind, query, sort, featured]);
   useEffect(() => { setShown(JOIN_PAGE); }, [kind, query, sort]);
   const more = list.length > shown;

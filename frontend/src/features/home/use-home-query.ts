@@ -11,6 +11,7 @@
  */
 import { useEffect, useState } from 'react';
 
+import { rankSearch, searchKey } from '../../lib/search-rank.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { gridStore, type HomeGridState } from './grid-store';
 
@@ -60,9 +61,32 @@ export function useSettledHomeQuery(): string {
   return settledQuery(live, grid);
 }
 
+/**
+ * The communities a search finds, in the order it ranks them (#7021): the
+ * one named exactly what was typed first, then the same name with Latin
+ * accents set aside, then every other match in the list's own order. The
+ * rule is lib/search-rank.js, the app grid's and the guest directory's, so
+ * these lists agree with them on what matches and what leads. A community's
+ * name and slug both count as its name; `description` adds its sentence as a
+ * text a match may be found in, never one that decides the lead. An empty
+ * query returns every row, in order.
+ */
+export function rankCommunities<T extends { name?: string | null; slug: string; description?: string | null }>(
+  rows: readonly T[],
+  query: string,
+  opts?: { description?: boolean },
+): T[] {
+  return rankSearch(
+    rows,
+    query,
+    (r: T) => [r.name, r.slug],
+    opts?.description ? (r: T) => [r.name, r.slug, r.description] : undefined,
+  ) as T[];
+}
+
 /** Does a community's name or slug match the search? */
 export function matchesQuery(query: string, ...fields: Array<string | null | undefined>): boolean {
   if (!query) return true;
-  const q = query.toLowerCase();
-  return fields.some((f) => typeof f === 'string' && f.toLowerCase().includes(q));
+  const q = searchKey(query);
+  return fields.some((f) => typeof f === 'string' && searchKey(f).includes(q));
 }

@@ -26,7 +26,7 @@ import { useCommunityColor } from '../../../lib/community-color';
 import { useMessages } from '../../../lib/i18n/react';
 import { featuredApps, presentCategories, type GuestApp } from '../../guest/guest-data';
 import { JOIN_PAGE, joinOrder, scrollParent } from '../communities-to-join';
-import { matchesQuery } from '../use-home-query';
+import { rankCommunities } from '../use-home-query';
 
 /**
  * How many cards across a grid of `count`, on a desktop: three, unless that
@@ -111,10 +111,14 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
   const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
   const list = useMemo(() => {
     const lead = new Set(featured.map((a) => a.slug));
-    return joinOrder(pool)
-      .filter((a) => !lead.has(a.slug))
-      .filter((a) => !kind || a.category === kind)
-      .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
+    // Ranked last: a sort after it would undo the lead (#7021).
+    return rankCommunities(
+      joinOrder(pool)
+        .filter((a) => !lead.has(a.slug))
+        .filter((a) => !kind || a.category === kind),
+      query,
+      { description: true },
+    );
   }, [pool, featured, kind, query]);
   useEffect(() => { setShown(JOIN_PAGE); }, [kind, query]);
   const more = list.length > shown;

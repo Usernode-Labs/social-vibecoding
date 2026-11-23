@@ -70,7 +70,7 @@ import { gridStore, type HomeAppView, type IconView } from '../grid-store';
 import { homePinsStore, setHomePin, type HomePin } from '../home-pins-store';
 import { panelsStore, type HomePanelsState } from '../panels-store';
 import { HOME_SEARCH_SHORTCUT_KEYS } from '../search-shortcut';
-import { matchesQuery, useSettledHomeQuery } from '../use-home-query';
+import { rankCommunities, useSettledHomeQuery } from '../use-home-query';
 import { ToJoinView } from './to-join';
 
 /** A tile's picture in the grids of this page. */
@@ -366,13 +366,15 @@ function PinnedCommunities({ query }: { query: string }) {
   const [showAll, setShowAll] = useState(false);
   useEffect(() => { if (query) setEditing(false); }, [query]);
 
-  const pinned = useMemo(() => state.pins.filter((p) => matchesQuery(query, p.name, p.slug)), [state.pins, query]);
+  // Each group is ranked on its own: a community named what was typed leads
+  // its group (#7021).
+  const pinned = useMemo(() => rankCommunities(state.pins, query), [state.pins, query]);
   const unpinned = useMemo(() => {
     const on = new Set(state.pins.map((p) => p.slug));
-    return state.joined
+    const joined = state.joined
       .filter((c) => !on.has(c.slug))
-      .map((c) => ({ slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null, iconColor: c.icon_color || null }))
-      .filter((c) => matchesQuery(query, c.name, c.slug));
+      .map((c) => ({ slug: c.slug, name: c.name || c.slug, iconUrl: c.icon_url || null, iconEmoji: c.icon_emoji || null, iconColor: c.icon_color || null }));
+    return rankCommunities(joined, query);
   }, [state.joined, state.pins, query]);
   const say = (name: string) => ({
     pinned: t('home:communities.pinned', { community: name }),
