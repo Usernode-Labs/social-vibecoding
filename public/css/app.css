@@ -6303,8 +6303,14 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
 @media (hover: hover) and (min-width: 640px) and (max-width: 1023.98px) {
   html:not([data-skin]) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li { box-shadow: none; }
 }
-@media (hover: hover) and (min-width: 1024px) {
+@media (hover: hover) and (min-width: 1280px) {
   html:not([data-skin]) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li + li + li { box-shadow: none; }
+}
+/* From 1024px to 1280px Home's lists are two across beside the open sidebar
+   (BESIDE THE OPEN SIDEBAR, below), so there the line is two rows on. */
+@media (hover: hover) and (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li + li + li { box-shadow: none; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #home-screen .wip-rows-cols > li:has(> a.wip-row:is(:hover, :focus-visible)) + li + li { box-shadow: none; }
 }
 /* A panel: a card's inside, padded, for a list (Needs you). */
 .wip-panel { padding: var(--wip-card-pad); min-width: 0; }
@@ -6608,6 +6614,18 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
   html:not([data-skin]) { --home-cell-h: var(--wip-tile-h-stacked); }
   html:not([data-skin]) #app-list .app-card-title { margin-top: var(--wip-title-gap-stacked); font-size: var(--wip-title-size-mid); min-height: 2.5em; }
 }
+/* BESIDE THE OPEN SIDEBAR the tile stays stacked up to 1280px. As a row
+   (below), four across beside the sidebar left a name about 75px, and every
+   project on Home read "Stagi…". So between 1024px and 1280px with the
+   sidebar open a tile is as it is under 1024px, and so are Home's lists:
+   two across, where four cut every thread's and challenge's title. Folded,
+   the sidebar leaves the row its room, and the row starts at 1024px. */
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) { --home-cell-h: var(--wip-tile-h-stacked); }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #home-screen { --wip-cols: 2; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people { display: none; }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-title { margin-top: var(--wip-title-gap-stacked); font-size: var(--wip-title-size-mid); min-height: 2.5em; }
+}
 /* On a phone the tile gives its side padding to the name: at this size a
    name needs every pixel of its quarter of the screen. */
 @media (max-width: 639.98px) {
@@ -6628,7 +6646,7 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
   html:not([data-skin]) #app-list > .app-card > .relative { width: min(3.5rem, calc(100% - 0.1875rem)); height: auto; aspect-ratio: 1 / 1; }
   html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { width: 100%; height: 100%; border-radius: min(1.25rem, 36%); }
 }
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   html:not([data-skin]) { --home-cell-h: var(--wip-tile-h); }
   html:not([data-skin]) #app-list > .app-card {
     flex-direction: row;
@@ -6642,6 +6660,27 @@ html:not([data-skin]) #app-list .app-card-desc { display: none; }
   html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
   html:not([data-skin]) #app-list .app-card-people { justify-content: flex-start; }
   html:not([data-skin]) #app-list .app-card-title {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    min-height: 0;
+    text-align: start;
+  }
+}
+/* The same row from 1024px wherever the sidebar is not open beside it. */
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) { --home-cell-h: var(--wip-tile-h); }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card {
+    flex-direction: row;
+    align-items: center; /* a tile with no sentence keeps its two lines beside the icon's middle */
+    gap: var(--wip-tile-gap);
+    text-align: start;
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .min-w-0 { flex: 1 1 0; width: auto; }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .relative,
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .relative > .app-icon-tile { width: var(--wip-icon); height: var(--wip-icon); }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list .app-card-people { justify-content: flex-start; }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list .app-card-title {
     -webkit-line-clamp: 1;
     line-clamp: 1;
     min-height: 0;
@@ -6752,8 +6791,10 @@ html:not([data-skin]) #home-screen [data-home-join-featured] > h3 {
 /* The shell's own placeholders, drawn in this look's shapes while Home
    loads (the prerender does not know the look; these rules do, before the
    first paint), so what arrives takes the place its placeholder held.
-   Pinned projects, from 1024px: rows, an icon and two lines beside it. */
-@media (min-width: 1024px) {
+   Pinned projects, where a tile is a row (from 1280px, and from 1024px
+   unless the sidebar is open beside it): rows, an icon and two lines beside
+   it. */
+@media (min-width: 1280px) {
   html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div {
     flex-direction: row;
     align-items: center;
@@ -6776,6 +6817,36 @@ html:not([data-skin]) #home-screen [data-home-join-featured] > h3 {
   }
   html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :last-child > div { width: 55%; height: 0.75rem; }
   html:not([data-skin]) #app-list:not([data-view]) > .animate-pulse > div > :last-child::after {
+    content: "";
+    width: 85%;
+    height: 0.625rem;
+    border-radius: var(--wip-radius-small);
+    background-color: var(--wip-skeleton);
+  }
+}
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--wip-tile-gap);
+    height: var(--wip-tile-h);
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :first-child {
+    width: var(--wip-icon);
+    height: var(--wip-icon);
+    border-radius: var(--wip-icon-radius);
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :last-child {
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0.5rem;
+    height: auto;
+    padding-top: 0;
+  }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :last-child > div { width: 55%; height: 0.75rem; }
+  html:not([data-skin]):not(:has(> body > #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded))) #app-list:not([data-view]) > .animate-pulse > div > :last-child::after {
     content: "";
     width: 85%;
     height: 0.625rem;
@@ -8485,6 +8556,10 @@ html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; 
    (asked 21 Nov 2026). Two ids, so it outranks the BUTTONS block's shape. */
 html:not([data-skin]) #communities-screen #communities-new-top { font-family: var(--wip-font); }
 html:not([data-skin]) #communities-search-input { border-radius: var(--wip-radius-inner); }
+/* Beside New community a phone leaves this box about 100px of words, and its
+   prompt was cut mid-word ("Search your com"), as Home's was ("Search apps
+   and co"). Both end in an ellipsis. */
+html:not([data-skin]) :is(#communities-search-input, #home-search-input) { text-overflow: ellipsis; }
 /* A group's label is Home's: one row gap above every group after the first, the config's label tokens. */
 html:not([data-skin]) #communities-screen section ~ section > .home-area-label { padding-top: var(--wip-row-gap); }
 html:not([data-skin]) #communities-screen .home-area-label > span:first-child {
@@ -25145,6 +25220,14 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
    padding here. */
 .platform-under-header {
   top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top));
+}
+/* BESIDE THE SIDEBAR, NOT OVER IT. From 768px the standard look's sidebar
+   reaches the top of the window beside the top bar. The make and made
+   screens ran the window's width from the bar's foot down, so they covered
+   the sidebar from there and left its top 52px (the fold button and the
+   logo on blue) standing alone in the corner. They start at its edge. */
+@media (min-width: 768px) {
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) .platform-under-header { inset-inline-start: var(--platform-rail-w, 0px); }
 }
 @media (max-width: 767px) {
   html.platform-kb-open .platform-kb-surface.platform-under-header {

@@ -25,6 +25,8 @@ const WIP_HIDES = [
   'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
   'html:not([data-skin]) #app-list .app-card-people',
+  // So it is beside the open sidebar up to 1280px, where the tile stays stacked: as a row its name had about 75px.
+  'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html:not([data-skin]) #dev-workshop [data-ws-hub-topics]',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
