@@ -76,6 +76,11 @@ export type { InviteLink, InviteState } from './invite-data';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-start '
   + 'text-zinc-700 dark:text-zinc-200';
+// Phone review #51: the links are one ruled list, every row the same height,
+// its hairline on the words' 20px margin.
+const LIST = 'divide-y divide-zinc-100 dark:divide-zinc-800';
+const LINK_ROW = 'flex items-center gap-3 mx-5 py-2 min-h-[56px] text-sm text-start '
+  + 'text-zinc-700 dark:text-zinc-200';
 // The links' heading row: the small-caps label, and Change beside it.
 const SECTION_ROW = 'flex items-center justify-between gap-3 px-5 pt-4 pb-1';
 const SECTION = 'text-[0.7rem] font-semibold uppercase tracking-wide '
@@ -171,13 +176,15 @@ function SkeletonLine({ className, shape = 'muted' }: { className: string; shape
  * Share, the heading row and a link row are theirs. What it cannot know is
  * how many links there are, so it draws the common case: one of their own.
  */
-export function InviteSkeleton({ label, unnamed = false, canShare }: { label: string; unnamed?: boolean; canShare: boolean }): ReactNode {
+export function InviteSkeleton({ label, unnamed = false, canShare, titled = true }: { label: string; unnamed?: boolean; canShare: boolean; titled?: boolean }): ReactNode {
   const t = useMessages('agent');
   return (
     <div id="app-invite-pane" className="pb-2" data-invite-loading="">
-      <div className="px-5 pt-1">
-        <div className={TITLE}>{unnamed ? t('agent:appContext.invite.titleUnnamed') : t('agent:appContext.invite.title', { project: label })}</div>
-      </div>
+      {titled ? (
+        <div className="px-5 pt-1">
+          <div className={TITLE}>{inviteTitle(label, unnamed)}</div>
+        </div>
+      ) : null}
       {/* The pulse is opacity alone, on the compositor, and still under
           reduced motion. */}
       <SkeletonGroup label={t('agent:appContext.invite.making')} className="motion-reduce:animate-none">
@@ -194,9 +201,11 @@ export function InviteSkeleton({ label, unnamed = false, canShare }: { label: st
           <span className={`${SECTION} flex-1`}><SkeletonLine shape="line" className="w-16" /></span>
           <span className="text-sm"><SkeletonLine className="w-12" /></span>
         </div>
-        <div className={ROW}>
-          <Skeleton className="w-2/5" />
-          <Skeleton className="ms-auto w-12" />
+        <div className={LIST}>
+          <div className={LINK_ROW}>
+            <Skeleton className="w-2/5" />
+            <Skeleton className="ms-auto w-12" />
+          </div>
         </div>
       </SkeletonGroup>
     </div>
@@ -208,7 +217,16 @@ export function InviteSkeleton({ label, unnamed = false, canShare }: { label: st
  * is a stand-in: the sentences here use their unnamed wording instead of
  * taking the stand-in as a name.
  */
-export function InvitePane({ slug, label, unnamed = false }: { slug: string | null; label: string; unnamed?: boolean }) {
+/**
+ * The pane's title, "Invite people to Plant Pal". Phone review #51 (23 Nov
+ * 2026): in the app menu it is the head's, on the close button's line, and
+ * the pane is not `titled`; the close button had a row of its own over it.
+ */
+export function inviteTitle(label: string, unnamed = false): string {
+  return unnamed ? t('agent:appContext.invite.titleUnnamed') : t('agent:appContext.invite.title', { project: label });
+}
+
+export function InvitePane({ slug, label, unnamed = false, titled = true }: { slug: string | null; label: string; unnamed?: boolean; titled?: boolean }) {
   const t = useMessages('agent');
   // What AppContext.openInvite() read before the sheet went up, when it came
   // in time: the pane's first render is then the loaded one.
@@ -352,7 +370,7 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
       </div>
     );
   }
-  if (!state) return <InviteSkeleton label={label} unnamed={unnamed} canShare={canShare} />;
+  if (!state) return <InviteSkeleton label={label} unnamed={unnamed} canShare={canShare} titled={titled} />;
   if (!state.canCreate) {
     return (
       <div id="app-invite-pane">
@@ -364,13 +382,57 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
       </div>
     );
   }
+  const isEnded = (link: InviteLink) => link.status !== 'live' && link.status !== 'paused';
+  const liveLinks = state.links.filter((link) => !isEnded(link));
+  const endedLinks = state.links.filter(isEnded);
+  const renderLink = (link: InviteLink): ReactNode => {
+    const paused = link.status === 'paused';
+    const ended = link.status !== 'live' && !paused;
+    return (
+      <div
+        key={link.id}
+        className={ended ? `${LINK_ROW} text-zinc-500 dark:text-zinc-400` : LINK_ROW}
+        data-invite-link={link.id}
+        data-invite-status={link.status}
+      >
+        <span className="flex-1 min-w-0">
+          <span className="block truncate">{linkDetail(link)}</span>
+          <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{statusLine(link)}</span>
+          {!link.mine && link.createdBy ? (
+            <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.invite.madeBy', { username: link.createdBy })}</span>
+          ) : null}
+        </span>
+        {paused ? (
+          <button
+            type="button"
+            className="shrink-0 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-50"
+            disabled={busy}
+            data-invite-reopen={link.id}
+            onClick={() => reopen(link)}
+          >
+            {t('agent:appContext.invite.reopen')}
+          </button>
+        ) : null}
+        {ended ? null : (
+          <button
+            type="button"
+            className="shrink-0 text-sm font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+            disabled={busy}
+            onClick={() => turnOff(link)}
+          >
+            {t('agent:appContext.invite.turnOff')}
+          </button>
+        )}
+      </div>
+    );
+  };
   return (
     <div id="app-invite-pane" className="pb-2">
-      <div className="px-5 pt-1">
-        <div className={TITLE}>
-          {unnamed ? t('agent:appContext.invite.titleUnnamed') : t('agent:appContext.invite.title', { project: label })}
+      {titled ? (
+        <div className="px-5 pt-1">
+          <div className={TITLE}>{inviteTitle(label, unnamed)}</div>
         </div>
-      </div>
+      ) : null}
       {current ? (
         <>
           <div className="px-5 pt-3">
@@ -401,20 +463,10 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
       {sentOut ? <div className="px-5 pt-3"><NotifyAsk moment="invite_sent" /></div> : null}
 
       <div id="app-invite-links">
-        <div className={SECTION_ROW}>
-          <h4 className={SECTION}>
-            {state.manages
-              ? t('agent:appContext.invite.liveLinks')
-              : t('agent:appContext.invite.yourLinks')}
-          </h4>
-          {changing ? null : (
-            <button id="app-invite-change-open" type="button" className={CHANGE_LINK} onClick={() => setChanging(true)}>
-              {t('agent:appContext.invite.change')}
-            </button>
-          )}
-        </div>
+        {/* Phone review #51 (23 Nov 2026): the new link's form is its own
+            block, above the list's heading, which used to label it. */}
         {changing ? (
-          <div id="app-invite-change" className="px-5 pt-2 pb-2 space-y-3">
+          <div id="app-invite-change" className="mx-5 mt-3 p-3 space-y-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60">
             <label className="block text-sm text-zinc-700 dark:text-zinc-200">
               <span className="block pb-1">{t('agent:appContext.invite.expiresAfter')}</span>
               <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
@@ -439,47 +491,30 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
             </div>
           </div>
         ) : null}
-        {state.links.length ? state.links.map((link) => {
-          const paused = link.status === 'paused';
-          const ended = link.status !== 'live' && !paused;
-          return (
-            <div
-              key={link.id}
-              className={ended ? `${ROW} text-zinc-500 dark:text-zinc-400` : ROW}
-              data-invite-link={link.id}
-              data-invite-status={link.status}
-            >
-              <span className="flex-1 min-w-0">
-                <span className="block truncate">{linkDetail(link)}</span>
-                <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{statusLine(link)}</span>
-                {!link.mine && link.createdBy ? (
-                  <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.invite.madeBy', { username: link.createdBy })}</span>
-                ) : null}
-              </span>
-              {paused ? (
-                <button
-                  type="button"
-                  className="shrink-0 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-50"
-                  disabled={busy}
-                  data-invite-reopen={link.id}
-                  onClick={() => reopen(link)}
-                >
-                  {t('agent:appContext.invite.reopen')}
-                </button>
-              ) : null}
-              {ended ? null : (
-                <button
-                  type="button"
-                  className="shrink-0 text-sm font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                  disabled={busy}
-                  onClick={() => turnOff(link)}
-                >
-                  {t('agent:appContext.invite.turnOff')}
-                </button>
-              )}
-            </div>
-          );
-        }) : (changing ? null : <p className={NOTE}>{t('agent:appContext.invite.noLinks')}</p>)}
+        <div className={SECTION_ROW}>
+          <h4 className={SECTION}>
+            {state.manages
+              ? t('agent:appContext.invite.liveLinks')
+              : t('agent:appContext.invite.yourLinks')}
+          </h4>
+          {changing ? null : (
+            <button id="app-invite-change-open" type="button" className={CHANGE_LINK} onClick={() => setChanging(true)}>
+              {t('agent:appContext.invite.change')}
+            </button>
+          )}
+        </div>
+        {/* #51: one ruled list, every row the same height, the links that
+            still work first; the ended ones fold under their count. */}
+        {liveLinks.length ? <div className={LIST}>{liveLinks.map(renderLink)}</div> : null}
+        {endedLinks.length ? (
+          <details className="mt-1" data-invite-ended="">
+            <summary className={`${ROW} cursor-pointer text-zinc-500 dark:text-zinc-400`}>
+              {t('agent:appContext.invite.ended', { count: endedLinks.length })}
+            </summary>
+            <div className={LIST}>{endedLinks.map(renderLink)}</div>
+          </details>
+        ) : null}
+        {state.links.length || changing ? null : <p className={NOTE}>{t('agent:appContext.invite.noLinks')}</p>}
       </div>
     </div>
   );

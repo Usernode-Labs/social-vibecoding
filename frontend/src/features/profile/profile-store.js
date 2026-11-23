@@ -196,10 +196,14 @@ export function breakdownRows(breakdown) {
   return rows;
 }
 
-const CHIP_ZINC =
-  'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ' +
-  'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 ' +
-  'hover:bg-zinc-200 dark:hover:bg-zinc-700';
+// A verified account is a FACT about the person, so it is drawn as one: a
+// line of muted text after a check, not a pill. The pill (a filled, rounded
+// chip) was repainted as the standard look's outlined button, so a fact read
+// as an action (phone review #99, 23 Nov 2026). It stays a link to the
+// account; `ui-plain` keeps the looks' button rules off it.
+const VERIFIED_LINE =
+  'ui-plain inline-flex min-w-0 items-center gap-1 text-[0.8125rem] font-medium ' +
+  'text-zinc-500 dark:text-zinc-400 hover:underline';
 
 /** Provider links in both the owner's card and the public card. The server
  * supplies this `links` object exclusively from OAuth-backed identity rows;
@@ -212,7 +216,7 @@ export function verifiedSocialLinksView(profile) {
     const safe = safeHref(href);
     if (safe) {
       rows.push({
-        key, label, href: safe, external: true, className: CHIP_ZINC,
+        key, label, href: safe, external: true, className: VERIFIED_LINE,
       });
     }
   };

@@ -5,7 +5,8 @@
 // same name). The big card is a 16:9 picture (a brand background where it
 // has none), the real icon standing mostly below it, the name over the
 // members, two lines of what it is and this week on one line; the compact
-// card is the same with the picture taken off.
+// card is the same with the picture taken off, its week in two plain lines
+// under the name (the Joined list, approved 23 Nov 2026).
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -91,10 +92,29 @@ test('an emoji icon, one member, no sentence and a quiet week: each says what it
   assert.doesNotMatch(draw('CommunityCardContent', { community: { ...TIDE, members: null } }), /cm-card-members/);
 });
 
-test('the compact card: the icon beside the name and the members, and nothing else', () => {
+test('the compact card: the icon beside the name, then the members and who was active, then what went live, and nothing else', () => {
   const html = draw('CommunityCardCompactContent', { community: TIDE });
-  assert.match(html, /^<span class="cm-card-head"><span class="cm-card-face"><span class="cm-card-icon" data-icon="image" aria-hidden="true">[\s\S]*<span class="cm-card-name">Tide Table<\/span><span class="cm-card-members" data-cm-members="">1,284 members<\/span><\/span><\/span>$/);
-  assert.doesNotMatch(html, /cm-card-pic|cm-card-desc|cm-card-week/);
+  // One message, its two facts each kept whole so a narrow card wraps between them; then the tick and what went live.
+  assert.equal(message('home:communities.compactMembersActive', { count: 33, formatted: '33', members: '1,284 members' }), '<0>1,284 members,</0> <1>33 active this week</1>');
+  assert.match(html, /^<span class="cm-card-head"><span class="cm-card-face"><span class="cm-card-icon" data-icon="image" aria-hidden="true">[\s\S]*<span class="cm-card-name">Tide Table<\/span><span class="cm-card-members" data-cm-members=""><span class="cm-card-fact">1,284 members,<\/span> <span class="cm-card-fact">33 active this week<\/span><\/span><span class="cm-card-live" data-cm-live=""><svg[^>]*class="cm-card-live-tick"[^>]*aria-hidden="true"[\s\S]*?<\/svg><span class="cm-card-fact">5 changes live this week<\/span><\/span><\/span><\/span>$/);
+  assert.doesNotMatch(html, /cm-card-pic|cm-card-desc|cm-card-week|<img[^>]*avatar/, 'no picture, no sentence, no faces');
+  // A quiet community is its members alone: a zero says nothing.
+  const quiet = draw('CommunityCardCompactContent', { community: { ...TIDE, members: 16, activeWeek: 0, liveWeek: 0 } });
+  assert.match(quiet, /<span class="cm-card-members" data-cm-members="">16 members<\/span><\/span><\/span>$/);
+  assert.doesNotMatch(quiet, /cm-card-live|cm-card-fact|active/);
+  // One active, one change: the singular of each.
+  const one = draw('CommunityCardCompactContent', { community: { ...TIDE, members: 1, activeWeek: 1, liveWeek: 1 } });
+  assert.match(one, /<span class="cm-card-fact">1 member,<\/span> <span class="cm-card-fact">1 active this week<\/span>/);
+  assert.match(one, new RegExp(`<span class="cm-card-fact">${message('home:communities.compactLive', { count: 1, formatted: '1' })}</span>`));
+  assert.equal(message('home:communities.compactLive', { count: 1, formatted: '1' }), '1 change live this week');
+  // Changes live with nobody active: the members, then the changes.
+  const liveOnly = draw('CommunityCardCompactContent', { community: { ...TIDE, activeWeek: 0, liveWeek: 6 } });
+  assert.match(liveOnly, /data-cm-members="">1,284 members<\/span><span class="cm-card-live" data-cm-live="">[\s\S]*6 changes live this week/);
+  // Before the week is read: the members, as the card drew them before.
+  const unread = draw('CommunityCardCompactContent', { community: { ...TIDE, activeWeek: undefined, liveWeek: undefined } });
+  assert.match(unread, /<span class="cm-card-members" data-cm-members="">1,284 members<\/span><\/span><\/span>$/);
+  // The big card draws its own week line, never the compact card's.
+  assert.doesNotMatch(draw('CommunityCardContent', { community: TIDE }), /cm-card-live|cm-card-fact/);
 });
 
 test('the page\'s card is one link to the hub, the tile\'s hooks and votes, and its edit discs', () => {
@@ -137,10 +157,20 @@ test('the card\'s measures: a 16:9 picture, a 56px icon 14px over its edge, 15px
   // Under 640px the glyphs, always one line.
   assert.match(block, /@media \(max-width: 639\.98px\) \{\s*\.cm-card \.cm-week-words \{ display: none; \}\s*\.cm-card \.cm-week-glyphs \{ display: flex; \}\s*\}/);
   assert.match(block, /@media \(min-width: 640px\) \{\s*\.cm-week-sr \{ display: none; \}\s*\}/);
-  // The compact card: a 44px icon on a dark hairline, the head centred, 12px round it.
-  assert.match(block, /\.cm-card\[data-cm-size="compact"\] \{ padding: 12px; \}/);
+  // The compact card: a 44px icon on a dark hairline, the head centred, 16px round it, 14px from the
+  // icon to the words, 5px between the lines, its small words 13px on 18px.
+  assert.match(block, /\.cm-card\[data-cm-size="compact"\] \{ padding: 16px; \}/);
   assert.match(rule('.cm-card[data-cm-size="compact"] .cm-card-icon'), /width: 44px;\s*height: 44px;\s*border-radius: 11px;\s*box-shadow: 0 0 0 1px var\(--cm-icon-edge\);/);
-  assert.match(block, /\.cm-card\[data-cm-size="compact"\] \.cm-card-head \{ align-items: center; \}/);
+  assert.match(block, /\.cm-card\[data-cm-size="compact"\] \.cm-card-head \{ align-items: center; gap: 14px; \}/);
+  assert.match(block, /\.cm-card\[data-cm-size="compact"\] \.cm-card-id \{ gap: 5px; padding-top: 0; \}/);
+  assert.match(block, /\.cm-card\[data-cm-size="compact"\] :is\(\.cm-card-members, \.cm-card-live\) \{ font-size: 13px; line-height: 18px; \}/);
+  // Its first line wraps between its two facts, never inside one; what went live is the link's blue, with no fill.
+  assert.match(block, /\.cm-card\[data-cm-size="compact"\] \.cm-card-members \{ white-space: normal; \}/);
+  assert.match(rule('.cm-card-fact'), /display: inline-block;\s*max-width: 100%;\s*overflow: hidden;\s*text-overflow: ellipsis;\s*white-space: nowrap;/);
+  const live = rule('.cm-card-live');
+  assert.match(live, /gap: 5px;[\s\S]*font-weight: 600;[\s\S]*color: var\(--cm-link\);/);
+  assert.doesNotMatch(live, /background/, 'no filled pill');
+  assert.match(rule('.cm-card-live-tick'), /width: 14px;\s*height: 14px;/);
   // No blur anywhere on it, and no stock palette.
   assert.doesNotMatch(block, /blur\(|backdrop-filter|gray-|indigo-/);
 });

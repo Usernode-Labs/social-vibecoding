@@ -330,6 +330,10 @@ export function ConnectorsSection() {
               before the focus ring, where #settings-openrouter-key writes it after.
               Input's variant table exists to reproduce both spellings.
           */}
+          {/* An address too long for the field ends in "…" rather than
+              stopping mid-address with nothing to say it goes on (phone
+              review #126). The whole value is still there to select, copy
+              and scroll. */}
           <Input
             id="connector-url"
             type="text"
@@ -337,6 +341,7 @@ export function ConnectorsSection() {
             spellCheck="false"
             width="flex"
             mono
+            className="text-ellipsis"
           />
           {/*
               This one KEEPS the violet fill: it is the section's primary

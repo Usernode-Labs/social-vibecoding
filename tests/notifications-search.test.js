@@ -175,12 +175,11 @@ test('while searching the headings, pinned sections and pager step aside', () =>
     '{!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? ('
   );
   assert.ok(gate > 0, 'the headings block is skipped while searching');
-  const todayHead = SHEET_SRC.indexOf('{today.length ? (');
-  const earlierHead = SHEET_SRC.indexOf('{earlier.length ? (');
-  assert.ok(
-    todayHead > gate && earlierHead > gate,
-    'the Today/Earlier headings are skipped while searching'
-  );
+  // Phone review #118: All's sections (allSections) are the older rows'
+  // cards, drawn inside the same gate, and are not built while searching.
+  const allHeads = SHEET_SRC.indexOf('allSections.map(renderOlderSection)');
+  assert.ok(allHeads > gate, 'the section headings are skipped while searching');
+  assert.match(SHEET_SRC, /const allSections = tab === 'all' && !searching \?/);
   assert.ok(
     SHEET_SRC.includes("{searching ? null : (tab === 'unread' && !olderShown ? ("),
     'none of the pager footers render while searching'
@@ -190,7 +189,7 @@ test('while searching the headings, pinned sections and pager step aside', () =>
     'the ordinary empty state is replaced while searching'
   );
   assert.ok(
-    SHEET_SRC.includes('matches.length ? matches.map(renderEntry) : ('),
+    SHEET_SRC.includes('matches.length ? <div className="notifications-stack">{matches.map(renderEntry)}</div> : ('),
     'the matches render through the same row renderer'
   );
 });

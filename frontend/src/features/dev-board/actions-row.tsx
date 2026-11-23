@@ -154,6 +154,9 @@ const PLUS_ROW_CLS =
 const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
 const PLUS_ICON_CLS = 'shrink-0 mt-0.5 w-5 h-5 text-zinc-500 dark:text-zinc-400';
 const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-200';
+const PLUS_TITLE_BAD_CLS = 'block text-sm font-medium text-red-600 dark:text-red-400';
+/** S17: a group's small-caps label in Settings & rules (SectionHeader's type). */
+const PLUS_GROUP_CLS = 'px-5 pt-4 pb-1 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 /** The ⋯ in the hero: Invite's pill fill (`pillNeutral`), as a circle. */
 const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '
   + 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';
@@ -181,9 +184,12 @@ const PLUS_TITLE_LIT_CLS = 'block text-sm font-bold text-zinc-900 dark:text-zinc
  * interesting part.
  */
 function PlusRow({
-  'data-plus': action, icon, title, sub, dividerCls = '', titleNode, onClick, group, trailing, lit = false,
+  'data-plus': action, icon, title, sub, dividerCls = '', titleNode, onClick, group, trailing, lit = false, destructive = false,
 }: {
   'data-plus': string;
+  /** Phone review #115: a row that takes something away (Leave), in red,
+      and red in the phone's sheet too (`data-plus-destructive`). */
+  destructive?: boolean;
   /** The highlighted row: a tint behind it and a bold title (PLUS_ROW_LIT_CLS). */
   lit?: boolean;
   /** #4045: a row that opens a group of rows (Settings & rules) carries
@@ -204,6 +210,7 @@ function PlusRow({
       data-plus={action}
       data-plus-group={group}
       data-plus-lit={lit ? '' : undefined}
+      data-plus-destructive={destructive ? '' : undefined}
       aria-haspopup={group ? 'true' : undefined}
       onClick={onClick}
       className={(lit ? PLUS_ROW_LIT_CLS : PLUS_ROW_CLS) + dividerCls}
@@ -211,7 +218,7 @@ function PlusRow({
       {icon}
       <span className="min-w-0 flex-1">
         {titleNode ?? (
-          <span data-plus-title className={lit ? PLUS_TITLE_LIT_CLS : PLUS_TITLE_CLS}>{title}</span>
+          <span data-plus-title className={lit ? PLUS_TITLE_LIT_CLS : destructive ? PLUS_TITLE_BAD_CLS : PLUS_TITLE_CLS}>{title}</span>
         )}
         {sub ? <span className={PLUS_SUB_CLS}>{sub}</span> : null}
       </span>
@@ -398,9 +405,10 @@ export function DevPlusMenu({
             {/* B8: Suggest an improvement leads (it goes to Homeroom bot,
                 or to the group as a request); building it yourself is
                 second. */}
+            {/* Phone review #129 (23 Nov 2026): no fill on it. A tinted
+                first row read as the current choice, not as an action. */}
             <PlusRow
               data-plus="issue"
-              lit
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
               title={t('project:menu.suggest.title')}
               sub={t('project:menu.suggest.sub')}
@@ -438,7 +446,7 @@ export function DevPlusMenu({
             {homeCommunity ? (
               <PlusRow
                 data-plus="home-community"
-                icon={<HomeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
                 title={homeCommunity.pinned ? t('project:menu.homeCommunity.remove') : t('project:menu.homeCommunity.add')}
                 sub={homeCommunity.pinned ? undefined : t('project:menu.homeCommunity.sub')}
                 onClick={() => { callAppView('_closePlusMenu'); homeCommunity.onToggle(); }}
@@ -486,6 +494,12 @@ export function DevPlusMenu({
               <ChevronLeftIcon className="shrink-0 w-4 h-4" aria-hidden="true" />
               {t('project:menu.settings.heading')}
             </button>
+            {/* Phone review S17 (23 Nov 2026): three labelled groups, the
+                everyday ones first, and one name for the thing (project).
+                It was eleven rows of one weight, Custom domain and the
+                secrets among the everyday ones. #115: Leave is last, in red;
+                it was the first row, in the same ink as the rest. */}
+            <div data-plus-group="people" className={PLUS_GROUP_CLS}>{t('project:menu.settings.group.people')}</div>
             {onWhoDecides ? (
               <PlusRow
                 data-plus="who-decides"
@@ -497,39 +511,6 @@ export function DevPlusMenu({
                 onClick={() => { callAppView('_closePlusMenu'); onWhoDecides(); }}
               />
             ) : null}
-            {onLeave ? (
-              <PlusRow
-                data-plus="leave"
-                icon={<ArrowRightIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title={appName ? t('project:menu.leave.named', { project: appName }) : t('project:menu.leave.plain')}
-                // Home.setMembership asks before it takes them out.
-                onClick={() => { callAppView('_closePlusMenu'); onLeave(); }}
-              />
-            ) : null}
-            {typeof window !== 'undefined' && ((window.AppView?.appData?.can_manage && !selfHosted)
-              || window.AppView?.appData?.can_delete
-              || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow
-              data-plus="app-settings"
-              icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title={t('project:menu.appSettings.title')}
-              sub={t('project:menu.appSettings.sub')}
-            /> : null}
-            {/* #4405: a project's own web address. Owner-set, like secrets,
-                so the same people who manage the app see it; never for the
-                platform's own app, which the deploy pipeline addresses. */}
-            {typeof window !== 'undefined' && window.AppView?.appData?.can_manage && !selfHosted ? <PlusRow
-              data-plus="domain"
-              icon={<GlobeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title={t('project:menu.domain.title')}
-              sub={t('project:menu.domain.sub')}
-            /> : null}
-            {canManageIllustration ? <PlusRow
-              data-plus="featured-illustration"
-              icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title={t('project:menu.illustration.title')}
-              sub={t('project:menu.illustration.sub')}
-              onClick={() => setEditingIllustration(true)}
-            /> : null}
             {showsMembers ? (
               <>
                 {selfHosted ? (
@@ -549,13 +530,6 @@ export function DevPlusMenu({
                 )}
               </>
             ) : null}
-            <PlusRow
-              data-plus="rename"
-              icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title={t('project:menu.rename.title')}
-              sub={t('project:menu.rename.sub')}
-              dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
-            />
             {/* #4417: the project's topics, its lasting conversations: each
                 is a channel and a category. A change to them is a proposal
                 against dapp.json's `topics` (features/dialogs/topics.tsx).
@@ -570,6 +544,38 @@ export function DevPlusMenu({
                 window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
               }}
             />
+            <div data-plus-group="look" className={PLUS_GROUP_CLS}>{t('project:menu.settings.group.look')}</div>
+            <PlusRow
+              data-plus="rename"
+              icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title={t('project:menu.rename.title')}
+              sub={t('project:menu.rename.sub')}
+            />
+            {canManageIllustration ? <PlusRow
+              data-plus="featured-illustration"
+              icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title={t('project:menu.illustration.title')}
+              sub={t('project:menu.illustration.sub')}
+              onClick={() => setEditingIllustration(true)}
+            /> : null}
+            <div data-plus-group="advanced" className={PLUS_GROUP_CLS}>{t('project:menu.settings.group.advanced')}</div>
+            {typeof window !== 'undefined' && ((window.AppView?.appData?.can_manage && !selfHosted)
+              || window.AppView?.appData?.can_delete
+              || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow
+              data-plus="app-settings"
+              icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title={t('project:menu.appSettings.title')}
+              sub={t('project:menu.appSettings.sub')}
+            /> : null}
+            {/* #4405: a project's own web address. Owner-set, like secrets,
+                so the same people who manage the app see it; never for the
+                platform's own app, which the deploy pipeline addresses. */}
+            {typeof window !== 'undefined' && window.AppView?.appData?.can_manage && !selfHosted ? <PlusRow
+              data-plus="domain"
+              icon={<GlobeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title={t('project:menu.domain.title')}
+              sub={t('project:menu.domain.sub')}
+            /> : null}
             <PlusRow
               data-plus="secrets"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
@@ -591,7 +597,6 @@ export function DevPlusMenu({
               sub={selfHosted
                 ? t('project:menu.secrets.platformSub')
                 : t('project:menu.secrets.appSub')}
-              dividerCls={PLUS_ROW_DIVIDER_CLS}
             />
             {/* Updates from, Suggest to and Make your own (#4045, the owner,
                 7 Oct; docs/plans/versions.md): the last rows of the Settings
@@ -626,6 +631,17 @@ export function DevPlusMenu({
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
               />
             )}
+            {onLeave ? (
+              <PlusRow
+                data-plus="leave"
+                icon={<ArrowRightIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={appName ? t('project:menu.leave.named', { project: appName }) : t('project:menu.leave.plain')}
+                destructive
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+                // Home.setMembership asks before it takes them out.
+                onClick={() => { callAppView('_closePlusMenu'); onLeave(); }}
+              />
+            ) : null}
             </div>
           </>
         )}

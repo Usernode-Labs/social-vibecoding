@@ -230,18 +230,24 @@ function rows(tree) {
 
 const row = (key, label, extras) => ({ key, label, terms: label.toLowerCase(), parts: [], subtitle: '', status: '', tag: '', ...extras });
 
-test('the phone menu draws the words or the tag before the chevron, and nothing on the rest', () => {
+test('the phone menu draws the count under the name, the tag before the chevron, and nothing on the rest', () => {
+  // Phone review #62 (23 Nov 2026): the count moved from the trailing edge,
+  // where with the chevron and the bookmark it cut the name, to the line
+  // under the name.
   const items = [
     row('phones', 'Linked phones', { status: '2 linked' }),
     row('experimental', 'Experimental', { tag: 'Beta' }),
     row('account', 'Account'),
   ];
   const found = rows(renderNav({ desktop: null, mobile: [{ name: 'G', items }], visit: 1 }, 'SettingsMobileMenu'));
-  const trailing = Object.fromEntries(found.map((n) => [n.props['data-settings-nav'], n.props.trailing]));
-  assert.equal(trailing.account, undefined, 'a row with nothing to say has no trailing slot');
-  const status = trailing.phones;
-  assert.equal(status.type({ ...status.props }).props.children, '2 linked');
-  const tag = trailing.experimental;
+  const by = Object.fromEntries(found.map((n) => [n.props['data-settings-nav'], n.props]));
+  assert.equal(by.account.trailing, undefined, 'a row with nothing to say has no trailing slot');
+  assert.equal(by.account.subtitle, undefined, 'and no second line');
+  assert.equal(by.phones.trailing, undefined, 'the count is not on the trailing edge');
+  const text = (n) => (typeof n === 'string' ? n : Array.isArray(n) ? n.map(text).join('')
+    : n && n.props ? text(n.props.children) : '');
+  assert.equal(text(by.phones.subtitle), '2 linked', 'it is the line under the name');
+  const tag = by.experimental.trailing;
   const tagEl = tag.type({ ...tag.props });
   assert.equal(tagEl.props.children, 'Beta');
   assert.match(tagEl.props.className, /rounded-full bg-zinc-100/, 'a grey pill, no accent');

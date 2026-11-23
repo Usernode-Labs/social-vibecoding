@@ -201,12 +201,18 @@ test('a row answers the pointer, a press and the keyboard, and a placeholder row
   // The lines either side of a lit row give way: the row's own above it, and under it the line of the row a whole
   // line of columns on, so the chain is as long as the look's column count at each width.
   assert.match(css, /@media \(hover: hover\) \{\s*html:not\(\[data-skin\]\) \.wip-rows > li:has\(> a\.wip-row:is\(:hover, :focus-visible\)\) \{ box-shadow: none; \}\s*\}/);
-  const widths = [['\\(max-width: 639\\.98px\\)', 1], ['\\(min-width: 640px\\) and \\(max-width: 1023\\.98px\\)', 2], ['\\(min-width: 1024px\\)', 4]];
+  const widths = [['\\(max-width: 639\\.98px\\)', 1], ['\\(min-width: 640px\\) and \\(max-width: 1023\\.98px\\)', 2], ['\\(min-width: 1280px\\)', 4]];
   for (const [media, cols] of widths) {
     assert.match(css, new RegExp(`@media \\(hover: hover\\) and ${media} \\{\\s*html:not\\(\\[data-skin\\]\\) \\.wip-rows-cols > li:has\\(> a\\.wip-row:is\\(:hover, :focus-visible\\)\\)${' \\+ li'.repeat(cols)} \\{ box-shadow: none; \\}\\s*\\}`), `${cols} column(s): the row under a lit one is ${cols} on`);
   }
   // Those are the look's own counts: one, two from 640px, four from 1024px.
   assert.match(css, /html:not\(\[data-skin\]\) \{ --wip-cols: 1; \}\n@media \(min-width: 640px\) \{ html:not\(\[data-skin\]\) \{ --wip-cols: 2; \} \}\n@media \(min-width: 1024px\) \{ html:not\(\[data-skin\]\) \{ --wip-cols: 4; \} \}/);
+  // Except on Home beside the open sidebar up to 1280px, where it stays two (four cut every title there), so
+  // between 1024px and 1280px the line under a lit row is four on unless the sidebar is open, and two on if it is.
+  const open = '#platform-tabs:not\\(\\.hidden\\):not\\(\\.platform-tabs-route-hidden\\):not\\(\\.platform-tabs-folded\\)';
+  const lit = '\\.wip-rows-cols > li:has\\(> a\\.wip-row:is\\(:hover, :focus-visible\\)\\)';
+  assert.match(css, new RegExp(`@media \\(min-width: 1024px\\) and \\(max-width: 1279\\.98px\\) \\{[^}]*\\}\\s*html:not\\(\\[data-skin\\]\\) body:has\\(> ${open}\\) #home-screen \\{ --wip-cols: 2; \\}`), 'Home is two across beside the open sidebar');
+  assert.match(css, new RegExp(`@media \\(hover: hover\\) and \\(min-width: 1024px\\) and \\(max-width: 1279\\.98px\\) \\{\\s*html:not\\(\\[data-skin\\]\\):not\\(:has\\(> body > ${open}\\)\\) ${lit}${' \\+ li'.repeat(4)} \\{ box-shadow: none; \\}\\s*html:not\\(\\[data-skin\\]\\) body:has\\(> ${open}\\) #home-screen ${lit}${' \\+ li'.repeat(2)} \\{ box-shadow: none; \\}\\s*\\}`), 'between 1024px and 1280px the line under a lit row follows the sidebar');
   // A placeholder is a row too, but a span, not a link: no rule lights a row that is not the link.
   assert.match(read('frontend/src/features/home/wip-kit.tsx'), /<span className="wip-row" aria-hidden="true">/);
   assert.doesNotMatch(css, /(?<!a)\.wip-row:(?:is\(|(?:hover|active|focus-visible)\s*[{,)])/, 'a placeholder would light up too');
