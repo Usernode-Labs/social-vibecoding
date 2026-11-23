@@ -212,6 +212,7 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.post('/api/apps/:slug/invite-links', drainGuard, inviteLinkCreateLimiter,",
     "router.get('/api/apps/:slug/invite-links',",
     "router.delete('/api/invite-links/:id', drainGuard,",
+    "router.post('/api/invite-links/:id/note', drainGuard, sameOriginBrowserOnly,",
     "router.get('/api/public/invites/:token', invitePreviewLimiter,",
     "router.get('/api/invite-links/by-token/:token', invitePreviewLimiter,",
     "router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter,",

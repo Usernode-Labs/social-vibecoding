@@ -499,16 +499,22 @@ const MembersDialog = {
     }
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
+      // #7027: already in the project but has not taken up building — the
+      // invitation is an offer, not a waiting invite, and nothing waits on
+      // them, so the row is not faded.
+      const offered = pending && r.inCommunity;
       const tag = r.isCreator
         ? `<span class="text-[0.65rem] text-violet-700 font-medium ms-1 dark:text-violet-400">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.creator')}</span>`
-        : (pending ? `<span class="text-[0.65rem] text-amber-800 font-medium ms-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.invited')}</span>` : '');
+        : (offered
+          ? `<span class="text-[0.65rem] text-zinc-500 font-medium ms-1 dark:text-zinc-400">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.offered')}</span>`
+          : (pending ? `<span class="text-[0.65rem] text-amber-800 font-medium ms-1 dark:text-amber-300">${PlatformI18n.htmlText('dialogs:members.collaborators.tag.invited')}</span>` : ''));
       // Remove/revoke: creator/admin for anyone but the creator; users
       // may remove themselves (leave). Mirrors the server rules.
       const canRemove = !r.isCreator && (canManage || r.userId === me.id);
       const removeBtn = canRemove
         ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? PlatformI18n.htmlText('dialogs:members.collaborators.revokeTitle') : (r.userId === me.id ? PlatformI18n.htmlText('dialogs:members.collaborators.leaveTitle') : PlatformI18n.htmlText('dialogs:members.collaborators.removeTitle'))}">${pending ? PlatformI18n.htmlText('dialogs:members.collaborators.revoke') : (r.userId === me.id ? PlatformI18n.htmlText('dialogs:members.collaborators.leave') : PlatformI18n.htmlText('dialogs:members.collaborators.remove'))}</button>`
         : '';
-      return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
+      return `<div class="flex items-center justify-between px-3 py-2 ${pending && !offered ? 'opacity-70' : ''}">
         <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
         ${removeBtn}
       </div>`;

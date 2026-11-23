@@ -100,6 +100,11 @@ async function migrate(config) {
   // #6990's shots: a request with an open vote to close it, so the Votes
   // card that now shows a saved vote at once has a state to show.
   await seedStagingCloseVote(pool);
+  // #7027's shots: an invitation to build that its person answered by
+  // joining the project another way, so the bell row reads as an offer and
+  // the member list tags them "offered to build". Obviously fake, staging
+  // only.
+  await seedStagingJoinedBuildOffer(pool);
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
@@ -2074,6 +2079,85 @@ async function seedStagingCloseVote(pool) {
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging close-vote seeding failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// #7027's shots: an invitation to build is not a waiting invitation once its
+// person is in the project. Two obviously fake projects, one per screen:
+//
+//   * someone else's, where the capture member already joined the community
+//     and still has an unread invitation to build it, so the bell's Invites
+//     row reads "@inviter offered to let you build …" and "You joined it";
+//   * the capture member's own, where a fake person joined the community and
+//     was offered building, so Members & approvals tags them "offered to
+//     build" instead of "invited".
+//
+// Rows are for the fixture account and fake people; nothing here is a signal
+// the code reads to decide anything, and the invitation's status is the one a
+// real join leaves behind. Idempotent by slug, a no-op outside staging.
+async function seedStagingJoinedBuildOffer(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return; }
+    const inviter = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-offer-inviter', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+    const offered = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-offer-builder', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+
+    // Someone else's project, which the capture member has already joined.
+    await tx.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       SELECT 'Staging demo: Page Turners', 'staging-demo-build-offer', 'running', $1, 'public', 'private'
+        WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-build-offer')`, [inviter.id]);
+    const theirs = (await tx.query(
+      "SELECT id, community_id FROM apps WHERE slug = 'staging-demo-build-offer'")).rows[0];
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW()) ON CONFLICT DO NOTHING`, [theirs.id, inviter.id]);
+    await tx.query(
+      `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+       ON CONFLICT DO NOTHING`, [theirs.community_id, member.id]);
+    // The invitation to build, still waiting, though they are in the project.
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
+       VALUES ($1, $2, 'invited', $3) ON CONFLICT DO NOTHING`, [theirs.id, member.id, inviter.id]);
+    await tx.query(
+      `INSERT INTO notifications (user_id, app_id, source_user_id, kind, created_at, read_at)
+       SELECT $1, $2, $3, 'collab_invite', NOW() - INTERVAL '2 days', NOW()
+        WHERE NOT EXISTS (SELECT 1 FROM notifications
+                           WHERE user_id = $1 AND app_id = $2 AND kind = 'collab_invite')`,
+      [member.id, theirs.id, inviter.id]);
+
+    // The capture member's own project, with a fake person in it who was
+    // offered building and has not taken it up.
+    await tx.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       SELECT 'Staging demo: Reading Club', 'staging-demo-members-offer', 'running', $1, 'public', 'private'
+        WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-members-offer')`, [member.id]);
+    const own = (await tx.query(
+      "SELECT id, community_id FROM apps WHERE slug = 'staging-demo-members-offer'")).rows[0];
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW()) ON CONFLICT DO NOTHING`, [own.id, member.id]);
+    await tx.query(
+      `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+       ON CONFLICT DO NOTHING`, [own.community_id, offered.id]);
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
+       VALUES ($1, $2, 'invited', $3) ON CONFLICT DO NOTHING`, [own.id, offered.id, member.id]);
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging build-offer seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 
