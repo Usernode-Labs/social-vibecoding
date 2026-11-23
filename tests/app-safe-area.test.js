@@ -479,6 +479,10 @@ test('the probe reads the max inset, and the detector gates like the CSS', () =>
   assert.match(detectFn,
     /\(display-mode: standalone\), \(display-mode: fullscreen\)/,
     'the same two display modes the #2755 CSS rule gates on');
+  assert.match(detectFn, /classList\.contains\('in-native-webview'\)/,
+    'the native WebView forwards the max too, the bottom twin of #5970 (#7061)');
+  assert.match(detectFn, /!docEl\.classList\.contains\('web-browser-chrome'\)/,
+    'a browser tab keeps the live inset, where the max is the collapsed chin');
   assert.match(detectFn, /typeof window\.matchMedia !== 'function'/,
     'a browser without matchMedia must fall back to the old value');
 });

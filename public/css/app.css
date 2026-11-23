@@ -26725,28 +26725,42 @@ html.un-ios {
   --platform-tabs-inset: max(0px, calc(var(--platform-safe-bottom, 0px) - 14px));
 }
 
-/* THE WHOLE BAR ON AN INSTALLED ANDROID APP (#2755). An installed Android
-   web app can be drawn edge to edge, under the system navigation bar, where
-   Chrome's `safe-area-inset-bottom` can read 0 or arrive late while its
-   `safe-area-max-inset-bottom` (Chrome 135+) carries the bar's full height. With
-   an inset of 0 the bar's padding is 0 and the navigation bar paints over its
-   lower half: the truncated bar in the report. Taking the larger of the two
-   is exact where the inset is right (they agree, there is no browser chin in
-   an installed app) and whole where it is not. A browser without the second
+/* THE WHOLE BAR ON AN INSTALLED ANDROID APP (#2755), AND IN THE NATIVE APP
+   (#7061). An installed Android web app can be drawn edge to edge, under the
+   system navigation bar, where Chrome's `safe-area-inset-bottom` can read 0
+   or arrive late while its `safe-area-max-inset-bottom` (Chrome 135+) carries
+   the bar's full height. With an inset of 0 every bottom-anchored surface
+   loses its padding and the navigation bar paints over its lower half: the
+   truncated tab bar in the report. Taking the larger of the two is exact
+   where the inset is right (they agree, there is no browser chin in an
+   installed app) and whole where it is not. A browser without the second
    variable falls back to 0px, which leaves the first untouched.
 
-   STANDALONE ONLY. In a browser tab the max variable is the height the inset
-   grows to when Chrome's bottom chin collapses, and reserving it while the
-   chin is still up would stack the bar on top of a strip the browser already
-   keeps clear. Both declarations restate the kit form so `?shot=safe-bottom`
-   still drives them; the second is the platform surface's own restatement
-   (see `#app-view[data-app-surface="platform"]`), which would otherwise win
-   inside it. */
+   THE TOKEN, NOT A NEW ONE (#7061): every bottom-inset rule reads
+   `--un-safe-inset-bottom` — the shell's `--platform-safe-bottom` on :root
+   and on the platform surface, and the kit's sheets, panels, action menus,
+   toasts and `.un-safe-bottom*` classes — so one declaration on <html>
+   reaches them all with no rule restated. The value is `env()` only, never
+   `var(--un-safe-inset-bottom)`, so it cannot reference itself. The review
+   state (`?safe-bottom=1`) writes the same property as an inline style on
+   <html>, which wins over this rule.
+
+   STANDALONE AND NATIVE WEBVIEW, NEVER A BROWSER TAB (#2509): in a browser
+   tab the max variable is the height the inset grows to when Chrome's bottom
+   chin collapses, and reserving it while the chin is still up would stack the
+   bar on top of a strip the browser already keeps clear. The native app is a
+   WebView that reports browser display mode, so it needs its own selector:
+   the bottom twin of the #5970 top rule. `:not(.un-kb)` stands down while the
+   keyboard is up, where the kit already pads by `--un-kb-inset`, which
+   includes the navigation-bar strip. iOS is untouched — `un-android` never
+   lands there, so `html.un-ios`'s 14px tab-bar trim stays as it is. */
 @media (display-mode: standalone), (display-mode: fullscreen) {
-  html.un-android,
-  html.un-android #app-view[data-app-surface="platform"] {
-    --platform-safe-bottom: max(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)), env(safe-area-max-inset-bottom, 0px));
+  html.un-android:not(.un-kb) {
+    --un-safe-inset-bottom: max(env(safe-area-inset-bottom, 0px), env(safe-area-max-inset-bottom, 0px));
   }
+}
+html.un-android.in-native-webview:not(.web-browser-chrome):not(.un-kb) {
+  --un-safe-inset-bottom: max(env(safe-area-inset-bottom, 0px), env(safe-area-max-inset-bottom, 0px));
 }
 
 /* THE STATUS BAR ON AN INSTALLED ANDROID APP (#5970), the top twin of the
