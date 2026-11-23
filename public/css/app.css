@@ -7105,6 +7105,8 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #d
 }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
+/* The ⋯ sits in the card's corner, out of the flow, and reaches 1.5rem into the words' column: a name of more than about fourteen letters ran under it on a phone. The name stops short of it and wraps instead. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary:has(.dev-ws-hero-actions > .dev-ws-plus) .dev-ws-hero-name { padding-inline-end: 1.75rem; }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
   width: var(--wip-hub-icon);
   height: var(--wip-hub-icon);
@@ -7265,6 +7267,14 @@ html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop [data-ws-hub-f
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
   html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
+}
+/* THREE DOORS NEED THREE COLUMNS' WORTH OF ROOM. Side by side from 768px, a door was 231px wide on a 1024px window beside the open sidebar: after its glyph, its count and its chevron it had 20px left for words, and read "N…" for Needs you and "Disc…" for Discussion. Below 1200px beside the open sidebar, and below 1020px beside the folded one, they are a list, one to a row, as on a phone. */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: 1 / -1; }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
+}
+@media (min-width: 1020px) and (max-width: 1199.98px) {
+  html:not([data-skin]) body:has(> #platform-tabs.platform-tabs-folded) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; margin-top: 0; }
 }
 /* RECENTLY LIVE, as a list and not a wall of pictures. Each change is a row
    of Home's own kind: a small picture at its side (a thumbnail, not a
@@ -7444,6 +7454,8 @@ html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"]::after {
 }
 html:not([data-skin]) #dev-workshop .wip-hero-wash[data-scene="home"] + .wip-hero-art .wip-hero-stage { animation: none; place-items: end center; padding-block-end: 6px; }
 .wip-hero-people { position: absolute; inset-block-end: 6px; inset-inline-end: 1.25rem; height: calc(100% - 14px); width: auto; max-width: none; }
+/* The people are as tall as the card, so their width followed its height, and where the words wrap (about 900 to 1200px) the card grew and the picture with it, out of the side kept for it and over the words. They stay inside that side, standing on the bottom edge, and are drawn smaller when it is narrow. */
+html:not([data-skin]) #dev-workshop .wip-hero-people { max-width: calc(100% - 1.25rem); object-fit: contain; object-position: bottom; }
 /* THE PROJECT'S PREVIEW STANDS BESIDE THE HERO (asked 20 Nov 2026), in its row from 1024px: the hero takes two of the
    hub's three columns and the preview the third, the two as tall as each other. Narrower, there is no card: the hero keeps the picture at its own side, tilted, as before. */
 html:not([data-skin]) #dev-workshop .wip-hero-preview { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: var(--wip-card-radius); box-shadow: inset 0 0 0 1px var(--wip-card-line); background-color: var(--wip-card-bg); }
@@ -7882,7 +7894,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     height: auto;
     padding: 0;
   }
-  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: min(36rem, 38vw); margin-top: 0; }
+  /* Its width is the bar's beside the sidebar (the usable box), less the 12.5rem kept for the bell and account on its right and 11rem for the page's name ("Hub", "Workshop") on its left. It was min(36rem, 38vw), which cut the sentence at "moves off GitHu…" on a 1440px window with 300px of the bar empty beside it. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"], [data-ws-tab="workshop"], [data-ws-tab="bot"])) > #dev-code-pause-notice > [data-code-pause] { max-width: calc(var(--platform-usable-w) - 12.5rem - 11rem); margin-top: 0; }
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
