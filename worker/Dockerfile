@@ -30,12 +30,19 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # The base image's own packages are upgraded first: the release's image scan
 # refuses a fixed advisory left unpatched (OpenSSL CVE-2026-84782, 26 Oct
 # 2026), and a cached layer would otherwise keep the old package.
-# linux-libc-dev is named in the install so this layer rebuilds and takes
-# Debian's patched release instead of the cached one (audit of 14 Nov 2026:
-# 6.12.117-1 or later).
-RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+# Bumping BASE_PACKAGES_REFRESHED below re-runs this cached layer so it takes
+# Debian's current linux-libc-dev, and the version check fails the build
+# loudly if the mirror would still ship anything older than 6.12.118-1
+# (audit of 23 Nov 2026), so a stale cached layer cannot quietly keep the
+# old package.
+ARG BASE_PACKAGES_REFRESHED=2026-11-23
+RUN echo "base packages refreshed: ${BASE_PACKAGES_REFRESHED}" \
+  && apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ linux-libc-dev \
+  && v="$(dpkg-query -W -f='${Version}' linux-libc-dev)" \
+  && { dpkg --compare-versions "$v" ge 6.12.118-1 \
+       || { echo "linux-libc-dev $v is older than 6.12.118-1" >&2; exit 1; }; } \
   && rm -rf /var/lib/apt/lists/*
 
 # ── The shots browser's system font (#4087) ────────────────────────────
