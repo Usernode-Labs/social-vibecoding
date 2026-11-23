@@ -5375,6 +5375,10 @@
     "text": "GitHub didn’t answer. Trying again in a few minutes.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots could not start because GitHub did not answer, and Homeroom tries again once by itself shortly. \"GitHub\" is the code host's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
+  "badge.reason.shots.retryingBusyDetail": {
+    "text": "Homeroom was too busy to take these screenshots. It tries again on its own shortly.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom takes them again once by itself soon. \"Homeroom\" is the product's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
+  },
   "badge.reason.shots.enforcedDetail": {
     "text": "Voting and merging wait for before & after screenshots of the current proposal commit.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are required before a vote. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
@@ -5863,6 +5867,14 @@
     "text": "Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
     "description": "Sentence under \"Trying the screenshots again\" on a proposal's screenshots card, when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
   },
+  "shots.state.retryingBusy.detail": {
+    "text": "Homeroom was too busy to take them. It tries again on its own shortly.",
+    "description": "Sentence under \"Trying the screenshots again\" on a proposal's screenshots card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom takes them again once by itself soon. \"Them\" are the screenshots. Homeroom is the product's name."
+  },
+  "shots.state.busy.detail": {
+    "text": "Homeroom was too busy to take them. Take them again in a few minutes.",
+    "description": "Sentence under \"Couldn’t take the screenshots\" on a proposal's screenshots card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom will not try again by itself. \"Them\" are the screenshots. Homeroom is the product's name."
+  },
   "shots.state.couldNot.label": {
     "text": "Couldn’t take the screenshots",
     "description": "Heading of the screenshots card on a proposal when the before/after screenshots failed for a reason other than the change itself."
@@ -5978,6 +5990,14 @@
   "shots.sentence.githubDown": {
     "text": "Couldn’t take the screenshots: GitHub didn’t answer. Take them again in a few minutes.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots could not start because GitHub did not answer, and Homeroom does not try again by itself. \"GitHub\" is the code host's name."
+  },
+  "shots.sentence.retryingBusy": {
+    "text": "Couldn’t take the screenshots: Homeroom was too busy to take them. It tries again on its own shortly.",
+    "description": "Line on a change's page, under \"What changes for you\", and the matching tooltip on its card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom takes them again once by itself soon. Homeroom is the product's name."
+  },
+  "shots.sentence.busy": {
+    "text": "Couldn’t take the screenshots: Homeroom was too busy to take them. Take them again in a few minutes.",
+    "description": "Line on a change's page, under \"What changes for you\", and the matching tooltip on its card, when taking the screenshots failed because Homeroom itself was too busy (it could not reach its database in time), not because of the proposal, and Homeroom does not try again by itself. Homeroom is the product's name."
   },
   "shots.sentence.couldNot": {
     "text": "Couldn’t take the screenshots. The screenshot agent could not take the before & after screenshots.",

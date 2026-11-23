@@ -57,6 +57,45 @@ function isDbConflict(error) {
   return isTransientLockError(error) || isObjectInUse(error);
 }
 
+// A database the step could not reach, or that would not take another
+// connection: nothing about the work it was for was decided, so a failure on
+// it is the platform's, never the proposal's. On 23 Nov 2026 three runs
+// failed in the same half minute on pg-pool's "timeout exceeded when trying
+// to connect" while a release's replaced processes finished their work on
+// their drain-sized pools (server.js shrinkPoolsForDrain), and Postgres
+// itself had room to spare.
+//
+// Known by its shape, never by a word in a sentence somebody wrote:
+//   - pg-pool's checkout timeout and pg Client's connect timeout, which carry
+//     no code, by their whole message;
+//   - the socket's own errno;
+//   - the server's SQLSTATE: 57P01 admin_shutdown, 57P02 crash_shutdown,
+//     57P03 cannot_connect_now, 53300 too_many_connections, and the class 08
+//     connection exceptions 08000 to 08006;
+//   - psql's FATAL line for the same server refusals, and libpq's own words
+//     for a connection that was refused or timed out (db-manager's psql and
+//     pg_dump report in their stderr).
+// A wrapper that keeps the error as its `cause` (or an AggregateError's
+// `errors`, as Node's connect reports trying several addresses) is read
+// through, a few levels deep.
+const CONNECTION_SQLSTATES = new Set(['57P01', '57P02', '57P03', '53300']);
+const CONNECTION_EXCEPTION = /^0800[0-6]$/;
+const CONNECTION_ERRNOS = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH']);
+const CONNECTION_MESSAGE = /^(?:timeout exceeded when trying to connect|Connection terminated due to connection timeout)$/;
+const CONNECTION_FATAL_TEXT = /\bFATAL:\s+(?:sorry, too many clients already|remaining connection slots are reserved|the database system is (?:starting up|shutting down|in recovery mode)|terminating connection due to administrator command)/;
+const CONNECTION_LIBPQ_TEXT = /\bconnection to server (?:at|on) [^\n]{1,300}? failed: (?:Connection refused|timeout expired|No route to host|Connection reset by peer)/;
+
+function isConnectionError(error, depth = 0) {
+  if (!error || typeof error !== 'object' || depth > 3) return false;
+  const code = String(error.code || '');
+  if (CONNECTION_ERRNOS.has(code) || CONNECTION_SQLSTATES.has(code) || CONNECTION_EXCEPTION.test(code)) return true;
+  if (typeof error.message === 'string' && CONNECTION_MESSAGE.test(error.message.trim())) return true;
+  const text = errorText(error);
+  if (CONNECTION_FATAL_TEXT.test(text) || CONNECTION_LIBPQ_TEXT.test(text)) return true;
+  if (Array.isArray(error.errors) && error.errors.some((inner) => isConnectionError(inner, depth + 1))) return true;
+  return error.cause !== error && isConnectionError(error.cause, depth + 1);
+}
+
 // Run `fn(attempt)` until it settles, at most `attempts` times. Only an error
 // `retryable` accepts is tried again; `beforeRetry(error, attempt)` runs
 // before the pause (a step that clears what the conflict was about). The
@@ -91,5 +130,6 @@ module.exports = {
   isTransientLockError,
   isObjectInUse,
   isDbConflict,
+  isConnectionError,
   withDbRetry,
 };

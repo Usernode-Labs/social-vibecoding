@@ -23,11 +23,14 @@ const orchestrator = () => legacy('services/shots-orchestrator');
 // and the platform's fault kind when it is one (taken again once). A stop
 // (the item cancelled, its lease lost, the process stopping) is not a
 // failure: it is thrown, so nothing is reported and the next claim goes on.
+// The words are the error's own; a connection the database would not give
+// has its own code (orchestrator errorCode), which every reader says in
+// plain words instead.
 function failureOf(error: any): Json {
   const o = orchestrator();
   const fault = o.platformFault(error);
   return {
-    code: String(error?.code || 'shots_failed').slice(0, 48),
+    code: o.errorCode(error),
     message: o.visibleError(error),
     fault: fault?.kind ?? null,
     retryAt: fault?.retryAt ? new Date(fault.retryAt).toISOString() : null,

@@ -10,6 +10,7 @@
 // machine's work (src/workflow/shots-eval/), on the trial's attempt id.
 
 const appManifest = require('./app-manifest');
+const dbRetry = require('./db-retry');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const github = require('./github');
@@ -65,9 +66,11 @@ function agentBusyRetryable(error) {
 // (shots-state PLATFORM_RETRY_TRIGGER). Read off the error, never off its
 // wording: a database or clone step the platform runs for the copies tags
 // its own error (shots-environment), GitHub's hourly limit and the shots
-// agent's exit have their own codes, and the worker's bootstrap names its
-// transient failures. Anything else, a revision that does not build
-// included, is the proposal's and is not taken again.
+// agent's exit have their own codes, the worker's bootstrap names its
+// transient failures, and a database connection that could not be had in
+// time is known by its shape (db-retry.isConnectionError, 23 Nov 2026).
+// Anything else, a revision that does not build included, is the
+// proposal's and is not taken again.
 const GITHUB_RESET_GRACE_MS = 60_000;
 const GITHUB_UNKNOWN_RESET_WAIT_MS = 15 * 60_000;
 const MAX_PLATFORM_RETRY_WAIT_MS = 65 * 60_000;
@@ -86,6 +89,9 @@ function platformFault(error, { now = Date.now() } = {}) {
   // once, a few minutes on, by the recovery sweep.
   if (error.code === 'github_unavailable') return { kind: 'github_unavailable', retryAt: now + 5 * 60_000 };
   if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
+  // No connection in time (a release's draining process on its small pool,
+  // a server refusing connections): whichever step met it, the database's.
+  if (dbRetry.isConnectionError(error)) return { kind: 'database' };
   // The change's worker could not start (its volume, its image, no room on
   // any node, a setup that never finished): the platform's, never the
   // change's, so the run is taken again once.
@@ -698,7 +704,12 @@ function sameProvenance(actual, expected) {
     && actual.headImageDigest === expected.headImageDigest;
 }
 
+// The code a run that ended on `error` records. A connection the database
+// would not give in time is one code whatever the driver said (its errno, a
+// SQLSTATE, or none at all), so every reader can say it in plain words
+// (shots-state DATABASE_BUSY_REASON) instead of the driver's.
 function errorCode(error) {
+  if (dbRetry.isConnectionError(error)) return state.DATABASE_BUSY_CODE;
   const code = String(error?.code || '');
   return /^[A-Za-z0-9_]{1,48}$/.test(code) ? code : 'shots_failed';
 }
@@ -1636,6 +1647,7 @@ module.exports = {
   MAX_AGENT_BUSY_RETRIES,
   MIN_AGENT_RETRY_MS,
   platformFault,
+  errorCode,
   visibleError,
   redactDiagnosticText,
   newRunMetrics,

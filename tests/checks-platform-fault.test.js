@@ -173,6 +173,24 @@ test('a capture Job refused, lost, or whose Pod never started, outside the settl
   assert.match(thrown, /: \{ outcome: 'blocked', reason: captureFailureDetail\(/, 'any other throw is not the platform\'s fault');
 });
 
+// 23 Nov 2026: a run that could not get a database connection in time (a
+// release's draining process on its small pool) tested nothing. It is the
+// platform's fault, so the error lane's platform allowance applies
+// (check_error_platform), and the card's reason is in words, never the
+// driver's "timeout exceeded when trying to connect".
+test('a checks run that could not get a database connection is the platform\'s fault, in plain words', () => {
+  const busy = visuals.databaseBusyResult();
+  assert.deepEqual(busy, { outcome: 'blocked', reason: visuals.CHECKS_DATABASE_BUSY, platformFault: true });
+  assert.doesNotMatch(busy.reason, /timeout exceeded|trying to connect/);
+  const src = read('src/services/visuals.js');
+  const capture = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function workflowOperation('));
+  const catchAt = capture.indexOf("traceStep('capture_error', 'Checks run threw'");
+  const thrown = capture.slice(catchAt, catchAt + 600);
+  assert.match(thrown, /if \(dbRetry\.isConnectionError\(err\)\) return databaseBusyResult\(\);/);
+  assert.ok(thrown.indexOf('isConnectionError') < thrown.indexOf('captureFailureDetail('),
+    'it is read before the driver\'s words could become the reason');
+});
+
 // ── A collected run ─────────────────────────────────────────────────────
 
 test('the collect names a shard whose Pod never started, as the live run does', () => {

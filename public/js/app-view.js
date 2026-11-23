@@ -9364,7 +9364,13 @@ const AppView = {
         retake: !running && AppView._canRetakeShots(item) ? Number(item.id) : null,
       };
     }
-    if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    if (running) {
+      // 23 Nov 2026: a run Homeroom takes again because it was too busy to
+      // get a database connection says that, still under way, rather than
+      // that the screenshots are being taken.
+      const busy = view.retrying && shots.failureCode === 'database_busy';
+      return { state: view.state, html: '', line: busy ? view.sentence : PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    }
     return {
       state: view.state, html: '', line: view.sentence, waiting: false,
       retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
@@ -26072,12 +26078,18 @@ const AppView = {
             ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
             : shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:badge.reason.shots.retryingGithubDetail')
-              : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
+              : shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:badge.reason.shots.retryingBusyDetail')
+                : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
           : notStarted ? AppView._shotsNotStartedReason(shots)
-            // #6598: never quote GitHub's own error page here.
+            // #6598: never quote GitHub's own error page here, nor (23 Nov
+            // 2026) the database driver's words for a connection it could
+            // not give in time.
             : shots.state === 'failed' && shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:shots.sentence.githubDown')
-              : shots.failureReason)
+              : shots.state === 'failed' && shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:shots.sentence.busy')
+                : shots.failureReason)
           || (enforced
             ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
             : PlatformI18n.t('changes:badge.reason.shots.missingDetail')),
@@ -26952,6 +26964,12 @@ const AppView = {
         ? [t('changes:shots.state.changeFailed.label'), e.failureReason || t('changes:shots.state.changeFailed.detail')]
         : e.failureCode === 'shots_stopped'
         ? [t('changes:shots.state.stopped.label'), e.failureReason || t('changes:shots.state.stopped.detail')]
+        // 23 Nov 2026: no database connection in time. The driver's own
+        // words are never shown; the line says what Homeroom does next.
+        : e.failureCode === 'database_busy'
+        ? (e.automaticRetryPending === true
+          ? [t('changes:shots.state.retrying.label'), t('changes:shots.state.retryingBusy.detail')]
+          : [t('changes:shots.state.couldNot.label'), t('changes:shots.state.busy.detail')])
         : e.automaticRetryPending === true
           ? [t('changes:shots.state.retrying.label'), e.failureCode === 'shots_run_interrupted'
             ? t('changes:shots.state.retrying.detail') : t('changes:shots.state.retryingFault.detail')]
@@ -27002,6 +27020,14 @@ const AppView = {
         return e.automaticRetryPending === true
           ? t('changes:shots.sentence.retryingGithub')
           : t('changes:shots.sentence.githubDown');
+      }
+      // 23 Nov 2026: Homeroom could not get a database connection in time
+      // (a release's draining process, say). Nothing the proposal did; the
+      // driver's own words are never quoted.
+      if (e.failureCode === 'database_busy') {
+        return e.automaticRetryPending === true
+          ? t('changes:shots.sentence.retryingBusy')
+          : t('changes:shots.sentence.busy');
       }
       if (e.failureCode === 'shots_change_failed') {
         return e.failureReason

@@ -30,6 +30,15 @@ export function agentBusyCode(code: unknown): boolean {
   return typeof code === 'string' && AGENT_BUSY_CODES.has(code);
 }
 
+// 23 Nov 2026: a step that could not get a database connection in time (a
+// release's draining process, or the database refusing connections) ends
+// its run on this code (services/db-retry.js isConnectionError). The driver's
+// own words ("timeout exceeded when trying to connect") mean nothing to a
+// person, so every reader of the run says this instead; the run's row keeps
+// the driver's text for admins.
+export const DATABASE_BUSY_CODE = 'database_busy';
+export const DATABASE_BUSY_REASON = 'Homeroom was too busy to take the before & after shots. This says nothing about the proposal.';
+
 function clip(value: unknown, max: number): string | null {
   const text = typeof value === 'string' ? value.trim() : '';
   return text ? text.slice(0, max) : null;
@@ -120,7 +129,8 @@ export function runSummary(row: Obj | null, artifactSummary: unknown[] = [],
     baseSha: row.base_sha,
     headSha: row.head_sha,
     failureCode: currentCode(row.failure_code) || null,
-    failureReason: agentBusyCode(row.failure_code) ? AGENT_BUSY_REASON : (row.failure_reason || null),
+    failureReason: agentBusyCode(row.failure_code) ? AGENT_BUSY_REASON
+      : row.failure_code === DATABASE_BUSY_CODE ? DATABASE_BUSY_REASON : (row.failure_reason || null),
     // Any finished run on the current head can be taken again; an explicit
     // no-visible-change declaration has nothing to retry.
     repairAvailable: row.state === 'failed' && currentCode(row.failure_code) !== 'visible_changes_conflict',
