@@ -46,6 +46,14 @@ test('the card ships under Theme, with Standard and Sunrise in light and dark', 
   ]) {
     assert.match(html, new RegExp(`src="/brand/templates/${file.replace('.', '\\.')}"`), `${file} is drawn`);
     assert.match(html, alt, `${file} says what it shows`);
+    // Width and height are declared, and the picture is NOT lazy: the card
+    // sits below the fold, and a lazy image is never fetched by a capture
+    // that does not scroll, so it would show blank and look like a 404.
+    const img = html.match(new RegExp(`<img[^>]*src="/brand/templates/${file.replace('.', '\\.')}"[^>]*>`));
+    assert.ok(img, `${file} renders an <img>`);
+    assert.match(img[0], /width="160"/, `${file} declares its width`);
+    assert.match(img[0], /height="190"/, `${file} declares its height`);
+    assert.doesNotMatch(img[0], /loading="lazy"/, `${file} loads without a scroll`);
     const full = path.join(ROOT, 'public', 'brand', 'templates', file);
     assert.ok(fs.existsSync(full), `public/brand/templates/${file} exists`);
     assert.ok(fs.statSync(full).size < 60 * 1024, `${file} is under 60 KB`);

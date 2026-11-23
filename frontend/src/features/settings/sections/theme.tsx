@@ -239,7 +239,11 @@ function TemplateChooser() {
           <span>{t(TEMPLATE_LABELS[value])}</span>
           <TemplateDot on={on} />
         </span>
-        <img className="tc-pic" src={src} width={160} height={190} alt={alt} loading="lazy" />
+        {/* Eager on purpose: these are 12 KB thumbnails inside a card that
+            sits below the fold, and a lazy image is never fetched by a
+            capture that does not scroll, so the chooser's pictures would
+            show blank in a screenshot and log no successful load (#6984). */}
+        <img className="tc-pic" src={src} width={160} height={190} alt={alt} />
       </button>
     );
   };
