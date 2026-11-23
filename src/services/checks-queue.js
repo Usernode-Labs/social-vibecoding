@@ -50,6 +50,9 @@
 // fill the slots, would leave more of those merges unchecked for longer. So
 // the cluster holds at most CHECKS_MAX_CONCURRENT_RUNS proposal runs plus one
 // main-watch run, or more main-watch runs only in slots no proposal is using.
+// The overflow pilot can add one proposal-only slot alongside an existing
+// extra main-watch run. It keeps the four-proposal ceiling and requires the
+// dedicated pool's per-node capacity plan to support five shared slots.
 //
 // A pass is cheap (one small table, read under a lock) and any process may
 // run one: every waiter runs one each poll, and admits the head of the line
@@ -64,6 +67,7 @@ const checkRuns = require('./check-runs');
 const { CHECKS_QUEUE_LOCK } = require('./advisory-locks');
 
 const DEFAULT_MAX_CONCURRENT_RUNS = 4;
+const PROPOSAL_OVERFLOW_PILOT_CAP = 4;
 const POLL_MS = Math.max(250, Number(process.env.CHECKS_QUEUE_POLL_MS) || 3000);
 // Dead main and early-unit rows stop counting well before cleanup.
 const ADMISSION_ROW_RETENTION_MS = 60 * 60 * 1000;
@@ -128,7 +132,9 @@ async function enqueue(pool, {
                     COALESCE((SELECT MIN(queued_at) FROM taken), NOW())),
               NULL
        ON CONFLICT (run_id) DO UPDATE
-         SET manifest = EXCLUDED.manifest, owner = EXCLUDED.owner, heartbeat_at = NOW()
+         SET manifest = CASE WHEN check_runs.manifest->>'proposalOverflow' = 'true'
+               THEN EXCLUDED.manifest || '{"proposalOverflow": true}'::jsonb ELSE EXCLUDED.manifest END,
+             owner = EXCLUDED.owner, heartbeat_at = NOW()
        RETURNING queued_at`,
       [runId, sessionId == null ? null : Number(sessionId), appId == null ? null : Number(appId),
         kind, commitSha || null, checkRuns.selfOwner(), JSON.stringify(manifest || {}),
@@ -199,6 +205,7 @@ const QUEUE_SQL = `
   SELECT cr.run_id, cr.kind, cr.session_id, cr.app_id, cr.commit_sha, cr.owner,
          cr.queued_at, cr.admitted_at, cr.heartbeat_at,
          (cr.manifest->>'earlyUnit' = 'true') AS early_unit,
+         (cr.manifest->>'proposalOverflow' = 'true') AS proposal_overflow,
          (cr.heartbeat_at >= NOW() - ($1::int * INTERVAL '1 millisecond')) AS alive,
          (cr.admitted_at IS NOT NULL
            AND cr.admitted_at >= NOW() - ($2::int * INTERVAL '1 millisecond')) AS within_deadline,
@@ -281,11 +288,14 @@ function sweepReason(row, alive) {
 // get a slot now, and where every other waiting run stands. A row holds a
 // slot once admitted, while its owner is alive or its Jobs may still be on
 // the cluster, unless its run is known to be over (holdsSlot). The line is
-// strict: when the run at its head cannot have a slot, nobody behind it gets
-// one. `self` is the run asking, which counts as alive whatever its last
-// heartbeat says, and is never over. `sweep` is the rows the pass deletes
-// (sweepReason).
-function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available = true } = {}) {
+// strict for ordinary slots. A main-watch run waiting for one can be passed
+// only for the proposal-only pilot slot. `self` counts as alive and is never
+// over. `sweep` is the rows the pass deletes (sweepReason). The legacy pool
+// reports Infinity and cannot qualify for the pilot.
+function planAdmission(rows, {
+  cap = maxConcurrentRuns(), poolCap = Infinity, self = null, available = true, proposalOverflowPilot = false,
+} = {}) {
+  const sharedCap = Math.min(cap, poolCap);
   const runs = (rows || []).map((row) => ({
     runId: row.run_id,
     kind: row.kind === 'main' ? 'main' : 'proposal',
@@ -316,18 +326,33 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
   let proposals = runs.filter((r) => r.holding && r.kind === 'proposal').length;
   // The first main-watch run is in its own slot; any more use the shared ones.
   const sharedUsed = () => proposals + Math.max(0, mains - 1);
+  const pilotBudget = proposalOverflowPilot === true && cap === PROPOSAL_OVERFLOW_PILOT_CAP
+    && Number.isFinite(poolCap) && poolCap >= cap + 1;
+  const overflowHolders = runs.filter((r, i) =>
+    r.holding && r.kind === 'proposal' && rows[i].proposal_overflow === true).length;
+  // A granted pilot run keeps its own slot while the pool still supports it.
+  // An ordinary slot released meanwhile is available to the head of the line.
+  // If the pilot is turned off or capacity drops, count the holder as ordinary.
+  const overflowDiscount = pilotBudget && overflowHolders === 1 ? 1 : 0;
+  const canGrantOverflow = pilotBudget && overflowHolders === 0 && mains > 1;
   const admit = [];
+  let proposalOverflowRunId = null;
   for (const run of runs) {
     if (!run.waiting) continue;
-    if (available && (run.kind === 'main' ? (mains === 0 || sharedUsed() < cap) : sharedUsed() < cap)) {
-      if (run.kind === 'main') mains += 1; else proposals += 1;
-      run.waiting = false;
-      run.holding = true;
-      run.admitted = true;
-      admit.push(run.runId);
-      continue;
+    if (!available) break;
+    const mainRun = run.kind === 'main';
+    const hasOrdinarySlot = (mainRun && mains === 0)
+      || (sharedUsed() - overflowDiscount < sharedCap && (mainRun || proposals < sharedCap));
+    if (!hasOrdinarySlot) {
+      if (!canGrantOverflow || sharedUsed() !== sharedCap || proposals >= cap) break;
+      if (mainRun) continue;
+      proposalOverflowRunId = run.runId;
     }
-    break;
+    if (mainRun) mains += 1; else proposals += 1;
+    run.waiting = false;
+    run.holding = true;
+    run.admitted = true;
+    admit.push(run.runId);
   }
   let ahead = 0;
   for (const run of runs) {
@@ -336,8 +361,9 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
     ahead += 1;
   }
   return {
-    cap,
+    cap: sharedCap,
     admit,
+    proposalOverflowRunId,
     expired: runs.filter((r) => r.expired).map((r) => r.runId),
     sweep,
     holding: { main: mains, proposal: proposals },
@@ -356,7 +382,6 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
 // waiter is never mistaken for dead by its own pass. Returns the plan.
 async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
   const capacity = await require('./kubernetes').checkPoolCapacity();
-  cap = Math.min(cap, capacity.cap);
   const plan = await withAdmissionLock(pool, async (client) => {
     if (self) {
       await client.query(
@@ -365,11 +390,17 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
       );
     }
     const rows = await queueRows(client);
-    const plan = planAdmission(rows, { cap, self, available: capacity.available });
+    const plan = planAdmission(rows, {
+      cap, poolCap: capacity.cap ?? 0, self, available: capacity.available === true && capacity.cap != null,
+      proposalOverflowPilot: process.env.CHECKS_PROPOSAL_OVERFLOW_PILOT === 'true',
+    });
     if (plan.admit.length) {
       await client.query(
-        'UPDATE check_runs SET admitted_at = NOW() WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL',
-        [plan.admit]
+        `UPDATE check_runs SET admitted_at = NOW(),
+            manifest = CASE WHEN run_id = $2::uuid THEN manifest || '{"proposalOverflow": true}'::jsonb
+              ELSE manifest - 'proposalOverflow' END
+          WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL`,
+        [plan.admit, plan.proposalOverflowRunId]
       );
     }
     if (plan.expired.length) {
@@ -400,6 +431,7 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
       runs: plan.runs.filter((r) => plan.admit.includes(r.runId))
         .map((r) => ({ runId: r.runId, kind: r.kind, class: r.class, sessionId: r.sessionId, appId: r.appId })),
       holding: plan.holding, waiting: plan.waiting, cap: plan.cap,
+      ...(plan.proposalOverflowRunId ? { proposalOverflowRunId: plan.proposalOverflowRunId } : {}),
     });
   }
   return plan;

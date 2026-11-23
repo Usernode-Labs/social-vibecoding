@@ -291,6 +291,7 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
             - {name: CHECKS_MAX_CONCURRENT_RUNS, value: {{ .Values.config.checksMaxConcurrentRuns | int64 | quote }}}
+            - {name: CHECKS_PROPOSAL_OVERFLOW_PILOT, value: {{ .Values.config.checksProposalOverflowPilot | quote }}}
             - {name: CHECK_NODE_POOL, value: {{ .Values.config.checkNodePool | quote }}}
             - {name: CHECK_NODE_POOL_REQUIRED, value: {{ .Values.config.checkNodePoolRequired | quote }}}
             - {name: CHECK_POOL_METRICS_URL, value: {{ .Values.config.checkPoolMetricsUrl | quote }}}

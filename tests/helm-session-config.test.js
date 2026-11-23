@@ -22,6 +22,9 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
       { MAX_GLOBAL_SESSIONS: '25', CAPTURE_CPUS: '8', CHECKS_MAX_CONCURRENT_RUNS: '0' }],
     [['--set', 'config.checksMaxConcurrentRuns=6'],
       { MAX_GLOBAL_SESSIONS: '25', CAPTURE_CPUS: '8', CHECKS_MAX_CONCURRENT_RUNS: '6' }],
+    [['--set', 'config.checkNodePoolRequired=true,config.checksProposalOverflowPilot=true',
+      '--set-string', 'config.checkNodePool=pool=checks'],
+      { CHECKS_PROPOSAL_OVERFLOW_PILOT: 'true' }],
     [['--set', 'platform.shotsEnabled=false'],
       { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'false' }],
     [['--set-string', 'config.browserSiteIsolation=strict'], { BROWSER_SITE_ISOLATION: 'strict' }],
@@ -35,6 +38,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     assert.equal(env.PLATFORM_SIGNALS, 'shadow', 'other platform signals retain their mode');
     assert.equal(env.BROWSER_SITE_ISOLATION, expected.BROWSER_SITE_ISOLATION || 'legacy');
     assert.equal(env.PLATFORM_SIGNALS_SECURITY_AUDIT, 'on', 'only security filing opts in');
+    assert.equal(env.CHECKS_PROPOSAL_OVERFLOW_PILOT, expected.CHECKS_PROPOSAL_OVERFLOW_PILOT || 'false');
     for (const [name, value] of Object.entries({
       CHECKS_MAX_CONCURRENT_RUNS: '4',
       ...expected, MAX_USER_SESSIONS: '3', MAX_USER_PROMOTED_SESSIONS: '5',

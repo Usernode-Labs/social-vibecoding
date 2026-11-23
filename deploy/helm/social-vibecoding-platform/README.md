@@ -668,6 +668,19 @@ leave room in the worker namespace's ResourceQuota for coding workers,
 and so the previews under test do not saturate the shared Postgres primary.
 `0` turns the queue off.
 
+`config.checksProposalOverflowPilot` (`CHECKS_PROPOSAL_OVERFLOW_PILOT`,
+default `false`) allows a single additional shared slot for the first waiting
+proposal when at least two main-watch runs already hold slots. The pilot
+requires `checksMaxConcurrentRuns: 4` and a required dedicated pool whose
+current per-node capacity plan supports five shared slots plus the reserved
+main-watch run. The four-proposal ceiling still applies, and the first
+main-watch run retains its reserved lane. The overflow grant stays with the
+proposal that holds it, so an ordinary slot that frees can go to the head of
+the line. Turning the pilot off or losing sufficient pool capacity counts the
+holder as ordinary until it finishes. Early unit suites use the ordinary
+reservation policy. Admission logs identify pilot starts with
+`proposalOverflowRunId`.
+
 `config.checkNodePool` (`CHECK_NODE_POOL`, default empty) names a dedicated
 node pool for check Jobs as the pool nodes' label `key=value`, for example
 `usernodelabs.org/node-pool=cpu-heavy`. Label the pool's nodes with that pair
