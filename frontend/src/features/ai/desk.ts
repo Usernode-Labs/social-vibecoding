@@ -37,6 +37,12 @@ export interface DeskSummary {
   waiting: number;
   /** The first thing you owe, by its title. */
   first: string | null;
+  /**
+   * The read has come back, whatever it said: `ready` stays false when it
+   * failed. The Workshop holds its Your work card's place until then
+   * (../dev-board/workshop/your-work.tsx), and no longer once it has.
+   */
+  settled?: boolean;
 }
 
 export const EMPTY_DESK: DeskSummary = { ready: false, needs: 0, progress: 0, waiting: 0, first: null };
@@ -121,7 +127,9 @@ export function useDesk(slug: string | null | undefined): DeskSummary {
     if (!slug || typeof window === 'undefined' || !(window as any).App?.user) return undefined;
     let live = true;
     void readDesk().then(({ work, needs }) => {
-      if (live) setSummary(deskOf(slug, needs, work));
+      if (live) setSummary({ ...deskOf(slug, needs, work), settled: true });
+    }, () => {
+      if (live) setSummary({ ...EMPTY_DESK, settled: true });
     });
     return () => { live = false; };
   }, [slug]);

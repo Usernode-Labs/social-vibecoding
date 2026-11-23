@@ -61,8 +61,8 @@ const { CHECKS_QUEUE_LOCK } = require('./advisory-locks');
 
 const DEFAULT_MAX_CONCURRENT_RUNS = 4;
 const POLL_MS = Math.max(250, Number(process.env.CHECKS_QUEUE_POLL_MS) || 3000);
-// A dead main row is garbage after this; it stopped counting long before.
-const MAIN_ROW_RETENTION_MS = 60 * 60 * 1000;
+// Dead main and early-unit rows stop counting well before cleanup.
+const ADMISSION_ROW_RETENTION_MS = 60 * 60 * 1000;
 // Past the Jobs' own deadlines: room for the gap between admission and the
 // Jobs' creation (the capture's preparation) and for a slow cluster.
 const DEADLINE_SLACK_MS = 5 * 60 * 1000;
@@ -183,6 +183,7 @@ function recordSlotGranted(pool, {
 const QUEUE_SQL = `
   SELECT cr.run_id, cr.kind, cr.session_id, cr.app_id, cr.commit_sha, cr.owner,
          cr.queued_at, cr.admitted_at, cr.heartbeat_at,
+         (cr.manifest->>'earlyUnit' = 'true') AS early_unit,
          (cr.heartbeat_at >= NOW() - ($1::int * INTERVAL '1 millisecond')) AS alive,
          (cr.admitted_at IS NOT NULL
            AND cr.admitted_at >= NOW() - ($2::int * INTERVAL '1 millisecond')) AS within_deadline,
@@ -222,7 +223,7 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
     waiting: false,
     admitted: false,
     ahead: null,
-    expired: row.expired === true && row.kind === 'main' && row.run_id !== self,
+    expired: row.expired === true && (row.kind === 'main' || row.early_unit === true) && row.run_id !== self,
   }));
   for (const [i, run] of runs.entries()) {
     const admittedAt = rows[i].admitted_at;
@@ -265,24 +266,21 @@ function planAdmission(rows, { cap = maxConcurrentRuns(), self = null, available
 }
 
 // One admission pass, under the lock: admit the runs planAdmission names,
-// and clear main rows long dead (a proposal row is the harvest's to clear).
+// and clear main and early unit rows long dead. Other proposal rows are
+// left for recovery to read.
 // `self` also refreshes that run's heartbeat in the same transaction, so a
 // waiter is never mistaken for dead by its own pass. Returns the plan.
 async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
   const capacity = await require('./kubernetes').checkPoolCapacity();
   cap = Math.min(cap, capacity.cap);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [CHECKS_QUEUE_LOCK]);
+  const plan = await withAdmissionLock(pool, async (client) => {
     if (self) {
       await client.query(
         'UPDATE check_runs SET heartbeat_at = NOW() WHERE run_id = $1 AND owner = $2',
         [self, checkRuns.selfOwner()]
       );
     }
-    const { rows } = await client.query(QUEUE_SQL,
-      [Math.round(checkRuns.ORPHAN_MS), Math.round(jobHoldMs()), MAIN_ROW_RETENTION_MS]);
+    const rows = await queueRows(client);
     const plan = planAdmission(rows, { cap, self, available: capacity.available });
     if (plan.admit.length) {
       await client.query(
@@ -292,26 +290,92 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
     }
     if (plan.expired.length) {
       await client.query(
-        `DELETE FROM check_runs WHERE run_id = ANY($1::uuid[]) AND kind = 'main'
+        `DELETE FROM check_runs WHERE run_id = ANY($1::uuid[])
+            AND (kind = 'main' OR manifest->>'earlyUnit' = 'true')
             AND heartbeat_at < NOW() - ($2::int * INTERVAL '1 millisecond')`,
-        [plan.expired, MAIN_ROW_RETENTION_MS]
+        [plan.expired, ADMISSION_ROW_RETENTION_MS]
       );
     }
-    await client.query('COMMIT');
-    if (plan.admit.length) {
-      log.info('checks-queue', 'Admitted checks runs', {
-        runs: plan.runs.filter((r) => plan.admit.includes(r.runId))
-          .map((r) => ({ runId: r.runId, kind: r.kind, class: r.class, sessionId: r.sessionId, appId: r.appId })),
-        holding: plan.holding, waiting: plan.waiting, cap: plan.cap,
-      });
-    }
     return plan;
+  });
+  if (plan.admit.length) {
+    log.info('checks-queue', 'Admitted checks runs', {
+      runs: plan.runs.filter((r) => plan.admit.includes(r.runId))
+        .map((r) => ({ runId: r.runId, kind: r.kind, class: r.class, sessionId: r.sessionId, appId: r.appId })),
+      holding: plan.holding, waiting: plan.waiting, cap: plan.cap,
+    });
+  }
+  return plan;
+}
+
+async function withAdmissionLock(pool, work) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [CHECKS_QUEUE_LOCK]);
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
   }
+}
+
+async function queueRows(client) {
+  const { rows } = await client.query(QUEUE_SQL,
+    [Math.round(checkRuns.ORPHAN_MS), Math.round(jobHoldMs()), ADMISSION_ROW_RETENTION_MS]);
+  return rows;
+}
+
+// Reserve one whole proposal slot for an early unit suite only when the
+// regular queue is empty. Leave another shared slot available for arrivals.
+// The preview row fences a late launcher against a completed or failed build.
+async function reserveEarlyUnitSlot(config, pool, { runId, sessionId, appId, attempt, commitSha }) {
+  const capacity = await require('./kubernetes').checkPoolCapacity(config);
+  const cap = Math.min(maxConcurrentRuns(), capacity.cap);
+  if (!capacity.available || cap < 2) return false;
+  const reserved = await withAdmissionLock(pool, async (client) => {
+    const rows = await queueRows(client);
+    const plan = planAdmission(rows, { cap, available: false });
+    const shared = plan.holding.proposal + Math.max(0, plan.holding.main - 1);
+    if (plan.waiting || shared >= cap - 1 || rows.some((row) => {
+      const run = plan.byRun.get(row.run_id);
+      return run.holding && (row.early_unit === true || run.sessionId === sessionId);
+    })) return false;
+    const preparing = await client.query(
+      `SELECT 1 FROM wf_instances WHERE machine = 'preview' AND key = $1
+        AND data->'preparing'->>'n' = $2 AND data->'preparing'->>'head' = $3 FOR UPDATE`,
+      [`session:${sessionId}`, String(attempt), commitSha]);
+    if (!preparing.rowCount) return false;
+    const created = await client.query(
+      `INSERT INTO check_runs (run_id, session_id, app_id, kind, commit_sha, owner, manifest, admitted_at)
+       VALUES ($1, $2, $3, 'proposal', $4, $5, '{"workflow":true,"earlyUnit":true}', NOW())
+       ON CONFLICT (run_id) DO NOTHING`,
+      [runId, sessionId, appId, commitSha, checkRuns.selfOwner()]);
+    return created.rowCount === 1;
+  });
+  if (reserved) log.info('checks-queue', 'Reserved an early unit-suite slot', { sessionId, runId, commitSha });
+  return reserved;
+}
+
+// Transfer the slot and its accounting to the capture claim in one write,
+// keeping the early suite's Job label in the new manifest for recovery.
+async function takeEarlyUnitSlot(pool, { runId, sessionId, commitSha, manifest, earlyRunId }) {
+  return withAdmissionLock(pool, async (client) => {
+    const { rows } = await client.query(
+      `UPDATE check_runs SET run_id = $1, owner = $2, manifest = $3,
+          queued_at = NOW(), heartbeat_at = NOW(), admitted_at = NOW()
+        WHERE run_id = $4 AND session_id = $5 AND commit_sha = $6
+          AND kind = 'proposal' AND manifest->>'earlyUnit' = 'true'
+          AND admitted_at >= NOW() - ($7::int * INTERVAL '1 millisecond')
+        RETURNING queued_at`,
+      [runId, checkRuns.selfOwner(), JSON.stringify({ ...manifest, unitRunId: earlyRunId }),
+        earlyRunId, sessionId, commitSha, Math.round(jobHoldMs())]);
+    return rows[0]?.queued_at || null;
+  });
 }
 
 // Stamp a run admitted without a pass: the fail-open path, so a run that
@@ -536,7 +600,7 @@ async function snapshot(pool, { cap = maxConcurrentRuns() } = {}) {
   if (cap <= 0) return { ...describeQueue([], { cap: 0 }), last24h };
   try {
     const { rows } = await pool.query(SNAPSHOT_SQL,
-      [Math.round(checkRuns.ORPHAN_MS), Math.round(jobHoldMs()), MAIN_ROW_RETENTION_MS]);
+      [Math.round(checkRuns.ORPHAN_MS), Math.round(jobHoldMs()), ADMISSION_ROW_RETENTION_MS]);
     return { ...describeQueue(rows, { cap }), last24h };
   } catch (err) {
     log.warn('checks-queue', 'Could not read the checks queue for the status page', { err: err.message });
@@ -562,6 +626,8 @@ module.exports = {
   enqueue,
   planAdmission,
   admit,
+  reserveEarlyUnitSlot,
+  takeEarlyUnitSlot,
   markAdmitted,
   waitForSlot,
   slotFreed,

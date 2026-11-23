@@ -86,6 +86,34 @@ that can only get the platform Application. The role, mint procedure, and
 rotation live in the infra repository's
 `docs/22-social-vibecoding-runtime-operations.md`.
 
+The same workflow's **Observe Kubernetes rollout timings** job starts
+independently of the refresh. It reads the successful promotion step and
+resolves the immutable chart for that run and attempt. Its summary pairs
+Argo's recorded sync times with the first observed digest comparison,
+migration completion, healthy state, and exact source SHA from the public
+`/api/version`. It samples every ten seconds for up to four minutes.
+Short-lived or superseded states can be unobserved. Use the hard refresh
+timestamps in the refresh job to compare the time spent requesting refresh
+with the time spent waiting for the controller or rollout.
+
+The shared build-slot prototype runs offline against recorded job times:
+
+```bash
+node scripts/replay-kubernetes-build-queue.js tests/fixtures/kubernetes-release-queue-sample.json
+```
+
+The sample uses 36 runs starting with #6960, with one row per run and
+seconds relative to the first merge. Each row records the plan completion,
+the wall time of each required verification job, and the time the last check
+actually finished. Worker and capture use the fast path only if their
+resolved digest matched the release at verification time. Three shared
+slots moved the last required check for #6952 forward 182 seconds. Two
+shared slots delayed the cold #6954 run 151 seconds. The replay keeps
+observed job durations and models runner startup at two seconds. It covers
+verification queueing. Publisher batching, chart promotion and the rollout
+are governed by their existing policy. The release workflow still uses
+its fixed lanes.
+
 A merged platform PR is therefore "merged" on its card before it is running,
 and nothing in that chain reports back to the platform when a link fails. The
 platform watches the gap itself: `services/release-watch.js` compares the
@@ -96,11 +124,10 @@ commit, and once (per commit and verdict) records the stall on
 admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
-`RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
-so after a burst of merges the newest one's run waits for the others. The
-tip's run may also wait out the release gap above. So a run that has not
-finished is reported only once no run of the workflow on `main` has finished
-for the grace. A run that succeeded gives the
+`RELEASE_GRACE_MS` (default ten minutes). After a burst of merges,
+ready runs can wait on the publication lock and the previous rollout. A run
+that has not finished is reported only once no run of the workflow on
+`main` has finished for the grace. A run that succeeded gives the
 rollout its own grace from when it finished. Re-running the failed workflow
 jobs, or the next merge, releases the commit; a build that already carries the recorded commit
 reads as resolved at once, and the poller clears the record on the new build's
@@ -621,7 +648,11 @@ The repo's unit suite usually starts with the preview build: the machine's
 (`sv-unit-early-…` Jobs), and the checks run against that attempt reads it,
 from its own process or after a restart. It does not start for a head whose
 last checks errored, or while the cluster already runs as many unit suites as
-the checks queue admits (`EARLY_UNIT_SUITE=0` turns it off). The attempt's
+the checks queue admits (`EARLY_UNIT_SUITE=0` turns it off). In a required
+pool the launcher reserves a regular proposal slot, with at most one early
+reservation and another shared slot free. Waiting checks take priority when
+the launcher tries to reserve. The checks run can take over the reservation
+for the same attempt and commit once all the unit Jobs exist. The attempt's
 retirement deletes its Jobs.
 
 The main-watch suite after a direct merge keeps its own hand-over: a platform

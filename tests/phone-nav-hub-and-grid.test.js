@@ -36,7 +36,8 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   assert.match(topics, /data-ws-hub-topic=\{topic\.handle\}/);
   assert.match(topics, /<span className="dev-ws-foryou-handle">#\{topic\.handle\}<\/span>/, 'its #handle, as the Discussion row has #general');
   // One pill a row, and a zero says nothing.
-  assert.match(topics, /trailing=\{unread \? \(/);
+  assert.match(topics, /titleClassName=\{TITLE_WITH_PILL\}/, "its new count on the title line (phone review #91)");
+  assert.match(topics, /\), unread \? \(\n\s*<span className="dev-ws-foryou-pill" data-ws-hub-topic-unread/);
   assert.match(topics, /t\('project:hub\.channel\.unread', \{ count: unread, shown: unread > 99 \? '99\+' : String\(unread\) \}\)/);
   // The first few, then the rest behind "Show N more", as the sidebar folds them.
   assert.match(cards, /export const HUB_TOPICS_SHOWN = 6;/);

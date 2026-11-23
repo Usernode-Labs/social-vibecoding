@@ -1856,12 +1856,12 @@
     "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, pointing at the Communities tab. \"change\" is a noun: a change to an app. \"here\" in \"Find yours here\" is that tab."
   },
   "tour.step.apps.title": {
-    "text": "Pinned apps",
+    "text": "Pinned projects",
     "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
     "text": "Open the apps you pin here, in one tap. To start your own, select New project.",
-    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the Pinned apps section. \"New project\" is the label of the control on Home that starts one (the last tile of Pinned apps, or the button beside search); write New project as that control is named."
+    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the Pinned projects section. \"New project\" is the label of the control on Home that starts one (the last tile of Pinned projects, or the button beside search); write New project as that control is named."
   },
   "tour.step.appMenu.title": {
     "text": "The Homeroom menu",

@@ -75,7 +75,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, SwooshArrowIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
@@ -189,6 +189,9 @@ export interface PlacesPayload {
   proposals?: Array<{ session_id: number; pr_number: number | null; pr_url: string | null; title: string | null }>;
 }
 
+/** One row of the hub's Top contributors card: a person and how many contributions. */
+export interface HubContributor { id: number; username: string; display_name?: string | null; n: number }
+
 export type CommunityPayload = {
   slug: string;
   name?: string;
@@ -245,6 +248,12 @@ export type CommunityPayload = {
     daily?: Array<{ day: string; n: number }>;
     active_people?: Array<{ id: number; username: string; display_name?: string | null }>;
   } | null;
+  /** Who took part most (communities.js contributorsSummary, request 6837):
+      up to five people this calendar month and up to five over all time,
+      the most first, each with one number: their changes that went live,
+      their votes on changes and the requests they filed, one each. The
+      hub's Top contributors card (./hub-cards.tsx ContributorsCard). */
+  contributors?: { month: HubContributor[]; all_time: HubContributor[] } | null;
   /** Whether this viewer may propose who the project is for (the creator,
       an app admin or a platform admin; never the platform's own app). */
   can_manage?: boolean;
@@ -723,9 +732,8 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
         <h1 className="dev-ws-hero-name" data-ws-community-name="">{name}</h1>
         <span className="dev-ws-hero-id-sub" data-ws-members-cell="members">
           {wipLook ? (
-            // One line that ends in its own next step: what kind of
-            // community, who is in it, and the open seat that invites the
-            // next person (the hero's Invite, for a member).
+            // One line: what kind of community, and who is in it. Invite is
+            // the action row's (CommunityCard).
             <span className="wip-hub-meta">
               <span className="wip-hub-meta-kind" data-audience={data.audience}>
                 <AudienceGlyph audience={data.audience} />
@@ -734,19 +742,18 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
                 </span>
               </span>
               {!solo && data.audience_label ? (
-                <span className="wip-hub-meta-people">
+                // Phone review #52 (23 Nov 2026): the faces and the count
+                // looked like a way to see who is in it and did nothing; the
+                // roster was three levels down the ⋯ menu. They open it.
+                <button
+                  type="button"
+                  className="wip-hub-meta-people"
+                  data-ws-members-open=""
+                  title={t('project:communityCard.people.open')}
+                  onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+                >
                   <HeroFaces members={data.members} />
                   {t('project:communityCard.people.members', { count })}
-                </span>
-              ) : null}
-              {member ? (
-                // A drawn arrow, for show: it swoops from the people to the open seat.
-<SwooshArrowIcon className="wip-hub-meta-arrow" aria-hidden="true" />
-              ) : null}
-              {member ? (
-                <button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title={t('project:communityCard.invite.title')} onClick={openInviteLinks}>
-                  <span className="wip-hub-meta-seat" aria-hidden="true"><UserPlusIcon className="wip-invite-glyph" /></span>
-                  {t('project:communityCard.invite.button')}
                 </button>
               ) : null}
             </span>
@@ -992,6 +999,16 @@ export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef
   );
 }
 
+/**
+ * Whether the project's app is there to open: no first version on the way,
+ * or that first version is live. The hero's Open app is drawn then, and the
+ * First version card is not (./hub-cards.tsx FirstVersionCard). Pure.
+ */
+export function hubAppLive(data: Pick<CommunityPayload, 'first_version'> | null | undefined): boolean {
+  const fv = data ? data.first_version : null;
+  return !fv || fv.line === 'live';
+}
+
 export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false, platform = false }: {
   slug: string;
   /** Homeroom's own community: its hero wears the brand's own page (cream, the people, the three-colour rule). */
@@ -1187,23 +1204,39 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       </button>
     </div>
   ) : null;
-  // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
-  // on a phone, above everything the page shows them to decide by (what it
-  // is, who is here, Open app, and below the hero what is
-  // being decided).
-  const inviteHead = invited && offer ? (
-    <InviteCard
-      offer={offer}
-      name={displayName}
-      busy={busy}
-      joinRef={joinRef}
-      onJoin={() => {
-        if (asking) { answerThroughLink(asking.answer); return; }
-        void joinThroughLink(true);
-      }}
-    >
+  // WHO INVITED THEM, AND JOIN (asked 23 Nov 2026). The hero leads the way
+  // every hub's does, with what it is and who is here; under those words
+  // one line says who invited them, with their note, and "Join <name>" is
+  // the first button of the hero's own row, the size of Open app beside it.
+  // It was a card of its own above the name, its Join the card's full
+  // width, which pushed the project it was about down the page. The
+  // invite preview keeps that card (InviteCard): there it is the whole page.
+  const inviteLine = invited && offer ? (
+    <div className="dev-ws-invite-line" data-ws-invite="">
+      <p className="dev-ws-invite-from" data-ws-invite-from="">{invitedByLine(offer)}</p>
+      {offer.note ? <p className="dev-ws-invite-note" data-ws-invite-note="">{t('project:communityCard.inviteCard.note', { note: offer.note })}</p> : null}
+    </div>
+  ) : null;
+  const inviteJoin = invited && offer ? (
+    <span className="dev-ws-join-anchor">
+      <Button
+        ref={joinRef}
+        type="button"
+        variant="pillAccent"
+        disabledStyle="dim"
+        size="sm"
+        ink="solid"
+        data-ws-invite-join=""
+        disabled={busy}
+        onClick={() => {
+          if (asking) { answerThroughLink(asking.answer); return; }
+          void joinThroughLink(true);
+        }}
+      >
+        {t('project:communityCard.inviteCard.join', { project: displayName })}
+      </Button>
       {popup}
-    </InviteCard>
+    </span>
   ) : null;
   // YOU AND THIS PROJECT, at the end of the action row: Join. Joined was
   // here too, and was the way out; Leave is a row of the ⋯ now (#4045,
@@ -1241,10 +1274,13 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   // WHO IS AROUND is for a project with other people in it: never one that
   // is just yours, and not one nobody else has joined yet.
   const others = !solo && (Number(data.member_count) || 0) > 1;
-  // While its first version is on the way (or, in its first week, just
-  // went live) the First version card is the way into the app: Open app
-  // there, so not here too.
-  const appButton = data.first_version ? null : openApp;
+  // While its first version is on the way there is no app to open yet: the
+  // First version card says where its build stands. Once it is live, Open
+  // app is the hero's, as on every other hub (phone review #53: in a
+  // project's first week it moved to that card, under the project's name
+  // and tile a second time, with a full-width button of its own).
+  const appLive = hubAppLive(data);
+  const appButton = appLive ? openApp : null;
 
   // STILL DECIDING (the hand-off of 11 Nov 2026): signed in, not in it, and
   // not opened from an invite link (which leads with who invited them). The
@@ -1274,7 +1310,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           description={data.description}
           actions={(
             <>
-              {canOpenApp && !data.first_version ? (
+              {canOpenApp && appLive ? (
                 <button
                   type="button"
                   className={CARD_OPEN_BTN}
@@ -1339,7 +1375,6 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       // the card after it.
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
-      {inviteHead}
       {/* Standard (WIP): the hero is a poster. At its side, for show only, the
           project's own picture (the one its group voted in for its card)
           when it has one, and its icon again, large, in front of it. */}
@@ -1370,6 +1405,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           with other people in it: a project that is just yours, or one
           nobody else has joined, has nobody else to name. */}
       {others ? <HeroActive activity={data.activity} /> : null}
+      {inviteLine}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, the ⋯, and across from them Join. Invite is the small one
           unless the Invite card is drawn below (then it is the card's), and
@@ -1382,12 +1418,14 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
+        {/* Opened from an invite link: Join leads the row, before Open app. */}
+        {inviteJoin}
         {appButton}
-        {/* Standard (WIP): "Make it public" beside Open app (WipHeroPublic). */}
-        {wipLook ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
-        {/* Standard (WIP) has Invite on the line about who is here (HeroIdentity). */}
-        {wipLook ? null : (
-          <>
+        {/* Standard (WIP): Invite is a full-size button beside Open app, its
+            outlined second, with the invite glyph; on Homeroom's own hub,
+            which has no Open app, it stands alone in the row. It was a small
+            pill at the end of the line about who is here, with a drawn arrow
+            to it that was left pointing at nothing once the pill wrapped. */}
         {member && !(inviteCard && showsInviteHero(data) && !inviteClosed) ? (
           <Button
             type="button"
@@ -1398,11 +1436,12 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
             title={t('project:communityCard.invite.title')}
             onClick={openInviteLinks}
           >
+            {wipLook ? <UserPlusIcon aria-hidden="true" /> : null}
             {t('project:communityCard.invite.button')}
           </Button>
         ) : null}
-          </>
-        )}
+        {/* Standard (WIP): "Make it public" after them (WipHeroPublic). */}
+        {wipLook ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
         {menuFor('hero')}
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
@@ -1878,20 +1917,36 @@ export function ruleSentence(
  * card's (app.css shows one): the named approvers' faces, then their names
  * in bold, where the sentence names them.
  */
+/**
+ * The approvers' names in bold, their faces before them, and the faces held
+ * on the line of the first name (phone review #64): drawn apart, a narrow
+ * card broke the line between them, "…checks pass and (E)(S)" over "evan or
+ * snait says yes". The first name is a username, one word, so the faces and
+ * it are one unbreakable run and the rest of the list wraps as words do.
+ */
+function NamesWithFaces({ names, children }: { names: string[] | null; children?: ReactNode }) {
+  const faces = names && names.length ? (
+    <span className="dev-ws-ov-faces" aria-hidden="true">
+      {names.map((name) => (
+        <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
+          {(name || '?').charAt(0).toUpperCase()}
+        </span>
+      ))}
+    </span>
+  ) : null;
+  const text = typeof children === 'string' ? children
+    : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+  const first = names && names.length ? names[0] : '';
+  if (faces && text !== null && first && text.startsWith(first)) {
+    return <b className="dev-ws-ov-names"><span className="dev-ws-ov-glued">{faces}{first}</span>{text.slice(first.length)}</b>;
+  }
+  return <b className="dev-ws-ov-names">{faces}{children}</b>;
+}
+
 export function RuleWords({ line }: { line: RuleSentence }) {
   useMessages('project');
-  const parts = [
-    line.names ? (
-      <span className="dev-ws-ov-faces" aria-hidden="true">
-        {line.names.map((name) => (
-          <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
-            {(name || '?').charAt(0).toUpperCase()}
-          </span>
-        ))}
-      </span>
-    ) : <span />,
-    <b className="dev-ws-ov-names" />,
-  ];
+  // <0></0> is where the faces were drawn; they ride with the names now.
+  const parts = [<span />, <NamesWithFaces names={line.names} />];
   return (
     <>
       <span className="dev-ws-ov-wide"><RichMessage id={line.long} values={line.values} components={parts} /></span>

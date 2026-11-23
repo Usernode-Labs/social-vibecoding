@@ -268,6 +268,7 @@ function Card({ view }: { view: CardView }): ReactNode {
     <ChallengeCard
       view={view}
       className={'tc-se-card' + (view.featured ? CARD_FEATURED : '')}
+      wrapTitle
       onClick={() => controller()?._openIdx(view.idx)}
     />
   );

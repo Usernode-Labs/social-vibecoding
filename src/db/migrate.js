@@ -459,6 +459,8 @@ async function migrate(config) {
   await backfillSettingsProposalSource(pool);
   await markBareDateActivities(pool);
   await migrateWaitlistCountryCodes(pool);
+  // Phone review #103: the welcome message's sign-off is a name, not a list.
+  await plainWelcomeSignOffs(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
   // 14 Nov 2026: Main Chat is removed. What each person and Homeroom bot
@@ -1049,6 +1051,48 @@ async function migrateWaitlistCountryCodes(pool) {
 // instance wrote while a deploy was rolling. The app table is found through
 // its (user_id, app_id) index; the channel conversations are few. Best-effort:
 // a failure never aborts boot, and the channel half is one transaction.
+// PHONE REVIEW #103 (23 Nov 2026): the welcome message's sign-off is a
+// name, not a one-item list. The template admins saved ended "- Evan" on a
+// line of its own, which the chat drew as a bullet point; the sweep now
+// sends it without the dash (services/welcome-dm.js plainSignOff), and this
+// takes the dash off the saved template and off the welcomes already sent
+// (their idempotency key is `welcome-dm:<user id>`), the words otherwise as
+// they were. Every boot, and a no-op once clean. Best-effort: a failure
+// never aborts boot.
+async function plainWelcomeSignOffs(pool) {
+  const { plainSignOff } = require('../services/welcome-dm');
+  try {
+    const { rows: settings } = await pool.query(
+      "SELECT value FROM platform_settings WHERE key = 'welcome_dm_message'"
+    );
+    for (const row of settings) {
+      const next = plainSignOff(row.value);
+      if (next !== row.value) {
+        await pool.query(
+          "UPDATE platform_settings SET value = $1 WHERE key = 'welcome_dm_message' AND value = $2",
+          [next, row.value]
+        );
+      }
+    }
+    const { rows: sent } = await pool.query(
+      `SELECT id, content FROM conversation_messages
+        WHERE idempotency_key LIKE 'welcome-dm:%' AND deleted_at IS NULL
+          AND content ~ '\\n[ \\t]*[-*+][ \\t]+\\S[^\\n]*\\s*$'`
+    );
+    for (const row of sent) {
+      const next = plainSignOff(row.content);
+      if (next !== row.content) {
+        await pool.query(
+          'UPDATE conversation_messages SET content = $1 WHERE id = $2 AND content = $3',
+          [next, row.id, row.content]
+        );
+      }
+    }
+  } catch (err) {
+    log.warn('db', 'Welcome sign-offs were not tidied', { err: err.message });
+  }
+}
+
 async function clearAutomatedChannelLines(pool) {
   let client = null;
   try {
@@ -17531,6 +17575,7 @@ module.exports = {
   migrateWaitlistCountryCodes,
   seedStagingHelperCalls,
   clearAutomatedChannelLines,
+  plainWelcomeSignOffs,
   moveMainChatToThreads,
   moveOldChatsToThreads,
   backfillFiledDraftCards,

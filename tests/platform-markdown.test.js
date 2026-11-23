@@ -178,3 +178,29 @@ test('#3559: a fenced block and a wide table scroll sideways inside their own bo
   assert.doesNotMatch(code, /white-space|overflow-wrap/, 'and is never wrapped');
   assert.match(CSS, /\.dc-table \{[^}]*display: block; overflow-x: auto; \}/, 'a wide table scrolls inside itself');
 });
+
+test('phone review #29: a fence written at the end of a line of words still opens a block', () => {
+  const { PlatformMarkdown } = loadMarkdown();
+  const fences = PlatformMarkdown.fencesOnOwnLines;
+  // The bot's habit: "Below it, two lines: ```js", then the code. Left as it
+  // was, marked read a code span: "js" its first word, the lines joined.
+  const glued = 'Below it, two lines: ```js\nconst a = 1;\nconst b = 2;\n```\nAfter.';
+  assert.equal(fences(glued), 'Below it, two lines:\n```js\nconst a = 1;\nconst b = 2;\n```\nAfter.');
+  const html = PlatformMarkdown.render(glued, { cache: false });
+  assert.match(html, /<div class="dc-code-header">js<\/div><pre class="dc-code-block"><code>const a = 1;\nconst b = 2;<\/code><\/pre>/);
+  assert.doesNotMatch(html, /dc-inline-code/);
+  // A block it opened that way also closes at a fence ending a line of code.
+  assert.equal(fences('Below: ```js\nconst a = 1;```\nAfter.'), 'Below:\n```js\nconst a = 1;\n```\nAfter.');
+  // Everything else is left as written: a block opened on its own line keeps
+  // every line in it, a one-line span stays a span, a fence that ends the
+  // text opens nothing, and text with no fence is the same string.
+  for (const kept of [
+    'Text\n```js\nconst a = `x`;\nfoo ```\n```',
+    'Code: ```js const a = 1;``` ok',
+    'ends with ```',
+    'Use `x` and ``y``\nnext',
+  ]) assert.equal(fences(kept), kept, JSON.stringify(kept));
+  assert.match(PlatformMarkdown.render('Code: ```js const a = 1;``` ok', { cache: false }), /<code class="dc-inline-code">js const a = 1;<\/code>/);
+  // Windows line ends keep theirs.
+  assert.equal(fences('Below: ```js\r\nx\r\n```'), 'Below:\r\n```js\r\nx\r\n```');
+});

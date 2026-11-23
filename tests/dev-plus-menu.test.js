@@ -180,7 +180,7 @@ test('the members item keeps both label pairs, branched on self_hosted', () => {
   assert.equal(message('project:menu.members.title'), 'Members & approvals');
   assert.ok(otherwise.includes("sub={t('project:menu.members.sub')}"),
     'other apps describe the remaining member and approval controls');
-  assert.equal(message('project:menu.members.sub'), 'Manage collaborators, app admins and proposal approvals');
+  assert.equal(message('project:menu.members.sub'), 'Manage members, admins and proposal approvals');
   // The prop feeding that branch is appData.self_hosted, read in the module.
   assert.match(
     VIEW_SRC,
@@ -199,11 +199,11 @@ test('rename and secrets are ungated — they render for every writeable viewer'
   assert.ok(start !== -1 && end !== -1 && start < end, 'rename precedes fork');
   const tail = FRAME_SRC.slice(start, end);
   assert.ok(tail.includes('data-plus="secrets"'), 'secrets renders between rename and fork');
-  assert.match(
-    tail.slice(0, 300),
-    /showsMembers \? PLUS_ROW_DIVIDER_CLS : ''/,
-    "rename's divider is the only thing the members gate changes about it"
-  );
+  // Phone review S17: rename opens the Look group, under its own label, so
+  // it draws no divider of its own whatever the members gate says.
+  assert.doesNotMatch(tail.slice(0, 300), /dividerCls/, 'rename has no conditional at all');
+  assert.ok(FRAME_SRC.lastIndexOf('data-plus-group="look"', start) > FRAME_SRC.lastIndexOf('data-plus="topics"', start),
+    'the Look label heads it');
 });
 
 test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
@@ -238,7 +238,8 @@ test('"+" menu has rename and secrets items in its Settings & rules panel, no Ap
     'rename and secrets are inside the settings panel, and Suggest to <original> and Make your own end it (the owner, 7 Oct)');
   assert.ok(FRAME_SRC.includes('data-plus="rename"'), 'rename item present');
   assert.match(FRAME_SRC, /data-plus="rename"[\s\S]{0,160}title=\{t\('project:menu\.rename\.title'\)\}/, 'rename label present');
-  assert.equal(message('project:menu.rename.title'), 'App display name');
+  // Phone review S17: one name for the thing, the project.
+  assert.equal(message('project:menu.rename.title'), 'Project name');
   assert.ok(FRAME_SRC.includes('data-plus="secrets"'), 'secrets item present');
   assert.ok(FRAME_SRC.includes('id="dc-secrets-state"'),
     'secrets item carries the missing-required state slot for refreshDevChatSecretsState');
@@ -369,10 +370,19 @@ test('the ?shot=plus-menu hook waits for a button that now arrives late', () => 
 
 // ── the one lit row (the owner, 8 Oct 2026) ───────────────────────────────
 
-test('"+" menu: Suggest an improvement is the one highlighted row, on desktop and in the phone sheet', () => {
-  // Desktop: a tint behind it and a bold title; every other row is plain.
-  assert.match(FRAME_SRC, /<PlusRow\s+data-plus="issue"\s+lit\s/);
-  assert.equal((FRAME_SRC.match(/^\s+lit$/gm) || []).length, 1, 'exactly one row is lit');
+test('"+" menu: no row is drawn as the current choice (phone review #129), and Leave is the red one', () => {
+  // The phone review of 23 Nov 2026: a tinted first row (Suggest an
+  // improvement, lit since 8 Oct) read as the selected one. No row is lit
+  // now; a row can still be (`lit`), and the sheet still carries it.
+  assert.doesNotMatch(FRAME_SRC, /<PlusRow\s+data-plus="issue"\s+lit\s/);
+  assert.equal((FRAME_SRC.match(/^\s+lit$/gm) || []).length, 0, 'no row is lit');
+  // #115: Leave, last in Settings & rules, is destructive in both idioms.
+  assert.match(FRAME_SRC, /data-plus="leave"[\s\S]{0,400}\n\s+destructive\n/);
+  assert.match(FRAME_SRC, /data-plus-destructive=\{destructive \? '' : undefined\}/);
+  assert.match(VIEW_SRC, /destructive: node\.hasAttribute\('data-plus-destructive'\),/);
+  const panel = FRAME_SRC.slice(FRAME_SRC.indexOf('id="dev-plus-settings"'));
+  const rows = [...panel.matchAll(/data-plus="([a-z-]+)"/g)].map((m) => m[1]);
+  assert.equal(rows.filter((r) => r !== 'fork').at(-1), 'leave', 'Leave is the last row of the settings');
   assert.match(FRAME_SRC, /const PLUS_ROW_LIT_CLS =[\s\S]*?bg-violet-50 hover:bg-violet-100 dark:bg-violet-900\/30/);
   assert.match(FRAME_SRC, /const PLUS_TITLE_LIT_CLS = 'block text-sm font-bold /);
   assert.match(FRAME_SRC, /data-plus-lit=\{lit \? '' : undefined\}/);
@@ -391,8 +401,9 @@ test('Settings & rules has a Topics row that opens the Topics dialog', () => {
   const settings = FRAME_SRC.indexOf('id="dev-plus-settings"');
   const at = FRAME_SRC.indexOf('data-plus="topics"');
   assert.ok(settings > -1 && at > settings, 'the row is inside the Settings & rules panel');
-  assert.ok(at > FRAME_SRC.indexOf('data-plus="rename"') && at < FRAME_SRC.indexOf('data-plus="secrets"'),
-    'beside the other change that is a proposal against dapp.json, the display name');
+  // Phone review S17: in People and rules, after the members row, before the Look group.
+  assert.ok(at > FRAME_SRC.indexOf('data-plus-group="people"') && at < FRAME_SRC.indexOf('data-plus-group="look"'),
+    'in the People and rules group');
   const row = FRAME_SRC.slice(at, FRAME_SRC.indexOf('/>', FRAME_SRC.indexOf('onClick', at)));
   assert.match(row, /title=\{t\('project:menu\.topics\.title'\)\}/);
   assert.equal(message('project:menu.topics.title'), 'Topics');

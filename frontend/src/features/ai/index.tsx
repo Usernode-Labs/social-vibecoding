@@ -81,10 +81,10 @@
  * moves (./live.ts), not only when it is shown again.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { MicrophoneIcon, SearchIcon } from '@/components/ui/icons';
+import { MicrophoneIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
@@ -92,7 +92,7 @@ import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
-import { closeNewThread, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
+import { closeNewThread, newThreadIn, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
 import { noteThreadNames } from '../messages/private-thread-bar';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
@@ -128,7 +128,7 @@ import { cleanQuery, useBotSearch } from './search';
 import { clearSearchMark, currentSearchMark } from './search-mark';
 import { communityScopeStore } from '../workshop/community-scope';
 import { NewChatButton } from './new-chat-button';
-import { AiDrawer, ThreadPane, usePhone } from './phone-drawer';
+import { AiDrawer, PHONE_QUERY, ThreadPane } from './phone-drawer';
 import { claimDetail, closeDetail, detailEntry, detailLayout, holdDetail, openDetail, reopenDetail, setDetailOwner, takeHeldDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
@@ -173,6 +173,35 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<ListRead<T
  */
 export type ListsFailure = 'unreachable' | 'failed' | null;
 
+/**
+ * Phone review #11 (23 Nov 2026): the page's two layouts read as ONE answer.
+ * A phone's width and a docked window's were two hooks, each with its own
+ * listener, so turning a folded phone drew one render with both true: the
+ * drawer's chat and the docked one both mounted, and the drawer's, leaving a
+ * render later, closed the route they share (../messages/store.ts release).
+ * The thread was gone and the address was the bare tab's. Both queries are
+ * read together here, on either one's change, so the layouts swap in one render.
+ */
+function useWidths(): { phone: boolean; wide: boolean } {
+  const [widths, setWidths] = useState({ phone: false, wide: false });
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const narrow = window.matchMedia(PHONE_QUERY);
+    const docked = window.matchMedia(WIDE);
+    const sync = () => setWidths((had) => (
+      had.phone === narrow.matches && had.wide === docked.matches ? had : { phone: narrow.matches, wide: docked.matches }
+    ));
+    sync();
+    narrow.addEventListener?.('change', sync);
+    docked.addEventListener?.('change', sync);
+    return () => {
+      narrow.removeEventListener?.('change', sync);
+      docked.removeEventListener?.('change', sync);
+    };
+  }, []);
+  return widths;
+}
+
 function useWide(at: string = WIDE): boolean {
   const [wide, setWide] = useState(false);
   useEffect(() => {
@@ -191,15 +220,40 @@ function go(href: string | null): void {
 }
 
 /**
- * The address says what the column shows, in place: a row pressed here is
- * no step for Back to take (as it was not before), but a reload reopens it.
- * Only while the address is this page's.
+ * The address says what the column shows, so a reload reopens it. Only while
+ * the address is this page's.
+ *
+ * #7045: A ROW OPENED FROM THE LISTS IS A STEP BACK CAN UNDO. The address was
+ * always replaced in place, so Back from a thread left the tab altogether
+ * (on a phone, where the thread is the whole screen, that was the only Back
+ * there is). Now the first thing opened from the bare tab is a new entry,
+ * and closing it steps back onto the tab's own entry when that is the one
+ * below (App._stepBackTo), so no second copy of the list is left behind.
+ * One row to another, a filter, a detail: those still swap in place.
  */
+let steppingBack = false;
 function showAddress(href: string): void {
   if (typeof window === 'undefined' || !/^#(homeroom-bot|ai)(\/|\?|$)/.test(window.location.hash)) return;
+  // A step back is on its way (history.back() lands a task later): the
+  // address is about to be the tab's, and a second write now would step
+  // back twice, off the tab.
+  if (steppingBack) return;
   if (window.location.hash === href) return;
+  const bare = (hash: string) => /^#(homeroom-bot|ai)(\?|$)/.test(hash);
+  const url = `${window.location.pathname}${window.location.search}${href}`;
   try {
-    history.replaceState(history.state, '', `${window.location.pathname}${window.location.search}${href}`);
+    if (bare(window.location.hash) && !bare(href)) { history.pushState(history.state, '', url); return; }
+    if (!bare(window.location.hash) && bare(href)) {
+      const app = (window as { App?: { _stepBackTo?: (to: string) => boolean } }).App;
+      if (app?._stepBackTo?.(href)) {
+        steppingBack = true;
+        const done = () => { steppingBack = false; };
+        window.addEventListener('popstate', done, { once: true });
+        window.setTimeout(done, 1500);
+        return;
+      }
+    }
+    history.replaceState(history.state, '', url);
   } catch { /* the column still shows it */ }
 }
 
@@ -274,13 +328,14 @@ export function AiScreen(): ReactNode {
   const previewRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'ai-screen', false);
   const visible = useVisibility('ai-screen', false);
-  const wide = useWide();
+  // A phone: the list and the column are one drawer (./phone-drawer.tsx);
+  // from 768px the column is docked. One reading of the two (useWidths).
+  const { phone, wide } = useWidths();
   const [work, setWork] = useState<AiWork | null>(null);
   const [needs, setNeeds] = useState<NeedItem[] | null>(null);
   const [botId, setBotId] = useState<number | null>(null);
   const [at, setAt] = useState<{ threadRootId: number | null; focusMessageId: number | null } | null>(null);
-  // A phone: the list and the column are one drawer (./phone-drawer.tsx); level 1 is the thread or the new chat.
-  const phone = usePhone();
+  // On a phone, level 1 is the thread or the new chat.
   const [level, setLevel] = useState<0 | 1>(0);
   // A boot from the saved session draws this page before the server has
   // confirmed who you are, and a read made in that window can come back
@@ -304,6 +359,16 @@ export function AiScreen(): ReactNode {
   const [historyKind, setHistoryKind] = useState<HistoryKind | null>(null);
   const [toHistory, setToHistory] = useState(0);
   const historyRef = useRef<HTMLDivElement | null>(null);
+  // THE SEARCH BOX DOES NOT OUTLIVE THE VISIT (phone review, 23 Nov 2026, #3
+  // and S14). This screen stays mounted while another is shown, so what was
+  // typed here an hour ago was still narrowing every list when You › Your
+  // changes opened History: one row of 2,330, the box scrolled out of sight.
+  // So the box is emptied and closed when the tab is left, and when a door
+  // asks for History (`#homeroom-bot/history`), which is asking for all of it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const endSearch = useCallback(() => { setQuery(''); setSearchOpen(false); }, []);
   // Read again each time the tab is shown, too: an old address the router
   // swaps for one of the tab's in place (#profile/your-changes, which is
   // History on changes now) fires no hashchange.
@@ -314,7 +379,7 @@ export function AiScreen(): ReactNode {
     if (!isBotTabHash(hash)) return;
     setPicked(projectsOf(hash));
     setHistoryKind(kindOf(hash));
-    if (historyAsked(hash)) setToHistory((n) => n + 1);
+    if (historyAsked(hash)) { setToHistory((n) => n + 1); endSearch(); }
   };
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -323,7 +388,7 @@ export function AiScreen(): ReactNode {
     window.addEventListener('hashchange', take);
     return () => window.removeEventListener('hashchange', take);
   }, []);
-  useEffect(() => { if (visible) takeFilter.current(); }, [visible]);
+  useEffect(() => { if (visible) takeFilter.current(); else endSearch(); }, [visible, endSearch]);
   const filterRef = useRef({ picked, historyKind });
   filterRef.current = { picked, historyKind };
   const writeFilter = (next: { picked: string[]; historyKind: HistoryKind | null }) => {
@@ -587,16 +652,33 @@ export function AiScreen(): ReactNode {
   }, [visible, shown]);
   // Another thread opened: the one left holds what it showed, and the one
   // arrived at shows what it held, if anything.
+  //
+  // LEAVING THE PAGE IS LEAVING THE THREAD (phone review #5, 23 Nov 2026).
+  // The store is the whole shell's, and a request's or a change's own page
+  // draws whatever is in it (../detail/detail-slot.tsx). An artifact left
+  // open here, with Home pressed instead of its back arrow, stayed in the
+  // store, and the next request opened was covered by it, whatever its
+  // project. So what the thread shows is held for it when this page stops
+  // being the one on screen, as when another thread opens, and shown again
+  // when the page is come back to. A running preview is not: its frame is
+  // the staging overlay's, which puts its own entry away.
   const ownerWas = useRef<string | null>(null);
   useEffect(() => {
-    if (!visible) return;
     const was = ownerWas.current;
+    if (!visible) {
+      ownerWas.current = null;
+      const entry = detailEntry();
+      if (!entry?.owner || entry.kind === 'preview') return;
+      const ofThisChat = (entry.kind === 'design' || entry.kind === 'draft') && !!botId && entry.ref.conversationId === botId;
+      if (entry.owner === was || ofThisChat) holdDetail(entry.owner);
+      return;
+    }
     ownerWas.current = shown;
     if (was === shown) return;
     if (was) holdDetail(was);
     const back = takeHeldDetail(shown);
     if (back) reopenDetail(back);
-  }, [visible, shown]);
+  }, [visible, shown]); // eslint-disable-line react-hooks/exhaustive-deps
   // Put the column's detail away with its thread, to show again when the
   // thread is opened again; one that belongs to no thread just closes.
   const putAway = () => {
@@ -857,7 +939,7 @@ export function AiScreen(): ReactNode {
   // A request, a change or a decision: its page, in the column on a wide
   // window, its own page anywhere else. Every row goes to its own place
   // (#6210): a ▷ plan row to its request's page, where its plan and Build
-  // it are, the same place a Vote or Needs Reply row for it opens.
+  // it are, the same place a Vote or Needs reply row for it opens.
   const openPage = (href: string | null, app: AiApp | null, title: string | null, about: AboutItem | null) => {
     const route = routeOf(href);
     opened.current = route ? { route, about } : null;
@@ -946,7 +1028,10 @@ export function AiScreen(): ReactNode {
 
   // NEW CHAT (#6071 follow-up; 14 Nov 2026): a new chat with the bot, in the
   // column (../messages/new-thread.tsx), slid in on a phone.
+  // Whether the new chat in the column was put there by the page (below), not asked for.
+  const autoBlank = useRef(false);
   const openBlank = () => {
+    autoBlank.current = false;
     sidePanel()?.close?.();
     putAway();
     if (phone) setLevel(1);
@@ -974,14 +1059,80 @@ export function AiScreen(): ReactNode {
     openBlank();
     startNewThread(botId, preset);
   };
+  // THE COLUMN IS NEVER EMPTY BESIDE THE LISTS (23 Nov 2026, #7039): from
+  // 768px, where the column is docked, a new chat is what it shows whenever
+  // nothing else is open there, as if New chat had been pressed. The page
+  // opens on it, and closing a thread or a page comes back to it. Nothing
+  // is made until the first message. A phone's list stays alone.
+  // `autoBlank` says this new chat was not asked for: a thread that arrives
+  // after it (a cold load on a thread's address, whose chat is learned
+  // late) takes the column from it, where one the person opened stays.
+  useEffect(() => {
+    if (!visible || !mounted || !docked || phone || !botId || column) return;
+    // A new chat an address just asked for (`#homeroom-bot/new?with=…`, the
+    // effect above, in this same commit) is already there, set as it asked:
+    // read live, since this render's `column` is from before it.
+    if (newThreadIn() === botId) return;
+    autoBlank.current = true;
+    startNewThread(botId, newChatPreset());
+  }, [visible, mounted, docked, phone, botId, column]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (blank && autoBlank.current && openRoot && !phone) { autoBlank.current = false; closeNewThread(); }
+  }, [blank, openRoot, phone]);
+  // THE LAYOUT SWITCHED (phone review #11, 23 Nov 2026): a folded phone
+  // turned, or opened and closed, crosses 768px, and the drawer and the
+  // docked column are two trees with a chat mounted in each. The one left
+  // gives the store's route back as it goes (../messages/store.ts release),
+  // which closed the thread on screen and left the address the bare tab's.
+  // So the thread that was open is asked for again in the layout arrived at
+  // (after the two chats' own effects, which run before this one), slid in
+  // on a phone; a new chat the person opened stays up too, where one the
+  // page put in an empty column (above) gives the phone its list back.
+  const layoutNow = phone ? 'phone' : wide ? 'wide' : null;
+  const layoutWas = useRef<'phone' | 'wide' | null>(null);
+  useEffect(() => {
+    const was = layoutWas.current;
+    layoutWas.current = layoutNow;
+    if (!was || !layoutNow || was === layoutNow || !botId) return;
+    if (openRoot) {
+      const next = { threadRootId: openRoot, focusMessageId: null };
+      setAt(next);
+      embed(botId, next, { threadsOnly: true });
+      if (layoutNow === 'phone') setLevel(1);
+      return;
+    }
+    if (layoutNow === 'phone') setLevel(blank && !autoBlank.current ? 1 : 0);
+  }, [layoutNow]); // eslint-disable-line react-hooks/exhaustive-deps
+  // And the lists keep their place: they are drawn again in the other
+  // layout's scroller (the drawer's list on a phone, the page itself from
+  // 768px), which would start at its top.
+  const listTop = useRef(0);
+  useEffect(() => {
+    const screen = screenRef.current;
+    if (!screen) return undefined;
+    const note = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (target === screen || target?.classList?.contains('ai-drawer-list')) listTop.current = target.scrollTop;
+    };
+    screen.addEventListener('scroll', note, true);
+    return () => screen.removeEventListener('scroll', note, true);
+  }, []);
+  const scrolledIn = useRef<'phone' | 'wide' | null>(null);
+  useLayoutEffect(() => {
+    const was = scrolledIn.current;
+    scrolledIn.current = layoutNow;
+    const screen = screenRef.current;
+    if (!was || !layoutNow || was === layoutNow || !screen || !listTop.current) return;
+    const scroller = layoutNow === 'phone' ? screen.querySelector<HTMLElement>('.ai-drawer-list') : screen;
+    if (scroller) scroller.scrollTop = listTop.current;
+  }, [layoutNow]);
   // SEARCH (#6398, 6 Nov 2026): a round button beside the plus opens a box
   // under the heading, and every list narrows to the threads whose title,
   // number or project matches what it says (./lists.tsx). It starts closed
   // each time the page loads, closing it clears what was typed, and it is
-  // not kept in the address: the chips are what a link carries.
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const searchRef = useRef<HTMLInputElement | null>(null);
+  // not kept in the address: the chips are what a link carries. Its state
+  // is declared above, with the filter, which empties it when the tab is
+  // left or a door opens History.
   useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
   // 13 Nov 2026: the box also searches what was said, in the person's own
   // threads with the bot, on the server (./search.ts). Asked
@@ -1016,8 +1167,12 @@ export function AiScreen(): ReactNode {
     <>
       <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
         <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+        {/* The page is named once on screen, by the bar above (phone review,
+            23 Nov 2026, S14): this card repeated "Homeroom bot" directly
+            under it. The heading stays for a screen reader; what is drawn is
+            the line that counts the lists below. */}
         <span className="min-w-0 flex-1 flex flex-col">
-          <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
+          <h1 className="sr-only">{t('messages:ai.hero.name')}</h1>
           {heroLine ? (
             <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
               <RichMessage
@@ -1061,6 +1216,20 @@ export function AiScreen(): ReactNode {
             className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-base text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-100 dark:placeholder:text-zinc-400 [&::-webkit-search-cancel-button]:hidden"
             data-ai-search=""
           />
+          {/* S14: a way to empty the box without closing it. Drawn only
+              while it holds something; the cursor stays in the box. */}
+          {query ? (
+            <button
+              type="button"
+              className="-me-2 inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 [&>svg]:h-4 [&>svg]:w-4"
+              aria-label={t('messages:ai.search.clear')}
+              title={t('messages:ai.search.clear')}
+              data-ai-search-clear=""
+              onClick={(e) => { e.preventDefault(); setQuery(''); searchRef.current?.focus(); }}
+            >
+              <XIcon aria-hidden="true" strokeWidth="2.25" />
+            </button>
+          ) : null}
         </label>
       ) : null}
     </>
@@ -1105,6 +1274,7 @@ export function AiScreen(): ReactNode {
         <AiLists
           hero={hero}
           query={searchOpen ? query : ''}
+          onQueryClear={endSearch}
           found={search.found}
           onFoundRetry={search.retry}
           lit={lit}

@@ -128,11 +128,18 @@ const ALONE_Y = 7;
 export function titleSlot(
   titles: { laidOut: boolean; left: number },
   group: { laidOut: boolean; left: number },
+  edge?: number,
 ): number | null {
   if (!titles.laidOut) return null;
   if (!group.laidOut) return 0;
   const at = titles.left - group.left;
-  return at > 0 ? at : null;
+  if (!(at > 0)) return null;
+  // Phone review #4 (23 Nov 2026): never past the bar's own padding. A slot
+  // read while another screen's bar was laid out (a community's, its titles
+  // further in) slid "Messages" 78px left, its first letter and a half off
+  // the screen. `edge` is where the bar's content starts, in the same
+  // reading-direction figures; the name can step back to it and no further.
+  return edge === undefined || !Number.isFinite(edge) ? at : Math.max(0, Math.min(at, titles.left - edge));
 }
 
 export function headerFrame(f: number, slot: number, reduced = false, messages = false): HeaderFrame {

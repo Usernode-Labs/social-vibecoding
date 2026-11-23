@@ -311,7 +311,7 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   platform_operation_inputs: ['payload'],
   // Social identity is private account metadata. The short-lived OAuth row
   // additionally contains the callback-state hash and live PKCE verifier.
-  user_social_identities: ['provider_subject', 'handle'],
+  user_social_identities: ['provider_subject', 'handle', 'account_created_at'],
   social_identity_oauth_states: ['state_hash', 'pkce_verifier'],
   // A wallet sign-in's challenge: its hash is the single-use credential.
   // Which address it was minted for, and until when, stay readable.
@@ -324,7 +324,7 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // until it is redeemed (services/db-export.js). The rest of the audit
   // trail (who, when, how it ended) stays readable.
   db_exports: ['ticket_hash'],
-  social_identity_pending_replacements: ['provider_subject', 'handle'],
+  social_identity_pending_replacements: ['provider_subject', 'handle', 'account_created_at'],
   // Public report share links. `share_token` is the SOLE access control on
   // the unauthenticated /reports/:token route (schema.sql says so outright),
   // so it is a plaintext bearer credential even though the rest of the row

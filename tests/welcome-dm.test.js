@@ -18,6 +18,26 @@ const welcomeDm = require('../src/services/welcome-dm');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
+// Phone review #103 (23 Nov 2026): "- Evan" on the last line read as a
+// one-item list, so the welcome ended in a bullet point.
+test('a sign-off on its own line loses its dash, and a real list is left alone', () => {
+  const { plainSignOff } = welcomeDm;
+  assert.equal(plainSignOff('Hope you have fun building\n- Evan'), 'Hope you have fun building\nEvan');
+  assert.equal(plainSignOff('Hope you have fun building\n\n* Evan  \n'), 'Hope you have fun building\n\nEvan');
+  assert.equal(plainSignOff('Hi there.\n+ Evan and Lukas'), 'Hi there.\nEvan and Lukas');
+  const list = 'Try these:\n- Make a project\n- Invite a friend';
+  assert.equal(plainSignOff(list), list, 'a list that ends the message stays a list');
+  assert.equal(plainSignOff('Steps:\n1. Join\n- Evan'), 'Steps:\n1. Join\n- Evan', 'after a numbered item too');
+  assert.equal(plainSignOff('- Evan'), '- Evan', 'a message that is only the line is left as it was');
+  assert.equal(plainSignOff('A dash - inside a line stays'), 'A dash - inside a line stays');
+  assert.equal(plainSignOff(welcomeDm.DEFAULT_MESSAGE), welcomeDm.DEFAULT_MESSAGE);
+  const src = read('src/services/welcome-dm.js');
+  assert.match(src, /content: plainSignOff\(render\(settings\.message, \{ username: step\.username \}\)\),/, 'the sweep sends it plain');
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /await plainWelcomeSignOffs\(pool\);/, 'boot tidies what was saved and sent');
+  assert.match(migrate, /WHERE idempotency_key LIKE 'welcome-dm:%' AND deleted_at IS NULL/);
+});
+
 test('{username} fills the title and the message, and a long title stays inside 80 characters', () => {
   assert.equal(welcomeDm.render('Hi @{username}, {username}!', { username: 'ada' }), 'Hi @ada, ada!');
   assert.equal(welcomeDm.renderTitle('Welcome,   {username}', { username: 'ada' }), 'Welcome, ada');

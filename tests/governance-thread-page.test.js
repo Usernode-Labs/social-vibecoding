@@ -12,6 +12,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
 
@@ -155,4 +157,33 @@ test('a reopen vote and a thread move are drawn on the page they are about', () 
   // the router forwards there. The model still reads the vote's own words.
   assert.equal(reopen.content.kind, 'close');
   assert.equal(reopen.content.number, 12, 'the request it would bring back');
+});
+
+// #7052: on the standard look's widened page a decision's Discussion card kept
+// the base rule's 900px cap and its centring, so it floated in the middle
+// under a post that filled the width. It now takes the post's own edges.
+test('a decision’s Discussion card lines up with the post above it', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
+  const SELECTOR = 'html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request.dev-decision #gc-thread-messages {';
+  const start = CSS.indexOf(`\n  ${SELECTOR}`);
+  assert.ok(start >= 0, 'a rule of its own places the decision page’s Discussion card');
+  const body = CSS.slice(start, CSS.indexOf('\n  }', start));
+  assert.match(body, /max-width: none;/, 'the 900px cap is lifted');
+  assert.match(body, /margin-inline: calc\(16px \+ 36px \+ 12px\) 16px;/, 'it starts at the post’s text and ends at its pictures');
+
+  // Inside `@media (min-width: 768px)`: a phone keeps today’s card.
+  let depth = 0;
+  let enclosing = '';
+  for (let i = start; i >= 0; i -= 1) {
+    if (CSS[i] === '}') depth += 1;
+    else if (CSS[i] === '{') {
+      if (depth === 0) {
+        const lineStart = CSS.lastIndexOf('\n', i) + 1;
+        enclosing = CSS.slice(lineStart, i + 1).trim();
+        break;
+      }
+      depth -= 1;
+    }
+  }
+  assert.equal(enclosing, '@media (min-width: 768px) {', 'a phone keeps the 900px card');
 });

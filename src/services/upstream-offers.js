@@ -130,7 +130,7 @@ const SQL = Object.freeze({
                     collab_visibility, created_by, self_hosted, moderation_suspended_at
                FROM apps WHERE id = $1`,
   offer: `SELECT uo.app_id, uo.from_app_id, uo.from_sha, uo.state, uo.theirs_sha, uo.session_id,
-                 uo.facts, uo.brings, uo.keeps, uo.conflicts, uo.error, uo.updated_at,
+                 uo.facts, uo.brings, uo.keeps, uo.conflicts, uo.error, uo.updated_at, uo.created_at,
                  cs.status AS session_status, cs.pr_number, cs.branch_name, cs.reviewed_head_sha
             FROM upstream_offers uo
             LEFT JOIN chat_sessions cs ON cs.id = uo.session_id
@@ -202,7 +202,7 @@ const SQL = Object.freeze({
          ON CONFLICT (app_id) DO UPDATE
            SET state = 'available', from_app_id = EXCLUDED.from_app_id, from_sha = EXCLUDED.from_sha,
                theirs_sha = NULL, session_id = NULL, facts = '{}'::jsonb, brings = '[]'::jsonb,
-               keeps = '{}'::jsonb, conflicts = '[]'::jsonb, error = NULL, updated_at = NOW()
+               keeps = '{}'::jsonb, conflicts = '[]'::jsonb, error = NULL, created_at = NOW(), updated_at = NOW()
            WHERE upstream_offers.state IN ('skipped', 'merged')
               OR (upstream_offers.state = 'failed'
                   AND upstream_offers.from_sha IS DISTINCT FROM EXCLUDED.from_sha)`,
@@ -1368,6 +1368,9 @@ function offerView(row, slug) {
     sessionId: row.session_id || null,
     href: row.session_id ? changeHref(slug, row.session_id, row.pr_number) : null,
     fromSha: sha(row.from_sha),
+    // When the update was offered to this version (a re-armed offer is a new
+    // one, so its date restarts; saveOffer's upsert keeps it).
+    sentAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     brings: readBrings(row.brings),
     facts: readFacts(row.facts),
     keeps: readKeeps(row.keeps),

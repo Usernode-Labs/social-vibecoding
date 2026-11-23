@@ -127,7 +127,9 @@ export function CreateConversationDialog() {
         ) : null}
         <label className="block">
           <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{mode === 'direct' ? t('messages:create.findPerson') : t('messages:create.invitePeople')}</span>
-          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('messages:create.searchPlaceholder')} autoComplete="off" autoFocus />
+          {/* Phone review #124 (23 Nov 2026): a username, not a word. With no
+              hints iOS capitalised its first letter and offered "An" for "sn". */}
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('messages:create.searchPlaceholder')} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus />
         </label>
         <div className="mt-2 min-h-12 max-h-52 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800">
           {loadingRow(t, search.loading, query, results.length)}
@@ -148,8 +150,8 @@ export function CreateConversationDialog() {
         {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
           <button type="button" onClick={() => void loadBlocked()} className="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">{t('messages:create.blockedPeople')}</button>
+          {/* #124: one way to close, the X in the head; a Cancel here said it twice. */}
           <div className="ms-auto flex gap-2">
-            <Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>{t('core:common.cancel')}</Button>
             {mode === 'group' ? <Button type="button" disabled={submitting || !title.trim() || !selected.length} onClick={() => void submitGroup()}>{submitting ? t('messages:create.creating') : t('messages:create.createGroup')}</Button> : null}
           </div>
         </div>

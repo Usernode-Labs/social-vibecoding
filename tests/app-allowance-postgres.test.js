@@ -57,6 +57,7 @@ test('app allowances: migration, create/fork, requests and admin review', async 
       CREATE TABLE platform_settings (key VARCHAR(255) PRIMARY KEY, value TEXT);
       CREATE TABLE notifications (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id),
         source_user_id INTEGER REFERENCES users(id), kind VARCHAR(32), detail VARCHAR(32),
+        mailed_at TIMESTAMPTZ DEFAULT NOW(),
         created_at TIMESTAMPTZ DEFAULT NOW());
       CREATE TABLE apps (id SERIAL PRIMARY KEY, name TEXT, slug TEXT, repo_url TEXT,
         created_by INTEGER REFERENCES users(id), status VARCHAR(32),
@@ -194,6 +195,49 @@ test('app allowances: migration, create/fork, requests and admin review', async 
       failNotifications = false;
       assert.equal(response.status, 500);
       assert.equal((await allowance.read(pool, alice)).quota.limit, 4);
+    });
+
+    // #7043: a rise for one person owes them an email (mailed_at NULL, for
+    // the notice-mail clock); a drop and an all users change owe none.
+    await t.test('only a single person\'s rise owes the grant email', async () => {
+      user = admin;
+      await client.query('DELETE FROM notifications');
+      await request('PUT', '/api/admin/users/2/app-quota', { quota: 6 });
+      let rows = (await client.query(
+        "SELECT detail, mailed_at FROM notifications WHERE user_id = 2 AND kind = 'app_quota_changed' ORDER BY id",
+      )).rows;
+      assert.deepEqual(rows.map((r) => [r.detail, r.mailed_at === null]), [['4:6', true]], 'a rise owes the email');
+      await request('PUT', '/api/admin/users/2/app-quota', { quota: 3 });
+      rows = (await client.query(
+        "SELECT detail, mailed_at FROM notifications WHERE user_id = 2 AND kind = 'app_quota_changed' ORDER BY id",
+      )).rows;
+      assert.deepEqual(rows.at(-1).detail, '6:3');
+      assert.notEqual(rows.at(-1).mailed_at, null, 'a drop owes none');
+      await client.query('DELETE FROM notifications');
+      await request('PUT', '/api/admin/users/app-quota', { quota: 5 });
+      const bulk = (await client.query(
+        "SELECT mailed_at FROM notifications WHERE kind = 'app_quota_changed'",
+      )).rows;
+      assert.ok(bulk.length > 0);
+      assert.ok(bulk.every((r) => r.mailed_at !== null), 'an all users change owes none');
+      // Granting a pending request is always a rise.
+      await client.query('DELETE FROM notifications');
+      await client.query('UPDATE users SET app_quota = 4, app_quota_requested_at = NULL WHERE id = 2');
+      user = alice;
+      await request('POST', '/api/me/app-allowance/request');
+      user = admin;
+      assert.equal((await request('POST', '/api/admin/users/2/app-quota-request/approve')).status, 200);
+      rows = (await client.query(
+        "SELECT detail, mailed_at FROM notifications WHERE user_id = 2 AND kind = 'app_quota_changed' ORDER BY id",
+      )).rows;
+      assert.deepEqual(rows.map((r) => [r.detail, r.mailed_at === null]), [['4:6', true]], 'a granted request owes the email');
+      // Leave the allowances as the later subtests expect them.
+      await client.query(
+        `UPDATE users SET app_quota = v.quota
+           FROM (VALUES (1, 5), (2, 4), (3, 0), (4, 7), (5, 2), (6, 2)) AS v(id, quota)
+          WHERE users.id = v.id`,
+      );
+      await client.query('DELETE FROM notifications');
     });
 
     await t.test('request decline is visible to the user and retries do not duplicate it', async () => {

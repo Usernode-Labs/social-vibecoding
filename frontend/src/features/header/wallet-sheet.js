@@ -310,6 +310,7 @@ import { requireAdult } from '../auth/adult-gate';
       walletSheetStore.set({
         visible: WalletSheet._visible,
         balanceLabel: `${WalletSheet._fmtBalance()} ${WalletSheet._symbol()}`,
+        balanceKnown: s.tokenAmount != null,
         address: s.address || null,
         shortAddress: WalletSheet._shortAddr(s.address),
         walletSupported: WalletSheet._walletSupported,

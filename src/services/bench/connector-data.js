@@ -215,7 +215,29 @@ function settingsOf(p = {}) {
     verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : [],
     verifiedGrandfather: s.verifiedGrandfather !== false,
     verifiedSince: s.verifiedSince || null,
+    // How old both accounts must be for github_x_age, in days.
+    verifiedMinAccountAgeDays: num(s.verifiedMinAccountAgeDays),
+    // The automatic switch to verified accounts only
+    // (services/homeroom-bot-verified-auto.js): armed or not, its thresholds,
+    // the figures its last sweep read (read-only) and when and why it last
+    // fired (read-only).
+    verifiedAuto: s.verifiedAuto === true,
+    verifiedAutoUsers: num(s.verifiedAutoUsers),
+    verifiedAutoSpendCents: num(s.verifiedAutoSpendCents),
+    verifiedAutoFigures: autoFiguresOf(p.verifiedAuto?.figures),
+    verifiedAutoFired: autoFiredOf(p.verifiedAuto?.fired),
   };
+}
+
+// The figures the automatic switch's last sweep read, and its last firing,
+// in fixed shapes.
+function autoFiguresOf(f) {
+  if (!f || typeof f !== 'object') return null;
+  return { activeUsers: num(f.activeUsers), aiSpendCents: num(f.aiSpendCents), at: typeof f.at === 'string' ? f.at : null };
+}
+function autoFiredOf(f) {
+  if (!f || typeof f !== 'object' || !['activeUsers', 'aiSpend'].includes(f.figure)) return null;
+  return { at: typeof f.at === 'string' ? f.at : null, figure: f.figure, value: num(f.value), threshold: num(f.threshold) };
 }
 
 /**
@@ -612,7 +634,9 @@ const SETTINGS_FIELDS = Object.freeze([
   'continueReads', 'liveBuildStream',
   // #6632: who the bot works for (everyone let in, or verified accounts),
   // which signals count, and whether earlier members keep it.
-  'worksFor', 'verifiedSignals', 'verifiedGrandfather',
+  'worksFor', 'verifiedSignals', 'verifiedGrandfather', 'verifiedMinAccountAgeDays',
+  // The automatic switch to verified accounts only, and its two thresholds.
+  'verifiedAuto', 'verifiedAutoUsers', 'verifiedAutoSpendCents',
   // Homeroom bot parity, P8: pictures' model and weekly cap.
   'imageModel', 'pictureWeeklyCap',
   // #6867: the OpenRouter credit levels the full admins are warned at.

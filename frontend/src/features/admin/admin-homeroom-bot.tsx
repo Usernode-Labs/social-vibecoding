@@ -105,6 +105,16 @@ interface Settings {
   verifiedSignals?: string[];
   verifiedGrandfather?: boolean;
   verifiedSince?: string | null;
+  // How old, in days, both accounts must be for "GitHub and X, both older
+  // than a minimum age".
+  verifiedMinAccountAgeDays?: number;
+  // The automatic switch to verified accounts only
+  // (services/homeroom-bot-verified-auto.js): armed or not, and its two
+  // thresholds, people active in the last 30 days and the platform's AI
+  // spend over them in cents. Firing disarms it.
+  verifiedAuto?: boolean;
+  verifiedAutoUsers?: number;
+  verifiedAutoSpendCents?: number;
   // When it went on for everyone: older requests nobody has touched since
   // are left alone.
   everyoneSince?: string | null;
@@ -450,6 +460,12 @@ function retryAt(loop: LastPass): string {
   return when(new Date(at + loop.retryInMs).toISOString());
 }
 
+export interface VerifiedAutoStatus {
+  figures: { activeUsers: number | null; aiSpendCents: number | null; at: string | null } | null;
+  fired: { at: string; figure: 'activeUsers' | 'aiSpend'; value: number; threshold: number } | null;
+  near?: string[];
+}
+
 interface Payload {
   settings: Settings;
   modes: string[];
@@ -467,6 +483,9 @@ interface Payload {
   // the two levels admins are warned at, and beside it what OpenRouter counts
   // of the bot key's week (services/openrouter-credit.js status).
   credit?: Credit | null;
+  // The automatic switch's last read of the two figures, and when and why it
+  // last fired (homeroom-bot-verified-auto.js status).
+  verifiedAuto?: VerifiedAutoStatus | null;
   loop: LastPass | null;
   totals: Totals;
   // `buildsWaiting`: live builds waiting their turn, which wait on their
@@ -1522,6 +1541,10 @@ interface Form {
   worksFor: 'everyone' | 'verified';
   verifiedSignals: string[];
   verifiedGrandfather: boolean;
+  verifiedMinAccountAgeDays: string;
+  verifiedAuto: boolean;
+  verifiedAutoUsers: string;
+  verifiedAutoSpend: string;
   shadowBuildPlatform: boolean;
   buildConcurrency: string;
   liveAtOnce: string;
@@ -1556,6 +1579,10 @@ const FIELD_LABEL: Record<FormKey, string> = {
   worksFor: 'who it works for',
   verifiedSignals: 'what counts as verified',
   verifiedGrandfather: 'earlier members keeping the bot',
+  verifiedMinAccountAgeDays: 'how old GitHub and X must be',
+  verifiedAuto: 'switching to verified accounts automatically',
+  verifiedAutoUsers: 'the active people that switches it',
+  verifiedAutoSpend: 'the AI spend that switches it',
   shadowBuildPlatform: 'side builds of Homeroom',
   buildConcurrency: 'shadow builds at once',
   liveAtOnce: 'live requests at once',
@@ -1574,10 +1601,36 @@ export const BOT_SIGNALS: readonly { key: string; label: string; how: string }[]
   { key: 'phone', label: 'Phone', how: 'an SMS code' },
   { key: 'x', label: 'X', how: 'linked in Settings' },
   { key: 'github', label: 'GitHub', how: 'linked in Settings' },
+  { key: 'github_x_age', label: 'GitHub and X, both older than a minimum age', how: 'both linked in Settings' },
   { key: 'zkpassport', label: 'zkPassport', how: 'a proof from the mobile app' },
   { key: 'oauth', label: 'Google or Apple sign-in', how: 'signed in with one' },
   { key: 'email', label: 'Confirmed email', how: 'a confirmed address' },
 ];
+
+// The automatic switch to verified accounts only: a figure as the card says
+// it, beside its threshold, with how far along it is. Pure.
+export function autoFigureLine(figure: 'activeUsers' | 'aiSpend', value: number | null | undefined, threshold: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return 'Not read yet.';
+  const shown = figure === 'aiSpend'
+    ? `$${Math.round(Number(value) / 100).toLocaleString('en-US')}`
+    : `${Number(value).toLocaleString('en-US')} ${Number(value) === 1 ? 'person' : 'people'}`;
+  const t = Number(threshold);
+  const pct = Number.isFinite(t) && t > 0 ? ` (${Math.floor((Number(value) / t) * 100)}% of the threshold)` : '';
+  return `Now: ${shown}${pct}.`;
+}
+
+/** The note under the automatic switch: when and why it fired, or what arming does now. Pure. */
+export function autoNote(settings: Pick<Settings, 'verifiedAuto' | 'worksFor'> | null | undefined, status: VerifiedAutoStatus | null | undefined): string {
+  const fired = status?.fired;
+  const firedLine = fired
+    ? `Switched the bot to verified accounts only automatically on ${new Date(fired.at).toLocaleString()}: ${fired.figure === 'aiSpend'
+      ? `AI spend over the last 30 days reached $${Math.round(fired.value / 100).toLocaleString('en-US')}, its threshold $${Math.round(fired.threshold / 100).toLocaleString('en-US')}`
+      : `${fired.value.toLocaleString('en-US')} people were active in the last 30 days, its threshold ${fired.threshold.toLocaleString('en-US')}`}. `
+    : '';
+  if (!settings?.verifiedAuto) return `${firedLine}Off: nothing switches by itself.`;
+  if (settings.worksFor === 'verified') return `${firedLine}Armed, but the bot already works for verified accounts only, so there is nothing to switch.`;
+  return `${firedLine}Armed. The figures are read every 15 minutes; the first time either reaches its threshold, the bot switches to verified accounts only, as Save would, the full admins are told, and this disarms. If one is already over its threshold, that happens at the next read. It never switches back to everyone.`;
+}
 
 /** The form as the saved settings fill it. Pure. */
 export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
@@ -1600,8 +1653,12 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     continueReads: s.continueReads !== false,
     liveBuildStream: s.liveBuildStream !== false,
     worksFor: s.worksFor === 'verified' ? 'verified' : 'everyone',
-    verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : ['phone', 'x', 'github'],
+    verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : ['phone', 'github_x_age'],
     verifiedGrandfather: s.verifiedGrandfather !== false,
+    verifiedMinAccountAgeDays: String(s.verifiedMinAccountAgeDays ?? 365),
+    verifiedAuto: s.verifiedAuto === true,
+    verifiedAutoUsers: String(s.verifiedAutoUsers ?? 500),
+    verifiedAutoSpend: String(Math.round((s.verifiedAutoSpendCents ?? 500000) / 100)),
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 12),
@@ -1695,6 +1752,11 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
       && (dirty.includes('worksFor') || dirty.includes('verifiedSignals'))) {
     return { patch: {}, error: 'Tick at least one signal that counts as verified.' };
   }
+  // Armed with nothing ticked would switch to that same lock by itself.
+  if (form.verifiedAuto && !form.verifiedSignals.length
+      && (dirty.includes('verifiedAuto') || dirty.includes('verifiedSignals'))) {
+    return { patch: {}, error: 'Tick at least one signal that counts as verified before switching automatically.' };
+  }
   for (const key of dirty) {
     if (key === 'mode') patch.mode = form.mode;
     else if (key === 'worksFor') patch.worksFor = form.worksFor;
@@ -1703,6 +1765,13 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
       // next "Verified accounts only" starts from, and the route keeps one.
       if (form.verifiedSignals.length) patch.verifiedSignals = BOT_SIGNALS.map((s) => s.key).filter((k) => form.verifiedSignals.includes(k));
     } else if (key === 'verifiedGrandfather') patch.verifiedGrandfather = form.verifiedGrandfather;
+    else if (key === 'verifiedMinAccountAgeDays') patch.verifiedMinAccountAgeDays = whole(key, 0, 3650, 'Days old, GitHub and X');
+    else if (key === 'verifiedAuto') patch.verifiedAuto = form.verifiedAuto;
+    else if (key === 'verifiedAutoUsers') patch.verifiedAutoUsers = whole(key, 1, 10_000_000, 'People active in the last 30 days');
+    else if (key === 'verifiedAutoSpend') {
+      const n = whole(key, 1, 10_000_000, 'AI spend over the last 30 days, in dollars');
+      if (n != null) patch.verifiedAutoSpendCents = n * 100;
+    }
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
     else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform'
       || key === 'voiceSession' || key === 'voiceIssue' || key === 'voiceChat') patch[key] = form[key];
@@ -2588,7 +2657,7 @@ function HomeroomBotSection() {
                   <span>{label}</span>
                 </label>
               ))}
-              {form.worksFor === 'verified' ? (
+              {form.worksFor === 'verified' || form.verifiedAuto ? (
                 <div className="mt-3 ms-6" id="admin-homeroom-bot-verified-signals">
                   <p className={AdminUI.muted}>Any one ticked signal is enough.</p>
                   {BOT_SIGNALS.map((signal) => (
@@ -2605,6 +2674,17 @@ function HomeroomBotSection() {
                       <span>{signal.label} <span className={AdminUI.muted}>({signal.how})</span></span>
                     </label>
                   ))}
+                  {form.verifiedSignals.includes('github_x_age') ? (
+                    <div className="mt-3 ms-6">
+                      <NumberField id="admin-homeroom-bot-verified-min-age" label="Days old, both accounts"
+                        value={form.verifiedMinAccountAgeDays} min={0} max={3650} canWrite={canWrite}
+                        onChange={(v) => setField('verifiedMinAccountAgeDays', v)}>
+                        <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-verified-min-age-note">
+                          Counted from when each account was made on GitHub and on X. An account whose date is not known does not count.
+                        </p>
+                      </NumberField>
+                    </div>
+                  ) : null}
                   <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-verified-grandfather">
                     <input
                       id="admin-homeroom-bot-verified-grandfather" type="checkbox"
@@ -2622,6 +2702,46 @@ function HomeroomBotSection() {
                   ? `${payload?.settings?.verifiedSince ? `Switched on ${new Date(payload.settings.verifiedSince).toLocaleDateString()}. ` : ''}Anybody else is asked to verify when they write to it, press Build it, start a thread or describe a new project, and it does not start their requests by itself. A verified member can still press Build it on those, from their own week.`
                   : 'Identity plays no part: an account that is let in has the bot. Choose verified accounts to ask for a phone number, a linked X or GitHub account or another signal first.'}
               </p>
+              <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800" id="admin-homeroom-bot-verified-auto">
+                <label className="flex items-center gap-2 text-sm" htmlFor="admin-homeroom-bot-verified-auto-on">
+                  <input
+                    id="admin-homeroom-bot-verified-auto-on" type="checkbox"
+                    className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                    checked={form.verifiedAuto}
+                    disabled={!canWrite}
+                    onChange={(e) => setField('verifiedAuto', e.target.checked)}
+                  />
+                  <span>Switch to verified accounts only automatically</span>
+                </label>
+                <p className={`${AdminUI.muted} mt-1`}>
+                  When either figure reaches its threshold. They are Admin › Analytics&apos; own, admins left out: active people
+                  is its MAU, and AI spend is what the platform paid (its key and system tokens, Homeroom bot&apos;s own work
+                  included; a person&apos;s own key is not counted).
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2 mt-3">
+                  <NumberField
+                    id="admin-homeroom-bot-verified-auto-users" label="People active in the last 30 days"
+                    value={form.verifiedAutoUsers} min={1} max={10_000_000} canWrite={canWrite}
+                    onChange={(v) => setField('verifiedAutoUsers', v)}
+                  >
+                    <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-verified-auto-users-now">
+                      {autoFigureLine('activeUsers', payload?.verifiedAuto?.figures?.activeUsers, payload?.settings?.verifiedAutoUsers)}
+                    </p>
+                  </NumberField>
+                  <NumberField
+                    id="admin-homeroom-bot-verified-auto-spend" label="AI spend over the last 30 days, dollars"
+                    value={form.verifiedAutoSpend} min={1} max={10_000_000} canWrite={canWrite}
+                    onChange={(v) => setField('verifiedAutoSpend', v)}
+                  >
+                    <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-verified-auto-spend-now">
+                      {autoFigureLine('aiSpend', payload?.verifiedAuto?.figures?.aiSpendCents, payload?.settings?.verifiedAutoSpendCents)}
+                    </p>
+                  </NumberField>
+                </div>
+                <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-verified-auto-note">
+                  {autoNote(payload?.settings, payload?.verifiedAuto)}
+                </p>
+              </div>
             </div>
 
             <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-voice">

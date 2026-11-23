@@ -557,9 +557,14 @@
       "schemaSha256": "31a9051336203261d90f0775a1a45e60f18c7586c20e93f107afac657bc513bb"
     },
     {
+      "id": "social-account-created-at",
+      "sha256": "a2a48d09c57bbfd735dcdb34ee990027e0c9a9c89e4f9f72b8d61a966faefa19",
+      "schemaSha256": "688b8af7998594e3dd25024f17d587859648074154b242cc0d21e2334cffbb3c"
+    },
+    {
       "id": "app-archive-uploads",
       "sha256": "cf9eb841b856e594d2ce6ca0e6f01c8d99821d47770aef7e6597049c956d9043",
-      "schemaSha256": "054408e014272c5eedcec6122d5cbf848347b133ad75410ef7a5af043296d36c"
+      "schemaSha256": "a7ecaf6c9a5b4367d217f5cd5b554113cd6b7683f1989b3d683acd38d6b13312"
     }
   ]
 }

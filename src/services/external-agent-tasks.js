@@ -1684,7 +1684,10 @@ function buildWorkOrder({
       ...handIn,
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
       ...lands,
-      '   proposal — give that link to the user and tell them it is up for the',
+      // Which link: the result carries the pull request's GitHub address
+      // beside it, and an agent used to pull requests reaches for that one.
+      '   proposal — give that link (`link`, its page on Homeroom, never `prUrl`,',
+      '   the GitHub pull request) to the user and tell them it is up for the',
       '   group\'s vote.',
       // The two-audience rule, at the moment it is acted on. An agent that
       // sends only `description` produces a proposal whose About sheet shows

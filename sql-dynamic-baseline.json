@@ -250,9 +250,23 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "runtime-expression",
+      "fingerprint": "23adf783ab6aa52e5d68",
+      "count": 1,
+      "preview": "activeUsersSql(includeAdmins)"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "runtime-expression",
       "fingerprint": "a9abe0bb8b8fe9e78fbd",
       "count": 1,
       "preview": "metricsSql(true)"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "runtime-expression",
+      "fingerprint": "bfb4d58869632eaed8a2",
+      "count": 1,
+      "preview": "dailySpendSql(includeAdmins)"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -299,13 +313,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "2c5b5898f202955d3743",
-      "count": 1,
-      "preview": "`WITH activity AS (${activityDaysSql(includeAdmins)}) SELECT COUNT(DISTINCT user_id) FILTER (WHERE day >= ${UTC_TODAY_SQL} - 6)::int AS wau, COUNT(DISTINCT user"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "35c213856bd95299a61b",
       "count": 1,
       "preview": "`${metricsSql(false, 'prompt_version')}`"
@@ -323,13 +330,6 @@
       "fingerprint": "43afefd2e8c3b28f1072",
       "count": 1,
       "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COALESCE(SUM(lu.total_cost_cents), 0)::float AS platform_cents, COALESCE(SUM(lu.byok_cost_cents), 0)::float "
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "4477bc03e2c497e8a7b8",
-      "count": 1,
-      "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, SUM(lu.total_cost_c"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -1086,6 +1086,20 @@
       "fingerprint": "da9e0ef3aa5f12fda97b",
       "count": 1,
       "preview": "YOURS_SQL"
+    },
+    {
+      "source": "src/services/analytics-figures.js",
+      "kind": "runtime-expression",
+      "fingerprint": "23adf783ab6aa52e5d68",
+      "count": 1,
+      "preview": "activeUsersSql(includeAdmins)"
+    },
+    {
+      "source": "src/services/analytics-figures.js",
+      "kind": "runtime-expression",
+      "fingerprint": "bfb4d58869632eaed8a2",
+      "count": 1,
+      "preview": "dailySpendSql(includeAdmins)"
     },
     {
       "source": "src/services/app-access.js",

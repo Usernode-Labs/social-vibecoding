@@ -259,6 +259,18 @@ const KEY_WORKS_FOR = 'homeroom_bot_works_for';
 const KEY_VERIFIED_SIGNALS = 'homeroom_bot_verified_signals';
 const KEY_VERIFIED_GRANDFATHER = 'homeroom_bot_verified_grandfather';
 const KEY_VERIFIED_SINCE = 'homeroom_bot_verified_since';
+// How old, in days, the GitHub and X accounts must both be for the
+// github_x_age signal (homeroom-bot-verified.js).
+const KEY_VERIFIED_MIN_AGE = 'homeroom_bot_verified_min_account_age_days';
+// The automatic switch to verified accounts only (services/
+// homeroom-bot-verified-auto.js): whether it is armed, and its two
+// thresholds, people active in the last 30 days and the platform's AI spend
+// over them, in cents. Either one reached fires it, once: firing disarms it.
+const KEY_VERIFIED_AUTO = 'homeroom_bot_verified_auto';
+const KEY_VERIFIED_AUTO_USERS = 'homeroom_bot_verified_auto_users';
+const KEY_VERIFIED_AUTO_SPEND = 'homeroom_bot_verified_auto_spend_cents';
+const MAX_VERIFIED_AUTO_USERS = 10_000_000;
+const MAX_VERIFIED_AUTO_SPEND_CENTS = 1_000_000_000;
 const MAX_PICTURE_WEEKLY_CAP = 1000;
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
@@ -269,7 +281,8 @@ const SETTING_KEYS = Object.freeze([
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING, KEY_APP_CAPS,
   KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
   KEY_IMAGE_MODEL, KEY_PICTURE_WEEKLY_CAP,
-  KEY_WORKS_FOR, KEY_VERIFIED_SIGNALS, KEY_VERIFIED_GRANDFATHER, KEY_VERIFIED_SINCE,
+  KEY_WORKS_FOR, KEY_VERIFIED_SIGNALS, KEY_VERIFIED_GRANDFATHER, KEY_VERIFIED_SINCE, KEY_VERIFIED_MIN_AGE,
+  KEY_VERIFIED_AUTO, KEY_VERIFIED_AUTO_USERS, KEY_VERIFIED_AUTO_SPEND,
   KEY_CREDIT_WARN, KEY_CREDIT_URGENT,
   ...Object.values(KEY_MODELS),
 ]);
@@ -326,6 +339,12 @@ const DEFAULTS = Object.freeze({
   verifiedSignals: botVerified.DEFAULT_SIGNALS,
   verifiedGrandfather: true,
   verifiedSince: null,
+  verifiedMinAccountAgeDays: botVerified.DEFAULT_MIN_ACCOUNT_AGE_DAYS,
+  // Not armed until an admin arms it: 500 people active in 30 days, or
+  // $5,000 of AI spend over them.
+  verifiedAuto: false,
+  verifiedAutoUsers: 500,
+  verifiedAutoSpendCents: 500000,
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BUILD_CONCURRENCY = 4;
@@ -764,8 +783,17 @@ function parseSettings(rows) {
   const verifiedGrandfather = map.get(KEY_VERIFIED_GRANDFATHER) !== 'off';
   const verifiedSinceMs = Date.parse(map.get(KEY_VERIFIED_SINCE) || '');
   const verifiedSince = Number.isFinite(verifiedSinceMs) ? new Date(verifiedSinceMs).toISOString() : null;
+  const verifiedMinAccountAgeDays = clampInt(
+    map.get(KEY_VERIFIED_MIN_AGE), DEFAULTS.verifiedMinAccountAgeDays, 0, botVerified.MAX_MIN_ACCOUNT_AGE_DAYS,
+  );
+  const verifiedAuto = map.get(KEY_VERIFIED_AUTO) === 'on';
+  const verifiedAutoUsers = clampInt(map.get(KEY_VERIFIED_AUTO_USERS), DEFAULTS.verifiedAutoUsers, 1, MAX_VERIFIED_AUTO_USERS);
+  const verifiedAutoSpendCents = clampInt(
+    map.get(KEY_VERIFIED_AUTO_SPEND), DEFAULTS.verifiedAutoSpendCents, 1, MAX_VERIFIED_AUTO_SPEND_CENTS,
+  );
   return {
-    worksFor, verifiedSignals, verifiedGrandfather, verifiedSince,
+    worksFor, verifiedSignals, verifiedGrandfather, verifiedSince, verifiedMinAccountAgeDays,
+    verifiedAuto, verifiedAutoUsers, verifiedAutoSpendCents,
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, readsPerApp, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
@@ -1007,6 +1035,34 @@ function validateSettingsPatch(patch) {
   if (body.verifiedGrandfather !== undefined) {
     if (typeof body.verifiedGrandfather !== 'boolean') return { ok: false, error: 'verifiedGrandfather must be true or false' };
     updates.push([KEY_VERIFIED_GRANDFATHER, body.verifiedGrandfather ? 'on' : 'off']);
+  }
+  if (body.verifiedMinAccountAgeDays !== undefined) {
+    const n = body.verifiedMinAccountAgeDays;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > botVerified.MAX_MIN_ACCOUNT_AGE_DAYS) {
+      return { ok: false, error: `verifiedMinAccountAgeDays must be an integer from 0 to ${botVerified.MAX_MIN_ACCOUNT_AGE_DAYS}` };
+    }
+    updates.push([KEY_VERIFIED_MIN_AGE, String(n)]);
+  }
+  // The automatic switch to verified accounts only: armed or not, and its
+  // two thresholds. Its record of when it fired is the sweep's, never a
+  // patch's.
+  if (body.verifiedAuto !== undefined) {
+    if (typeof body.verifiedAuto !== 'boolean') return { ok: false, error: 'verifiedAuto must be true or false' };
+    updates.push([KEY_VERIFIED_AUTO, body.verifiedAuto ? 'on' : 'off']);
+  }
+  if (body.verifiedAutoUsers !== undefined) {
+    const n = Number(body.verifiedAutoUsers);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_VERIFIED_AUTO_USERS) {
+      return { ok: false, error: `verifiedAutoUsers must be an integer from 1 to ${MAX_VERIFIED_AUTO_USERS}` };
+    }
+    updates.push([KEY_VERIFIED_AUTO_USERS, String(n)]);
+  }
+  if (body.verifiedAutoSpendCents !== undefined) {
+    const n = Number(body.verifiedAutoSpendCents);
+    if (!Number.isInteger(n) || n < 100 || n > MAX_VERIFIED_AUTO_SPEND_CENTS) {
+      return { ok: false, error: `verifiedAutoSpendCents must be an integer from 100 to ${MAX_VERIFIED_AUTO_SPEND_CENTS}` };
+    }
+    updates.push([KEY_VERIFIED_AUTO_SPEND, String(n)]);
   }
   // #6867: the two credit levels, in dollars. The urgent one is never above
   // the first, which would warn in the wrong order.
@@ -7526,6 +7582,11 @@ async function recordUnstageable(pool, config, { app, bot, session, head, reason
       app: app.slug, sessionId: session.id, err: err.message,
     });
   }
+  // Only Homeroom's own copies get the ready-made demo states (shots-ready-
+  // states.js), so a state missing for another app's change is nothing the
+  // platform's board can add (requests 6985 and 6991 were filed that way).
+  // Its reason stays on the change itself, recorded above.
+  if (!(await platformAppSlugs(pool)).includes(app.slug)) return;
   const feedback = require('./feedback-reports');
   const title = `Before & after shots: no demo state for "${clip(reason, 90)}"`;
   try {
@@ -11776,6 +11837,9 @@ async function adminPayload(pool, config, {
     // #6867: OpenRouter's credit, as the last read left it (the console's
     // tile beside this week's spend), and why the lane is paused.
     credit: await require('./openrouter-credit').status(pool).catch(() => null),
+    // The automatic switch to verified accounts only: the figures its last
+    // sweep read and when it last fired (services/homeroom-bot-verified-auto.js).
+    verifiedAuto: await require('./homeroom-bot-verified-auto').status(pool),
     loop: memory.loop,
     totals,
     queue: { ...queue, buildsWaiting: builds.waiting },
@@ -12778,6 +12842,7 @@ module.exports = {
   KEY_VERIFIED_SIGNALS,
   KEY_VERIFIED_GRANDFATHER,
   KEY_VERIFIED_SINCE,
+  KEY_VERIFIED_MIN_AGE,
   DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,

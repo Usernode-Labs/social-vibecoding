@@ -278,8 +278,8 @@ export function WelcomePage({ account, beforeFinish }: {
               <img
                 src="/brand/people.png"
                 alt=""
-                width={816}
-                height={612}
+                width={576}
+                height={432}
                 draggable={false}
                 className={`mx-auto mt-2 block h-auto w-[140px] max-w-full ${SHORT_PICTURE_WIDTH}`}
               />

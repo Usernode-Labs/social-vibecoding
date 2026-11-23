@@ -334,7 +334,8 @@ function CodePauseNotice(): ReactNode {
   const s = useStoreState<CodePauseState>(codePauseStore);
   if (!s.paused) return null;
   return (
-    <Alert variant="notice" density="compact" data-code-pause="github">
+    // The title carries the whole sentence: from 900px the notice is one line in the top bar, cut with an ellipsis where it does not fit.
+    <Alert variant="notice" density="compact" data-code-pause="github" title={t('project:codePause.notice')}>
       <span>{t('project:codePause.notice')}</span>
     </Alert>
   );

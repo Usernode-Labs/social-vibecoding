@@ -132,7 +132,7 @@ import {
 import { AboutPane, ExternalMark } from './about-pane';
 import { offeringGoToHomeroom, owedHomeWalk, useAboutApp, usePlatformAbout } from './about-data';
 import { versionRowText } from './about-model';
-import { InvitePane } from './invite-pane';
+import { InvitePane, inviteTitle } from './invite-pane';
 import { isNativeApp } from '../mobile-install/environment';
 import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
 import type { MobileOs } from '../mobile-install/detect';
@@ -149,7 +149,6 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
-import { placeHref } from '../dev-board/workshop/places';
 import { navStore } from '../nav/nav-store.js';
 
 /**
@@ -277,41 +276,65 @@ function loadedPlatformShort(): string | null {
  * here as a navigation of ours: the browser opens its tab.
  */
 /**
- * Where the "Go to community" row opens the project page (#5927 item 3): on
- * Needs you, the list of what waits on this person, while its badge counts
- * any; on the hub otherwise. `owed` is the badge's own figure, so the row
- * opens on what it says.
+ * Where the "Go to community" row opens the project page: always the hub
+ * (#7049). It opened the project's Needs you list while the row's badge
+ * counted decisions waiting on the viewer (#5927 item 3), but the row says
+ * "Go to community", and every other door to a community opens its hub. The
+ * `owed` figure stays in the signature for callers, and the badge still shows
+ * it; where the row goes no longer depends on it.
  */
-export function communityRowPlace(owed: number | null): 'needs' | 'status' {
-  return typeof owed === 'number' && owed > 0 ? 'needs' : 'status';
+/** The menu's figure in words: a message id and its values (owedWords). */
+export type OwedWords = { id: string; values: Record<string, number> };
+
+/**
+ * WHAT THE FIGURE COUNTS (phone review #22, 23 Nov 2026). Within minutes the
+ * same project read "10 to vote" on its hub and "17 decisions waiting on
+ * you" here, with nothing to say they count different things: the hub
+ * counts votes, and this figure (GET /api/workshop/counts `needs`) is votes
+ * and Homeroom bot's questions on your requests together. Its `owed` names
+ * each one (`proposal:…`, `governance:…`, `question:…`), so the line says
+ * both in the hub's own words: "10 to vote · 7 to answer". `total` is the
+ * figure already less what was swiped past (unseenNeeds), which only ever
+ * takes off votes. Without the list (an older server) the one figure keeps
+ * its old words, which say decisions. Pure but for the seen record.
+ */
+export function owedWords(slug: string, total: number, owed: readonly string[] | null | undefined): OwedWords | null {
+  if (!owed || !owed.length) return null;
+  const questions = owed.filter((key) => String(key).startsWith('question:')).length;
+  const votes = Math.max(0, total - questions);
+  if (votes && questions) return { id: 'agent:appContext.row.owedBoth', values: { votes, questions, count: votes } };
+  if (questions) return { id: 'agent:appContext.row.owedAnswer', values: { count: questions } };
+  return { id: 'agent:appContext.row.owedVote', values: { count: votes } };
+}
+
+export function communityRowPlace(owed: number | null): 'status' {
+  return 'status';
 }
 
 /**
  * The row's link, for whatever the browser does with it itself: a new tab,
- * a middle click, a copied address. While the badge shows it is Needs you's
- * own address (`?ws=needs`, ../dev-board/workshop/places.ts placeHref), so a
- * tab opened from it lands where a plain tap does; otherwise the hub's.
+ * a middle click, a copied address. It is the Hub's own address whatever the
+ * badge says, so a tab opened from the row lands where a plain tap does
+ * (#7049).
  */
 export function communityRowHref(slug: string | null | undefined, owed: number | null): string {
   if (!slug) return '#';
-  return communityRowPlace(owed) === 'needs'
-    ? placeHref(slug, 'needs')
-    // The Hub's own address (App._placeAddress), so a new tab lands where a
-    // plain tap does: a bare /workshop opens the Workshop.
-    : `#app/${encodeURIComponent(slug)}/dev/hub`;
+  // The Hub's own address (App._placeAddress), so a new tab lands where a
+  // plain tap does: a bare /workshop opens the Workshop.
+  return `#app/${encodeURIComponent(slug)}/dev/hub`;
 }
 
 /**
- * A press on the row. Only a plain click is ours: it says which place the
- * page opens on (AppView._landOnTab / _landOnHub), then follows the page's
- * own address in place. A modified or middle click, or one something else
- * took, changes nothing on this page, and the browser opens the link.
+ * A press on the row. Only a plain click is ours: it lands on the community's
+ * hub (AppView._landOnHub, #7049), then follows the page's own address in
+ * place. A modified or middle click, or one something else took, changes
+ * nothing on this page, and the browser opens the link.
  *
- * ITS MENU CLOSES A TICK LATER. The browser reads the link after this
- * handler returns, and closing publishes `open: false` synchronously
- * (flushSync), which clears the badge's figure (`owed`) and with it the
- * Needs you address: a new tab opened from a closed-in-time row went to the
- * hub. Deferred, the close comes after the browser has read the link.
+ * ITS MENU CLOSES A TICK LATER (the ordering it has always had). Closing
+ * publishes `open: false` synchronously (flushSync), which tears the row
+ * down, while the browser reads the link once this handler returns. Deferred,
+ * the close comes after that read, so a new tab opens the address the person
+ * saw.
  */
 export function openCommunityRow(e: React.MouseEvent, slug: string | null | undefined, owed: number | null): void {
   if (!isPlainClick(e)) {
@@ -320,8 +343,7 @@ export function openCommunityRow(e: React.MouseEvent, slug: string | null | unde
   }
   if (slug) {
     const view = (window as any).AppView;
-    if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
-    else view?._landOnHub?.(slug);
+    view?._landOnHub?.(slug);
   }
   followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
 }
@@ -463,6 +485,8 @@ export function AppsSwitcherSheet(): ReactNode {
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to community hub" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
+  // What the figure counts, in the hub's own words (owedWords).
+  const [owedLine, setOwedLine] = useState<OwedWords | null>(null);
 
   // HOMEROOM FOR A VIEWER WHO IS NOT SERVED ITS ROW (SELF_APP_PUBLIC_VOTING
   // off, not an admin): the platform's workshop answers them 404, so the row
@@ -619,7 +643,7 @@ export function AppsSwitcherSheet(): ReactNode {
       renders exactly as it did before this existed.
   */
   useEffect(() => {
-    if (!open || !slug) { setOwed(null); return; }
+    if (!open || !slug) { setOwed(null); setOwedLine(null); return; }
     let live = true;
     (async () => {
       try {
@@ -631,10 +655,14 @@ export function AppsSwitcherSheet(): ReactNode {
         // #3526: less the votes swiped past in a Needs you feed, as every
         // other count of them is (../workshop/needs-seen.ts).
         hydrateNeedsSeen();
+        const keys = c && Array.isArray(c.owed) ? c.owed : null;
         const n = c && typeof c.needs === 'number'
-          ? unseenNeeds(slug, c.needs, Array.isArray(c.owed) ? c.owed : null)
+          ? unseenNeeds(slug, c.needs, keys)
           : null;
-        if (live && typeof n === 'number' && n > 0) setOwed(n);
+        if (live && typeof n === 'number' && n > 0) {
+          setOwed(n);
+          setOwedLine(owedWords(slug, n, keys));
+        }
       } catch {
         // Offline is a state, not a failure: no figure, the row still works.
       }
@@ -711,6 +739,13 @@ export function AppsSwitcherSheet(): ReactNode {
                   <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
                 </button>
               )}
+              {/* Phone review #51 (23 Nov 2026): Invite's title is on the
+                  close button's line, which had a row of its own over it. */}
+              {view === 'invite' ? (
+                <h3 className={'min-w-0 truncate text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100' + (back === 'none' ? '' : ' ms-3')}>
+                  {inviteTitle(appLabel, !appName)}
+                </h3>
+              ) : null}
             </div>
           ) : (
             /*
@@ -802,7 +837,7 @@ export function AppsSwitcherSheet(): ReactNode {
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
           {view === 'about' ? <AboutPane label={appLabel} unnamed={!appName} /> : view === 'invite' ? (
-            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} />
+            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} titled={false} />
           ) : (
           <>
           {/*
@@ -995,11 +1030,11 @@ export function AppsSwitcherSheet(): ReactNode {
             sub={owed ? (
               <span
                 id="app-menu-workshop-owed"
-                title={t('agent:appContext.row.toVote', { count: owed })}
-                aria-label={t('agent:appContext.row.toVote', { count: owed })}
+                title={t(owedLine ? owedLine.id : 'agent:appContext.row.toVote', owedLine ? owedLine.values : { count: owed })}
+                aria-label={t(owedLine ? owedLine.id : 'agent:appContext.row.toVote', owedLine ? owedLine.values : { count: owed })}
                 className="block truncate text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
-                {t('agent:appContext.row.toVote', { count: owed })}
+                {t(owedLine ? owedLine.id : 'agent:appContext.row.toVote', owedLine ? owedLine.values : { count: owed })}
               </span>
             ) : null}
             // It says community, so it opens the hub, not whichever tab
@@ -1007,9 +1042,10 @@ export function AppsSwitcherSheet(): ReactNode {
             // running app on a desktop it opens full width, leaving the app,
             // as every link to a community does: a community's page is never
             // the side panel's (../side-panel/routes.ts).
-            // #5927 item 3: while it says decisions wait on you, it opens
-            // on the list of them, the project's Needs you place, rather
-            // than the hub, where they are one card among others.
+            // #7049: always the hub, even while the badge says decisions
+            // wait on you. Those are still one card away there (the hub's
+            // For you card); the row used to open Needs you itself (#5927
+            // item 3).
             onClick={(e) => openCommunityRow(e, slug, owed)}
           />
           {/*

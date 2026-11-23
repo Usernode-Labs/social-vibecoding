@@ -315,14 +315,6 @@ export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   );
 }
 
-function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`data-${string}`, string>): ReactNode {
-  return (
-    <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500" {...rest}>
-      {children}
-    </div>
-  );
-}
-
 /**
  * #6785: one row of the Recent threads tab. It is the tab's whole content:
  * the project's own tile on the left (the tile notification rows from
@@ -1719,26 +1711,18 @@ export function NotificationsSheetView() {
   // the sheet opens on Unread) and is forgotten when the sheet closes.
   const [kindFilter, setKindFilter] = useState<KindFilter | null>(null);
   // #5405: what the search field holds. It narrows the tab that is open —
-  // both tabs, and a tab change keeps it. It starts '' so the
-  // prerendered markup is an empty field; the restore effect below reads
-  // the remembered value back after mount (#5460), so the field still holds
-  // what you typed when you come back — opening a row closes the sheet, and
-  // a query wiped on close was lost on every round trip to a proposal.
+  // both tabs, and a tab change keeps it. It starts '' so the prerendered
+  // markup is an empty field.
+  //
+  // IT LASTS ONE OPENING (phone review, 23 Nov 2026, #21). #5460 kept it for
+  // the browser tab's session, so that a round trip to a proposal came back
+  // to the same narrowed list. What that cost was found on a phone: the
+  // sheet opened hours later on the All tab with an old word in the box, one
+  // row under a bell that said 18, and nothing but the box to say why. So
+  // the next opening after a close starts over: an empty box, on Unread
+  // (the reset below). The box has a clear button while it holds text.
   const [query, setQuery] = useState('');
-  // #5460: every write to the query goes through this one helper. A
-  // non-empty query is remembered for the browser tab's session: it
-  // survives leaving the screen and a reload, and goes away when the tab
-  // closes; an empty one forgets it, so a cleared field stays cleared.
-  // Storage
-  // that is unavailable (private mode, blocked) changes nothing: the search
-  // then just behaves as it did before, within the page.
-  const rememberQuery = useCallback((next: string) => {
-    setQuery(next);
-    try {
-      if (next) window.sessionStorage.setItem('usernode:notifications-search', next);
-      else window.sessionStorage.removeItem('usernode:notifications-search');
-    } catch { /* storage unavailable */ }
-  }, []);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const t = useMessages('notifications');
 
   // #6785: one page of the viewer's threads, from the pager's cursor or from
@@ -1828,25 +1812,39 @@ export function NotificationsSheetView() {
     if (shot === 'notifications-threads') setTab('threads');
   }, []);
 
-  // #5460: the remembered search comes back after mount, not in the initial
-  // state — the SSG pass renders this island in Node with no sessionStorage,
-  // and the prerendered field has to stay empty so hydration matches (the
-  // reason every deep link in this bundle reads its address in an effect: a
-  // console error on any route fails proposal checks). An empty or missing value
-  // restores nothing, so a search you cleared stays cleared.
+  // #21: a search a session remembered before this change is forgotten once,
+  // after mount, so nothing reads the old key again. Storage that is
+  // unavailable (private mode, blocked) is the same as nothing kept.
   useEffect(() => {
-    try {
-      const remembered = window.sessionStorage.getItem('usernode:notifications-search');
-      if (remembered) setQuery(remembered.slice(0, 100));
-    } catch { /* storage unavailable */ }
+    try { window.sessionStorage.removeItem('usernode:notifications-search'); }
+    catch { /* storage unavailable */ }
   }, []);
+
+  // #21: EACH OPENING AFTER A CLOSE STARTS OVER: the box empty, on Unread
+  // (or on the tab a door asked for, #6816). Applied as the sheet opens and
+  // not as it closes, so the list under a sheet that is still sliding away
+  // does not change as it goes; a layout effect, so the opening's first
+  // paint (and the kit's one measure of the sheet's height) is already the
+  // reset one. The first opening of a page load is left alone: there is
+  // nothing to forget, and `?shot=notifications-all` has just chosen its tab.
+  const reopenRef = useRef<'never' | 'open' | 'closed'>('never');
+  useIsomorphicLayoutEffect(() => {
+    if (!open) {
+      if (reopenRef.current === 'open') reopenRef.current = 'closed';
+      return;
+    }
+    if (reopenRef.current === 'closed') {
+      setQuery('');
+      setTab(wantedTab || 'unread');
+    }
+    reopenRef.current = 'open';
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The expanded Unread view is forgotten when the sheet closes or you leave
   // the tab, so each visit to Unread starts collapsed again (see the state
-  // above). The query is NOT: it is remembered for the tab session (#5460),
-  // because opening a row closes the sheet, and clearing it here made every
-  // round trip to a proposal re-widen the list. An effect, not the initial
-  // state, for the same hydration reason.
+  // above). The query and the tab are forgotten too, as the sheet next opens
+  // (the reset above). An effect, not the initial state, for the same
+  // hydration reason.
   useEffect(() => {
     if (!open) setOlderShown(false);
     else if (tab !== 'unread') setOlderShown(false);
@@ -1925,7 +1923,6 @@ export function NotificationsSheetView() {
   const needsCount = unreadNow.filter((view) => view.needsYou).length + (snap.invites || []).length;
   const entries: Entry[] = shown.map((view) => (
     { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
-  const { today, earlier } = splitToday(entries);
   // #5405: the query narrows what the open tab already drew — the same
   // `entries`. Whitespace-only is no query
   // at all. While it is active the headings, the pinned sections and the
@@ -2039,6 +2036,12 @@ export function NotificationsSheetView() {
       </div>
     </Fragment>
   );
+  // Phone review #118 (23 Nov 2026): All was a second list, flat rows ruled
+  // edge to edge with their dots outside the column, beside Unread's cards.
+  // It is the same cards now, in the same Today / Yesterday / Last 7 days /
+  // Older sections as Unread's older rows, each naming its project; a
+  // search's matches are those cards too.
+  const allSections = tab === 'all' && !searching ? groupOlderByTime(rows, t) : [];
   const renderEntry = (entry: Entry): ReactNode => (
     <ScreenRow
       key={entry.key}
@@ -2047,6 +2050,10 @@ export function NotificationsSheetView() {
       removes={tab === 'unread'}
       held={tab === 'unread' && !entry.view.unread && !olderShown}
       onRelease={held.release}
+      card={{
+        groupName: entry.view.appId != null ? entry.view.appName || entry.view.appLine : '',
+        leadsWithProject: true,
+      }}
     />
   );
   // #5580: a card in a project's stack, which only collapsed Unread draws:
@@ -2119,7 +2126,9 @@ export function NotificationsSheetView() {
         <h2 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {t('notifications:sheet.title')}
         </h2>
-        {tab === 'unread' ? (
+        {/* Phone review #118: on All too, whose cards carry the same unread
+            dots, so the pill does not come and go as the tabs change. */}
+        {tab !== 'threads' ? (
           <button
             id="notifications-screen-mark-all"
             type="button"
@@ -2172,14 +2181,15 @@ export function NotificationsSheetView() {
           />
           <input
             id="notifications-search-input"
+            ref={searchRef}
             type="search"
             value={query}
-            onChange={(event) => rememberQuery(event.currentTarget.value.slice(0, 100))}
+            onChange={(event) => setQuery(event.currentTarget.value.slice(0, 100))}
             onKeyDown={(event) => {
               if (event.key === 'Escape' && event.currentTarget.value) {
                 event.preventDefault();
                 event.stopPropagation();
-                rememberQuery('');
+                setQuery('');
               }
             }}
             placeholder={t('notifications:sheet.search.placeholder')}
@@ -2187,8 +2197,22 @@ export function NotificationsSheetView() {
             autoComplete="off"
             spellCheck={false}
             enterKeyHint="search"
-            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-10 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600 [&::-webkit-search-cancel-button]:hidden"
           />
+          {/* #21: the box's own clear, drawn while it holds text (a phone's
+              search field has none of its own). The cursor stays in the box. */}
+          {query ? (
+            <button
+              id="notifications-search-clear"
+              type="button"
+              className="absolute end-0 top-1/2 flex h-9 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+              aria-label={t('notifications:sheet.search.clear')}
+              title={t('notifications:sheet.search.clear')}
+              onClick={() => { setQuery(''); searchRef.current?.focus(); }}
+            >
+              <XIcon aria-hidden="true" className="h-4 w-4" strokeWidth="2.25" />
+            </button>
+          ) : null}
         </div>
       </div>
       <div
@@ -2242,7 +2266,9 @@ export function NotificationsSheetView() {
               key={key}
               id={`notifications-kind-${key}`}
               size="bar"
-              className="px-4"
+              // Phone review #118: an unlit chip is white on the white sheet,
+              // so the row read as plain words; a hairline draws each chip.
+              className={kindFilter === key ? 'px-4' : 'px-4 ring-1 ring-inset ring-zinc-300 dark:ring-zinc-700'}
               selected={kindFilter === key}
               onClick={(event) => {
                 event.stopPropagation();
@@ -2297,7 +2323,7 @@ export function NotificationsSheetView() {
               {t('notifications:sheet.search.noMatches', { query: query.trim() })}
             </p>
           )
-        ) : matches.length ? matches.map(renderEntry) : (
+        ) : matches.length ? <div className="notifications-stack">{matches.map(renderEntry)}</div> : (
           <p id="notifications-search-empty" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-500 text-center">
             {t('notifications:sheet.search.noMatches', { query: query.trim() })}
           </p>
@@ -2313,26 +2339,7 @@ export function NotificationsSheetView() {
           {renderAppGroups()}
           {olderSections.map(renderOlderSection)}
         </>
-      ) : (
-        <>
-          {today.length ? (
-            <>
-              <SectionHead>
-                {t('notifications:sheet.today')}
-              </SectionHead>
-              {today.map(renderEntry)}
-            </>
-          ) : null}
-          {earlier.length ? (
-            <>
-              <SectionHead>
-                {t('notifications:sheet.earlier')}
-              </SectionHead>
-              {earlier.map(renderEntry)}
-            </>
-          ) : null}
-        </>
-      ))}
+      ) : allSections.map(renderOlderSection))}
       {!searching && !isThreads && !entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? t('notifications:sheet.empty.unread')

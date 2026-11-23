@@ -381,14 +381,19 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 1280px)' });
   Home._apps = mine(12);
   // The button is the kit's Home's (Standard (WIP), and the standard look since
-  // 20 Nov 2026): the brand look keeps the tile under 768px, where its search row
-  // waits to be pulled into view.
-  sandbox.Skin = { get: () => 'brand' };
-  Home.render();
-  assert.equal(model().create.inCard, false, 'the tile stays on a phone under the brand look');
+  // 20 Nov 2026), on the search row from 768px. Under 768px every look keeps
+  // the tile, where the search row waits to be pulled into view: the brand
+  // look first, and the standard look and Standard (WIP) since the phone
+  // review of 23 Nov 2026 (nothing on screen started a project at rest).
+  for (const skin of ['brand', 'standard', 'wip']) {
+    sandbox.Skin = { get: () => skin };
+    Home.render();
+    assert.equal(model().create.inCard, false, `the tile stays on a phone under ${skin}`);
+  }
+  sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 768px)' || q === '(min-width: 1280px)' });
   sandbox.Skin = { get: () => 'standard' };
   Home.render();
-  assert.equal(model().create.inCard, true, 'the standard look has the button at every width');
+  assert.equal(model().create.inCard, true, 'from 768px the standard look has the button on its search row');
   sandbox.Skin = { get: () => 'wip' };
   Home.render();
   const state = model();

@@ -462,7 +462,13 @@ test('the thread pane reads the two lists as one transcript, counted together, a
   assert.match(screen, /const merged: MergedRow\[\] = \[/, 'the two lists become one');
   assert.match(screen, /merged\.sort\(\(a, b\) => \(a\.message\.createdAt < b\.message\.createdAt \? -1/);
   assert.match(screen, /row\.kind === 'reply' && row\.message\.id < 0/, 'a reply still in flight stays last');
-  assert.match(screen, /t\('messages:replies\.count', \{ count: merged\.length \}\)/, 'the count is of both');
+  assert.match(screen, /const counted = merged\.length - \(opensWithOwnWords \? 1 : 0\);/, 'the count is of both');
+  assert.match(screen, /t\('messages:replies\.count', \{ count: counted \}\)/);
+  // Phone review S6: a thread the person opened from New chat starts with
+  // their own words, which name it: they are not a reply, and with nothing
+  // else in it yet there is no count line.
+  assert.match(screen, /const opensWithOwnWords = sheet && !!root && !rootRow\s+&& merged\[0\]\?\.kind === 'reply' && merged\[0\]\.message\.sender\.id === meId;/);
+  assert.match(screen, /\{thread\?\.error \|\| \(opensWithOwnWords && !counted\) \? null : \(/);
   assert.match(screen, /discussion\?\.more \? <a className="messages-load-older" href=\{issueRefHref\(discussion\.appSlug/);
   assert.match(screen, /<MessageComposer threadRootId=\{rootId\} scroller=\{scroller\} \/>/,
     'the composer is untouched: replies still go in the private thread');

@@ -14,6 +14,12 @@
 // first column until "Weekly calendar" broke mid-word and the tags fell off
 // the card's edge). A table that still does not fit a phone scrolls sideways
 // inside the card, never the page.
+// Phone review #28 (23 Nov 2026): the table has no floor of its own on a
+// phone. It was at least 280px in a card 257px inside, so the last column
+// was cut at the card's edge with nothing to say it scrolls; its words wrap
+// instead, and the floor comes back from 640px, where every card has room.
+// Every heading starts at the line's start, the row's name too: a <th> is
+// centred by default, which made a sentence-long first cell a centred block.
 // The words are the model's, drawn as text.
 
 import { useState, type MouseEvent } from 'react';
@@ -140,11 +146,11 @@ export function TableCard({ message, conversationId, card }: BotCardProps) {
     <CardShell state="shown">
       {title ? <CardTitle>{title}</CardTitle> : null}
       <div className="-mx-4 mt-1 overflow-x-auto px-4">
-        <table className="w-full min-w-[280px] border-collapse text-start">
+        <table className="w-full border-collapse text-start sm:min-w-[280px]">
           <thead>
             <tr>
               {columns.map((column, i) => (
-                <th key={i} scope="col" className="py-1.5 pe-3 align-bottom text-[0.75rem] font-semibold leading-4 text-zinc-500 last:pe-0 dark:text-zinc-400">{column}</th>
+                <th key={i} scope="col" className="py-1.5 pe-3 text-start align-bottom text-[0.75rem] font-semibold leading-4 text-zinc-500 last:pe-0 dark:text-zinc-400">{column}</th>
               ))}
               {tagged ? <th scope="col" className="py-1.5"><span className="sr-only">{t('messages:botCards.table.tagHeading')}</span></th> : null}
             </tr>
@@ -154,7 +160,7 @@ export function TableCard({ message, conversationId, card }: BotCardProps) {
               <tr key={r} className="border-t border-[color:var(--app-sheet-line)] align-top" data-bot-table-row={r + 1}>
                 {row.cells.map((cell, i) => (
                   i === 0 ? (
-                    <th key={i} scope="row" className="py-2 pe-3 text-[0.9375rem] font-[650] leading-5 text-zinc-900 break-words dark:text-zinc-100">
+                    <th key={i} scope="row" className="py-2 pe-3 text-start text-[0.9375rem] font-[650] leading-5 text-zinc-900 break-words dark:text-zinc-100">
                       <RowName row={row} conversationId={conversationId} />
                     </th>
                   ) : (

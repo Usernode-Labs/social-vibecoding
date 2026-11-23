@@ -572,3 +572,17 @@ test('the credit warnings are the account\'s credit, with days only when there i
   assert.equal(copy('credit:low:500:480:0').body, '$480 left. Add credit before Homeroom bot stops building');
   assert.equal(copy('credit:out').title, 'OpenRouter credit ran out');
 });
+
+test('the automatic switch to verified accounts only: told when it fires, and when a figure is close', () => {
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_incident', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('verify:on:u:512:500'), {
+    title: 'Homeroom bot now works for verified accounts only',
+    body: 'It switched by itself: 512 people were active in the last 30 days, and it switches at 500',
+  });
+  assert.deepEqual(copy('verify:near:s:4100:5000'), {
+    title: 'Homeroom bot may soon switch to verified accounts only',
+    body: 'AI spend over the last 30 days is $4,100. It switches at $5,000',
+  });
+});

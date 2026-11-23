@@ -1018,7 +1018,11 @@ function authRoutes(config) {
       if (!req.user.isSynthetic) {
         homeroomBotDm = await botDm.botWorksFor(pool, settings, req.user);
         if (!homeroomBotDm && botDm.hasBot({ ...settings, worksFor: 'everyone' }, req.user)) {
-          homeroomBotVerify = { signals: require('../services/homeroom-bot-verified').signalsOf(settings) };
+          const botVerified = require('../services/homeroom-bot-verified');
+          const signals = botVerified.signalsOf(settings);
+          homeroomBotVerify = signals.includes('github_x_age')
+            ? { signals, minAccountAgeDays: botVerified.minAccountAgeDaysOf(settings) }
+            : { signals };
         }
       }
     } catch {}
