@@ -67,6 +67,52 @@ test('sent only to a confirmed address with no phone, and never once turned off'
   assert.equal(await activityMail.emailIfNoPush(fakePool({ user: CONFIRMED }), args), 'off', 'nothing before boot hands it a config');
 });
 
+test('#7043: an app slot grant is emailed even when a phone could take the push', async () => {
+  activityMail.init({ sessionSecret: 'k1' });
+  const args = { userId: 7, kind: 'app_slots_granted', username: 'maya', added: 2, total: 4 };
+  assert.equal(await activityMail.emailIfNoPush(fakePool({ user: CONFIRMED, phones: 1 }), args), 'sent',
+    'the person asked for the slots, so the phone does not stand in for this');
+  assert.equal(await activityMail.emailIfNoPush(fakePool({ user: { ...CONFIRMED, activity_email: false }, phones: 1 }), args), 'turned_off',
+    'turning activity emails off still wins');
+  assert.equal(await activityMail.emailIfNoPush(fakePool({ user: { ...CONFIRMED, is_synthetic: true } }), args), 'no_email');
+  assert.equal(await activityMail.emailIfNoPush(fakePool({ user: { ...CONFIRMED, email_confirmed: false } }), args), 'no_email');
+  activityMail.init(null);
+});
+
+test('#7043: a notice is emailed only when the quota went up, and says by how much', async () => {
+  activityMail.init({ sessionSecret: 'k1' });
+  const sent = [];
+  const real = activityMail.emailIfNoPush;
+  activityMail.emailIfNoPush = async (pool, args) => { sent.push(args); return 'sent'; };
+  const notice = (detail) => ({
+    id: 3, user_id: 7, kind: 'app_quota_changed', detail, mailed_at: null, recent: true,
+    conversation_message_id: null, app_slug: null, app_name: null, username: null, recipient_username: 'maya',
+  });
+  const steps = { once: (key, fn) => fn() };
+  const handled = [];
+  const poolWith = (row) => ({
+    async query(sql) {
+      if (/FROM notifications n/.test(sql)) return { rows: [row] };
+      if (/UPDATE notifications SET mailed_at/.test(sql)) { handled.push(sql); return { rows: [] }; }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  });
+  try {
+    assert.deepEqual(await activityMail.mailNotice(poolWith(notice('2:4')), 3, steps), { said: 'sent' });
+    assert.deepEqual(sent.at(-1), { userId: 7, kind: 'app_slots_granted', username: 'maya', added: 2, total: 4 });
+    const count = sent.length;
+    assert.deepEqual(await activityMail.mailNotice(poolWith(notice('4:2')), 3, steps), { said: 'settled' },
+      'a drop never mails');
+    assert.deepEqual(await activityMail.mailNotice(poolWith(notice('4:4')), 3, steps), { said: 'settled' });
+    assert.deepEqual(await activityMail.mailNotice(poolWith(notice('nonsense')), 3, steps), { said: 'settled' });
+    assert.equal(sent.length, count, 'only the rise was sent');
+    assert.equal(handled.length, 4, 'each is marked handled');
+  } finally {
+    activityMail.emailIfNoPush = real;
+    activityMail.init(null);
+  }
+});
+
 test('the button opens the bot\'s chat for a build, the project otherwise', () => {
   assert.match(activityMail.openUrl({ appSlug: 'run-club', conversationId: 12 }), /\/#messages\/12$/);
   assert.match(activityMail.openUrl({ appSlug: 'run-club' }), /\/app\/run-club$/);
@@ -121,7 +167,7 @@ test('activity mail has its own hourly budget, apart from sign-in codes', () => 
   // #4396 added a project you joined opening; the vote digest is not emailed
   // any more (#5794).
   assert.deepEqual([...rateLimit.ACTIVITY_KINDS].sort(),
-    ['build_ready', 'invite_activity', 'project_opened']);
+    ['app_slots_granted', 'build_ready', 'invite_activity', 'project_opened']);
   for (const kind of rateLimit.ACTIVITY_KINDS) assert.ok(rateLimit.RULES[kind], `${kind} is throttled`);
   // A full activity budget refuses activity mail…
   const full = rateLimit.decide({
@@ -131,6 +177,7 @@ test('activity mail has its own hourly budget, apart from sign-in codes', () => 
   // A vote digest notice is not one the notice-mail clock sends (#5794).
   assert.equal(activityMail.NOTICE_MAIL_KINDS.has('vote_digest'), false);
   assert.equal(activityMail.NOTICE_MAIL_KINDS.has('project_opened'), true, 'the one-off emails stay');
+  assert.equal(activityMail.NOTICE_MAIL_KINDS.has('app_quota_changed'), true, 'a slot grant owes its email (#7043)');
   // …and the mailer counts each budget on its own, choosing the cap by kind
   // (the waitlist reminders have one of their own too).
   const index = read('src/services/mail/index.js');

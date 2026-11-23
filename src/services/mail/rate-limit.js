@@ -74,6 +74,9 @@ const RULES = {
   invite_activity: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
   // #4396: a project opens once; a few a day across projects is plenty.
   project_opened: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
+  // #7043: an admin raising a person's app slots. A grant is rare; the
+  // minute gap collapses a double tap and four a day is a backstop.
+  app_slots_granted: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
   // Reminders to an admitted person who has not signed in
   // (services/waitlist-reminders.js): each goes to an address once, ever, by
   // a stamp on its waitlist row. These are the backstop behind that stamp,
@@ -87,7 +90,7 @@ const DEFAULT_MAX_PER_HOUR = 300;
 // WP-E: activity mail spends its OWN hourly budget, counted apart from every
 // other kind. The global cap above is shared with sign-in codes, and a busy
 // hour of "it's ready" mail must never be what stops somebody signing in.
-const ACTIVITY_KINDS = new Set(['build_ready', 'invite_activity', 'project_opened']);
+const ACTIVITY_KINDS = new Set(['build_ready', 'invite_activity', 'project_opened', 'app_slots_granted']);
 const ACTIVITY_MAX_PER_HOUR = 100;
 
 // The waitlist reminders spend a budget of their own too, for the same

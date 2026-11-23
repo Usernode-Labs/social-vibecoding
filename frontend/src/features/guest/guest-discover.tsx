@@ -211,7 +211,7 @@ export function Card({ app, eager, featured = false, lead = false }: {
           <ProjectLink
             slug={app.slug}
             data-guest-card-link=""
-            className="cm-card-name outline-none after:absolute after:inset-0 after:z-[1] after:content-['']"
+            className="cm-card-name inline-flex min-h-11 items-center outline-none after:absolute after:inset-0 after:z-[1] after:content-['']"
           >
             {app.name}
           </ProjectLink>
