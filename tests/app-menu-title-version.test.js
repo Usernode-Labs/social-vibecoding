@@ -118,25 +118,18 @@ test('Homeroom\'s line names the build this document loaded, not the newer one o
     message('agent:appContext.about.version.app', { version: 'b0b0b0b' }));
 });
 
-test('Go to community opens on Needs you while decisions wait on you, else on the hub (#5927 item 3)', () => {
-  assert.equal(ui.communityRowPlace(7), 'needs', 'the badge counts decisions, so the row opens on the list of them');
-  assert.equal(ui.communityRowPlace(1), 'needs');
-  assert.equal(ui.communityRowPlace(0), 'status', 'nothing waits: the hub');
-  assert.equal(ui.communityRowPlace(null), 'status', 'no figure (loading, offline): the hub');
-
+test('Go to community always opens the project hub, whatever the count (#7047)', () => {
   // The link the browser opens by itself (new tab, middle click) names the
-  // same place: Needs you's own address while the badge shows.
-  assert.equal(ui.communityRowHref('bread-bot', 3), '/app/bread-bot/workshop?ws=needs');
-  assert.equal(ui.communityRowHref('bread-bot', 0), '#app/bread-bot/dev/hub', 'the Hub\'s own address: a new tab lands where a tap does');
-  assert.equal(ui.communityRowHref('bread-bot', null), '#app/bread-bot/dev/hub');
-  assert.equal(ui.communityRowHref(null, 3), '#');
+  // hub's own address.
+  assert.equal(ui.communityRowHref('bread-bot'), '#app/bread-bot/dev/hub', 'the Hub\'s own address: a new tab lands where a tap does');
+  assert.equal(ui.communityRowHref(null), '#', 'no app, no address');
 
-  // Rendered closed (the prerender), there is no figure, so the hub's link.
+  // Rendered closed (the prerender), the link is the hub's.
   const html = renderSheet({ target: 'app', slug: 'bread-bot', name: 'Bread Bot' });
   assert.match(html, /id="app-menu-row-workshop"[^>]*href="#app\/bread-bot\/dev\/hub"/);
 });
 
-test('pressing Go to community: a plain click lands on its place, a modified one changes nothing here (#5927 item 3)', (t) => {
+test('pressing Go to community opens the hub: a plain click lands there, a modified one changes nothing here (#7047)', (t) => {
   const previousWindow = global.window;
   const realDismiss = ui.AppContext.dismissForNav;
   t.after(() => { global.window = previousWindow; ui.AppContext.dismissForNav = realDismiss; });
@@ -153,7 +146,7 @@ test('pressing Go to community: a plain click lands on its place, a modified one
     },
   };
   ui.AppContext.dismissForNav = () => { dismissed += 1; };
-  const press = (mods, owed) => {
+  const press = (mods) => {
     calls = []; dismissed = 0; location.hash = '#home';
     let prevented = false;
     const e = {
@@ -162,35 +155,31 @@ test('pressing Go to community: a plain click lands on its place, a modified one
       preventDefault() { prevented = true; },
       ...mods,
     };
-    ui.openCommunityRow(e, 'bread-bot', owed);
+    ui.openCommunityRow(e, 'bread-bot');
     return { calls, dismissed, prevented, hash: location.hash };
   };
 
-  const plain = press({}, 7);
-  assert.deepEqual(plain.calls, [['tab', 'bread-bot', 'needs']], 'a plain click opens the page on Needs you');
+  const plain = press({});
+  assert.deepEqual(plain.calls, [['hub', 'bread-bot']], 'a plain click opens the hub');
   assert.ok(plain.prevented, 'and follows the page address in place');
   assert.equal(plain.hash, '#app/bread-bot/workshop');
   assert.equal(plain.dismissed, 1);
 
-  const none = press({}, 0);
-  assert.deepEqual(none.calls, [['hub', 'bread-bot']], 'nothing waiting: the hub, as before');
-
   for (const mods of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
-    const r = press(mods, 7);
+    const r = press(mods);
     assert.deepEqual(r.calls, [], `${JSON.stringify(mods)}: this page's place is left alone`);
     assert.equal(r.prevented, false, 'the browser opens the link itself');
     assert.equal(r.hash, '#home');
     assert.equal(r.dismissed, 0, 'and the menu does not close under the browser while it reads the link');
   }
 
-  const taken = press({ defaultPrevented: true }, 7);
+  const taken = press({ defaultPrevented: true });
   assert.deepEqual(taken.calls, [], 'a click something else took changes nothing here either');
 });
 
 test('a modified click on Go to community: the real close waits until the browser has read the link (#5927 item 3)', async (t) => {
-  // Closing publishes `open: false` synchronously, which clears the badge's
-  // figure and so the row's Needs you address. The browser reads the link
-  // once the click handler returns, so nothing may publish before then.
+  // Closing publishes `open: false` synchronously, so nothing may publish
+  // before the browser has read the row's link.
   const previousWindow = global.window;
   const initial = { ...ui.appContextStore.get() };
   t.after(() => { global.window = previousWindow; ui.appContextStore.set(initial); });
@@ -202,17 +191,16 @@ test('a modified click on Go to community: the real close waits until the browse
   const off = ui.appContextStore.subscribe(() => published.push(ui.appContextStore.get().open));
   t.after(() => { if (typeof off === 'function') off(); });
 
-  const owed = 4;
   const e = {
     button: 0, metaKey: true, ctrlKey: false, shiftKey: false, altKey: false,
     defaultPrevented: false, nativeEvent: { defaultPrevented: false }, preventDefault() {},
   };
-  ui.openCommunityRow(e, 'bread-bot', owed);
-  // What the browser reads now: the menu is still open, so `owed` and the
-  // row's href are what they were when the person clicked.
+  ui.openCommunityRow(e, 'bread-bot');
+  // What the browser reads now: the menu is still open, so the row's href is
+  // what it was when the person clicked.
   assert.deepEqual(published, [], 'nothing published during the click');
   assert.equal(ui.AppContext.isOpen(), true);
-  assert.equal(ui.communityRowHref('bread-bot', owed), '/app/bread-bot/workshop?ws=needs');
+  assert.equal(ui.communityRowHref('bread-bot'), '#app/bread-bot/dev/hub');
 
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(ui.AppContext.isOpen(), false, 'and then the menu closes, through its own dismissal');
@@ -232,7 +220,7 @@ test('the put-off close belongs to its own opening: a reopen before the tick sta
   const cmdClick = () => ui.openCommunityRow({
     button: 0, metaKey: true, ctrlKey: false, shiftKey: false, altKey: false,
     defaultPrevented: false, nativeEvent: { defaultPrevented: false }, preventDefault() {},
-  }, 'bread-bot', 4);
+  }, 'bread-bot');
   const tick = () => new Promise((r) => setTimeout(r, 5));
   const listeners = ui.appContextStore.listenerCount();
 

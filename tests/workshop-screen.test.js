@@ -676,7 +676,7 @@ test('#needs is the Needs you page; #communities is the Communities tab\'s page,
   assert.match(page, /const needsTile = !kit && needs > 0 && !q && !editing;/);
   assert.match(page, /\{needsTile \? <NeedsTile count=\{needs\} \/> : null\}/);
   // The app menu keeps the SCOPED entrance, the project's own hub (#2761).
-  assert.match(sheetTsx, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/,
+  assert.match(sheetTsx, /communityRowHref\(slug: string \| null \| undefined\): string \{[\s\S]*?return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#';[\s\S]*?href=\{communityRowHref\(slug\)\}/,
     "and the app's menu links out to it, scoped");
   assert.match(sheetTsx, /id="app-menu-row-workshop"/, 'as a row');
   assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');
