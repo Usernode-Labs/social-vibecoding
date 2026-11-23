@@ -156,6 +156,13 @@ test('the channel is a hub card at its old address; Join asks under its button a
     'it hangs from the button');
   assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ inset-inline-start: auto; inset-inline-end: -6px; \}/,
     'from its right edge in the hero, where Join ends the actions row (#852)');
+  // #7060: on a phone Join sits right of the screen's middle, so a popup
+  // centred under it ran off the right edge. It lines up with the card's
+  // actions row instead, and the arrow is drawn by Join itself.
+  assert.match(css, /@media \(max-width: 767px\) \{\s*\.dev-ws-project-card \[data-project-card-actions\] \{ position: relative; \}[\s\S]*?\.dev-ws-project-card \.dev-ws-join-pop \{[^}]*inset-inline-end: 0;[^}]*width: min\(300px, 100%\);/,
+    'the phone popup ends at the card\'s actions row and is never wider than it');
+  assert.match(css, /\.dev-ws-project-card \[data-ws-community-join\]\[aria-expanded="true"\]::after \{[^}]*top: calc\(100% \+ 4px\)[^}]*inset-inline-start: calc\(50% - 7px\)/,
+    'and its arrow hangs from the Join button, centred whatever the label says');
   // #4045: Leave is a row of the hub's ⋯ (it was the Joined pill), through
   // the same call Discover makes, and never the creator's.
   assert.match(src, /home\.setMembership\(slug, false\)/, 'Leave goes through the same call Discover makes');

@@ -23324,13 +23324,35 @@ button.dev-ws-recent-card {
 .dev-ws-project-card .dev-ws-join-anchor { margin-inline-start: 0; }
 .dev-ws-project-card .dev-ws-join-pop {
   color: var(--text-primary);
-  /* Join is mid-row here, not at the row's end: the popup hangs centred
-     under it, so on a phone it stays on the screen. */
+  /* On a tablet or desktop Join is mid-row, and the popup hangs centred
+     under it; a phone hangs it from the row's end instead (#7060, below). */
   inset-inline-end: auto; inset-inline-start: 50%;
   margin-inline-start: calc(min(300px, var(--platform-float-w) - 56px) / -2);
   transform-origin: 50% 0;
 }
 .dev-ws-project-card .dev-ws-join-pop::before { inset-inline-end: auto; inset-inline-start: calc(50% - 7px); }
+/* #7060: on a phone, Join sits right of the screen's middle, so a popup
+   centred under it ran off the right edge. The popup is positioned from the
+   card's actions row instead: it ends where the row ends and is never wider
+   than it, so "Join this project?" fits whole. The arrow moves onto the Join
+   button itself, so it stays over Join whatever the label's width. */
+@media (max-width: 767px) {
+  .dev-ws-project-card [data-project-card-actions] { position: relative; }
+  .dev-ws-project-card .dev-ws-join-anchor { position: static; }
+  .dev-ws-project-card .dev-ws-join-pop {
+    inset-inline-start: auto; inset-inline-end: 0; margin-inline-start: 0;
+    width: min(300px, 100%);
+    transform-origin: calc(100% - 32px) 0;
+  }
+  .dev-ws-project-card .dev-ws-join-pop::before { content: none; }
+  .dev-ws-project-card [data-ws-community-join][aria-expanded="true"] { position: relative; z-index: 8; }
+  .dev-ws-project-card [data-ws-community-join][aria-expanded="true"]::after {
+    content: ""; position: absolute; top: calc(100% + 4px); inset-inline-start: calc(50% - 7px);
+    width: 14px; height: 14px; background: var(--dc-sheet);
+    border-inline-start: 1px solid var(--app-sheet-line); border-top: 1px solid var(--app-sheet-line);
+    transform: rotate(45deg); pointer-events: none;
+  }
+}
 .dev-ws-project-card:has(#dev-plus-menu:not(.hidden)) { position: relative; z-index: 5; }
 .dev-ws-plus-btn.dev-ws-plus-btn-card { width: 50px; height: 50px; }
 .dev-ws-plus-btn.dev-ws-plus-btn-card .dev-ws-plus-glyph { width: 22px; height: 22px; }
