@@ -1309,6 +1309,23 @@ function proposalRefSentence(proposalId, prNumber) {
   return ref ? ref.charAt(0).toUpperCase() + ref.slice(1) : 'This proposal';
 }
 
+// WHICH ADDRESS A PERSON IS GIVEN (23 Nov 2026). An answer about a proposal
+// carries two: `link`, its page on Homeroom, where somebody reads it and
+// votes, and `prUrl`, the pull request on the git host. The output schema
+// says so on `link` ("Link people here, never to prUrl"), but an agent acts
+// on the RESULT, which carries the two addresses side by side and none of
+// the schema's words, and an agent used to pull requests reaches for prUrl:
+// one reported a new proposal to its user with the GitHub address, where
+// that user can neither read the summary nor vote. So the rule travels in
+// nextStep, with the address in it, on every answer that has both. Nothing
+// is added where there is no pull request: there is only one address then.
+function personLinkStep(link, prUrl) {
+  return link && prUrl
+    ? ` When you tell the user about it, link its page on Homeroom, ${link}: that is where they read it and vote. `
+      + 'Do not link the GitHub pull request (prUrl).'
+    : '';
+}
+
 // A promote answered 202: accepted, and GitHub has not answered yet. It goes
 // up without another ask, or is refused, and get_proposal reports which.
 function goingUpSentence(ref) {
@@ -1718,6 +1735,8 @@ function shapeProposal(session, origin, viewerId = null) {
   const checks = shapeChecks(session);
   const step = shapeNextStep(session, checks, viewerId);
   const skipStep = shotsSkipStep(session, shapeBranch(session));
+  // The page a person reads and votes on it at; prUrl is the git host's.
+  const link = session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null;
   return {
     proposalId: session.id,
     appSlug: session.app_slug || null,
@@ -1738,15 +1757,16 @@ function shapeProposal(session, origin, viewerId = null) {
     linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
-    // The page a person reads and votes on it at; prUrl is the git host's.
-    link: session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null,
+    link,
     stagingUrl: session.staging_url || null,
     checkState: session.check_state || null,
     checks,
     // Where the head lives and who may move it. Everything an agent needs to
     // revise this proposal without guessing.
     branch: shapeBranch(session),
-    nextStep: skipStep ? `${step} ${skipStep}` : step,
+    // The address for the person comes straight after what to do, ahead of
+    // the note about shots that could not be taken, which only ever follows.
+    nextStep: step + personLinkStep(link, session.pr_url) + (skipStep ? ` ${skipStep}` : ''),
     // A true value says capture used the app root because neither an explicit
     // route nor a matching named scenario supplied something more specific.
     captureDefaultedToRoot: detail.media !== false
@@ -2042,7 +2062,14 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
     behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
     mergeability: session.mergeability || null,
-    nextStep: changeNextStep(session, checks, liveState, kind),
+    // An outside agent reports a change to its user from this answer as
+    // readily as from get_proposal, so it carries the same sentence about
+    // which address to give. Homeroom bot links changes its own way
+    // (homeroom-bot-voice.js changeMd) and is told nothing new.
+    nextStep: changeNextStep(session, checks, liveState, kind)
+      + (kind === 'external'
+        ? personLinkStep(session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null, session.pr_url)
+        : ''),
     webPath: session.app_slug ? changeWebPath(origin, session.app_slug, session.id) : null,
   };
 }
@@ -6800,7 +6827,9 @@ function registerTools(server, ctx) {
         nextStep: attempt.status === 202 ? goingUpSentence(proposalRefSentence(proposalId, promotedPr))
           : `${proposalRefSentence(proposalId, promotedPr)} is now UP FOR THE GROUP'S VOTE as it stood: `
           + 'nothing was pushed and no code moved. Checks and the staging preview build automatically where '
-          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.',
+          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.'
+          + personLinkStep(promotedSlug ? changeLink(origin, promotedSlug, proposalId, promotedPr) : null,
+            typeof promotedBody.prUrl === 'string' ? promotedBody.prUrl : ((row && row.pr_url) || null)),
       });
     }
     // #4263: or a patch, with the taskId of the proposal's update work order.
@@ -7233,7 +7262,9 @@ function registerTools(server, ctx) {
           ? changeWebPath(origin, result.appSlug, result.proposalId)
           : appWebPath(origin, result.appSlug),
         nextStep: (result.unchanged ? resubmitStep : landedStep)
-          + rejectedNote + titleNote + descNote + summaryNote + proposeNote,
+          + rejectedNote + titleNote + descNote + summaryNote + proposeNote
+          + personLinkStep(result.proposalId && result.appSlug
+            ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null, result.prUrl),
       });
     }
 
@@ -7323,7 +7354,9 @@ function registerTools(server, ctx) {
         nextStep: 'That work was already submitted — most likely the coding agent submitted it itself through '
           + 'its own connector. Nothing was duplicated. It is up for the group\'s vote'
           + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}; `
-          + 'use get_proposal to follow it.',
+          + 'use get_proposal to follow it.'
+          + personLinkStep(result.proposalId && result.appSlug
+            ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null, result.prUrl),
       });
     }
 
@@ -7372,6 +7405,8 @@ function registerTools(server, ctx) {
         // Submitting is never its author's yes (governance-rules.ts,
         // "PROPOSING IS NOT A YES"), so say where theirs is cast.
         + ' Submitting it is not a vote: tell the user their own yes counts once they tap Yes on it on Homeroom.'
+        + personLinkStep(result.proposalId && result.appSlug
+          ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null, result.prUrl)
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
     });
