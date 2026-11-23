@@ -76,7 +76,7 @@ function loadPlan(dir = directory,
   if (manifest.version !== 1 || !Array.isArray(manifest.migrations) || !manifest.migrations.length) {
     throw new Error('Invalid schema migration manifest');
   }
-  const prefix = [];
+  const prefix = crypto.createHash('sha256');
   const seen = new Set();
   const migrations = manifest.migrations.map((entry, index) => {
     if (typeof entry.id !== 'string' || !validId(entry.id, index) || seen.has(entry.id)
@@ -91,8 +91,9 @@ function loadPlan(dir = directory,
     if (!transactional(sql)) {
       throw new Error(`Schema migration must be transactional: ${entry.id}`);
     }
-    prefix.push(sql);
-    if (digest(prefix.join('\n')) !== entry.schemaSha256) {
+    if (index > 0) prefix.update('\n');
+    prefix.update(sql);
+    if (prefix.copy().digest('hex') !== entry.schemaSha256) {
       throw new Error(`Schema migration history checksum mismatch: ${entry.id}`);
     }
     return { ...entry, sql };

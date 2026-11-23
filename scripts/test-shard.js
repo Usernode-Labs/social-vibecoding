@@ -162,6 +162,12 @@ async function main() {
     process.stdout.write(`# shard ${shard.k}/${shard.n}: no time-balanced plan (${err.message}); running node's --test-shard\n`);
     return runFallback(pkg, shard, files);
   }
+  // Only mark direct children in this checkout. A test that launches another
+  // runner, or the standalone node --test entry point, validates its own SQL.
+  if (ROOT === path.resolve(__dirname, '..') && opts.requires.includes('./tests/lib/test-net.js')) {
+    const schema = require('../src/db/schema-source').ensureSchema();
+    process.env.TEST_SHARD_VALIDATED_SCHEMA = `${process.pid}:${schema}`;
+  }
   const mine = shards[shard.k - 1];
   const id = shardPlan.planId(shards);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-shard-'));
