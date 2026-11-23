@@ -269,7 +269,10 @@ export function CommunitiesScreen() {
   );
 
   return (
-    <main ref={screenRef} id="communities-screen" className="hidden flex-1 overflow-y-auto" data-page-bounce="">
+    <main ref={screenRef} id="communities-screen" className="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce="">
+      {/* `platform-safe-scroll` (phone review S15, 23 Nov 2026): the page's
+          foot clears the tab bar and the Resume strip above it, as every
+          other page's does; without it the last rows ran under both. */}
       <div id="communities-body" className="home-column communities-page" data-editing={editing ? '' : undefined}>
         {/* The search row, from 768px (app.css): the field, and in the looks
             that draw Home with the kit, New community as the page's one

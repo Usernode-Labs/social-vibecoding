@@ -31930,6 +31930,44 @@ const AppView = {
     });
   },
 
+  // PURE. The frame's rect with its top moved down to the platform header's
+  // foot where the header lies over it (phone review #74, 23 Nov 2026). The
+  // header overlaps the frame by its 8px rounded foot (`-mb-2`), and on an
+  // iPhone Duo held upright the header IS the system's top band, 80px
+  // beside the clock, so the frame started 7px inside the band and the app
+  // was told a 7px top inset for a strip the header already covers. What
+  // the header covers is not the app's to pad. A header that does not
+  // reach over the frame's top (hidden, chromeless, beside it) changes
+  // nothing; neither does a header taller than the frame, which cannot be.
+  _frameRectBelowHeader(rect, header) {
+    if (!rect || !header) return rect;
+    const top = Number(rect.top);
+    const bottom = Number(rect.bottom);
+    const foot = Number(header.bottom);
+    if (!Number.isFinite(top) || !Number.isFinite(bottom) || !Number.isFinite(foot)) return rect;
+    if (!(Number(header.height) > 0) || !(Number(header.width) > 0)) return rect;
+    if (!(Number(header.top) <= top) || !(foot > top) || !(foot < bottom)) return rect;
+    // It must span the frame: a header beside a desktop frame covers none of it.
+    if (!(Number(header.left) <= Number(rect.left) + 1) || !(Number(header.right) >= Number(rect.right) - 1)) return rect;
+    return {
+      top: foot,
+      bottom,
+      left: rect.left,
+      right: rect.right,
+      width: rect.width,
+      height: bottom - foot,
+    };
+  },
+
+  // The platform header's rect while it is on screen, else null.
+  _platformHeaderRect() {
+    if (typeof document === 'undefined') return null;
+    const header = document.getElementById('platform-header');
+    if (!header || header.classList.contains('hidden') || typeof header.getBoundingClientRect !== 'function') return null;
+    const r = header.getBoundingClientRect();
+    return r.width && r.height ? r : null;
+  },
+
   _frameInsets(raw, rect, viewport) {
     const zero = AppView._zeroInsets();
     if (!raw || !rect || !viewport) return zero;
@@ -32079,6 +32117,8 @@ const AppView = {
     // which would read as "flush against every edge" and forward the full
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
+    // The part of the frame the platform header does not cover (#74).
+    const visible = AppView._frameRectBelowHeader(rect, AppView._platformHeaderRect());
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     // The keyboard is read once and used twice: beside the edges below, and
     // in the root-bottom decision (#4545) as its guard.
@@ -32090,11 +32130,11 @@ const AppView = {
       androidStandalone: AppView._isAndroidStandalone(),
       keyboard,
     });
-    const insets = AppView._frameInsets(raw, rect, viewport);
+    const insets = AppView._frameInsets(raw, visible, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, keyboard);
+    insets.keyboard = AppView._frameKeyboardInset(visible, viewport, keyboard);
     return insets;
   },
 
