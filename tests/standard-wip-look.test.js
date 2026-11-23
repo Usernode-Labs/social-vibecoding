@@ -526,7 +526,9 @@ test('open, You\'s row ends short of Settings, and on Settings only Settings is 
 
   // On Settings, You's tab keeps `aria-current` (it is Settings' section), and
   // its row steps back to rest: no ground, a resting row's ink and weight.
-  const GIVE = `${OPEN}:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]`;
+  // Open or folded (phone review #80): the folded strip stacks Settings'
+  // square over You's tile, and both were lit.
+  const GIVE = `${MENU_SCOPE} #platform-tabs:has(> .platform-rail-settings[aria-current="page"]) #platform-tab-me[aria-current="page"]`;
   const rest = all.find((r) => r.selector === GIVE);
   assert.ok(rest, 'You\'s row gives up its light while Settings is current');
   assert.equal(decl(rest.body, 'background'), 'transparent', 'the lit-row rule would otherwise paint it');
@@ -550,8 +552,8 @@ test('open, You\'s row ends short of Settings, and on Settings only Settings is 
   assert.ok(lit, 'the lit-row rule lights Settings');
   assert.equal(decl(lit.body, 'background'), 'var(--wip-nav-on-bg)');
   assert.ok(block.indexOf(GIVE) > block.indexOf(lit.selector), 'after the lit-row rule, which it out-ranks');
-  // A wide display's rules, for the open menu: folded, the strip keeps its own
-  // drawing, and the phone's bar has no Settings.
+  // A wide display's rules, for the open menu and the folded strip alike;
+  // the phone's bar has no Settings.
   assert.ok(block.includes(`@media (min-width: 768px) {\n  ${GIVE} {`), 'the give-way rules sit in a wide-display group of the menu block');
 });
 

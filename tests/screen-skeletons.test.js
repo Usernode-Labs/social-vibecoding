@@ -123,9 +123,9 @@ test('the placeholders borrow the REAL row classes, so they cannot drift', () =>
     'standings: CARD, the white card the table itself sits on (#4869)');
   assert.match(STANDINGS, /className=\{`\$\{RULE\} px-4 py-3 flex items-center gap-3`\}/,
     'and RULE, the hairline between the real rows');
-  assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} p-4 mb-3/,
+  assert.match(PROFILE, /\$\{PLANE_CARD\} p-4 mb-3/,
     'profile: the identity card’s face, verbatim (the plane colour, like Discover)');
-  assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} px-2 py-3/,
+  assert.match(PROFILE, /\$\{PLANE_CARD\} px-2 py-3/,
     'and the stat cards’ face');
 });
 

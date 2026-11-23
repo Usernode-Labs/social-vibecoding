@@ -293,6 +293,6 @@ test('Y03: a zero stat card says nothing: hidden, kept in the DOM', () => {
   assert.deepEqual(statsView(SUMMARY).map((s) => !!s.zero), [false, false]);
   assert.deepEqual(statsView(null).map((s) => !!s.zero), [false, false], 'a dash is not a zero');
   const view = read('frontend/src/features/profile/profile-view.tsx');
-  assert.match(view, /className=\{`rounded-2xl \$\{PLANE_FILL\} px-2 py-3 text-center\$\{stat\.zero \? ' hidden' : ''\}`\}/);
+  assert.match(view, /className=\{`\$\{PLANE_CARD\} px-2 py-3 text-center\$\{stat\.zero \? ' hidden' : ''\}`\}/);
   assert.match(view, /const SHOWN_GRID = \['hidden', 'grid grid-cols-1 gap-2 mb-2', 'grid grid-cols-2 gap-2 mb-2', 'grid grid-cols-3 gap-2 mb-2'\];/);
 });

@@ -744,23 +744,23 @@
     "description": "Shown in place of a participant's activities under the Standings table when the row carries nothing to look them up by."
   },
   "drill.epoch.heading": {
-    "text": "Epoch breakdown",
+    "text": "Blocks, round by round",
     "description": "Heading in a participant's details under the Standings table, over their block production epoch by epoch. An epoch is a fixed period of the network's time."
   },
   "drill.epoch.loading": {
-    "text": "Loading epoch breakdown…",
+    "text": "Loading blocks…",
     "description": "Shown in a participant's details under the Standings table while their epoch-by-epoch record is being fetched."
   },
   "drill.epoch.empty": {
-    "text": "No epoch data for this event.",
+    "text": "No blocks recorded for this event.",
     "description": "Shown in a participant's details under the Standings table when there is no epoch-by-epoch record."
   },
   "drill.epoch.failed": {
-    "text": "Could not load the epoch breakdown.",
+    "text": "Could not load the blocks.",
     "description": "Error shown in a participant's details under the Standings table when their epoch-by-epoch record could not be fetched and the server gave no reason."
   },
   "drill.epoch.perEvent": {
-    "text": "The epoch breakdown is per event. Pick a single event above to see it.",
+    "text": "Blocks are counted for one event at a time. Pick a single event above to see them.",
     "description": "Shown in a participant's details under the Standings table when the whole season is chosen. \"Above\" is the event drop-down."
   },
   "drill.epoch.noWallet": {
@@ -768,7 +768,7 @@
     "description": "Shown in place of the epoch-by-epoch record under the Standings table when the participant has no wallet address."
   },
   "drill.epoch.column.epoch": {
-    "text": "Epoch",
+    "text": "Round",
     "description": "Column heading in the epoch-by-epoch table of a participant's details: the epoch's number."
   },
   "drill.epoch.column.wonSlots": {
