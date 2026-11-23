@@ -8429,6 +8429,10 @@ html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; 
    (asked 21 Nov 2026). Two ids, so it outranks the BUTTONS block's shape. */
 html:not([data-skin]) #communities-screen #communities-new-top { font-family: var(--wip-font); }
 html:not([data-skin]) #communities-search-input { border-radius: var(--wip-radius-inner); }
+/* Beside New community a phone leaves this box about 100px of words, and its
+   prompt was cut mid-word ("Search your com"), as Home's was ("Search apps
+   and co"). Both end in an ellipsis. */
+html:not([data-skin]) :is(#communities-search-input, #home-search-input) { text-overflow: ellipsis; }
 /* A group's label is Home's: one row gap above every group after the first, the config's label tokens. */
 html:not([data-skin]) #communities-screen section ~ section > .home-area-label { padding-top: var(--wip-row-gap); }
 html:not([data-skin]) #communities-screen .home-area-label > span:first-child {
