@@ -1580,8 +1580,8 @@
     "description": "Placeholder in the empty note box on the sheet for sending an invite link to a community."
   },
   "firstSession.invite.noteHint": {
-    "text": "When you share, your note also goes in the group chat as your first message.",
-    "description": "Hint under the note box on the sheet for sending an invite link to a community: the note is also posted in the community's chat."
+    "text": "Your note goes with the link. When you share or copy it, it also goes in the group chat as your first message.",
+    "description": "Hint under the note box on the sheet for sending an invite link to a community: the note is saved onto the link, and a note they wrote is also posted in the community's chat whether they shared the link or copied it."
   },
   "firstSession.invite.shareLink": {
     "text": "Share link",
