@@ -215,6 +215,8 @@ function settingsOf(p = {}) {
     verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : [],
     verifiedGrandfather: s.verifiedGrandfather !== false,
     verifiedSince: s.verifiedSince || null,
+    // How old both accounts must be for github_x_age, in days.
+    verifiedMinAccountAgeDays: num(s.verifiedMinAccountAgeDays),
     // The automatic switch to verified accounts only
     // (services/homeroom-bot-verified-auto.js): armed or not, its thresholds,
     // the figures its last sweep read (read-only) and when and why it last
@@ -632,7 +634,7 @@ const SETTINGS_FIELDS = Object.freeze([
   'continueReads', 'liveBuildStream',
   // #6632: who the bot works for (everyone let in, or verified accounts),
   // which signals count, and whether earlier members keep it.
-  'worksFor', 'verifiedSignals', 'verifiedGrandfather',
+  'worksFor', 'verifiedSignals', 'verifiedGrandfather', 'verifiedMinAccountAgeDays',
   // The automatic switch to verified accounts only, and its two thresholds.
   'verifiedAuto', 'verifiedAutoUsers', 'verifiedAutoSpendCents',
   // Homeroom bot parity, P8: pictures' model and weekly cap.
