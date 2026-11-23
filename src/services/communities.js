@@ -126,6 +126,15 @@ async function join(pool, app, userId) {
       [app.id, userId]
     );
   }
+  // #7027: joining is accepting an invitation to be here, so a waiting
+  // invitation's bell row stops being unread. It is only ever the bell: the
+  // app_collaborators row stays 'invited', so an invitation to BUILD is
+  // still waiting for Accept. Best-effort — a cleanup never fails the join.
+  try {
+    const notifications = require('./notifications');
+    const marked = await notifications.markJoinedInviteNotificationsRead(pool, userId, app.id);
+    if (marked) require('./ws').pushNotificationToUser(userId, { type: 'notifications_changed' });
+  } catch {}
 }
 
 // Leave. One transaction, three rows: the membership, the collaborator row

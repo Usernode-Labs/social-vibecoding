@@ -4923,6 +4923,14 @@
     "text": "Ask the group to close this request. If they approve, it's closed",
     "description": "Tooltip of the \"Propose to close\" row in a request's ⋯ menu."
   },
+  "issue.menu.copyLink": {
+    "text": "Copy link",
+    "description": "Row in the ⋯ menu of a request's card and page: copies the address of the request's page to the clipboard."
+  },
+  "issue.menu.copyLinkDone": {
+    "text": "Link copied",
+    "description": "Brief notice after pressing Copy link in a request's ⋯ menu: the link is on the clipboard."
+  },
   "issue.menu.share": {
     "text": "Share to…",
     "description": "Row in the ⋯ menu of a request's card: opens the picker of chats and discussions to send a link to this request to. \"Share\" is a verb. Keep the ellipsis."
