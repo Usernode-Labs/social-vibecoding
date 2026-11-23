@@ -52,7 +52,7 @@ import { InboxToEnd } from './inbox-to-end';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
-import { messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
+import { chatBarStore, messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, initials, UserAvatar, senderName, swatchFor } from './format';
@@ -419,6 +419,12 @@ const NEW_CHOICES = [
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
+/** The kit's own answer to "is this a touch screen", as its sheets use it. */
+function isTouchScreen(): boolean {
+  const pu = typeof window !== 'undefined' ? (window as any).PlatformUI : null;
+  return !!(pu && typeof pu.isTouch === 'function' && pu.isTouch());
+}
+
 function startNew(choice: NewChoice) {
   // DM and group are the create dialog, opened on the matching tab.
   openDialog('messagesCreate', choice);
@@ -471,8 +477,15 @@ function MessagesGuide() {
  * The popover is placed and dismissed exactly as the vote picker's desktop
  * home is — lib/anchor-popover.ts and lib/popover-dismiss.ts are that code,
  * shared — and portalled to
- * the body so the list's own scroller cannot clip it. On touch it is the
- * kit's action sheet instead, which is what a short menu is on a phone.
+ * the body so the list's own scroller cannot clip it.
+ *
+ * ON TOUCH IT OPENS THE DIALOG ITSELF (phone review #124, 23 Nov 2026). It
+ * raised the kit's action sheet, Direct message or Group chat, and the
+ * dialog that followed opened on a Direct | Group switch for the same
+ * choice: one question asked twice, the first time in a sheet unlike any
+ * other in the app. A tap opens the dialog on Direct, and its switch is the
+ * one place the choice is made. A pointer keeps the menu (#2778), whose rows
+ * also say what each is for.
  *
  * Nothing is rendered until the button is pressed, so the prerendered
  * document holds the button alone and hydration has nothing to disagree
@@ -492,15 +505,16 @@ function NewMessageButton() {
   const shut = () => setRect(null);
   useAnchoredDismiss(open, [btnRef, popRef], shut);
   const menuKeys = useMenuKeyboard(open, popRef, btnRef, shut);
+  // What the press opens, for a screen reader: read after hydration, so the
+  // prerender and the first render agree on the menu.
+  const [touch, setTouch] = useState(false);
+  useEffect(() => { setTouch(isTouchScreen()); }, []);
 
   const toggle = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (open) { shut(); return; }
-    const pu = (window as any).PlatformUI;
-    if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
-      pu.actionSheet({
-        actions: NEW_CHOICES.map((item) => ({ label: t(item.label), handler: () => startNew(item.key) })),
-      });
+    if (isTouchScreen()) {
+      startNew('direct');
       return;
     }
     setRect(anchorRectOf(event.currentTarget));
@@ -520,7 +534,7 @@ function NewMessageButton() {
         type="button"
         id="messages-new"
         className="messages-new-btn"
-        aria-haspopup="menu"
+        aria-haspopup={touch ? 'dialog' : 'menu'}
         aria-expanded={open ? 'true' : 'false'}
         aria-label={t('messages:inbox.new.button')}
         title={t('messages:inbox.new.button')}
@@ -1139,6 +1153,13 @@ function ThreadHeader() {
   // itself here, as the tour's open-item pane does at any width (s17).
   const frame = isFrameSkin(useLiveSkin());
   const inDrawer = drawerOn && !frame;
+  // PHONE REVIEW #131 (23 Nov 2026): on the drawer the bar names the
+  // conversation, and its discs go up beside the bell (the host the bar
+  // draws, ../nav-drawer/header-drawer.tsx ChatBarSlot). Left in the page
+  // they floated under the bar over the first message's time, and the bar's
+  // name and its line were cut by four controls that were not the chat's.
+  const { host: barHost } = useStoreState(chatBarStore);
+  const discsInBar = inDrawer && !!barHost;
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
@@ -1154,7 +1175,19 @@ function ThreadHeader() {
   // the disc's label and its press come from that one value.
   const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
   const closeMenu = () => setMenu(false);
-  useDismiss(menu, [menuWrapRef], closeMenu);
+  // The menu itself counts as inside: in the bar it is portalled to the page.
+  useDismiss(menu, [menuWrapRef, menuRef], closeMenu);
+  // #131: where the menu drops from the ⋯ in the bar. The bar clips what it
+  // holds to its rounded foot, so there the menu is laid over the page,
+  // fixed under the disc, rather than inside it.
+  const [menuAt, setMenuAt] = useState<{ top: number; end: number } | null>(null);
+  const toggleMenu = () => {
+    if (!menu && discsInBar && menuBtnRef.current) {
+      const box = menuBtnRef.current.getBoundingClientRect();
+      setMenuAt({ top: box.bottom + 6, end: dirSign() === -1 ? box.left : window.innerWidth - box.right });
+    }
+    setMenu((open) => !open);
+  };
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
   // Another conversation is another header: a menu left open does not follow.
   useEffect(() => { setMenu(false); }, [active?.id]);
@@ -1238,6 +1271,43 @@ function ThreadHeader() {
   // the list draws (GroupFaces), not one of them, so the group is one
   // picture in both places.
   const groupFaces = active.kind === 'group' && !invited;
+  const inBarMenu = (node: ReactNode) => (discsInBar && typeof document !== 'undefined' ? createPortal(node, document.body) : node);
+  const discs = (
+    <>
+      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
+      <FullWidthToggle />
+      <div className="relative" ref={menuWrapRef}>
+        <button ref={menuBtnRef} type="button" onClick={toggleMenu} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
+        {menu ? inBarMenu(
+          <div
+            ref={menuRef}
+            className={discsInBar ? 'messages-thread-menu messages-thread-menu-bar' : 'messages-thread-menu'}
+            style={discsInBar && menuAt ? { top: `${menuAt.top}px`, insetInlineEnd: `${menuAt.end}px` } : undefined}
+            role="menu"
+            aria-label={t('messages:header.actions')}
+            onKeyDown={menuKeys.onKeyDown}
+          >
+            {active.kind === 'group' && active.canManage
+              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>{t('messages:header.menu.rename')}</button>
+              : null}
+            {active.kind === 'group'
+              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>{t('messages:header.menu.members')}</button>
+              : withBot
+                ? <button type="button" role="menuitem" data-bot-feedback="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); (window as unknown as { App?: { openFeedbackModal?: () => void } }).App?.openFeedbackModal?.(); }}>{t('messages:header.menu.botFeedback')}</button>
+                : active.kind === 'direct'
+                  ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
+                    : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
+                      : t('messages:header.menu.block', { name: senderName(peer, { bare: active.kind === 'direct' }) })}</button>
+                  : null}
+            {peer && !withBot ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer, { bare: active.kind === 'direct' }), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
+            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
+          </div>,
+        ) : null}
+      </div>
+    </>
+  );
+  // The page then draws no title row at all: the bar has the name and the discs.
+  if (discsInBar && barHost) return createPortal(discs, barHost);
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
@@ -1261,29 +1331,7 @@ function ThreadHeader() {
         <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
       </button>
       )}
-      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
-      <FullWidthToggle />
-      <div className="relative" ref={menuWrapRef}>
-        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
-        {menu ? (
-          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label={t('messages:header.actions')} onKeyDown={menuKeys.onKeyDown}>
-            {active.kind === 'group' && active.canManage
-              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>{t('messages:header.menu.rename')}</button>
-              : null}
-            {active.kind === 'group'
-              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>{t('messages:header.menu.members')}</button>
-              : withBot
-                ? <button type="button" role="menuitem" data-bot-feedback="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); (window as unknown as { App?: { openFeedbackModal?: () => void } }).App?.openFeedbackModal?.(); }}>{t('messages:header.menu.botFeedback')}</button>
-                : active.kind === 'direct'
-                  ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
-                    : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
-                      : t('messages:header.menu.block', { name: senderName(peer, { bare: active.kind === 'direct' }) })}</button>
-                  : null}
-            {peer && !withBot ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer, { bare: active.kind === 'direct' }), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
-            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
-          </div>
-        ) : null}
-      </div>
+      {discs}
     </header>
   );
 }

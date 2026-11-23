@@ -142,7 +142,7 @@ test('the "+" sits beside the search, and opens a choice rather than guessing (#
   const button = SCREEN.slice(SCREEN.indexOf('function NewMessageButton'));
   const fn = button.slice(0, button.indexOf('\n}\n'));
   assert.match(fn, /id="messages-new"/);
-  assert.match(fn, /aria-haspopup="menu"/);
+  assert.match(fn, /aria-haspopup=\{touch \? 'dialog' : 'menu'\}/, 'a menu for a pointer, the dialog itself on touch');
   // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
   // the button's rect, dismissal on outside click / Escape / scroll / resize.
   assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
@@ -150,7 +150,11 @@ test('the "+" sits beside the search, and opens a choice rather than guessing (#
   assert.match(fn, /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* NEW_CHOICES\.length \+ 2 \}/);
   assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
   assert.match(fn, /role="menu"/);
-  assert.match(fn, /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
+  // Phone review #124 (23 Nov 2026): on touch the "+" opens the create
+  // dialog on Direct, whose switch is the one place the kind is chosen; the
+  // kit's action sheet asked the same question first.
+  assert.doesNotMatch(fn, /actionSheet/, 'no sheet asks Direct or Group before the dialog does');
+  assert.match(fn, /if \(isTouchScreen\(\)\) \{\n\s*startNew\('direct'\);\n\s*return;\n\s*\}/);
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(card, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/, 'the vote picker reads the same helper');
   assert.match(card, /placeUnderAnchor\(rect, \{ width: w, height: h \}/);

@@ -1200,6 +1200,14 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-grouped:hover .messages-message-gutter { visibility: visible; }
 @media (hover: none) {
   .messages-message-gutter { visibility: visible; }
+  /* PHONE REVIEW #57 (23 Nov 2026): IN A CONVERSATION'S BUBBLES THE RUN'S
+     HEAD CARRIES THE TIME, on touch. Shown on every continuation it was a
+     second clock in a second format beside the head's ("Nov 18, 12:05 AM"
+     over "12:05 AM"), hard against both screen edges. Their side's column
+     stays, empty, so the bubble keeps its line under the first; yours has
+     no face to line up with, so it goes, and your bubbles keep one edge. */
+  .messages-message-bubble > .messages-message-gutter { visibility: hidden; }
+  .messages-message-bubble.messages-message-self > .messages-message-gutter { display: none; }
 }
 
 /* ── A conversation has sides (#5680) ───────────────────────────────────
@@ -1538,6 +1546,23 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 
 /* The phone's sheet: a scrim, and a sheet rising from the bottom edge. */
 .msgx-sheet-layer { position: fixed; z-index: 2100; inset: 0; }
+/* PHONE REVIEW #20 (23 Nov 2026): a hold opens this sheet and nothing else.
+   iOS also selected the word under the finger and laid its own Copy · Look
+   Up · Translate callout over the sheet's "Reply in thread", with handles
+   on a word in it. So the system's long press is off on the row while a
+   finger is held on it (useLongPress sets `data-press-armed`, and takes it
+   away on the lift, so text can be selected as before) and on the sheet
+   itself, whose rows are buttons; a field in it (the emoji search) keeps
+   its text. */
+[data-press-armed],
+[data-press-armed] *,
+.msgx-sheet-layer,
+.msgx-sheet-layer * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.msgx-sheet-layer :is(input, textarea) { -webkit-user-select: text; user-select: text; }
 .msgx-sheet-scrim { position: absolute; inset: 0; border: 0; background: rgba(0, 0, 0, 0.32); }
 .msgx-sheet {
   position: absolute;
@@ -2626,6 +2651,14 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   .messages-invite-actions { justify-content: stretch; }
   .messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
   .messages-message { padding-inline-end: 12px; padding-inline-start: 12px; }
+  /* #57: the continuation's clock borrows 8px of this row's 12px, not the
+     12px it borrows of a wide window's 16px, so it starts 4px in from the
+     edge instead of on it (and on your side ends 4px in, not shaved). The
+     column is 4px narrower to match, so the words stay under the name:
+     12 - 8 + 44 + 12 = 12 + 36 + 12. At 10px "12:45 PM" is about 42px,
+     so the clock never runs past its column. */
+  .messages-message-gutter { flex-basis: 44px; width: 44px; margin-inline-start: -8px; font-size: 10px; }
+  .messages-message-bubble.messages-message-self > .messages-message-gutter { margin-inline-start: 0; margin-inline-end: -8px; }
   .messages-attachment img { width: 112px; }
 }
 
@@ -9551,6 +9584,17 @@ html:not([data-skin]) :is(#platform-header, .platform-parked, .nav-drawer-untint
    it; the search field keeps its own hairline. */
 html:not([data-skin]) .messages-layout.messages-drawer {
   background-color: var(--wip-card-bg);
+}
+/* PHONE REVIEW #133 (23 Nov 2026): THE CARD RUNS UP UNDER THE BAR'S FOOT,
+   SQUARE, as the Homeroom bot tab's ground does. It kept the lift's 28px
+   top corners (and so did the conversation laid over it), so where the
+   bar's own rounded foot met them the wallpaper showed through two small
+   gaps: a blue wedge on the left and a purple one on the right in the dark,
+   cream on cream (and unseen) in the light. The drawer is a phone's alone. */
+html:not([data-skin]) .messages-layout.messages-drawer,
+html:not([data-skin]) .messages-layout.messages-drawer > .messages-thread-pane {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
 }
 /* In a conversation the other side's bubble is cream; yours keeps its tint. */
 html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,
@@ -22842,6 +22886,25 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     max-width: 100%; overflow: hidden; text-overflow: ellipsis;
     font-size: 12px; font-weight: 600; opacity: 0.78;
   }
+  /* PHONE REVIEW #131 (23 Nov 2026): A CONVERSATION'S DISCS ARE THE BAR'S.
+     Its members and ⋯ (portalled from the thread's header, ChatBarSlot)
+     wear the bar's own discs, as the bell does: 28px, no fill at rest, the
+     header's ink. The look picker's Look and Theme fold away meanwhile
+     (both are in Settings), so the name and who it is with keep the width. */
+  .nav-drawer-chat-actions { display: flex; align-items: center; gap: 10px; }
+  .nav-drawer-chat-actions .messages-thread-action {
+    width: 28px; height: 28px; position: relative;
+    background: transparent; box-shadow: none;
+    color: var(--brand-ink);
+  }
+  .nav-drawer-chat-actions .messages-thread-action:hover { background: var(--brand-tint); }
+  .nav-drawer-chat-actions .messages-thread-action svg { width: 20px; height: 20px; }
+  /* The bar's discs reach 44px for a finger, as un-touch-target makes them. */
+  .nav-drawer-chat-actions .messages-thread-action::after { content: ''; position: absolute; inset: -8px; }
+  /* Its ⋯ menu is laid over the page under the disc (the bar clips what it
+     holds to its rounded foot), above the transcript and below a sheet. */
+  .messages-thread-menu.messages-thread-menu-bar { position: fixed; z-index: 60; color: var(--text-primary); }
+  #platform-header:has(.nav-drawer-chat-actions) :is([data-look-picker="shell"], [data-look-theme="shell"]) { display: none; }
 }
 /* ── MESSAGES ON THE SAME DRAWER (features/messages/phone-drawer.tsx) ──
    Evan's design (18 Oct 2026), on a phone: the conversation list at 85% of
@@ -22884,10 +22947,14 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > :first-child {
     flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
   }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
-    position: static; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
+  /* PHONE REVIEW S21 (23 Nov 2026): a group is its members' two faces here
+     too, as in the wide window's list and in the conversation's own head,
+     at the column's size: two 20px faces in the 28px tile, the second over
+     the first's corner. It was the first face alone, a square letter tile,
+     so turning a Duo redrew every group's picture. */
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > * {
+    width: 20px; height: 20px; border-radius: 6px; font-size: 9px;
   }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child { display: none; }
   /* AUDIT C03 (2 Nov 2026): the column keeps the rows' own type, 15 over
      13 at the house weight, and their time: a 400-weight title and a 12px
      line with no time made the same list two designs, upright and
