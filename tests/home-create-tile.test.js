@@ -471,6 +471,32 @@ test('the tile draws both states, and never the disabled attribute', () => {
   assert.doesNotMatch(off, /violet/);
 });
 
+// #7054: the tile is Home's one primary action, so the standard look paints
+// its face as the look's sun pill (the top action and the plan card's Build
+// it), and presses it into the pill's edge. The brand look has its own rule
+// (tests/brand-look.test.js); the locked tile keeps its dashed outline.
+test('#7054: the standard look paints the enabled tile face as its sun pill', () => {
+  const css = read('public/css/app.css');
+  const SEL = 'html:not\\(\\[data-skin\\]\\) #home-create-tile\\[data-create-enabled="true"\\]';
+  const rule = css.match(new RegExp(`${SEL} \\.home-create-glyph \\{[^}]*\\}`));
+  assert.ok(rule, 'the standard look has a rule of its own for the enabled tile face');
+  assert.match(rule[0], /background:\s*var\(--wip-top-cta-bg\)/,
+    'the sun yellow, which clears the face\'s gradient');
+  assert.match(rule[0], /color:\s*var\(--wip-top-cta-ink\)/, 'ink on the sun, as the pills are');
+  assert.match(rule[0], /box-shadow:\s*var\(--wip-top-cta-edge\)/,
+    'the ink outline and hard edge, replacing the shadow and the ring');
+  assert.doesNotMatch(rule[0], /home-create-label/, 'only the face: the label keeps its accent');
+  const hover = css.match(new RegExp(`${SEL}:hover \\.home-create-glyph \\{[^}]*\\}`));
+  assert.ok(hover, 'a rule for the pointer');
+  assert.match(hover[0], /filter:\s*none/, 'the face no longer brightens under the pointer');
+  const press = css.match(new RegExp(`${SEL}:active \\.home-create-glyph \\{[^}]*\\}`));
+  assert.ok(press, 'a rule for the press');
+  assert.match(press[0], /box-shadow:\s*var\(--wip-top-cta-edge-down\)/, 'the press takes up the edge');
+  assert.match(press[0], /transform:\s*var\(--wip-top-cta-press\)/, 'and sinks by the pill\'s own amount');
+  assert.match(css, /html\[data-motion="reduce"\] #home-create-tile\[data-create-enabled="true"\]:active \.home-create-glyph \{ transform: none; \}/,
+    'reduced motion keeps the ink change and drops the sink');
+});
+
 test('both states open the same create flow', () => {
   const src = read(TILE);
   // The handler's CODE, its comment lines dropped (they explain the toast it

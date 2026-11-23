@@ -34156,6 +34156,27 @@ html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build]:active {
 }
 html[data-motion="reduce"] [data-bot-plan] button[data-bot-plan-build]:active { transform: none; }
 
+/* Home's New project is the page's one primary action, so its tile face is
+   the look's sun pill too (#7054): yellow, ink outline and a hard edge under
+   it, as the top action and Build it are. The id outranks the face's Tailwind
+   utilities (the background shorthand clears the gradient; box-shadow
+   replaces both shadow-lg and the ring), and `data-create-enabled` keeps the
+   locked tile's quiet dashed outline. The brand look's own rule is untouched
+   (it keys on data-skin), as are the frame looks. */
+html:not([data-skin]) #home-create-tile[data-create-enabled="true"] .home-create-glyph {
+  background: var(--wip-top-cta-bg);
+  color: var(--wip-top-cta-ink);
+  box-shadow: var(--wip-top-cta-edge);
+}
+html:not([data-skin]) #home-create-tile[data-create-enabled="true"]:hover .home-create-glyph {
+  filter: none;
+}
+html:not([data-skin]) #home-create-tile[data-create-enabled="true"]:active .home-create-glyph {
+  box-shadow: var(--wip-top-cta-edge-down);
+  transform: var(--wip-top-cta-press);
+}
+html[data-motion="reduce"] #home-create-tile[data-create-enabled="true"]:active .home-create-glyph { transform: none; }
+
 /* (#102, phone review 23 Nov 2026) In dark the page is one card ground:
    the ask's "Building" band was 9% sun mixed into navy, a slate grey, and the
    timeline's current step sat in a near-black box on the navy card. Both are
