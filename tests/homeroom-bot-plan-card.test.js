@@ -154,7 +154,7 @@ test('#7044: the plan card\'s Build it wears the look\'s sun pill', () => {
   // A press takes up the edge and moves the pill down; reduced motion stays still.
   assert.match(css, /html:not\(\[data-skin\]\) \[data-bot-plan\] \[data-bot-plan-build\]:active\s*\{[^}]*box-shadow:\s*var\(--wip-top-cta-edge-down\)[^}]*transform:\s*var\(--wip-top-cta-press\)/s);
   assert.match(css, /html\[data-skin="brand"\] \[data-bot-plan\] \[data-bot-plan-build\]:active\s*\{[^}]*box-shadow:\s*var\(--bl-pill-edge-down\)[^}]*transform:\s*translateY\(2px\)/s);
-  assert.match(css, /html\[data-motion="reduce"\] \[data-bot-plan\] \[data-bot-plan-build\]:active\s*\{\s*transform:\s*none;\s*\}/,
+  assert.match(css, /html\[data-motion="reduce"\] \[data-bot-plan\] button\[data-bot-plan-build\]:active\s*\{\s*transform:\s*none;\s*\}/,
     'a reader who asked for less motion keeps it still');
   // The frame looks keep the accent-filled button: no frame rule touches it.
   const frames = css.match(/html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\)[^{]*\[data-bot-plan-build\][^{]*\{[^}]*\}/g) || [];
