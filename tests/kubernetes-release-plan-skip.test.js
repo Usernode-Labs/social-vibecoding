@@ -132,7 +132,7 @@ function runSelect(env) {
     });
     assert.equal(res.status, 0, res.stderr);
     const out = fs.readFileSync(output, 'utf8');
-    return { shouldRelease: /should_release=true/.test(out), lane: /^build_lane=(\d+)$/m.exec(out)?.[1], summary: fs.readFileSync(summary, 'utf8') };
+    return { shouldRelease: /should_release=true/.test(out), summary: fs.readFileSync(summary, 'utf8') };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -141,12 +141,10 @@ function runSelect(env) {
 test('Select release work: a run that can release builds and publishes; one that cannot, neither', () => {
   const normal = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'false', GITHUB_RUN_NUMBER: '1601' });
   assert.equal(normal.shouldRelease, true);
-  assert.equal(normal.lane, '1');
   const skipped = runSelect({ GITHUB_EVENT_NAME: 'push', BEHIND_SKIP: 'true', BEHIND_REASON: 'No build: main is at x.' });
   assert.equal(skipped.shouldRelease, false);
   assert.match(skipped.summary, /No build: main is at x\./);
   const dispatched = runSelect({ GITHUB_RUN_NUMBER: '1602' });
-  assert.equal(dispatched.lane, '0');
   assert.equal(dispatched.shouldRelease, true, 'a run dispatched by hand is never held back');
   const claude = workflow.jobs.plan.steps.find((step) => step.id === 'claude');
   assert.equal(claude.if, "steps.release.outputs.should_release == 'true'");
@@ -154,6 +152,38 @@ test('Select release work: a run that can release builds and publishes; one that
   assert.equal(workflow.jobs.build.if, "needs.plan.outputs.should_release == 'true'");
   assert.deepEqual([].concat(workflow.jobs.release.needs),
     ['plan', 'build', 'preview-schema-compatibility']);
+});
+
+test('the last planning step reserves one lane for the confirmed main tip and keeps all fallback checks', () => {
+  const lane = plan.at(-1);
+  assert.equal(lane.id, 'lane');
+  assert.equal(lane.if, "steps.release.outputs.should_release == 'true'");
+  assert.equal(workflow.jobs.plan.outputs.build_lane, '${{ steps.lane.outputs.build_lane }}');
+  assert.equal(lane.run, 'node scripts/select-kubernetes-build-lane.js');
+});
+
+test('main tip borrows an idle fallback lane when previous tips still have work', async () => {
+  const { selectLane } = require('../scripts/select-kubernetes-build-lane');
+  const ref = 'refs/heads/main';
+  const prefix = `kubernetes-build-${ref}-`;
+  const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: ref, GITHUB_SHA: MINE };
+  const groups = (...names) => ({
+    total_count: names.length, concurrency_groups: names.map(name => ({ group_name: prefix + name })),
+  });
+  for (const [snapshot, expected] of [
+    [groups(), 1], [groups('platform-0'), 1], [groups('postgres-1'), 0],
+    [groups('worker-1', 'capture-0'), 1], [null, 1], [{ ...groups('platform-1'), total_count: 101 }, 1],
+  ]) {
+    assert.equal(await selectLane(env, async () => MINE, async () => snapshot), expected);
+  }
+  assert.equal(await selectLane({ ...env, GITHUB_EVENT_NAME: 'workflow_dispatch' }, async () => MINE,
+    async () => groups('platform-0')), 1, 'a manual refresh of main can use the tip lane');
+  for (const [event, tip] of [['push', TIP], ['push', null], ['workflow_dispatch', TIP]]) {
+    let lookups = 0;
+    assert.equal(await selectLane({ ...env, GITHUB_EVENT_NAME: event }, async () => tip,
+      async () => { lookups++; return groups(); }), 0);
+    assert.equal(lookups, 0);
+  }
 });
 
 function postgresResultFixture() {

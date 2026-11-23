@@ -24,7 +24,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      build_lane: ${{ steps.release.outputs.build_lane }}
+      build_lane: ${{ steps.lane.outputs.build_lane }}
       claude_code_version: ${{ steps.claude.outputs.version }}
       should_release: ${{ steps.release.outputs.should_release }}
       postgres_verified: ${{ steps.postgres.outputs.verified }}
@@ -67,7 +67,6 @@ jobs:
           BEHIND_SKIP: ${{ steps.behind.outputs.skip }}
           BEHIND_REASON: ${{ steps.behind.outputs.reason }}
         run: |
-          echo "build_lane=$(( GITHUB_RUN_NUMBER % 2 ))" >> "$GITHUB_OUTPUT"
           if [ "$BEHIND_SKIP" = true ]; then
             echo 'should_release=false' >> "$GITHUB_OUTPUT"
             echo "$BEHIND_REASON" >> "$GITHUB_STEP_SUMMARY"
@@ -102,12 +101,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/reuse-kubernetes-postgres-check.js
 
+      # Read main at admission, after dependency and PostgreSQL lookups. Keep
+      # group names 0 and 1 so older workflow revisions share these limits.
+      - name: Select build lane
+        id: lane
+        if: steps.release.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/select-kubernetes-build-lane.js
+
   build:
     name: Resolve ${{ matrix.component }} image
     needs: [plan]
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    # One running job per component in each of the two lanes.
+    # An older plan finishing late can neither evict nor cancel a newer check.
     concurrency:
       group: kubernetes-build-${{ github.ref }}-${{ matrix.component }}-${{ needs.plan.outputs.build_lane }}
       cancel-in-progress: false
