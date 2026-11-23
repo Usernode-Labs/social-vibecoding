@@ -425,6 +425,11 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
             exclude={EMPTY}
             signedIn={false}
             query={q}
+            emptyLine={(
+              <p data-guest-empty="" role="status" className="px-2 py-10 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
+                {t('auth:guest.empty')}
+              </p>
+            )}
             headingAction={searchShown ? null : (
               <button
                 type="button"

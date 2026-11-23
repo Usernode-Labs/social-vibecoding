@@ -67,7 +67,7 @@ export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending
   return [...featured, ...sortApps(apps, sort).filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, ids }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, emptyLine, ids }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -81,6 +81,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   onRetry?: () => void;
   /** A control at the end of the heading's row: the visitor's search button (../guest/guest-discover.tsx). */
   headingAction?: ReactNode;
+  /** Drawn when a search matches nothing. Home's own search answers that itself; the visitor's page has only this list, and was left blank. */
+  emptyLine?: ReactNode;
   /** The section's and its Featured label's ids where it is drawn a second time in the document (the Communities page): Home's own stay Home's. */
   ids?: { section: string; featured: string };
 }) {
@@ -148,7 +150,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     return () => { io.disconnect(); if (timer) window.clearTimeout(timer); };
   }, [more, shown]);
 
-  if (query && !list.length) return null;
+  if (query && !list.length) return emptyLine ?? null;
   const sortMenu = (
     <Select
       variant="plain"
