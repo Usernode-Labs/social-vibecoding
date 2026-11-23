@@ -249,6 +249,14 @@ test('every rule of the look is scoped to the flag, in one of its two modes or i
   assert.ok(seen.light > 10 && seen.dark > 10, 'and each mode has its own tokens and its own utility ramp');
 });
 
+test('the brand look\'s phone bar sizes each seat to its own label (#7059)', () => {
+  // The word-sized seats used to be the standard look's alone, so the brand
+  // look's blue bar cut Home and the long labels mid-word.
+  assert.match(read('public', 'css', 'app.css'),
+    /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\):not\(\[data-side-strip\]\) #platform-tabs \{ grid-template-columns: repeat\(5, auto\); \}/,
+    'the brand look starts each seat from its label');
+});
+
 test('the block lives last and redeclares none of the counted wallpaper tokens', () => {
   const css = read('public', 'css', 'app.css');
   const block = lookBlock();
