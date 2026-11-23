@@ -498,7 +498,8 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // No estimate yet: where it is, and no promise of a time.
   assert.equal(testing({ check_state: 'pending', check_phase: 'testing', checks_progress: { ran: 1, expected: 4 } }).figure, 'Checking it');
   // A queued run says where it is in line.
-  assert.match(testing({ check_state: 'pending', check_phase: 'queued', checks_progress: { queue: { ahead: 2 } } }).note[0], /\(2 ahead\)$/);
+  assert.match(testing({ check_state: 'pending', check_phase: 'queued', checks_progress: { queue: { ahead: 2 } } }).note[0], /\(2 ahead\)\.$/,
+    'its place in line opens the note as a sentence (23 Nov 2026)');
   // #4502: the deferred status explains the actual admission reason; the
   // native disclosure can open with a pointer, touch, or keyboard.
   const deferred = { ...PR, check_state: 'pending', check_phase: 'deferred' };

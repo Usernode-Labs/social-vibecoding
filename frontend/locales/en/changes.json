@@ -4067,6 +4067,22 @@
     "text": "Waiting for a checks slot ({{count}} ahead)",
     "description": "Status of a proposal's automated checks, shown as the heading of its checks note and on its card: the run waits its turn for a free slot. {{count}} is how many other runs are ahead of it in line."
   },
+  "checks.phase.queued.sentence": {
+    "text": "Waiting for a checks slot.",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the preview is built and the run waits its turn for a free slot, because only a few proposals' checks run at once. \"slot\" is a free place to run. A whole sentence, ending with its own full stop."
+  },
+  "checks.phase.queued.sentenceNext": {
+    "text": "Waiting for a checks slot (next in line).",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the run waits its turn for a free slot and no other run is ahead of it. A whole sentence, ending with its own full stop."
+  },
+  "checks.phase.queued.sentenceAhead_one": {
+    "text": "Waiting for a checks slot ({{count}} ahead).",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the run waits its turn for a free slot. {{count}} is how many other runs are ahead of it in line. A whole sentence, ending with its own full stop."
+  },
+  "checks.phase.queued.sentenceAhead_other": {
+    "text": "Waiting for a checks slot ({{count}} ahead).",
+    "description": "First sentence of the note on a change's Testing card and in its checks details, followed by another sentence (how long the wait should be, or why the run started): the run waits its turn for a free slot. {{count}} is how many other runs are ahead of it in line. A whole sentence, ending with its own full stop."
+  },
   "checks.trigger.proposalOpen": {
     "text": "Triggered by this proposal being opened.",
     "description": "Small print in the checks note on a proposal's page saying why the run of checks now in progress began: the proposal was opened (created)."
