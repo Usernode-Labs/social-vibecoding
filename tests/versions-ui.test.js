@@ -120,6 +120,21 @@ test('a version\'s hub shows the Update card for an update not yet looked at, a 
   assert.equal(message('project:hub.update.notNow'), 'Not now');
 });
 
+test('the Update card says when the update was sent, under its title, and never on the behind card', () => {
+  const src = read(HUB);
+  assert.match(src, /const sentAt = kind !== 'behind' && asked === null && offer \? offer\.sentAt : null;/, 'no date for the behind card, nor once the bot was asked');
+  assert.match(src, /const sent = sentAt \? agoStamp\(sentAt\) : null;/, 'the hub\'s own short time words');
+  assert.match(src, /<p className="dev-ws-share-sent" data-ws-update-sent="">\s*<time dateTime=\{sentAt\} title=\{sent\.title\}>/, 'the Share it card\'s grey line, the exact date on hover');
+  assert.match(src, /t\('project:hub\.update\.sent', \{ when: sent\.text \}\)/);
+  assert.match(src, /\{sent && sent\.text && sentAt \? \(/, 'a missing or unreadable date leaves the line out');
+  assert.doesNotMatch(src.slice(src.indexOf('data-ws-update-sent'), src.indexOf('data-ws-update-line')), /—/);
+  assert.match(read(UPSTREAM), /sentAt: string \| null;/);
+  assert.equal(message('project:hub.update.sent', { when: '3d ago' }), 'Sent 3d ago');
+  const catalog = JSON.parse(read('frontend/locales/en/project.json'));
+  assert.equal(catalog['hub.update.sent'].text, 'Sent {{when}}');
+  assert.match(catalog['hub.update.sent'].description, /Update card/);
+});
+
 test('the Update card draws nothing in its first render, and is placed under the hero', () => {
   const { UpdateCard, FromVersionsCard } = loadTsx(HUB);
   // The reads happen in effects, which a static render never runs: the
@@ -172,9 +187,14 @@ test('the shared reads take the contract\'s shapes and draw nothing from anythin
     enabled: true,
     original: { slug: 'tier-list', name: 'Tier list', emoji: '🏆', iconUrl: null },
     following: false, share: true, canManage: true, private: true, behind: true,
-    offer: { state: 'needs_fit', sessionId: '42', href: '#app/b/dev/changes/3', fromSha: 'f00', brings: [{ title: 'A' }, {}], facts: { ai: true }, keeps: { count: 4, titles: ['x', 7] }, conflicts: ['api.js', null] },
+    offer: {
+      state: 'needs_fit', sessionId: '42', href: '#app/b/dev/changes/3', fromSha: 'f00', sentAt: '2026-11-20T16:12:00.000Z',
+      brings: [{ title: 'A' }, {}], facts: { ai: true }, keeps: { count: 4, titles: ['x', 7] }, conflicts: ['api.js', null],
+    },
   });
   assert.equal(body.offer.sessionId, 42);
+  assert.equal(body.offer.sentAt, '2026-11-20T16:12:00.000Z', 'the update\'s sent time is read as it is');
+  assert.equal(readUpstreamBody({ offer: { state: 'available' } }).offer.sentAt, null, 'a server that leaves it out sends nothing');
   assert.deepEqual(body.offer.brings, [{ title: 'A' }]);
   assert.deepEqual(body.offer.keeps, { count: 4, titles: ['x'] });
   assert.deepEqual(body.offer.conflicts, ['api.js']);
@@ -292,6 +312,9 @@ test('the hub shots draw a version of Tier list and Tier list itself, with their
   assert.deepEqual(original.versions, { count: 214, following: 160 });
   assert.equal(original.made_from, null);
   assert.equal(shot.hubShotUpstream('version').offer.state, 'available');
+  const sentAt = shot.hubShotUpstream('version').offer.sentAt;
+  assert.match(String(sentAt), /^\d{4}-\d{2}-\d{2}T/, 'the shot\'s update is dated, so the line shows');
+  assert.ok(Math.abs(Date.now() - 3 * 864e5 - Date.parse(String(sentAt))) < 60_000, 'three days before now');
   assert.equal(shot.hubShotUpstream('original'), null);
   assert.equal(shot.hubShotVersions('original', 0).suggestions.length, 2);
   assert.equal(shot.hubShotVersions('creator', 0), null);

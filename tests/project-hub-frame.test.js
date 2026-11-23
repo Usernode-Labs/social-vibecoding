@@ -183,6 +183,9 @@ test('under a look the project\'s page has the frame\'s page area, and the stand
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   assert.match(hub, /data-ws-first-version=\{line\}/);
   assert.match(hub, /data-ws-update=\{kind\}/);
+  // The update's date is the Share it card's grey line, in the card that stays
+  // under the kit's Hub, so it shows under a look too.
+  assert.match(hub, /<section className="dev-ws-strip dev-ws-share dev-ws-update" data-ws-update=\{kind\}>[\s\S]*?className="dev-ws-share-sent" data-ws-update-sent=""/);
   assert.match(read('frontend/src/features/dev-board/workshop/community-card.tsx'), /data-ws-share=""/);
   assert.match(hand, /html\[data-skin\] \.dev-ws:not\(\[data-ws-tab="needs"\]\) > \[data-project-frame\] ~ \.dev-ws-tabbody > \* \{ max-width: 720px; margin-inline: 0; \}/, 'an undrawn place sits in the kit\'s content column');
   assert.match(hand, /html\[data-skin\] #dev-workshop\.dev-ws-on-needs > \.dev-ws\[data-ws-tab="needs"\] > \[data-project-frame\] \{ max-width: none; margin-inline: 0; \}/, 'the kit\'s head is not held to the review stage\'s 760px');

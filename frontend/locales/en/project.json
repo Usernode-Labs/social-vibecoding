@@ -511,6 +511,10 @@
     "text": "Its changes are ready for you to try and vote on.",
     "description": "Line on the Update card when it lists none of the original's changes by name."
   },
+  "hub.update.sent": {
+    "text": "Sent {{when}}",
+    "description": "Grey line under the title of the Update card on a version's hub: when the original's update was offered to this version. {{when}} is already worded, for example \"3d ago\", \"just now\" or \"Nov 2\"."
+  },
   "hub.update.bringsMore_one": {
     "text": "{{title}}, and {{count}} more",
     "description": "Line on the Update card: the first of the original's changes it brings, {{title}}, and how many more there are, {{count}}."

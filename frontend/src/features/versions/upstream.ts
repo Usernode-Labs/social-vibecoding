@@ -61,6 +61,8 @@ export interface UpstreamOffer {
   /** The update's change page (changeHref), once it is a change. */
   href: string | null;
   fromSha: string | null;
+  /** When the update was offered to this version (ISO), for the card's date. */
+  sentAt: string | null;
   brings: Array<{ title: string }>;
   facts: UpstreamFacts | null;
   keeps: UpstreamKeeps | null;
@@ -108,6 +110,7 @@ export function readUpstreamBody(raw: unknown): UpstreamState | null {
     sessionId: Number.isFinite(Number(o.sessionId)) && o.sessionId != null ? Number(o.sessionId) : null,
     href: text(o.href) || null,
     fromSha: text(o.fromSha) || null,
+    sentAt: text(o.sentAt) || null,
     brings: list<{ title?: unknown }>(o.brings).map((x) => ({ title: text(x && x.title) })).filter((x) => x.title),
     facts: o.facts && typeof o.facts === 'object' ? o.facts as UpstreamFacts : null,
     keeps: o.keeps && typeof o.keeps === 'object'
