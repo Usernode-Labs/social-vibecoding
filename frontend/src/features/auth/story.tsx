@@ -360,8 +360,8 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
             <img
               src="/brand/landing-people.webp"
               alt=""
-              width={619}
-              height={434}
+              width={758}
+              height={542}
               draggable={false}
               className="h-auto w-[280px] max-w-full shrink-0 lg:w-[380px]"
             />

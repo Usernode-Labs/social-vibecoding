@@ -41,7 +41,7 @@ fixed color, not the scalable source the app UI uses.
 | `homeroom-logo-black.png` | n/a — no Figma export | n/a | hand-encoded: a 5×7 bitmap "HOMEROOM" wordmark rasterized to `zinc-900` (`#1c1c1e`) on a transparent RGBA background, then wrapped in a minimal PNG (`IHDR`/`IDAT`/`IEND`) using only Node's built-in `zlib.deflateSync` — see the one-off generator note in the git history for #2673, since the repo has no `sharp`/`canvas`/ImageMagick to export from | 294 × 54, 8-bit RGBA PNG | 451 B |
 | `sky.webp` | n/a — no Figma export | n/a | the cloud image the Homeroom website (onhomeroom.com) draws behind its own hero, downloaded as the site serves it (PNG), resized to 1920 px wide, cropped to the middle 1080 rows and encoded with Pillow (`quality=74, method=6`), a one-off local step whose output is committed | 1920 × 1080, lossy WebP | 54.3 KB |
 | `landing-communities.webp` | n/a — STAND-IN, cut from a mock-up | n/a | cropped from the hero mock-up Drea shared in the landing change's discussion (17 Nov 2026), its white ground flood-filled to transparent from the edges, encoded with Pillow (`quality=88, method=6`). Replace with an export of the drawing itself when there is one | 1060 × 656, lossy WebP with alpha | 82.7 KB |
-| `landing-people.webp` | n/a — STAND-IN, cut from a mock-up | n/a | cropped from the same mock-up; the white window and the sky behind the figures removed by colour (flood fill from the edges, plus the sky enclosed between the figures), the window's edge line erased, the alpha edge softened by 0.7 px; Pillow (`quality=90, method=6`). Replace with an export of the drawing itself when there is one | 619 × 434, lossy WebP with alpha | 68.4 KB |
+| `landing-people.webp` | n/a — cut from the picture the website shares | n/a | the four people of the Homeroom website's share picture (onhomeroom.com's `og:image`: red hoodie, green jumper, cream hoodie, black hoodie), from a 976 × 604 copy on white supplied by the product owner (23 Nov 2026); the white ground removed by a flood fill from the edges plus the eight white gaps enclosed between the figures, the two pixels beside the cut un-mixed from white so no pale rim shows on the dark landing; cropped to the figures and encoded with ffmpeg's libwebp (`-q:v 90 -compression_level 6`, `yuva420p`). Replace with an export of the drawing itself, on a transparent ground, when there is one | 758 × 542, lossy WebP with alpha | 63.7 KB |
 
 There is no `sha384` column, and the omission is deliberate rather than an
 oversight. `public/vendor/README.md` records a digest per file because each of
@@ -93,8 +93,8 @@ recorded.
 - **landing-communities.webp** — the picture of the communities page beside
   the landing hero's words, from 1024px. Decorative, empty `alt`.
 - **landing-people.webp** — the people on the bottom edge of the landing
-  hero's window, from 768px. Decorative, empty `alt`. It is drawn at up to 400px wide, so it is
-  soft on a 2× screen: the mock-up it was cut from had no more pixels.
+  hero's window, from 768px. Decorative, empty `alt`. It is drawn at up to 380px wide, and the
+  file is 758px wide, so it is sharp on a 2× screen.
 - **homeroom-logotype-black.png** — the logo at the top of every
   transactional email (#2908), referenced by the standard email layout's first
   version (`src/db/email-template-seeds.js`) as an absolute
