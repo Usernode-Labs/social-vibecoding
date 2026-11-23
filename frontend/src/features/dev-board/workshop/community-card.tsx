@@ -1204,23 +1204,39 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       </button>
     </div>
   ) : null;
-  // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
-  // on a phone, above everything the page shows them to decide by (what it
-  // is, who is here, Open app, and below the hero what is
-  // being decided).
-  const inviteHead = invited && offer ? (
-    <InviteCard
-      offer={offer}
-      name={displayName}
-      busy={busy}
-      joinRef={joinRef}
-      onJoin={() => {
-        if (asking) { answerThroughLink(asking.answer); return; }
-        void joinThroughLink(true);
-      }}
-    >
+  // WHO INVITED THEM, AND JOIN (asked 23 Nov 2026). The hero leads the way
+  // every hub's does, with what it is and who is here; under those words
+  // one line says who invited them, with their note, and "Join <name>" is
+  // the first button of the hero's own row, the size of Open app beside it.
+  // It was a card of its own above the name, its Join the card's full
+  // width, which pushed the project it was about down the page. The
+  // invite preview keeps that card (InviteCard): there it is the whole page.
+  const inviteLine = invited && offer ? (
+    <div className="dev-ws-invite-line" data-ws-invite="">
+      <p className="dev-ws-invite-from" data-ws-invite-from="">{invitedByLine(offer)}</p>
+      {offer.note ? <p className="dev-ws-invite-note" data-ws-invite-note="">{t('project:communityCard.inviteCard.note', { note: offer.note })}</p> : null}
+    </div>
+  ) : null;
+  const inviteJoin = invited && offer ? (
+    <span className="dev-ws-join-anchor">
+      <Button
+        ref={joinRef}
+        type="button"
+        variant="pillAccent"
+        disabledStyle="dim"
+        size="sm"
+        ink="solid"
+        data-ws-invite-join=""
+        disabled={busy}
+        onClick={() => {
+          if (asking) { answerThroughLink(asking.answer); return; }
+          void joinThroughLink(true);
+        }}
+      >
+        {t('project:communityCard.inviteCard.join', { project: displayName })}
+      </Button>
       {popup}
-    </InviteCard>
+    </span>
   ) : null;
   // YOU AND THIS PROJECT, at the end of the action row: Join. Joined was
   // here too, and was the way out; Leave is a row of the ⋯ now (#4045,
@@ -1359,7 +1375,6 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       // the card after it.
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
-      {inviteHead}
       {/* Standard (WIP): the hero is a poster. At its side, for show only, the
           project's own picture (the one its group voted in for its card)
           when it has one, and its icon again, large, in front of it. */}
@@ -1390,6 +1405,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           with other people in it: a project that is just yours, or one
           nobody else has joined, has nobody else to name. */}
       {others ? <HeroActive activity={data.activity} /> : null}
+      {inviteLine}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, the ⋯, and across from them Join. Invite is the small one
           unless the Invite card is drawn below (then it is the card's), and
@@ -1402,6 +1418,8 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
+        {/* Opened from an invite link: Join leads the row, before Open app. */}
+        {inviteJoin}
         {appButton}
         {/* Standard (WIP): Invite is a full-size button beside Open app, its
             outlined second, with the invite glyph; on Homeroom's own hub,

@@ -7840,7 +7840,7 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :i
   color: var(--wip-hero-ink);
   box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
 }
-html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join], [data-ws-invite-join]) {
   height: 2.75rem;
   border-color: transparent;
   padding-inline: 1.25rem 1.5rem;
@@ -7850,6 +7850,23 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(bu
   background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
   color: var(--wip-cta-ink);
   box-shadow: 0 8px 18px -8px var(--wip-cta-glow);
+}
+/* OPENED FROM AN INVITE LINK (asked 23 Nov 2026): who invited you and their
+   note are two lines of the hero's own words, under what it is, and "Join
+   <name>" is the row's filled action. Open app, beside it, is then the
+   plain pill: one filled button in the row. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-invite-line { max-width: 40rem; margin-top: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-invite-line > .dev-ws-invite-from { font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-invite-line > .dev-ws-invite-note { font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink-soft); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row:has([data-ws-invite-join]) :is(button, a)[data-ws-community-open-app] {
+  border-color: var(--wip-hero-glass-line);
+  padding-inline: 1.125rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  background-color: var(--wip-hero-glass);
+  background-image: none;
+  color: var(--wip-hero-ink);
+  box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
 }
 /* A phone has no room for the hero's sizes. */
 @media (max-width: 639.98px) {
@@ -23965,6 +23982,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 .dev-ws-invite-from { margin: 0; font-size: 16px; line-height: 21px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-invite-note { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+/* On the hub itself (asked 23 Nov 2026) the invitation is not a card: two
+   lines of the hero's words under what the project is, and its Join is a
+   button of the hero's row (community-card.tsx). */
+.dev-ws-invite-line { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dev-ws-invite-line > .dev-ws-invite-from { font-size: 15px; }
 
 /* ── "Your communities" (features/workshop/community-switcher.tsx) ──
    The switcher behind the Communities tab: a sheet from the floor on a

@@ -430,15 +430,16 @@ const PAGE_OFFER = {
   token: TOKEN, slug: 'arena', name: 'Arena', inviter: 'maya', inviterName: 'Maya', inviterMadeIt: false, building: false, note: 'Come vote',
 };
 
-test('the hero of a page opened from a link leads with who invited them and one Join', async () => {
+test('the hero of a page opened from a link says who invited them under what it is, with one Join in its row', async () => {
   const html = await hero({ offer: PAGE_OFFER });
-  assert.match(html, /<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="open"><div class="dev-ws-invite" data-ws-invite="">/,
-    'first in the hero, above what it is and who is here');
-  assert.ok(html.indexOf('data-ws-invite=""') < html.indexOf('data-ws-community-name=""'), 'then the name it is about');
-  assert.match(html, /<p class="dev-ws-invite-from" data-ws-invite-from="">@maya invited you<\/p>/);
-  assert.match(html, /<p class="dev-ws-invite-note" data-ws-invite-note="">“Come vote”<\/p>/);
-  assert.match(html, /<div class="dev-ws-join-anchor"><button type="button" data-ws-invite-join="" class="w-full rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-3 text-\[17px\] font-semibold text-white transition-colors">Join Arena<\/button><\/div>/,
-    'the screen\'s primary button, the full width of the card');
+  // Asked 23 Nov 2026: the hero leads as every hub's does, and the invitation
+  // is two lines of its words and a button of its row, not a card above the name.
+  assert.doesNotMatch(html, /class="dev-ws-invite"/, 'no card of its own in the hero');
+  assert.ok(html.indexOf('data-ws-community-name=""') < html.indexOf('data-ws-invite=""'), 'the name first, then who invited them');
+  assert.ok(html.indexOf('data-ws-community-description=""') < html.indexOf('data-ws-invite=""'), 'under what it is');
+  assert.match(html, /<div class="dev-ws-invite-line" data-ws-invite=""><p class="dev-ws-invite-from" data-ws-invite-from="">@maya invited you<\/p><p class="dev-ws-invite-note" data-ws-invite-note="">“Come vote”<\/p><\/div><div class="dev-ws-hero-row"><div class="dev-ws-hero-actions"><span class="dev-ws-join-anchor"><button type="button" data-ws-invite-join="" class="rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-3 py-1.5 text-sm font-medium text-white transition-colors">Join Arena<\/button><\/span>/,
+    'Join leads the hero\'s own row, the size of its other buttons');
+  assert.ok(html.indexOf('data-ws-invite-join=""') < html.indexOf('data-ws-community-open-app=""'), 'before Open app');
   assert.doesNotMatch(html, /will see that you joined|data-ws-invite-seen/, 'the Join stands alone (#4395)');
   assert.doesNotMatch(html, /data-ws-community-join=""/, 'one Join on the hero');
   assert.match(html, /data-ws-community-open-app=""/, 'Open app, to try it first');
@@ -476,8 +477,9 @@ test('the page lands its Join, and the platform reaches it by URL', () => {
   // new one: the manifest stands at its floor (tests/lib/check-cap.js).
   const checks = JSON.parse(read('dapp.json')).tests.filter((t) => /shot=invite-join/.test(t.path));
   assert.equal(checks.length, 1, 'a declared check reaches the invite head');
-  assert.match(checks[0].expectSelector, /:has\(> \.dev-ws-invite:first-child \[data-ws-invite-join\]\) > \.dev-ws-hero-id \[data-ws-community-name\] \+ \[data-ws-members-cell\] > \[data-ws-community-audience\]$/);
+  assert.match(checks[0].expectSelector, /:has\(> \.dev-ws-invite-line \+ \.dev-ws-hero-row \[data-ws-invite-join\]\) > \.dev-ws-hero-id \[data-ws-community-name\] \+ \[data-ws-members-cell\] > \[data-ws-community-audience\]$/);
   assert.match(read('public/css/app.css'), /\.dev-ws-invite \{\s+display: flex; flex-direction: column; gap: 10px;/);
+  assert.match(read('public/css/app.css'), /\.dev-ws-invite-line \{ display: flex; flex-direction: column; gap: 2px; min-width: 0; \}/);
 });
 
 // ── A private community's invite preview ───────────────────────────────
