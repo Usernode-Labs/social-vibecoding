@@ -236,6 +236,23 @@ test('approval shell consumes a one-click fragment without leaking it in navigat
   );
 });
 
+test('the CLI and connector approval cards fit a phone: their width counts the padding and border', () => {
+  // As a content width, 100% - 3rem plus 2rem of padding a side and a 1px
+  // border came to 100% + 18px, so on a phone the card ran off both edges
+  // and the page scrolled sideways (visual audit, Nov 2026). The wide-screen
+  // width grows by the padding and border, so a desktop keeps 30rem and
+  // 32rem of words.
+  for (const [file, words] of [['cli-authorize.css', 30], ['connect-authorize.css', 32]]) {
+    const css = fs.readFileSync(path.join(__dirname, '../public/css', file), 'utf8');
+    const main = css.match(/\nmain \{([^}]*)\}/);
+    assert.ok(main, `${file} styles the card`);
+    assert.match(main[1], /\bbox-sizing: border-box;/, `${file}: the width includes padding and border`);
+    assert.match(main[1], new RegExp(`\\bwidth: min\\(calc\\(${words + 4}rem \\+ 2px\\), calc\\(100% - 3rem\\)\\);`), `${file}: ${words}rem of words on a wide screen`);
+    assert.match(main[1], /\bpadding: 2rem;/);
+    assert.match(main[1], /\bborder: 1px solid /);
+  }
+});
+
 test('Settings exposes only the hint-based CLI credential list and revocation API', () => {
   const html = shellMarkup();
   const script = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8');
