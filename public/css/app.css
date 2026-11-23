@@ -9547,6 +9547,14 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
     gap: 8px;
   }
 }
+/* Joined from 768px: two compact cards across, three from 1280px, so each
+   has room for its week on one line. */
+@media (min-width: 768px) {
+  .cm-grid[data-cm-grid="joined"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .cm-grid[data-cm-grid="joined"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 .cm-card {
   position: relative;
   display: flex;
@@ -9801,9 +9809,11 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   .cm-grid[data-cm-grid="join"] .cm-card-skel-body { height: 110px; }
 }
 /* The compact card: the icon smaller, on a dark hairline (it sits on the
-   card's own white), beside the name and the members, centred. */
-.cm-card[data-cm-size="compact"] { padding: 12px; }
-.cm-card[data-cm-size="compact"] .cm-card-head { align-items: center; }
+   card's own white), beside the name and its week, centred, with room round
+   them: 16px in, 14px from the icon to the words, 5px between the lines,
+   the small words 13px on 18px. */
+.cm-card[data-cm-size="compact"] { padding: 16px; }
+.cm-card[data-cm-size="compact"] .cm-card-head { align-items: center; gap: 14px; }
 .cm-card[data-cm-size="compact"] .cm-card-face { margin-top: 0; }
 .cm-card[data-cm-size="compact"] .cm-card-icon {
   width: 44px;
@@ -9812,7 +9822,35 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   box-shadow: 0 0 0 1px var(--cm-icon-edge);
   font-size: 24px;
 }
-.cm-card[data-cm-size="compact"] .cm-card-id { padding-top: 0; }
+.cm-card[data-cm-size="compact"] .cm-card-id { gap: 5px; padding-top: 0; }
+.cm-card[data-cm-size="compact"] :is(.cm-card-members, .cm-card-live) { font-size: 13px; line-height: 18px; }
+/* Its first line ("34 members, 6 active this week") wraps between its two
+   facts, never inside one; a fact longer than the card ends in an ellipsis. */
+.cm-card[data-cm-size="compact"] .cm-card-members { white-space: normal; }
+.cm-card-fact {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+/* What went live this week, under it: a tick and the words in the link's
+   blue, the one coloured thing on the card. */
+.cm-card-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--cm-link);
+}
+.cm-card-live-tick {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
 
 /* THE COMMUNITIES TAB'S PAGE (features/communities/index.tsx, `#communities`).
    The communities you pinned and the others you are in, as the tiles Home's

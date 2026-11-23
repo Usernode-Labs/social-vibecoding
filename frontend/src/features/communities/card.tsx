@@ -21,8 +21,13 @@
  *             screen reader hears the words.
  *
  * THE COMPACT CARD is the same card with its picture taken off: the icon
- * smaller beside the name and the members, and nothing else (the Communities
- * page's Joined).
+ * smaller beside the name, and under the name its week in two plain lines
+ * (the Communities page's Joined; approved 23 Nov 2026, "F, without the
+ * little people icons"): "34 members, 6 active this week" in grey, then
+ * "6 changes live this week" after a tick in the link's blue. A quiet
+ * community is "16 members" alone, and the second line is drawn only when
+ * something went live. No faces, no description. A narrow card wraps the
+ * first line between its two facts, never inside one.
  *
  * Everything here is markup with fixed class names; the sizes, inks, edges
  * and corners are app.css's (`.cm-card`, "A COMMUNITY'S CARD"), read from
@@ -34,7 +39,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 
 import { CheckIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
 
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMinWidth } from '../../lib/use-min-width';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
@@ -161,16 +166,36 @@ export function CommunityWeek({ active, live }: { active?: number | null; live?:
   );
 }
 
-/** The name over how many members, beside the icon. `name` replaces the plain name (a card whose name is its link). */
-function CardId({ community, name }: { community: CardCommunity; name?: ReactNode }) {
+/**
+ * The name over how many members, beside the icon. `name` replaces the plain
+ * name (a card whose name is its link). `week` is the compact card's: the
+ * members line says who was active this week too, and a second line what
+ * went live (see the header). A zero says nothing.
+ */
+function CardId({ community, name, week = false }: { community: CardCommunity; name?: ReactNode; week?: boolean }) {
   const t = useMessages('home');
   const members = count(community.members);
+  const active = week ? count(community.activeWeek) : 0;
+  const live = week ? count(community.liveWeek) : 0;
+  const membersText = t('home:communities.members', { count: members, formatted: members.toLocaleString() });
   return (
     <span className="cm-card-id">
       {name ?? <span className="cm-card-name">{community.name}</span>}
       {members ? (
         <span className="cm-card-members" data-cm-members="">
-          {t('home:communities.members', { count: members, formatted: members.toLocaleString() })}
+          {active ? (
+            <RichMessage
+              id="home:communities.compactMembersActive"
+              values={{ count: active, formatted: active.toLocaleString(), members: membersText }}
+              components={[<span className="cm-card-fact" />, <span className="cm-card-fact" />]}
+            />
+          ) : membersText}
+        </span>
+      ) : null}
+      {live ? (
+        <span className="cm-card-live" data-cm-live="">
+          <CheckIcon className="cm-card-live-tick" aria-hidden="true" />
+          <span className="cm-card-fact">{t('home:communities.compactLive', { count: live, formatted: live.toLocaleString() })}</span>
         </span>
       ) : null}
     </span>
@@ -212,7 +237,7 @@ export function CommunityCardContent({ community, eager = false, name, face, fac
   );
 }
 
-/** The compact card's insides: the icon beside the name and the members, no picture. */
+/** The compact card's insides: the icon beside the name and its week (the members, who was active, what went live), no picture. */
 export function CommunityCardCompactContent({ community, face, faceClass }: {
   community: CardCommunity;
   face?: ReactNode;
@@ -224,7 +249,7 @@ export function CommunityCardCompactContent({ community, face, faceClass }: {
         <CommunityIcon community={community} />
         {face}
       </span>
-      <CardId community={community} />
+      <CardId community={community} week />
     </span>
   );
 }
