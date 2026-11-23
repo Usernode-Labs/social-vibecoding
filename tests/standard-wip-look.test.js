@@ -25,6 +25,10 @@ const WIP_HIDES = [
   'html:not([data-skin]) #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
   'html:not([data-skin]) #app-list .app-card-people',
+  // On a phone New project is the grid's last tile, not a button on the search row that waits under the header (phone review, 23 Nov 2026).
+  'html:not([data-skin]) #home-search-bar #home-new-project-top',
+  // While words are in the Communities page's search, New community gives the field its place, as New project does on Home (phone review, 23 Nov 2026).
+  'html:not([data-skin]) #communities-screen .communities-top:has(#communities-search-input:not(:placeholder-shown)) > #communities-new-top',
   // So it is beside the open sidebar up to 1280px, where the tile stays stacked: as a row its name had about 75px.
   'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
