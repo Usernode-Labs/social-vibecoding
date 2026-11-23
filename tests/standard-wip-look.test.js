@@ -67,6 +67,11 @@ const WIP_HIDES = [
  * declared once, and nothing hidden but what MENU_HIDES lists.
  */
 const MENU_SCOPE = 'html:not([data-skin])';
+// The bar's page-ground layer (asked 23 Nov 2026) paints the look's own page
+// colour under Standard (WIP), where the page and its frame are one ground;
+// the standard look reads its wallpaper instead. So these two rules
+// of the menu's block name that look on purpose, and the foot test holds them.
+const WIP_LAYER = /^html\[data-skin-wip\]\[data-wip-tokens\] body:has\(#(?:home|communities)-screen:not\(\.hidden\)\) #platform-header#platform-header::before$/;
 const MENU_HIDES = [
   // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
   'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
@@ -202,8 +207,8 @@ test('the menu and the top bar: one block for the standard look and this one, ev
   assert.ok(all.length > 30, 'the block holds the menu\'s rules');
   for (const { selector } of all) {
     for (const one of topLevel(selector)) {
-      assert.ok(one.startsWith(MENU_SCOPE), `"${one}" is not scoped to the standard look and its brand drawing`);
-      assert.doesNotMatch(one, /data-skin-wip|data-skin="/, `"${one}" names a look: the block is the two together`);
+      assert.ok(one.startsWith(MENU_SCOPE) || WIP_LAYER.test(one), `"${one}" is not scoped to the standard look and its brand drawing`);
+      assert.ok(WIP_LAYER.test(one) || !/data-skin-wip|data-skin="/.test(one), `"${one}" names a look: the block is the two together`);
     }
   }
   // Colours are written in the token rules alone (light, then dark), and every token a rule reads is declared there.
@@ -214,6 +219,8 @@ test('the menu and the top bar: one block for the standard look and this one, ev
   for (const r of all) {
     if (tokens.includes(r)) continue;
     assert.doesNotMatch(r.body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, `${r.selector} writes a colour of its own; make it a --wip-nav-* token`);
+    // The page's own colour is Standard (WIP)'s token, declared in that block; it is not the menu's.
+    if (WIP_LAYER.test(r.selector)) continue;
     for (const m of r.body.matchAll(/var\((--wip-[a-z0-9-]+)/g)) {
       assert.ok(declared.has(m[1]), `${m[1]} (used by ${r.selector}) is declared in the block's token rule`);
     }
@@ -255,6 +262,36 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
   const query = css.lastIndexOf('@media', at);
   assert.equal(css.slice(query, css.indexOf('{', query)).trim(), '@media (min-width: 768px)');
   assert.ok(css.indexOf('\n}\n', query) > at, 'inside that query, not after it');
+
+  // THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026): on Home and
+  // Communities the bar paints the page's own ground again, so the search
+  // field and the page's action pass behind it instead of showing through it
+  // and letting the foot line be drawn across them. The line does not move.
+  const UNDER = `${MENU_SCOPE} body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before`;
+  const under = all.find((r) => r.selector === UNDER);
+  assert.ok(under, 'Home and Communities paint the bar\'s layer');
+  assert.match(under.body, /content: "" !important;/, 'it turns the layer back on against the content-none rule above');
+  assert.match(under.body, /background: var\(--home-wallpaper\);/, 'with the page\'s own wallpaper, as the body paints it');
+  assert.match(under.body, /clip-path: inset\(0 0 0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\)\);/,
+    'clipped past the menu\'s edge and the rounded page corner');
+  const rtlUnder = all.find((r) => r.selector === `${MENU_SCOPE}[dir="rtl"] body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before`);
+  assert.ok(rtlUnder, 'right to left the menu is on the right');
+  assert.match(rtlUnder.body, /clip-path: inset\(0 calc\(var\(--platform-rail-w, 0px\) \+ var\(--wip-nav-page-radius\)\) 0 0\);/,
+    'so its strip is cut on the other side');
+  // Standard (WIP) makes the page and its frame one colour, so there the layer paints that colour.
+  const wip = rules(wipBlock());
+  const wipTokens = new Set();
+  for (const r of wip) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) wipTokens.add(m[1]);
+  const wipHome = all.find((r) => WIP_LAYER.test(r.selector) && /#home-screen/.test(r.selector));
+  assert.ok(wipHome, 'Home under Standard (WIP) paints its page colour');
+  assert.match(wipHome.body, /background: var\(--wip-page-bg\);/);
+  assert.ok(wipTokens.has('--wip-page-bg'), 'the colour is the look\'s own token');
+  const wipCommunities = all.find((r) => WIP_LAYER.test(r.selector) && /#communities-screen/.test(r.selector));
+  assert.ok(wipCommunities, 'Communities under Standard (WIP) paints its page colour');
+  assert.match(wipCommunities.body, /background: var\(--wip-page-bg-communities\);/);
+  assert.ok(wipTokens.has('--wip-page-bg-communities'), 'the colour is the look\'s own token');
+  // The layer is never content of its own, so the hidden-rule list does not grow.
+  assert.ok(!MENU_HIDES.includes(UNDER));
 });
 
 test('on a community\'s page the Communities tab gives way to its row', () => {
