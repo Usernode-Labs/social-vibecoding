@@ -4427,11 +4427,11 @@ export function DevWorkshop(): ReactNode {
           from the board's buckets; New for you is What happened's now (its
           new requests nobody has picked up end with Build it). Not for a
           visitor, who has no work here. */}
-      {/* Its label, for a look that stands the card beside What happened, where each of the two needs a name over it (app.css hides it everywhere else). */}
+      {slug && v.mine && v.mine.viewer ? <YourWorkCard slug={slug} name={projectName} /> : null}
+      {/* Its label, for a look that stands the card beside What happened, where each of the two needs a name over it (app.css hides it everywhere else). AFTER the card in the document, which the declared checks read as Overview's next sibling; the look that shows it orders it over the card. */}
       {slug && v.mine && v.mine.viewer ? (
         <SectionHeader className="dev-ws-part-work px-1.5 pb-0 pt-3.5" data-ws-part="work">{t('project:hub.forYou.title')}</SectionHeader>
       ) : null}
-      {slug && v.mine && v.mine.viewer ? <YourWorkCard slug={slug} name={projectName} /> : null}
 
       {/* ── WHAT HAPPENED ──
           One card for what was Since your last visit and Week by week:

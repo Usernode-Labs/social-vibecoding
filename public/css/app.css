@@ -7531,6 +7531,10 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-stri
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0 0.25rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > h2[data-ws-part="overview"] { margin-top: 0.25rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { display: block; }
+/* The label follows its card in the document and stands over it on the page. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { order: 1; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :has(+ .dev-ws-part-work) { order: 2; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work ~ * { order: 3; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody :is(h2[data-ws-part], .dev-ws-parthead > h2) {
   padding: 0;
   font-family: var(--wip-label-font);
@@ -7554,7 +7558,8 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
   box-shadow: none;
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head { position: absolute; inset-block-start: -1.75rem; inset-inline-end: 0.25rem; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { display: none; }
+/* The card's own heading is said, not shown: the four cards have no card to head, and "See all" follows it. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open { font-size: var(--wip-link-size); font-weight: 650; color: var(--wip-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-dash { display: contents; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] {
@@ -7655,11 +7660,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
     align-items: start;
   }
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > * { grid-column: 1 / -1; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-parthead { grid-column: 1; order: 1; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> [data-ws-happened]) > .dev-ws-part-work { grid-column: 2; order: 2; align-self: center; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work) > [data-ws-happened] { grid-column: 1; order: 3; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> [data-ws-happened]) > .dev-ws-part-work + section { grid-column: 2; order: 4; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work) > [data-ws-happened] ~ * { order: 5; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-parthead { grid-column: 1; order: 3; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-part-work { grid-column: 2; order: 4; align-self: center; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > [data-ws-happened] { grid-column: 1; order: 5; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > :has(+ .dev-ws-part-work) { grid-column: 2; order: 6; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > [data-ws-happened] ~ * { order: 7; }
 }
 /* What happened has no card around it (asked 23 Nov 2026): this week is a
    card, and each week before it a card of its own, as the figures are; the
