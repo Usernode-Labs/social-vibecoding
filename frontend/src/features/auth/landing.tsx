@@ -2007,7 +2007,7 @@ export function LandingScreen() {
               more thing between a stranger and what this is.
 
               `width`/`height` are the file's own pixels (public/brand/
-              people.png, 2x), which reserve the box before it decodes so the
+              people.png, about 2x), which reserve the box before it decodes so the
               heading under it does not jump. It sits straight on the
               wallpaper with no plate behind it, in both themes.
 
@@ -2046,8 +2046,8 @@ export function LandingScreen() {
           <img
             src="/brand/people.png"
             alt=""
-            width={816}
-            height={612}
+            width={576}
+            height={432}
             draggable={false}
             className={hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')}
           />

@@ -231,7 +231,7 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow and ad
   assert.match(html, /<form class="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] /);
   // Top to bottom, in this order.
   const order = [
-    /<img src="\/brand\/people\.png" alt="" width="816" height="612" draggable="false" class="mx-auto mt-2 block h-auto w-\[140px\] max-w-full [^"]*"\/>/,
+    /<img src="\/brand\/people\.png" alt="" width="576" height="432" draggable="false" class="mx-auto mt-2 block h-auto w-\[140px\] max-w-full [^"]*"\/>/,
     // The address is the line under the eyebrow (Evan, 20 Oct 2026): the
     // row type's 15px, a step darker, breaking anywhere it has to.
     /<p class="mt-4 text-\[13px\] font-semibold uppercase tracking-\[0\.8px\] text-zinc-500 dark:text-zinc-400">You(?:&#x27;|')re in<\/p><p data-welcome-page-email="" class="mt-1 text-\[15px\] leading-5 font-medium text-zinc-700 dark:text-zinc-300 \[overflow-wrap:anywhere\]">ada@example\.com<\/p>/,
@@ -346,7 +346,7 @@ test('in Safari\'s visible area Continue is on screen: under 800px a 96px pictur
   const src = read(WELCOME);
   // 800px tall and up: all of it, drawn as above (the 140px picture, the
   // rows with their second lines).
-  assert.match(html, /<img src="\/brand\/people\.png" alt="" width="816" height="612" draggable="false" class="mx-auto mt-2 block h-auto w-\[140px\] max-w-full \[@media\(max-height:799px\)\]:w-\[96px\]"\/>/);
+  assert.match(html, /<img src="\/brand\/people\.png" alt="" width="576" height="432" draggable="false" class="mx-auto mt-2 block h-auto w-\[140px\] max-w-full \[@media\(max-height:799px\)\]:w-\[96px\]"\/>/);
   // Under 800px (about 402x717 on an iPhone 17): the picture at 96px, still
   // shown, and each row keeps its title and drops its second line, in a
   // 44px row (the 40px tile and 2px above and below). Every row is still
