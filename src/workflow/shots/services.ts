@@ -17,6 +17,10 @@ interface Deps { config: any; pool: Pool }
 // own proposal's worker and costs the platform almost nothing.
 export const COPIES_CONCURRENCY = 4;
 export const AGENT_CONCURRENCY = 32;
+// How often, and how far apart, a published run's comparison is made again
+// after its first one failed (shots.recompare): four tries in about an hour.
+export const RECOMPARE_ATTEMPTS = 4;
+export const RECOMPARE_BACKOFF_MS: readonly number[] = Object.freeze([5 * 60_000, 15 * 60_000, 45 * 60_000]);
 
 const orchestrator = () => legacy('services/shots-orchestrator');
 
@@ -149,6 +153,21 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
       leaseMs: 120000,
       async run({ input, signal }): Promise<Json> {
         return { verdict: await orchestrator().compareScreens(pool, { runId: input.runId, verdict: input.verdict, signal }) };
+      },
+    },
+
+    // A published run's comparison, made again after its first one failed
+    // (the machine asks for it as it publishes the stand-in screens). A try
+    // that fails again throws, so the kernel tries it later, a bounded number
+    // of times, spaced out; one that never succeeds leaves the stand-ins. One
+    // at a time across the platform: it is never in anybody's way.
+    [WORK.recompare]: {
+      maxAttempts: RECOMPARE_ATTEMPTS,
+      backoffMs: (attempt) => RECOMPARE_BACKOFF_MS[Math.min(attempt - 1, RECOMPARE_BACKOFF_MS.length - 1)]!,
+      leaseMs: 120000,
+      concurrency: 1,
+      async run({ input, signal }): Promise<Json> {
+        return orchestrator().recompareScreens(pool, { runId: input.runId, signal });
       },
     },
 

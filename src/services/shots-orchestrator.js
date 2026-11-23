@@ -16,6 +16,7 @@ const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff-worker');
+const pureDiff = require('./shots-diff');
 const shotsFiles = require('./shots-files');
 const shotsDensity = require('./shots-density');
 const logRedaction = require('./log-redaction');
@@ -1506,18 +1507,55 @@ async function dispatchAgent(config, pool, {
   };
 }
 
+// A verdict with the comparison's screens: the changes whose screens came
+// out the same marked so, a change folded onto another one's screen said so
+// beside it, and a screen on which something sizeable changed outside every
+// change's frame noted (shots-diff elsewhereChanged). Injected comparers may
+// lack the optional readers.
+function withScreens(verdict, screens, diff) {
+  let stories = verdict.stories;
+  if (typeof diff.unchangedStories === 'function') {
+    stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
+  }
+  // A change folded onto another one's screen kept its own after shot, but
+  // the card draws the first change's: say so beside it. Injected comparers
+  // may return screens without the field.
+  if (typeof shotsFiles.markFolded === 'function') {
+    const folded = new Set();
+    for (const screen of screens) {
+      if (screen && Array.isArray(screen.foldedAfter)) for (const id of screen.foldedAfter) folded.add(id);
+    }
+    if (folded.size) stories = shotsFiles.markFolded(stories, folded);
+  }
+  const notices = typeof diff.elsewhereNotices === 'function'
+    ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
+    : (verdict.notices || []);
+  return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
+}
+
+// The ready changes of a run's declaration, each slot their comparison reads.
+function readyStories(intent, verdict) {
+  return (intent?.stories || []).filter((story) => (verdict.stories || [])
+    .some((result) => result.id === story.id && result.status === 'ready'));
+}
+
 /**
  * Where each ready change's before and after screens differ, so the card
  * can outline it, with the changes whose screens came out the same marked
  * so (shots.publish). Resolves the verdict to store. A screen that cannot be
- * compared is shown without outlines; it never holds the run back.
+ * compared never holds the run back: when the comparison fails (its worker
+ * busy past the wait, out of time, or an image it cannot read), the verdict
+ * still carries a screen for each one the run shot (shots-diff
+ * fallbackScreens: nothing outlined, and no change marked unchanged, since
+ * nothing was compared), so the card draws the current viewer, and says
+ * `screensFallback`: the shots machine compares them again later
+ * (recompareScreens below) and puts the real screens in their place.
  */
 async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
   const diff = injected.shotsDiff || shotsDiff;
   const control = await shotsControl.read(pool, runId);
   if (!control || verdict.afterOnly) return verdict;
-  const ready = control.intent.stories.filter((story) => verdict.stories
-    .some((result) => result.id === story.id && result.status === 'ready'));
+  const ready = readyStories(control.intent, verdict);
   const slots = [];
   for (const story of ready) {
     for (const viewport of story.viewports) {
@@ -1528,37 +1566,50 @@ async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
       }
     }
   }
+  let files = null;
   try {
-    const files = await shotsControl.filesFor(pool, runId, slots);
-    const screens = await diff.screensFor(ready, files, { signal });
-    let stories = verdict.stories;
-    if (typeof diff.unchangedStories === 'function') {
-      stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
-    }
-    // A change folded onto another one's screen kept its own after shot, but
-    // the card draws the first change's: say so beside it. Injected comparers
-    // may return screens without the field.
-    if (typeof shotsFiles.markFolded === 'function') {
-      const folded = new Set();
-      for (const screen of screens) {
-        if (screen && Array.isArray(screen.foldedAfter)) for (const id of screen.foldedAfter) folded.add(id);
-      }
-      if (folded.size) stories = shotsFiles.markFolded(stories, folded);
-    }
-    // A screen on which something sizeable changed outside every change's
-    // frame says so beside the agent's own notices (shots-diff
-    // elsewhereChanged). Injected comparers may not have it.
-    const notices = typeof diff.elsewhereNotices === 'function'
-      ? diff.elsewhereNotices(screens, verdict.notices, shotsFiles.MAX_NOTICES || 5)
-      : (verdict.notices || []);
-    return { ...verdict, screens, stories, ...(notices.length ? { notices } : {}) };
+    files = await shotsControl.filesFor(pool, runId, slots);
+    // The run's own comparison waits for a worker, with the longer deadline
+    // (shots-diff-worker RUN_COMPARE_TIMEOUT_MS).
+    const screens = await diff.screensFor(ready, files, { signal, wait: true });
+    return withScreens(verdict, screens, diff);
   } catch (error) {
     if (signal?.aborted) throw error;
     log.warn('shots', 'Could not compare the before and after screens', {
       runId, code: error?.code, error: String(error?.message || error).slice(0, 300),
     });
-    return verdict;
+    let screens = [];
+    try { screens = files ? pureDiff.fallbackScreens(ready, files) : []; } catch { screens = []; }
+    return { ...verdict, screens, screensFallback: true };
   }
+}
+
+/**
+ * The comparison of a published run whose first one failed (its verdict
+ * says `screensFallback`), tried again (shots.recompare), from the run's
+ * published shots: its workspace is gone by then. Resolves { verdict } with
+ * the real screens in place of the fallback ones, or { skipped } when there
+ * is nothing to do (the run is no longer published, or already compared).
+ * A comparison that fails again throws, so the work item tries again later
+ * (src/workflow/shots/services.ts RECOMPARE_ATTEMPTS, spaced out).
+ */
+async function recompareScreens(pool, { runId, signal }, injected = {}) {
+  const diff = injected.shotsDiff || shotsDiff;
+  const { rows: [run] } = await pool.query(
+    'SELECT id, state, intent, hard_verdict FROM shot_runs WHERE id = $1', [runId]);
+  const verdict = run?.hard_verdict;
+  if (!run || run.state !== 'verified' || !verdict || typeof verdict !== 'object' || verdict.screensFallback !== true) {
+    return { skipped: true };
+  }
+  const ready = readyStories(run.intent, verdict);
+  if (!ready.length || verdict.afterOnly) return { skipped: true };
+  const files = await (injected.publishedFilesFor || shotsControl.publishedFilesFor)(pool, runId);
+  const screens = await diff.screensFor(ready, files, { signal, wait: true });
+  // The verdict as published, less what the fallback put in it.
+  const compared = { ...verdict };
+  delete compared.screensFallback;
+  delete compared.screens;
+  return { verdict: withScreens(compared, screens, diff) };
 }
 
 // Another run on the proposal's worker is under way: its own (the shots
@@ -1662,5 +1713,6 @@ module.exports = {
   agentErrorOf,
   dispatchAgent,
   compareScreens,
+  recompareScreens,
   cleanupRun,
 };

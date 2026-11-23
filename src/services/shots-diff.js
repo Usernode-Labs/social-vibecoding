@@ -691,6 +691,92 @@ async function screensFor(stories, files) {
   return screens;
 }
 
+// The screens a run's card shows when the comparison could not be made (the
+// comparer was busy, or ran out of time: shots-orchestrator.compareScreens,
+// 23 Nov 2026), so the card still draws the current viewer rather than the
+// older whole-screen one. One screen per change and screen size with a
+// before and an after screen shot, as screensFor makes them, except that
+// changes are put on one screen only when their before AND after shots are
+// the very same images (nothing is decoded to see whether they look the
+// same). Nothing is outlined (`regions` empty): what differs is not known,
+// which is also why nothing here may count a change as unchanged
+// (unchangedStories is never run on these). A change's frame is where its
+// browser measured its element shot (`focusRect`) when that fits the
+// screen, unconfirmed by pixels. Cheap: only the PNGs' headers are read.
+function fallbackScreens(stories, files) {
+  const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
+    && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');
+  const sizeOf = (file) => {
+    const raw = file && file.data;
+    if (!raw || !(raw.byteLength >= 24)) return null;
+    const data = Buffer.isBuffer(raw) ? raw : Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+    // The IHDR chunk, where a PNG's width and height are.
+    return data.readUInt32BE(12) === 0x49484452 ? pngSize(data) : null;
+  };
+  const densityOf = (size, story, viewport) => {
+    const declared = (story.viewports || []).find((candidate) => candidate.name === viewport);
+    return size && declared ? densityFor(size.w, declared.width) : 1;
+  };
+  const cssOf = (size, density) => ({ w: Math.floor(size.w / density), h: Math.floor(size.h / density) });
+  // An element shot's recorded place on a screen `css` big, or null.
+  const placed = (file, css) => {
+    const rect = file && file.focusRect;
+    if (!rect || typeof rect !== 'object') return null;
+    const box = [rect.x, rect.y, rect.w, rect.h];
+    if (!box.every(Number.isSafeInteger) || rect.x < 0 || rect.y < 0 || rect.w < 1 || rect.h < 1) return null;
+    return rect.x + rect.w <= css.w && rect.y + rect.h <= css.h ? box : null;
+  };
+  const viewports = [];
+  for (const story of stories) {
+    for (const viewport of story.viewports || []) {
+      if (!viewports.includes(viewport.name)) viewports.push(viewport.name);
+    }
+  }
+  const screens = [];
+  for (const viewport of viewports) {
+    const groups = [];
+    for (const story of stories) {
+      if (!(story.viewports || []).some((candidate) => candidate.name === viewport)) continue;
+      const base = find(story.id, viewport, 'base', 'context');
+      const head = find(story.id, viewport, 'head', 'context');
+      const baseSize = sizeOf(base);
+      const headSize = sizeOf(head);
+      if (!baseSize || !headSize) continue;
+      const own = story.intent?.baseState === 'not_present';
+      const group = own ? null : groups.find((entry) => !entry.notPresent
+        && entry.base.sha256 === base.sha256 && entry.head.sha256 === head.sha256);
+      if (group) { group.stories.push(story); continue; }
+      groups.push({ stories: [story], base, head, baseSize, headSize, notPresent: own });
+    }
+    for (const group of groups) {
+      const first = group.stories[0];
+      const density = densityOf(group.baseSize, first, viewport);
+      const before = cssOf(group.baseSize, density);
+      const after = cssOf(group.headSize, densityOf(group.headSize, first, viewport));
+      const frames = [];
+      for (const story of group.stories) {
+        const b = placed(find(story.id, viewport, 'base', 'focus'), before);
+        const a = placed(find(story.id, viewport, 'head', 'focus'), after);
+        if (b || a) frames.push({ story: story.id, b, a });
+      }
+      screens.push({
+        viewport,
+        stories: group.stories.map((story) => story.id),
+        shot: first.id,
+        // Grouped only on the very same after shot: nothing is folded.
+        foldedAfter: [],
+        width: before.w,
+        heightBefore: before.h,
+        heightAfter: after.h,
+        density,
+        regions: [],
+        frames,
+      });
+    }
+  }
+  return screens;
+}
+
 // Whether an area that differs touches a change's frame: its box (or, for a
 // part one side has and the other does not, its mark line) overlaps the
 // frame on the same side. A frame with only one side (no before element
@@ -784,6 +870,7 @@ module.exports = {
   locate,
   locateAll,
   screensFor,
+  fallbackScreens,
   unchangedStories,
   touchesFrame,
   elsewhereChanged,
