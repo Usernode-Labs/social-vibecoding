@@ -76,7 +76,8 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   // The welcome and the maker's hello both offer "How do I invite friends?".
   assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite \(or Invite people under Share it\)\. It\n  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included\./);
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
-  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,
+  // The hub's Invite leads with its glyph under the standard look.
+  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*(?:\{wipLook \? <UserPlusIcon aria-hidden="true" \/> : null\}\s*)?\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,
     'the buttons it names are called that');
   assert.equal(require('./lib/platform-i18n').message('project:communityCard.invite.button'), 'Invite');
   assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*\{t\('project:communityCard\.share\.invite'\)\}\s*<\/Button>/);
