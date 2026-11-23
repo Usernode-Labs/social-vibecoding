@@ -32817,6 +32817,32 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes:not(:disabled):hover { background: var(--bl-sun-lit); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes:not(:disabled):active { box-shadow: var(--bl-pill-edge-down); }
 /* ── END OF THE THREAD PAGE IN THE STANDARD LOOK. ── */
+/* The plan card's Build it is the look's sun pill (#7044): the request's
+   card, the bot chat's, the App tab's and a first version's all wear it, so
+   it reads as the card's one primary action as the page's yellow pills do.
+   Keyed on the look's own attributes, so the markup keeps its Tailwind
+   classes and every frame look keeps the accent-filled button. */
+html:not([data-skin]) [data-bot-plan] [data-bot-plan-build] {
+  background: var(--wip-top-cta-bg);
+  color: var(--wip-top-cta-ink);
+  box-shadow: var(--wip-top-cta-edge);
+}
+html:not([data-skin]) [data-bot-plan] [data-bot-plan-build]:hover { background: var(--wip-top-cta-bg); }
+html:not([data-skin]) [data-bot-plan] [data-bot-plan-build]:active {
+  box-shadow: var(--wip-top-cta-edge-down);
+  transform: var(--wip-top-cta-press);
+}
+html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build] {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build]:hover { background: var(--bl-sun-lit); }
+html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build]:active {
+  box-shadow: var(--bl-pill-edge-down);
+  transform: translateY(2px);
+}
+html[data-motion="reduce"] [data-bot-plan] [data-bot-plan-build]:active { transform: none; }
 /* ═══════════════════════════════════════════════════════════════════════
    THE THREAD'S RAIL: "How it got here" (dev-board/topic/thread-rail.tsx).
    A request's and a change's page say their big events down a line: asked,
