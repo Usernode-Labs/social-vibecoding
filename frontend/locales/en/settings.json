@@ -1864,7 +1864,7 @@
     "description": "Heading of the section in Settings that replays the introduction shown to new members."
   },
   "tour.intro": {
-    "text": "A one-minute walk through your apps and the Homeroom menu.",
+    "text": "A one-minute walk through your projects and the Homeroom menu.",
     "description": "Explanation under the Welcome tour heading in Settings."
   },
   "tour.replay": {
@@ -1900,8 +1900,8 @@
     "description": "Row title in Settings > User guide: the second step for someone new."
   },
   "guide.start.open.body": {
-    "text": "Open a community's hub and select Open app, or select an app under Pinned apps on Home. Inside it, select the Homeroom logo to open its menu.",
-    "description": "Paragraph in Settings > User guide. \"Open app\" is a button on a community's hub; \"Pinned apps\" is the name of a section of the Home screen."
+    "text": "Open a community's hub and select Open app, or select a project under Pinned projects on Home. Inside it, select the Homeroom logo to open its menu.",
+    "description": "Paragraph in Settings > User guide. \"Open app\" is a button on a community's hub; \"Pinned projects\" is the name of a section of the Home screen."
   },
   "guide.start.suggest.title": {
     "text": "Suggest your first improvement",
@@ -1924,12 +1924,12 @@
     "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Communities\" is the name of a tab in the main navigation. \"Workshop\" is the name of a place on a project's page."
   },
   "guide.place.apps.title": {
-    "text": "Pinned apps",
-    "description": "Row title in Settings > User guide, about the Pinned apps section of the home screen. Same words as that section's heading."
+    "text": "Pinned projects",
+    "description": "Row title in Settings > User guide, about the Pinned projects section of the home screen. Same words as that section's heading."
   },
   "guide.place.apps.body": {
-    "text": "Pinned apps on Home holds the apps you pin and the ones you help build. Select one to open it. To start your own project, select New project: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
-    "description": "Paragraph in Settings > User guide. \"Pinned apps\" is a section of the Home screen; \"New project\" is the control on Home that starts a project."
+    "text": "Pinned projects on Home holds the apps you pin and the ones you help build. Select one to open it. To start your own project, select New project: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
+    "description": "Paragraph in Settings > User guide. \"Pinned projects\" is a section of the Home screen; \"New project\" is the control on Home that starts a project."
   },
   "guide.place.appMenu.title": {
     "text": "The Homeroom menu",
@@ -2104,8 +2104,8 @@
     "description": "Row title in Settings > User guide: a question a person might ask."
   },
   "guide.faq.findApp.body": {
-    "text": "Pinned apps holds the apps you pin or help build. For any other app, open its community from the Communities tab and select Open app on its hub. To keep it on Home, open the About entry in its Homeroom menu and choose Pin to Home.",
-    "description": "Paragraph in Settings > User guide. \"Pinned apps\" is a name on the Home screen; \"Communities\" is the name of a tab in the main navigation; \"Open app\" and \"Pin to Home\" are the names of buttons. \"The About entry\" is the row of the Homeroom menu that tells about the app."
+    "text": "Pinned projects holds the apps you pin or help build. For any other app, open its community from the Communities tab and select Open app on its hub. To keep it on Home, open the About entry in its Homeroom menu and choose Pin to Home.",
+    "description": "Paragraph in Settings > User guide. \"Pinned projects\" is a name on the Home screen; \"Communities\" is the name of a tab in the main navigation; \"Open app\" and \"Pin to Home\" are the names of buttons. \"The About entry\" is the row of the Homeroom menu that tells about the app."
   },
   "guide.faq.suggestion.title": {
     "text": "My suggestion isn't showing",

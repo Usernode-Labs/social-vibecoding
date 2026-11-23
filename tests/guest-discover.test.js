@@ -468,7 +468,9 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // The kind chips fade at whichever edge has more chips, the AI page's own
   // rail, and a chosen kind names itself in Featured's heading (#6660).
   assert.match(src, /<FadeRail role="group" aria-label=\{ta\('auth:guest\.categories\.label'\)\}/);
-  assert.match(src, /kind \? t\('home:join\.featuredKind', \{ kind: ta\(`auth:guest\.category\.\$\{kind\}`\) \}\)\s*: wip \? t\('home:join\.featuredAppsCommunities'\) : t\('home:join\.featured'\)/);
+  // Featured is "Featured" in every look (phone review, 23 Nov 2026): no "Featured apps / communities" beside it.
+  assert.match(src, /kind \? t\('home:join\.featuredKind', \{ kind: ta\(`auth:guest\.category\.\$\{kind\}`\) \}\) : t\('home:join\.featured'\)\}/);
+  assert.doesNotMatch(src, /featuredAppsCommunities/);
   assert.equal(message('home:join.featuredKind', { kind: 'Games' }), 'Featured in Games');
   // Each featured card is the visitor's card, with no Join and no footer (#6609).
   assert.doesNotMatch(cardOf(html, 'game-corner'), /data-home-join=|data-guest-card-footer/);

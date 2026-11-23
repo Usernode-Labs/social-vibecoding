@@ -3115,6 +3115,24 @@ html:not([data-skin]) .un-action-btn.un-has-icon.un-destructive .un-item-icon { 
   touch-action: pan-y;
 }
 
+/* PIN TO HOME (Home › Edit › Add other apps) is the same trade: its two
+   lists scroll in a box under the title (phone review, 23 Nov 2026; they ran
+   2,693px down an 812px sheet that no swipe moved). The box is as tall as
+   the sheet's cap leaves under the grabber, the body's padding and the
+   title row (7rem together), so the sheet itself never outgrows the screen. */
+.un-sheet:has([data-add-apps-sheet]) {
+  touch-action: pan-y;
+}
+[data-add-apps-scroll] {
+  max-height: calc(100dvh - max(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)), 12px)
+    - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))
+    - var(--un-kb-inset, 0px) - 7rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding-bottom: 1rem;
+}
+
 /* THE SWITCHER'S ONLY SCROLLER RUNS THE OTHER WAY. Its app rail is a
    horizontal strip, and `pan-y` here made that strip unreachable by touch —
    the overflow existed and no gesture could get at it. `pan-x` inverts the
@@ -4088,7 +4106,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
     var(--home-washes);
   background: var(--home-wallpaper);
@@ -4129,7 +4147,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
     var(--home-washes);
 }
@@ -4153,7 +4171,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(253, 232, 228, 0.7), rgba(253, 232, 228, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
     --home-wallpaper:
-      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
@@ -4167,10 +4185,24 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(118, 31, 15, 0.7), rgba(118, 31, 15, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(80, 48, 105, 0.55), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
     --home-wallpaper:
-      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
+}
+/* THE STAR IS PLACED FROM THE USABLE BOX (phone review, 23 Nov 2026). The
+   body runs under the iPhone Duo's status column, so 32px from the body's
+   right edge put the star half under the clock: a pixelated stain, not a
+   star. With the column on the right it stands that much further in. */
+html[data-side-strip="right"] body { --home-star-x: calc(32px + var(--platform-strip-w, 0px)); }
+/* AND A PHONE'S STANDARD LOOK DRAWS NONE. Its 78px were placed for a 52px
+   bar at the top of the screen. Under a phone's status bar all but a sliver
+   is behind the system's own clock and battery, and once the search row is
+   pulled down the rest lands behind New project, where it read as a smudge.
+   `none` is a valid layer image, so the shorthands above keep their shape;
+   !important because the dark rule above is the more specific selector. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) body { --home-star: none !important; }
 }
 /* THE HEADER STAYS CLEAR OF THE STAR in a running app and on New project
    (polish N20). On Home the star sits behind the bell by design, but over
@@ -5271,10 +5303,16 @@ html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-
   line-height: 1.18; /* 13px at the design size; unitless so it tracks the font */
   font-weight: 500;
   text-align: center;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  -webkit-hyphens: auto;
-  hyphens: auto;
+  /* A WORD BREAKS ONLY WHEN IT CANNOT FIT A LINE ON ITS OWN (phone review,
+     23 Nov 2026). `hyphens: auto` with `anywhere` let WebKit fill the first
+     line with a piece of the second word: "Pourover Cof-fee", "Game Cor-ner",
+     beside a neighbour that wrapped at its space. A name's own soft hyphens
+     still count (manual), and a single word wider than the tile is still
+     cut to fit rather than run out of it. */
+  overflow-wrap: break-word;
+  word-break: normal;
+  -webkit-hyphens: manual;
+  hyphens: manual;
 }
 
 /* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
@@ -6700,7 +6738,11 @@ html:not([data-skin]) .wip-card[data-tone="goal"] {
   cursor: pointer;
   transition: color 150ms;
 }
-.wip-head-more:hover { color: var(--wip-ink); }
+/* Under a POINTER only (phone review, 23 Nov 2026): iOS keeps :hover on the
+   last thing tapped, so after "Show all" the label stayed near black and its
+   underline black, beside a link still in blue, until something else was
+   tapped. The same gate is on this link's three other hover rules below. */
+@media (hover: hover) { .wip-head-more:hover { color: var(--wip-ink); } }
 .wip-head-chevron {
   display: inline-flex;
   flex: none;
@@ -6713,7 +6755,7 @@ html:not([data-skin]) .wip-card[data-tone="goal"] {
   color: var(--wip-ink-action);
   transition: background-color 150ms;
 }
-.wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-head-disc); }
+@media (hover: hover) { .wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-head-disc); } }
 .wip-head-chevron-glyph { width: 0.875rem; height: 0.875rem; }
 /* A label that folds its section says so on a small button after its words
    (asked 19 Nov 2026): the words of what a press does and the chevron, in
@@ -6740,7 +6782,7 @@ html:not([data-skin]) .wip-card[data-tone="goal"] {
   color: var(--wip-fold-ink);
   transition: transform 150ms, box-shadow 150ms, background-color 150ms;
 }
-.wip-head-more:hover > .wip-fold-pill { background-color: var(--wip-fold-bg-on); }
+@media (hover: hover) { .wip-head-more:hover > .wip-fold-pill { background-color: var(--wip-fold-bg-on); } }
 .wip-head-more:active > .wip-fold-pill { box-shadow: var(--wip-fold-edge-down); transform: var(--wip-fold-press); }
 /* Rows: one thing a line, a hairline between them. */
 .wip-rows { display: grid; min-width: 0; margin-top: 0.25rem; overflow: hidden; }
@@ -6974,6 +7016,13 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
   .wip-rail-arrow-back { inset-inline-start: -0.625rem; }
   .wip-rail-arrow-on { inset-inline-end: -0.625rem; }
 }
+/* Where a finger moves the row there are no arrows (phone review, 23 Nov
+   2026): the disc hung half off the card, 2px from the screen's edge, over
+   the points, and after a swipe a second one covered the first picture. The
+   row swipes; the arrows are a pointer's way along it. */
+@media (hover: none) and (pointer: coarse) {
+  .wip-rail-arrow { display: none; }
+}
 .wip-rail-arrow-glyph { width: 1rem; height: 1rem; }
 .wip-poster-facts { display: flex; align-items: baseline; gap: 0.5rem; }
 .wip-poster-facts > .wip-item-meta { flex: 1 1 0; min-width: 0; }
@@ -7041,6 +7090,15 @@ html:not([data-skin]) .wip-filterbar > select {
   font-weight: 500;
   color: var(--wip-ink);
 }
+/* On a phone the menu takes a line of its own, under the choices (phone
+   review, 23 Nov 2026): side by side, the menu left the choices about 217px,
+   two of them fit and the third was cut to "So" against it. The choices get
+   the whole line, and fade at the edge where there are more. Up to 480px:
+   the folded Duo is 466 wide with 382 to use. */
+@media (max-width: 479.98px) {
+  html:not([data-skin]) .wip-filterbar { flex-wrap: wrap; row-gap: 0.5rem; }
+  html:not([data-skin]) .wip-filterbar > :first-child { flex: 1 1 100%; }
+}
 /* The search row: a short field, then the filled action at its end, the
    same distance from the header as from the first label. */
 .wip-topbar > .wip-cta { margin-inline-start: auto; }
@@ -7056,7 +7114,18 @@ html:not([data-skin]) .wip-filterbar > select {
    the row (asked 19 Nov 2026; the field stood 5px under it). */
 @media (max-width: 767.98px) {
   html:not([data-skin]) #home-search-bar > .wip-topbar { padding-top: var(--wip-topbar-pad-phone); }
+  /* There the row is the field alone, the whole width (phone review, 23 Nov
+     2026): it waits under the header until pulled down, so New project is
+     the grid's last tile instead (home.js hasSideCard), as in the brand look,
+     and the field's words are no longer cut beside a button. */
+  html:not([data-skin]) #home-search-bar #home-new-project-top { display: none; }
+  html:not([data-skin]) #home-search-bar .wip-search { max-width: none; }
 }
+/* New project wears the page's typeface, as New community does on its page
+   (21 Nov 2026), not the buttons' serif: it is of Home, whose heading and
+   labels are the look's own font (phone review, 23 Nov 2026). Two ids, so it
+   outranks the BUTTONS block's shape. */
+html:not([data-skin]) #home-search-bar #home-new-project-top { font-family: var(--wip-font); }
 .wip-search { width: 100%; max-width: var(--wip-search-w); }
 /* A project tile's sentence and its line of facts (app-grid.tsx). */
 .app-card-desc {
@@ -7240,6 +7309,19 @@ html:not([data-skin]) #home-screen #home-join-section > [data-home-join-featured
   padding-top: var(--wip-row-gap);
   padding-bottom: 0;
 }
+/* Pinned projects' heading is one height with or without Edit on (the
+   label's Show all link, 32px, sets it; Edit's own links are as tall,
+   features/home/index.tsx), so the grid under it holds still. */
+html:not([data-skin]) #home-screen #home-apps-section > .home-area-label { min-height: 3.375rem; }
+/* Featured's label and cards start at the page's gutter, as every other
+   section's do: its own box brings the gutter here, so the 4px its label and
+   grids add inside it (px-1, for the looks where the section's box is the
+   gutter) put them at 16px beside sections at 12 (phone review, 23 Nov 2026). */
+html:not([data-skin]) #home-screen #home-join-section > [data-home-join-featured] > :is(h3, [data-cm-grid]) { padding-inline: 0; }
+/* The page ends with room under its last line. The section gave up its box
+   (display: contents, above) and its bottom padding with it, so "That's
+   every public community." stood flush against the tab bar. */
+html:not([data-skin]) #home-screen .home-main { padding-bottom: 1.5rem; }
 /* Its rows stand one row gap apart, and nothing is drawn between them. A
    section's label brings one card gap of its own. */
 html:not([data-skin]) #home-screen #home-join-section > .home-area-label { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
@@ -9094,6 +9176,11 @@ html:not([data-skin]) #communities-screen .communities-top {
   padding: var(--wip-topbar-pad-phone) var(--wip-gutter) 0;
 }
 html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; min-width: 0; }
+/* While there are words in the field New community gives it its place, as
+   New project does on Home (phone review, 23 Nov 2026), and the field's own ×
+   empties it (features/communities/index.tsx), not the browser's. */
+html:not([data-skin]) #communities-screen .communities-top:has(#communities-search-input:not(:placeholder-shown)) > #communities-new-top { display: none; }
+html:not([data-skin]) #communities-search-input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 @media (min-width: 768px) {
   html:not([data-skin]) #communities-screen .communities-top { padding: 1.75rem var(--wip-gutter) 0; }
   html:not([data-skin]) #communities-screen .communities-search { flex: 0 1 var(--wip-search-w); }
@@ -9920,7 +10007,9 @@ html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .hom
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
 }
-html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; }
+/* Under a pointer only: a tapped link kept the dark underline on a phone, so
+   "Add other apps" stood dark beside "Done" in blue (phone review, 23 Nov 2026). */
+@media (hover: hover) { html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; } }
 /* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
    is a level 1 button: its fill, its edge and its serif label at the block's
    own weight, not a face of its own. (The ids outrank the class rules
@@ -10330,7 +10419,7 @@ html:not([data-skin]) .wip-fold-pill {
 html:not([data-skin]) :is(.home-area-label > span:first-child, #home-needs-card-title):has(.wip-fold-pill),
 html:not([data-skin]) .wip-head-more:has(> .wip-fold-pill) { display: flex; flex: 1 1 auto; }
 html:not([data-skin]) .wip-head-more > .wip-fold-pill { margin-inline-start: auto; }
-html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; }
+@media (hover: hover) { html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; } }
 html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none; transform: none; }
 /* END OF HOME. */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
@@ -10675,6 +10764,10 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
    sets --cm-lead-cols; the rest of Featured is the grid under it. */
 .cm-grid[data-cm-grid="lead"] { grid-template-columns: repeat(var(--cm-lead-cols, 3), minmax(0, 1fr)); }
 .cm-grid[data-cm-grid="lead"] + .cm-grid { margin-top: var(--cm-gap); }
+/* A lone featured card across a row meant for two or three
+   (features/home/communities-to-join.tsx `lone`): its picture is a band, not
+   16:9 across the whole page. */
+.cm-grid[data-cm-grid="lead"][data-cm-lone] .cm-card-pic { aspect-ratio: 3 / 1; max-height: 15rem; }
 .cm-card[data-cm-size="lead"] .cm-card-body { padding: 0 16px 18px; }
 .cm-card[data-cm-size="lead"] .cm-card-head { gap: 14px; }
 .cm-card[data-cm-size="lead"] .cm-card-face { margin-top: -18px; }

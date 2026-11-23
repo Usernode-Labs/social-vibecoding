@@ -111,6 +111,11 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const leadCount = useLeadCount(probe);
   const lead = useMemo(() => featured.slice(0, leadCount), [featured, leadCount]);
   const leadStyle = { ['--cm-lead-cols' as string]: String(leadCount) } as CSSProperties;
+  // One featured community where the row has room for more is the whole row,
+  // a wide card, not one card beside an empty half page (phone review, 23 Nov
+  // 2026, the Duo unfolded sideways). Its picture is a band (app.css).
+  const lone = lead.length === 1 && leadCount > 1;
+  const shownLeadStyle = lone ? ({ ['--cm-lead-cols' as string]: '1' } as CSSProperties) : leadStyle;
   const list = useMemo(() => {
     // Searching keeps the join order (featured first); otherwise this is the
     // rest, in the chosen sort, the featured ones left out because Featured
@@ -199,7 +204,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
         // list: its place is held while the directory is read, by its larger
         // first row's cards, so the rows under it do not move when they land.
         <div data-home-join-featured="" data-loading="" className="pb-4 animate-pulse" aria-hidden="true">
-          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featuredAppsCommunities')}</h3>
+          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featured')}</h3>
           {probeGrid}
           <div className={GRID} data-cm-grid="lead" style={leadStyle}>
             {Array.from({ length: leadCount }, (_, i) => <CommunityCardSkeleton key={i} lead />)}
@@ -209,8 +214,9 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
           <h3 id={featuredId} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
-            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) })
-              : wip ? t('home:join.featuredAppsCommunities') : t('home:join.featured')}
+            {/* One name for one thing on Home (phone review, 23 Nov 2026): the
+                row is Featured in every look, not "Featured apps / communities". */}
+            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) }) : t('home:join.featured')}
           </h3>
           {probeGrid}
           {/* The first few featured communities are drawn larger, a row of
@@ -223,8 +229,9 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             aria-labelledby={featuredId}
             data-home-join-lead={lead.length}
             data-cm-grid="lead"
+            data-cm-lone={lone ? '' : undefined}
             className={GRID}
-            style={leadStyle}
+            style={shownLeadStyle}
           >
             {lead.map((app, i) => (
               <div key={app.slug} role="listitem" className="flex min-w-0 [&>article]:flex-1">

@@ -123,6 +123,18 @@
     "text": "Not saved on this phone yet. Your communities will load when you’re back online.",
     "description": "Communities screen, in place of the list, when Homeroom cannot be reached and the list was never saved on this device. Not an error: it says what will happen."
   },
+  "page.search.placeholderShort": {
+    "text": "Search",
+    "description": "Placeholder inside the search field at the top of the Communities page on a phone, where the field beside New community is too narrow for \"Search your communities\". A verb."
+  },
+  "page.search.clear": {
+    "text": "Clear search",
+    "description": "Tooltip and accessible name of the × button inside the Communities page's search field: empties the field."
+  },
+  "page.search.toJoin": {
+    "text": "Search communities to join",
+    "description": "Button under the line that says none of the person's communities match their search on the Communities page: opens Home with the same words in its search, which also looks through the public communities they can join."
+  },
   "page.noMatch": {
     "text": "None of your communities match “{{query}}”.",
     "description": "Line on the Communities page when the search finds none of the person's communities. {{query}} is what they typed."
