@@ -102,11 +102,12 @@ test('#2883: from 768px up the transcript steps down the existing scale, and the
   const at = CSS.indexOf('#2883: THE TRANSCRIPT READS ONE STEP DOWN');
   assert.ok(at >= 0);
   const block = CSS.slice(CSS.indexOf('@media (min-width: 768px) {', at), CSS.indexOf('\n}\n', at));
-  assert.match(block, /\.messages-message-head \{ min-height: 20px; font-size: 15px; \}/);
-  assert.match(block, /\.messages-message-head time ~ span \{ font-size: 13px; \}/);
-  assert.match(block, /\.messages-markdown\.gc-msg-content \{ font-size: 15px; line-height: 1\.4; \}/);
-  assert.match(block, /\.messages-composer-input \{ font-size: 15px; \}/);
-  assert.match(block, /\.messages-edit textarea \{ font-size: 15px; \}/);
-  for (const size of block.match(/font-size: \d+px/g)) assert.match(size, /font-size: (15|13)px/, 'nothing off the scale');
-  assert.match(rule('.messages-markdown.gc-msg-content'), /font-size: 17px;/, 'the phone keeps its reading size');
+  assert.match(block, /\.messages-message-head \{ min-height: 20px; font-size: 0\.9375rem; \}/);
+  assert.match(block, /\.messages-message-head time ~ span \{ font-size: 0\.8125rem; \}/);
+  assert.match(block, /\.messages-markdown\.gc-msg-content \{ font-size: 0\.9375rem; line-height: 1\.4; \}/);
+  assert.match(block, /\.messages-composer-input \{ font-size: 0\.9375rem; \}/);
+  assert.match(block, /\.messages-edit textarea \{ font-size: 0\.9375rem; \}/);
+  // In rem, so Settings > Accessibility's Text size reaches the transcript: 0.9375rem and 0.8125rem are 15 and 13 at the default size.
+  for (const size of block.match(/font-size: [\d.]+(?:px|rem)/g)) assert.match(size, /font-size: (0\.9375|0\.8125)rem/, 'nothing off the scale');
+  assert.match(rule('.messages-markdown.gc-msg-content'), /font-size: 1\.0625rem;/, 'the phone keeps its reading size');
 });
