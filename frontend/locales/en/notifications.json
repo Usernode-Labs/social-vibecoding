@@ -251,10 +251,6 @@
     "text": "Today",
     "description": "Heading over the notifications that arrived today, in the notifications sheet."
   },
-  "sheet.earlier": {
-    "text": "Earlier",
-    "description": "Heading over the notifications that arrived before today, in the notifications sheet."
-  },
   "sheet.yesterday": {
     "text": "Yesterday",
     "description": "Heading over the older notifications that arrived yesterday, on the notifications sheet's Unread filter once its older notifications are showing."

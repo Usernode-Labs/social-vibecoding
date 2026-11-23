@@ -583,7 +583,12 @@ test('buttons: the Sticker drawing, one block for the standard look and this one
   // The levels: the main action in the sun, the secondary in white, the destructive in red, a press onto the edge.
   assert.match(tokens[0].body, /--wip-btn-1-bg: #ffee6f;[\s\S]*--wip-btn-2-bg: #ffffff;[\s\S]*--wip-btn-bad-ink: #a3281a;/);
   assert.match(tokens[0].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-line\);/);
-  assert.match(tokens[0].body, /--wip-btn-font: 'Source Serif 4',/);
+  // Phone review S2 (23 Nov 2026): the label is the page's typeface, set once here.
+  assert.match(tokens[0].body, /--wip-btn-font: var\(--wip-font\);/);
+  assert.doesNotMatch(tokens[0].body, /Source Serif/);
+  // S8: in dark the hard edge is darker than the ground, never the pale outline again.
+  assert.match(tokens[1].body, /--wip-btn-edge: 2px 2px 0 0 var\(--wip-btn-shade\);/);
+  assert.match(tokens[1].body, /--wip-btn-shade: rgb\(0 0 0 \/ 0\.7\);/);
   // The rule that shapes every level reads the shell's classes through :where(), so a level's own rule outranks it.
   assert.match(css.slice(start, end), /html:not\(\[data-skin\]\) :is\(button, a, label, summary, \[role="button"\]\):where\(\.bg-violet-600, \.wip-cta,[^{]*\{\s*border: 1px solid var\(--wip-btn-line\);\s*border-radius: var\(--wip-btn-radius\);\s*box-shadow: var\(--wip-btn-edge\);/);
 });
@@ -598,17 +603,18 @@ test('New community wears the Communities page\'s typeface, not the buttons\' se
   assert.ok(token, 'the page\'s font is the one the rest of the page reads');
   // Two ids, so it outranks the BUTTONS block's shape (its classes are inside :where()).
   assert.equal((rule.selector.match(/#/g) || []).length, 2, 'it beats the class rules and the one-id page top action rule');
-  // The buttons' serif is untouched, and the shared page top action rule names
-  // no family, so Home's New project keeps it.
+  // Since phone review S2 every button wears the page's typeface (the buttons'
+  // own token), and the shared page top action rule names no family, so Home's
+  // New project takes that one too.
   const css = read('public', 'css', 'app.css');
   const start = css.indexOf('── BUTTONS (20 Nov 2026)');
   const end = css.indexOf('END OF BUTTONS.');
   const buttons = rules(css.slice(css.indexOf('*/', start) + 2, css.lastIndexOf('/*', end)).replace(/\/\*[\s\S]*?\*\//g, ''));
   const serif = buttons.filter((r) => /^html:not\(\[data-skin\]\)(\.dark)?$/.test(r.selector) && /--wip-btn-/.test(r.body))[0];
-  assert.match(serif.body, /--wip-btn-font: 'Source Serif 4',/);
+  assert.match(serif.body, /--wip-btn-font: var\(--wip-font\);/);
   const top = buttons.find((r) => r.selector === 'html:not([data-skin]) :is(#home-new-project-top, #communities-new-top)');
   assert.ok(top, 'the page top action rule is still the buttons block\'s');
-  assert.doesNotMatch(top.body, /font-family/, 'Home\'s New project keeps the serif');
+  assert.doesNotMatch(top.body, /font-family/, 'Home\'s New project reads the buttons\' face');
 });
 
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {

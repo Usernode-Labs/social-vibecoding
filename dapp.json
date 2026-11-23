@@ -4604,7 +4604,7 @@
       "name": "About is the app's page (nav prototype): Open, Add to your apps, and its builders with what each has merged",
       "path": "/?shot=app-about&demo=1&about=app#app/staging-demo-forkable/workshop",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane:has(#app-about-actions > #app-about-add) #app-about-contributors [data-contributor]",
-      "expectText": "14 live"
+      "expectText": "14 changes live"
     },
     {
       "name": "About Homeroom carries the platform's own figures: apps, members, merged (nav prototype)",

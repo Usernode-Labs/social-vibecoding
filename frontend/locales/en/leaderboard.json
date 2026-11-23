@@ -652,16 +652,16 @@
     "description": "Line at the top of the Standings tab for a viewer who is not signed in: a link to the Challenges tab. The first tag holds a separator, in lighter ink; the second is the link. Keep the arrow."
   },
   "standings.showNonPodium": {
-    "text": "Show non-podium users",
-    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking."
+    "text": "Show everyone",
+    "description": "Filter chip on the Standings tab: also lists the participants who are left out of the prize ranking, so the table shows everyone."
   },
   "standings.showNonPodiumCount_one": {
-    "text": "Show non-podium users ({{count}})",
-    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking. {{count}} is how many there are."
+    "text": "Show everyone ({{count}} more)",
+    "description": "Filter chip on the Standings tab: also lists the participants who are left out of the prize ranking, so the table shows everyone. {{count}} is how many more people that adds."
   },
   "standings.showNonPodiumCount_other": {
-    "text": "Show non-podium users ({{count}})",
-    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking. {{count}} is how many there are."
+    "text": "Show everyone ({{count}} more)",
+    "description": "Filter chip on the Standings tab: also lists the participants who are left out of the prize ranking, so the table shows everyone. {{count}} is how many more people that adds."
   },
   "standings.column.rank": {
     "text": "Rank",
