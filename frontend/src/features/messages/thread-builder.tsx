@@ -41,7 +41,7 @@ import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/button';
 import { ChatIcon, CheckIcon, ChevronDownIcon, TerminalIcon } from '@/components/ui/icons';
 import { CLAUDE_CODE_WEB_URL } from '../../lib/claude-code-link';
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { ChatgptSetupSteps, ClaudeSetupSteps } from '../settings/connector-setup-steps';
@@ -156,19 +156,19 @@ export function BuilderChip({ builder, open, onOpen }: {
       className="messages-project-chip"
       data-bot-new-thread-builder={builder}
       data-picked={own ? '' : undefined}
-      style={own ? ({ '--project-ink': 'var(--accent)' } as CSSProperties) : undefined}
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={t('messages:newThread.builder.chip', { builder: name })}
-      title={t('messages:newThread.builder.chip', { builder: name })}
       onClick={(event) => onOpen(event.currentTarget)}
     >
+      {/* Phone review S13: Homeroom bot's mark is the Homeroom project's too,
+          so beside "About: Homeroom" it made two pills look alike; "With:"
+          says who it is. Claude Code's and ChatGPT's glyphs still show. */}
       {own ? (
         <span className="messages-project-chip-tile messages-project-chip-any" aria-hidden="true"><BuilderGlyph builder={own} /></span>
-      ) : (
-        <span className="messages-project-chip-tile" aria-hidden="true"><img src={BOT_AVATAR} alt="" /></span>
-      )}
-      <span className="messages-project-chip-name">{name}</span>
+      ) : null}
+      {/* Phone review S13: it says what it picks ("About: Homeroom", "With:
+          Homeroom bot"), and those words are its name for a screen reader. */}
+      <span className="messages-project-chip-name"><RichMessage id="messages:newThread.builder.chip" values={{ builder: name }} components={[<span className="messages-project-chip-label" />]} /></span>
       <ChevronDownIcon className="messages-project-chip-chev" aria-hidden="true" />
     </button>
   );

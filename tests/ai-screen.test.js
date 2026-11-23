@@ -15,7 +15,7 @@
 //
 // What this pins:
 //   1. Needs you's order: the Needs you feed, the bot's plans waiting to be
-//      reviewed and the requests it handed back (Needs Reply, Restart
+//      reviewed and the requests it handed back (Needs reply, Restart
 //      build), then private threads; each thread is listed once.
 //   2. In progress and Waiting: what goes in each, in what order, and the
 //      words each row says, the bot's stages and claims among them.
@@ -125,7 +125,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
     'plan:7',
     'private:91', 'private:92',
   ], '#390 is the question owed above, so its plan is not listed again; nothing waiting on others is here');
-  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Choose a version', 'Needs Reply', 'Vote', 'Review plan', null, null]);
+  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Choose a version', 'Needs reply', 'Vote', 'Review plan', null, null]);
   assert.equal(owedCount(rows), 5, 'the heading counts what asks for you, not your private threads');
   // B17: on a project that is just yours, your yes alone approves it, and
   // the row says so as its card and the project's Needs you do.
@@ -144,7 +144,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
     ['A reminder email', 'Garden club · #410 · Waiting for you to OK the plan', '#app/garden/dev/issues/410'],
     'the row says its stage in the words every screen uses');
   // #6210 (3 Nov 2026): its Build it is on the plan on the request's page,
-  // so the row opens that page, as a Vote or Needs Reply row for it
+  // so the row opens that page, as a Vote or Needs reply row for it
   // would. B06's way to Main Chat at the plan is gone.
   assert.equal(rows[4].plan, undefined);
   const index = read('frontend/src/features/ai/index.tsx');
@@ -696,7 +696,8 @@ test('the filter: the three projects that need you most as chips, then any picke
   assert.deepEqual(tied.map((p) => p.app.slug), ['birds', 'zines'], 'a tie goes by name');
 
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /<FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\} data-ai-project-chips="" className="min-w-0 flex-1">/);
+  assert.match(lists, /<FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\} data-ai-project-chips="" className="min-w-0 flex-1" reveal=\{picked\.join\(' '\)\}>/,
+    'phone review #95: the picked chips are scrolled whole into view');
   // The chip primitive's own fade rail (#6660), which Home's kind chips use:
   // the first render carries no mask and no edge marks, so a prerender and its
   // hydration match; a caller's spacing wins over the rail's own through `cn`.
@@ -719,6 +720,20 @@ test('the filter: the three projects that need you most as chips, then any picke
   assert.match(lists, /aria-pressed=\{undefined\}\s+aria-haspopup="dialog"\s+aria-expanded=\{!!more\}/);
   assert.match(lists, /\{t\('messages:ai\.filter\.more', \{ count: past \}\)\}/);
   assert.equal(message('messages:ai.filter.more', { count: 28 }), '28 more');
+
+  // Phone review #95 (23 Nov 2026): the fade is over a chip the rail's edge
+  // cuts, never over one that fits whole; a sliver is clipped clean.
+  const { railMask } = loadTsx('frontend/src/features/ai/lists.tsx');
+  assert.equal(railMask(220, [[10, 60], [68, 214]]), null, 'every chip fits: no fade, though more chips may be scrolled past');
+  assert.equal(railMask(220, [[10, 60], [68, 214], [222, 355]]), null, 'the next chip starts past the edge: nothing is cut, nothing fades');
+  assert.equal(railMask(231, [[10, 60], [68, 214], [222, 355]]), 'linear-gradient(to right, #000 0px, #000 222px, transparent 222px)',
+    'a 9px sliver of the next chip is clipped at its own start, and the chip before it keeps its whole colour');
+  assert.equal(railMask(220, [[10, 60], [68, 300]]), 'linear-gradient(to right, #000 0px, #000 180px, transparent 100%)',
+    'a chip cut well inside fades over the last 40px only');
+  assert.equal(railMask(220, [[10, 60], [190, 300]]), 'linear-gradient(to right, #000 0px, #000 190px, transparent 100%)',
+    'a chip cut near the edge fades from its own start, never over the chip before it');
+  assert.equal(railMask(220, [[-100, 20], [28, 214]]), 'linear-gradient(to right, transparent 20px, #000 20px, #000 100%)',
+    'the same at the start edge, scrolled');
 
   const picker = read('frontend/src/features/ai/project-picker.tsx');
   assert.match(picker, /createPortal\(sheet \? <PickerSheet \{\.\.\.props\} \/> : <PickerMenu anchor=\{anchor\} \{\.\.\.props\} \/>, document\.body\)/,
@@ -872,7 +887,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
     'Going live', 'Building', 'Building', 'Building', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
     'Ready to build', 'Ready to build', 'Not started yet', 'Not started yet', 'Stopped: the build didn\'t finish',
   ], 'the stage, in the words every screen uses');
-  // Handed back by the bot: Needs Reply, Restart build and Retry the fix,
+  // Handed back by the bot: Needs reply, Restart build and Retry the fix,
   // each saying its stage.
   const work = {
     private: [], next: [], live: [],
@@ -883,7 +898,7 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   const rows = needsYou(bots, work);
   assert.deepEqual(rows.map((r) => [r.key, r.pill && message(r.pill.id), words(r.sub)]), [
     ['need:proposal:1', 'Vote', 'Garden club · #600 · Your vote helps free a build slot'],
-    ['decide:7', 'Needs Reply', 'Garden club · #410 · Waiting for you to decide'],
+    ['decide:7', 'Needs reply', 'Garden club · #410 · Waiting for you to decide'],
     ['stopped:8', 'Restart build', 'Garden club · #411 · Stopped: the build didn\'t finish'],
     ['fix_stopped:10', 'Retry the fix', 'Garden club · #413 · Stopped: its tests still fail'],
   ]);
@@ -921,7 +936,7 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
   };
   const rows = needsYou([], work);
   assert.deepEqual(rows.map((r) => r.key), ['works:7', 'works:8', 'decide:9']);
-  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Confirm it works', 'Confirm it works', 'Needs Reply']);
+  assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Confirm it works', 'Confirm it works', 'Needs reply']);
   assert.deepEqual(rows.map((r) => words(r.sub)), [
     'Garden club · #410 · It may already work: close it? · Homeroom bot: Visitors get the lobby and play as a guest.',
     'Garden club · #411 · It may already work: close it?',
@@ -1492,6 +1507,11 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   assert.match(quiet, /data-ai-line="private" data-ai-lit="" aria-current="true"><span[^>]*>[\s\S]*?A darker header/);
   const src = read(LISTS);
   assert.match(src, /const LIT_ROW = '[^']*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\]';/, 'the lit tint and ink, as the rail\'s rows are');
+  // Phone review #140: a private thread's row is lit whole, its ⋯ inside the tint.
+  assert.match(src, /const LIT_ROW_WHOLE = '[^']*rounded-md bg-\[color:var\(--lit-tint\)\]';/);
+  assert.match(src, /const LIT_INK_ROW = '(?![^']*bg-)[^']*text-\[color:var\(--lit-ink\)\]';/, 'its button keeps the ink and no fill of its own');
+  assert.match(src, /<div className=\{line\.lit \? LIT_ROW_WHOLE : 'flex min-w-0 items-center gap-1'\} data-ai-line-done="">/);
+  assert.match(src, /<LineButton line=\{line\} quiet=\{quiet\} freshTitles=\{freshTitles\} inLitRow=\{line\.lit\} \/>/);
   assert.doesNotMatch(src, /MainChatRow|MAIN_LIT|main\.(lit|unread|open)/);
   // A private thread's own new mark (no Main Chat counts it): the server's
   // count on its row, as any thread's (#6262).
@@ -2041,8 +2061,9 @@ test('the column is held inside the window, and the panel takes its place at its
   assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   // A thread alone in the column has its own head, which pads by the Duo's column (1 Nov 2026).
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="alone"\] \{\s+padding-inline-end: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
-    'a thread\'s title stops beside the column, not under the clock');
+  // Phone review #70 (23 Nov 2026): and New chat's head, whose ✕ sat under the Wi-Fi ring held sideways.
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="alone"\],\n[^\n]*\n[^\n]*\n#ai-screen \.ai-main-pane \[data-bot-new-thread-pane\] > \.messages-thread-header \{\s+padding-inline-end: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
+    'a thread\'s title and New chat\'s ✕ stop beside the column, not under the clock');
   assert.match(read('frontend/src/features/messages/index.tsx'), /<header className="messages-thread-header" data-reply-head=\{alone \? 'alone' : undefined\}>/);
   assert.doesNotMatch(css, /\.messages-layout \{[^}]*padding-inline-end: var\(--ai-edge/, 'the chat runs under the column, below its head');
   assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-inline-end: var\(--ai-edge, 0px\);/);
@@ -2826,7 +2847,7 @@ test('#6838: the list scrolls up and down only, and the chip rail keeps its own 
 });
 
 // T2.10 (19 Nov 2026): a hand-back's pill says what it waits on, from the
-// cause the server stored (services/bot-stop-cause.js), never "Needs Reply"
+// cause the server stored (services/bot-stop-cause.js), never "Needs reply"
 // to a requester whose decision it is not.
 test('T2.10: a person verdict\'s pill says who or what it waits on', () => {
   const { needsYou } = loadTsx(MODEL);
@@ -2837,7 +2858,7 @@ test('T2.10: a person verdict\'s pill says who or what it waits on', () => {
       decide(5, 'wrong_project'), decide(6, 'close'), decide(7, 'operator_work')],
   });
   assert.deepEqual(rows.map((r) => message(r.pill.id)), [
-    'Needs Reply', 'See who decides', 'Move it', 'Move it', 'Close it', 'Close it', 'Take a look',
+    'Needs reply', 'See who decides', 'Move it', 'Move it', 'Close it', 'Close it', 'Take a look',
   ]);
   const { normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
   assert.equal(normalizeWorkState({ stage: 'waiting_for_you', why: 'decide', cause: 'others' }).cause, 'others', 'the client keeps the cause');

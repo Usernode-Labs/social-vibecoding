@@ -2268,6 +2268,25 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    declared check selects it). Two selectors' worth of specificity, so it
    outranks the element's own `flex` although tailwind.css loads later. */
 .messages-composer-count:not([data-near-limit]) { display: none; }
+/* THE STACKED MESSAGE BOX (phone review #58, 23 Nov 2026). The "+", the
+   field, dictation and Send shared one row for the field's whole height, so
+   on a phone the words had 219px of a 357px card and two sentences filled
+   six lines. Once the text wraps (lib/use-composer-stack.ts sets
+   `data-stacked` on the row), the field takes the card's whole width and the
+   buttons stand on a line of their own beneath it: the "+" at the start, the
+   mic and Send at the end. The field keeps its 140px ceiling and scrolls
+   past it; the band its top padding leaves is faded, so a line scrolled up
+   under the card's edge goes out softly instead of being cut through its
+   letters. */
+.messages-composer-row[data-stacked] { flex-wrap: wrap; row-gap: 0; }
+.messages-composer-row[data-stacked] > .messages-composer-input {
+  order: -1;
+  flex: 1 0 100%;
+  padding-top: 10px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 2px, #000 14px);
+  mask-image: linear-gradient(to bottom, transparent 2px, #000 14px);
+}
+.messages-composer-row[data-stacked] > .messages-composer-add { margin-inline-end: auto; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
 .messages-reply-draft {
@@ -21661,7 +21680,10 @@ body:has(#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed]:not(.hidd
 /* Its head is the column's head, so it pads its contents by iPhone Duo's
    column of system chrome (`--ai-edge`, 0 everywhere else): unpadded, a
    thread's long title ran under the clock and the Wi-Fi ring (1 Nov 2026). */
-#ai-screen .ai-main-pane .messages-thread-header[data-reply-head="alone"] {
+#ai-screen .ai-main-pane .messages-thread-header[data-reply-head="alone"],
+/* New chat's head is the column's head too (phone review #70, 23 Nov 2026):
+   unpadded, its ✕ sat under the Duo's Wi-Fi ring held sideways. */
+#ai-screen .ai-main-pane [data-bot-new-thread-pane] > .messages-thread-header {
   padding-inline-end: calc(16px + var(--ai-edge, 0px));
 }
 /* A WIDER COLUMN KEEPS A READABLE LINE (3 Nov 2026). With the 720px cap
@@ -24091,6 +24113,16 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    the box's placeholder ink. The one the message begins with wears the
    card's focus ring. Auto margins centre the block in a scroller that keeps
    its `justify-end`, and let it scroll when a short screen cannot hold it. */
+/* A SHORT PANE BEGINS AT THE MARK (phone review #143, 23 Nov 2026). The
+   scroller's `justify-end` is a chat's, for messages; with only the starts
+   in it, a pane shorter than they are (a screen about 670px tall, or the box
+   grown with what is typed) laid their overflow out upward, behind the
+   head, out of scroll's reach: the bot's mark sat under the head with its
+   last row of pixels showing as a dash. Started from the top instead, the
+   auto margins still centre the starts wherever they fit, and where they do
+   not they begin at the mark and scroll (the `safe center` the review asked
+   for, in a form every engine lays out the same). */
+[data-bot-new-thread-pane] > .messages-thread-scroll { justify-content: flex-start; }
 .messages-starts {
   margin-block: auto;
   display: flex;
@@ -24103,7 +24135,10 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .messages-starts-hello > img { width: 40px; height: 40px; margin-bottom: 6px; border-radius: 12px; object-fit: cover; }
 .messages-starts-title { margin: 0; color: var(--text-primary); font-size: 17px; font-weight: 700; line-height: 22px; text-wrap: balance; }
 .messages-starts-sub { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 17px; }
-.messages-starts-list { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+/* ONE WIDTH FOR THE STARTS (phone review S13): a single column as wide as
+   the widest start, centred, so the pills stand as one stack rather than
+   six widths. A narrow pane caps the column, and each pill, at its width. */
+.messages-starts-list { display: grid; grid-template-columns: minmax(0, max-content); justify-content: center; gap: 8px; width: 100%; }
 .messages-start {
   display: inline-flex;
   align-items: center;
@@ -24141,13 +24176,17 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 }
 /* THE PROJECT IT IS FOR, floating over the box: a disc of its own above the
    card, not a row inside it, which opens the "Your communities" rows
-   (project-picker.tsx). A project picked tints it in its community's colour,
-   as the switcher tints the row you are on. */
-.messages-project-row { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px; }
+   (project-picker.tsx). It says what it picks: "About: Homeroom" (ONE FILL
+   FOR BOTH, below). */
+/* One line (phone review S13): labelled, the two chips are wider, and a
+   long project's name gives way (its own ellipsis) rather than the second
+   chip dropping to a row of its own. */
+.messages-project-row { display: flex; gap: 6px; padding-bottom: 8px; }
+.messages-project-row > [data-bot-new-thread-builder] { flex-shrink: 0; }
 .messages-project-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
   height: 34px;
@@ -24162,11 +24201,17 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 }
 .messages-project-chip:hover { background: var(--messages-surface-2); }
 .messages-project-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.messages-project-chip[data-picked] {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--project-ink) 14%, var(--messages-surface));
-}
+/* ONE FILL FOR BOTH (phone review S13, 23 Nov 2026). A picked project was
+   tinted in its community's colour, so beside the white "Homeroom bot" chip
+   the Homeroom project's read grey: two near-identical pills in two fills,
+   and nothing said which was which. Each now says what it picks in words
+   ("About:", "With:", in the label's fainter ink) on the same surface; a
+   pick reads as its name in the page's own ink. */
+.messages-project-chip[data-picked] { color: var(--text-primary); }
 .messages-project-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages-project-chip-label { color: var(--text-muted); font-weight: 500; }
+/* A chip with no tile (Homeroom bot's, S13) starts its words a pill's inset in. */
+.messages-project-chip:not(:has(> .messages-project-chip-tile)) { padding-inline-start: 12px; }
 .messages-project-chip-tile {
   flex: 0 0 auto;
   width: 22px;
@@ -24199,8 +24244,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 :where(html[data-motion="reduce"]) .messages-start,
 :where(html[data-motion="reduce"]) .messages-project-chip { transition: none; }
 /* WHO WORKS ON IT (10 Nov 2026, thread-builder.tsx). The second chip in the
-   row above is the project chip's own class, tinted in the accent once the
-   person's own Claude Code or ChatGPT is picked. Then the send is not a send:
+   row above is the project chip's own class, "With: Homeroom bot", or the
+   person's own Claude Code or ChatGPT once picked. Then the send is not a send:
    it opens the product in a new tab, so the disc widens into a pill that
    says Open beside the leaving-arrow. */
 .messages-send.messages-send-open {
@@ -27340,7 +27385,8 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
      tabs and the back button. Over the ground it slides under the strip
      instead, as off a phone's edge. Under the header (z-index 10), over
      the screens. */
-  html[data-side-strip] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+  html[data-side-strip] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground,
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground {
     position: fixed;
     z-index: 9;
     top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) - 0.5rem);
@@ -27352,7 +27398,8 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     clip-path: inset(0 round 0 1.75rem 0 0);
     pointer-events: none;
   }
-  html[data-side-strip="left"] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+  html[data-side-strip="left"] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground,
+  html[data-side-strip="left"] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground {
     left: 0;
     right: auto;
     border-top-right-radius: 0;
@@ -27368,6 +27415,28 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     background:
       linear-gradient(var(--dc-strip-fill), var(--dc-strip-fill)),
       var(--home-wallpaper, var(--dc-strip-solid));
+  }
+  /* THE HOMEROOM BOT TAB TOO (phone review #71, #67, 23 Nov 2026). Its
+     thread and its New chat slide in over the list as the drawer's second
+     level (features/ai/phone-drawer.tsx), and that level's ground is not the
+     wallpaper: a thread stands on the page's own ground (`.ai-drawer-thread`,
+     --home-ground) and New chat is one full-height sheet (--dc-sheet-solid).
+     The strip beside them showed the wallpaper's washes, a straight seam the
+     full height of the screen in light and a purple column beside a navy
+     page in dark. So while that level is out the strip takes the level's own
+     fill, opaque, in either theme; the list (level 0) stands on the
+     wallpaper itself and keeps it. */
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground {
+    /* The level runs square under the header's foot, so the strip does
+       (still clipped: the fill is a viewport-sized layer). */
+    border-radius: 0;
+    clip-path: inset(0);
+  }
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground::before {
+    background: var(--home-ground);
+  }
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"] [data-bot-new-thread-pane]) .platform-side-strip-ground::before {
+    background: var(--dc-sheet-solid);
   }
   /* The plane's hairline, drawn over the layer (which paints over a
      border, as the tab bar's does). */
@@ -31090,7 +31159,7 @@ html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-hello > img { width: 44px; height: 44px; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-title { color: var(--fr-ink); font-size: 15px; font-weight: 650; line-height: 1.45; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-sub { color: var(--fr-mut); }
-html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-list { align-items: stretch; gap: 0; max-width: 432px; }
+html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-list { display: flex; flex-direction: column; align-items: stretch; gap: 0; max-width: 432px; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-start { display: flex; gap: 12px; min-height: 60px; padding: 8px 16px; border-radius: 0; background: none; box-shadow: none; color: var(--fr-ink); font-size: 15px; font-weight: 650; line-height: 1.45; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-start + .messages-start { border-top: 1px solid var(--fr-line2); }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-start > svg { box-sizing: border-box; width: 40px; height: 40px; padding: 10px; border-radius: 12px; background: var(--fr-sunk); color: var(--fr-ink); }

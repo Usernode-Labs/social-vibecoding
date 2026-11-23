@@ -4048,8 +4048,8 @@
     "description": "Written into the message box when the \"I have a question about…\" pill is tapped, for the person to finish the sentence. Must be the same words as that pill: a message that begins with them is read as asking Homeroom bot a question."
   },
   "newThread.projectChip": {
-    "text": "Project: {{project}}",
-    "description": "Accessible name and tooltip of the chip over the message box of a new thread with Homeroom bot, which opens the project picker. {{project}} is the project picked, or \"Any project\"."
+    "text": "<0>About:</0> {{project}}",
+    "description": "The chip over the message box of a new thread with Homeroom bot, which opens the project picker: what the thread is about. Its words are its name for a screen reader too. <0> is the label, drawn in a fainter ink than the project's name. {{project}} is the project picked, or \"Any project\"."
   },
   "newThread.picker.title": {
     "text": "Which project is it for?",
@@ -4080,8 +4080,8 @@
     "description": "In the project picker of a new thread while the projects you are in are read."
   },
   "newThread.builder.chip": {
-    "text": "Works on it: {{builder}}",
-    "description": "Accessible name and tooltip of the second chip over the message box of a new thread, beside the project chip: who works on the thread. {{builder}} is Homeroom bot, Claude Code or ChatGPT."
+    "text": "<0>With:</0> {{builder}}",
+    "description": "The second chip over the message box of a new thread, beside the project chip (\"About: …\"): who works on the thread. Its words are its name for a screen reader too. <0> is the label, drawn in a fainter ink than the name. {{builder}} is Homeroom bot, Claude Code or ChatGPT."
   },
   "newThread.builder.title": {
     "text": "Who works on it?",
@@ -5148,7 +5148,7 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Pill at the end of a row: the person owes a pick between competing changes. A verb."
   },
   "ai.pill.answer": {
-    "text": "Needs Reply",
+    "text": "Needs reply",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Pill at the end of a row: Homeroom bot asked the person a question about it and needs their reply. A short label, not a verb."
   },
   "ai.pill.buildIt": {
@@ -5156,7 +5156,7 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Pill at the end of a row: a plan is ready to build; it opens the plan, where Build it is the button. A verb."
   },
   "ai.pill.decide": {
-    "text": "Needs Reply",
+    "text": "Needs reply",
     "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first, and the bot needs their reply about what happens next. Opens the request. A short label, not a verb."
   },
   "ai.pill.othersDecide": {

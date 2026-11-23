@@ -586,7 +586,7 @@ function needKind(work: WorkState): string {
   if (work.why === 'needs_detail') return 'detail';
   // T2.10 (19 Nov 2026): a person verdict says what it waits on, from the
   // cause the server stored (services/bot-stop-cause.js handBackOf): never
-  // "Needs Reply" to a requester whose decision it is not.
+  // "Needs reply" to a requester whose decision it is not.
   if (work.why === 'decide' && work.cause && DECIDE_KINDS[work.cause]) return DECIDE_KINDS[work.cause];
   return 'decide';
 }
