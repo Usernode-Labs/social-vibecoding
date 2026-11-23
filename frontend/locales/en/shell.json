@@ -300,8 +300,8 @@
     "description": "Title shown in the header bar, and as the browser tab's title, on the History tab of the leaderboard screen: what earned the viewer's challenge points and when."
   },
   "title.profile": {
-    "text": "Profile",
-    "description": "Title shown in the header bar, and as the browser tab's title, on the signed-in person's own profile screen. A noun."
+    "text": "You",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the signed-in person's own profile screen. The same word as the tab bar's \"You\" tab that opens it, so the tab and the page it opens agree."
   },
   "title.allApps": {
     "text": "Discover",

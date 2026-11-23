@@ -132,7 +132,7 @@ import {
 import { AboutPane, ExternalMark } from './about-pane';
 import { offeringGoToHomeroom, owedHomeWalk, useAboutApp, usePlatformAbout } from './about-data';
 import { versionRowText } from './about-model';
-import { InvitePane } from './invite-pane';
+import { InvitePane, inviteTitle } from './invite-pane';
 import { isNativeApp } from '../mobile-install/environment';
 import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
 import type { MobileOs } from '../mobile-install/detect';
@@ -711,6 +711,13 @@ export function AppsSwitcherSheet(): ReactNode {
                   <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
                 </button>
               )}
+              {/* Phone review #51 (23 Nov 2026): Invite's title is on the
+                  close button's line, which had a row of its own over it. */}
+              {view === 'invite' ? (
+                <h3 className={'min-w-0 truncate text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100' + (back === 'none' ? '' : ' ms-3')}>
+                  {inviteTitle(appLabel, !appName)}
+                </h3>
+              ) : null}
             </div>
           ) : (
             /*
@@ -802,7 +809,7 @@ export function AppsSwitcherSheet(): ReactNode {
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
           {view === 'about' ? <AboutPane label={appLabel} unnamed={!appName} /> : view === 'invite' ? (
-            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} />
+            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} titled={false} />
           ) : (
           <>
           {/*

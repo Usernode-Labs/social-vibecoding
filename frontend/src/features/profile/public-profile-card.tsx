@@ -35,6 +35,7 @@ import { MessageButton } from './message-button';
 import { FriendButton } from '../friends/friend-button';
 import type { FriendState } from '../friends/api';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
+import { CheckIcon } from '@/components/ui/icons';
 import { Av, Card, GroupLink, PageBody, Row, Sec, Sub } from '@/components/ui/kit';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { useFrameFlag } from '../frame/frame-flag';
@@ -199,7 +200,8 @@ export function PublicProfileCard({
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    {link.label}
+                    <CheckIcon className="h-3.5 w-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
+                    <span className="min-w-0 break-all">{link.label}</span>
                   </a>
                 ))}
               </div>
