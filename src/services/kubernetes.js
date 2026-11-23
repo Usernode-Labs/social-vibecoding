@@ -3200,9 +3200,9 @@ async function deleteRunCheckJobs(config, { sessionId, previewRunId }) {
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
 // `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id).
-// An early unit suite (`sv-unit-early-…`) is never touched here: it goes
-// with its attempt (preview services retireAttempt).
-async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false } = {}) {
+// An early unit suite goes with its attempt unless its exact run is named
+// by the caller holding the suite's queue slot.
+async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false, includeEarly = false } = {}) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
@@ -3211,7 +3211,8 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spa
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
-        && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+        && !name.startsWith(`sv-unit-suite-s${sessionId}-`)
+        && !(includeEarly && previewRunId && name.startsWith(`sv-unit-early-s${sessionId}-`))) return;
     const runId = job.metadata.labels?.['social.usernode.io/preview-run-id'];
     if (previewRunId && runId !== previewRunId) return;
     if (runId && spare(runId)) return;
@@ -3506,7 +3507,7 @@ async function waitForCheckPool(config, { signal = null, waitMs = 15 * 60 * 1000
 
 // `namePrefix` names a Job outside the preview's own check Jobs: an early
 // unit suite (preview services checks.unitEarly) is `sv-unit-early-…`, which
-// cancelPreviewChecks and stopCheckJobs leave alone. `nameSuffix` and
+// session-wide check cleanup leaves to its attempt. `nameSuffix` and
 // `shard` name and label one of a run's capture shards; `cpuRequest` is a
 // shard's smaller share of the scheduler (services/visuals.js
 // CAPTURE_SHARD_CPU_REQUEST).
@@ -3640,9 +3641,11 @@ async function runCheckJob(config, {
   };
   try {
     signal?.throwIfAborted();
-    // Covers early and main-watch Jobs too. Their execution deadlines begin
-    // only once the dedicated pool exists, not while waiting for its return.
-    await create(() => waitForCheckPool(config, { signal }));
+    // Recheck placement immediately before creating resources. An early
+    // suite gives up its spare slot if the pool became unavailable.
+    await create(() => waitForCheckPool(config, {
+      signal, ...(namePrefix === 'sv-unit-early' ? { waitMs: 0 } : {}),
+    }));
     if (inputSecretName) {
       inputSecret = await create(() => core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',

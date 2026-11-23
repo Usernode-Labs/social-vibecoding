@@ -648,7 +648,11 @@ The repo's unit suite usually starts with the preview build: the machine's
 (`sv-unit-early-…` Jobs), and the checks run against that attempt reads it,
 from its own process or after a restart. It does not start for a head whose
 last checks errored, or while the cluster already runs as many unit suites as
-the checks queue admits (`EARLY_UNIT_SUITE=0` turns it off). The attempt's
+the checks queue admits (`EARLY_UNIT_SUITE=0` turns it off). In a required
+pool the launcher reserves a regular proposal slot, with at most one early
+reservation and another shared slot free. Waiting checks take priority when
+the launcher tries to reserve. The checks run can take over the reservation
+for the same attempt and commit once all the unit Jobs exist. The attempt's
 retirement deletes its Jobs.
 
 The main-watch suite after a direct merge keeps its own hand-over: a platform

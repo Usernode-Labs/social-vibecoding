@@ -27,7 +27,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     [['--set-string', 'config.browserSiteIsolation=strict'], { BROWSER_SITE_ISOLATION: 'strict' }],
     [['--set', 'config.previewSleepAfterMs=1800000,config.appSleepAfterMs=0,config.checkNodePoolRequired=true',
       '--set-string', 'config.checkNodePool=pool=checks'],
-      { PREVIEW_SLEEP_AFTER_MS: '1800000', APP_SLEEP_AFTER_MS: '0', EARLY_UNIT_SUITE: '0' }],
+      { PREVIEW_SLEEP_AFTER_MS: '1800000', APP_SLEEP_AFTER_MS: '0' }],
   ]) {
     const rendered = execFileSync('helm', [...args, ...overrides], { encoding: 'utf8' });
     const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z0-9_]+), value: "([^"]*)"\}/g)]
@@ -48,8 +48,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     }
     // The preview machine is the only path; its flag is no longer rendered.
     assert.equal(env.WF_PREVIEWS_ENABLED, undefined, 'WF_PREVIEWS_ENABLED is gone');
-    assert.equal(env.EARLY_UNIT_SUITE, expected.EARLY_UNIT_SUITE,
-      'required mode disables early suites; other modes preserve an imported switch');
+    assert.equal(env.EARLY_UNIT_SUITE, undefined, 'the chart preserves the early suite environment switch');
   }
   const securityOff = execFileSync('helm', [...args, '--set-string', 'config.platformSignals.securityAudit=off'], { encoding: 'utf8' });
   assert.match(securityOff, /name: PLATFORM_SIGNALS_SECURITY_AUDIT, value: "off"/);
