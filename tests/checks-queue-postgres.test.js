@@ -326,6 +326,37 @@ test('two processes never have more than the cap of runs admitted, whoever runs 
   assert.equal(rows[0].n, 0, 'every row went with its run');
 });
 
+test('two processes grant the pilot slot once and hold only four proposal runs', async (t) => {
+  const env = await fresh(t, { cap: 4 });
+  if (!env) return;
+  const { pool, appId } = env;
+  const other = processPool();
+  const flag = 'CHECKS_PROPOSAL_OVERFLOW_PILOT';
+  const saved = process.env[flag];
+  process.env[flag] = 'true';
+  t.after(() => {
+    if (saved === undefined) delete process.env[flag];
+    else process.env[flag] = saved;
+  });
+  t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity',
+    async () => ({ available: true, cap: 5 }));
+
+  const mains = [await askMain(pool, appId, 'a'.repeat(40)), await askMain(other, appId, 'b'.repeat(40))];
+  const proposals = [];
+  for (let i = 0; i < 3; i += 1) proposals.push(await ask(pool, await session(pool, appId)));
+  assert.deepEqual((await checksQueue.admit(pool)).admit.sort(), [...mains, ...proposals].sort());
+  const nextMain = await askMain(other, appId, 'c'.repeat(40));
+  const first = await ask(pool, await session(pool, appId));
+  const second = await ask(other, await session(other, appId, { status: 'active' }));
+
+  const raced = await Promise.all(Array.from({ length: 12 }, (_, i) => checksQueue.admit(i % 2 ? other : pool)));
+  assert.deepEqual(raced.flatMap((p) => p.admit), [first]);
+  assert.deepEqual(raced.map((p) => p.proposalOverflowRunId).filter(Boolean), [first]);
+  assert.deepEqual((await admittedIds(pool)).sort(), [...mains, ...proposals, first].sort());
+  assert.equal(raced.at(-1).byRun.get(nextMain).admitted, false);
+  assert.equal(raced.at(-1).byRun.get(second).admitted, false);
+});
+
 // ── The order ───────────────────────────────────────────────────────────
 
 test('slots go to main-watch, promoted, submitted hand-offs, then drafts; a draft promoted while it waits moves up', async (t) => {

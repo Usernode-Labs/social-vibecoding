@@ -310,6 +310,115 @@ test('main-watch has a slot of its own besides the cap, and goes first for any f
   assert.deepEqual(plan.admit, [], 'the reserved slot is main-watch\'s alone');
 });
 
+test('the pilot lends one slot to the first waiting proposal while extra main-watch already holds a slot', () => {
+  const mains = [main({ admitted: true }), main({ admitted: true })];
+  const waitingMain = main();
+  const proposals = Array.from({ length: 3 }, () => promoted({ admitted: true }));
+  const first = promoted();
+  const second = handoff();
+  const rows = [...mains, waitingMain, ...proposals, first, second];
+
+  assert.deepEqual(checksQueue.planAdmission(rows, { cap: 4, poolCap: 5 }).admit, []);
+  const plan = checksQueue.planAdmission(rows, { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(plan.admit, [first.run_id]);
+  assert.equal(plan.proposalOverflowRunId, first.run_id);
+  assert.deepEqual(plan.holding, { main: 2, proposal: 4 });
+  assert.equal(plan.byRun.get(waitingMain.run_id).ahead, 0);
+  assert.equal(plan.byRun.get(second.run_id).ahead, 1);
+
+  const nextPass = rows.map((r) => r === first ? { ...r, admitted_at: new Date() } : r);
+  assert.deepEqual(checksQueue.planAdmission(nextPass,
+    { cap: 4, poolCap: 6, proposalOverflowPilot: true }).admit, [],
+  'repeated passes keep the single overflow grant and four-proposal ceiling');
+});
+
+test('the pilot requires a finite capacity of five and a healthy pool with the ordinary cap of four', () => {
+  const waiting = promoted();
+  const rows = [
+    main({ admitted: true }), main({ admitted: true }),
+    ...Array.from({ length: 3 }, () => promoted({ admitted: true })),
+    waiting,
+  ];
+  for (const options of [
+    { cap: 4, poolCap: Infinity }, { cap: 4, poolCap: 4 },
+    { cap: 3, poolCap: 5 }, { cap: 4, poolCap: 5, available: false },
+  ]) {
+    assert.deepEqual(checksQueue.planAdmission(rows, { ...options, proposalOverflowPilot: true }).admit, []);
+  }
+});
+
+test('a waiting main-watch run takes the first ordinary slot and only existing main holds activate the pilot', () => {
+  const firstMain = main({ admitted: true });
+  const secondMain = main();
+  const proposals = Array.from({ length: 3 }, () => promoted({ admitted: true }));
+  const waiting = promoted();
+  const options = { cap: 4, poolCap: 5, proposalOverflowPilot: true };
+  assert.deepEqual(checksQueue.planAdmission([firstMain, secondMain, ...proposals, waiting], options).admit,
+    [secondMain.run_id]);
+
+  const started = { ...secondMain, admitted_at: new Date() };
+  assert.deepEqual(checksQueue.planAdmission([firstMain, started, ...proposals, waiting], options).admit,
+    [waiting.run_id]);
+  const reserved = checksQueue.planAdmission([secondMain, ...proposals, promoted({ admitted: true }), waiting], options);
+  assert.deepEqual(reserved.admit, [secondMain.run_id], 'the first main-watch slot remains reserved');
+});
+
+test('an existing pilot proposal keeps its slot through lower capacity and main-watch completion', () => {
+  const firstMain = main({ admitted: true });
+  const extraMain = main({ admitted: true, alive: false, withinDeadline: true });
+  const proposals = Array.from({ length: 3 }, () => promoted({ admitted: true }));
+  const waiting = promoted();
+  const pilot = checksQueue.planAdmission([firstMain, extraMain, ...proposals, waiting],
+    { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(pilot.admit, [waiting.run_id], 'a main-watch run with Jobs still within deadline counts');
+
+  const holder = { ...waiting, admitted_at: new Date() };
+  const next = promoted();
+  const reduced = checksQueue.planAdmission([firstMain, extraMain, ...proposals, holder, next],
+    { cap: 4, poolCap: 4, proposalOverflowPilot: true });
+  assert.deepEqual(reduced.admit, []);
+  assert.equal(reduced.byRun.get(holder.run_id).holding, true);
+  const released = checksQueue.planAdmission([firstMain, ...proposals, holder, next],
+    { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(released.admit, []);
+  assert.deepEqual(released.holding, { main: 1, proposal: 4 });
+});
+
+test('the admission transaction passes physical capacity and the runtime pilot flag to the planner', async (t) => {
+  const flag = 'CHECKS_PROPOSAL_OVERFLOW_PILOT';
+  const previous = process.env[flag];
+  delete process.env[flag];
+  t.after(() => {
+    if (previous === undefined) delete process.env[flag];
+    else process.env[flag] = previous;
+  });
+  const capacity = t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity',
+    async () => ({ available: true, cap: 5 }));
+  const waiting = promoted();
+  const rows = [
+    main({ admitted: true }), main({ admitted: true }),
+    ...Array.from({ length: 3 }, () => promoted({ admitted: true })),
+    waiting,
+  ];
+  const grants = [];
+  const client = {
+    async query(sql, params) {
+      if (sql.includes('FROM check_runs cr')) return { rows };
+      if (sql.includes('SET admitted_at = NOW()')) grants.push(...params[0]);
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { async connect() { return client; } };
+  assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, []);
+  process.env[flag] = 'true';
+  assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, [waiting.run_id]);
+  assert.deepEqual(grants, [waiting.run_id]);
+
+  capacity.mock.mockImplementation(async () => ({ available: true }));
+  assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, [], 'missing capacity cannot grant a slot');
+});
+
 // ── A waiting run is not stuck ──────────────────────────────────────────
 
 test('checkRunOverdue never reads a run waiting for a slot as overdue, however long it has waited', () => {
