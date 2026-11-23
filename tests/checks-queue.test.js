@@ -389,9 +389,10 @@ test('the card says "Waiting for a checks slot (2 ahead)", offers no re-run, and
   assert.doesNotMatch(`${note.heading} ${text}`, /—/, 'user-facing copy carries no em dash');
 
   assert.equal(AppView._checksLine({ state: 'active' }, QUEUED, false), 'Waiting for a slot · 2 ahead');
-  // #4452: the change page's Testing card says it, still moving.
-  assert.equal(AppView._changeTestingView(QUEUED).note.join(' '), 'Waiting for a checks slot (2 ahead)');
-  assert.equal(AppView._changeTestingView({ ...QUEUED, checks_progress: null }).note.join(' '), 'Waiting for a checks slot');
+  // #4452: the change page's Testing card says it, still moving, as the
+  // first sentence of its note (23 Nov 2026: with its own full stop).
+  assert.equal(AppView._changeTestingView(QUEUED).note.join(' '), 'Waiting for a checks slot (2 ahead).');
+  assert.equal(AppView._changeTestingView({ ...QUEUED, checks_progress: null }).note.join(' '), 'Waiting for a checks slot.');
   assert.equal(AppView._changeTestingView(QUEUED).figure, 'Waiting for a slot');
   assert.equal(AppView._changeTestingView(QUEUED).done, false);
 });
@@ -482,8 +483,53 @@ test('the proposal page itself says where a waiting run is in line, without open
   const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: mock }));
   const text = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase();
   assert.ok(text.includes(want), `the page says "${declared.expectText}"; it read: ${text.slice(0, 600)}`);
-  assert.match(page, /data-change-gate="testing" data-done="false"[\s\S]*?<p class="dev-change-gate-note">Waiting for a checks slot \(2 ahead\)<\/p>/,
+  assert.match(page, /data-change-gate="testing" data-done="false"[\s\S]*?<p class="dev-change-gate-note">Waiting for a checks slot \(2 ahead\)\.<\/p>/,
     'on the Testing card\'s line');
+});
+
+// 23 Nov 2026: the Testing card's note read "Waiting for a checks slot (2
+// ahead) This wait is longer than usual.": the place in line is the
+// heading's words, with no full stop, joined to the next sentence by the
+// catalog's pair (project:sentences.pair, which expects each to end as a
+// sentence). The note now opens with the place in line as a sentence of its
+// own, a whole message per case, so every language ends it as it ends a
+// sentence; the heading, the chip and the status pill keep the title.
+test('a queued run\'s note reads as two sentences: its place in line, then its wait', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const { sentences } = loadTsx('frontend/src/features/dev-board/topic/request-head.tsx');
+  const AppView = makeAppView();
+  const est = { buildMs: 180000, checksMs: 540000, runs: 12, rough: false, slots: 4 };
+  const now = Date.now();
+  const at = (ms) => new Date(now - ms).toISOString();
+  const queued = (ahead, sinceMs) => ({ ...QUEUED, checks_estimate: est, checks_checked_at: at(sinceMs),
+    checks_progress: { ...QUEUED.checks_progress, queue: { ahead, since: at(sinceMs) } } });
+  // Waited past what its place in line suggested.
+  assert.equal(sentences(AppView._changeTestingView(queued(2, 60 * 60000)).note),
+    'Waiting for a checks slot (2 ahead). This wait is longer than usual.');
+  // Still inside its wait.
+  assert.match(sentences(AppView._changeTestingView(queued(2, 3 * 60000)).note),
+    /^Waiting for a checks slot \(2 ahead\)\. About \d+ minutes? until it starts\.$/);
+  assert.equal(sentences(AppView._changeTestingView(queued(0, 60 * 60000)).note),
+    'Waiting for a checks slot (next in line). This wait is longer than usual.');
+  assert.equal(sentences(AppView._changeTestingView(queued(1, 60 * 60000)).note),
+    'Waiting for a checks slot (1 ahead). This wait is longer than usual.');
+  // The heading and its chip keep the title, which is not a sentence.
+  assert.equal(AppView._checksPhaseCopy('queued', queued(2, 0)).title, 'Waiting for a checks slot (2 ahead)');
+  assert.equal(AppView._checksPhaseCopy('queued', queued(2, 0)).sentence, 'Waiting for a checks slot (2 ahead).');
+  assert.equal(AppView._checksPhaseCopy('testing').sentence, AppView._checksPhaseCopy('testing').title,
+    'a title that already ends as a sentence is its own sentence');
+
+  // Every sentence form ends with the full stop its title has not, in the
+  // English the translations are made from.
+  const english = JSON.parse(read('frontend/locales/en/changes.json'));
+  for (const [title, sentence] of [
+    ['checks.phase.queued.title', 'checks.phase.queued.sentence'],
+    ['checks.phase.queued.titleNext', 'checks.phase.queued.sentenceNext'],
+    ['checks.phase.queued.titleAhead_one', 'checks.phase.queued.sentenceAhead_one'],
+    ['checks.phase.queued.titleAhead_other', 'checks.phase.queued.sentenceAhead_other'],
+  ]) {
+    assert.equal(english[sentence].text, `${english[title].text}.`, sentence);
+  }
 });
 
 test('the Helm chart passes the cap through, documented beside CAPTURE_CPUS', () => {

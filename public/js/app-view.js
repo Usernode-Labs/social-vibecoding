@@ -7888,8 +7888,8 @@ const AppView = {
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
-      const title = AppView._checksPhaseCopy(item.check_phase, item).title;
-      note = why ? `${title} ${why}` : title;
+      const phase = AppView._checksPhaseCopy(item.check_phase, item);
+      note = why ? `${phase.sentence} ${why}` : phase.title;
     } else if (item.check_state === 'error' && item.check_error_detail) {
       // The run's own reason first: it is the one that can say "not this
       // change" (#1771).
@@ -9274,8 +9274,9 @@ const AppView = {
     }
     if (phase === 'queued' || phase === 'deferred') {
       const copy = AppView._checksPhaseCopy(phase, item);
-      // #6122: a queued run also says how long its wait should be.
-      const note = [copy.title];
+      // #6122: a queued run also says how long its wait should be. Its
+      // place in line is the note's first sentence, so it ends as one.
+      const note = [copy.sentence];
       if (phase === 'queued') {
         const eta = AppView._checksEta(item);
         if (eta && eta.kind === 'wait') note.push(PlatformI18n.t('changes:checks.pending.wait', { count: Math.max(1, eta.minutes) }));
@@ -9376,7 +9377,13 @@ const AppView = {
         retake: !running && AppView._canRetakeShots(item) ? Number(item.id) : null,
       };
     }
-    if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    if (running) {
+      // 23 Nov 2026: a run Homeroom takes again because it was too busy to
+      // get a database connection says that, still under way, rather than
+      // that the screenshots are being taken.
+      const busy = view.retrying && shots.failureCode === 'database_busy';
+      return { state: view.state, html: '', line: busy ? view.sentence : PlatformI18n.t('changes:page.shots.taking'), waiting: true };
+    }
     return {
       state: view.state, html: '', line: view.sentence, waiting: false,
       retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
@@ -22073,19 +22080,30 @@ const AppView = {
 
   // `pr` is optional: a queued run's title says how many runs are ahead of
   // it when the row carries that (checks_progress.queue.ahead).
+  //
+  // `sentence` is the title as the first sentence of a note that goes on
+  // (the Testing card's "About 6 minutes until it starts.", the trigger in
+  // Details). A queued run's title is a heading, with no full stop, so the
+  // note reads it as a sentence of its own, in every language, rather than
+  // "Waiting for a checks slot (2 ahead) This wait is longer than usual."
+  // (23 Nov 2026). The other phases' titles already end as sentences do.
   _checksPhaseCopy(phase, pr) {
     const ids = AppView.CHECKS_PHASE_COPY[phase] || AppView.CHECKS_PHASE_OTHER_COPY;
-    const copy = { title: PlatformI18n.t(ids.title), detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
+    const title = PlatformI18n.t(ids.title);
+    const copy = { title, sentence: title, detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
     if (phase !== 'queued') return copy;
     // The title with the place in line is a whole message per case.
     const q = pr && pr.checks_progress && pr.checks_progress.queue;
     const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
-    if (ahead === null) return copy;
+    if (ahead === null) return { ...copy, sentence: PlatformI18n.t('changes:checks.phase.queued.sentence') };
     return {
       ...copy,
       title: ahead === 0
         ? PlatformI18n.t('changes:checks.phase.queued.titleNext')
         : PlatformI18n.t('changes:checks.phase.queued.titleAhead', { count: ahead }),
+      sentence: ahead === 0
+        ? PlatformI18n.t('changes:checks.phase.queued.sentenceNext')
+        : PlatformI18n.t('changes:checks.phase.queued.sentenceAhead', { count: ahead }),
     };
   },
 
@@ -26127,12 +26145,18 @@ const AppView = {
             ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
             : shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:badge.reason.shots.retryingGithubDetail')
-              : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
+              : shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:badge.reason.shots.retryingBusyDetail')
+                : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
           : notStarted ? AppView._shotsNotStartedReason(shots)
-            // #6598: never quote GitHub's own error page here.
+            // #6598: never quote GitHub's own error page here, nor (23 Nov
+            // 2026) the database driver's words for a connection it could
+            // not give in time.
             : shots.state === 'failed' && shots.failureCode === 'github_unavailable'
               ? PlatformI18n.t('changes:shots.sentence.githubDown')
-              : shots.failureReason)
+              : shots.state === 'failed' && shots.failureCode === 'database_busy'
+                ? PlatformI18n.t('changes:shots.sentence.busy')
+                : shots.failureReason)
           || (enforced
             ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
             : PlatformI18n.t('changes:badge.reason.shots.missingDetail')),
@@ -27007,6 +27031,12 @@ const AppView = {
         ? [t('changes:shots.state.changeFailed.label'), e.failureReason || t('changes:shots.state.changeFailed.detail')]
         : e.failureCode === 'shots_stopped'
         ? [t('changes:shots.state.stopped.label'), e.failureReason || t('changes:shots.state.stopped.detail')]
+        // 23 Nov 2026: no database connection in time. The driver's own
+        // words are never shown; the line says what Homeroom does next.
+        : e.failureCode === 'database_busy'
+        ? (e.automaticRetryPending === true
+          ? [t('changes:shots.state.retrying.label'), t('changes:shots.state.retryingBusy.detail')]
+          : [t('changes:shots.state.couldNot.label'), t('changes:shots.state.busy.detail')])
         : e.automaticRetryPending === true
           ? [t('changes:shots.state.retrying.label'), e.failureCode === 'shots_run_interrupted'
             ? t('changes:shots.state.retrying.detail') : t('changes:shots.state.retryingFault.detail')]
@@ -27057,6 +27087,14 @@ const AppView = {
         return e.automaticRetryPending === true
           ? t('changes:shots.sentence.retryingGithub')
           : t('changes:shots.sentence.githubDown');
+      }
+      // 23 Nov 2026: Homeroom could not get a database connection in time
+      // (a release's draining process, say). Nothing the proposal did; the
+      // driver's own words are never quoted.
+      if (e.failureCode === 'database_busy') {
+        return e.automaticRetryPending === true
+          ? t('changes:shots.sentence.retryingBusy')
+          : t('changes:shots.sentence.busy');
       }
       if (e.failureCode === 'shots_change_failed') {
         return e.failureReason

@@ -62,7 +62,9 @@ test('no sweeper runs in a process, and the measurement stops at its next row', 
   // Which stopping the runtime aborts (cleanup() stops it at once without a
   // drain, or at the drain's deadline).
   const kernel = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/kernel/index.ts'), 'utf8');
-  assert.match(kernel, /execute\(service, w, stopping\.signal\)/);
+  // (and which, once the runtime claims nothing more, a handler that hands
+  // its item back is let to: kernel/services.ts HandedBack).
+  assert.match(kernel, /execute\(service, w, stopping\.signal, \(\) => quiesced \|\| stopping\.signal\.aborted\)/);
   assert.match(kernel, /async stop\(\) \{\n\s+stopping\.abort\(\);/);
   const work = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/kernel/services.ts'), 'utf8');
   assert.match(work, /stopping\?\.addEventListener\('abort', onStop, \{ once: true \}\);/);

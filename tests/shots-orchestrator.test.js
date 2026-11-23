@@ -627,6 +627,12 @@ test('a platform fault is read off the error, and GitHub\'s limit waits for its 
   // again once, a few minutes on, by the recovery sweep.
   assert.deepEqual(fault({ code: 'github_unavailable' }),
     { kind: 'github_unavailable', retryAt: now + 5 * 60_000 });
+  // 23 Nov 2026: a connection the database would not give in time (a
+  // release's draining process on its small pool) is the database's,
+  // whichever step met it, and is taken again once.
+  assert.deepEqual(fault(new Error('timeout exceeded when trying to connect')), { kind: 'database' });
+  assert.deepEqual(fault(Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' })), { kind: 'database' });
+  assert.deepEqual(fault(Object.assign(new Error('sorry, too many clients already'), { code: '53300' })), { kind: 'database' });
 
   for (const error of [
     null,
@@ -638,9 +644,26 @@ test('a platform fault is read off the error, and GitHub\'s limit waits for its 
     { code: 'shots_stopped' },
     { code: 'visible_changes_conflict' },
     { shotsPlatformFault: 'not_a_kind' },
+    // An ordinary query error is not the database being out of reach.
+    Object.assign(new Error('syntax error at or near "SELEC"'), { code: '42601' }),
   ]) {
     assert.equal(fault(error), null, String(error?.code || error?.message || error?.shotsPlatformFault || error));
   }
+});
+
+test('a run that ended on a connection it could not get records one code, whatever the driver said', () => {
+  for (const error of [
+    new Error('timeout exceeded when trying to connect'),
+    Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }),
+  ]) {
+    assert.equal(orchestrator.errorCode(error), 'database_busy');
+    const agent = orchestrator.agentErrorOf(error);
+    assert.equal(agent.code, 'database_busy');
+    assert.deepEqual(agent.platformFault, { kind: 'database' });
+  }
+  assert.equal(orchestrator.errorCode(new Error('Image build failed')), 'shots_failed');
+  assert.equal(orchestrator.errorCode({ code: 'shots_capture_incomplete' }), 'shots_capture_incomplete');
 });
 
 // trace_summary.tokenUsage was null on every shots run (18 Nov 2026). The

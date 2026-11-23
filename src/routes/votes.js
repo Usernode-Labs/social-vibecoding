@@ -970,6 +970,45 @@ function stagingMockProposals(viewer) {
         build: { step: 'done', steps: mockBuildSteps(), totalMs: 19964 },
       },
     },
+    // 23 Nov 2026: a change whose before & after shots could not be taken
+    // because Homeroom could not get a database connection in time (a
+    // release's draining process): the card says so in plain words and that
+    // it tries again on its own, never the driver's "timeout exceeded when
+    // trying to connect". Its shots view is written here as the server
+    // serves one (services/shots-view.js); a real run in this state lasts
+    // only the minute before its retry, so this row is how it is reviewable.
+    {
+      ...mk(9000098, 900198,
+        '[Mock] Shots test: a run that met a busy database, taken again on its own',
+        0.08, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      shots: {
+        state: 'failed',
+        required: true,
+        impact: 'ui',
+        rationale: '[Mock] The header gains a sort control.',
+        claims: [{ id: 'header-sort', claim: '[Mock] The header shows a Newest sort control.', persona: 'member', viewports: ['desktop'] }],
+        baseSha: 'a'.repeat(40),
+        headSha: 'b'.repeat(40),
+        failureCode: 'database_busy',
+        failureReason: 'Homeroom was too busy to take the before & after shots. This says nothing about the proposal.',
+        notStartedReason: null,
+        automaticRetryPending: true,
+        repairAvailable: false,
+        planHash: null,
+        shotResults: [],
+        shotNotices: [],
+        afterOnly: false,
+        screens: [],
+        progress: null,
+        verifiedReason: null,
+        overriddenBy: null,
+        overriddenAt: null,
+        overrideReason: null,
+        artifacts: [],
+        updatedAt: hoursAgo(0.01),
+        previous: null,
+      },
+    },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
     // console snapshot. The grey "Checks starting…" spinner badge + the

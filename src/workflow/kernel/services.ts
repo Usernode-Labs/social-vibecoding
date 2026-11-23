@@ -20,6 +20,27 @@ export class LeaseLost extends Error {
   }
 }
 
+// What a handler throws to give its item back unfinished, the way a process
+// that stops does (execute below): nothing is reported, its claim is given up
+// at once, and the next process claims it and carries it on, a resumable
+// handler from its checkpoint. For a process that is going away and met
+// something that says nothing about the work: a release's draining process
+// on its drain-sized pools, which had no connection for it in time
+// (services/db-retry.js handBackOnDrain, 23 Nov 2026).
+//
+// Only a runtime that claims nothing more (quiesced, or stopping) hands an
+// item back: one that still claims would take the item straight back
+// itself. Anywhere else the handler's `otherwise` is reported as its result
+// (what it would have said without the hand-back), or, when it gave none,
+// `cause` as the attempt's failure.
+export class HandedBack extends Error {
+  readonly otherwise: Json | undefined;
+  constructor(cause: unknown, otherwise?: Json) {
+    super(`work handed back by its process: ${String((cause as { message?: unknown })?.message ?? cause).slice(0, 500)}`, { cause });
+    this.otherwise = otherwise;
+  }
+}
+
 export interface ServiceOptions {
   pool: Pool;
   handlers: ReadonlyMap<string, WorkHandler>;
@@ -263,7 +284,12 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
 // ended in an error count against `maxAttempts`, and lost ones against
 // `maxLostAttempts`, which bounds a handler that keeps taking its process
 // down with it.
-export async function execute(opts: ServiceOptions, w: Claimed, stopping?: AbortSignal): Promise<void> {
+//
+// `handsOver`: whether this process claims nothing more (its runtime
+// quiesced or stopping), so an item a handler hands back (HandedBack) is
+// another process's to carry on.
+export async function execute(opts: ServiceOptions, w: Claimed, stopping?: AbortSignal,
+  handsOver: () => boolean = () => !!stopping?.aborted): Promise<void> {
   const h = opts.handlers.get(w.kind)!;
   const maxAttempts = h.maxAttempts ?? DEFAULTS.maxAttempts;
   const leaseMs = h.leaseMs ?? DEFAULTS.leaseMs;
@@ -310,6 +336,8 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     return { outcome: 'retry', error: errorJson(err), delayMs: (h.backoffMs || defaultBackoff)(tries) };
   };
   let report: Report | null;
+  // The handler handed its item back, and this process may (HandedBack).
+  let handedBack = false;
   try {
     const checkpoint = async (v: Json) => {
       assertJson(v);
@@ -330,20 +358,27 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     assertJson(result);
     report = { outcome: 'succeeded', result };
   } catch (err) {
-    report = abort.signal.aborted ? null : failure(err);
+    if (abort.signal.aborted) report = null;
+    else if (err instanceof HandedBack && handsOver()) { report = null; handedBack = true; }
+    else if (err instanceof HandedBack && err.otherwise !== undefined) report = { outcome: 'succeeded', result: err.otherwise };
+    else report = failure(err instanceof HandedBack && err.cause instanceof Error ? err.cause : err);
   } finally {
     clearInterval(heartbeat);
     stopping?.removeEventListener('abort', onStop);
   }
-  if (!leaseLost && !report && stopping?.aborted) {
-    // Stopping, with nothing to report: the claim is given up now, under it,
-    // and the attempt says it stopped (not a death: claim()).
+  if (!leaseLost && !report && (stopping?.aborted || handedBack)) {
+    // Stopping, or handing the item back, with nothing to report: the claim
+    // is given up now, under it, and the attempt says so (not a death:
+    // claim()).
+    const said = handedBack
+      ? { message: 'its process handed it back', code: 'handed_back' }
+      : { message: 'its process stopped', code: 'stopped' };
+    if (handedBack) opts.log.info('workflow', 'work handed back to the next process', { kind: w.kind, workId: w.id });
     await opts.pool.query(
       `WITH given AS (UPDATE wf_work SET lease_until = now() WHERE ${live} RETURNING kind)
-       UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now(),
-              error = '{"message": "its process stopped", "code": "stopped"}'::jsonb
+       UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now(), error = $3::jsonb
         WHERE id = $2 AND outcome = 'running' AND EXISTS (SELECT 1 FROM given)
-       RETURNING pg_notify('wf_work', (SELECT kind FROM given))`, [w.id, w.claim_id])
+       RETURNING pg_notify('wf_work', (SELECT kind FROM given))`, [w.id, w.claim_id, jsonText(said)])
       .catch((err) => opts.log.warn('workflow', 'could not give up a stopped work item\'s lease', { kind: w.kind, workId: w.id, message: err?.message }));
     return;
   }
