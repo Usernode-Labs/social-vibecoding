@@ -14233,6 +14233,15 @@ html .un-backdrop.platform-backdrop-dim {
      foot) and an 8px gap. */
   scroll-padding-bottom: 76px;
 }
+/* SUGGEST AN IMPROVEMENT'S BUTTONS ARE IN THE SANS (phone review S5,
+   23 Nov 2026). The look draws its buttons in its serif (--wip-btn-font),
+   which in this dialog made Take screenshot, Cancel and Post request the
+   only serif words beside a sans switch, sans fields and sans labels. The
+   id outranks the look's button rule; its shapes and colours stay. */
+html:not([data-skin]) #feedback-modal :is(button, a, label, summary, [role="button"]) {
+  font-family: inherit;
+  letter-spacing: normal;
+}
 /* CANCEL AND POST STAY ON SCREEN (#4033). The kit modal is the scroller
    (native.css `.un-modal`: overflow-y auto), so a long description or the
    kudos row pushed the two buttons below its bottom edge and they had to be
@@ -14342,6 +14351,51 @@ html .un-backdrop.platform-backdrop-dim {
     background-color: var(--dc-sheet-solid);
     box-shadow: 0 -1px 0 var(--app-sheet-line);
   }
+  /* SUGGEST AN IMPROVEMENT WITH THE KEYS UP (phone review #17, #18, #94,
+     23 Nov 2026). The row's 48px foot is the home indicator's, which is
+     behind the keys: it stood 46px of empty sheet between Post request and
+     the keyboard, and covered the attach row and the Private box. And the
+     field's reveal scrolled the heading and the grabber off the top, so the
+     sheet opened on "See your requests" against its edge. With the keys up
+     the foot is 12px, and the heading stays at the sheet's top, carrying the
+     grabber, while the form scrolls under it (feedback.tsx reveals a field
+     between the two). Held the card's 24px top padding higher, as the row is
+     held lower; the grabber's own box goes, so nothing moves on the swap. */
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] .feedback-actions {
+    padding-bottom: 12px;
+  }
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] .feedback-sheet-grabber {
+    display: none;
+  }
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] #feedback-form > h2 {
+    position: sticky;
+    top: -24px;
+    z-index: 2;
+    margin-top: -24px;
+    padding: 24px 0 8px;
+    background-color: var(--dc-sheet-solid);
+    box-shadow: 0 1px 0 var(--app-sheet-line);
+  }
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] #feedback-form > h2::before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: -10px auto 12px;
+    border-radius: 2px;
+    background: var(--border);
+  }
+  /* On a screen the keys leave short (`platform-kb-short`: under 400px, the
+     Duo's cover) the row goes into the flow, under the last field: sticky,
+     it covered most of what was left, and with the Title focused the
+     description stayed hidden behind it the whole time (#18). Post request
+     is a short scroll away. */
+  html.platform-kb-short #feedback-modal[data-dialog-sheet] .feedback-actions {
+    position: relative;
+    bottom: auto;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
 }
 
 @media (max-width: 767px) and (pointer: coarse) and (prefers-reduced-motion: reduce) {
@@ -14391,6 +14445,16 @@ html .un-backdrop.platform-backdrop-dim {
    live page while the first picture drew, it covered the page's own header
    for a few frames (iPhone 17 Pro simulator, 12 Oct 2026). */
 .comment-bar-in { animation: comment-shot-ground-in 320ms ease-out; }
+/* The mode draws its frame at once, the picture's place included, and the
+   picture fades into that place when it lands (phone review #110,
+   comment-pin.tsx `shotIntro`): the page has already gone under the ground,
+   so there is nothing for it to shrink from. Leaving still grows it back
+   over the page (below, later in the cascade). */
+.comment-shot-in.comment-shot-fill { animation: comment-shot-ground-in 200ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .comment-shot-in.comment-shot-fill { animation: none; }
+}
+:where(html[data-motion="reduce"]) .comment-shot-in.comment-shot-fill { animation: none; }
 
 /* THE MODE LEAVES THE WAY IT CAME (12 Oct 2026). Done, Esc and Form used to
    unmount it in a frame: the picture and its grey ground vanished and the
@@ -27009,6 +27073,38 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     left: var(--platform-strip-w, 0px);
     padding-left: 0;
   }
+}
+
+/* EVERY DIALOG AND SHEET THE KIT PRESENTS STOPS AT THE STRIP TOO (phone
+   review #8, 23 Nov 2026). They are fixed, so the body's padding never
+   reached them: Suggest an improvement was laid out across the cover's
+   whole 466pt, and with the keys up the end of the Title field and of
+   every typed line went under the clock and the Wi-Fi ring. A sheet that
+   runs edge to edge (the kit's own, and a dialog bottomed as a phone sheet,
+   `[data-dialog-sheet]`) keeps its ground under the column, as the
+   notification sheet does, and pads its content clear of it with 12px to
+   spare. A centred dialog is centred in the floating box instead, beside
+   the column (THE USABLE BOX's `--platform-float-*`, which the kit's
+   dialogs inherit: it mounts them in the body). */
+html[data-side-strip="right"] :is(.un-sheet, [data-dialog-sheet] [data-modal-backdrop] > div) {
+  padding-right: calc(var(--platform-strip-w, 0px) + 12px);
+}
+html[data-side-strip="left"] :is(.un-sheet, [data-dialog-sheet] [data-modal-backdrop] > div) {
+  padding-left: calc(var(--platform-strip-w, 0px) + 12px);
+}
+html[data-side-strip] .un-modal {
+  left: calc(var(--platform-float-left) + var(--platform-float-w) / 2);
+  max-width: calc(var(--platform-float-w) - 32px);
+}
+/* Comment mode's phone sheet is the same kind of sheet, drawn by
+   comment-pin.tsx rather than adopted, and its picture and bar already sit
+   beside the column (`insetFrame`'s side, #135). The id outranks the
+   sheet's own `p-3`. */
+html[data-side-strip="right"] #comment-pin-box.comment-sheet {
+  padding-right: calc(var(--platform-strip-w, 0px) + 12px);
+}
+html[data-side-strip="left"] #comment-pin-box.comment-sheet {
+  padding-left: calc(var(--platform-strip-w, 0px) + 12px);
 }
 
 /* The strip's own pieces (features/nav/strip-back.tsx, side-apps.tsx)

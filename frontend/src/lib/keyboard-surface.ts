@@ -57,6 +57,13 @@ import { KB_OPEN_CLASS } from './keyboard-open';
  * no style or class of the sheet's is touched and its own open and close
  * transitions compose with it), and none with reduced motion.
  *
+ * A sheet that names a sticky row at its foot (`foot`) has a field the
+ * keys leave under that row, or under its `head`, revealed in the same
+ * viewport event, without waiting for the keys to settle: the sheet shrinks
+ * first, and for a beat the feedback sheet's Cancel / Post request row sat
+ * over the very field being typed in (phone review #18, 23 Nov 2026). The
+ * settled reveal still follows.
+ *
  * Structural no-op on a desktop, without `visualViewport`, or without the
  * kit. Nothing is written to the DOM but the scroller's scrollTop and, for a
  * ride, a short-lived animation.
@@ -271,10 +278,35 @@ export function attachKeyboardSurface(
     });
     if (top === Math.round(scroller.scrollTop)) return;
     try {
-      scroller.scrollTo({ top, behavior: reduced() ? 'auto' : 'smooth' });
+      scroller.scrollTo({ top, behavior: revealNow || reduced() ? 'auto' : 'smooth' });
     } catch {
       scroller.scrollTop = top;
     }
+  };
+
+  // The keys have just moved a sheet that names its foot: a focused field
+  // its foot row or its covered head now hides is revealed at once, in this
+  // event (#18), and with no smooth scroll to wait on.
+  let revealNow = false;
+  const revealIfCovered = () => {
+    if (!options.foot) return;
+    const field = (pending || doc.activeElement) as FieldLike | null;
+    if (!field || doc.activeElement !== field || !scroller.contains(field)) return;
+    const view = scroller.getBoundingClientRect();
+    const top = view.top + (options.head && options.head > 0 ? options.head : 0);
+    let bottom = view.bottom;
+    const rows = scroller.querySelectorAll(options.foot);
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const rect = rows[i].getBoundingClientRect();
+      if (rect.width || rect.height) {
+        bottom = Math.min(bottom, rect.top);
+        break;
+      }
+    }
+    const box = field.getBoundingClientRect();
+    if (box.bottom <= bottom && box.top >= top) return;
+    revealNow = true;
+    try { reveal(field); } finally { revealNow = false; }
   };
 
   const clearTimers = () => {
@@ -319,6 +351,7 @@ export function attachKeyboardSurface(
     // A drag the person made is not a keyboard settling: nothing to reveal.
     if (!pending && scrolledByHand) return;
     if (!pending && !(active && scroller.contains(active))) return;
+    revealIfCovered();
     if (settle != null) win.clearTimeout(settle);
     settle = win.setTimeout(revealPending, SETTLE_MS);
   };

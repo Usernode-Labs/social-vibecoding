@@ -595,3 +595,26 @@ test('the password step walks on Return, and each field says what its Return doe
   assert.doesNotMatch(SHEET, /id="sign-in-sheet-username"[^>]*onKeyDown=/);
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
 });
+
+test('a field the keys leave under a sticky row is revealed in that same event (phone review #18)', () => {
+  // The sheet shrinks first, and for a beat its sticky Cancel / Post row sat
+  // over the very field being typed in, until the settled reveal came.
+  const r = rig();
+  r.field.form = null;
+  const row = fakeEl();
+  row.getBoundingClientRect = () => ({ top: 360, bottom: 377, width: 300, height: 17 });
+  r.rows.push(row);
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { foot: '.feedback-actions' });
+  r.tap();
+  r.vv.fire('resize');
+  assert.deepEqual(r.scrolls, [460 - (360 - 12)], 'at once, not after SETTLE_MS');
+  r.advance(surface.SETTLE_MS);
+  assert.equal(r.scrolls.length, 2, 'the settled reveal still follows');
+
+  // Nothing named, nothing early: today's timing.
+  const plain = rig();
+  surface.attachKeyboardSurface(plain.scroller, plain.win, plain.doc);
+  plain.tap();
+  plain.vv.fire('resize');
+  assert.deepEqual(plain.scrolls, []);
+});
