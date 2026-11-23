@@ -505,7 +505,7 @@
   },
   "review.vote.prevLabel": {
     "text": "Go back to the previous change",
-    "description": "Screen-reader name of the round back arrow at the left of the Yes | No pair in Needs you. It shows the change seen just before this one; it is greyed out on the first change of a run."
+    "description": "Screen-reader name of the round step-back arrow at the left of the Yes | No pair in Needs you. It shows the change seen just before this one; it is greyed out on the first change of a run."
   },
   "review.no.placeholder": {
     "text": "One line for {{name}}",

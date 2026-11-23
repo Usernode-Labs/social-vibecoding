@@ -790,7 +790,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one
   // discussion. The stream tags each with its change, and the chat hears
   // their live rows for this page too (GroupChat.setThreadMembers).
-  const changeKey = layout.changes.map((c) => `${c.id}:${c.number ?? ''}`).join(',');
+  const changeKey = layout.changes.map((c) => `${c.id}:${c.number ?? ''}:${c.state ?? ''}`).join(',');
   useEffect(() => {
     if (!threadRead.data) return;
     publishRequestChanges(r.number, layout.changes);

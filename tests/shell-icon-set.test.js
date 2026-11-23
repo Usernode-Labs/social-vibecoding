@@ -263,6 +263,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // NewspaperIcon nowhere.
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     'M4 9.5h16',
+    // StepBackIcon (phone review S4, 23 Nov 2026): Needs you's previous
+    // change beside Yes / No, drawn only once the run has a change open.
+    'M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+    'M9 14 4 9l5-5',
     'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
     'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     // ── #2718 moved paths across this line, in both directions ───────

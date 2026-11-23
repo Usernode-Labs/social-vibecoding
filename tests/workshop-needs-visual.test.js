@@ -187,7 +187,7 @@ test('a mode switch repaints the open page and the Workshop, and re-shapes the r
   // React re-shapes the run it already holds in the new mode.
   const reviewFlow = read('frontend/src/features/review-flow/review-flow.tsx');
   assert.match(reviewFlow, /const dark = usePageDark\(\);/);
-  assert.match(reviewFlow, /toReviewItems\(items, shape\)\) : null\), \[items, dark\]\);/);
+  assert.match(reviewFlow, /toReviewItems\(items, shape\)\)\.map\(\(it\) => groundInMode\(it, dark\)\) : null\), \[items, dark\]\);/);
   assert.match(reviewFlow, /const fresh = new Map\(toReviewItems\(items, shape\)/);
 });
 

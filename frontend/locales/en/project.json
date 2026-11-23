@@ -7107,6 +7107,10 @@
     "text": "No picture yet",
     "description": "Heading in the box where a change's picture would be, on a change that changes nothing on screen and has no picture of what it does yet."
   },
+  "topic.card.shots.noPictureTakenTitle": {
+    "text": "No picture was taken for this change",
+    "description": "The one line in the box where a change's picture would be, on a change that changes nothing on screen and is already live, going live or closed without a picture of what it does: nothing will be added any more."
+  },
   "topic.card.shots.noPictureText": {
     "text": "Nothing on screen changes, and this change has no picture of what it does yet. Homeroom bot is adding one.",
     "description": "Sentence under “No picture yet” in the box where a change's picture would be."

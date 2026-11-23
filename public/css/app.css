@@ -506,18 +506,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    chosen by the control's own state (shown is `inert`-free), so nothing
    is written to the scroller, which public/js/group-chat.js owns in the
    group chat. The foot's control hangs from the box right after the
-   scroller, the top's from the box right before it. */
+   scroller, the top's from the box right before it. Since the phone
+   review's #26 (23 Nov 2026) the foot's pill sits on the reply box's edge,
+   half over it, so only the last 28px fade. */
 :has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent calc(100% - 2px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent calc(100% - 2px));
 }
 [data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + * {
   -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
   mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
 }
 [data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + :has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 28px), transparent calc(100% - 2px));
+  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 28px), transparent calc(100% - 2px));
 }
 /* WHO IS TYPING TAKES NO ROOM UNTIL SOMEBODY TYPES (1 November 2026). The
    line held 18px open between the transcript and the reply box whether or
@@ -11627,6 +11629,8 @@ span.gc-vote-btn-icon { cursor: default; }
    "Checks failing · 3" red on the folded row and near-black on the open
    card. Where there is no fill the label inherits the tone. */
 .gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+/* (#102, phone review 23 Nov 2026) A pill's spinner had 1px before its word: "Building" touched the arc. */
+.gc-vote-count-label > .dc-status-icon { margin-inline-end: 5px; }
 .dev-status-pill-block:not(:has(> .gc-vote-fill)) .gc-vote-count-label { color: inherit; }
 /* The pill absorbed the standalone pulsing "Vote" badge, the advisory
    chip and the explicit-approval chip. Their glyphs ride inside the
@@ -18871,8 +18875,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   position: absolute;
   box-sizing: border-box;
   width: max-content;
-  max-width: max(120px, min(240px, calc(100% - var(--pin-x) - 34px)));
-  padding: 6px 10px;
+  max-width: min(calc(100% - 8px), max(120px, min(240px, calc(100% - var(--pin-x) - 34px))));
+  /* (#60, phone review 23 Nov 2026) The 6px above and below are a
+     transparent border, not padding: a line clamp clips at the padding
+     box, so padding showed the top of a seventh line under the ellipsis.
+     The border is outside that box, and the ground still paints under it. */
+  padding: 0 10px;
+  border: 6px solid transparent;
+  border-inline-width: 0;
   border-radius: 12px;
   background: var(--dc-sheet);
   color: var(--text-primary);
@@ -18890,10 +18900,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 /* Right of the pin, or left of the point in the picture's right part; its
    foot level with the point, or its head there near the picture's top. */
-.pin-shot-mark[data-side="right"] .pin-shot-note { left: calc(var(--pin-x) + 30px); }
+/* (#60) Never past the picture's edge: where the room beside the pin is
+   narrower than the note's least width (120px), the note moves in to end
+   4px inside the picture instead of hanging over the page. */
+.pin-shot-mark[data-side="right"] .pin-shot-note { left: max(4px, min(calc(var(--pin-x) + 30px), calc(100% - 124px))); }
 .pin-shot-mark[data-side="left"] .pin-shot-note {
-  right: calc(100% - var(--pin-x) + 6px);
-  max-width: max(120px, min(240px, calc(var(--pin-x) - 10px)));
+  right: max(4px, min(calc(100% - var(--pin-x) + 6px), calc(100% - 124px)));
+  max-width: min(calc(100% - 8px), max(120px, min(240px, calc(var(--pin-x) - 10px))));
 }
 .pin-shot-mark[data-rise="up"] .pin-shot-note { bottom: calc(100% - var(--pin-y)); }
 .pin-shot-mark[data-rise="down"] .pin-shot-note { top: var(--pin-y); }
@@ -19064,11 +19077,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-self > .min-w-0 { background: transparent; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-username-self { color: inherit; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { gap: 8px; margin-bottom: 0; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { column-gap: 8px; row-gap: 0; margin-bottom: 0; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 17px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 15px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug { font-size: 17px; line-height: 1.3; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > [aria-hidden="true"] {
+/* (#112, phone review 23 Nov 2026) Homeroom bot's logo is an <img>, not an
+   aria-hidden tile, so it kept its 44px and its words started 8px further in
+   than everyone else's. Every sender's face is the same 36px here. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > :is([aria-hidden="true"], [data-bot-avatar]) {
   width: 36px;
   height: 36px;
   font-size: 13px;
@@ -19105,9 +19121,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--text-muted);
 }
 .dev-request-event-glyph { flex: 0 0 36px; text-align: center; font-size: 15px; }
-.dev-request-event-text { min-width: 0; overflow-wrap: anywhere; }
+.dev-request-event-text { min-width: 0; overflow-wrap: anywhere; text-wrap: wrap; }
 .dev-request-event-text b { color: var(--text-primary); font-weight: 600; }
-.dev-request-event-time { white-space: nowrap; }
+/* (#116) The time, and the change it was on, under the sentence. */
+.dev-request-event-time { display: block; font-size: 0.8125rem; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-request-event-link {
   appearance: none;
   border: 0;
@@ -29241,11 +29258,25 @@ body {
    are the heavy thing on the page, so it has no fill and one line of type.
    Open (⌄, the title, or the line under the bar), the title wraps in full
    and a card under the bar holds what the change does (.rf-desc). */
-.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+/* (#36, phone review 23 Nov 2026) No status-bar inset of its own: the card
+   is drawn in the page, under the shell's header, which already clears the
+   status bar (.rf-page's height counts both). The inset written for a
+   full-screen card put a blank 62px band above the title on a phone. */
+.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: 0 16px 0 4px; min-height: 44px; background: var(--rf-page); }
 /* #6199: the vote-type chips sit under the bar's title row, so the folded
    bar's measurement includes them. */
 .rf-bar .needs-vote-chips { flex-basis: 100%; }
 .rf-back { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* (S4, phone review 23 Nov 2026) One way out of the card on a phone: the
+   shell's header, whose back already leaves Needs you, so the card's own
+   back beside the title steps aside (it stays in the document, and from
+   768px, where the header has none, it is the way back). The previous
+   change keeps its own control beside Yes / No, drawn as a step back
+   through the run rather than as a third Back. */
+@media (max-width: 767px) {
+  .rf-bar > .rf-back[data-rf-back] { display: none; }
+  .rf-bar:has(> .rf-back[data-rf-back]) { padding-inline-start: 16px; }
+}
 .rf-bar-title { flex: 1; min-width: 0; margin: 0; padding: 11px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; line-height: 22px; letter-spacing: -0.015em; }
 .rf-bar-title-btn { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: inherit; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rf-bar[data-open] .rf-bar-title { white-space: normal; text-wrap: pretty; padding-bottom: 4px; }
@@ -29306,12 +29337,21 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-closeup { position: absolute; display: block; max-width: none; pointer-events: none; }
 .rf-seam { position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 2px; margin-inline-start: -1px; background: var(--rf-black); z-index: 3; pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1), width .15s ease-out; }
 .rf-dragging .rf-seam { width: 1px; opacity: .5 !important; }
-/* Each side's caption is printed on its own picture, under a short shade
-   that keeps it legible on any shot, and the seam wipes it with the picture. */
-.rf-cap { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; height: 84px; background: linear-gradient(rgba(12,12,14,.62) 0%, rgba(12,12,14,.55) 18%, rgba(12,12,14,.45) 33%, rgba(12,12,14,.35) 46%, rgba(12,12,14,.26) 57%, rgba(12,12,14,.18) 67%, rgba(12,12,14,.11) 76%, rgba(12,12,14,.06) 84%, rgba(12,12,14,.025) 91%, rgba(12,12,14,0) 100%); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
-.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: #fffeea; text-shadow: 0 1px 2px rgba(12,12,14,.35); white-space: nowrap; }
-.rf-cap-after .rf-cap-line { inset-inline-end: 22px; }
-.rf-cap-before .rf-cap-line { inset-inline-start: 22px; }
+/* Each side's caption is on a solid strip across the top of the picture,
+   and the seam wipes it with the picture (phone review #27, 23 Nov 2026:
+   printed over the screenshot under a shade, it collided with the shot's own
+   heading). The switch is on a strip across the foot. compare.tsx places the
+   screen between the two (CAP_STRIP, FOOT_STRIP), so neither covers it. The
+   strips are the card's own ground, so they read as the picture's frame.
+   No z-index: they paint in the slider's order, the After strip under the
+   Before layer (whose own strip wipes over it) and the foot over both. */
+.rf-compare { --rf-strip: var(--rf-page, var(--messages-surface, #ffffff)); }
+.rf-cap { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; height: 30px; background: var(--rf-strip); box-shadow: 0 1px 0 var(--rf-line, var(--app-sheet-line)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-cap-line { position: absolute; top: 10px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--rf-ink, var(--text-primary)); white-space: nowrap; }
+.rf-foot { position: absolute; inset-inline-start: 0; inset-inline-end: 0; bottom: 0; height: 64px; background: var(--rf-strip); box-shadow: 0 -1px 0 var(--rf-line, var(--app-sheet-line)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-compare[data-rf-strips] .rf-seam { top: 30px; bottom: 64px; }
+.rf-cap-after .rf-cap-line { inset-inline-end: 16px; }
+.rf-cap-before .rf-cap-line { inset-inline-start: 16px; }
 .rf-cap-dim { opacity: .72; }
 /* The switch: Before on its left, After on its right, its knob on the side
    most of the window shows, carrying that side's mark. Flat and inked, like
@@ -29424,7 +29464,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-prev, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-foot, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-prev, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
   .rf-lens { animation: none; }
   .rf-claim { animation: none; }
 }
@@ -29433,6 +29473,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 :where(html[data-motion="reduce"]) .rf-scrim,
 :where(html[data-motion="reduce"]) .rf-seam,
 :where(html[data-motion="reduce"]) .rf-cap,
+:where(html[data-motion="reduce"]) .rf-foot,
 :where(html[data-motion="reduce"]) .rf-switch,
 :where(html[data-motion="reduce"]) .rf-knob,
 :where(html[data-motion="reduce"]) .rf-knob-icon,
@@ -32630,6 +32671,24 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
     touch-action: none;
   }
 }
+
+/* (#102, phone review 23 Nov 2026) In dark the page is one card ground:
+   the ask's "Building" band was 9% sun mixed into navy, a slate grey, and the
+   timeline's current step sat in a near-black box on the navy card. Both are
+   the card now, the step outlined by its hairline. The yellow is the accent
+   the lit tab and every level-1 button wear, not a second, greener one.
+   The generated block below (scripts/thread-look.js) carries the brand
+   look's own dark sun and card tokens, so the brand look keeps them; these
+   rules are written outside it and outweigh it (an id, and `body`), so the
+   generator leaves them alone. */
+html:not([data-skin]).dark:not([data-app-tone="light"]) body #dev-topic-thread { --bl-sun: var(--wip-btn-1-bg, #ffee6f); --bl-sun-lit: var(--wip-btn-1-hover, #fff59f); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-request { --thread-foot: var(--bl-card); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-rail { --rail-now-box: var(--bl-card); }
+/* (#113, phone review 23 Nov 2026) One face for a thread card's buttons:
+   Preview and Vote are the page's sans, so "Suggest a change privately" and
+   the quick replies under Homeroom bot's message are too, instead of the
+   look's serif button label. */
+html:not([data-skin]) #dev-topic-thread :is([data-work-with-bot], [data-gc-bot-suggest]) :is(button, a) { font-family: inherit; font-weight: 600; letter-spacing: normal; }
 /* ── THE THREAD PAGE IN THE STANDARD LOOK (generated by scripts/thread-look.js; do not edit by hand) ── */
 /* The colours the carried rules wrote outright, each a token of the page, declared once. */
 html:not([data-skin]) #dev-topic-thread { --thread-000000: #000000; --thread-0d1421: #0d1421; --thread-121a0e: #121a0e; --thread-182135: #182135; --thread-243047: #243047; --thread-2a3125: #2a3125; --thread-303e5a: #303e5a; --thread-41483c: #41483c; --thread-425270: #425270; --thread-4d5347: #4d5347; --thread-595f52: #595f52; --thread-838da1: #838da1; --thread-858a7c: #858a7c; --thread-a0a9bb: #a0a9bb; --thread-c3cad8: #c3cad8; --thread-dfe5ef: #dfe5ef; --thread-e3dfc1: #e3dfc1; --thread-ece8cc: #ece8cc; --thread-eef2f8: #eef2f8; --thread-f4f1dc: #f4f1dc; --thread-ff8a78: #ff8a78; --thread-ffffff: #ffffff; }
