@@ -190,7 +190,7 @@ export function attachKeyboardSurface(
   scroller: HTMLElement | null | undefined,
   win: WinLike | undefined = typeof window !== 'undefined' ? (window as unknown as WinLike) : undefined,
   doc: DocLike | undefined = typeof document !== 'undefined' ? (document as unknown as DocLike) : undefined,
-  options: { ride?: boolean; foot?: string } = {},
+  options: { ride?: boolean; foot?: string; head?: number } = {},
 ): () => void {
   const kit = win?.unNative;
   const vv = win?.visualViewport;
@@ -244,6 +244,10 @@ export function attachKeyboardSurface(
     // button to find, so the row that covers the view's foot names itself.
     // The last match with a rect is the one showing (a form and an edit
     // section, one hidden at a time).
+    // And a bar floating over the scroller's head (the make screen's ✕,
+    // phone review #9): `head` px of the view's top are covered, so a field
+    // is revealed below them.
+    const viewTop = view.top + (options.head && options.head > 0 ? options.head : 0);
     let viewBottom = view.bottom;
     if (options.foot) {
       const rows = scroller.querySelectorAll(options.foot);
@@ -258,7 +262,7 @@ export function attachKeyboardSurface(
     const top = revealScrollTop({
       scrollTop: scroller.scrollTop,
       scrollMax: scroller.scrollHeight - scroller.clientHeight,
-      viewTop: view.top,
+      viewTop,
       viewBottom,
       fieldTop: box.top,
       fieldBottom: box.bottom,
@@ -420,15 +424,16 @@ export function attachKeyboardSurface(
  * attachKeyboardSurface on whatever element `ref` holds, re-attached when
  * React hands it a new node (the sheet renders its panel only while open).
  */
-export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string } = {}): void {
-  const attached = useRef<{ el: HTMLElement; foot: string | undefined; detach: () => void } | null>(null);
+export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string; head?: number } = {}): void {
+  const attached = useRef<{ el: HTMLElement; foot: string | undefined; head: number; detach: () => void } | null>(null);
   const ride = !!options.ride;
   const foot = options.foot;
+  const head = options.head || 0;
   useEffect(() => {
     const el = ref.current;
-    if (attached.current && attached.current.el === el && attached.current.foot === foot) return;
+    if (attached.current && attached.current.el === el && attached.current.foot === foot && attached.current.head === head) return;
     attached.current?.detach();
-    attached.current = el ? { el, foot, detach: attachKeyboardSurface(el, undefined, undefined, { ride, foot }) } : null;
+    attached.current = el ? { el, foot, head, detach: attachKeyboardSurface(el, undefined, undefined, { ride, foot, head }) } : null;
   });
   useEffect(() => () => {
     attached.current?.detach();
