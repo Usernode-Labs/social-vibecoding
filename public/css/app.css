@@ -8938,6 +8938,30 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
   /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
+  /* THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026). Home and Communities
+     are the two pages whose search row is pulled up towards the bar; scrolling
+     them a little ran the search field and the New project (New community)
+     button into the bar, where they showed through it and the foot line was
+     drawn across them. Every other page keeps the layer off, above. Here the
+     bar paints the page's own ground again, so what scrolls up disappears at
+     its edge and the line stays unbroken over it. The position, `inset: 0`,
+     `z-index: -1` and `pointer-events: none` are the shared faked layer's
+     ("THE ONE FAKED LAYER"), and the header's own `clip-path` keeps it to the
+     bar. Its clip starts past the menu's edge and the rounded page corner, so
+     the panel and the corner are untouched. The ::after line above paints
+     over this layer, so it stays on the bar's edge. */
+  html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before {
+    content: "" !important;
+    background: var(--home-wallpaper);
+    clip-path: inset(0 0 0 calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)));
+  }
+  html:not([data-skin])[dir="rtl"] body:has(:is(#home-screen, #communities-screen):not(.hidden)) #platform-header#platform-header::before {
+    clip-path: inset(0 calc(var(--platform-rail-w, 0px) + var(--wip-nav-page-radius)) 0 0);
+  }
+  /* Standard (WIP) gives the page and its frame one colour, so there the
+     layer paints that colour rather than the wallpaper the standard look has. */
+  html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)) #platform-header#platform-header::before { background: var(--wip-page-bg); }
+  html[data-skin-wip][data-wip-tokens] body:has(#communities-screen:not(.hidden)) #platform-header#platform-header::before { background: var(--wip-page-bg-communities); }
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
 }
 /* THE PAGE IS A SHEET TUCKED INTO THE MENU (asked 20 Nov 2026, from the
