@@ -11,6 +11,7 @@ import {
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronLeftIcon, EllipsisHorizontalIcon, ListBulletIcon,
   LockIcon, PlusIcon, SearchIcon, UserGroupIcon, XIcon,
+  ChevronRightIcon, HashIcon,
 } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -421,6 +422,46 @@ type NewChoice = typeof NEW_CHOICES[number]['key'];
 function startNew(choice: NewChoice) {
   // DM and group are the create dialog, opened on the matching tab.
   openDialog('messagesCreate', choice);
+}
+
+/**
+ * THE GUIDE (23 Nov 2026, #7040): what the pane beside the list says while
+ * no conversation is open, for a look that draws the list and the pane side
+ * by side from 768px (app.css; hidden everywhere else, where the pane's
+ * heading and line stand alone). What Messages is for, the two ways to start
+ * a conversation (the "+" menu's own choices, in its own words), and where
+ * a project's channel is, which is not here.
+ */
+function MessagesGuide() {
+  const t = useMessages('messages');
+  return (
+    <div className="messages-guide" data-messages-guide="">
+      <span className="messages-guide-mark" aria-hidden="true"><ChatIcon /></span>
+      <h2 className="messages-guide-title">{t('messages:guide.title')}</h2>
+      <p className="messages-guide-body">{t('messages:guide.body')}</p>
+      <div className="messages-guide-rows">
+        {NEW_CHOICES.map((item) => (
+          <button key={item.key} type="button" className="messages-guide-row" data-guide-new={item.key} onClick={() => startNew(item.key)}>
+            <span className="messages-guide-glyph" aria-hidden="true">{item.key === 'direct' ? <PlusIcon /> : <UserGroupIcon />}</span>
+            <span className="messages-guide-text">
+              <b>{t(item.label)}</b>
+              <span>{t(item.hint)}</span>
+            </span>
+            <ChevronRightIcon className="messages-guide-go" aria-hidden="true" />
+          </button>
+        ))}
+        <a className="messages-guide-row" data-guide-channels="" href="#communities">
+          <span className="messages-guide-glyph" aria-hidden="true"><HashIcon /></span>
+          <span className="messages-guide-text">
+            <b>{t('messages:guide.channels.label')}</b>
+            <span>{t('messages:guide.channels.hint')}</span>
+          </span>
+          <ChevronRightIcon className="messages-guide-go" aria-hidden="true" />
+        </a>
+      </div>
+      <p className="messages-guide-note">{t('messages:guide.bot')}</p>
+    </div>
+  );
 }
 
 /**
@@ -1646,7 +1687,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2></section>;
   }
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
-  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2><p>{t('messages:thread.empty.body')}</p></section>;
+  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2><p>{t('messages:thread.empty.body')}</p><MessagesGuide /></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
   // safe-area test pins. It decides the rows' shape: a DM and a group draw
