@@ -659,7 +659,12 @@ test('Messages\' drawer runs under the strip the same way', () => {
   assert.match(APP_CSS, /\.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header:not\(:has\(\+ \[data-bot-strip\]\)\) \{\s*position: static; padding: 4px 12px; justify-content: flex-end;/);
   assert.match(block, /html\[data-side-strip="right"\] \.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*right: calc\(12px \+ var\(--platform-strip-w, 0px\)\);/);
   // Its own sheet runs under the strip, so the strip's ground is not drawn.
-  assert.match(block, /\.dc-lift-strip:not\(\.messages-drawer\)\) \.platform-side-strip-ground \{/);
+  assert.match(block, /\.dc-lift-strip:not\(\.messages-drawer\)\) \.platform-side-strip-ground,\n  html\[data-side-strip\] body:has\(#ai-screen:not\(\.hidden\)\[data-ai-drawer="1"\]\) \.platform-side-strip-ground \{/);
+  // Phone review #71, #67: the bot tab's thread level stands on its own
+  // ground, not the wallpaper, so the strip beside it takes that fill.
+  assert.match(block, /body:has\(#ai-screen:not\(\.hidden\)\[data-ai-drawer="1"\]\) \.platform-side-strip-ground::before \{\s+background: var\(--home-ground\);/);
+  assert.match(block, /body:has\(#ai-screen:not\(\.hidden\)\[data-ai-drawer="1"\] \[data-bot-new-thread-pane\]\) \.platform-side-strip-ground::before \{\s+background: var\(--dc-sheet-solid\);/,
+    'New chat is one full-height sheet');
   // It pans by the width beside the strip.
   const drawer = read('frontend/src/features/messages/phone-drawer.tsx');
   assert.match(drawer, /Math\.max\(1, \(layout\?\.clientWidth \|\| 1\) - stripWidth\(\)\)/);

@@ -134,9 +134,10 @@ test('the side panel measures itself in figures that hold in Arabic', () => {
 });
 
 test('a sideways scroller reads scrollLeft as a distance: it is negative in Arabic', () => {
-  for (const file of ['frontend/src/lib/use-scroll-fade.ts', 'frontend/src/features/ai/lists.tsx']) {
-    assert.match(read(file), /const at = Math\.abs\(el\.scrollLeft\);/, file);
-  }
+  assert.match(read('frontend/src/lib/use-scroll-fade.ts'), /const at = Math\.abs\(el\.scrollLeft\);/);
+  // Phone review #95: the bot tab's chip rail reads its chips' boxes against
+  // its own, physical sides only, so the direction changes nothing there.
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /return \[r\.left - box\.left, r\.right - box\.left\] as const;/);
   const staking = read('frontend/src/features/profile/staking-sheet.tsx');
   assert.match(staking, /\(el\.clientWidth - 12\) \* dirSign\(\)/, 'a positive scrollLeft is clamped to 0 there');
   assert.match(staking, /Math\.abs\(el\.scrollLeft\) \/ \(el\.clientWidth - 12\)/);
