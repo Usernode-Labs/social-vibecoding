@@ -1015,6 +1015,19 @@ html.web-browser-chrome.platform-kb-short {
 .messages-invitation p { margin-top: 2px; color: var(--text-muted); }
 .messages-invitation [role="alert"] { display: block; margin-top: 4px; color: #dc2626; }
 .messages-invite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+/* THE WORDS KEEP A READING WIDTH (23 Nov 2026). The card is a row, and its
+   three buttons never gave way: in the thread pane beside the list (328px
+   at 1024, 584 at 1280) the words were laid out at zero width, one to a
+   line down a card taller than the window, with "Decline & block" printed
+   over them. The words take at least 18rem, and the buttons go under them
+   when the two do not fit side by side. From 768px only: under it the card
+   is already a column (the phone block further down), where a basis would
+   set the words' height instead. */
+@media (min-width: 768px) {
+  .messages-invitation { flex-wrap: wrap; }
+  .messages-invitation > div:first-child { flex: 1 1 min(18rem, 100%); }
+  .messages-invitation > .messages-invite-actions { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+}
 .messages-invite-decline,
 .messages-invite-block,
 .messages-invite-accept {
