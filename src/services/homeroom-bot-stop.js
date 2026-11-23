@@ -167,6 +167,16 @@ const LASTING = Object.freeze({
   // a Stop right after it has saved a change.
   reply: (_args, result) => (result?.applied?.saved
     ? { did: 'saved a change to the live draft', stays: 'it stays in the draft' } : null),
+  // #6994: their attached website archive put in place of the project's
+  // pages, as a change up for the project's vote (services/archive-change.js).
+  use_archive: (_args, result) => {
+    if (!result?.ok) return null;
+    const n = requestNumber(result.number);
+    return {
+      did: n ? `put the archive's files in place of the project's pages as change #${n}` : 'put the archive\'s files in place of the project\'s pages',
+      stays: 'it is up for the vote',
+    };
+  },
 });
 
 // The tools that change nothing that lasts when they run: a read, or

@@ -1239,9 +1239,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // answer's id is what POST /api/apps links to the new project.
   //
   // Raw bytes, as the feedback screenshot route takes them, so an over-cap
-  // upload gets the plain 400 sentence rather than the parser's 413.
+  // upload gets the plain 400 sentence rather than the parser's 413. The
+  // upload is a cookie-authenticated write, so the Homeroom page is the only
+  // browser that may make it (sameOriginBrowserOnly), after its limiter.
   const archiveBody = express.raw({ type: 'application/octet-stream', limit: archiveImport.MAX_ARCHIVE_BYTES + 1 });
-  router.post('/api/apps/archive', drainGuard, appCreateLimiter, (req, res, next) => {
+  router.post('/api/apps/archive', drainGuard, appCreateLimiter, sameOriginBrowserOnly, (req, res, next) => {
     archiveBody(req, res, (err) => {
       if (!err) return next();
       if (err.type === 'entity.too.large') {
