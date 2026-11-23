@@ -46,6 +46,7 @@ function selfOwner() {
 // thin provisional row the moment the run is admitted (launched: false — a
 // process that dies here has nothing to harvest, so the adopter re-drives
 // straight away), then the full manifest just before the Jobs are created.
+// Capacity grants belong to the held row and survive either manifest write.
 async function record(pool, { runId, sessionId, commitSha, manifest }) {
   if (!pool || !runId || !sessionId) return false;
   try {
@@ -53,7 +54,8 @@ async function record(pool, { runId, sessionId, commitSha, manifest }) {
       `INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest, started_at, heartbeat_at)
        VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), NOW())
        ON CONFLICT (run_id) DO UPDATE
-         SET manifest = EXCLUDED.manifest,
+         SET manifest = CASE WHEN check_runs.manifest->>'proposalOverflow' = 'true'
+               THEN EXCLUDED.manifest || '{"proposalOverflow": true}'::jsonb ELSE EXCLUDED.manifest END,
              commit_sha = EXCLUDED.commit_sha,
              owner = EXCLUDED.owner,
              heartbeat_at = NOW()`,

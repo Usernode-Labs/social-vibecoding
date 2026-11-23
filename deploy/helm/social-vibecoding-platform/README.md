@@ -674,7 +674,10 @@ proposal when at least two main-watch runs already hold slots. The pilot
 requires `checksMaxConcurrentRuns: 4` and a required dedicated pool whose
 current per-node capacity plan supports five shared slots plus the reserved
 main-watch run. The four-proposal ceiling still applies, and the first
-main-watch run retains its reserved lane. Early unit suites use the ordinary
+main-watch run retains its reserved lane. The overflow grant stays with the
+proposal that holds it, so an ordinary slot that frees can go to the head of
+the line. Turning the pilot off or losing sufficient pool capacity counts the
+holder as ordinary until it finishes. Early unit suites use the ordinary
 reservation policy. Admission logs identify pilot starts with
 `proposalOverflowRunId`.
 

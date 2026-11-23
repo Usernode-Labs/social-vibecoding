@@ -132,7 +132,9 @@ async function enqueue(pool, {
                     COALESCE((SELECT MIN(queued_at) FROM taken), NOW())),
               NULL
        ON CONFLICT (run_id) DO UPDATE
-         SET manifest = EXCLUDED.manifest, owner = EXCLUDED.owner, heartbeat_at = NOW()
+         SET manifest = CASE WHEN check_runs.manifest->>'proposalOverflow' = 'true'
+               THEN EXCLUDED.manifest || '{"proposalOverflow": true}'::jsonb ELSE EXCLUDED.manifest END,
+             owner = EXCLUDED.owner, heartbeat_at = NOW()
        RETURNING queued_at`,
       [runId, sessionId == null ? null : Number(sessionId), appId == null ? null : Number(appId),
         kind, commitSha || null, checkRuns.selfOwner(), JSON.stringify(manifest || {}),
@@ -203,6 +205,7 @@ const QUEUE_SQL = `
   SELECT cr.run_id, cr.kind, cr.session_id, cr.app_id, cr.commit_sha, cr.owner,
          cr.queued_at, cr.admitted_at, cr.heartbeat_at,
          (cr.manifest->>'earlyUnit' = 'true') AS early_unit,
+         (cr.manifest->>'proposalOverflow' = 'true') AS proposal_overflow,
          (cr.heartbeat_at >= NOW() - ($1::int * INTERVAL '1 millisecond')) AS alive,
          (cr.admitted_at IS NOT NULL
            AND cr.admitted_at >= NOW() - ($2::int * INTERVAL '1 millisecond')) AS within_deadline,
@@ -323,17 +326,25 @@ function planAdmission(rows, {
   let proposals = runs.filter((r) => r.holding && r.kind === 'proposal').length;
   // The first main-watch run is in its own slot; any more use the shared ones.
   const sharedUsed = () => proposals + Math.max(0, mains - 1);
-  const pilotEligible = proposalOverflowPilot === true && cap === PROPOSAL_OVERFLOW_PILOT_CAP
-    && Number.isFinite(poolCap) && poolCap >= cap + 1 && mains > 1;
+  const pilotBudget = proposalOverflowPilot === true && cap === PROPOSAL_OVERFLOW_PILOT_CAP
+    && Number.isFinite(poolCap) && poolCap >= cap + 1;
+  const overflowHolders = runs.filter((r, i) =>
+    r.holding && r.kind === 'proposal' && rows[i].proposal_overflow === true).length;
+  // A granted pilot run keeps its own slot while the pool still supports it.
+  // An ordinary slot released meanwhile is available to the head of the line.
+  // If the pilot is turned off or capacity drops, count the holder as ordinary.
+  const overflowDiscount = pilotBudget && overflowHolders === 1 ? 1 : 0;
+  const canGrantOverflow = pilotBudget && overflowHolders === 0 && mains > 1;
   const admit = [];
   let proposalOverflowRunId = null;
   for (const run of runs) {
     if (!run.waiting) continue;
     if (!available) break;
     const mainRun = run.kind === 'main';
-    const hasOrdinarySlot = (mainRun && mains === 0) || sharedUsed() < sharedCap;
+    const hasOrdinarySlot = (mainRun && mains === 0)
+      || (sharedUsed() - overflowDiscount < sharedCap && (mainRun || proposals < sharedCap));
     if (!hasOrdinarySlot) {
-      if (!pilotEligible || sharedUsed() !== sharedCap || proposals >= cap) break;
+      if (!canGrantOverflow || sharedUsed() !== sharedCap || proposals >= cap) break;
       if (mainRun) continue;
       proposalOverflowRunId = run.runId;
     }
@@ -385,8 +396,11 @@ async function admit(pool, { cap = maxConcurrentRuns(), self = null } = {}) {
     });
     if (plan.admit.length) {
       await client.query(
-        'UPDATE check_runs SET admitted_at = NOW() WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL',
-        [plan.admit]
+        `UPDATE check_runs SET admitted_at = NOW(),
+            manifest = CASE WHEN run_id = $2::uuid THEN manifest || '{"proposalOverflow": true}'::jsonb
+              ELSE manifest - 'proposalOverflow' END
+          WHERE run_id = ANY($1::uuid[]) AND admitted_at IS NULL`,
+        [plan.admit, plan.proposalOverflowRunId]
       );
     }
     if (plan.expired.length) {

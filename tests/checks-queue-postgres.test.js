@@ -346,7 +346,8 @@ test('two processes grant the pilot slot once and hold only four proposal runs',
   for (let i = 0; i < 3; i += 1) proposals.push(await ask(pool, await session(pool, appId)));
   assert.deepEqual((await checksQueue.admit(pool)).admit.sort(), [...mains, ...proposals].sort());
   const nextMain = await askMain(other, appId, 'c'.repeat(40));
-  const first = await ask(pool, await session(pool, appId));
+  const firstSession = await session(pool, appId);
+  const first = await as('pilot-owner', () => ask(pool, firstSession));
   const second = await ask(other, await session(other, appId, { status: 'active' }));
 
   const raced = await Promise.all(Array.from({ length: 12 }, (_, i) => checksQueue.admit(i % 2 ? other : pool)));
@@ -355,6 +356,23 @@ test('two processes grant the pilot slot once and hold only four proposal runs',
   assert.deepEqual((await admittedIds(pool)).sort(), [...mains, ...proposals, first].sort());
   assert.equal(raced.at(-1).byRun.get(nextMain).admitted, false);
   assert.equal(raced.at(-1).byRun.get(second).admitted, false);
+
+  async function readHolder() {
+    const { rows: [holder] } = await pool.query('SELECT owner, manifest FROM check_runs WHERE run_id = $1', [first]);
+    return holder;
+  }
+  const holder = await readHolder();
+  assert.equal(holder.manifest.proposalOverflow, true);
+  assert.equal(await as('pilot-owner', () => checkRuns.release(pool)), 1);
+  await checkRuns.finish(pool, proposals[0]);
+  assert.deepEqual((await checksQueue.admit(other)).admit, [nextMain],
+    'the ordinary slot frees even while the released pilot run may still have Jobs');
+  assert.equal(await checkRuns.claim(other, first, `${holder.owner}:exited`), true);
+  const claimed = { runId: first, sessionId: firstSession.id, commitSha: firstSession.checks_commit_sha };
+  assert.equal(await checkRuns.record(other, { ...claimed, manifest: { launched: true } }), true);
+  assert.deepEqual((await readHolder()).manifest, { launched: true, proposalOverflow: true });
+  assert.ok(await checksQueue.enqueue(other, { ...claimed, manifest: { launched: false } }));
+  assert.deepEqual((await readHolder()).manifest, { launched: false, proposalOverflow: true });
 });
 
 // ── The order ───────────────────────────────────────────────────────────

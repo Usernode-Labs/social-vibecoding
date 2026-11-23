@@ -326,7 +326,8 @@ test('the pilot lends one slot to the first waiting proposal while extra main-wa
   assert.equal(plan.byRun.get(waitingMain.run_id).ahead, 0);
   assert.equal(plan.byRun.get(second.run_id).ahead, 1);
 
-  const nextPass = rows.map((r) => r === first ? { ...r, admitted_at: new Date() } : r);
+  const nextPass = rows.map((r) => r === first
+    ? { ...r, admitted_at: new Date(), proposal_overflow: true } : r);
   assert.deepEqual(checksQueue.planAdmission(nextPass,
     { cap: 4, poolCap: 6, proposalOverflowPilot: true }).admit, [],
   'repeated passes keep the single overflow grant and four-proposal ceiling');
@@ -372,16 +373,37 @@ test('an existing pilot proposal keeps its slot through lower capacity and main-
     { cap: 4, poolCap: 5, proposalOverflowPilot: true });
   assert.deepEqual(pilot.admit, [waiting.run_id], 'a main-watch run with Jobs still within deadline counts');
 
-  const holder = { ...waiting, admitted_at: new Date() };
+  const holder = { ...waiting, admitted_at: new Date(), proposal_overflow: true };
   const next = promoted();
-  const reduced = checksQueue.planAdmission([firstMain, extraMain, ...proposals, holder, next],
-    { cap: 4, poolCap: 4, proposalOverflowPilot: true });
-  assert.deepEqual(reduced.admit, []);
-  assert.equal(reduced.byRun.get(holder.run_id).holding, true);
+  const nextMain = main();
+  const rows = [nextMain, firstMain, extraMain, ...proposals.slice(1), holder, next];
+  for (const options of [{ cap: 4, poolCap: 4, proposalOverflowPilot: true }, { cap: 4, poolCap: 5 }]) {
+    const plan = checksQueue.planAdmission(rows, options);
+    assert.deepEqual(plan.admit, []);
+    assert.equal(plan.byRun.get(holder.run_id).holding, true);
+  }
+
   const released = checksQueue.planAdmission([firstMain, ...proposals, holder, next],
     { cap: 4, poolCap: 5, proposalOverflowPilot: true });
-  assert.deepEqual(released.admit, []);
+  assert.deepEqual(released.admit, [], 'a free ordinary slot cannot start a fifth proposal');
   assert.deepEqual(released.holding, { main: 1, proposal: 4 });
+  const withMain = checksQueue.planAdmission([nextMain, firstMain, ...proposals, holder, next],
+    { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(withMain.admit, [nextMain.run_id], 'the main hold never depends on a future main admission');
+});
+
+test('a held pilot proposal leaves a released ordinary slot available to the next main-watch run', () => {
+  const mains = [main({ admitted: true }), main({ admitted: true })];
+  const waitingMain = main();
+  const ordinary = [promoted({ admitted: true }), promoted({ admitted: true })];
+  const overflow = promoted({ admitted: true, proposal_overflow: true, alive: false });
+  const waitingProposal = promoted();
+  const rows = [...mains, waitingMain, ...ordinary, overflow, waitingProposal];
+  const plan = checksQueue.planAdmission(rows, { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(plan.admit, [waitingMain.run_id]);
+  assert.equal(plan.proposalOverflowRunId, null);
+  assert.equal(plan.byRun.get(overflow.run_id).holding, true, 'its Jobs may still run after a lease loss');
+  assert.deepEqual(plan.holding, { main: 3, proposal: 3 });
 });
 
 test('the admission transaction passes physical capacity and the runtime pilot flag to the planner', async (t) => {
@@ -404,7 +426,7 @@ test('the admission transaction passes physical capacity and the runtime pilot f
   const client = {
     async query(sql, params) {
       if (sql.includes('FROM check_runs cr')) return { rows };
-      if (sql.includes('SET admitted_at = NOW()')) grants.push(...params[0]);
+      if (sql.includes('SET admitted_at = NOW()')) grants.push({ ids: params[0], overflow: params[1] });
       return { rows: [] };
     },
     release() {},
@@ -413,7 +435,7 @@ test('the admission transaction passes physical capacity and the runtime pilot f
   assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, []);
   process.env[flag] = 'true';
   assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, [waiting.run_id]);
-  assert.deepEqual(grants, [waiting.run_id]);
+  assert.deepEqual(grants, [{ ids: [waiting.run_id], overflow: waiting.run_id }]);
 
   capacity.mock.mockImplementation(async () => ({ available: true }));
   assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, [], 'missing capacity cannot grant a slot');
