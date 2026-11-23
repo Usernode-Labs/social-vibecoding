@@ -1380,7 +1380,7 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   assert.equal(open.figure, 'Needs 1 more yes');
   assert.equal(open.tone, 'ask');
   assert.deepEqual(open.segments, [{ weight: 1, pct: 100, state: 'moving' }, { weight: 1, pct: 0, state: 'moving' }]);
-  assert.deepEqual(open.note, ['Any of the 3 approvers can give it.', 'cilokman’s yes was on an earlier version.']);
+  assert.deepEqual(open.note, ['Any of the 3 approvers can approve it.', 'cilokman’s yes was on an earlier version.']);
   // The viewer has voted: the figure is no longer an ask.
   assert.equal(votes({ ...PR, my_vote: 'yes' }).tone, 'muted');
   // Reached, while testing runs: the names, and that it waits on testing.
@@ -1397,7 +1397,7 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   assert.equal(yours(['jo'], { ...PR, status: 'merged' }), 'jo said yes.');
   // A vote a newer push retired: the reader's own reads "Your".
   const earlier = votes(PR, { yesNames: [], earlierYes: ['Builder', 'cilokman'], earlierNo: ['Builder'], approvers: 3 });
-  assert.deepEqual(earlier.note, ['Any of the 3 approvers can give it.', 'Your yes was on an earlier version.',
+  assert.deepEqual(earlier.note, ['Any of the 3 approvers can approve it.', 'Your yes was on an earlier version.',
     'cilokman’s yes was on an earlier version.', 'Your no was on an earlier version.']);
   assert.ok(v.body.thread.votes, 'every change page has its Votes card');
   // The roster keeps the names the card reads.

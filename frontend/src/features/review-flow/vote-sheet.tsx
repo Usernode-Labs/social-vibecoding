@@ -31,7 +31,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
-import { CheckIcon, ChevronLeftIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronLeftIcon, SparklesIcon, StepBackIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { radioGroupKeys } from '../../lib/radio-group';
@@ -91,6 +91,8 @@ const Icon = {
   check: <CheckIcon aria-hidden="true" width={18} height={18} strokeWidth="2.4" />,
   x: <XIcon aria-hidden="true" width={16} height={16} strokeWidth="2.4" />,
   back: <ChevronLeftIcon aria-hidden="true" width={22} height={22} strokeWidth="2.2" />,
+  // S4: the previous change is a step back through the run, not a Back.
+  prev: <StepBackIcon aria-hidden="true" width={22} height={22} strokeWidth="2.2" />,
   spark: <SparklesIcon aria-hidden="true" width={20} height={20} />,
 };
 
@@ -376,7 +378,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
             disabled={!hasPrev}
             aria-label={t('communities:review.vote.prevLabel')}
             onClick={onPrev}
-          >{Icon.back}</button>
+          >{Icon.prev}</button>
           {pair()}
           <button
             type="button"

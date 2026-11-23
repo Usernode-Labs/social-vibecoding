@@ -29,7 +29,7 @@
  * frames never re-render.
  */
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -42,7 +42,7 @@ import { litPlace, placeHandle, placeName, type PlaceKey } from '../dev-board/wo
 import { improveStore } from '../improve/improve-store.js';
 import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
-import { messagesBack, messagesDepth, messagesDrawerStore } from './messages-drawer';
+import { messagesBack, messagesDepth, messagesDrawerStore, publishChatBarHost } from './messages-drawer';
 import { dirSign } from '../../lib/i18n/direction';
 
 type Mode = 'communities' | 'messages' | null;
@@ -115,7 +115,8 @@ export function upFromPlace(slug: string | null, place: string): void {
   if (!slug) return;
   const key = place as PlaceKey;
   const lit = litPlace(key);
-  openPlace(slug, lit !== key ? lit : 'status');
+  // #7045: up, not across: a step Back when the parent is the entry below, so Back from it does not return here.
+  openPlace(slug, lit !== key ? lit : 'status', { up: true });
 }
 
 /**
@@ -197,29 +198,55 @@ export function DrawerTitles(): ReactNode {
   const sub = useRef<HTMLElement>(null);
   // How far the bar's left edge is from where the name sits: the arrow and
   // its gap. A list's title ("Messages") sits there, with no arrow beside it.
-  // Measured when it mounts and when the window changes, never per frame.
+  // Measured when the bar's layout changes, never per frame.
+  //
+  // PHONE REVIEW #4 (23 Nov 2026): it was measured once, when the titles
+  // mounted, and on a window resize. They mount on whichever screen first
+  // draws the drawer's header and stay mounted from one tab to the next, so
+  // the slot was the first screen's: a request's page, which draws no arrow
+  // (its group is out of the bar), read 0 and left "Messages" 44px to the
+  // right of its place; a community's page read the wrong distance and slid
+  // it 78px left, off the screen. It is measured again whenever the drawer
+  // changes (mode, level, Hub or not) and whenever the bar's left group or
+  // the titles change size, and it never steps past the bar's padding.
   const slot = useRef(44);
   const redraw = useRef(() => {});
   const hubRef = useRef(hub);
   hubRef.current = hub;
+  const measure = useRef(() => {});
+  measure.current = () => {
+    const el = box.current;
+    const bar = el?.closest('#platform-header');
+    const left = bar?.querySelector('.platform-header-left');
+    if (!el || !bar || !left) return;
+    const style = getComputedStyle(bar);
+    const pad = parseFloat(dirSign() === -1 ? style.paddingRight : style.paddingLeft) || 0;
+    const at = titleSlot(
+      { laidOut: el.getClientRects().length > 0, left: inlineStart(el) },
+      { laidOut: left.getClientRects().length > 0, left: inlineStart(left) },
+      inlineStart(bar) + pad,
+    );
+    if (at !== null && at !== slot.current) {
+      slot.current = at;
+      redraw.current();
+    }
+  };
   useIsomorphicLayoutEffect(() => {
-    const measure = () => {
-      const el = box.current;
-      const left = el?.closest('#platform-header')?.querySelector('.platform-header-left');
-      if (!el || !left) return;
-      const at = titleSlot(
-        { laidOut: el.getClientRects().length > 0, left: inlineStart(el) },
-        { laidOut: left.getClientRects().length > 0, left: inlineStart(left) },
-      );
-      if (at !== null && at !== slot.current) {
-        slot.current = at;
-        redraw.current();
-      }
+    const run = () => measure.current();
+    run();
+    window.addEventListener('resize', run);
+    const left = box.current?.closest('#platform-header')?.querySelector('.platform-header-left');
+    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(run) : null;
+    if (watch && box.current) watch.observe(box.current);
+    if (watch && left) watch.observe(left);
+    return () => {
+      window.removeEventListener('resize', run);
+      watch?.disconnect();
     };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
   }, []);
+  // The drawer it is drawn for, and where it rests, move the boxes: measure
+  // again in the same frame, before the paint.
+  useIsomorphicLayoutEffect(() => { measure.current(); }, [mode, hub, two?.level]);
   useHeaderFrame(mode, (frame) => {
     const a = outer.current;
     const b = inner.current;
@@ -276,4 +303,20 @@ function Untint(): ReactNode {
     return () => { header?.style.removeProperty('--nav-k'); };
   }, []);
   return <span ref={ref} className="nav-drawer-untint" aria-hidden="true" />;
+}
+
+/**
+ * Where a conversation's own discs (its members and its ⋯) sit in the bar,
+ * beside the bell (phone review #131): only while a conversation is open on
+ * Messages' drawer, so never in the prerender. The host is empty here; the
+ * thread's header (../messages/index.tsx ThreadHeader) portals its discs
+ * into it. While it is drawn, app.css folds the look picker's two discs
+ * away (they are Settings' Theme and Look), so the name and its line have
+ * the bar's width.
+ */
+export function ChatBarSlot(): ReactNode {
+  const { on, level } = useStoreState(messagesDrawerStore);
+  const host = useCallback((el: HTMLSpanElement | null) => { publishChatBarHost(el); }, []);
+  if (!on || level !== 1) return null;
+  return <span ref={host} className="nav-drawer-chat-actions" data-nav-drawer-chat-actions="" />;
 }

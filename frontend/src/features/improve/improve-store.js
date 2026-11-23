@@ -144,7 +144,8 @@ export function backsToBot(href) {
  */
 export function topicWorkshopHref(route) {
   const back = topicBackHref(route);
-  if (!back || !(backsToMessages(back) || backsToBot(back))) return null;
+  // #7045: and one opened from Needs you (`#needs`) carries the pair too.
+  if (!back || !(backsToMessages(back) || backsToBot(back) || back === '#needs')) return null;
   return boardHref(route.slug, route.boardView);
 }
 

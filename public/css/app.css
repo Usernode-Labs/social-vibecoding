@@ -506,18 +506,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    chosen by the control's own state (shown is `inert`-free), so nothing
    is written to the scroller, which public/js/group-chat.js owns in the
    group chat. The foot's control hangs from the box right after the
-   scroller, the top's from the box right before it. */
+   scroller, the top's from the box right before it. Since the phone
+   review's #26 (23 Nov 2026) the foot's pill sits on the reply box's edge,
+   half over it, so only the last 28px fade. */
 :has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent calc(100% - 2px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent calc(100% - 2px));
 }
 [data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + * {
   -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
   mask-image: linear-gradient(to bottom, transparent 10px, #000 52px);
 }
 [data-transcript-overlay="top"]:has([data-unread-banner]:not([inert])) + :has(+ [data-transcript-overlay="foot"] [data-jump-latest]:not([inert])) {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 64px), transparent calc(100% - 12px));
+  -webkit-mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 28px), transparent calc(100% - 2px));
+  mask-image: linear-gradient(to bottom, transparent 10px, #000 52px, #000 calc(100% - 28px), transparent calc(100% - 2px));
 }
 /* WHO IS TYPING TAKES NO ROOM UNTIL SOMEBODY TYPES (1 November 2026). The
    line held 18px open between the transcript and the reply box whether or
@@ -850,11 +852,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    conversation" (desktop only — below 768px the list IS the screen until you
    pick a row) is the same words standing on the strip where the sheet would
    be, because a card there would read as a conversation with nothing in it. */
+/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
+.messages-guide { display: none; }
+/* A rule of its own (phone review, 23 Nov 2026, #44): written inside the list
+   below, it hid every state with it, and a search that found nothing left a
+   blank page. */
 .messages-state,
 .messages-empty,
 .messages-thread-empty,
-/* The guide inside the empty pane (index.tsx MessagesGuide): drawn only by a look that asks for it (the standard look, from 768px). */
-.messages-guide { display: none; }
 .messages-no-selection {
   display: flex;
   align-items: center;
@@ -1200,6 +1205,14 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-grouped:hover .messages-message-gutter { visibility: visible; }
 @media (hover: none) {
   .messages-message-gutter { visibility: visible; }
+  /* PHONE REVIEW #57 (23 Nov 2026): IN A CONVERSATION'S BUBBLES THE RUN'S
+     HEAD CARRIES THE TIME, on touch. Shown on every continuation it was a
+     second clock in a second format beside the head's ("Nov 18, 12:05 AM"
+     over "12:05 AM"), hard against both screen edges. Their side's column
+     stays, empty, so the bubble keeps its line under the first; yours has
+     no face to line up with, so it goes, and your bubbles keep one edge. */
+  .messages-message-bubble > .messages-message-gutter { visibility: hidden; }
+  .messages-message-bubble.messages-message-self > .messages-message-gutter { display: none; }
 }
 
 /* ── A conversation has sides (#5680) ───────────────────────────────────
@@ -1538,6 +1551,23 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 
 /* The phone's sheet: a scrim, and a sheet rising from the bottom edge. */
 .msgx-sheet-layer { position: fixed; z-index: 2100; inset: 0; }
+/* PHONE REVIEW #20 (23 Nov 2026): a hold opens this sheet and nothing else.
+   iOS also selected the word under the finger and laid its own Copy · Look
+   Up · Translate callout over the sheet's "Reply in thread", with handles
+   on a word in it. So the system's long press is off on the row while a
+   finger is held on it (useLongPress sets `data-press-armed`, and takes it
+   away on the lift, so text can be selected as before) and on the sheet
+   itself, whose rows are buttons; a field in it (the emoji search) keeps
+   its text. */
+[data-press-armed],
+[data-press-armed] *,
+.msgx-sheet-layer,
+.msgx-sheet-layer * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.msgx-sheet-layer :is(input, textarea) { -webkit-user-select: text; user-select: text; }
 .msgx-sheet-scrim { position: absolute; inset: 0; border: 0; background: rgba(0, 0, 0, 0.32); }
 .msgx-sheet {
   position: absolute;
@@ -2238,6 +2268,25 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    declared check selects it). Two selectors' worth of specificity, so it
    outranks the element's own `flex` although tailwind.css loads later. */
 .messages-composer-count:not([data-near-limit]) { display: none; }
+/* THE STACKED MESSAGE BOX (phone review #58, 23 Nov 2026). The "+", the
+   field, dictation and Send shared one row for the field's whole height, so
+   on a phone the words had 219px of a 357px card and two sentences filled
+   six lines. Once the text wraps (lib/use-composer-stack.ts sets
+   `data-stacked` on the row), the field takes the card's whole width and the
+   buttons stand on a line of their own beneath it: the "+" at the start, the
+   mic and Send at the end. The field keeps its 140px ceiling and scrolls
+   past it; the band its top padding leaves is faded, so a line scrolled up
+   under the card's edge goes out softly instead of being cut through its
+   letters. */
+.messages-composer-row[data-stacked] { flex-wrap: wrap; row-gap: 0; }
+.messages-composer-row[data-stacked] > .messages-composer-input {
+  order: -1;
+  flex: 1 0 100%;
+  padding-top: 10px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 2px, #000 14px);
+  mask-image: linear-gradient(to bottom, transparent 2px, #000 14px);
+}
+.messages-composer-row[data-stacked] > .messages-composer-add { margin-inline-end: auto; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
 .messages-reply-draft {
@@ -2626,6 +2675,14 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   .messages-invite-actions { justify-content: stretch; }
   .messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
   .messages-message { padding-inline-end: 12px; padding-inline-start: 12px; }
+  /* #57: the continuation's clock borrows 8px of this row's 12px, not the
+     12px it borrows of a wide window's 16px, so it starts 4px in from the
+     edge instead of on it (and on your side ends 4px in, not shaved). The
+     column is 4px narrower to match, so the words stay under the name:
+     12 - 8 + 44 + 12 = 12 + 36 + 12. At 10px "12:45 PM" is about 42px,
+     so the clock never runs past its column. */
+  .messages-message-gutter { flex-basis: 44px; width: 44px; margin-inline-start: -8px; font-size: 10px; }
+  .messages-message-bubble.messages-message-self > .messages-message-gutter { margin-inline-start: 0; margin-inline-end: -8px; }
   .messages-attachment img { width: 112px; }
 }
 
@@ -3075,6 +3132,24 @@ html:not([data-skin]) .un-action-btn.un-has-icon.un-destructive .un-item-icon { 
 .un-sheet:has(#notifications-sheet),
 .un-sheet:has(#messages-sheet) {
   touch-action: pan-y;
+}
+
+/* PIN TO HOME (Home › Edit › Add other apps) is the same trade: its two
+   lists scroll in a box under the title (phone review, 23 Nov 2026; they ran
+   2,693px down an 812px sheet that no swipe moved). The box is as tall as
+   the sheet's cap leaves under the grabber, the body's padding and the
+   title row (7rem together), so the sheet itself never outgrows the screen. */
+.un-sheet:has([data-add-apps-sheet]) {
+  touch-action: pan-y;
+}
+[data-add-apps-scroll] {
+  max-height: calc(100dvh - max(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)), 12px)
+    - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))
+    - var(--un-kb-inset, 0px) - 7rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding-bottom: 1rem;
 }
 
 /* THE SWITCHER'S ONLY SCROLLER RUNS THE OTHER WAY. Its app rail is a
@@ -4050,7 +4125,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
     var(--home-washes);
   background: var(--home-wallpaper);
@@ -4091,7 +4166,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
     var(--home-washes);
 }
@@ -4115,7 +4190,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(253, 232, 228, 0.7), rgba(253, 232, 228, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
     --home-wallpaper:
-      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
@@ -4129,10 +4204,24 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(118, 31, 15, 0.7), rgba(118, 31, 15, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(80, 48, 105, 0.55), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
     --home-wallpaper:
-      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-star) right var(--home-star-x, 32px) top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
+}
+/* THE STAR IS PLACED FROM THE USABLE BOX (phone review, 23 Nov 2026). The
+   body runs under the iPhone Duo's status column, so 32px from the body's
+   right edge put the star half under the clock: a pixelated stain, not a
+   star. With the column on the right it stands that much further in. */
+html[data-side-strip="right"] body { --home-star-x: calc(32px + var(--platform-strip-w, 0px)); }
+/* AND A PHONE'S STANDARD LOOK DRAWS NONE. Its 78px were placed for a 52px
+   bar at the top of the screen. Under a phone's status bar all but a sliver
+   is behind the system's own clock and battery, and once the search row is
+   pulled down the rest lands behind New project, where it read as a smudge.
+   `none` is a valid layer image, so the shorthands above keep their shape;
+   !important because the dark rule above is the more specific selector. */
+@media (max-width: 767.98px) {
+  html:not([data-skin]) body { --home-star: none !important; }
 }
 /* THE HEADER STAYS CLEAR OF THE STAR in a running app and on New project
    (polish N20). On Home the star sits behind the bell by design, but over
@@ -5233,10 +5322,16 @@ html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-
   line-height: 1.18; /* 13px at the design size; unitless so it tracks the font */
   font-weight: 500;
   text-align: center;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  -webkit-hyphens: auto;
-  hyphens: auto;
+  /* A WORD BREAKS ONLY WHEN IT CANNOT FIT A LINE ON ITS OWN (phone review,
+     23 Nov 2026). `hyphens: auto` with `anywhere` let WebKit fill the first
+     line with a piece of the second word: "Pourover Cof-fee", "Game Cor-ner",
+     beside a neighbour that wrapped at its space. A name's own soft hyphens
+     still count (manual), and a single word wider than the tile is still
+     cut to fit rather than run out of it. */
+  overflow-wrap: break-word;
+  word-break: normal;
+  -webkit-hyphens: manual;
+  hyphens: manual;
 }
 
 /* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
@@ -6662,7 +6757,11 @@ html:not([data-skin]) .wip-card[data-tone="goal"] {
   cursor: pointer;
   transition: color 150ms;
 }
-.wip-head-more:hover { color: var(--wip-ink); }
+/* Under a POINTER only (phone review, 23 Nov 2026): iOS keeps :hover on the
+   last thing tapped, so after "Show all" the label stayed near black and its
+   underline black, beside a link still in blue, until something else was
+   tapped. The same gate is on this link's three other hover rules below. */
+@media (hover: hover) { .wip-head-more:hover { color: var(--wip-ink); } }
 .wip-head-chevron {
   display: inline-flex;
   flex: none;
@@ -6675,7 +6774,7 @@ html:not([data-skin]) .wip-card[data-tone="goal"] {
   color: var(--wip-ink-action);
   transition: background-color 150ms;
 }
-.wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-head-disc); }
+@media (hover: hover) { .wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-head-disc); } }
 .wip-head-chevron-glyph { width: 0.875rem; height: 0.875rem; }
 /* A label that folds its section says so on a small button after its words
    (asked 19 Nov 2026): the words of what a press does and the chevron, in
@@ -6702,7 +6801,7 @@ html:not([data-skin]) .wip-card[data-tone="goal"] {
   color: var(--wip-fold-ink);
   transition: transform 150ms, box-shadow 150ms, background-color 150ms;
 }
-.wip-head-more:hover > .wip-fold-pill { background-color: var(--wip-fold-bg-on); }
+@media (hover: hover) { .wip-head-more:hover > .wip-fold-pill { background-color: var(--wip-fold-bg-on); } }
 .wip-head-more:active > .wip-fold-pill { box-shadow: var(--wip-fold-edge-down); transform: var(--wip-fold-press); }
 /* Rows: one thing a line, a hairline between them. */
 .wip-rows { display: grid; min-width: 0; margin-top: 0.25rem; overflow: hidden; }
@@ -6936,6 +7035,13 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
   .wip-rail-arrow-back { inset-inline-start: -0.625rem; }
   .wip-rail-arrow-on { inset-inline-end: -0.625rem; }
 }
+/* Where a finger moves the row there are no arrows (phone review, 23 Nov
+   2026): the disc hung half off the card, 2px from the screen's edge, over
+   the points, and after a swipe a second one covered the first picture. The
+   row swipes; the arrows are a pointer's way along it. */
+@media (hover: none) and (pointer: coarse) {
+  .wip-rail-arrow { display: none; }
+}
 .wip-rail-arrow-glyph { width: 1rem; height: 1rem; }
 .wip-poster-facts { display: flex; align-items: baseline; gap: 0.5rem; }
 .wip-poster-facts > .wip-item-meta { flex: 1 1 0; min-width: 0; }
@@ -7003,6 +7109,15 @@ html:not([data-skin]) .wip-filterbar > select {
   font-weight: 500;
   color: var(--wip-ink);
 }
+/* On a phone the menu takes a line of its own, under the choices (phone
+   review, 23 Nov 2026): side by side, the menu left the choices about 217px,
+   two of them fit and the third was cut to "So" against it. The choices get
+   the whole line, and fade at the edge where there are more. Up to 480px:
+   the folded Duo is 466 wide with 382 to use. */
+@media (max-width: 479.98px) {
+  html:not([data-skin]) .wip-filterbar { flex-wrap: wrap; row-gap: 0.5rem; }
+  html:not([data-skin]) .wip-filterbar > :first-child { flex: 1 1 100%; }
+}
 /* The search row: a short field, then the filled action at its end, the
    same distance from the header as from the first label. */
 .wip-topbar > .wip-cta { margin-inline-start: auto; }
@@ -7018,7 +7133,18 @@ html:not([data-skin]) .wip-filterbar > select {
    the row (asked 19 Nov 2026; the field stood 5px under it). */
 @media (max-width: 767.98px) {
   html:not([data-skin]) #home-search-bar > .wip-topbar { padding-top: var(--wip-topbar-pad-phone); }
+  /* There the row is the field alone, the whole width (phone review, 23 Nov
+     2026): it waits under the header until pulled down, so New project is
+     the grid's last tile instead (home.js hasSideCard), as in the brand look,
+     and the field's words are no longer cut beside a button. */
+  html:not([data-skin]) #home-search-bar #home-new-project-top { display: none; }
+  html:not([data-skin]) #home-search-bar .wip-search { max-width: none; }
 }
+/* New project wears the page's typeface, as New community does on its page
+   (21 Nov 2026), not the buttons' serif: it is of Home, whose heading and
+   labels are the look's own font (phone review, 23 Nov 2026). Two ids, so it
+   outranks the BUTTONS block's shape. */
+html:not([data-skin]) #home-search-bar #home-new-project-top { font-family: var(--wip-font); }
 .wip-search { width: 100%; max-width: var(--wip-search-w); }
 /* A project tile's sentence and its line of facts (app-grid.tsx). */
 .app-card-desc {
@@ -7202,6 +7328,19 @@ html:not([data-skin]) #home-screen #home-join-section > [data-home-join-featured
   padding-top: var(--wip-row-gap);
   padding-bottom: 0;
 }
+/* Pinned projects' heading is one height with or without Edit on (the
+   label's Show all link, 32px, sets it; Edit's own links are as tall,
+   features/home/index.tsx), so the grid under it holds still. */
+html:not([data-skin]) #home-screen #home-apps-section > .home-area-label { min-height: 3.375rem; }
+/* Featured's label and cards start at the page's gutter, as every other
+   section's do: its own box brings the gutter here, so the 4px its label and
+   grids add inside it (px-1, for the looks where the section's box is the
+   gutter) put them at 16px beside sections at 12 (phone review, 23 Nov 2026). */
+html:not([data-skin]) #home-screen #home-join-section > [data-home-join-featured] > :is(h3, [data-cm-grid]) { padding-inline: 0; }
+/* The page ends with room under its last line. The section gave up its box
+   (display: contents, above) and its bottom padding with it, so "That's
+   every public community." stood flush against the tab bar. */
+html:not([data-skin]) #home-screen .home-main { padding-bottom: 1.5rem; }
 /* Its rows stand one row gap apart, and nothing is drawn between them. A
    section's label brings one card gap of its own. */
 html:not([data-skin]) #home-screen #home-join-section > .home-area-label { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
@@ -7508,7 +7647,10 @@ html:not([data-skin]) .dev-ws-hero-summary:hover .wip-hero-art-pic { transform: 
 html:not([data-skin]) .dev-ws-hero-summary:hover .wip-hero-art-icon { transform: rotate(3deg) scale(1.05); }
 @media (min-width: 900px) {
   .wip-hero-stage { display: grid; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: min(30%, 20rem); }
+  /* The words stop a gap short of the picture's side (phone review #76): they
+     ended exactly at its edge, so the names of who was around ran into the
+     drawing. */
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: calc(min(30%, 20rem) + 1.5rem); }
 }
 @media (prefers-reduced-motion: reduce) {
   html:not([data-skin]) .wip-hero-wash::before { animation: none; }
@@ -7568,7 +7710,9 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { m
   box-shadow: 0 0 0 2px var(--wip-card-bg);
 }
 .wip-hub-meta-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
-/* "Make it public", beside the main action: the same height, a plain pill. */
+/* "Make it public", beside the main action: the same height, a plain pill, in
+   Invite's type (INVITE below, phone review #53): the look's serif button face
+   made it a third style in one row. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { height: 2.75rem; padding-inline: 1.125rem; font-size: 0.9375rem; font-weight: 600; }
 /* THE QUESTION "Make it public" asks hangs under its button, which is at
    the hero's start here: so it opens from the button's own start edge and
@@ -7611,7 +7755,7 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .d
    in Open app's type, in the plain pills' outline, with the invite glyph
    before the word. On Homeroom's own hub, which has no Open app, it stands
    alone in the row. The pointer darkens its edge, as it does the ⋯'s. */
-html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is([data-ws-community-invite], [data-ws-community-audience-change]) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7626,7 +7770,8 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [d
   white-space: nowrap;
 }
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite] > svg { flex: none; width: 1.125rem; height: 1.125rem; }
-html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-invite]:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { padding-inline: 1.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is([data-ws-community-invite], [data-ws-community-audience-change]):is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
 /* With nothing on the hero's last line but the ⋯ (which is in the corner,
    out of the line), the line takes no room: no empty band under the words. */
 html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
@@ -7695,7 +7840,7 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :i
   color: var(--wip-hero-ink);
   box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
 }
-html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join], [data-ws-invite-join]) {
   height: 2.75rem;
   border-color: transparent;
   padding-inline: 1.25rem 1.5rem;
@@ -7705,6 +7850,23 @@ html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(bu
   background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
   color: var(--wip-cta-ink);
   box-shadow: 0 8px 18px -8px var(--wip-cta-glow);
+}
+/* OPENED FROM AN INVITE LINK (asked 23 Nov 2026): who invited you and their
+   note are two lines of the hero's own words, under what it is, and "Join
+   <name>" is the row's filled action. Open app, beside it, is then the
+   plain pill: one filled button in the row. */
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary > .dev-ws-invite-line { max-width: 40rem; margin-top: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-invite-line > .dev-ws-invite-from { font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-invite-line > .dev-ws-invite-note { font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink-soft); }
+html:not([data-skin]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row:has([data-ws-invite-join]) :is(button, a)[data-ws-community-open-app] {
+  border-color: var(--wip-hero-glass-line);
+  padding-inline: 1.125rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  background-color: var(--wip-hero-glass);
+  background-image: none;
+  color: var(--wip-hero-ink);
+  box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
 }
 /* A phone has no room for the hero's sizes. */
 @media (max-width: 639.98px) {
@@ -7884,10 +8046,13 @@ html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
   box-shadow: inset 0 1px 0 var(--wip-card-line);
   color: var(--wip-ink);
 }
-html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-n { min-width: 0; height: 1.5rem; padding: 0 0.5rem; border-radius: var(--wip-radius-pill); background-color: var(--wip-count-bg); color: var(--wip-count-ink); font-size: 0.75rem; }
 html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-words { font-size: var(--wip-link-size); font-weight: 600; }
+/* Side by side only where each change keeps a readable line (phone review
+   #139): three across on a 951px window gave a title 106px, cut after two
+   words, and broke "Homeroom bot · 24m ago" over two lines. A change takes
+   at least 300px, so two share a row where three would not fit. */
 @media (min-width: 768px) {
-  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 18.75rem), 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
   html:not([data-skin]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
@@ -8087,7 +8252,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-stri
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
 /* A section's label: Home's, from the same tokens; a section's room is over its label. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > h2[data-ws-part="overview"] { margin-top: 0.25rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { display: block; }
 /* The label follows its card in the document and stands over it on the page. */
@@ -8119,13 +8284,25 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head { position: absolute; inset-block-start: -1.75rem; inset-inline-end: 0.25rem; }
 /* The card's own heading is said, not shown: the four cards have no card to head, and "See all" follows it. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open { font-size: var(--wip-link-size); font-weight: 650; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open {
+  /* Home's way to all of a section (.wip-head-more): the label's own type and ink, its chevron in the action colour (phone review #63). */
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open:hover { color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open > svg { color: var(--wip-ink-action); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-dash { display: contents; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   column-gap: var(--wip-tile-gap);
-  align-items: center;
+  /* From the top, every card alike (phone review #64): centred, a card with a third line (4 on you, from 3 last week) held its mark and number lower than its neighbour's. */
+  align-items: start;
+  align-content: start;
   width: 100%;
   min-height: 4.5rem;
   margin: 0;
@@ -8153,10 +8330,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="unclaimed"] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="votes"] > .dev-ws-dash-mark { background-color: var(--wip-mark-1-bg); color: var(--wip-mark-1-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="shipped"] > .dev-ws-dash-mark { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+/* A zero wears no colour (phone review #64): a green tick over "0 live this week" read as good news. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell][data-zero] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell > b {
   grid-column: 2;
   grid-row: 1;
-  align-self: end;
   font-size: 1.5rem;
   font-weight: 750;
   line-height: 1.1;
@@ -8175,8 +8353,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
 }
 /* The mark says what the dot said. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot { display: none; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; margin: 0; font-size: 0.75rem; white-space: nowrap; color: var(--wip-ink-muted); }
+/* It wraps (phone review #23): "from 3 by this time last week" on one line needed 173px of a 193px card and ran off it and off the screen, and on the Duo sideways it let the page be dragged sideways. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; min-width: 0; margin: 0; font-size: 0.75rem; color: var(--wip-ink-muted); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="owed"] {
+  justify-self: start;
+  white-space: nowrap;
   padding: 0.1875rem 0.625rem;
   border-radius: var(--wip-radius-pill);
   background: var(--wip-cta-from);
@@ -8193,7 +8374,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
   html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { padding: 0.75rem; }
 }
 /* The bot's line and the rule: two slim cards, each half the row. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) {
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules], [data-ws-dash-none]) {
   grid-column: 1 / -1;
   align-items: center;
   min-height: 3rem;
@@ -8732,6 +8913,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-card 
   background-color: var(--wip-tray);
   box-shadow: none;
 }
+/* ONE COLUMN, NO TRAY (phone review #89): where the board is one column its
+   cards stand on the page, as the Workshop's do, at the head's own edges.
+   The desktop's tray inside a white head read as frames nested in frames,
+   the head 394px wide over a 358px grey column. The head is a card of its
+   own then, rounded at its foot too. */
+@container ws-board (max-width: 975.98px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-kanban-card { padding: 0; background-color: transparent; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-ws-pane-body { padding-inline: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]) .dev-ws-board { padding-inline: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"]:not([data-ws-side-open]):not([data-ws-head-pinned]) .dev-ws-pane-head { border-radius: var(--wip-card-radius); }
+}
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-step { gap: 0.5rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-kanban-step-tile {
   width: 2rem;
@@ -9020,6 +9212,11 @@ html:not([data-skin]) #communities-screen .communities-top {
   padding: var(--wip-topbar-pad-phone) var(--wip-gutter) 0;
 }
 html:not([data-skin]) #communities-screen .communities-search { flex: 1 1 auto; min-width: 0; }
+/* While there are words in the field New community gives it its place, as
+   New project does on Home (phone review, 23 Nov 2026), and the field's own ×
+   empties it (features/communities/index.tsx), not the browser's. */
+html:not([data-skin]) #communities-screen .communities-top:has(#communities-search-input:not(:placeholder-shown)) > #communities-new-top { display: none; }
+html:not([data-skin]) #communities-search-input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 @media (min-width: 768px) {
   html:not([data-skin]) #communities-screen .communities-top { padding: 1.75rem var(--wip-gutter) 0; }
   html:not([data-skin]) #communities-screen .communities-search { flex: 0 1 var(--wip-search-w); }
@@ -9361,19 +9558,23 @@ html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings,
 html:not([data-skin]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label, .dev-ws-place-glyph, .dev-ws-place-label, .platform-rail-sub-glyph, .platform-rail-sub-name, .platform-rail-settings-glyph) {
   color: var(--wip-nav-on-ink);
 }
-html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+/* ONE BADGE RECIPE (phone review #45, 23 Nov 2026). The unread count on Messages (and the bot's) was the panel's faint
+   white, 32% white with a white numeral: the quietest thing on the bar, and on the lit tab's sun close to invisible,
+   while the vote count beside it was a solid pill. A new message is no less worth seeing, so every count on the panel
+   is the same solid pill with the same contrast: white with the panel's dark ink at rest, the lit row's dark ink with
+   white numerals on the sun. */
+html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .platform-tab-badge, .dev-ws-place-count, .platform-rail-sub-count) {
   background: var(--wip-nav-count-bg);
   color: var(--wip-nav-count-ink);
 }
-html:not([data-skin]) #platform-tabs [aria-current="page"] :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+html:not([data-skin]) #platform-tabs [aria-current="page"] :is(.platform-rail-votes, .platform-tab-votes, .platform-tab-badge, .dev-ws-place-count, .platform-rail-sub-count) {
   background: var(--wip-nav-on-count-bg);
   color: var(--wip-nav-on-count-ink);
 }
-/* The grey "new to read" count takes the panel's faint white for its fill, which on the lit row's sun left white numerals on yellow (1.13:1). There it is the row's own ink on a tint of it: still the quiet count, and readable. */
-html:not([data-skin]) #platform-tabs [aria-current="page"] .platform-tab-badge {
-  background: var(--wip-nav-on-badge-bg);
-  color: var(--wip-nav-on-ink);
-}
+/* On a glyph's corner (the phone's bar, the folded menu) the pill is ringed in the ground it stands on, so where it
+   meets the glyph it cuts a clean edge rather than leaving specks of the stroke beside its figures. */
+html:not([data-skin]) #platform-tabs .platform-tab :is(.platform-tab-votes, .platform-tab-badge) { box-shadow: 0 0 0 2px var(--wip-nav-bg); }
+html:not([data-skin]) #platform-tabs .platform-tab[aria-current="page"] :is(.platform-tab-votes, .platform-tab-badge) { box-shadow: 0 0 0 2px var(--wip-nav-on-bg); }
 /* A letter tile's face is the page's white, not the panel's blue, so its initial takes the page's faint grey (as on Home) and not the panel's faint white, which drew a blank square. Dark tiles are the page's dark grey, where the panel's faint white reads. */
 html:not([data-skin]):not(.dark) #platform-tabs :is(.app-icon-tile[data-icon="letter"], .app-icon-wait) { color: var(--wip-nav-tile-letter); }
 html:not([data-skin]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) { color: var(--wip-nav-mut); }
@@ -9399,6 +9600,11 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs .platform-tab:first-child,
   html:not([data-skin]) #platform-tabs #platform-tab-home { margin-inline-start: var(--wip-nav-tab-inset); }
   html:not([data-skin]) #platform-tabs #platform-tab-me { margin-inline-end: var(--wip-nav-tab-inset); }
+  /* ONE PILL, NOT TWO (phone review #106, 23 Nov 2026). The lit tab is its own sun fill here, and the sliding marker
+     behind it was drawn as well: a wider 16% white pill that showed as a pale ring round the yellow. The tab's fill
+     is the one drawn, as the side strip and the sidebar already do; the marker is still measured (tab-bar.tsx), so
+     its `data-marker-at` is set as before. */
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tabs-marker { display: none; }
 }
 @media (min-width: 768px) {
   html:not([data-skin]) #platform-tabs {
@@ -9572,6 +9778,31 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
     background: var(--wip-nav-bar-line);
     pointer-events: none;
   }
+  /* THE PAGE STARTS AT THE FOOT (phone review #68, 23 Nov 2026). The bar
+     overlapped the page by 8px (its `-mb-2`, the phone's "eats into the
+     app area" corner), and here the bar has no fill, so the page showed
+     through its last pixels: a card's rounded top stood above the line,
+     two lines at two heights. The page starts under the line instead.
+     The line ends where the screen does, or at an iPhone Duo's column of
+     system chrome, where it ran on under the clock. */
+  html:not([data-skin]) body #platform-header#platform-header { margin-bottom: 0; }
+  html:not([data-skin]):not([dir="rtl"])[data-side-strip="right"] body #platform-header#platform-header::after,
+  html:not([data-skin])[dir="rtl"][data-side-strip="left"] body #platform-header#platform-header::after {
+    inset-inline-end: var(--platform-strip-w, 0px);
+  }
+  /* …AND THE PAGE'S SIDES ARE THE LINE'S (#68). A project's page (its
+     Workshop, a request) kept the gutter beside the menu as padding on
+     #app-view, outside the box that clips it, so what the page holds was
+     cut 24px short of where the line and the page's rounded corner start.
+     The gutter moves inside that box: the content stands where it stood,
+     and the clip is the line's own span. Not a running app, which keeps
+     its frame's own rules. */
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #app-view[data-app-surface="platform"]:not(.hidden) {
+    padding-inline: var(--platform-rail-w, 0px) 0;
+  }
+  html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)) #app-view[data-app-surface="platform"] > #app-content {
+    padding-inline: var(--platform-gutter);
+  }
   /* (!important: the bar's fill is set per page by rules that out-rank any one selector here.) */
   html:not([data-skin]) body #platform-header#platform-header::before { content: none !important; }
   /* THE PAGE SCROLLS UNDER THE BAR (asked 23 Nov 2026). Home and Communities
@@ -9649,7 +9880,21 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) { display: flex; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek).platform-tabs { padding-inline: var(--wip-nav-mini-pad); }
-  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-tab-votes, .platform-side-app-x) { display: none; }
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab-label, .platform-rail-name, .platform-rail-head, .platform-side-apps-head, .platform-rail-pin, .platform-rail-nest, .platform-rail-votes, .platform-side-app-x) { display: none; }
+  /* THE COUNTS STAY, ON THE GLYPH'S CORNER (phone review #81, 23 Nov 2026). Folded, the votes waiting on you were
+     dropped with the words, so turning an iPhone Duo sideways (where the menu starts folded) took the Communities
+     count away; and the unread count stood beside its glyph and pushed it off the column's centre. Both are the
+     phone bar's pill on the glyph's top-right corner now, the glyph left where the others are. The tab is the
+     anchor: the glyph's wrapper is dissolved from 768px. */
+  html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) .platform-tab :is(.platform-tab-votes, .platform-tab-badge) {
+    position: absolute;
+    top: 3px;
+    inset-inline-start: calc(50% + 4px);
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-tab, .platform-rail-community, .platform-rail-settings, .platform-side-app) { justify-content: center; padding-inline: 0; gap: 0; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-row, .platform-side-app-row) { display: flex; justify-content: center; }
   html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) :is(.platform-rail-community, .platform-side-app) { flex: 1; }
@@ -9694,9 +9939,10 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] :is(.platform-tab-glyph, .platform-tab-label) {
     color: inherit;
   }
-  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] .platform-tab-votes {
+  html:not([data-skin]) #platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] :is(.platform-tab-votes, .platform-tab-badge) {
     background: var(--wip-nav-count-bg);
     color: var(--wip-nav-count-ink);
+    box-shadow: 0 0 0 2px var(--wip-nav-bg);
   }
 }
 /* ON SETTINGS, SETTINGS IS LIT, NOT YOU (20 Nov 2026): one thing lit at a
@@ -9846,7 +10092,9 @@ html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .hom
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
 }
-html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; }
+/* Under a pointer only: a tapped link kept the dark underline on a phone, so
+   "Add other apps" stood dark beside "Done" in blue (phone review, 23 Nov 2026). */
+@media (hover: hover) { html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; } }
 /* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
    is a level 1 button: its fill, its edge and its serif label at the block's
    own weight, not a face of its own. (The ids outrank the class rules
@@ -10041,6 +10289,17 @@ html:not([data-skin]) :is(#platform-header, .platform-parked, .nav-drawer-untint
 html:not([data-skin]) .messages-layout.messages-drawer {
   background-color: var(--wip-card-bg);
 }
+/* PHONE REVIEW #133 (23 Nov 2026): THE CARD RUNS UP UNDER THE BAR'S FOOT,
+   SQUARE, as the Homeroom bot tab's ground does. It kept the lift's 28px
+   top corners (and so did the conversation laid over it), so where the
+   bar's own rounded foot met them the wallpaper showed through two small
+   gaps: a blue wedge on the left and a purple one on the right in the dark,
+   cream on cream (and unseen) in the light. The drawer is a phone's alone. */
+html:not([data-skin]) .messages-layout.messages-drawer,
+html:not([data-skin]) .messages-layout.messages-drawer > .messages-thread-pane {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
 /* In a conversation the other side's bubble is cream; yours keeps its tint. */
 html:not([data-skin]) .messages-message:not(.messages-message-self) .messages-bubble,
 html:not([data-skin]) .gc-bubble:not(.gc-bubble-self) {
@@ -10071,6 +10330,18 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request,
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) { max-width: none; margin-inline: 0; padding-inline: var(--wip-gutter); }
 html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(#gc-thread-head:empty) .dev-request-sheet { background: none; border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* A DECISION'S DISCUSSION LINES UP WITH THE POST ABOVE IT (asked 23 Nov 2026, #7052): a request's and a change's
+   replies run the page's width, with no card (the rule at "The stream: no sheet of its own", further down). A
+   decision kept the base card's 900px cap and centred it, so on the widened page it floated in the middle under a
+   post that filled the width. Here it takes the post's own edges: its text column on the left (the post's 16px
+   padding, the 36px avatar and the 12px gap, `.messages-message`) and its 16px on the right. Phones, a side panel,
+   the page with the reader open, and the other looks keep the centred card. */
+@media (min-width: 768px) {
+  html:not([data-skin]):not(.in-side-panel) body .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request.dev-decision #gc-thread-messages {
+    max-width: none;
+    margin-inline: calc(16px + 36px + 12px) 16px;
+  }
+}
 /* THE PAGE'S TITLE (asked 20 Nov 2026): the other places open under their name ("Hub", "Needs you", "Workshop"), and
    this page opened under nothing. It says the place it is under, in the band and at the size the others have theirs.
    The standard look alone, from 768px, on the page: a phone's header says it, and a side panel has its own head. */
@@ -10233,7 +10504,7 @@ html:not([data-skin]) .wip-fold-pill {
 html:not([data-skin]) :is(.home-area-label > span:first-child, #home-needs-card-title):has(.wip-fold-pill),
 html:not([data-skin]) .wip-head-more:has(> .wip-fold-pill) { display: flex; flex: 1 1 auto; }
 html:not([data-skin]) .wip-head-more > .wip-fold-pill { margin-inline-start: auto; }
-html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; }
+@media (hover: hover) { html:not([data-skin]) .wip-head-more:hover > .wip-fold-pill { background: transparent; text-decoration-color: currentColor; } }
 html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none; transform: none; }
 /* END OF HOME. */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
@@ -10578,6 +10849,10 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
    sets --cm-lead-cols; the rest of Featured is the grid under it. */
 .cm-grid[data-cm-grid="lead"] { grid-template-columns: repeat(var(--cm-lead-cols, 3), minmax(0, 1fr)); }
 .cm-grid[data-cm-grid="lead"] + .cm-grid { margin-top: var(--cm-gap); }
+/* A lone featured card across a row meant for two or three
+   (features/home/communities-to-join.tsx `lone`): its picture is a band, not
+   16:9 across the whole page. */
+.cm-grid[data-cm-grid="lead"][data-cm-lone] .cm-card-pic { aspect-ratio: 3 / 1; max-height: 15rem; }
 .cm-card[data-cm-size="lead"] .cm-card-body { padding: 0 16px 18px; }
 .cm-card[data-cm-size="lead"] .cm-card-head { gap: 14px; }
 .cm-card[data-cm-size="lead"] .cm-card-face { margin-top: -18px; }
@@ -10920,6 +11195,15 @@ html:not([data-skin]) .wip-head-more:active > .wip-fold-pill { box-shadow: none;
   position: absolute;
   top: -2px;
   inset-inline-end: -2px;
+}
+/* NOT ON A PHONE (phone review S15, 23 Nov 2026). There the app you left is
+   already named by the Resume strip over the tab bar (or, on an iPhone Duo's
+   cover, the strip's Apps), and an unexplained grey dot on its Home tile said
+   the same thing a second time, with no legend. The tile keeps its words for
+   a screen reader ("…, still open"); the dot is the sidebar's mark, where the
+   App row's close control sits. */
+@media (max-width: 767.98px) {
+  #home-screen .app-card-live-dot { display: none; }
 }
 
 /* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────
@@ -12178,6 +12462,8 @@ span.gc-vote-btn-icon { cursor: default; }
    "Checks failing · 3" red on the folded row and near-black on the open
    card. Where there is no fill the label inherits the tone. */
 .gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+/* (#102, phone review 23 Nov 2026) A pill's spinner had 1px before its word: "Building" touched the arc. */
+.gc-vote-count-label > .dc-status-icon { margin-inline-end: 5px; }
 .dev-status-pill-block:not(:has(> .gc-vote-fill)) .gc-vote-count-label { color: inherit; }
 /* The pill absorbed the standalone pulsing "Vote" badge, the advisory
    chip and the explicit-approval chip. Their glyphs ride inside the
@@ -13529,6 +13815,14 @@ html.un-kb #settings-content-col > .settings-sheet {
 @media (max-width: 1023px) {
   #settings-mobile-menu-host { padding: 4px 0 0; }
 }
+/* While "Find a setting" holds a query, the list is its results alone
+   (phone review, 23 Nov 2026, #61). The footer under the menu (the wallet
+   and node group of the phone app, then Sign out) is no page the search
+   reads, so it stood under the results as if it matched; Sign out is still
+   offered as a result when the words ask for it (settings-nav.tsx
+   matchesSignOut). settings.js moves the footer between the two columns, so
+   the rule follows it to whichever one holds the results. */
+:is(#settings-sidebar-col, #settings-content-col):has([data-settings-filter-results]) > #settings-footer { display: none; }
 
 /* ── The bell's sheet on the ladder ─────────────────────────────────────
    #notifications-sheet wears `.dc-lift dc-lift-panel` (features/notifications/
@@ -13956,6 +14250,15 @@ html .un-backdrop.platform-backdrop-dim {
      foot) and an 8px gap. */
   scroll-padding-bottom: 76px;
 }
+/* SUGGEST AN IMPROVEMENT'S BUTTONS ARE IN THE SANS (phone review S5,
+   23 Nov 2026). The look draws its buttons in its serif (--wip-btn-font),
+   which in this dialog made Take screenshot, Cancel and Post request the
+   only serif words beside a sans switch, sans fields and sans labels. The
+   id outranks the look's button rule; its shapes and colours stay. */
+html:not([data-skin]) #feedback-modal :is(button, a, label, summary, [role="button"]) {
+  font-family: inherit;
+  letter-spacing: normal;
+}
 /* CANCEL AND POST STAY ON SCREEN (#4033). The kit modal is the scroller
    (native.css `.un-modal`: overflow-y auto), so a long description or the
    kudos row pushed the two buttons below its bottom edge and they had to be
@@ -14065,6 +14368,51 @@ html .un-backdrop.platform-backdrop-dim {
     background-color: var(--dc-sheet-solid);
     box-shadow: 0 -1px 0 var(--app-sheet-line);
   }
+  /* SUGGEST AN IMPROVEMENT WITH THE KEYS UP (phone review #17, #18, #94,
+     23 Nov 2026). The row's 48px foot is the home indicator's, which is
+     behind the keys: it stood 46px of empty sheet between Post request and
+     the keyboard, and covered the attach row and the Private box. And the
+     field's reveal scrolled the heading and the grabber off the top, so the
+     sheet opened on "See your requests" against its edge. With the keys up
+     the foot is 12px, and the heading stays at the sheet's top, carrying the
+     grabber, while the form scrolls under it (feedback.tsx reveals a field
+     between the two). Held the card's 24px top padding higher, as the row is
+     held lower; the grabber's own box goes, so nothing moves on the swap. */
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] .feedback-actions {
+    padding-bottom: 12px;
+  }
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] .feedback-sheet-grabber {
+    display: none;
+  }
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] #feedback-form > h2 {
+    position: sticky;
+    top: -24px;
+    z-index: 2;
+    margin-top: -24px;
+    padding: 24px 0 8px;
+    background-color: var(--dc-sheet-solid);
+    box-shadow: 0 1px 0 var(--app-sheet-line);
+  }
+  html.platform-kb-open #feedback-modal[data-dialog-sheet] #feedback-form > h2::before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: -10px auto 12px;
+    border-radius: 2px;
+    background: var(--border);
+  }
+  /* On a screen the keys leave short (`platform-kb-short`: under 400px, the
+     Duo's cover) the row goes into the flow, under the last field: sticky,
+     it covered most of what was left, and with the Title focused the
+     description stayed hidden behind it the whole time (#18). Post request
+     is a short scroll away. */
+  html.platform-kb-short #feedback-modal[data-dialog-sheet] .feedback-actions {
+    position: relative;
+    bottom: auto;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
 }
 
 @media (max-width: 767px) and (pointer: coarse) and (prefers-reduced-motion: reduce) {
@@ -14114,6 +14462,16 @@ html .un-backdrop.platform-backdrop-dim {
    live page while the first picture drew, it covered the page's own header
    for a few frames (iPhone 17 Pro simulator, 12 Oct 2026). */
 .comment-bar-in { animation: comment-shot-ground-in 320ms ease-out; }
+/* The mode draws its frame at once, the picture's place included, and the
+   picture fades into that place when it lands (phone review #110,
+   comment-pin.tsx `shotIntro`): the page has already gone under the ground,
+   so there is nothing for it to shrink from. Leaving still grows it back
+   over the page (below, later in the cascade). */
+.comment-shot-in.comment-shot-fill { animation: comment-shot-ground-in 200ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .comment-shot-in.comment-shot-fill { animation: none; }
+}
+:where(html[data-motion="reduce"]) .comment-shot-in.comment-shot-fill { animation: none; }
 
 /* THE MODE LEAVES THE WAY IT CAME (12 Oct 2026). Done, Esc and Form used to
    unmount it in a frame: the picture and its grey ground vanished and the
@@ -16450,6 +16808,23 @@ button.attr-chip { cursor: pointer; }
     min-width: 0;
   }
   .dev-kanban-col.dev-kanban-col-active { display: block; }
+}
+/* ONE COLUMN UNTIL THE FOUR FIT WHOLE (phone review #77). All items' pane
+   is a container, and below 976px of it (four 220px columns, their three
+   gaps and the board's 36px of padding; room for three of 300px) the board
+   is the phone's: one column, the strip its tabs. At the 640px line alone, the iPhone Duo's
+   inner screen (669pt) got columns of about 220px: two and a half, the third
+   cut mid-button, a title ten letters a line, a byline over three lines.
+   The pane and not the window, because the sidebar takes 212px of a window
+   from 768px up. Not while an item is open beside the board: there its
+   columns keep their 316px and scroll sideways (THE BOARD BESIDE THE
+   PANEL). card/dev-kanban.tsx reads which of the two CSS drew
+   (`useBoardOneColumn`), so the strip and the deferred columns follow. */
+#dev-workshop .dev-ws-pane { container: ws-board / inline-size; }
+@container ws-board (max-width: 975.98px) {
+  .dev-ws:not([data-ws-side-open]) #dev-kanban { display: block; overflow-x: hidden; }
+  .dev-ws:not([data-ws-side-open]) #dev-kanban > .dev-kanban-col { display: none; min-width: 0; }
+  .dev-ws:not([data-ws-side-open]) #dev-kanban > .dev-kanban-col.dev-kanban-col-active { display: block; }
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -19465,8 +19840,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   position: absolute;
   box-sizing: border-box;
   width: max-content;
-  max-width: max(120px, min(240px, calc(100% - var(--pin-x) - 34px)));
-  padding: 6px 10px;
+  max-width: min(calc(100% - 8px), max(120px, min(240px, calc(100% - var(--pin-x) - 34px))));
+  /* (#60, phone review 23 Nov 2026) The 6px above and below are a
+     transparent border, not padding: a line clamp clips at the padding
+     box, so padding showed the top of a seventh line under the ellipsis.
+     The border is outside that box, and the ground still paints under it. */
+  padding: 0 10px;
+  border: 6px solid transparent;
+  border-inline-width: 0;
   border-radius: 12px;
   background: var(--dc-sheet);
   color: var(--text-primary);
@@ -19484,10 +19865,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 /* Right of the pin, or left of the point in the picture's right part; its
    foot level with the point, or its head there near the picture's top. */
-.pin-shot-mark[data-side="right"] .pin-shot-note { left: calc(var(--pin-x) + 30px); }
+/* (#60) Never past the picture's edge: where the room beside the pin is
+   narrower than the note's least width (120px), the note moves in to end
+   4px inside the picture instead of hanging over the page. */
+.pin-shot-mark[data-side="right"] .pin-shot-note { left: max(4px, min(calc(var(--pin-x) + 30px), calc(100% - 124px))); }
 .pin-shot-mark[data-side="left"] .pin-shot-note {
-  right: calc(100% - var(--pin-x) + 6px);
-  max-width: max(120px, min(240px, calc(var(--pin-x) - 10px)));
+  right: max(4px, min(calc(100% - var(--pin-x) + 6px), calc(100% - 124px)));
+  max-width: min(calc(100% - 8px), max(120px, min(240px, calc(var(--pin-x) - 10px))));
 }
 .pin-shot-mark[data-rise="up"] .pin-shot-note { bottom: calc(100% - var(--pin-y)); }
 .pin-shot-mark[data-rise="down"] .pin-shot-note { top: var(--pin-y); }
@@ -19658,11 +20042,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-self > .min-w-0 { background: transparent; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-username-self { color: inherit; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { gap: 8px; margin-bottom: 0; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { column-gap: 8px; row-gap: 0; margin-bottom: 0; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 17px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 15px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug { font-size: 17px; line-height: 1.3; }
-#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > [aria-hidden="true"] {
+/* (#112, phone review 23 Nov 2026) Homeroom bot's logo is an <img>, not an
+   aria-hidden tile, so it kept its 44px and its words started 8px further in
+   than everyone else's. Every sender's face is the same 36px here. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > :is([aria-hidden="true"], [data-bot-avatar]) {
   width: 36px;
   height: 36px;
   font-size: 13px;
@@ -19699,9 +20086,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--text-muted);
 }
 .dev-request-event-glyph { flex: 0 0 36px; text-align: center; font-size: 15px; }
-.dev-request-event-text { min-width: 0; overflow-wrap: anywhere; }
+.dev-request-event-text { min-width: 0; overflow-wrap: anywhere; text-wrap: wrap; }
 .dev-request-event-text b { color: var(--text-primary); font-weight: 600; }
-.dev-request-event-time { white-space: nowrap; }
+/* (#116) The time, and the change it was on, under the sentence. */
+.dev-request-event-time { display: block; font-size: 0.8125rem; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-request-event-link {
   appearance: none;
   border: 0;
@@ -21373,7 +21761,10 @@ body:has(#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed]:not(.hidd
 /* Its head is the column's head, so it pads its contents by iPhone Duo's
    column of system chrome (`--ai-edge`, 0 everywhere else): unpadded, a
    thread's long title ran under the clock and the Wi-Fi ring (1 Nov 2026). */
-#ai-screen .ai-main-pane .messages-thread-header[data-reply-head="alone"] {
+#ai-screen .ai-main-pane .messages-thread-header[data-reply-head="alone"],
+/* New chat's head is the column's head too (phone review #70, 23 Nov 2026):
+   unpadded, its ✕ sat under the Duo's Wi-Fi ring held sideways. */
+#ai-screen .ai-main-pane [data-bot-new-thread-pane] > .messages-thread-header {
   padding-inline-end: calc(16px + var(--ai-edge, 0px));
 }
 /* A WIDER COLUMN KEEPS A READABLE LINE (3 Nov 2026). With the 720px cap
@@ -21889,6 +22280,12 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
    not how many wait on them: the accent's light tint, not its fill. */
 .dev-ws-foryou-pill.dev-ws-foryou-pill-light { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+/* The pill on the title line (hub-cards.tsx pillTitle, phone review #91): the
+   name first, cut short before the pill when it must be, the pill at the
+   line's end, and the line under them the row's whole width. */
+.dev-ws-foryou-title { display: flex; align-items: center; gap: 8px; }
+.dev-ws-foryou-title > .dev-ws-foryou-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-ws-foryou-title > .dev-ws-foryou-pill { margin-inline-start: auto; }
 .dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
 /* TOP CONTRIBUTORS (ContributorsCard, request 6837): For you's card and
    rows, read not pressed. A row is a face, a name and a muted count in
@@ -21929,12 +22326,6 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-
   background: transparent; color: var(--accent);
   box-shadow: inset 0 1px 0 var(--app-sheet-line);
   -webkit-tap-highlight-color: transparent;
-}
-.dev-ws-recent-more-n {
-  flex: none; min-width: 56px; height: 32px; padding: 0 8px; box-sizing: border-box;
-  display: inline-grid; place-items: center; border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
-  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
 .dev-ws-recent-more-words { flex: 1; min-width: 0; font-size: 15px; font-weight: 650; }
 @media (hover: hover) {
@@ -21978,6 +22369,11 @@ button.dev-ws-recent-card {
   object-fit: cover; object-position: top center;
 }
 .dev-ws-recent-glyph { width: 26px; height: 26px; color: var(--text-muted); opacity: .6; }
+/* What changed, not a slice of a screen (phone review #41): the after screen
+   framed on the claim's element (hub-cards.tsx FramedShot), or the run's
+   element shot drawn whole, on the slot's own ground. */
+.dev-ws-recent-pic > img.dev-ws-recent-frame { position: absolute; inset: 0 auto auto 0; height: auto; max-width: none; object-fit: fill; }
+.dev-ws-recent-pic[data-ws-recent-pic="shot"] > img { object-fit: contain; object-position: center; }
 /* A change with no picture, and the app's own card: the project's tile on its
    community's colour, the band's own `--community-tint` (polish board N13),
    where a grey box with a check was. */
@@ -22040,7 +22436,6 @@ button.dev-ws-recent-card {
   border: 0; background: none; cursor: pointer;
   font: inherit; font-size: 15px; font-weight: 500; white-space: nowrap; color: var(--accent);
 }
-.dev-ws-hub-first .dev-ws-hub-first-open { width: 100%; height: 40px; justify-content: center; font-size: 16px; font-weight: 600; }
 
 /* The plan, for the people who joined (plan-page.tsx, #4074): a page under
    the Hub. Its head is the disc back to the Hub and Homeroom bot's face and
@@ -22829,6 +23224,12 @@ button.dev-ws-recent-card {
   .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { padding-inline: 12px; }
   .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { padding-inline: 0; }
 }
+/* The Workshop and All items keep the hub's 16px too (phone review #63,
+   #89): their cards ran to 4px from the screen's edge, a phone's All items
+   head was wider than the list under it, and the labels started at 4 and 8. */
+@media (max-width: 767.98px) {
+  .dev-ws:is([data-ws-tab="workshop"], [data-ws-tab="all"]) > .dev-ws-tabbody { padding-inline: 12px; }
+}
 .dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
@@ -23436,6 +23837,25 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     max-width: 100%; overflow: hidden; text-overflow: ellipsis;
     font-size: 12px; font-weight: 600; opacity: 0.78;
   }
+  /* PHONE REVIEW #131 (23 Nov 2026): A CONVERSATION'S DISCS ARE THE BAR'S.
+     Its members and ⋯ (portalled from the thread's header, ChatBarSlot)
+     wear the bar's own discs, as the bell does: 28px, no fill at rest, the
+     header's ink. The look picker's Look and Theme fold away meanwhile
+     (both are in Settings), so the name and who it is with keep the width. */
+  .nav-drawer-chat-actions { display: flex; align-items: center; gap: 10px; }
+  .nav-drawer-chat-actions .messages-thread-action {
+    width: 28px; height: 28px; position: relative;
+    background: transparent; box-shadow: none;
+    color: var(--brand-ink);
+  }
+  .nav-drawer-chat-actions .messages-thread-action:hover { background: var(--brand-tint); }
+  .nav-drawer-chat-actions .messages-thread-action svg { width: 20px; height: 20px; }
+  /* The bar's discs reach 44px for a finger, as un-touch-target makes them. */
+  .nav-drawer-chat-actions .messages-thread-action::after { content: ''; position: absolute; inset: -8px; }
+  /* Its ⋯ menu is laid over the page under the disc (the bar clips what it
+     holds to its rounded foot), above the transcript and below a sheet. */
+  .messages-thread-menu.messages-thread-menu-bar { position: fixed; z-index: 60; color: var(--text-primary); }
+  #platform-header:has(.nav-drawer-chat-actions) :is([data-look-picker="shell"], [data-look-theme="shell"]) { display: none; }
 }
 /* ── MESSAGES ON THE SAME DRAWER (features/messages/phone-drawer.tsx) ──
    Evan's design (18 Oct 2026), on a phone: the conversation list at 85% of
@@ -23478,10 +23898,14 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > :first-child {
     flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
   }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
-    position: static; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
+  /* PHONE REVIEW S21 (23 Nov 2026): a group is its members' two faces here
+     too, as in the wide window's list and in the conversation's own head,
+     at the column's size: two 20px faces in the 28px tile, the second over
+     the first's corner. It was the first face alone, a square letter tile,
+     so turning a Duo redrew every group's picture. */
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > * {
+    width: 20px; height: 20px; border-radius: 6px; font-size: 9px;
   }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child { display: none; }
   /* AUDIT C03 (2 Nov 2026): the column keeps the rows' own type, 15 over
      13 at the house weight, and their time: a 400-weight title and a 12px
      line with no time made the same list two designs, upright and
@@ -23558,6 +23982,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 .dev-ws-invite-from { margin: 0; font-size: 16px; line-height: 21px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-invite-note { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+/* On the hub itself (asked 23 Nov 2026) the invitation is not a card: two
+   lines of the hero's words under what the project is, and its Join is a
+   button of the hero's row (community-card.tsx). */
+.dev-ws-invite-line { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dev-ws-invite-line > .dev-ws-invite-from { font-size: 15px; }
 
 /* ── "Your communities" (features/workshop/community-switcher.tsx) ──
    The switcher behind the Communities tab: a sheet from the floor on a
@@ -23770,6 +24199,16 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    the box's placeholder ink. The one the message begins with wears the
    card's focus ring. Auto margins centre the block in a scroller that keeps
    its `justify-end`, and let it scroll when a short screen cannot hold it. */
+/* A SHORT PANE BEGINS AT THE MARK (phone review #143, 23 Nov 2026). The
+   scroller's `justify-end` is a chat's, for messages; with only the starts
+   in it, a pane shorter than they are (a screen about 670px tall, or the box
+   grown with what is typed) laid their overflow out upward, behind the
+   head, out of scroll's reach: the bot's mark sat under the head with its
+   last row of pixels showing as a dash. Started from the top instead, the
+   auto margins still centre the starts wherever they fit, and where they do
+   not they begin at the mark and scroll (the `safe center` the review asked
+   for, in a form every engine lays out the same). */
+[data-bot-new-thread-pane] > .messages-thread-scroll { justify-content: flex-start; }
 .messages-starts {
   margin-block: auto;
   display: flex;
@@ -23782,7 +24221,10 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .messages-starts-hello > img { width: 40px; height: 40px; margin-bottom: 6px; border-radius: 12px; object-fit: cover; }
 .messages-starts-title { margin: 0; color: var(--text-primary); font-size: 17px; font-weight: 700; line-height: 22px; text-wrap: balance; }
 .messages-starts-sub { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 17px; }
-.messages-starts-list { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+/* ONE WIDTH FOR THE STARTS (phone review S13): a single column as wide as
+   the widest start, centred, so the pills stand as one stack rather than
+   six widths. A narrow pane caps the column, and each pill, at its width. */
+.messages-starts-list { display: grid; grid-template-columns: minmax(0, max-content); justify-content: center; gap: 8px; width: 100%; }
 .messages-start {
   display: inline-flex;
   align-items: center;
@@ -23820,13 +24262,17 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 }
 /* THE PROJECT IT IS FOR, floating over the box: a disc of its own above the
    card, not a row inside it, which opens the "Your communities" rows
-   (project-picker.tsx). A project picked tints it in its community's colour,
-   as the switcher tints the row you are on. */
-.messages-project-row { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px; }
+   (project-picker.tsx). It says what it picks: "About: Homeroom" (ONE FILL
+   FOR BOTH, below). */
+/* One line (phone review S13): labelled, the two chips are wider, and a
+   long project's name gives way (its own ellipsis) rather than the second
+   chip dropping to a row of its own. */
+.messages-project-row { display: flex; gap: 6px; padding-bottom: 8px; }
+.messages-project-row > [data-bot-new-thread-builder] { flex-shrink: 0; }
 .messages-project-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
   height: 34px;
@@ -23841,11 +24287,17 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 }
 .messages-project-chip:hover { background: var(--messages-surface-2); }
 .messages-project-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.messages-project-chip[data-picked] {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--project-ink) 14%, var(--messages-surface));
-}
+/* ONE FILL FOR BOTH (phone review S13, 23 Nov 2026). A picked project was
+   tinted in its community's colour, so beside the white "Homeroom bot" chip
+   the Homeroom project's read grey: two near-identical pills in two fills,
+   and nothing said which was which. Each now says what it picks in words
+   ("About:", "With:", in the label's fainter ink) on the same surface; a
+   pick reads as its name in the page's own ink. */
+.messages-project-chip[data-picked] { color: var(--text-primary); }
 .messages-project-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages-project-chip-label { color: var(--text-muted); font-weight: 500; }
+/* A chip with no tile (Homeroom bot's, S13) starts its words a pill's inset in. */
+.messages-project-chip:not(:has(> .messages-project-chip-tile)) { padding-inline-start: 12px; }
 .messages-project-chip-tile {
   flex: 0 0 auto;
   width: 22px;
@@ -23878,8 +24330,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 :where(html[data-motion="reduce"]) .messages-start,
 :where(html[data-motion="reduce"]) .messages-project-chip { transition: none; }
 /* WHO WORKS ON IT (10 Nov 2026, thread-builder.tsx). The second chip in the
-   row above is the project chip's own class, tinted in the accent once the
-   person's own Claude Code or ChatGPT is picked. Then the send is not a send:
+   row above is the project chip's own class, "With: Homeroom bot", or the
+   person's own Claude Code or ChatGPT once picked. Then the send is not a send:
    it opens the product in a new tab, so the disc widens into a pill that
    says Open beside the leaving-arrow. */
 .messages-send.messages-send-open {
@@ -25929,6 +26381,63 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
     box-shadow: 0 -200px 0 0 var(--home-ground, #fffeea);
   }
 }
+/* THE NEW PROJECT PAGE ON A PHONE (phone review, 23 Nov 2026, iPhone 17 and
+   iPhone Duo; first-session/make.tsx).
+
+   IT STOPS AT THE SYSTEM'S COLUMN (#9). The page is a fixed box, so it is
+   not in the body's content box and the strip's padding never reached it:
+   on the Duo's cover the form was centred on the whole 466pt of glass, with
+   a 57pt gutter on its left and the idea cards' right edge under the camera
+   and the clock. It pads itself by the column, as the signed-out shell
+   does (THE SIDE STRIP, below): its ground still fills the screen, its
+   content does not. */
+/* direction: physical — the column is a side of the HARDWARE, named by
+   `data-side-strip`, and must not mirror in a right-to-left language. */
+html[data-side-strip="right"] [data-first-session-make] {
+  padding-right: var(--platform-strip-w, 0px);
+}
+html[data-side-strip="left"] [data-first-session-make] {
+  padding-left: var(--platform-strip-w, 0px);
+}
+/* direction: logical */
+/* WHAT SCROLLS GOES UNDER THE ✕, FADING (#9). From Create the ✕ stood in a
+   48px band above the scroller, which clipped at the band's foot: scrolled a
+   little, the heading was cut in half along a straight line beside the ✕.
+   The ✕ floats over the scroller's head now. The head is padding, so the
+   page rests exactly where it did, and what scrolls up into it thins out to
+   nothing at the top (the ground is the wallpaper, so the fade is a mask on
+   the scroller, not a wash of colour over it). make.tsx's MAKE_HEAD is the
+   same 48px. */
+[data-first-session-make].platform-under-header:not([data-make-kit]) > [data-first-session-make-scroll] {
+  padding-top: 3rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 4px, #000 3rem);
+  mask-image: linear-gradient(to bottom, transparent 4px, #000 3rem);
+}
+/* THE KEYS SHORTEN IT WHEREVER THEY COVER IT (#16). The padding above is
+   the phone layout's (`platform-kb-open`, under 768px, measured against the
+   page at rest). The Duo unfolded and sideways is 951pt wide, so the page
+   kept its full height under the keys: the box being typed in showed a line
+   and a half, and Make it sat 200pt below the keys with 58pt left to
+   scroll. And folded to the cover with the field already focused, "at rest"
+   was measured with the keys up, the class never came on, and the field was
+   left behind them. The kit's own inset (`un-kb`, `--un-kb-inset`,
+   native.js) is the covered foot of the page at any width and however the
+   screen got there, so wherever the phone's class is not on, the page ends
+   at that instead; its scroller ends at the keys, and the focused field is
+   revealed in it (lib/keyboard-surface.ts; make.tsx after a fold or a
+   turn). Where the web view is resized for the keys both are 0. */
+html.un-kb:not(.platform-kb-open) [data-first-session-make] {
+  padding-bottom: var(--un-kb-inset, 0px);
+}
+/* ITS MAIN BUTTONS ARE IN THE PAGE'S SANS (S7). The look draws a button's
+   label in the serif (BUTTONS, above); on this page, where the tiles, the
+   two questions and the rule line are all in the sans, Make it read as a
+   line from another page. Make it, Import it and the rule sheet's Done keep
+   the button's fill, outline and edge, and take the face of the text around
+   them (`inherit`, so they follow the page whatever face it is given). */
+html:not([data-skin]) :is([data-first-session-make] button[type="submit"], [data-make-rule-done]) {
+  font-family: inherit;
+}
 
 .platform-tabs {
   /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three
@@ -26308,9 +26817,11 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    the five words together are wider than the bar, the longest end in an ellipsis instead of being printed over their
    neighbours. Only the word is cut: the tab itself stays unclipped, so the count on its glyph's corner is whole. Not the
    side strip, which stacks its tabs and has its own rules. */
+/* The lit pill is the tab's own box, so its word has the tab's side padding to the pill's edge: 8px, as Home and You
+   had to spare (phone review #106: "Communities" ran to within 4px of its sun). Below 375px the words need the room. */
 @media (max-width: 767.98px) {
   html:not([data-skin]):not([data-side-strip]) #platform-tabs { grid-template-columns: repeat(5, auto); }
-  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 5px; }
+  html:not([data-skin]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 8px; }
   html:not([data-skin]):not([data-side-strip]) #platform-tabs :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label { overflow: hidden; text-overflow: ellipsis; }
 }
 @media (max-width: 374.98px) {
@@ -26329,13 +26840,21 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 
    THE COMMUNITIES TAB IS DRAWN AGAIN (18 Nov 2026), on both bars. One Home
    (#6361) had hidden it here and kept your communities on Home; they are
-   its page's now (`#communities`, features/communities/). */
-@media (max-width: 767.98px) {
-  #platform-tab-home { order: -5; }
-  #platform-tab-workshop { order: -4; }
-  #platform-tab-ai { order: -3; }
-  #platform-tab-messages { order: -2; }
-}
+   its page's now (`#communities`, features/communities/).
+
+   …AND IT IS ONE ORDER ON EVERY LAYOUT (phone review #81, 23 Nov 2026).
+   The sidebar kept the markup's order, so an iPhone Duo turned sideways
+   (where the bar becomes the folded sidebar) moved Communities from second
+   to fourth, and a phone and a desktop disagreed. The sidebar is laid out
+   by the same four rules now: Home, Communities, Homeroom bot, Messages,
+   then Recents (the pinned and the recent, `order: 0`, still under their
+   heading) and you at the foot (the desktop block's `order: 1` to `3`).
+   The markup, and so the declared checks' sibling chain, is unchanged;
+   tab-bar.tsx hands screen readers and the Tab key the drawn order. */
+#platform-tab-home { order: -5; }
+#platform-tab-workshop { order: -4; }
+#platform-tab-ai { order: -3; }
+#platform-tab-messages { order: -2; }
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
    red disc as #notifications-badge, on the argument that two counts on one
@@ -26353,11 +26872,19 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    ink. The fill is `--text-faint`, the neutral ramp's lightest step, which
    is #8e8e93 in BOTH themes: a mid grey that reads as a mark on the light
    bar and on the dark one without competing with either. The desktop rail
-   moves the count off the glyph altogether (the desktop block below). */
+   moves the count off the glyph altogether (the desktop block below).
+
+   ANCHORED AT THE GLYPH'S RIGHT EDGE AND GROWING OUTWARD (phone review
+   #105, 23 Nov 2026). Its start sat 7 to 8px inside the 22px glyph, so a
+   second figure ("62") grew back over the icon and hid a third of it, and
+   the pill rose over the tab's own box. It starts at the glyph's right
+   edge now, as the vote count beside it does, a longer number only
+   reaching further out, and its top is the glyph's, inside the tab (the
+   lit pill's edge), its ring included. */
 .platform-tab-badge {
   position: absolute;
-  top: -3px;
-  inset-inline-start: calc(100% - 7px);
+  top: 0;
+  inset-inline-start: calc(100% - 1px);
   min-width: 1.1rem;
   height: 1.1rem;
   padding: 0 4px;
@@ -26379,7 +26906,7 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    its own: the ring that named the community it was on went when the tab
    became a plain door to its page (18 Nov 2026). */
 .platform-tab-votes {
-  position: absolute; top: -4px; inset-inline-start: calc(100% - 8px);
+  position: absolute; top: 0; inset-inline-start: calc(100% - 1px);
   min-width: 1.1rem; height: 1.1rem; padding: 0 4px; box-sizing: border-box;
   border-radius: 999px; background: var(--accent); color: #fff;
   font-size: 0.65rem; font-weight: 700; line-height: 1;
@@ -26570,6 +27097,38 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
   }
 }
 
+/* EVERY DIALOG AND SHEET THE KIT PRESENTS STOPS AT THE STRIP TOO (phone
+   review #8, 23 Nov 2026). They are fixed, so the body's padding never
+   reached them: Suggest an improvement was laid out across the cover's
+   whole 466pt, and with the keys up the end of the Title field and of
+   every typed line went under the clock and the Wi-Fi ring. A sheet that
+   runs edge to edge (the kit's own, and a dialog bottomed as a phone sheet,
+   `[data-dialog-sheet]`) keeps its ground under the column, as the
+   notification sheet does, and pads its content clear of it with 12px to
+   spare. A centred dialog is centred in the floating box instead, beside
+   the column (THE USABLE BOX's `--platform-float-*`, which the kit's
+   dialogs inherit: it mounts them in the body). */
+html[data-side-strip="right"] :is(.un-sheet, [data-dialog-sheet] [data-modal-backdrop] > div) {
+  padding-right: calc(var(--platform-strip-w, 0px) + 12px);
+}
+html[data-side-strip="left"] :is(.un-sheet, [data-dialog-sheet] [data-modal-backdrop] > div) {
+  padding-left: calc(var(--platform-strip-w, 0px) + 12px);
+}
+html[data-side-strip] .un-modal {
+  left: calc(var(--platform-float-left) + var(--platform-float-w) / 2);
+  max-width: calc(var(--platform-float-w) - 32px);
+}
+/* Comment mode's phone sheet is the same kind of sheet, drawn by
+   comment-pin.tsx rather than adopted, and its picture and bar already sit
+   beside the column (`insetFrame`'s side, #135). The id outranks the
+   sheet's own `p-3`. */
+html[data-side-strip="right"] #comment-pin-box.comment-sheet {
+  padding-right: calc(var(--platform-strip-w, 0px) + 12px);
+}
+html[data-side-strip="left"] #comment-pin-box.comment-sheet {
+  padding-left: calc(var(--platform-strip-w, 0px) + 12px);
+}
+
 /* The strip's own pieces (features/nav/strip-back.tsx, side-apps.tsx)
    exist only here. */
 .platform-side-strip-top,
@@ -26697,6 +27256,22 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     width: 24px;
     height: 24px;
   }
+  /* THE COUNT STAYS INSIDE THE CAPSULE (phone review #73, 23 Nov 2026).
+     It kept the bottom bar's place, starting near the glyph's right edge
+     and growing outward, which in a 48px capsule is past its side: "62"
+     poked 7px out into the bare column. Here its END is pinned instead, on
+     the glyph's top-right corner a step inside the capsule's edge, and a
+     longer number grows inward over the corner, a size down from the bar's
+     so it stays on the corner. */
+  html[data-side-strip] .platform-tab :is(.platform-tab-badge, .platform-tab-votes) {
+    top: -5px;
+    inset-inline-start: auto;
+    inset-inline-end: -7px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
   /* The place you are on is the pill inside the capsule, filled from the
      bar's own lit tokens with their hairline, exactly as the phone's marker
      and the rail's lit row are. A community's page lights Communities, which
@@ -26722,6 +27297,22 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
   }
   html:not([data-skin])[data-side-strip] .platform-tab:not([aria-current="page"]) {
     color: var(--text-muted);
+  }
+  /* Its counts are the bar's one recipe, read for the capsule's plane: the
+     bar's white pill was white on the white capsule (#73), so on the light
+     plane the pill is the lit row's dark one, on the dark plane the white
+     one, and ringed in the plane it stands on. */
+  html:not([data-skin])[data-side-strip] #platform-tabs .platform-tab :is(.platform-tab-votes, .platform-tab-badge) {
+    background: var(--wip-nav-on-count-bg);
+    color: var(--wip-nav-on-count-ink);
+    box-shadow: 0 0 0 2px var(--dc-sheet-solid);
+  }
+  html:not([data-skin])[data-side-strip].dark #platform-tabs .platform-tab:not([aria-current="page"]) :is(.platform-tab-votes, .platform-tab-badge) {
+    background: var(--wip-nav-count-bg);
+    color: var(--wip-nav-count-ink);
+  }
+  html:not([data-skin])[data-side-strip] #platform-tabs .platform-tab[aria-current="page"] :is(.platform-tab-votes, .platform-tab-badge) {
+    box-shadow: 0 0 0 2px var(--wip-nav-on-bg);
   }
   /* The words are not drawn (the system's own side tabs have none), but the
      tab is still named by them: clipped to nothing rather than removed, so a
@@ -26791,11 +27382,16 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
   html[data-side-strip] .platform-side-app-row {
     position: relative;
   }
+  /* THE ✕ IS A BADGE ON THE DISC'S CORNER (phone review #136, 23 Nov 2026).
+     It was a bare 12px glyph floating off the disc's top-right, over the
+     wallpaper, attached to nothing. It is a 20px badge now, filled and
+     ringed in the disc's own plane, inside the disc's square at its corner,
+     the way iOS marks a removable item. */
   html[data-side-strip] .platform-side-app-x {
     position: absolute;
     z-index: 2;
-    top: -6px;
-    right: -8px;
+    top: 0;
+    right: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -26803,20 +27399,25 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     height: 20px;
     border: 0;
     border-radius: 999px;
-    background: transparent;
-    color: var(--text-muted);
+    background: var(--text-muted);
+    box-shadow: 0 0 0 2px var(--dc-sheet-solid);
+    color: var(--dc-sheet-solid);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  /* A FINGER'S TARGET, NOT A POINTER'S (overnight audit U02). The ✕ that
-     forgets an app was its 20px glyph box, perched on the tile's corner: it
-     is pressed as 32px now, out over the disc's corner, and drawn as
-     before. Above the app's own target (z-index 2), so a press near the
-     corner forgets rather than opens. */
+  html[data-side-strip] .platform-side-app-x > svg {
+    width: 12px;
+    height: 12px;
+    stroke-width: 2.5;
+  }
+  /* A FINGER'S TARGET, NOT A POINTER'S (overnight audit U02; 44px since the
+     phone review's #136). Pressed as 44px round the badge, drawn as 20.
+     Above the app's own target (z-index 2), so a press near the corner
+     forgets rather than opens. */
   html[data-side-strip] .platform-side-app-x::after {
     content: "";
     position: absolute;
-    inset: -6px;
+    inset: -12px;
   }
   html[data-side-strip] #platform-parked {
     display: none;
@@ -26902,7 +27503,8 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
      tabs and the back button. Over the ground it slides under the strip
      instead, as off a phone's edge. Under the header (z-index 10), over
      the screens. */
-  html[data-side-strip] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+  html[data-side-strip] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground,
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground {
     position: fixed;
     z-index: 9;
     top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) - 0.5rem);
@@ -26914,7 +27516,8 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     clip-path: inset(0 round 0 1.75rem 0 0);
     pointer-events: none;
   }
-  html[data-side-strip="left"] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+  html[data-side-strip="left"] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground,
+  html[data-side-strip="left"] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground {
     left: 0;
     right: auto;
     border-top-right-radius: 0;
@@ -26930,6 +27533,28 @@ html[data-side-strip="left"] .un-sheet { padding-left: var(--platform-strip-w, 0
     background:
       linear-gradient(var(--dc-strip-fill), var(--dc-strip-fill)),
       var(--home-wallpaper, var(--dc-strip-solid));
+  }
+  /* THE HOMEROOM BOT TAB TOO (phone review #71, #67, 23 Nov 2026). Its
+     thread and its New chat slide in over the list as the drawer's second
+     level (features/ai/phone-drawer.tsx), and that level's ground is not the
+     wallpaper: a thread stands on the page's own ground (`.ai-drawer-thread`,
+     --home-ground) and New chat is one full-height sheet (--dc-sheet-solid).
+     The strip beside them showed the wallpaper's washes, a straight seam the
+     full height of the screen in light and a purple column beside a navy
+     page in dark. So while that level is out the strip takes the level's own
+     fill, opaque, in either theme; the list (level 0) stands on the
+     wallpaper itself and keeps it. */
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground {
+    /* The level runs square under the header's foot, so the strip does
+       (still clipped: the fill is a viewport-sized layer). */
+    border-radius: 0;
+    clip-path: inset(0);
+  }
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"]) .platform-side-strip-ground::before {
+    background: var(--home-ground);
+  }
+  html[data-side-strip] body:has(#ai-screen:not(.hidden)[data-ai-drawer="1"] [data-bot-new-thread-pane]) .platform-side-strip-ground::before {
+    background: var(--dc-sheet-solid);
   }
   /* The plane's hairline, drawn over the layer (which paints over a
      border, as the tab bar's does). */
@@ -29347,6 +29972,9 @@ html.in-side-panel body {
 /* "4 on you" asks something of the viewer, so it is the accent; "from 382"
    is green going up, muted otherwise, its glyph turned over going down. */
 .dev-ws-dash-sub[data-ws-dash-sub="owed"] { color: var(--accent-wash-ink); }
+/* Nothing open, nobody waiting, nothing live this week: one line in place of
+   four zeros (phone review #64, workshop.tsx DashTiles). */
+.dev-ws-dash-none { margin: 0; font-size: 14px; line-height: 1.4; color: var(--text-secondary); }
 .dev-ws-dash-sub[data-dir="up"] { color: var(--state-ok); }
 .dev-ws-dash-trend { flex: none; width: 10px; height: 10px; }
 .dev-ws-dash-sub[data-dir="down"] .dev-ws-dash-trend { transform: rotate(180deg); }
@@ -29368,6 +29996,8 @@ html.in-side-panel body {
   box-shadow: 0 0 0 1.5px var(--dc-sheet-solid, var(--bg-primary));
 }
 .dev-ws-ov-face + .dev-ws-ov-face { margin-inline-start: -4px; }
+/* The faces and the first name, one run (phone review #64). */
+.dev-ws-ov-glued { white-space: nowrap; }
 .dev-ws-ov-narrow { display: none; }
 @container (max-width: 520px) {
   .dev-ws-ov-wide { display: none; }
@@ -29398,7 +30028,14 @@ html.in-side-panel body {
 .dev-ws-hlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .dev-ws-hrow {
   position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
-  padding: 8px 2px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px;
+  padding: 8px 2px; border-radius: 10px;
+}
+/* The divider is its own straight line (phone review #37): drawn as the
+   row's border-top, it bent round the corners meant for the press fill, and
+   every row read as half a card. Only the fill is rounded. */
+.dev-ws-hrow::before {
+  content: ''; position: absolute; inset-inline: 0; top: 0; height: 1px;
+  background: var(--app-sheet-line); pointer-events: none;
 }
 .dev-ws-hrow:hover { background: var(--state-neutral-bg); }
 .dev-ws-hrow[data-on] { background: var(--lit-tint); }
@@ -29618,7 +30255,10 @@ body {
 .dev-ws-brow .dev-ws-wrow-link { -webkit-line-clamp: 3; text-wrap: pretty; }
 /* `pretty`: a wrapped line in words ends on more than "ago" or "now"
    (a browser without it wraps as it did). */
-.dev-ws-brow .dev-ws-wrow-sub { white-space: normal; overflow: visible; text-wrap: pretty; }
+/* One line, cut with an ellipsis (phone review #77): wrapped, a narrow
+   column broke "staging-tester · 1d ago · R#900009" over three lines, each
+   starting with a stray "·". */
+.dev-ws-brow .dev-ws-wrow-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-ws-brow .dev-ws-wrow-status { margin-top: 6px; gap: 5px; }
 .dev-ws-brow > .dev-ws-row-band {
   position: relative; z-index: 1; flex: 1 0 100%; min-width: 0; margin-top: 8px; pointer-events: none;
@@ -29742,6 +30382,52 @@ body {
   .dev-ws-allbar #dev-filter-chips { flex: 0 1 auto; margin-inline-start: auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
+/* Where the board is one column (the container query above) the steps are
+   the tabs, as on a phone (#77). */
+@container ws-board (max-width: 975.98px) {
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-stages {
+    display: flex; gap: 6px; padding: 0 0 2px; margin-top: 2px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-stages::-webkit-scrollbar { display: none; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step {
+    flex: none; min-height: 40px; padding-block: 6px 6px; padding-inline: 7px 13px; gap: 7px; cursor: pointer;
+    border-radius: 999px; background: var(--state-neutral-bg);
+  }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] { background: var(--lit-tint); box-shadow: inset 0 0 0 1px var(--lit-line); }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step[aria-selected="true"] :is(.dev-kanban-step-name, .dev-kanban-step-tile) { color: var(--lit-ink); }
+  .dev-ws:not([data-ws-side-open]) :is(.dev-kanban-step-tile, .dev-kanban-step-tile[data-kind="done"]) { width: 22px; height: 22px; border-radius: 999px; background: transparent; }
+  .dev-ws:not([data-ws-side-open]) :is(.dev-kanban-step-name, .dev-kanban-step-n) { font-size: 14px; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-step-arrow { display: none; }
+  .dev-ws:not([data-ws-side-open]) .dev-kanban-card { padding: 2px 12px 6px; }
+}
+/* THE TABS SAY THERE ARE MORE (phone review #89): they ran off the head's
+   edge cut mid-pill, "Underway 24" sliced and "Done 5,021" out of sight with
+   nothing to say so. The end that runs on fades (StageStrip sets which). */
+.dev-kanban-stages[data-more-end] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages[data-more-start] { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px); mask-image: linear-gradient(to right, transparent, #000 32px); }
+.dev-kanban-stages[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages:dir(rtl)[data-more-end] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+.dev-kanban-stages:dir(rtl)[data-more-start] { -webkit-mask-image: linear-gradient(to left, transparent, #000 32px); mask-image: linear-gradient(to left, transparent, #000 32px); }
+.dev-kanban-stages:dir(rtl)[data-more-start][data-more-end] { -webkit-mask-image: linear-gradient(to left, transparent, #000 32px, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+/* ONE WAY BACK ON A PHONE (phone review #89): the header's back disc goes
+   up to the Workshop too (header-drawer.tsx upFromPlace), 60px from this
+   one. Below 768px, where the header draws it, the page's own is put away
+   and its name stays as the page's heading. */
+@media (max-width: 767.98px) {
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar [data-ws-page-back] { display: none; }
+}
+/* S12: below 700px, where the chips are glyphs alone, one Filters button, in
+   words, opening the sheet that holds every filter, the two of yours among
+   them (kanban-filters.tsx). Three bare glyphs said nothing of what the two
+   people did or which was on. */
+@media (max-width: 699.98px) {
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-filters-btn .sr-only.dev-chip-word {
+    position: static; width: auto; height: auto; margin: 0; padding: 0;
+    overflow: visible; clip: auto; white-space: nowrap;
+  }
+  #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-filters-btn .dev-chip-count { display: none; }
+}
 @media (max-width: 640px) {
   .dev-ws-wrow { gap: 10px; }
   .dev-ws-wrow-tile { width: 30px; height: 30px; border-radius: 9px; }
@@ -29858,11 +30544,25 @@ body {
    are the heavy thing on the page, so it has no fill and one line of type.
    Open (⌄, the title, or the line under the bar), the title wraps in full
    and a card under the bar holds what the change does (.rf-desc). */
-.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+/* (#36, phone review 23 Nov 2026) No status-bar inset of its own: the card
+   is drawn in the page, under the shell's header, which already clears the
+   status bar (.rf-page's height counts both). The inset written for a
+   full-screen card put a blank 62px band above the title on a phone. */
+.rf-bar { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; padding: 0 16px 0 4px; min-height: 44px; background: var(--rf-page); }
 /* #6199: the vote-type chips sit under the bar's title row, so the folded
    bar's measurement includes them. */
 .rf-bar .needs-vote-chips { flex-basis: 100%; }
 .rf-back { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* (S4, phone review 23 Nov 2026) One way out of the card on a phone: the
+   shell's header, whose back already leaves Needs you, so the card's own
+   back beside the title steps aside (it stays in the document, and from
+   768px, where the header has none, it is the way back). The previous
+   change keeps its own control beside Yes / No, drawn as a step back
+   through the run rather than as a third Back. */
+@media (max-width: 767px) {
+  .rf-bar > .rf-back[data-rf-back] { display: none; }
+  .rf-bar:has(> .rf-back[data-rf-back]) { padding-inline-start: 16px; }
+}
 .rf-bar-title { flex: 1; min-width: 0; margin: 0; padding: 11px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; line-height: 22px; letter-spacing: -0.015em; }
 .rf-bar-title-btn { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: inherit; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rf-bar[data-open] .rf-bar-title { white-space: normal; text-wrap: pretty; padding-bottom: 4px; }
@@ -29923,12 +30623,21 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-closeup { position: absolute; display: block; max-width: none; pointer-events: none; }
 .rf-seam { position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 2px; margin-inline-start: -1px; background: var(--rf-black); z-index: 3; pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1), width .15s ease-out; }
 .rf-dragging .rf-seam { width: 1px; opacity: .5 !important; }
-/* Each side's caption is printed on its own picture, under a short shade
-   that keeps it legible on any shot, and the seam wipes it with the picture. */
-.rf-cap { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; height: 84px; background: linear-gradient(rgba(12,12,14,.62) 0%, rgba(12,12,14,.55) 18%, rgba(12,12,14,.45) 33%, rgba(12,12,14,.35) 46%, rgba(12,12,14,.26) 57%, rgba(12,12,14,.18) 67%, rgba(12,12,14,.11) 76%, rgba(12,12,14,.06) 84%, rgba(12,12,14,.025) 91%, rgba(12,12,14,0) 100%); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
-.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: #fffeea; text-shadow: 0 1px 2px rgba(12,12,14,.35); white-space: nowrap; }
-.rf-cap-after .rf-cap-line { inset-inline-end: 22px; }
-.rf-cap-before .rf-cap-line { inset-inline-start: 22px; }
+/* Each side's caption is on a solid strip across the top of the picture,
+   and the seam wipes it with the picture (phone review #27, 23 Nov 2026:
+   printed over the screenshot under a shade, it collided with the shot's own
+   heading). The switch is on a strip across the foot. compare.tsx places the
+   screen between the two (CAP_STRIP, FOOT_STRIP), so neither covers it. The
+   strips are the card's own ground, so they read as the picture's frame.
+   No z-index: they paint in the slider's order, the After strip under the
+   Before layer (whose own strip wipes over it) and the foot over both. */
+.rf-compare { --rf-strip: var(--rf-page, var(--messages-surface, #ffffff)); }
+.rf-cap { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; height: 30px; background: var(--rf-strip); box-shadow: 0 1px 0 var(--rf-line, var(--app-sheet-line)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-cap-line { position: absolute; top: 10px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--rf-ink, var(--text-primary)); white-space: nowrap; }
+.rf-foot { position: absolute; inset-inline-start: 0; inset-inline-end: 0; bottom: 0; height: 64px; background: var(--rf-strip); box-shadow: 0 -1px 0 var(--rf-line, var(--app-sheet-line)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-compare[data-rf-strips] .rf-seam { top: 30px; bottom: 64px; }
+.rf-cap-after .rf-cap-line { inset-inline-end: 16px; }
+.rf-cap-before .rf-cap-line { inset-inline-start: 16px; }
 .rf-cap-dim { opacity: .72; }
 /* The switch: Before on its left, After on its right, its knob on the side
    most of the window shows, carrying that side's mark. Flat and inked, like
@@ -30041,7 +30750,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-prev, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-foot, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-prev, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
   .rf-lens { animation: none; }
   .rf-claim { animation: none; }
 }
@@ -30050,6 +30759,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 :where(html[data-motion="reduce"]) .rf-scrim,
 :where(html[data-motion="reduce"]) .rf-seam,
 :where(html[data-motion="reduce"]) .rf-cap,
+:where(html[data-motion="reduce"]) .rf-foot,
 :where(html[data-motion="reduce"]) .rf-switch,
 :where(html[data-motion="reduce"]) .rf-knob,
 :where(html[data-motion="reduce"]) .rf-knob-icon,
@@ -30567,7 +31277,7 @@ html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-hello > img { width: 44px; height: 44px; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-title { color: var(--fr-ink); font-size: 15px; font-weight: 650; line-height: 1.45; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-sub { color: var(--fr-mut); }
-html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-list { align-items: stretch; gap: 0; max-width: 432px; }
+html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-starts-list { display: flex; flex-direction: column; align-items: stretch; gap: 0; max-width: 432px; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-start { display: flex; gap: 12px; min-height: 60px; padding: 8px 16px; border-radius: 0; background: none; box-shadow: none; color: var(--fr-ink); font-size: 15px; font-weight: 650; line-height: 1.45; }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-start + .messages-start { border-top: 1px solid var(--fr-line2); }
 html[data-skin] #ai-screen[data-frame-list] [data-bot-new-thread-pane] .messages-start > svg { box-sizing: border-box; width: 40px; height: 40px; padding: 10px; border-radius: 12px; background: var(--fr-sunk); color: var(--fr-ink); }
@@ -33247,9 +33957,57 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
     touch-action: none;
   }
 }
+
+/* The plan card's Build it is the look's sun pill (#7044): the request's
+   card, the bot chat's, the App tab's and a first version's all wear it, so
+   it reads as the card's one primary action as the page's yellow pills do.
+   Keyed on the look's own attributes, so the markup keeps its Tailwind
+   classes and every frame look keeps the accent-filled button. */
+html:not([data-skin]) [data-bot-plan] [data-bot-plan-build] {
+  background: var(--wip-top-cta-bg);
+  color: var(--wip-top-cta-ink);
+  box-shadow: var(--wip-top-cta-edge);
+}
+html:not([data-skin]) [data-bot-plan] [data-bot-plan-build]:hover { background: var(--wip-top-cta-bg); }
+html:not([data-skin]) [data-bot-plan] [data-bot-plan-build]:active {
+  box-shadow: var(--wip-top-cta-edge-down);
+  transform: var(--wip-top-cta-press);
+}
+html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build] {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build]:hover { background: var(--bl-sun-lit); }
+html[data-skin="brand"] [data-bot-plan] [data-bot-plan-build]:active {
+  box-shadow: var(--bl-pill-edge-down);
+  transform: translateY(2px);
+}
+html[data-motion="reduce"] [data-bot-plan] button[data-bot-plan-build]:active { transform: none; }
+
+/* (#102, phone review 23 Nov 2026) In dark the page is one card ground:
+   the ask's "Building" band was 9% sun mixed into navy, a slate grey, and the
+   timeline's current step sat in a near-black box on the navy card. Both are
+   the card now, the step outlined by its hairline. The yellow is the accent
+   the lit tab and every level-1 button wear, not a second, greener one.
+   The generated block below (scripts/thread-look.js) carries the brand
+   look's own dark sun and card tokens, so the brand look keeps them; these
+   rules are written outside it and outweigh it (an id, and `body`), so the
+   generator leaves them alone. */
+html:not([data-skin]).dark:not([data-app-tone="light"]) body #dev-topic-thread { --bl-sun: var(--wip-btn-1-bg, #ffee6f); --bl-sun-lit: var(--wip-btn-1-hover, #fff59f); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-request { --thread-foot: var(--bl-card); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-rail { --rail-now-box: var(--bl-card); }
+/* (#113, phone review 23 Nov 2026) One face for a thread card's buttons:
+   Preview and Vote are the page's sans, so "Suggest a change privately" and
+   the quick replies under Homeroom bot's message are too, instead of the
+   look's serif button label. */
+html:not([data-skin]) #dev-topic-thread :is([data-work-with-bot], [data-gc-bot-suggest]) :is(button, a) { font-family: inherit; font-weight: 600; letter-spacing: normal; }
 /* ── THE THREAD PAGE IN THE STANDARD LOOK (generated by scripts/thread-look.js; do not edit by hand) ── */
 /* The colours the carried rules wrote outright, each a token of the page, declared once. */
 html:not([data-skin]) #dev-topic-thread, html:not([data-skin]) [data-vote-look="thread"] { --thread-000000: #000000; --thread-0d1421: #0d1421; --thread-121a0e: #121a0e; --thread-182135: #182135; --thread-243047: #243047; --thread-2a3125: #2a3125; --thread-303e5a: #303e5a; --thread-41483c: #41483c; --thread-425270: #425270; --thread-4d5347: #4d5347; --thread-595f52: #595f52; --thread-838da1: #838da1; --thread-858a7c: #858a7c; --thread-a0a9bb: #a0a9bb; --thread-c3cad8: #c3cad8; --thread-dfe5ef: #dfe5ef; --thread-e3dfc1: #e3dfc1; --thread-ece8cc: #ece8cc; --thread-eef2f8: #eef2f8; --thread-f4f1dc: #f4f1dc; --thread-ff8a78: #ff8a78; --thread-ffffff: #ffffff; }
+html:not([data-skin]) :where(#dev-topic-thread) [data-bot-plan] [data-bot-plan-build] { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
+html:not([data-skin]) :where(#dev-topic-thread) [data-bot-plan] [data-bot-plan-build]:hover { background: var(--bl-sun-lit); }
+html:not([data-skin]) :where(#dev-topic-thread) [data-bot-plan] [data-bot-plan-build]:active { box-shadow: var(--bl-pill-edge-down); transform: translateY(2px); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #dev-topic-thread,
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-vote-look="thread"] { font-family: 'Geist', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; }
 html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) #dev-topic-thread,

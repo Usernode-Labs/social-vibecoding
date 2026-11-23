@@ -2423,7 +2423,7 @@
     {
       "name": "A project's hub leads with a hero that says what it is and who it is for (communities); opened from an invite link, who invited you and Join come first in it (#3700)",
       "path": "/?shot=invite-join&skin=brand#app/usernode-2d5619/dev/hub",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite:first-child [data-ws-invite-join]) > .dev-ws-hero-id [data-ws-community-name] + [data-ws-members-cell] > [data-ws-community-audience]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite-line + .dev-ws-hero-row [data-ws-invite-join]) > .dev-ws-hero-id [data-ws-community-name] + [data-ws-members-cell] > [data-ws-community-audience]",
       "expectText": "Public community"
     },
     {
@@ -2558,9 +2558,9 @@
       "expectText": "Discussion"
     },
     {
-      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and a Private badge, last on the tab",
+      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and no Private pill of its own (the heading says it), last on the tab",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"] [data-private-badge]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"]:not(:has([data-private-badge])) svg",
       "expectText": "Staging demo private request"
     },
     {
@@ -2926,7 +2926,7 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Communities, then Recents (the pinned group, then the rest), then you",
+      "name": "The sidebar's markup order: Home, then Homeroom bot (AI) above Messages, then Communities, then Recents (the pinned group, then the rest), then you; app.css draws Communities second on every layout (phone review #81)",
       "path": "/?shot=app-context&demo=1",
       "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-tab-workshop[href=\"#communities\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-me"
     },

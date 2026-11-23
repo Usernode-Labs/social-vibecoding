@@ -42,11 +42,15 @@ export const placeStore = createStore<PlaceState>({
   slug: null, place: 'status', owed: 0, unread: 0, tray: false,
 });
 
-let opener: { slug: string; open: (key: PlaceKey) => void } | null = null;
+let opener: { slug: string; open: (key: PlaceKey) => void; up?: (key: PlaceKey) => void } | null = null;
 
-/** The page says how to move it, while it is mounted. Returns the undo. */
-export function registerPlaceOpener(slug: string, open: (key: PlaceKey) => void): () => void {
-  const mine = { slug, open };
+/**
+ * The page says how to move it, while it is mounted. Returns the undo.
+ * `up` (#7045) is its way UP to a parent place, a step Back when that place
+ * is the entry below; `open` is a press on a place, which is a new entry.
+ */
+export function registerPlaceOpener(slug: string, open: (key: PlaceKey) => void, up?: (key: PlaceKey) => void): () => void {
+  const mine = { slug, open, up };
   opener = mine;
   return () => { if (opener === mine) opener = null; };
 }
@@ -117,10 +121,11 @@ type AppApi = Record<string, never>;
  * already), so Back left the project instead of coming back (#3620).
  */
 export function openPlace(
-  slug: string, key: PlaceKey, opts: { replace?: boolean; door?: boolean } = {},
+  slug: string, key: PlaceKey, opts: { replace?: boolean; door?: boolean; up?: boolean } = {},
 ): boolean {
   if (!opts.door && opener && opener.slug === slug) {
-    opener.open(key);
+    if (opts.up && opener.up) opener.up(key);
+    else opener.open(key);
     return true;
   }
   const w = window as unknown as { AppView?: ViewApi; App?: AppApi };

@@ -289,7 +289,7 @@ test('the Communities tab\'s count drops as votes are swiped past anywhere', () 
 
 test('the app menu\'s "to vote" is the same number', () => {
   const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(SHEET, /unseenNeeds\(slug, c\.needs, Array\.isArray\(c\.owed\) \? c\.owed : null\)/);
+  assert.match(SHEET, /const keys = c && Array\.isArray\(c\.owed\) \? c\.owed : null;\s*const n = c && typeof c\.needs === 'number'\s*\? unseenNeeds\(slug, c\.needs, keys\)/);
 });
 
 // ── The server names the votes behind each count ───────────────────────

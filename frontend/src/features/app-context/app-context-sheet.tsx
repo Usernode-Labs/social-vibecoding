@@ -282,6 +282,30 @@ function loadedPlatformShort(): string | null {
  * any; on the hub otherwise. `owed` is the badge's own figure, so the row
  * opens on what it says.
  */
+/** The menu's figure in words: a message id and its values (owedWords). */
+export type OwedWords = { id: string; values: Record<string, number> };
+
+/**
+ * WHAT THE FIGURE COUNTS (phone review #22, 23 Nov 2026). Within minutes the
+ * same project read "10 to vote" on its hub and "17 decisions waiting on
+ * you" here, with nothing to say they count different things: the hub
+ * counts votes, and this figure (GET /api/workshop/counts `needs`) is votes
+ * and Homeroom bot's questions on your requests together. Its `owed` names
+ * each one (`proposal:…`, `governance:…`, `question:…`), so the line says
+ * both in the hub's own words: "10 to vote · 7 to answer". `total` is the
+ * figure already less what was swiped past (unseenNeeds), which only ever
+ * takes off votes. Without the list (an older server) the one figure keeps
+ * its old words, which say decisions. Pure but for the seen record.
+ */
+export function owedWords(slug: string, total: number, owed: readonly string[] | null | undefined): OwedWords | null {
+  if (!owed || !owed.length) return null;
+  const questions = owed.filter((key) => String(key).startsWith('question:')).length;
+  const votes = Math.max(0, total - questions);
+  if (votes && questions) return { id: 'agent:appContext.row.owedBoth', values: { votes, questions, count: votes } };
+  if (questions) return { id: 'agent:appContext.row.owedAnswer', values: { count: questions } };
+  return { id: 'agent:appContext.row.owedVote', values: { count: votes } };
+}
+
 export function communityRowPlace(owed: number | null): 'needs' | 'status' {
   return typeof owed === 'number' && owed > 0 ? 'needs' : 'status';
 }
@@ -463,6 +487,8 @@ export function AppsSwitcherSheet(): ReactNode {
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to community hub" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
+  // What the figure counts, in the hub's own words (owedWords).
+  const [owedLine, setOwedLine] = useState<OwedWords | null>(null);
 
   // HOMEROOM FOR A VIEWER WHO IS NOT SERVED ITS ROW (SELF_APP_PUBLIC_VOTING
   // off, not an admin): the platform's workshop answers them 404, so the row
@@ -619,7 +645,7 @@ export function AppsSwitcherSheet(): ReactNode {
       renders exactly as it did before this existed.
   */
   useEffect(() => {
-    if (!open || !slug) { setOwed(null); return; }
+    if (!open || !slug) { setOwed(null); setOwedLine(null); return; }
     let live = true;
     (async () => {
       try {
@@ -631,10 +657,14 @@ export function AppsSwitcherSheet(): ReactNode {
         // #3526: less the votes swiped past in a Needs you feed, as every
         // other count of them is (../workshop/needs-seen.ts).
         hydrateNeedsSeen();
+        const keys = c && Array.isArray(c.owed) ? c.owed : null;
         const n = c && typeof c.needs === 'number'
-          ? unseenNeeds(slug, c.needs, Array.isArray(c.owed) ? c.owed : null)
+          ? unseenNeeds(slug, c.needs, keys)
           : null;
-        if (live && typeof n === 'number' && n > 0) setOwed(n);
+        if (live && typeof n === 'number' && n > 0) {
+          setOwed(n);
+          setOwedLine(owedWords(slug, n, keys));
+        }
       } catch {
         // Offline is a state, not a failure: no figure, the row still works.
       }
@@ -1002,11 +1032,11 @@ export function AppsSwitcherSheet(): ReactNode {
             sub={owed ? (
               <span
                 id="app-menu-workshop-owed"
-                title={t('agent:appContext.row.toVote', { count: owed })}
-                aria-label={t('agent:appContext.row.toVote', { count: owed })}
+                title={t(owedLine ? owedLine.id : 'agent:appContext.row.toVote', owedLine ? owedLine.values : { count: owed })}
+                aria-label={t(owedLine ? owedLine.id : 'agent:appContext.row.toVote', owedLine ? owedLine.values : { count: owed })}
                 className="block truncate text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
-                {t('agent:appContext.row.toVote', { count: owed })}
+                {t(owedLine ? owedLine.id : 'agent:appContext.row.toVote', owedLine ? owedLine.values : { count: owed })}
               </span>
             ) : null}
             // It says community, so it opens the hub, not whichever tab
