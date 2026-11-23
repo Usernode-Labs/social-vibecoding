@@ -10746,6 +10746,18 @@ const AppView = {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
     if (!btn || !menu) return;
+    // A sheet row's words. A row's title can hold a second, quieter run after
+    // its name (App secrets' "No manifest yet", filled into #dc-secrets-state):
+    // two flex items on the desktop menu, with a gap between. `textContent`
+    // has no gap, so the sheet read "App secretsNo manifest yet"; the runs are
+    // joined with a middle dot instead. A title with one run reads as before.
+    const rowLabel = (titleEl, node) => {
+      const runs = Array.from(titleEl?.childNodes || [])
+        .map((part) => (part.textContent || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      if (runs.length) return runs.join(' · ');
+      return (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim();
+    };
     AppView._plusMenuAbort?.abort();
     const ac = new AbortController();
     AppView._plusMenuAbort = ac;
@@ -10774,7 +10786,7 @@ const AppView = {
       const glyph = node.querySelector('svg')?.cloneNode(true);
       if (glyph) glyph.removeAttribute('class');
       return {
-        label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+        label: rowLabel(titleEl, node),
         iconEl: glyph || undefined,
         handler: () => node.click(),
       };
@@ -10840,7 +10852,7 @@ const AppView = {
             const glyph = node.querySelector('svg')?.cloneNode(true);
             if (glyph) glyph.removeAttribute('class');
             return {
-              label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              label: rowLabel(titleEl, node),
               iconEl: glyph || undefined,
               // The menu's one lit row, Suggest an improvement (actions-row.tsx
               // `lit`, the owner, 8 Oct 2026), is lit in the sheet too.
