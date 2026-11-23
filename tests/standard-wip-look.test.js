@@ -346,9 +346,9 @@ test('the page is a sheet tucked into the menu: its corners are rounded where it
   assert.ok(tokens, 'the corners\' radius is a token of the block');
   assert.match(tokens.body, /--wip-nav-page-radius: 20px;/);
   // The corners: a fixed layer on <body>, just past the menu's edge, while the menu is docked.
-  const docked = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#app-view:not(.hidden):not([data-app-surface="platform"])))::after';
+  const docked = 'body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-peek)):not(:has(#platform-header.hidden))::after';
   const corners = all.find((r) => r.selector === `${MENU_SCOPE} ${docked}`);
-  assert.ok(corners, 'drawn while the menu is docked; not while it peeks over the page, nor beside a running app');
+  assert.ok(corners, 'drawn while the menu is docked, beside a running app too (its frame is a card on the page); not while it peeks over the page, nor while an app has the whole window');
   assert.match(corners.body, /position: fixed;/);
   assert.match(corners.body, /inset-inline-start: var\(--platform-rail-w, 0px\);/, 'just past the menu\'s edge, open or folded to its strip');
   assert.match(corners.body, /width: var\(--wip-nav-page-radius\);/);
