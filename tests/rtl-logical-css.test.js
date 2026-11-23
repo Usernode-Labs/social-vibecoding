@@ -1,3 +1,4 @@
+// test:changed: when frontend/src/ frontend/@/components/ui/ (the physical-utility scan walks both; scripts/test-changed.js)
 'use strict';
 
 // The shell follows the reading direction with LOGICAL properties, so one
