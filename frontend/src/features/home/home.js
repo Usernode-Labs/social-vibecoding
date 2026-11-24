@@ -746,7 +746,7 @@ const Home = {
     // so nothing on screen started a project until the page was pulled down.
     // There the collapsed grid ends with the tile again, and the row is the
     // field alone (app.css).
-    if (skin !== 'brand' && skin !== 'wip' && skin !== 'standard') return false;
+    if (skin !== 'brand' && skin !== 'standard') return false;
     try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },
 

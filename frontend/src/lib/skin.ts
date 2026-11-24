@@ -26,31 +26,27 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
  */
 export const FRAME_SKINS = ['paper'] as const;
 export type FrameSkin = typeof FRAME_SKINS[number];
-export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
+export type Skin = 'standard' | 'brand' | FrameSkin;
 
 /**
- * Every look the Look menu offers after Standard, in its order (20 Nov
- * 2026: the menu keeps three looks). 'wip' is "Homeroom brand kit
- * (WIP)": the standard look, drawn with the changes still being tried on
- * it and the brand kit's token set; the head sets `data-skin-wip` and
- * `data-wip-tokens="brand"` for it and no `data-skin`. 'brand' is
+ * Every look the Look menu offers after Standard, in its order. 'brand' is
  * "Paper, simplified, with brand styling", which keeps the standard pages.
- * It is the head's SKINS, and the option values of Settings › Experimental
- * › Look and of the look picker.
+ * ('wip', "Homeroom brand kit (WIP)", was removed on 24 Nov 2026: the
+ * standard look took what was tried on it.) It is the head's SKINS, and the
+ * option values of Settings › Experimental › Look and of the look picker.
  */
-export const MENU_SKINS = ['wip', 'brand'] as const;
+export const MENU_SKINS = ['brand'] as const;
 export type MenuSkin = typeof MENU_SKINS[number];
 
 /**
  * True where Home and the Communities page are drawn with the kit's pieces
  * (the one-column page, the pinned projects card, Recent threads, the
- * challenge posters; the grid of pinned communities and the joined list): Standard
- * (WIP), which drew them first, and the standard look, which took them on 20
- * Nov 2026. The first render's 'standard' is one of them, so the prerendered
- * document and the hydrated one agree.
+ * challenge posters; the grid of pinned communities and the joined list): the
+ * standard look, since 20 Nov 2026. The first render's 'standard' is it, so
+ * the prerendered document and the hydrated one agree.
  */
 export function isKitHome(skin: Skin): boolean {
-  return skin === 'wip' || skin === 'standard';
+  return skin === 'standard';
 }
 
 /** True for a look that draws a page in the frame; 'brand' keeps the standard pages. */

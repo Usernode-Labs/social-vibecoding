@@ -28,11 +28,9 @@ import { useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
 import { LOOK_CHOICES, useLiveSkin, type Skin } from '../../lib/skin';
 
-// Whole literals, so the catalog inventory can see each id asked for. 'wip'
-// is named by the token set that draws it, the one kept of its four.
+// Whole literals, so the catalog inventory can see each id asked for.
 const NAME_OF: Record<string, string> = {
   standard: 'settings:experimental.look.standard',
-  wip: 'settings:experimental.wipTokens.brand',
   brand: 'settings:experimental.look.brand',
 };
 

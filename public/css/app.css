@@ -6422,18 +6422,18 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
 }
 
 /* ============================================================
-   STANDARD (WIP): the standard look with the changes still being tried on
-   it (head.html window.Skin 'wip', which sets data-skin-wip and no
-   data-skin, so no other look's rule applies and every screen is the
-   standard one unless a rule below says otherwise).
+   STANDARD (WIP): the standard look's own kit. It began as Standard (WIP),
+   "Homeroom brand kit (WIP)", a look where changes to the standard one
+   were tried first (data-skin-wip on <html>). The standard look took them
+   on 20 Nov 2026 and the WIP look was removed on 24 Nov 2026; its `--wip-*`
+   tokens and `.wip-*` classes kept their names.
 
    THE RULES OF THIS BLOCK (tests/standard-wip-look.test.js holds them):
      1. Every value is a token. The `--wip-*` tokens are declared once, in
         the first rule, from the shell's own tokens where one exists; no
         rule after it writes a colour of its own.
-     2. Every rule is scoped to html[data-skin-wip] or is a `.wip-*`
-        component class (features/home/wip-kit.tsx), which only that look
-        mounts.
+     2. Every rule is scoped to the standard look (html:not([data-skin]))
+        or is a `.wip-*` component class (features/home/wip-kit.tsx).
      3. Nothing of the standard look is hidden here except what WIP_HIDES
         in that test lists, so a feature added to Standard shows under
         this look too unless somebody decides otherwise there.
@@ -6660,8 +6660,8 @@ html:not([data-skin]) {
 }
 /* ── The token set that draws the look ──────────────────────
    The rule above is the list every value starts from. The look is drawn
-   with one set of other values over it, on html[data-wip-tokens="brand"],
-   which the head sets whenever the look is on (head.html, WIP_TOKENS).
+   with one set of other values over it, the brand kit's, in the rule under
+   this comment.
    Three more drawings were tried and removed on 20 Nov 2026: the list
    above on its own, the brand kit's second drawing and Highlighter. Only
    the values differ: no rule of the look knows which set is on.
@@ -6726,11 +6726,6 @@ html:not([data-skin]) {
   /* The shell's own marks on a page of this config: where you are, in the
      kit's ink on a wash of it, not the standard blue. */
 }
-html[data-skin-wip][data-wip-tokens="brand"] {
-  --lit-ink: #000000;
-  --lit-tint: rgb(0 0 0 / 0.07);
-  --lit-line: rgb(0 0 0 / 0.14);
-}
 /* In the dark it is the kit's other pairing, cream on black. */
 html:not([data-skin]).dark {
   --wip-mark-1-bg: rgb(255 238 111 / 0.16);
@@ -6765,11 +6760,6 @@ html:not([data-skin]).dark {
   --wip-fold-edge: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-fold-edge-down: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-count-line: transparent;
-}
-html[data-skin-wip][data-wip-tokens="brand"].dark {
-  --lit-ink: #fffeea;
-  --lit-tint: rgb(255 254 234 / 0.1);
-  --lit-line: rgb(255 254 234 / 0.18);
 }
 /* How many columns a list of the look has, by the room there is: one, two
    from 640px, and four from 1024px, where Pinned projects' own four columns
@@ -7397,15 +7387,9 @@ html:not([data-skin]) #home-screen {
   --accent: var(--wip-ink-action);
 }
 /* The page's own ground is Standard (WIP)'s alone: the standard look keeps its wallpaper behind the cards (asked 20 Nov 2026). */
-html[data-skin-wip] #home-screen { background-color: var(--wip-page-bg); }
 /* While Home is the screen on show, a config that names a page colour gives
    it to the frame too (the header and the sidebar are clear over the body),
    so the page and its frame are one ground with no seam. */
-html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)),
-html[data-skin-wip][data-wip-tokens] body:has(> #app-view > #app-content > div > #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) {
-  background-color: var(--wip-page-bg);
-  background-image: none;
-}
 /* One column, in this order: Pinned projects, Needs you, Challenges, Featured
    (lifted out of Communities to join), then the rest of Communities to join. The markup keeps its own order; the column is a flex
    column, and both Communities to join and the row that holds Needs you
@@ -7609,7 +7593,7 @@ html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body >
   box-shadow: none;
 }
 /* The standard look keeps its wallpaper behind the hub's cards, as on Home: the page's own ground is Standard (WIP)'s alone. */
-html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) { background-color: transparent; }
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"])) { background-color: transparent; }
 /* The hub has no Topics card under the look: a topic's channel is reached by its own address. */
 html:not([data-skin]) #dev-workshop [data-ws-hub-topics] { display: none; }
 /* A section's label, outside its card: Home's label, from the same tokens. */
@@ -8302,19 +8286,6 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-foryou
    columns, and under it the ways on into the project as three doors in a
    row. With nothing waiting, the good news stands where the rows would: a
    tick in the "going well" colour, a heading and its line. */
-html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"]) .dev-ws-place-title {
-  font-family: var(--wip-label-font);
-  font-size: var(--wip-label-size);
-  font-weight: var(--wip-label-weight);
-  letter-spacing: var(--wip-label-track);
-  text-transform: var(--wip-label-case);
-  color: var(--wip-label-ink);
-  text-decoration-line: underline;
-  text-decoration-color: var(--wip-label-mark);
-  text-decoration-thickness: 0.42em;
-  text-underline-offset: -0.16em;
-  text-decoration-skip-ink: none;
-}
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs) { display: flex; flex-direction: column; gap: 0.5rem; max-width: none; margin: 0; padding: 0; }
 /* The place's own name bar spans the page too (on the hub as well), so the name starts where the cards do. */
 html:not([data-skin]) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) > .dev-ws-placebar,
@@ -8344,7 +8315,7 @@ html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body >
   -webkit-backdrop-filter: none;
   box-shadow: none;
 }
-html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="workshop"]) { background-color: transparent; }
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="workshop"]) { background-color: transparent; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:not(:has(> [data-ws-dashboard])) { width: 100%; max-width: 760px; margin-inline: auto; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]) { gap: 0.5rem var(--wip-card-gap); }
@@ -8536,7 +8507,7 @@ html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body >
   -webkit-backdrop-filter: none;
   box-shadow: none;
 }
-html:not([data-skin]):not([data-skin-wip]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="bot"]) { background-color: transparent; }
+html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="bot"]) { background-color: transparent; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] > .dev-ws-tabbody { width: 100%; max-width: 760px; margin-inline: auto; padding-block-start: 0.75rem; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slots-page] { border-radius: 0; background: none; box-shadow: none; }
@@ -8940,7 +8911,6 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[d
    so its board keeps the line, its way back up (THE STANDARD LOOK'S BOARD,
    below). Its toolbar is the look's: the search is Home's field, and the
    filters are plain pills on the card's ground. */
-html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead { display: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-actions { padding-inline: 0; padding-top: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar { padding-inline: 0; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban-search {
@@ -8974,8 +8944,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips
    reach the title. Under 900px it is the full-width line above the page it
    always was. */
 @media (min-width: 900px) {
-  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"])) > #dev-code-pause-notice,
-  html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) > #dev-code-pause-notice {
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"])) > #dev-code-pause-notice {
     position: relative;
     z-index: 2;
     height: 0;
@@ -8985,8 +8954,7 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-filter-chips
     overflow: visible;
     pointer-events: none;
   }
-  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"])) > #dev-code-pause-notice > [data-code-pause],
-  html[data-skin-wip] #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="all"]) > #dev-code-pause-notice > [data-code-pause] {
+  html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="all"])) > #dev-code-pause-notice > [data-code-pause] {
     flex: none;
     max-width: 62%;
     margin-top: 0.9375rem;
@@ -9324,49 +9292,24 @@ html:not([data-skin]) #app-list .app-card-opened { display: none; }
    across "All items", the search box and the columns' names. Nothing shows through a head that words scroll under.
    The place's bar wears it only once it is pinned (`data-ws-pinned`, workshop.tsx usePinnedStrip): at rest nothing is
    under it, and it sits on the page over its hairline as it does over the hub. */
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"][data-ws-pinned] > .dev-ws-placebar,
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: var(--wip-card-bg); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"][data-ws-pinned] > .dev-ws-placebar,
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pane-head { background-color: var(--wip-card-bg); }
 /* THE STANDARD LOOK'S BOARD IS A PAGE UNDER THE WORKSHOP (20 Nov 2026): the Workshop's door opens its overview, and the
    board's head leads with the way back up to it and the page's name, "‹ All items", the page's one heading. So the
    place's name over it is the quiet name of where you are, as "Hub" is over the hub's hero, not a second title. */
-html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }
 /* On a phone the filters share that line, at its far end, and the search takes the line under it, so the head that
    stays put over the column is no taller for the way back. */
 @media (max-width: 639px) {
-  html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-filter-chips { order: 1; }
-  html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-search { order: 2; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-filter-chips { order: 1; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-allbar #dev-kanban-search { order: 2; }
 }
 /* THE LEFT MENU AND THE TOP BAR are the standard look's too since 20 Nov
    2026: their rules and tokens, the menu's colours among them, are the
    block after this one ("THE LEFT MENU AND THE TOP BAR"). What is left here
    is where the brand kit points a token at a value of its own: its typeface,
    its corners, and its ink for the top bar. */
-html[data-skin-wip][data-wip-tokens="brand"] {
-  --wip-nav-font: var(--wip-font);
-  --wip-nav-tile-radius: var(--wip-radius-small);
-  --wip-nav-bar-ink: var(--wip-ink);
-  --wip-nav-bar-tint: var(--wip-ghost);
-  --wip-nav-bar-line: var(--wip-card-line);
-}
 /* The hub's "All in Workshop", beside Recently live, is the same button: the way to the rest of a section reads as one everywhere under the look. */
-html[data-skin-wip] #dev-workshop [data-ws-recent-all] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: var(--wip-fold-h);
-  padding-inline: 0.625rem 0.5rem;
-  border-radius: var(--wip-radius-pill);
-  background-color: var(--wip-fold-bg);
-  box-shadow: var(--wip-fold-edge);
-  font-size: var(--wip-body-size);
-  font-weight: 600;
-  line-height: 1;
-  text-decoration: none;
-  color: var(--wip-fold-ink);
-  transition: transform 150ms, box-shadow 150ms, background-color 150ms;
-}
-html[data-skin-wip] #dev-workshop [data-ws-recent-all]:hover { background-color: var(--wip-fold-bg-on); }
-html[data-skin-wip] #dev-workshop [data-ws-recent-all]:active { box-shadow: var(--wip-fold-edge-down); transform: var(--wip-fold-press); }
 /* ── THE COMMUNITIES TAB'S PAGE (features/communities/index.tsx) ──────────
    Drawn as Home is, from the same tokens and the same kit: the page's own
    ground and typeface, the whole width, a short search field with the filled
@@ -9378,12 +9321,7 @@ html:not([data-skin]) #communities-screen {
   --accent: var(--wip-ink-action);
 }
 /* The page's own ground is Standard (WIP)'s alone: the standard look keeps its wallpaper behind the cards, as on Home. */
-html[data-skin-wip] #communities-screen { background-color: var(--wip-page-bg-communities); }
 html:not([data-skin]) #communities-screen .home-column { max-width: none; }
-html[data-skin-wip][data-wip-tokens] body:has(#communities-screen:not(.hidden)) {
-  background-color: var(--wip-page-bg-communities);
-  background-image: none;
-}
 /* The search row is on a phone too under the look (asked 19 Nov 2026), as
    Home's is: the field, then New community as the filled action at its end,
    a clear step under the header. */
@@ -10010,8 +9948,6 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
   }
   /* Standard (WIP) gives the page and its frame one colour, so there the
      layer paints that colour rather than the wallpaper the standard look has. */
-  html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)) #platform-header#platform-header::before { background: var(--wip-page-bg); }
-  html[data-skin-wip][data-wip-tokens] body:has(#communities-screen:not(.hidden)) #platform-header#platform-header::before { background: var(--wip-page-bg-communities); }
   html:not([data-skin])[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) { outline-color: var(--wip-nav-bar-line); }
 }
 /* THE PAGE IS A SHEET TUCKED INTO THE MENU (asked 20 Nov 2026, from the

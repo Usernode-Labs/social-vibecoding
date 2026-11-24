@@ -333,7 +333,7 @@ is no replay plan to write and nothing to verify locally.
   pinned; Edit lets each be pinned), New community, which starts a project,
   and a Discover card whose button opens Home at Communities to join. Its
   Needs you tile, drawn while a vote waits, opens Needs you, in a look whose
-  Home has no Needs you card (Standard (WIP) and the brand look have the
+  Home has no Needs you card (the standard look and the brand look have the
   card on Home). The two pins are separate acts
   and neither joins: you may pin what you have not joined. Joining pins the
   community (`communities.join`); leaving unpins it and keeps the app's
