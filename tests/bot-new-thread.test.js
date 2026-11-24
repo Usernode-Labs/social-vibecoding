@@ -151,6 +151,37 @@ test('the kind is read off the start a message begins with, and a tap writes the
   assert.match(src, /input\.setSelectionRange\(end, end\);/, 'the caret goes to the end');
 });
 
+// #7069: New chat puts the caret in the box, so you can type at once; on a
+// touch-only phone it does not, so the keyboard stays down over the starts.
+// Its send disc wears the brand look's own colours: the raised plain disc
+// while the box is empty, the sun with its ink outline once there is
+// something to send.
+test('#7069: opening a new chat focuses its box, and the brand look draws its send as the page\'s main action', () => {
+  const src = read(NEW_THREAD);
+  assert.ok(src.includes("import { wantsKeyboardFocus } from '../message-actions/focus';"), 'the same rule Reply uses');
+  assert.ok(src.includes('let openTurn = 0;'));
+  const start = src.slice(src.indexOf('export function startNewThread'), src.indexOf('/** The chat a new chat is open in right now'));
+  assert.ok(start.includes('blankIn = conversationId;\n  openTurn += 1;\n  notify();'),
+    'every New chat press counts a turn, one over a chat already open too');
+  assert.ok(src.includes('() => openTurn,'), 'the panel reads that turn');
+  assert.ok(src.includes('useEffect(() => { if (wantsKeyboardFocus()) toField(); }, [opened]);'),
+    'the caret goes in the box where there is a keyboard, never on a touch-only phone');
+
+  // The disc's colours in the brand look, beside that look's reply-box block.
+  const css = read('public/css/app.css');
+  const brand = css.slice(css.indexOf('/* #7069:'), css.indexOf("/* THE COLUMN'S HEADER beside Homeroom bot's page"));
+  assert.ok(brand.includes('.messages-composer-card .messages-send:not([data-bot-stop]) {\n  background: var(--bl-sun);\n  color: var(--bl-on-sun);\n  box-shadow: var(--bl-pill-edge);\n  opacity: 1;\n}'),
+    'the look\'s main action once there is something to send');
+  assert.ok(brand.includes('.messages-send:not([data-bot-stop]):not(:disabled):hover {\n  background: var(--bl-sun-lit);'));
+  assert.ok(brand.includes('.messages-send:not([data-bot-stop]):not(:disabled):active {\n  box-shadow: var(--bl-pill-edge-down);'));
+  assert.ok(brand.includes('.messages-composer-card .messages-send:not([data-bot-stop]):disabled,'));
+  assert.ok(brand.includes('.messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send:not([data-bot-stop]) {\n  background: var(--bl-raise);\n  color: var(--bl-label);\n  box-shadow: var(--bl-raise-edge);\n  opacity: 1;\n}'),
+    'the raised plain disc while the box is empty, in the look\'s own colours');
+  assert.ok((brand.match(/\.messages-send:not\(\[data-bot-stop\]\)/g) || []).length >= 5, 'every rule leaves Stop alone');
+  // The looks that already drew it neutral, then accent, are untouched.
+  assert.ok(css.includes('html[data-skin]:where(:not([data-skin="brand"])) .messages-composer-card .messages-send:not(:disabled){background:var(--fr-acc);color:var(--fr-acc-ink)}'));
+});
+
 test('the project is chosen from the "Your communities" rows, Any project first', () => {
   const picker = loadTsx('frontend/src/features/messages/project-picker.tsx');
   const info = {

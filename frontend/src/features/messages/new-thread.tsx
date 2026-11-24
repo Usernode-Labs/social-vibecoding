@@ -57,6 +57,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Fo
 import { ChatComposerBar } from '@/components/ui/chat';
 import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, ListBulletIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { setListClosed, useShowListButton } from '../ai/list-closed';
+import { wantsKeyboardFocus } from '../message-actions/focus';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -169,6 +170,9 @@ export interface NewThreadPreset {
 // already open takes a later door's too.
 let preset: NewThreadPreset | null = null;
 let presetTurn = 0;
+// #7069: how many times New chat has been pressed. The caret goes in the box
+// on every open, including one pressed again over a chat already open.
+let openTurn = 0;
 
 /**
  * Open a new chat in the bot chat `conversationId` (closing a thread open
@@ -187,6 +191,7 @@ export function startNewThread(conversationId: number, fresh?: NewThreadPreset |
     : fresh || null;
   if (preset) presetTurn += 1;
   blankIn = conversationId;
+  openTurn += 1;
   notify();
 }
 
@@ -318,6 +323,15 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   }, [turn]); // eslint-disable-line react-hooks/exhaustive-deps
   // A door's item arrives with the caret in the box, ready for the question.
   useEffect(() => { if (object) toField(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // #7069: New chat puts the caret in the box, so the person can type at
+  // once. On a touch-only phone it does not, so the keyboard stays down over
+  // the starts they may want to tap (../message-actions/focus).
+  const opened = useSyncExternalStore(
+    (fn) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
+    () => openTurn,
+    () => 0,
+  );
+  useEffect(() => { if (wantsKeyboardFocus()) toField(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A door named the project: the chip says its name once the communities
   // you are in are known, which the picker would otherwise read on opening.
