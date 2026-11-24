@@ -56,6 +56,7 @@ jobs:
     name: Build and scan ${{ matrix.component }}
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
     strategy:
       fail-fast: false
@@ -90,6 +91,43 @@ jobs:
         if: matrix.component == 'worker'
         id: live
         run: node scripts/live-release.js
+      - name: Resolve Claude Code version
+        if: matrix.component == 'worker'
+        id: claude
+        shell: bash
+        run: |
+          version="$(bash scripts/resolve-claude-code-version.sh)"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'Claude Code: `%s`\n' "$version" >> "$GITHUB_STEP_SUMMARY"
+      - name: Find standalone Buildx cache from the main security audit
+        if: matrix.component == 'standalone'
+        id: standalone_cache
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/security-audit.yml/runs" \
+            -f branch=main -f status=success -f per_page=7 \
+            --jq '.workflow_runs[] | select(.head_branch == "main" and .head_repository.full_name == .repository.full_name and (.event == "schedule" or .event == "workflow_dispatch")) | [.id, .run_attempt] | @tsv')" || exit 0
+          while read -r run_id attempt; do
+            [[ "$run_id" =~ ^[0-9]+$ && "$attempt" =~ ^[0-9]+$ ]] || continue
+            name="standalone-buildx-cache-$attempt"
+            artifacts="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" -f "name=$name")" || continue
+            if jq -e --arg name "$name" 'any(.artifacts[]; .name == $name and .expired == false)' <<< "$artifacts" >/dev/null; then
+              printf 'run_id=%s\nname=%s\n' "$run_id" "$name" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done <<< "$runs"
+      - name: Restore trusted standalone Buildx cache
+        id: restore_standalone_cache
+        if: matrix.component == 'standalone' && steps.standalone_cache.outputs.run_id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.standalone_cache.outputs.run_id }}
+          name: ${{ steps.standalone_cache.outputs.name }}
+          path: ${{ runner.temp }}/standalone-buildx-cache
       # Baselines are built lazily from the exact PR base. Never restore an
       # inventory cache that an earlier PR revision could have written.
       - name: Build and scan the finished image
@@ -101,6 +139,8 @@ jobs:
           SECURITY_BASELINE_REVISION: ${{ github.event.pull_request.base.sha }}
           SECURITY_SCAN_PLATFORM: linux/amd64
           LIVE_WORKER_DIGEST: ${{ steps.live.outputs.worker }}
+          CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
+          STANDALONE_CACHE_RESTORED: ${{ steps.restore_standalone_cache.outcome == 'success' }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/security-$COMPONENT"
@@ -112,12 +152,17 @@ jobs:
             DOCKERFILE="$CONTEXT/Dockerfile"
           fi
           build_args=(--pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE")
+          if [ "$COMPONENT" = standalone ] && [ "$STANDALONE_CACHE_RESTORED" = true ] \
+            && [ -s "$RUNNER_TEMP/standalone-buildx-cache/index.json" ]; then
+            build_args+=(--cache-from "type=local,src=$RUNNER_TEMP/standalone-buildx-cache")
+          fi
           if [ "$COMPONENT" = worker ] && [[ "$LIVE_WORKER_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
             # Import build layers only from the image promoted by main. The
             # candidate still builds locally and gets all of its own checks.
             build_args+=(--cache-from "type=registry,ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-worker@$LIVE_WORKER_DIGEST")
           fi
           if [ "$COMPONENT" = worker ]; then
+            build_args+=(--build-arg "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:?exact Claude Code version required}")
             sh scripts/check-pr-worker-image.sh "$out" "${build_args[@]}" "$CONTEXT"
           else
             docker buildx build --load "${build_args[@]}" "$CONTEXT"
