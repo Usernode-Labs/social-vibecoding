@@ -389,6 +389,8 @@ async function migrate(config) {
   await seedStagingGroupInviteNote(pool);
   // #5393: must run AFTER seedStagingGeneralChannel — its fake speakers are that seed's people.
   await seedStagingGroupFacesRows(pool);
+  // Desktop polish 11: a run of follow-up lines from a fake person. The same people.
+  await seedStagingFollowUpBubbles(pool);
   await seedStagingOwnReviewChange(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
   await seedStagingAppFiles(pool);
@@ -6182,6 +6184,99 @@ async function seedStagingGroupFacesRows(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging group faces rows seeding failed', { message: err.message });
+  }
+}
+
+// Desktop polish 11's before/after shots hover a CONTINUATION line from
+// somebody else in a group chat: a second, third and fourth message in one
+// person's run, with no name line over it, in bubbles short and long (one
+// narrower than the hover bar), and a reply thread with three replies in a
+// row from one person. A fresh clone's conversations for the shots' member
+// fixture alternate speakers line by line, so none has one; this seeds one
+// group, owned by a fake person, with the member and the other fake person
+// accepted. Obviously fake, idempotent through the membership rows' primary
+// key and the messages' idempotency keys, and a strict no-op outside
+// staging. One minute apart, so the run holds together on screen.
+async function seedStagingFollowUpBubbles(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada',
+                           'staging-demo-general-lin')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const ada = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    const lin = people.rows.find((row) => row.username === 'staging-demo-general-lin');
+    if (!member || !ada || !lin || member.id === ada.id || member.id === lin.id) {
+      log.warn('db', 'Staging follow-up bubbles skipped: fixture users missing');
+      return;
+    }
+    const title = 'Follow-up bubbles (staging demo)';
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+        JOIN conversation_members owner ON owner.conversation_id = c.id
+          AND owner.user_id = $2 AND owner.role = 'owner'
+       WHERE c.kind = 'group' AND c.title = $1
+       LIMIT 1`,
+      [title, lin.id]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      conversationId = (await pool.query(
+        `INSERT INTO conversations (kind, title, created_by)
+         VALUES ('group', $1, $2) RETURNING id`,
+        [title, lin.id]
+      )).rows[0].id;
+    }
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, CASE WHEN u.id = $2 THEN 'owner' ELSE 'member' END,
+              'member', NOW(), NOW()
+         FROM users u WHERE u.id = ANY($3::int[])
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, lin.id, [lin.id, ada.id, member.id]]
+    );
+    // Oldest first, so the later id is the later word.
+    const lines = [
+      ['lin-1', lin.id, 'Staging demo: morning! Two things before the Friday demo.', 30],
+      ['lin-2', lin.id, 'Staging demo: first, can we move the walkthrough to after lunch, so the people joining from the other office are awake for it, and keep the questions for the end? I can take the slides if nobody else wants them.', 29],
+      ['lin-3', lin.id, 'Staging demo: second, who brings the coffee?', 28],
+      ['member-1', member.id, 'Staging demo: after lunch works for me.', 20],
+      ['ada-1', ada.id, 'Staging demo: same here, after lunch suits me.', 10],
+      ['ada-2', ada.id, 'Staging demo: coffee ☕', 9],
+    ];
+    let inserted = 0;
+    let rootId = null;
+    for (const [slug, senderId, content, minutesAgo] of lines) {
+      const row = await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, $3, 'staging-follow-up-' || $4, NOW() - ($5 * INTERVAL '1 minute'))
+         ON CONFLICT (conversation_id, sender_id, idempotency_key)
+           WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+         DO NOTHING
+         RETURNING id`,
+        [conversationId, senderId, content, slug, minutesAgo]
+      );
+      inserted += row.rowCount;
+      if (slug === 'lin-1' && row.rows[0]) rootId = row.rows[0].id;
+    }
+    // The thread under the first line, inserted with it: three replies in a
+    // row from the other fake person, the last narrower than the bar.
+    if (rootId) {
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: what is the second thing?', $3, NOW() - INTERVAL '27 minutes'),
+                ($1, $2, 'Staging demo: oh, the coffee. Never mind, I see it now in the chat, and I am happy to help carry the cups from the kitchen.', $3, NOW() - INTERVAL '26 minutes'),
+                ($1, $2, 'Staging demo: thanks', $3, NOW() - INTERVAL '25 minutes')`,
+        [conversationId, ada.id, rootId]
+      );
+    }
+    if (inserted > 0) log.info('db', 'Staging follow-up bubbles seeded', { inserted });
+  } catch (err) {
+    log.warn('db', 'Staging follow-up bubbles seeding failed', { message: err.message });
   }
 }
 

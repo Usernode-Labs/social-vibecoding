@@ -810,6 +810,19 @@ html:is(.un-kb, .platform-kb-open) .messages-list-scroll.platform-safe-scroll {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--inbox-foot) - 72px), transparent calc(100% - var(--inbox-foot) - 48px), transparent calc(100% - var(--inbox-foot) - 6px), #000 calc(100% - var(--inbox-foot)));
   mask-image: linear-gradient(to bottom, #000 calc(100% - var(--inbox-foot) - 72px), transparent calc(100% - var(--inbox-foot) - 48px), transparent calc(100% - var(--inbox-foot) - 6px), #000 calc(100% - var(--inbox-foot)));
 }
+/* JUMP TO BOTTOM RESTS ON NOTHING ON A DESKTOP (desktop polish 10, 24 Nov
+   2026). The mask above turns solid again for the band under the pill,
+   which on a phone is under the tab bar. From 768px there is no bar under
+   the list, so that band was the list's last 6px, and rows showed through
+   under and around the pill (more in Firefox). Here the list fades out
+   across the same lane and stays faded to its bottom edge while the pill is
+   up; with the pill hidden, near the end, the list is not masked at all. */
+@media (min-width: 768px) {
+  .messages-list-scroll:has(+ [data-inbox-to-end] button:not([inert])) {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--inbox-foot) - 72px), transparent calc(100% - var(--inbox-foot) - 48px));
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--inbox-foot) - 72px), transparent calc(100% - var(--inbox-foot) - 48px));
+  }
+}
 /* THE HISTORY ABOVE A COMPOSER reserves no band at its foot, only the
    transcript's own 12px end: `.chat-transcript`, under "A chat's foot"
    above, which every chat's scroller wears (1 November 2026). */
@@ -1407,6 +1420,28 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-head:has(> .messages-message-actions) { position: relative; }
 .messages-message-head > .messages-message-actions { top: -10px; inset-inline-end: auto; inset-inline-start: calc(100% + 8px); }
 .messages-message-head > .messages-message-actions::after { content: none; }
+/* Desktop polish 11 (24 Nov 2026): a continuation line of theirs has no
+   name line, so its bar sits on the bubble (message-row.tsx `barOnBubble`):
+   its bottom edge 2px over the bubble's top, and its trailing edge on the
+   bubble's, or its leading edge on the bubble's start when the bubble is
+   the narrower, so it never starts before the bubble. MessageActionBar
+   measures the bubble in the row as the pointer or the keyboard comes in
+   (`--msgx-bubble-start`, `-w`, `-top`); the shift is the bubble's width
+   less the bar's own, never below nothing, mirrored right to left. It
+   covers part of the message above while it is up. The bridge (::after)
+   still runs from the bar's foot into the bubble, and with no room above
+   the row the bar goes under it, as every row's does, still lined up with
+   the bubble. */
+.messages-message-actions.msgx-bar-on-bubble {
+  top: var(--msgx-bubble-top, 0px);
+  inset-inline-start: var(--msgx-bubble-start, 0px);
+  inset-inline-end: auto;
+  translate: calc(var(--rtl-sign, 1) * max(0px, var(--msgx-bubble-w, 0px) - 100%)) calc(2px - 100%);
+}
+.messages-message-actions.msgx-bar-on-bubble.msgx-bar-below {
+  top: calc(100% + 4px);
+  translate: calc(var(--rtl-sign, 1) * max(0px, var(--msgx-bubble-w, 0px) - 100%)) 0;
+}
 
 /* The tray of a message still in flight keeps its place but draws nothing
    (#2907) — on touch it is a line of the row, and growing it only once the
@@ -2480,11 +2515,34 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    this width is only its floor, through `--ai-list-min` (THE AI TAB'S MAIN
    VIEW). */
 :root { --list-pane-w: 22rem; }
+/* A WIDTH CHOSEN BY DRAGGING (desktop polish 09, 24 Nov 2026): the line
+   between the list and the pane beside it is a handle
+   (features/messages/list-divider.tsx). What it chooses is Messages' own,
+   `--messages-list-chosen-w` on <html>, already clamped to 280px..42% of the
+   layout; with nothing chosen the list keeps its default measure. The
+   handle is a child of the list, centred on the gap the reader sees: from
+   the list's cards, 24px inside its edge (its rows' 16px and its own 8px
+   end padding), to the conversation's sheet, 8px past it. It goes wherever
+   the list goes: Full width and a reply thread below 1600px hide both. A
+   phone draws one pane at a time and no handle. */
+.messages-list-divider { display: none; }
 @media (min-width: 768px) {
   .messages-list-pane {
-    flex: 0 0 var(--list-pane-w);
-    width: var(--list-pane-w);
+    position: relative;
+    flex: 0 0 var(--messages-list-chosen-w, var(--list-pane-w));
+    width: var(--messages-list-chosen-w, var(--list-pane-w));
     padding-inline-end: 8px;
+  }
+  .messages-list-divider {
+    display: block;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    inset-inline-end: -4px;
+    width: 24px;
+    z-index: 3;
+    cursor: col-resize;
+    touch-action: none;
   }
   .messages-thread-pane {
     flex: 1 1 auto;
@@ -8561,7 +8619,11 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
    is alone as before (its drawer never has `messages-list-page`). */
 @media (min-width: 768px) {
   html:not([data-skin]) .messages-layout.messages-list-page { gap: var(--wip-gutter); padding: 1rem var(--wip-gutter) var(--wip-gutter); }
-  html:not([data-skin]) .messages-layout.messages-list-page > .messages-list-pane { flex: none; width: 26rem; max-width: 42%; margin: -0.5rem 0 0; }
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-list-pane { flex: none; width: var(--messages-list-chosen-w, 26rem); max-width: 42%; margin: -0.5rem 0 0; }
+  /* The list's handle (desktop polish 09) stands in the middle of the gap
+     here too: from the list's cards, 16px inside its edge, to the guide's
+     card, a gutter past it. */
+  html:not([data-skin]) .messages-layout.messages-list-page > .messages-list-pane > .messages-list-divider { display: block; inset-inline-end: calc((16px - var(--wip-gutter)) / 2 - 12px); }
   html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection {
     display: flex;
     flex: 1 1 0;
@@ -29387,6 +29449,9 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
     margin: 0 auto;
     padding-inline-end: 0;
   }
+  /* Nothing stands beside the list here, so it has no handle to drag
+     (the standard look's two-up page puts it back). */
+  .messages-layout.messages-list-page > .messages-list-pane > .messages-list-divider { display: none; }
 }
 
 /* ── Messages is one inbox, and says which kind each row is (#2718) ──

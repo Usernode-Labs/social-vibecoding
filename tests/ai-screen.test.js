@@ -2036,7 +2036,10 @@ test('the column is held inside the window, and the panel takes its place at its
   // to the page's own 672px and centred in it, rather than staying the
   // inbox's 22rem against the rail with bare background beside it.
   assert.match(css, /:root \{ --list-pane-w: 22rem; \}/, 'one list width, defined once');
-  assert.match(css, /\.messages-list-pane \{\s+flex: 0 0 var\(--list-pane-w\);\s+width: var\(--list-pane-w\);/, 'the inbox reads it');
+  // Desktop polish 09 (24 Nov 2026): Messages' list can be dragged to a width
+  // of its own, `--messages-list-chosen-w`; with none chosen it reads this
+  // measure, and the bot tab's list is not touched.
+  assert.match(css, /\.messages-list-pane \{\s+position: relative;\s+flex: 0 0 var\(--messages-list-chosen-w, var\(--list-pane-w\)\);\s+width: var\(--messages-list-chosen-w, var\(--list-pane-w\)\);/, 'the inbox reads it');
   assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: 42rem;\s+margin-inline: auto;\s+\}/,
     'and the bot tab\'s list fills the room beside the open column, up to 672px, centred in it');
   assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');

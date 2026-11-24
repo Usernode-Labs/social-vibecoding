@@ -549,12 +549,25 @@ export const MessageRow = memo(function MessageRow({
     </>
   );
 
+  // Audit D13 (2 Nov 2026): on somebody else's bubble the bar hangs at the
+  // end of its name line, beside the message, not at the transcript's far
+  // edge, where on a wide screen it sat 800px from a short bubble and over
+  // the row above. Your own bubble and a channel's rows already end where
+  // the bar is.
+  const barBesideHead = sided && !mine && !grouped;
+  // Desktop polish 11 (24 Nov 2026): a continuation line of theirs has no
+  // name line, so its bar sits on the bubble itself, over its top edge and
+  // ending where the bubble ends (starting where it starts when the bubble
+  // is the narrower). MessageActionBar measures the bubble as the pointer
+  // or the keyboard comes in; app.css `.msgx-bar-on-bubble` places it.
+  const barOnBubble = sided && !mine && grouped;
+
   // The bar. WHILE A SEND IS IN FLIGHT it is still laid out, but invisible
   // and inert (#2907). A failed row has no bar — its Retry is its control —
   // and neither has one waiting for a connection, nor a deleted one.
   const actions = !message.failed && !message.queued && !message.deleted ? (
     <MessageActionBar
-      className={`messages-message-actions ${message.pending ? 'messages-message-actions-reserved' : ''}`}
+      className={`messages-message-actions ${barOnBubble ? 'msgx-bar-on-bubble' : ''} ${message.pending ? 'messages-message-actions-reserved' : ''}`}
       hidden={!!message.pending}
       // What useDismiss measures "outside" against: without it every press —
       // on a menu item or an emoji too — closed the popover before its click.
@@ -576,13 +589,6 @@ export const MessageRow = memo(function MessageRow({
       {menu ? <MessageMenu items={items} placement={menu} onClose={() => { setMenu(null); moreButton.current?.focus({ preventScroll: true }); }} /> : null}
     </MessageActionBar>
   ) : null;
-
-  // Audit D13 (2 Nov 2026): on somebody else's bubble the bar hangs at the
-  // end of its name line, beside the message, not at the transcript's far
-  // edge, where on a wide screen it sat 800px from a short bubble and over
-  // the row above. A continuation line has no name line, and your own
-  // bubble and a channel's rows already end where the bar is.
-  const barBesideHead = sided && !mine && !grouped;
 
   const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
