@@ -14826,6 +14826,12 @@ html.un-kb .un-modal {
   border-top: 1px solid var(--app-sheet-line);
 }
 
+/* The header, its one line and How to test's steps (24 Nov 2026): a box of
+   their own only beside a thread, where they are the pane's head card
+   ("THE PREVIEW BESIDE A THREAD"); anywhere else they are the overlay's own
+   rows, as they always were. */
+.staging-top { display: contents; }
+
 /* The overlay is `inset: 0` — it covers the status bar, so its own chrome
    bar has to clear the notch. */
 #staging-overlay .staging-chrome-bar {
@@ -14887,8 +14893,9 @@ html.un-kb .un-modal {
 /* 20 Nov 2026 (live-draft review, G): a live draft's own controls, in its
    preview's header now that the thread has no bar. They take the header's
    second row, where a change's Vote and switch would be (a draft has
-   neither): where the draft stands on the left, its one action and Close
-   draft on the right. */
+   neither): where the draft stands on the left, its one action on the
+   right. Discard draft is the title menu's last entry since 24 Nov 2026
+   (.detail-card-menu-end): beside Propose it read as the preview's ×. */
 .staging-draft {
   grid-column: 1 / -1;
   grid-row: 2;
@@ -22275,6 +22282,16 @@ body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-d
 .detail-card-version { display: flex; width: calc(100% - 44px); margin-inline-start: 44px; align-items: baseline; gap: 8px; padding: 6px 10px; border-radius: 10px; text-align: start; font-size: 13px; line-height: 18px; color: var(--text-secondary); }
 .detail-card-version b { flex: none; font-weight: 650; color: var(--text-primary); }
 .detail-card-version span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 24 Nov 2026: after the rows and a hairline, apart from what switches the
+   column, an action on the thing shown: a live draft's Discard draft, in
+   red (DetailPicker's `end`). Where the list holds nothing else (a phone,
+   the whole window) it is the list. */
+.detail-card-menu-end { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--app-sheet-line); }
+.detail-card-menu-end[data-alone] { margin-top: 0; padding-top: 0; border-top: 0; }
+.detail-card-row[data-danger], .detail-card-row[data-danger]:hover { color: var(--state-blocked); }
+.detail-card-row[data-danger]:hover { background: var(--state-blocked-bg); }
+.detail-card-row[data-danger] .detail-card-tile { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.detail-card-row:disabled { opacity: 0.5; pointer-events: none; }
 /* The cards, in the two card looks: the thread's paint, on the page's own
    ground. Beside the thread the column paints nothing and keeps the page's
    gutter; on a phone, where it is the whole screen over the drawer, it is
@@ -22324,12 +22341,77 @@ html #ai-screen[data-ai-preview="full"] .detail-card-body[data-detail-body="desi
 @media (max-width: 767px) {
   .detail-card-scrim { display: block; position: fixed; inset: 0; z-index: 59; background: rgba(0, 0, 0, 0.32); }
 }
-/* A running preview's frame stands over the card's body (its frame never
-   moves: features/staging/placement.ts), so it wears the card's corners. */
+/* THE PREVIEW BESIDE A THREAD (24 Nov 2026). A running preview stands over
+   the card's body (its frame never moves: features/staging/placement.ts),
+   and is drawn as the thread beside it is: two cards on the page's own
+   ground, 12px apart, with nothing painted around them. The head card
+   (.staging-top: the header, its one optional line and How to test's steps)
+   is the thread's title card, its radius, fill, edge and lift; the app's
+   frame is the messages card, clipped to its corners. The thread's tokens
+   are set on the thread (the "IN A PANEL TOO" block), which this overlay is
+   not inside, so they are named here again from the same looks. It used to
+   be one sheet, the header glued to the top of the frame. The whole window
+   and the side panel are as they were (.staging-top has no box there). */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-preview-pane .detail-card-body[data-detail-body="preview"] {
+  background: none;
+  box-shadow: none;
+}
 html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] {
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+  gap: 12px;
   border: 0;
-  border-radius: 20px;
-  box-shadow: var(--detail-card-edge);
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+/* The brand look's thread cards, as `.dev-request` paints them there. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] {
+  --thread-card-look: var(--bl-card);
+  --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-top {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge), 0 10px 24px -14px rgba(17, 24, 39, 0.22);
+}
+/* Inside it the rows paint nothing of their own: the line between two is
+   drawn above the lower one, which shows only when it has something. */
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-top > :is(.staging-head, .staging-context, .staging-steps) {
+  background: none;
+  border-bottom: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-top > :is(.staging-context, .staging-steps) {
+  border-top: 1px solid var(--app-sheet-line);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-body {
+  overflow: hidden;
+  border-radius: var(--thread-card-r);
+  box-shadow: var(--thread-card-edge);
+}
+/* The card's inset edge, drawn again over what fills the card (the frame,
+   the loader, the before and after), which would cover the card's own; it
+   takes no press, so a comment's pin lands in the app beneath. On the mat
+   the frame stands clear of the edge and the card's own shows. */
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"]:not([data-mat]) .staging-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  box-shadow: var(--thread-card-edge);
+  pointer-events: none;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"]:not([data-mat]) #staging-iframe,
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-pin-layer {
+  border-radius: inherit;
 }
 
 /* ── The AI tab on a phone, as a drawer (features/ai/phone-drawer.tsx) ──

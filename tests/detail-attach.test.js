@@ -95,7 +95,7 @@ test('beside a thread on the bot tab the column is cards: a head card with the p
   assert.match(card, /if \(entry\.kind === 'preview'\) return <div className="detail-card" data-detail-card=\{entry\.kind\}>\{body\}<\/div>;/);
   const overlay = read('frontend/src/features/staging/staging-overlay.tsx');
   assert.match(overlay, /const pickHere = placement === 'column' && detail\?\.kind === 'preview' && !!detail\.owner;/);
-  assert.match(overlay, /<DetailPicker entry=\{detail\} label=\{\{ title: title \|\| fallback, line: state\.appName \|\| null \}\} className="staging-titles staging-pick" anchor=\{headRef\}>/);
+  assert.match(overlay, /<DetailPicker entry=\{pickHere && detail \? detail : null\} label=\{\{ title: title \|\| fallback, line: state\.appName \|\| null \}\} className="staging-titles staging-pick" anchor=\{headRef\} end=\{draftActs\.discardItem\}>/);
   // The list is drawn at the top of the page, over the preview's frame.
   assert.match(card, /createPortal\(\n\s+<div\n\s+ref=\{list\}\n\s+className="detail-card-menu"/);
   assert.match(read('public/css/app.css'), /\.detail-card-menu \{ position: fixed; z-index: 60;/);
@@ -105,6 +105,33 @@ test('beside a thread on the bot tab the column is cards: a head card with the p
   const css = read('public/css/app.css');
   assert.match(css, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-preview-pane:has\(> \.detail-card\) \{\n  background: none;\n  border: 0;/);
   assert.match(css, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) #ai-screen \.ai-preview-pane :is\(\.detail-card-head, \.detail-card-body\) \{\n  border-radius: 20px;/);
+});
+
+test('a running preview beside a thread is two cards, as the thread is: a head card and the app\'s frame', () => {
+  const css = read('public/css/app.css');
+  const overlay = read('frontend/src/features/staging/staging-overlay.tsx');
+  // The header, its one line and How to test's steps are one box, which has
+  // no box of its own anywhere but beside a thread.
+  assert.match(overlay, /<div className="staging-top">\s*\{\/\*[\s\S]*?\*\/\}\s*<div ref=\{headRef\} className="staging-chrome-bar staging-head shrink-0">/);
+  assert.match(overlay, /<\/div>\n      <\/div>\n      <div className="staging-body relative flex-1">/, 'the steps are the last thing in it, the frame is not');
+  assert.match(css, /\n\.staging-top \{ display: contents; \}\n/);
+  const col = 'html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"]';
+  const rule = (sel) => {
+    const at = css.indexOf(`${sel} {\n`);
+    assert.ok(at >= 0, `no rule for ${sel}`);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  // The pane paints nothing; the cards are 12px apart on the page's ground.
+  assert.match(rule(col), /gap: 12px;[\s\S]*background: none;\n  box-shadow: none;\n  overflow: visible;/);
+  assert.match(rule('html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-preview-pane .detail-card-body[data-detail-body="preview"]'), /background: none;\n  box-shadow: none;/);
+  // The thread's own tokens, named on the overlay, which is not in the thread.
+  assert.match(rule(col), /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
+  assert.match(rule(col), /--thread-card-r: 20px;/);
+  // The head card is the thread's title card; the frame is its messages card.
+  assert.match(rule(`${col} .staging-top`), /border-radius: var\(--thread-card-r\);\n  background: var\(--thread-card\);\n  box-shadow: var\(--thread-card-edge\), 0 10px 24px -14px rgba\(17, 24, 39, 0\.22\);/);
+  assert.match(rule(`${col} .staging-body`), /overflow: hidden;\n  border-radius: var\(--thread-card-r\);\n  box-shadow: var\(--thread-card-edge\);/);
+  // Its edge is drawn over the frame too, and takes no press: a pin lands in the app.
+  assert.match(rule(`${col}:not([data-mat]) .staging-body::after`), /box-shadow: var\(--thread-card-edge\);\n  pointer-events: none;/);
 });
 
 test('a preview reopened from its address before the page knew its thread is claimed by it, not closed', () => {

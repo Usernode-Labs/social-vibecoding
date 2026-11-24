@@ -6212,8 +6212,16 @@
     "description": "The Propose button's words on a thread's live draft bar while the draft is being put up for a vote."
   },
   "liveDraft.close": {
-    "text": "Close draft",
-    "description": "A button on a thread's live draft bar: puts the draft away without proposing it."
+    "text": "Discard draft",
+    "description": "Confirm button of the question asked before a live draft is discarded (\"Discard this draft?\"): ends the draft and stops its live preview. A draft already up for a vote keeps its proposal."
+  },
+  "liveDraft.discard": {
+    "text": "Discard draft",
+    "description": "Last entry, drawn in red, of the menu under a live draft's preview title: ends the draft and stops its live preview, after asking first. Not the preview's ×, which only hides the preview and leaves the draft open."
+  },
+  "liveDraft.menu": {
+    "text": "{{title}}: draft options",
+    "description": "Screen-reader name of the title button of a live draft's preview where its menu holds only Discard draft (on a phone, and in the whole window). {{title}} is the preview's title."
   },
   "liveDraft.error": {
     "text": "That didn't work. Try again in a moment.",
@@ -6249,7 +6257,7 @@
   },
   "liveDraft.controls": {
     "text": "Live draft",
-    "description": "Accessible name of the group of a live draft's controls (its status, Propose or Update proposal, and Close draft) in the header of its running preview."
+    "description": "Accessible name of the group of a live draft's controls (its status, and Propose or Update proposal) in the header of its running preview."
   },
   "liveDraft.head.starting": {
     "text": "Starting the preview",
@@ -6300,8 +6308,8 @@
     "description": "Tooltip of the Update proposal button of a live draft: what updating the proposal does."
   },
   "liveDraft.closeConfirm.title": {
-    "text": "Close this draft?",
-    "description": "Title of the confirmation asked before a live draft is closed from its preview's header."
+    "text": "Discard this draft?",
+    "description": "Title of the confirmation asked before a live draft is discarded with Discard draft, in the menu under its preview's title."
   },
   "liveDraft.closeConfirm.open": {
     "text": "Its live preview stops, and nothing in it is proposed.",

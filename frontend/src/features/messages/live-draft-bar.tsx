@@ -10,10 +10,15 @@
  * thread's opening card, are gone. What they held is where the draft is
  * looked at:
  *
- *   - Propose (Update proposal once it is up for a vote) and Close draft are
- *     in the preview's own header, beside its ×, with one short line saying
- *     where the draft stands (LiveDraftControls, drawn by
- *     ../staging/staging-overlay.tsx while the preview shown is this draft's);
+ *   - Propose (Update proposal once it is up for a vote) is in the preview's
+ *     own header, beside its ×, with one short line saying where the draft
+ *     stands (LiveDraftControls, drawn by ../staging/staging-overlay.tsx
+ *     while the preview shown is this draft's);
+ *   - Discard draft is the last entry of the menu under the preview's title
+ *     (useLiveDraftActs' `discardItem`, drawn by ../detail/detail-card.tsx
+ *     DetailPicker). Until 24 Nov 2026 it was "Close draft", a button beside
+ *     Propose that people read as the ×: the × only hides the preview, and
+ *     the draft stays open; this ends it;
  *   - showing the preview again is the thread head's Artifacts button
  *     (./index.tsx), whose column lists the draft as "Live preview of <app>"
  *     (../detail/detail-card.tsx).
@@ -253,40 +258,49 @@ export function LiveDraftWatch({ rootId, onDraft }: { rootId: number; onDraft?: 
   return null;
 }
 
+/** What a live draft's preview can do to it: Propose or Update proposal, and Discard draft. */
+export interface LiveDraftActs {
+  busy: 'propose' | 'update' | 'close' | null;
+  /** Why the last of them failed, said on the header's line. */
+  error: string | null;
+  act: (what: 'propose' | 'update') => Promise<void>;
+  /** Asks first, then ends the draft (POST /api/live-drafts/:id/close). */
+  discard: () => Promise<void>;
+  /**
+   * Discard draft as the title menu's last entry (DetailPicker's `end`), or
+   * null when the preview is not a draft's. `alone` names the title's button
+   * where the menu holds nothing else: on a phone, and in the whole window.
+   */
+  discardItem: { label: string; alone: (title: string) => string; danger: true; disabled: boolean; onSelect: () => void; data: Record<string, string> } | null;
+}
+
 /**
- * G: a live draft's own controls in its preview's header, beside its ×: one
- * short line saying where the draft stands, Propose (Update proposal once it
- * is up for a vote with changes not in it yet), and Close draft, which asks
- * first. Drawn by ../staging/staging-overlay.tsx only while the preview shown
- * is this draft's.
+ * The actions of the draft a preview shows, held once for its header: the
+ * header's line and its button (LiveDraftControls) and the title menu's
+ * Discard draft read the same busy and error.
  */
-export function LiveDraftControls({ draft }: { draft: LiveDraft | null }): ReactNode {
+export function useLiveDraftActs(draft: LiveDraft | null): LiveDraftActs {
   const t = useMessages('messages');
-  const [busy, setBusy] = useState<'propose' | 'update' | 'close' | null>(null);
+  const [busy, setBusy] = useState<LiveDraftActs['busy']>(null);
   const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
   useEffect(() => { setError(null); }, [draft?.id]);
-  // Not a live draft's preview: nothing.
-  if (!draft) return null;
 
-  const line = draftHeadLine(draft);
-  const action = draftAction(draft);
-  const settle = (next: LiveDraft | null | undefined) => {
-    if (next) noteDraft(next, draft.sessionId);
-  };
   const failed = (err: any) => {
     if (alive.current) setError(err?.said || t('messages:liveDraft.error'));
   };
   const act = async (what: 'propose' | 'update') => {
+    if (!draft) return;
     setBusy(what);
     setError(null);
     try {
       const out = await call<{ draft: LiveDraft }>(`/api/live-drafts/${draft.id}/${what}`, { method: 'POST', body: '{}' });
-      settle(out?.draft);
+      if (out?.draft) noteDraft(out.draft, draft.sessionId);
     } catch (err) { failed(err); } finally { if (alive.current) setBusy(null); }
   };
-  const close = async () => {
+  const discard = async () => {
+    if (!draft) return;
     const ok = await confirmAction({
       title: t('messages:liveDraft.closeConfirm.title'),
       message: draft.state === 'proposed'
@@ -305,6 +319,33 @@ export function LiveDraftControls({ draft }: { draft: LiveDraft | null }): React
       if (stagingStore.get().open) (window as any).AppView?.closeStagingOverlay?.();
     } catch (err) { failed(err); } finally { if (alive.current) setBusy(null); }
   };
+  const discardItem = draft ? {
+    label: t('messages:liveDraft.discard'),
+    alone: (title: string) => t('messages:liveDraft.menu', { title }),
+    danger: true as const,
+    disabled: busy === 'close',
+    onSelect: () => { void discard(); },
+    data: { 'data-live-draft-close': '' },
+  } : null;
+  return { busy, error, act, discard, discardItem };
+}
+
+/**
+ * G: a live draft's own controls in its preview's header, beside its ×: one
+ * short line saying where the draft stands, and Propose (Update proposal
+ * once it is up for a vote with changes not in it yet). Discard draft is not
+ * here: it is the title menu's last entry (useLiveDraftActs). Drawn by
+ * ../staging/staging-overlay.tsx only while the preview shown is this
+ * draft's, with the actions it holds for the header.
+ */
+export function LiveDraftControls({ draft, acts }: { draft: LiveDraft | null; acts?: LiveDraftActs }): ReactNode {
+  const t = useMessages('messages');
+  // Not a live draft's preview: nothing.
+  if (!draft || !acts) return null;
+
+  const { busy, error, act } = acts;
+  const line = draftHeadLine(draft);
+  const action = draftAction(draft);
 
   return (
     <span className="staging-draft" data-live-draft={draft.id} data-live-draft-state={draft.live || ''} role="group"
@@ -326,10 +367,6 @@ export function LiveDraftControls({ draft }: { draft: LiveDraft | null }): React
           {busy === 'update' ? t('messages:liveDraft.updating') : t('messages:liveDraft.update')}
         </button>
       ) : null}
-      <button type="button" className="staging-draft-quiet" data-live-draft-close=""
-        disabled={busy === 'close'} onClick={() => void close()}>
-        {t('messages:liveDraft.close')}
-      </button>
     </span>
   );
 }

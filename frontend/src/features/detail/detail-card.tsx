@@ -23,7 +23,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { createPortal } from 'react-dom';
 
 import {
-  AppWindowIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, DescriptionIcon, PencilSquareIcon, PhotoIcon, PlayIcon, XIcon,
+  AppWindowIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, DescriptionIcon, DraftTrashIcon, PencilSquareIcon, PhotoIcon, PlayIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -149,20 +149,40 @@ export function threadHasArtifacts(design: Pick<DesignThread, 'latest' | 'artifa
 }
 
 /**
+ * One action after the list, set apart from the rows that switch what shows
+ * (24 Nov 2026): a live draft's Discard draft (../messages/live-draft-bar.tsx
+ * useLiveDraftActs). `alone` names the button when it is all the list holds.
+ */
+export interface PickerEnd {
+  label: string;
+  /** The button's name, from what shows now. */
+  alone: (title: string) => string;
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+  /** Its data-* hook, for the checks that find it. */
+  data?: Record<string, string>;
+}
+
+/**
  * The picker (20 Nov 2026): what shows now, as a button, and the list of
  * everything this thread can show here. The list is drawn at the top of the
  * page, under its anchor, so nothing beside it covers it: a running
  * preview's frame stands over the column, above the column's own layers.
  * Drawn in the head card, and in a running preview's own bar, which is that
- * preview's head (../staging/staging-overlay.tsx).
+ * preview's head (../staging/staging-overlay.tsx). With no entry (a live
+ * draft's preview in the whole window, as on a phone) the list is its `end`
+ * alone.
  */
-export function DetailPicker({ entry, label, className, anchor, children }: {
-  entry: DetailEntry;
+export function DetailPicker({ entry, label, className, anchor, end = null, children }: {
+  entry: DetailEntry | null;
   /** What shows now, for the button's name and its row in the list. */
   label: DetailLabel | null;
   className: string;
   /** What the list hangs under: the head card, or the preview's bar. */
   anchor?: RefObject<HTMLElement | null>;
+  /** The action after the list (PickerEnd). */
+  end?: PickerEnd | null;
   children: ReactNode;
 }): ReactNode {
   const t = useMessages('messages');
@@ -170,20 +190,21 @@ export function DetailPicker({ entry, label, className, anchor, children }: {
   const [at, setAt] = useState<{ start: number; top: number; width: number; rtl: boolean } | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  useEffect(() => { setMenu(false); }, [entry.seq]);
-  useEffect(() => { if (label) noteDetailLabel(entry, label); }, [entry, label]);
-  const has = useThreadHas(entry.owner, entry.seq, entry.kind === 'design' ? entry.ref.artifactId ?? null : null);
-  const rows = useMemo(() => pickRows(entry, has, t), [entry, has, t, label]);
+  useEffect(() => { setMenu(false); }, [entry?.seq]);
+  useEffect(() => { if (entry && label) noteDetailLabel(entry, label); }, [entry, label]);
+  const has = useThreadHas(entry?.owner ?? null, entry?.seq ?? 0, entry?.kind === 'design' ? entry.ref.artifactId ?? null : null);
+  const rows = useMemo(() => (entry ? pickRows(entry, has, t) : []), [entry, has, t, label]);
 
   // Under its anchor's start edge, as wide as it up to 420px, kept there as
-  // the window moves.
+  // the window moves; 12px clear of the window's edge, where the anchor
+  // touches it (a preview's bar in the whole window, as on a phone).
   useLayoutEffect(() => {
     if (!menu) return undefined;
     const place = () => {
       const box = (anchor?.current || trigger.current)?.getBoundingClientRect();
       if (!box) return;
       const rtl = document.documentElement.dir === 'rtl';
-      setAt({ start: rtl ? window.innerWidth - box.right : box.left, top: box.bottom + 8, width: Math.min(420, box.width), rtl });
+      setAt({ start: Math.max(12, rtl ? window.innerWidth - box.right : box.left), top: box.bottom + 8, width: Math.min(420, box.width), rtl });
     };
     place();
     window.addEventListener('resize', place);
@@ -215,7 +236,7 @@ export function DetailPicker({ entry, label, className, anchor, children }: {
   }, [menu]);
 
   const choose = (open: () => void) => { setMenu(false); open(); };
-  const title = label?.title || t(KIND_WORD[entry.kind]);
+  const title = label?.title || (entry ? t(KIND_WORD[entry.kind]) : '');
   return (
     <>
       <button
@@ -224,7 +245,7 @@ export function DetailPicker({ entry, label, className, anchor, children }: {
         className={className}
         aria-haspopup="menu"
         aria-expanded={menu}
-        aria-label={t('messages:detail.picker.label', { title })}
+        aria-label={rows.length || !end ? t('messages:detail.picker.label', { title }) : end.alone(title)}
         onClick={() => setMenu((open) => !open)}
         data-detail-picker=""
       >
@@ -242,7 +263,7 @@ export function DetailPicker({ entry, label, className, anchor, children }: {
           style={at.rtl ? { right: at.start, top: at.top, width: at.width } : { left: at.start, top: at.top, width: at.width }}
           data-detail-menu=""
         >
-          <div className="detail-card-menu-head">{t('messages:detail.picker.section')}</div>
+          {rows.length ? <div className="detail-card-menu-head">{t('messages:detail.picker.section')}</div> : null}
           {rows.map((row) => {
             const RowGlyph = GLYPH[row.kind];
             return (
@@ -281,6 +302,24 @@ export function DetailPicker({ entry, label, className, anchor, children }: {
               </div>
             );
           })}
+          {/* After a hairline, apart from the rows that switch what shows:
+              it does something to the thing shown (a draft's Discard draft). */}
+          {end ? (
+            <div className="detail-card-menu-end" data-alone={rows.length ? undefined : ''}>
+              <button
+                type="button"
+                role="menuitem"
+                className="detail-card-row"
+                data-danger={end.danger ? '' : undefined}
+                disabled={end.disabled}
+                onClick={() => choose(end.onSelect)}
+                {...end.data}
+              >
+                <span className="detail-card-tile" aria-hidden="true"><DraftTrashIcon className="h-4 w-4" /></span>
+                <span className="min-w-0 flex-1"><b>{end.label}</b></span>
+              </button>
+            </div>
+          ) : null}
         </div>,
         document.body,
       ) : null}
