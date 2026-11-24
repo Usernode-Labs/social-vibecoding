@@ -237,3 +237,9 @@ test('the one entry runs each kind on its surface, and the callers use it', asyn
   assert.match(dm, /kind: require\('\.\/bot-profiles'\)\.kindInChat\(turnDeps\)/);
   assert.match(read('src/workflow/bot-voice/services.ts'), /legacy\('services\/thread-bot'\)\.answer\(pool, config, \{\s+kind: legacy\('services\/bot-profiles'\)\.kindOfPlace\(input\.place\)/);
 });
+
+test('24 Nov 2026: a draft turn reads where its preview stands three times at most, and has the history tools', () => {
+  assert.equal(profiles.DRAFT_LIMITS.statusPerTurn, 3);
+  assert.equal(require('../src/services/live-draft-bot').MAX_STATUS, profiles.DRAFT_LIMITS.statusPerTurn);
+  for (const name of ['preview_status', 'draft_changes']) assert.ok(profiles.DRAFT_TOOLS.includes(name), name);
+});
