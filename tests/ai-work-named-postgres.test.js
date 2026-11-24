@@ -221,9 +221,10 @@ test('mobile 04: every thread you are in, and being named, against the full sche
   assert.equal(await mentions.dismiss(pool, { userId: bob.id, threadId: thread15 }), true);
   assert.equal((await pool.query('SELECT 1 FROM thread_mention_dismissals WHERE thread_id = $1', [thread15])).rows.length, 2,
     'one row each');
-  // A later @ brings it back, and pressing Dismiss again is one row still.
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  await name_(bob, 15);
+  // A later @ brings it back (written a second after the dismiss, so the
+  // order does not hang on the clock), and pressing Dismiss again is one row
+  // still.
+  await name_(bob, 15, new Date(Date.now() + 1000));
   w = await work();
   assert.ok(named(w, 'Asked a question'), 'a new @ after a dismiss starts it again');
   await mentions.dismiss(pool, { userId: ada.id, threadId: thread15 });
