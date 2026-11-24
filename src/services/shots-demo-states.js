@@ -75,6 +75,10 @@ const IDS = Object.freeze({
   updateRunningProposal: 990884,
   approvedSyncingProposal: 990885,
   voteAfterUpdateProposal: 990886,
+  // 24 Nov 2026 (#7067): a request of the member's with an open vote to
+  // close it, and the close_issue proposal itself.
+  closeVoteRequest: 990887,
+  closeVoteProposal: 990888,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -206,6 +210,7 @@ const TAKEN_SQL = Object.freeze({
   challenges: 'SELECT COUNT(*)::int AS taken FROM challenges WHERE id = ANY($1::bigint[])',
   apps: 'SELECT COUNT(*)::int AS taken FROM apps WHERE id = ANY($1::bigint[])',
   conversations: 'SELECT COUNT(*)::int AS taken FROM conversations WHERE id = ANY($1::bigint[])',
+  issues: 'SELECT COUNT(*)::int AS taken FROM issues WHERE id = ANY($1::bigint[])',
 });
 async function idsFree(client, table, ids) {
   const { rows } = await client.query(TAKEN_SQL[table], [ids]);
@@ -2206,6 +2211,74 @@ const STATES = [
           { state: 'Homeroom bot\'s tab: the same change under its vote group, saying Vote.',
             path: '/#homeroom-bot' },
         ],
+      };
+    },
+  },
+  {
+    // 24 Nov 2026 (#7067): a request of the member's with an open vote to
+    // close it, and a decision page's open Yes and No card. A copy has no
+    // GitHub, so the staging mocks are its only requests, and none carries a
+    // close vote. The request is the member's (their thread comes with it)
+    // and the vote is the staging seeds' #general demo account's, as a
+    // person's vote to close is (routes/issues.js): the member is asked to
+    // vote, not shown their own proposal. Nobody has voted, so the tally is
+    // 0 and both Yes and No are offered. With no votes the gate is never
+    // met, so nothing closes it; the thread trigger joins the proposal to
+    // the request's thread. No message is written into the request's
+    // discussion: the card does not need one.
+    id: 'shots-demo-member-request-close-vote-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username'],
+      requests: ['app_id', 'number', 'title', 'body', 'created_by', 'created_at', 'updated_at', 'thread_id'],
+      threads: ['id', 'app_id', 'number'],
+      issues: ['id', 'app_id', 'title', 'description', 'kind', 'payload', 'status', 'created_by', 'created_at',
+        'thread_id'],
+      issue_votes: ['issue_id', 'user_id', 'vote'],
+    },
+    free: async (client, ctx) => {
+      const maker = await client.query('SELECT 1 FROM users WHERE username = $1', [APPROVED_APP_MAKER]);
+      if (maker.rowCount !== 1) return false;
+      const taken = await client.query(
+        `SELECT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)
+             OR EXISTS (SELECT 1 FROM threads WHERE app_id = $1 AND number = $2) AS taken`,
+        [ctx.appId, IDS.closeVoteRequest]
+      );
+      if (taken.rows[0].taken) return false;
+      const closeRow = await client.query(
+        `SELECT 1 FROM issues
+          WHERE app_id = $1 AND kind = 'close_issue' AND payload->>'issueNumber' = $2`,
+        [ctx.appId, String(IDS.closeVoteRequest)]
+      );
+      return closeRow.rowCount === 0 && await idsFree(client, 'issues', [IDS.closeVoteProposal]);
+    },
+    async install(client, ctx) {
+      const maker = (await client.query('SELECT id FROM users WHERE username = $1', [APPROVED_APP_MAKER])).rows[0];
+      if (!maker) throw new Error('The close vote lost its proposer.');
+      const number = IDS.closeVoteRequest;
+      const title = '[shots fixture] Remember the last tab I opened';
+      const reason = '[shots fixture] It already remembers the tab since the menu rework.';
+      await client.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+         VALUES ($1, $2, $3, 'A demo request: obviously fake.', $4,
+                 NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days')`,
+        [ctx.appId, number, title, ctx.member.id]
+      );
+      // As routes/issues.js makes a close proposal: the target lives only in
+      // the payload, never in github_issue_number, and the title says what
+      // it closes. The thread trigger joins it to the request's thread.
+      await client.query(
+        `INSERT INTO issues (id, app_id, github_issue_number, title, description, kind, payload, status,
+                             created_by, created_at)
+         VALUES ($1, $2, NULL, $3, $4, 'close_issue', $5::jsonb, 'open', $6, NOW() - INTERVAL '20 minutes')`,
+        [IDS.closeVoteProposal, ctx.appId, `Close issue #${number}: "${title}"`.slice(0, 512), reason,
+          JSON.stringify({ issueNumber: number, issueTitle: title, reason }), maker.id]
+      );
+      return {
+        shows: [{
+          state: `Your request #${number} on Homeroom, with an open vote to close it that ${APPROVED_APP_MAKER} proposed: its reason, Votes at 0 yes, and Yes and No for you to press.`,
+          path: `/#app/${ctx.selfAppSlug}/dev/issues/${number}`,
+        }],
       };
     },
   },

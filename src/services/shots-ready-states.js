@@ -103,6 +103,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-approved-syncing-v1', 'an approved change catching up with main', ['member']],
   ['shots-demo-member-vote-after-update-v1', 'a change back up for a vote once its update has landed', ['member']],
+  // 24 Nov 2026 (#7067): a request with an open vote to close it, on its page.
+  ['shots-demo-member-request-close-vote-v1', 'a request with an open vote to close it', ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when
@@ -174,6 +176,14 @@ const NEEDS = Object.freeze([
     needs: 'a request nobody has picked up (Not moving)',
     test: /\bnot moving\b|\bnobody (?:has )?(?:picked|started) (?:it |them )?up\b|\bnot picked up\b/i,
     states: ['shots-demo-member-request-not-moving-v1'],
+  },
+  {
+    // 24 Nov 2026 (#7067): a request with an open vote to close it, drawn on
+    // its page's Yes and No card. "offer to close" is the bot's own offer
+    // (shots-demo-member-bot-close-offer-v1), not this.
+    needs: 'a request with an open vote to close it',
+    test: /\b(?:vote to close|close vote|proposal to close|proposed closing)\b/i,
+    states: ['shots-demo-member-request-close-vote-v1'],
   },
   {
     needs: 'a change whose votes are in while its checks still run',

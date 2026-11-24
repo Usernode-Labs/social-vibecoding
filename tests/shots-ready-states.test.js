@@ -301,6 +301,17 @@ test('a change whose steps wait for a model\'s reply is warned about whatever se
     /Nothing on them answers with a model: they have no model key, so seed a reply as the stored message rather than asking for it\.$/);
 });
 
+// 24 Nov 2026 (#7067): a request with an open vote to close it, drawn on its
+// page's Yes and No card, is ready-made for the member.
+test('a request with an open vote to close it is ready-made for the member', () => {
+  const held = declare(story('close-vote', 'A request with an open vote to close it shows Yes and No.'));
+  assert.deepEqual(warned(held, true), [], 'the new state holds it');
+  const needs = warned(held, false).map((w) => w.split(' to need ')[1].split(', and ')[0]);
+  assert.deepEqual(needs, ['a request with an open vote to close it']);
+  // "offer to close" is the bot's own offer, which a different state holds.
+  assert.deepEqual(warned(declare(story('offer', 'Homeroom bot\'s offer to close a request shows its buttons.')), true), []);
+});
+
 // The same advice, wherever an author reads how to declare: a state new in
 // the proposal is seeded in it, a seed holds fixture accounts' and fake
 // people's rows (never a signal the code reads), a reply is seeded as

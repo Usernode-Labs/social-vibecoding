@@ -539,7 +539,11 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(after.length, messages.length, 'no message under the card');
   const settled = after.find((m) => m.id === offered.id).metadata.homeroomBot.outcome;
   assert.deepEqual([settled.state, settled.text], ['failed', 'I couldn\'t propose closing it just now. Try again in a minute.']);
-  assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
+  // 24 Nov 2026 (#7067): the close-vote state holds its own close proposal
+  // for request 990887, so this counts the offer's target alone.
+  assert.equal((await pool.query(
+    `SELECT COUNT(*)::int AS n FROM issues
+      WHERE kind = 'close_issue' AND payload->>'issueNumber' = '900001'`)).rows[0].n, 0);
 
   // Second to last in the same chat, the bot's drafted request (#4605):
   // quoting the member's message that asked for one, with the words,
@@ -817,6 +821,29 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.ok(stillRow, 'the request nobody picked up is listed under Waiting');
   assert.deepEqual([stillRow.work.stage, stillRow.work.line?.code], ['reading', 'waiting'], 'the rows Not moving folds');
   assert.equal(stillRow.href, `#app/${SLUG}/dev/issues/900013`);
+  // 24 Nov 2026 (#7067): a request with an open vote to close it, read the
+  // way its page draws it. The proposal is on the request's own thread as a
+  // close item, open, with the proposer's reason, and the member has not
+  // voted, so both Yes and No are offered. The request and the proposal share
+  // the thread, and no vote exists on it.
+  const threads = require('../src/services/threads');
+  const { rows: [{ id: selfAppId }] } = await pool.query('SELECT id FROM apps WHERE slug = $1', [SLUG]);
+  const closeThread = await threads.threadForNumber(pool, { appId: selfAppId, number: demoStates.IDS.closeVoteRequest });
+  const closePage = await threads.threadPage(pool, { thread: closeThread, viewerId: member });
+  const closeItem = closePage.items.find((item) => item.type === 'close'
+    && item.id === demoStates.IDS.closeVoteProposal);
+  assert.ok(closeItem, 'the vote to close is on the request\'s thread');
+  assert.deepEqual([closeItem.status, closeItem.target, closeItem.myVote],
+    ['open', demoStates.IDS.closeVoteRequest, null]);
+  assert.equal(closeItem.reason, '[shots fixture] It already remembers the tab since the menu rework.');
+  assert.equal(closeItem.by, 'staging-demo-general-lin');
+  const { rows: [shared] } = await pool.query(
+    `SELECT r.thread_id = i.thread_id AS same, i.github_issue_number,
+            (SELECT COUNT(*)::int FROM issue_votes v WHERE v.issue_id = i.id) AS votes
+       FROM requests r JOIN issues i ON i.id = $2
+      WHERE r.app_id = $1 AND r.number = $3`,
+    [selfAppId, demoStates.IDS.closeVoteProposal, demoStates.IDS.closeVoteRequest]);
+  assert.deepEqual(shared, { same: true, github_issue_number: null, votes: 0 });
   const approvedRow = tab.waiting.find((row) => row.app?.slug === 'shots-demo-choir');
   assert.ok(approvedRow, 'the approved change is listed under Waiting');
   assert.deepEqual([approvedRow.kind, approvedRow.work.stage, approvedRow.work.line?.code],
