@@ -1090,5 +1090,49 @@
   "projects.empty": {
     "text": "Your projects will appear here when your first change goes live.",
     "description": "Empty state for projects with recently merged changes on the profile."
+  },
+  "preferences.title": {
+    "text": "Preferences",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "preferences.appearance": {
+    "text": "Appearance",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "preferences.privacy": {
+    "text": "Privacy",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.label": {
+    "text": "Profile sections",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.projects": {
+    "text": "Projects",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.changes": {
+    "text": "Changes",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.requests": {
+    "text": "Requests",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.votes": {
+    "text": "Votes",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "sections.activity": {
+    "text": "Activity",
+    "description": "Label in the standard profile’s preferences card or section navigation."
+  },
+  "recent.title": {
+    "text": "Recent activity",
+    "description": "Heading above the profile’s recently merged changes."
+  },
+  "recent.all": {
+    "text": "View all activity",
+    "description": "Link from the profile’s recent activity to the full changes history."
   }
 }

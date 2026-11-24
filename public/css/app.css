@@ -10901,20 +10901,33 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
    window's width beside the list of pages. PROFILE opens on who you are,
    across the page: a larger picture, the name in the serif, the facts and
    the bio, Edit profile, then your figures as one strip.
-   The serif is the shipped variable Source Serif 4, at weight 600,
+   The serif is the shipped variable Source Serif 4, at weight 460,
    matching the strong headings in the profile and settings references. The sky is the
    brand's own picture (public/brand/bg/sky.webp), under a veil of the
    page's colour so the words on it read in light and in dark.
    EVERY VALUE IS A TOKEN, --ed-*, declared once here in light and dark. */
 html:not([data-skin]) {
+  --ed-ground: #fffcf3;
+  --ed-ink: #000000;
+  --ed-muted: rgb(0 0 0 / 0.68);
+  --ed-field: #fffcf3;
+  --ed-sun: #ffee6f;
+  --ed-button-ink: #000000;
+  --ed-button-line: rgb(0 0 0 / 0.6);
+  --ed-stars: url('/brand/bg/stars.webp');
+  --ed-grass: url('/brand/editorial/grass-cut.webp');
+  --ed-page-veil: linear-gradient(180deg, rgb(255 252 243 / 0.02), rgb(255 252 243 / 0.7) 11rem, #fffcf3 17rem);
+  --ed-card-veil: linear-gradient(180deg, rgb(255 253 246 / 0.2), #fffdf6 68%);
+  --ed-green-card: linear-gradient(180deg, #e0f0d6, #fffdf6 68%);
+  --ed-yellow-card: linear-gradient(180deg, #fff4c8, #fffdf6 68%);
   --ed-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
   --ed-title-size: 3rem;       /* the page's name on the sky */
   --ed-title-size-phone: 1.75rem;
   --ed-page-size: 1.5rem;         /* a Settings page's own name, over its cards */
-  --ed-head-size: 1.75rem;        /* a card's heading */
+  --ed-head-size: 1.5rem;        /* a card's heading */
   --ed-head-size-phone: 1.125rem;
   --ed-lede-size: 1rem;           /* the sentence under the page's name */
-  --ed-paper: #fffdf4;            /* a card: warm paper */
+  --ed-paper: #fffdf6;            /* a card: warm paper */
   --ed-line: rgb(18 26 14 / 0.16);/* its one thin outline */
   --ed-rule: rgb(18 26 14 / 0.1); /* a rule inside a card */
   --ed-well: rgb(18 26 14 / 0.035); /* a row of its own inside a card */
@@ -10931,7 +10944,7 @@ html:not([data-skin]) {
   --ed-sky-h-phone: 6.5rem;
   --ed-lit-bg: #dcecc4;           /* the page you are on, in the list: the brand's green */
   --ed-lit-ink: #121a0e;
-  --ed-face: 11.5rem;                /* your picture at the head of Profile */
+  --ed-face: 11rem;                /* your picture at the head of Profile */
   --ed-face-phone: 4.5rem;
   --ed-face-gap: 0.875rem;        /* between the band's foot and the words beside the picture */
   --ed-face-ring: 0 0 0 3px var(--ed-paper), 0 0 0 4px var(--ed-line);
@@ -10941,6 +10954,15 @@ html:not([data-skin]) {
   --ed-stat-bg: rgb(255 238 111 / 0.3); /* the strip: the sun, thinned */
 }
 html:not([data-skin]).dark {
+  --ed-ground: #10100f;
+  --ed-ink: #fffeea;
+  --ed-muted: rgb(255 254 234 / 0.7);
+  --ed-field: #1c1c19;
+  --ed-page-veil: linear-gradient(180deg, rgb(16 16 15 / 0.65), #10100f 17rem);
+  --ed-card-veil: linear-gradient(180deg, rgb(16 16 15 / 0.45), #171715 68%);
+  --ed-green-card: linear-gradient(180deg, #263222, #171715 68%);
+  --ed-yellow-card: linear-gradient(180deg, #34301d, #171715 68%);
+
   --ed-paper: var(--wip-card-bg);
   --ed-line: rgb(255 254 234 / 0.18);
   --ed-rule: rgb(255 254 234 / 0.1);
@@ -10974,7 +10996,7 @@ html:not([data-skin]) #settings-root .settings-frame-title {
   color: var(--ed-sky-ink);
   font-family: var(--ed-serif);
   font-size: var(--ed-title-size);
-  font-weight: 600;
+  font-weight: 460;
   line-height: 1.1;
   letter-spacing: -0.01em;
 }
@@ -11049,7 +11071,7 @@ html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.h
 html:not([data-skin]) #settings-section-content h3 {
   font-family: var(--ed-serif);
   font-size: var(--ed-head-size);
-  font-weight: 600;
+  font-weight: 460;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -11057,7 +11079,7 @@ html:not([data-skin]) #settings-section-content > .settings-page-title {
   margin-bottom: var(--ed-gap);
   font-family: var(--ed-serif);
   font-size: var(--ed-page-size);
-  font-weight: 600;
+  font-weight: 460;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -11120,7 +11142,7 @@ html:not([data-skin]) #profile-identity-card .profile-id-name {
   color: var(--ed-sky-ink);
   font-family: var(--ed-serif);
   font-size: var(--ed-name-size-phone);
-  font-weight: 600;
+  font-weight: 460;
   line-height: 1.15;
 }
 html:not([data-skin]) #profile-identity-card .profile-id-sub { color: var(--ed-sky-ink-soft); line-height: 1.6; }
@@ -11152,7 +11174,7 @@ html:not([data-skin]) #profile-stats > [data-profile-stat]:not(.hidden) ~ [data-
 html:not([data-skin]) #profile-stats > [data-profile-stat] > :first-child {
   font-family: var(--ed-serif);
   font-size: var(--ed-stat-size);
-  font-weight: 600;
+  font-weight: 460;
 }
 /* The cards under them are paper, and a group's name is a serif heading. */
 html:not([data-skin]) #profile-root :is(#profile-activity, section[id^="profile-"] > .ui-glist) {
@@ -11163,7 +11185,7 @@ html:not([data-skin]) #profile-root :is(section[id^="profile-"] > h2, #profile-a
   color: var(--wip-ink);
   font-family: var(--ed-serif);
   font-size: var(--ed-head-size);
-  font-weight: 600;
+  font-weight: 460;
   letter-spacing: 0;
   line-height: 1.2;
   text-transform: none;
@@ -11178,7 +11200,7 @@ html:not([data-skin]) #profile-root #public-profile-card {
 html:not([data-skin]) #public-profile-card h2 {
   font-family: var(--ed-serif);
   font-size: var(--ed-name-size-phone);
-  font-weight: 600;
+  font-weight: 460;
   line-height: 1.15;
 }
 /* A real editor and preferences beside work, as in the profile reference. */
@@ -11192,7 +11214,7 @@ html:not([data-skin]) #profile-root .profile-details-card {
 html:not([data-skin]) #profile-details h2 {
   font-family: var(--ed-serif);
   font-size: var(--ed-head-size);
-  font-weight: 600;
+  font-weight: 460;
   line-height: 1.2;
 }
 html:not([data-skin]) #profile-details > p { margin: 0.5rem 0 1rem; font-size: 0.875rem; }
@@ -11208,7 +11230,7 @@ html:not([data-skin]) #profile-details-handle-note { display: block; margin-top:
 html:not([data-skin]) #profile-details .profile-details-count { display: block; text-align: end; font-size: 0.75rem; margin-top: 0.25rem; }
 html:not([data-skin]) #profile-details .profile-details-actions { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 1rem; }
 html:not([data-skin]) #profile-details button[type="submit"] { background: var(--wip-btn-1-bg); color: var(--wip-btn-1-ink); border: 1px solid var(--wip-btn-1-line); }
-html:not([data-skin]) #profile-details [role="alert"] { color: var(--state-bad); font-size: 0.8125rem; }
+html:not([data-skin]) #profile-details [role="alert"] { color: var(--state-blocked); font-size: 0.8125rem; }
 html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { row-gap: 1.25rem; }
 html:not([data-skin]) #profile-root #profile-work { margin-top: 0; }
 html:not([data-skin]) #profile-root #profile-account { margin-top: 0; }
@@ -11220,7 +11242,7 @@ html:not([data-skin]) #profile-root #profile-account { margin-top: 0; }
 html:not([data-skin]) #profile-live-projects { margin-bottom: 2rem; }
 html:not([data-skin]) #profile-live-projects > h2 {
   font-family: var(--ed-serif);
-  font-weight: 600;
+  font-weight: 460;
   font-size: var(--ed-head-size);
   line-height: 1.2;
 }
@@ -11238,7 +11260,7 @@ html:not([data-skin]) #profile-live-projects .profile-project-card {
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(2) { background: linear-gradient(var(--ed-lit-bg), var(--ed-paper)); }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3) { background: linear-gradient(var(--ed-stat-bg), var(--ed-paper)); }
 html:not([data-skin]) #profile-live-projects .profile-project-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 0.75rem; background: var(--ed-paper); }
-html:not([data-skin]) #profile-live-projects h3 { font-family: var(--ed-serif); font-weight: 600; font-size: 1.375rem; line-height: 1.2; margin: 0.75rem 0 0.5rem; }
+html:not([data-skin]) #profile-live-projects h3 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.375rem; line-height: 1.2; margin: 0.75rem 0 0.5rem; }
 html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.45; }
 html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1.5rem; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
 @media (max-width: 1199.98px) {
@@ -11248,6 +11270,307 @@ html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1
   html:not([data-skin]) #profile-root #profile-identity-card { padding-bottom: 4.5rem; }
   html:not([data-skin]) #profile-root #profile-stats { grid-row: 1; align-self: end; justify-self: end; width: 42%; z-index: 1; margin: 0 1.5rem 0.75rem 0; }
   html:not([data-skin]) #profile-stats > [data-profile-stat] { padding-block: 0.5rem; }
+}
+/* The supplied brand pack: an ivory page under a fading cloud-and-star sky.
+   These are page treatments, including the navigation while either is open. */
+html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) {
+  --wip-nav-bg: var(--ed-ground);
+  --wip-nav-ink: var(--ed-ink);
+  --wip-nav-ink-strong: var(--ed-ink);
+  --wip-nav-mut: var(--ed-muted);
+  --wip-nav-faint: var(--ed-muted);
+  --wip-nav-hover: var(--ed-well);
+  --wip-nav-count-bg: var(--ed-lit-bg);
+  --wip-nav-count-ink: var(--ed-ink);
+  --wip-nav-foot-line: var(--ed-line);
+  --wip-nav-brand-logo: url('/brand/editorial/homeroom-wordmark-black.svg');
+  background: var(--ed-ground);
+}
+html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs {
+  border-inline-end: 1px solid var(--ed-rule);
+  background: var(--ed-ground);
+}
+html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-header {
+  border-radius: 0;
+  background: var(--ed-ground);
+  box-shadow: inset 0 -1px 0 var(--ed-rule);
+  color: var(--ed-ink);
+}
+html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs .platform-tab { font-weight: 400; }
+html:not([data-skin]) :is(#profile-screen, #settings-screen) {
+  background: var(--ed-ground);
+  border-radius: 0;
+  color: var(--ed-ink);
+  font-family: var(--wip-font);
+}
+html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) {
+  padding: 0 1.75rem 3rem;
+  background: var(--ed-page-veil), var(--ed-stars) center top / 100% 18rem no-repeat, var(--ed-sky) center top / 100% 18rem no-repeat;
+  background-blend-mode: normal, screen, normal;
+}
+html:not([data-skin]) #profile-root #profile-identity-card {
+  padding: 2rem 0 1.5rem;
+  background: none;
+  min-height: 14.5rem;
+}
+html:not([data-skin]) #profile-identity-card > div:first-child { align-items: flex-start; }
+html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { align-items: flex-start; gap: 1.75rem; }
+html:not([data-skin]) #profile-identity-card .profile-id-avatar { border-radius: 1rem; }
+html:not([data-skin]) #profile-identity-card .profile-id-handle { margin-top: 0.2rem; font-size: 1.125rem; font-weight: 600; }
+html:not([data-skin]) #profile-identity-card .profile-id-bio { max-width: 33rem; margin-top: 0.5rem; line-height: 1.5; }
+html:not([data-skin]) #profile-identity-card .profile-id-about { margin-top: 0.625rem; color: var(--ed-muted); font-size: 0.8125rem; }
+html:not([data-skin]) :is(#profile-identity-card #profile-edit-btn, .profile-details-actions button[type="submit"]) {
+  border: 1px solid var(--ed-button-line);
+  border-radius: 0.875rem;
+  background: var(--ed-sun);
+  color: var(--ed-button-ink);
+  box-shadow: none;
+  font-family: var(--wip-font);
+  font-weight: 500;
+  min-height: 2.75rem;
+  padding-inline: 1.25rem;
+}
+html:not([data-skin]) #profile-root #profile-stats > [data-profile-stat] > :first-child { font-family: var(--wip-font); font-weight: 650; }
+html:not([data-skin]) #profile-root #profile-stats > [data-profile-stat] > :last-child { color: var(--ed-muted); }
+html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { row-gap: 0; column-gap: 2rem; }
+html:not([data-skin]) #profile-root .profile-details-card,
+html:not([data-skin]) #profile-root .profile-preferences-card {
+  padding: 1rem 1.25rem;
+  background: var(--ed-paper);
+  border: 1px solid var(--ed-line);
+  border-radius: 1rem;
+  margin-bottom: 1rem;
+}
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card h2,
+html:not([data-skin]) .profile-preferences-card h2 {
+  font-family: var(--ed-serif);
+  font-weight: 460;
+  font-size: 1.5rem;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card > p { margin: 0.5rem 0 0.75rem; font-size: 0.8125rem; line-height: 1.4; }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-label { display: block; margin: 0.625rem 0 0.2rem; font-size: 0.8125rem; font-weight: 500; }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  border: 1px solid var(--ed-line);
+  border-radius: 0.5rem;
+  background: var(--ed-field);
+  color: var(--ed-ink);
+  box-shadow: none;
+}
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card input[readonly] { background: var(--ed-well); color: var(--ed-muted); }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-handle-note { display: block; font-size: 0.6875rem; margin-top: 0.25rem; text-decoration: underline; }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-count { display: block; text-align: end; font-size: 0.75rem; color: var(--ed-muted); }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-actions { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.75rem; }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-actions button[type="button"] { border: 0; padding-inline: 0.5rem; background: none; box-shadow: none; color: var(--ed-muted); font-weight: 400; }
+html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card [role="alert"] { color: var(--state-blocked); font-size: 0.8125rem; }
+html:not([data-skin]) #profile-root #profile-preferences > a { display: flex; align-items: center; gap: 0.75rem; padding-block: 0.625rem; font-size: 0.8125rem; border-bottom: 1px solid var(--ed-rule); }
+html:not([data-skin]) #profile-root #profile-preferences > a:last-child { border-bottom: 0; }
+html:not([data-skin]) #profile-preferences > a > svg { width: 1.125rem; height: 1.125rem; }
+html:not([data-skin]) #profile-preferences > a > span { flex: 1; }
+html:not([data-skin]) #profile-root .profile-section-links { display: flex; gap: 1.75rem; overflow-x: auto; border-bottom: 1px solid var(--ed-line); margin-bottom: 1.5rem; }
+html:not([data-skin]) #profile-root .profile-section-links > :is(a, button) { padding: 0.5rem 0.5rem 0.75rem; white-space: nowrap; font-family: var(--ed-serif); font-weight: 460; font-size: 1.0625rem; border-bottom: 3px solid transparent; }
+html:not([data-skin]) #profile-root .profile-section-links > [aria-current="page"] { border-bottom-color: var(--ed-sun); }
+html:not([data-skin]) #profile-root :is(section[id^="profile-"] > h2, #profile-activity h2) { padding: 0; margin: 0 0 0.625rem; font-size: 1.5rem; font-weight: 460; }
+html:not([data-skin]) #profile-root section[id^="profile-"] > .ui-glist,
+html:not([data-skin]) #profile-root #profile-activity { background: var(--ed-paper); border-radius: 1rem; box-shadow: inset 0 0 0 1px var(--ed-line); }
+html:not([data-skin]) #profile-root :is(#profile-work, #profile-account, #profile-settings, #profile-admin, #profile-rewards) { margin-top: 1.5rem; }
+html:not([data-skin]) #profile-root #profile-work .ui-lrow { padding-block: 0.625rem; }
+html:not([data-skin]) #profile-root #profile-work .ui-icon-tile { border-radius: 0.625rem; }
+html:not([data-skin]) #profile-root #profile-activity { margin-top: 1.5rem; padding: 1.25rem; }
+html:not([data-skin]) #profile-live-projects { margin-bottom: 1.5rem; }
+html:not([data-skin]) #profile-live-projects > p { font-size: 0.8125rem; margin: 0.25rem 0 1.25rem; color: var(--ed-muted); }
+html:not([data-skin]) #profile-live-projects .profile-project-grid { gap: 1.5rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-card {
+  padding: 1rem;
+  min-height: 12rem;
+  background: var(--ed-card-veil), var(--ed-sky) center top / cover no-repeat;
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(2) { background: var(--ed-green-card); }
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3) { background: var(--ed-yellow-card); }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { width: 2.75rem; height: 2.75rem; border-radius: 0.625rem; background: var(--ed-well); }
+html:not([data-skin]) #profile-live-projects h3 { font-weight: 460; font-size: 1.5rem; letter-spacing: -0.035em; }
+html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.4; }
+/* Settings' profile is the reference's portrait beside editable fields. */
+html:not([data-skin]) #settings-root > .settings-frame-head { padding: 1.75rem 0; min-height: 8.75rem; background: none; margin-bottom: 0; }
+html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet { background: var(--ed-paper); border-radius: 1.25rem; box-shadow: none; border: 1px solid var(--ed-rule); min-height: 0; }
+html:not([data-skin]) #settings-nav-desktop .settings-nav-group { margin-top: 0.5rem; }
+html:not([data-skin]) #settings-nav-desktop .settings-nav-group-label { font-size: 0.6875rem; padding-top: 0.75rem; }
+html:not([data-skin]) #settings-section-content > .settings-page-title { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--ed-muted); }
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) { padding: 1rem 1.5rem; }
+html:not([data-skin]) #settings-section-content h3 { font-size: 1.75rem; letter-spacing: -0.035em; margin-bottom: 0.25rem; }
+html:not([data-skin]) #settings-profile-section .settings-profile-layout { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 1.5rem; align-items: center; }
+html:not([data-skin]) #settings-profile-section #settings-profile-card { display: flex; flex-direction: column; padding: 0; gap: 0.5rem; background: none; border-radius: 0; box-shadow: none; }
+html:not([data-skin]) #settings-profile-card > :is(img, span[aria-hidden="true"]:first-child) { width: 7.5rem; height: 7.5rem; border-radius: 0.875rem; font-size: 2.5rem; }
+html:not([data-skin]) #settings-profile-card .ui-row-tx { display: none; }
+html:not([data-skin]) #settings-profile-card > svg { display: none; }
+html:not([data-skin]) #settings-profile-card .ui-link { font-size: 0.8125rem; }
+html:not([data-skin]) #settings-profile-details { padding: 0; border: 0; border-radius: 0; background: none; margin: 0; }
+html:not([data-skin]) #settings-profile-details form { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: 0.5rem 1rem; align-items: start; }
+html:not([data-skin]) #settings-profile-details .profile-details-label { margin-top: 0.375rem; }
+html:not([data-skin]) #settings-profile-details .profile-details-input { margin-top: 0; }
+html:not([data-skin]) #settings-profile-details :is(.profile-details-handle-note, .profile-details-count, [role="alert"], .profile-details-actions) { grid-column: 2; }
+html:not([data-skin]) #settings-profile-details .profile-details-count { margin-top: -0.25rem; }
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-lrow { padding-block: 0.625rem; }
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-lrow-main { display: flex; gap: 2rem; align-items: center; }
+html:not([data-skin]) #settings-section-content .ui-link { box-shadow: none; text-decoration: none; }
+@media (min-width: 1024px) {
+  html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { grid-template-columns: minmax(16rem, 21rem) minmax(0, 1fr); }
+}
+@media (min-width: 1280px) {
+  html:not([data-skin]) #profile-root #profile-identity-card { padding-bottom: 2.5rem; min-height: 14.5rem; }
+  html:not([data-skin]) #profile-root #profile-stats { width: 35%; margin: 0 0 0.75rem; }
+}
+@media (max-width: 1023.98px) {
+  html:not([data-skin]) #profile-root #profile-identity-card { min-height: 0; }
+  html:not([data-skin]) #profile-root #profile-stats { margin-bottom: 1.25rem; }
+  html:not([data-skin]) #profile-root .profile-section-links { gap: 1rem; }
+}
+@media (max-width: 639.98px) {
+  html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) { padding-inline: 1rem; background-size: auto, auto 20rem, auto 20rem; }
+  html:not([data-skin]) #profile-root #profile-identity-card { padding-top: 1.25rem; }
+  html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { gap: 1rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-handle { font-size: 0.9375rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-bio { font-size: 0.875rem; }
+  html:not([data-skin]) #profile-identity-card #profile-edit-btn { margin-inline-start: 0; }
+  html:not([data-skin]) #settings-profile-section .settings-profile-layout { grid-template-columns: 1fr; gap: 1rem; }
+  html:not([data-skin]) #settings-profile-section #settings-profile-card { flex-direction: row; justify-content: flex-start; }
+  html:not([data-skin]) #settings-profile-card > :is(img, span[aria-hidden="true"]:first-child) { width: 4rem; height: 4rem; }
+  html:not([data-skin]) #settings-profile-details form { grid-template-columns: 1fr; gap: 0.25rem; }
+  html:not([data-skin]) #settings-profile-details :is(.profile-details-handle-note, .profile-details-count, [role="alert"], .profile-details-actions) { grid-column: 1; }
+  html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input { min-height: 2.75rem; }
+  html:not([data-skin]) #settings-profile-details .profile-details-actions { margin-top: 1rem; }
+}
+@media (min-width: 768px) {
+  html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)):has(#platform-tabs:not(.platform-tabs-folded)) #platform-header {
+    background: linear-gradient(to right, transparent var(--wip-nav-w), var(--ed-ground) var(--wip-nav-w));
+  }
+}
+html:not([data-skin]) #profile-root #profile-work .ui-lrow-tx { display: flex; align-items: center; gap: 1rem; }
+html:not([data-skin]) #profile-root #profile-work .ui-lrow-t { flex: 0 0 8rem; font-size: 0.875rem; font-weight: 500; }
+html:not([data-skin]) #profile-root #profile-work .ui-lrow-s { flex: 1; min-width: 0; margin-top: 0; font-size: 0.8125rem; }
+html:not([data-skin]) #settings-nav-desktop .ui-cap { font-size: 0.625rem; }
+html:not([data-skin]) #settings-nav-desktop > div:not(.sticky) { margin-top: 0.5rem; padding-top: 0.5rem; }
+html:not([data-skin]) #settings-nav-desktop .ui-search { background: var(--ed-paper); }
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-lrow-tx { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 1rem; align-items: center; }
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-lrow-s { margin: 0; font-size: 0.875rem; }
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-lrow-t { font-family: var(--ed-serif); font-size: 0.9375rem; font-weight: 460; }
+html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-link { border: 1px solid var(--ed-line); border-radius: 2rem; padding: 0.25rem 1.25rem; font-family: var(--ed-serif); font-weight: 460; color: var(--ed-ink); }
+@media (max-width: 639.98px) {
+  html:not([data-skin]) #profile-root #profile-work .ui-lrow-tx { display: block; }
+  html:not([data-skin]) #settings-section-content :is(#settings-username-section, #settings-email-section, #settings-password-section) .ui-lrow-tx { display: block; }
+}
+html:not([data-skin]) #profile-root #profile-recent-activity { margin: 1.5rem 0; padding-top: 1.25rem; border-top: 1px solid var(--ed-rule); }
+html:not([data-skin]) #profile-recent-activity .profile-recent-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+html:not([data-skin]) #profile-recent-activity h2 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.5rem; line-height: 1.2; letter-spacing: -0.035em; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-heading > a { color: var(--accent); font-size: 0.8125rem; }
+html:not([data-skin]) #profile-recent-activity ul { list-style: none; padding: 0 1rem; margin: 0; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
+html:not([data-skin]) #profile-recent-activity li > a { display: flex; align-items: center; gap: 0.75rem; min-height: 3rem; padding: 0.5rem 0; }
+html:not([data-skin]) #profile-recent-activity li + li { border-top: 1px solid var(--ed-rule); }
+html:not([data-skin]) #profile-recent-activity .profile-recent-icon { display: flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; flex: none; border-radius: 0.5rem; background: var(--ed-lit-bg); }
+html:not([data-skin]) #profile-recent-activity .profile-recent-icon svg { width: 1.25rem; height: 1.25rem; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-copy { flex: 1; min-width: 0; font-size: 0.875rem; line-height: 1.4; overflow-wrap: anywhere; }
+html:not([data-skin]) #profile-recent-activity .profile-recent-copy strong { font-weight: 600; margin-inline-end: 0.5rem; }
+html:not([data-skin]) #profile-recent-activity time { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
+@media (max-width: 639.98px) {
+  html:not([data-skin]) #profile-recent-activity .profile-recent-copy > span { display: block; }
+}
+/* Align the desktop pages to the original 1536px references. The sky is
+   the full content pane's backdrop, with the paper cards flowing over it. */
+html:not([data-skin]) #profile-identity-card #profile-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+html:not([data-skin]) #profile-identity-card #profile-edit-btn svg { width: 1.125rem; height: 1.125rem; flex: none; }
+html:not([data-skin]) #profile-identity-card .profile-id-name {
+  letter-spacing: -0.035em;
+}
+html:not([data-skin]) #settings-profile-section #settings-profile-card {
+  position: relative;
+  justify-self: center;
+}
+html:not([data-skin]) #settings-profile-card .settings-profile-camera {
+  position: absolute;
+  inset-inline-end: -0.5rem;
+  inset-block-end: 1rem;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--ed-rule);
+  background: var(--ed-paper);
+  color: var(--ed-ink);
+}
+html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { width: 1.125rem; height: 1.125rem; }
+@media (min-width: 1024px) {
+  html:not([data-skin]) body:has(#profile-screen:not(.hidden)) { --wip-nav-w: 216px; }
+  html:not([data-skin]) body:has(#settings-screen:not(.hidden)) { --wip-nav-w: 202px; }
+  html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) {
+    width: 100%;
+    margin-inline: 0;
+    padding-inline: 2rem;
+    background-origin: border-box;
+  }
+  html:not([data-skin]) #profile-screen #profile-root:has(#profile-identity-card) { padding-inline-start: 2.25rem; }
+  html:not([data-skin]) #profile-root #profile-identity-card { padding: 3.5rem 0 2rem 1.5rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-avatar { width: 12rem; height: 12rem; }
+  html:not([data-skin]) #profile-identity-card #profile-edit-btn { margin-top: 1rem; min-height: 3.125rem; }
+  html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) {
+    grid-template-columns: minmax(17rem, 22.5rem) minmax(0, 1fr);
+    column-gap: 2.625rem;
+  }
+  html:not([data-skin]) #profile-live-projects .profile-project-grid { gap: 2rem; }
+  html:not([data-skin]) #profile-live-projects .profile-project-card { min-height: 12.75rem; }
+  html:not([data-skin]) body :is(#settings-screen, #profile-screen:has(#profile-identity-card)) { padding-inline: var(--platform-rail-w, 0px) 0; }
+  html:not([data-skin]) body #settings-screen #settings-root { padding-inline-start: 1.375rem; }
+  html:not([data-skin]) #settings-root > .settings-frame-head { min-height: 10rem; padding-inline-start: 0.75rem; }
+  html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet { width: 16rem; }
+  html:not([data-skin]) #settings-section-content > .settings-page-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  html:not([data-skin]) #settings-profile-details .profile-details-input:is(textarea) { min-height: 3.5rem; }
+
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow {
+    min-height: 2.75rem;
+    padding: 0.375rem 0;
+  }
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow-tx {
+    display: grid;
+    grid-template-columns: minmax(7rem, 24%) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 1rem;
+  }
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow-s { margin: 0; }
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) :is(.ui-glist, .ui-card.bg-white) {
+    background: none;
+    border-radius: 0;
+  }
+}
+@media (min-width: 1024px) and (min-height: 850px) {
+  html:not([data-skin]):not(.dark) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs:not(.platform-tabs-folded)::after {
+    height: 6.5rem;
+    margin-inline: 0;
+    background: var(--ed-grass) right bottom / 60rem auto no-repeat;
+    clip-path: ellipse(118% 92% at 92% 100%);
+  }
+}
+@media (max-width: 639.98px) {
+  html:not([data-skin]) #settings-profile-section #settings-profile-card { justify-self: start; }
+  html:not([data-skin]) #settings-profile-card .settings-profile-camera { inset-inline-start: 2.75rem; inset-block-end: -0.25rem; width: 1.625rem; height: 1.625rem; }
+  html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { width: 0.875rem; height: 0.875rem; }
 }
 /* END OF THE EDITORIAL PAGES. */
 /* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's

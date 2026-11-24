@@ -774,8 +774,11 @@ carry most of them.
 
 - **Settings and Profile wear the brand's editorial voice in the standard
   look (#7072, 24 Nov 2026).** A sky band at the head of the page, headings
-  in Source Serif 4 (the shipped variable face, at weight 600), paper cards
+  in Source Serif 4 (the supplied brand pack’s variable face, at weight 460), paper cards
   with one thin outline, and a green row for the Settings page you are on.
+  These pages also tune their surrounding navigation to quiet ivory, use
+  the original sky and stars fading into the page, and share the labelled
+  name/bio editor between Profile and Settings (with distinct form ids).
   It is one block of `public/css/app.css` ("SETTINGS AND PROFILE, THE
   EDITORIAL PAGES"), scoped to `html:not([data-skin])`, whose every value is
   an `--ed-*` token declared once in light and dark. The two pages are the
