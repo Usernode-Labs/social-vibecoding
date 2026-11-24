@@ -874,9 +874,11 @@ async function openSession(pool, config, { user, draft, opening = false, imageIn
     }
     lastApply = result;
     const words = appliedWords(result);
-    // 24 Nov 2026: a save the preview is built again for (a new install, or
-    // a stylesheet catching up) arms the follow-up, which says so.
-    if (result.ok && (result.preview?.rebuilding || result.preview?.catchingUp) && words?.note
+    // 24 Nov 2026: a save the preview is built again for before it shows (a
+    // new install, a preview that could not be reached) arms the follow-up,
+    // which says so. A stylesheet catching up (catchingUp) does not: the app
+    // already runs the save, and a line after every edit would be noise.
+    if (result.ok && result.preview?.rebuilding && words?.note
       && await arm(lastLookPath || '/')) {
       words.note += FOLLOWUP_NOTE;
     }

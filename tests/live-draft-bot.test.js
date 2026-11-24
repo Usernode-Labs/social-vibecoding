@@ -1002,6 +1002,28 @@ test('24 Nov: a save or a look that meets a rebuild arms the follow-up, and the 
   assert.equal(s.sent[0].content, 'Saved: the preview is being built again, and I\'ll post here when it\'s up.', 'the follow-up backs it');
 });
 
+test('24 Nov: a save that already shows while its stylesheet catches up arms no follow-up', async () => {
+  const armed = [];
+  const liveExtra = { async armFollowup(_pool, args) { armed.push(args); return true; } };
+  const s = setup({
+    previews: [{ ok: true, bootMs: 300, catchingUp: true }],
+    liveExtra,
+    script: [
+      { calls: [['write_file', { path: 'server.js', content: 'v2' }]] },
+      { calls: [['apply_changes', { summary: 'Sourdough bake plan' }]] },
+      (options) => {
+        const applied = JSON.parse(options.messages.at(-1).content);
+        assert.equal(applied.catchingUp, true);
+        assert.doesNotMatch(applied.note, /posts a line here/);
+        return { content: '', toolCalls: [{ id: 'r', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'Saved, and the preview shows it now.' }) } }] };
+      },
+    ],
+  });
+  await s.run('change the bake plan');
+  assert.deepEqual(armed, [], 'the app already runs the save: a line after every edit would be noise');
+  assert.equal(s.sent[0].content, 'Saved, and the preview shows it now.');
+});
+
 test('24 Nov: "say try now again" is never sent; a later look with no follow-up set is held', async () => {
   let repair = null;
   const s = setup({

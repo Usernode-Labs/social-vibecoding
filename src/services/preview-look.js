@@ -35,6 +35,13 @@ const VIEWPORTS = Object.freeze({
 });
 // A look waits for the job this long (a Kubernetes Job may take a while to start).
 const LOOK_TIMEOUT_MS = 60_000;
+// 24 Nov 2026: and this much more for each step it takes first (capture.js
+// runLookSteps: a wait of up to 5 s, then up to 3 s for the page to settle).
+const LOOK_STEP_TIMEOUT_MS = 8_000;
+/** Pure: how long a look with `steps` waits for its job. */
+function lookTimeoutMs(steps = []) {
+  return LOOK_TIMEOUT_MS + (Array.isArray(steps) ? steps.length : 0) * LOOK_STEP_TIMEOUT_MS;
+}
 const MAX_PATH_CHARS = 300;
 const MAX_SELECTOR_CHARS = 300;
 // The address a look may never carry: a scheme, a host, a way up, or a backslash.
@@ -315,7 +322,7 @@ async function lookAtPreview(config, pool, {
       ...(checked.steps.length ? { steps: checked.steps } : {}),
     };
     const run = deps.runCaptureJob || require('./design-capture').runCaptureJob;
-    const out = await run(config, spec, { deps, kind: 'PREVIEW_LOOK', timeoutMs: LOOK_TIMEOUT_MS });
+    const out = await run(config, spec, { deps, kind: 'PREVIEW_LOOK', timeoutMs: lookTimeoutMs(checked.steps) });
     const seen = readLook(typeof out === 'string' ? out : out?.stdout);
     if (!seen.facts) return { ok: false, reason: scrub(seen.reason) };
     const facts = seen.facts;
@@ -339,7 +346,7 @@ async function lookAtPreview(config, pool, {
 }
 
 module.exports = {
-  VIEWPORTS, LOOK_TIMEOUT_MS, MAX_PATH_CHARS,
+  VIEWPORTS, LOOK_TIMEOUT_MS, LOOK_STEP_TIMEOUT_MS, lookTimeoutMs, MAX_PATH_CHARS,
   MAX_STEPS, STEP_KEYS, MAX_STEP_WAIT_MS, VISION_MODEL_DEFAULT, VISION_DEFAULT_QUESTION, VISION_COMPONENT,
   previewPath, sizeOf, selectorOf, stepsOf, questionOf, visionModel, askAboutPicture,
   previewOrigin, readLook, scrub, lookAtPreview,

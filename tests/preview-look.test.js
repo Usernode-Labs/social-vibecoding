@@ -22,6 +22,28 @@ function lookFrames(facts, png = null) {
     + (png ? `__USERNODE_LOOK_SHOT__ bytes=${png.length}\n${png.toString('base64')}\n__USERNODE_LOOK_SHOT_END__\n` : '');
 }
 
+test('24 Nov: a look with steps waits longer for its job, by each step\'s own limit', async () => {
+  assert.equal(look.lookTimeoutMs([]), look.LOOK_TIMEOUT_MS);
+  assert.equal(look.lookTimeoutMs(), look.LOOK_TIMEOUT_MS);
+  assert.equal(look.lookTimeoutMs([{}, {}, {}]), look.LOOK_TIMEOUT_MS + 3 * look.LOOK_STEP_TIMEOUT_MS);
+  // Six steps (each a 5 s wait and a 3 s settle at most) fit the job's wait.
+  assert.ok(look.lookTimeoutMs(new Array(look.MAX_STEPS).fill({})) >= look.LOOK_TIMEOUT_MS + look.MAX_STEPS * 8000);
+  let asked = null;
+  const k8s = { captureRuntime: 'kubernetes', kubernetes: { appDomain: 'apps.example', previewDomain: 'p.example' } };
+  await look.lookAtPreview(k8s, null, {
+    draft: DRAFT, path: '/', steps: [{ click: '#bread' }, { wait: '#bake' }],
+    deps: {
+      token: 'FIXTURE',
+      runCaptureJob: async (_config, spec, opts) => {
+        asked = { spec, opts };
+        return { stdout: lookFrames({ path: '/', status: 200, matched: 0, elements: [], consoleErrors: [] }) };
+      },
+    },
+  });
+  assert.equal(asked?.opts.timeoutMs, look.LOOK_TIMEOUT_MS + 2 * look.LOOK_STEP_TIMEOUT_MS);
+  assert.equal(asked?.spec.steps.length, 2);
+});
+
 test('previewPath keeps a path inside the app and refuses any address', () => {
   assert.equal(look.previewPath('/'), '/');
   assert.equal(look.previewPath(undefined), '/', 'the app\'s first page when none is given');
