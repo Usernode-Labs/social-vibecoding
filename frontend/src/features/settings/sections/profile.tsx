@@ -4,6 +4,8 @@ import { useCallback, useState } from 'react';
 import { SectionHeading } from '@/components/ui/field';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
+import { ProfileDetailsCard } from '../../profile/profile-details-card';
+import { useLiveSkin } from '../../../lib/skin';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 import { displayNameOf, initialOf } from '../../profile/profile-store.js';
@@ -31,6 +33,7 @@ interface ProfileUser {
   username?: string | null;
   displayName?: string | null;
   avatarUrl?: string | null;
+  bio?: string | null;
 }
 
 function readUser(): ProfileUser | null {
@@ -64,6 +67,7 @@ function Avatar({ user }: { user: ProfileUser | null }) {
 
 export function ProfileSection() {
   const t = useMessages('settings');
+  const editorial = useLiveSkin() === 'standard';
   const [user, setUser] = useState<ProfileUser | null>(null);
   const sync = useCallback(() => setUser(readUser()), []);
   useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
@@ -80,6 +84,7 @@ export function ProfileSection() {
         <SectionHeading title={t('settings:profile.title')}>
           {t('settings:profile.intro')}
         </SectionHeading>
+        <div className="settings-profile-layout">
         <a
           id="settings-profile-card"
           href="#profile?edit"
@@ -97,6 +102,11 @@ export function ProfileSection() {
           <span className="ui-link text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">{t('settings:profile.edit')}</span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
         </a>
+        {editorial && user ? <ProfileDetailsCard
+          key={`${user.username}:${user.displayName || ''}:${user.bio || ''}`}
+          id="settings-profile-details" embedded user={user} onSaved={sync}
+        /> : null}
+        </div>
       </div>
     </div>
   );
