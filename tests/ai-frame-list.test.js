@@ -238,7 +238,10 @@ test('the page draws this list in place of its own under a look, from the same r
   const list = read(LIST);
   assert.doesNotMatch(list, /\bfetch\(|useEffect\(/, 'nothing is read or kept in the list itself');
   assert.match(list, /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/, 'the rows are the ones the standard list draws');
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/);
+  // 24 Nov 2026: the standard list's three bands also hand it Done's kind
+  // chip (History's), which narrows this week's rows too; the look's list
+  // narrows History by its own chips and needs no more.
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found \}\);/);
 });
 
 test('the list\'s New chat opens the same new chat as the standard head\'s', () => {

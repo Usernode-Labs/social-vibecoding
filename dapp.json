@@ -917,15 +917,15 @@
       "expectSelector": "#profile-friends-sheet #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
     },
     {
-      "name": "Your changes' old address lands on History, narrowed to changes",
+      "name": "Your changes' old address lands on the bot tab's Done, opened into History and narrowed to changes",
       "path": "/?demo=1#profile/your-changes",
-      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-kind=\"change\"][aria-pressed=\"true\"]",
+      "expectSelector": "#ai-screen [data-ai-sheet=\"live\"] [data-ai-history-kind=\"change\"][aria-pressed=\"true\"]",
       "expectText": "Changes"
     },
     {
-      "name": "Your requests' old address lands on History, narrowed to requests",
+      "name": "Your requests' old address lands on the bot tab's Done, opened into History and narrowed to requests",
       "path": "/?demo=1#profile/your-requests",
-      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-kind=\"request\"][aria-pressed=\"true\"]",
+      "expectSelector": "#ai-screen [data-ai-sheet=\"live\"] [data-ai-history-kind=\"request\"][aria-pressed=\"true\"]",
       "expectText": "Requests"
     },
     {
@@ -2602,9 +2602,9 @@
       "expectText": "is working on this"
     },
     {
-      "name": "Homeroom bot's History: your finished work by month below Live this week, with kind chips for Me › Your work's old tabs",
+      "name": "Homeroom bot's Done is the whole past: History's finished work runs on under this week's, with no month headings and, once opened (#homeroom-bot/history opens it), the kind chips for Me › Your work's old tabs",
       "path": "/?demo=1#homeroom-bot/history",
-      "expectSelector": "#ai-screen [data-ai-sheet=\"history\"] [data-ai-history-month] [data-ai-line=\"history-change\"]",
+      "expectSelector": "#ai-screen:not(:has([data-ai-sheet=\"history\"], [data-ai-history-month])) [data-ai-sheet=\"live\"]:has([data-ai-history-kinds]) [data-ai-line=\"history-change\"]",
       "expectText": "Staging demo: a calendar sync, closed"
     },
     {
@@ -4763,9 +4763,9 @@
       ]
     },
     {
-      "name": "The Homeroom bot tab has no Main Chat row: its head has New chat, a labelled button beside search, and its lists are the threads you are in (14 Nov 2026; the chat is the tab's alone, and the demo chat's old Messages address lands here)",
+      "name": "The Homeroom bot tab has no Main Chat row: its head card has New chat at the end of its line and the search field under it, and its lists are the threads you are in (14 Nov 2026; the chat is the tab's alone, and the demo chat's old Messages address lands here)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#ai-screen:not(.hidden):not(:has([data-ai-main-row], [data-ai-main-head])) [data-ai-sheet=head] [data-ai-hero] > button[data-ai-search-toggle] + button[data-ai-new-chat]",
+      "expectSelector": "#ai-screen:not(.hidden):not(:has([data-ai-main-row], [data-ai-main-head])) [data-ai-sheet=head]:has([data-ai-tools] input[data-ai-search]) [data-ai-hero] > button[data-ai-new-chat]",
       "expectText": "New chat",
       "id": "homeroom-bot-new-chat",
       "visual": true,
@@ -4783,15 +4783,15 @@
       "expectText": "New chat"
     },
     {
-      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks, and a search button beside the plus (#6398)",
+      "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks, and the search field is always on the head card (#6398)",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:has([data-ai-hero] button[data-ai-search-toggle] svg) [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"]",
+      "expectSelector": "#ai-screen:has([data-ai-sheet=head] input[data-ai-search]) [data-ai-sheet=\"open\"] [data-ai-line=\"fix_yours\"] [data-ai-row-end=\"act\"]",
       "expectText": "Fix it"
     },
     {
-      "name": "Homeroom bot opened from a project's Your work is narrowed to that project: its chip is picked",
+      "name": "Homeroom bot opened from a project's Your work is narrowed to that project: the project filter names it",
       "path": "/?demo=1#homeroom-bot?project=staging-demo-your-app",
-      "expectSelector": "#ai-screen [data-ai-project-chips] [data-ai-chip=\"staging-demo-your-app\"][aria-pressed=\"true\"]",
+      "expectSelector": "#ai-screen [data-ai-sheet=head] button[data-ai-project-more][data-ai-picked=\"staging-demo-your-app\"]",
       "expectText": "Staging demo app"
     },
     {
@@ -4885,15 +4885,15 @@
       "expectText": "Also closes"
     },
     {
-      "name": "#6019: the AI tab opens on its own page: Needs you, grouped by project, with a plan waiting for you to review it and a request Homeroom bot handed back for a person to say what's next, another project's build that stopped (Restart build), and a private idea under Only you; over it, the project chips end in a More for the projects past the first three",
+      "name": "#6019: the AI tab opens on its own page: Needs you, one band with no project or day headings, with a plan waiting for you to review it and a request Homeroom bot handed back for a person to say what's next, another project's build that stopped (Restart build), and a private idea, each ending in what you do; over it, one project filter (24 Nov 2026, the three bands)",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-group=\"none\"] [data-ai-line=\"private\"]) [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"plan\"] ~ [data-ai-line=\"decide\"]",
+      "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]):not(:has([data-ai-group], [data-ai-project-head], [data-ai-day])) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-line=\"private\"] [data-ai-row-end=\"act\"]):has([data-ai-line=\"plan\"]) [data-ai-line=\"decide\"]",
       "expectText": "Restart build"
     },
     {
-      "name": "#6544 (#6019, #6160): the AI tab's Waiting & in progress card of its own lists your work under way then what waits on someone else (going live before being built, then other people's votes on a change or a group decision, then a build held back as Homeroom bot says in Main)",
+      "name": "#6544 (#6019, #6160): the AI tab's In progress band, its own card after Needs you, holds your work under way and what waits on someone else (going live, being built, other people's votes on a change or a group decision), each ending in its grey state",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"] [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"going_live\"] ~ [data-ai-line=\"building\"] ~ [data-ai-line=\"up_for_vote\"]",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"]:has([data-ai-line=\"going_live\"]):has([data-ai-line=\"building\"]) [data-ai-line=\"up_for_vote\"] [data-ai-row-end=\"state\"]",
       "expectText": "Going live"
     },
     {

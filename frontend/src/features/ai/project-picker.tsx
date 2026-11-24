@@ -1,8 +1,10 @@
 /**
  * The Homeroom bot tab's More projects (30 Oct 2026, Evan, option B of four
  * drawn on a canvas): every project in any list, to pick the ones whose work
- * the lists show, behind the rail's last chip once there are more projects
- * than chips (./lists.tsx).
+ * the lists show. 24 Nov 2026 (the three bands): the standard list opens it
+ * from its one project filter, "All projects", on the head card's tools line
+ * (./lists.tsx `data-ai-project-more`); the look's list from its rail's last
+ * chip (./frame-list.tsx).
  *
  *   ( Find a project               )
  *   NEEDS YOU
@@ -16,10 +18,10 @@
  *
  * The order is ./model.ts rankProjects'. A row is a checkbox and a pick
  * applies at once, so the lists change behind the panel as you go; Done
- * only closes. A project picked here joins the rail as a chip.
+ * only closes. The filter then names what it shows (the project, or how many).
  *
- * From 768px it hangs under the More chip, right edges together, sliding
- * right to stay 8px inside the window when the chip is near its left edge,
+ * From 768px it hangs under the filter, right edges together, sliding
+ * right to stay 8px inside the window when it is near the window's left edge,
  * and closes on a press outside it, Escape, or the page scrolling under it.
  * On a phone it is a sheet from the floor, handed to the native kit when
  * there is one, as the community switcher's is
@@ -134,7 +136,7 @@ function PickerBody({ ranked, picked, onToggle, onClear, onClose, search }: Pick
   );
 }
 
-/** From 768px: a menu under the More chip. */
+/** From 768px: a menu under the project filter. */
 function PickerMenu({ anchor, ...props }: PickerProps & { anchor: DOMRect }): ReactNode {
   const t = useMessages('messages');
   const panel = useRef<HTMLDivElement | null>(null);
@@ -150,7 +152,7 @@ function PickerMenu({ anchor, ...props }: PickerProps & { anchor: DOMRect }): Re
     };
     const onDown = (e: Event) => {
       if (inside(e)) return;
-      // The More chip toggles on its own: a press on it must not close and reopen.
+      // The filter toggles it on its own: a press on it must not close and reopen.
       if (e.target instanceof Element && e.target.closest('[data-ai-project-more]')) return;
       close.current();
     };

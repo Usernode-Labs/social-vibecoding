@@ -413,7 +413,10 @@ test('a done thread says so under its head, with Reopen; its ⋯ has Mark done, 
   assert.match(source, /`\/api\/conversations\/homeroom-bot\/threads\/\$\{rootId\}\/\$\{door\}`/);
   // Its row on the Homeroom bot page has the same ⋯, and leaves the lists at once.
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /<ThreadDoneMenu rootId=\{rootId\} done=\{false\} name=\{line\.title\} onChanged=\{\(state\) => \{ if \(state === 'done'\) mark\(\); \}\} className="shrink-0" \/>/);
+  assert.match(lists, /<ThreadDoneMenu rootId=\{done\.rootId\} done=\{false\} name=\{line\.title\} onChanged=\{\(state\) => \{ if \(state === 'done'\) done\.mark\(\); \}\} className="shrink-0" \/>/);
+  // 24 Nov 2026 (the three bands): where the list is narrow the row draws no
+  // ⋯ (app.css, `.ai-row-menu`), and Mark done is the thread's own ⋯, in its head.
+  assert.match(read('public/css/app.css'), /#ai-screen \.ai-lists \.ai-row-menu,\n#ai-screen \.ai-lists \.ai-search-key,/);
   assert.match(read('frontend/src/features/ai/model.ts'), /if \(p\.state === 'done'\) continue;/);
 });
 

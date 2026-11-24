@@ -52,7 +52,7 @@ function load() {
   return { mod, calls };
 }
 
-test('New chat is the Homeroom bot tab\'s labelled button, beside search, and is drawn before anything is read', () => {
+test('New chat is the Homeroom bot tab\'s labelled button, at the end of its head\'s line, and is drawn before anything is read', () => {
   // 14 Nov 2026: where the "+" disc was. Every conversation with the bot is
   // a thread and there is no Main Chat to type into, so this is how one
   // starts; the bot chat's header in Messages, which had a "+" too, is no
@@ -64,15 +64,20 @@ test('New chat is the Homeroom bot tab\'s labelled button, beside search, and is
   const html = renderToHtml(createElement(NewChatButton, { onOpen() {} }));
   assert.match(html, /^<button type="button" title="New chat" data-bot-new-thread="" data-ai-new-chat="" class="rounded-full bg-violet-600 [^"]*"><svg/, 'the page\'s one filled button, in the accent');
   assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*<\/svg><span>New chat<\/span><\/button>$/, 'a plus, then its words');
+  // 24 Nov 2026 (the three bands): the page hands it to the list's head
+  // card, which draws it at the end of the line with the Homeroom mark and
+  // the counts; the search field is the line under it.
   const ai = read('frontend/src/features/ai/index.tsx');
-  const hero = ai.slice(ai.indexOf('const hero = ('), ai.indexOf('</section>', ai.indexOf('const hero = (')));
-  assert.match(hero, /data-ai-search-toggle=""[\s\S]*<\/button>\n\s+<NewChatButton onOpen=\{openNewChat\} \/>/, 'in the Homeroom bot tab\'s head, after search');
+  assert.match(ai, /newChat=\{<NewChatButton onOpen=\{openNewChat\} \/>\}/);
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  const hero = lists.slice(lists.indexOf('data-ai-hero=""'), lists.indexOf('</section>', lists.indexOf('data-ai-hero=""')));
+  assert.match(hero, /<\/span>\n\s+\{newChat\}\n\s+$/, 'in the Homeroom bot tab\'s head, at the end of its line');
   assert.doesNotMatch(read('frontend/src/features/messages/index.tsx'), /NewThreadButton/);
   assert.doesNotMatch(read(NEW_THREAD), /NewThreadButton/);
-  // Where the heading is too narrow for the words, the disc alone, and the
-  // words stay its name (app.css, by the heading's own width).
+  // Where the list is narrow (under 520px of it), the disc alone, and the
+  // words stay its name (app.css, by the list's own width).
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 14px 16px; \}\n@container \(max-width: 400px\) \{\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 0; \}\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] > span \{\n    position: absolute; width: 1px; height: 1px;/);
+  assert.match(css, /#ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 14px 16px; \}\n@container ai-list \(max-width: 519\.98px\) \{\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 0; \}\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] > span \{\n    position: absolute; width: 1px; height: 1px;/);
 });
 
 test('New chat opens set to a project: the one chip picked, else the project last left, else Any project; a page in the column is carried', () => {

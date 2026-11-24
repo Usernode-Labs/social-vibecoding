@@ -21887,13 +21887,10 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    have. A row, New chat or a link opens it, and the list gives the lane up
    again. */
 #ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
-/* WITH A THREAD OPEN BESIDE IT (23 Nov 2026) the list is about 270px wide,
-   and from 1024px each row still kept a 48px column for a request's number
-   (and its gap), empty on most rows: a title had 60 to 130px and read
-   "Staging …" twice in a row. The number's column goes while a thread is
-   open beside the list, as it does on every screen under 1024px; the
-   number is on the thread's own head. */
-#ai-screen[data-ai-docked][data-ai-open] [data-ai-line-number] { display: none; }
+/* (23 Nov 2026: the number's column went while a thread was open beside the
+   list. 24 Nov 2026: the three bands' row carries its number under its
+   project's name, or under its title where the list is narrow: THE ROW BY
+   THE LIST'S OWN WIDTH, below.) */
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
    a column inside centres. Here Main is the far edge, with no gutter, so the
@@ -21961,24 +21958,82 @@ body:has(#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed]:not(.hidd
    a line. Under 340px of heading the mark steps aside, as a phone's
    conversation drops its avatar, and the name has the room. */
 #ai-screen [data-ai-hero] { container-type: inline-size; }
-@container (max-width: 340px) {
+/* 24 Nov 2026 (the three bands): the head's line is the mark, the counts
+   and New chat's round plus, so the mark keeps its place at the 352px list
+   beside a thread (a 320px line) and steps aside only at the 280px floor. */
+@container (max-width: 299.98px) {
   #ai-screen [data-ai-hero] > img { display: none; }
 }
 @container (max-width: 260px) {
   #ai-screen [data-ai-hero] h1 { font-size: 1.25rem; }
 }
-/* NEW CHAT KEEPS ITS WORDS WHERE THE HEADING HAS ROOM FOR THEM (14 Nov
-   2026). It is the page's one labelled button, a plus and "New chat" in the
-   accent. Beside the bot's picture, its name and search, the words fit from
-   about 400px of heading: a desktop's lists. Narrower (a phone, or the lists
-   beside an open column), the button is the accent disc with its plus, and
-   the words stay its name for a screen reader; a phone's Ask bar says them. */
+/* NEW CHAT KEEPS ITS WORDS WHERE THE LIST HAS ROOM FOR THEM (14 Nov 2026;
+   24 Nov 2026, the three bands: by the list's own width). It is the page's
+   one labelled button, a plus and "New chat". Where the list is narrow (THE
+   ROW BY THE LIST'S OWN WIDTH, below: the 352px beside a thread, a phone),
+   the button is the round plus alone, and the words stay its name for a
+   screen reader; a phone's Ask bar says them. */
 #ai-screen [data-ai-hero] [data-ai-new-chat] { padding-inline: 14px 16px; }
-@container (max-width: 400px) {
+@container ai-list (max-width: 519.98px) {
   #ai-screen [data-ai-hero] [data-ai-new-chat] { padding-inline: 0; }
   #ai-screen [data-ai-hero] [data-ai-new-chat] > span {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+}
+/* THE ROW BY THE LIST'S OWN WIDTH (24 Nov 2026, the three bands,
+   features/ai/lists.tsx). The list is 352px beside a thread until its divider
+   is dragged, and a phone's is about as wide, so the narrow row is the
+   common case and is the default here. Under 520px of list: no project
+   column, no second line and no ⋯; the title takes up to two lines and one
+   small line under it keeps the project and the number; the search field
+   drops its key. From 520px (dragged wider, up to the list's 672px): the
+   project's name over the number, the title over its reason and time, and
+   the ⋯'s room on every row so the pills keep one right edge. Measured on
+   the list, not the window: a container query. */
+#ai-screen .ai-lists { container: ai-list / inline-size; }
+#ai-screen .ai-lists .ai-row-project,
+#ai-screen .ai-lists .ai-row-sub,
+#ai-screen .ai-lists .ai-row-menu,
+#ai-screen .ai-lists .ai-search-key,
+#ai-screen .ai-lists .ai-found-place { display: none; }
+#ai-screen .ai-lists .ai-row-where,
+#ai-screen .ai-lists .ai-found-place-under { display: block; }
+#ai-screen .ai-lists .ai-row-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* A private thread's ⋯ on a wide row: a quiet 32px control in the row's
+   own ink, not the floating disc a thread's head draws. */
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action {
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action:hover { background: var(--messages-surface-2); color: var(--text-primary); }
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action svg { width: 18px; height: 18px; }
+@container ai-list (min-width: 520px) {
+  /* The project's column grows with the list: 104px at 520, 134px at 672. */
+  #ai-screen .ai-lists .ai-row-project { display: block; width: clamp(96px, 20cqi, 136px); }
+  #ai-screen .ai-lists .ai-row-sub,
+  #ai-screen .ai-lists .ai-found-place { display: block; }
+  #ai-screen .ai-lists .ai-row-menu { display: flex; }
+  #ai-screen .ai-lists .ai-search-key { display: inline-block; }
+  #ai-screen .ai-lists .ai-row-where,
+  #ai-screen .ai-lists .ai-found-place-under { display: none; }
+  #ai-screen .ai-lists .ai-row-title {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    -webkit-line-clamp: unset;
+    overflow-wrap: normal;
   }
 }
 /* The chat fills the column (as a project page's chat does). */
