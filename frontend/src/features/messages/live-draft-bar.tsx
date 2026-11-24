@@ -285,7 +285,10 @@ export function useLiveDraftActs(draft: LiveDraft | null): LiveDraftActs {
   const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
-  useEffect(() => { setError(null); }, [draft?.id]);
+  // A refusal is said until the draft moves on: another draft, or this one
+  // proposed (24 Nov 2026: by the Propose under the bot's reply, tapped with
+  // this one, whose own answer was that it is being put up for a vote).
+  useEffect(() => { setError(null); }, [draft?.id, draft?.state]);
 
   const failed = (err: any) => {
     if (alive.current) setError(err?.said || t('messages:liveDraft.error'));

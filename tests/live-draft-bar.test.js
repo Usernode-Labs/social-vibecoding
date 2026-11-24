@@ -95,6 +95,15 @@ test('the controls are the preview header\'s, beside its way out; Discard draft 
   assert.match(read('frontend/src/features/staging/placement.ts'), /sessionId: Number\(input\.sessionId\) \|\| null,/);
 });
 
+test('a refusal on the header\'s line goes once the draft is proposed (24 Nov 2026: two Proposes at once)', () => {
+  // The Propose under the bot's reply and this one, tapped together: this one
+  // is told the draft is being put up for a vote, and that line goes once the
+  // other has proposed it, rather than standing in for "Up for a vote".
+  assert.match(read(BAR), /useEffect\(\(\) => \{ setError\(null\); \}, \[draft\?\.id, draft\?\.state\]\);/);
+  const acts = { busy: null, error: 'It is being put up for a vote right now.', act: async () => {}, discard: async () => {}, discardItem: null };
+  assert.match(renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 2 }), acts }), /It is being put up for a vote right now\./);
+});
+
 test('the messages pane reads the draft on an open thread of theirs, with no bar; a newly opened draft brings its preview up', () => {
   const pane = read('frontend/src/features/messages/index.tsx');
   assert.doesNotMatch(pane, /<LiveDraftBar/);
