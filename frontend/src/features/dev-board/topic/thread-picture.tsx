@@ -81,7 +81,7 @@ export function ThreadPicture({ s, captions = null }: {
           <CompareSlider
             key={at}
             screen={screen}
-            ground="var(--messages-surface-2)"
+            ground="var(--thread-well, var(--messages-surface-2))"
             width={width}
             height={frame.height}
             marks

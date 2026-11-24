@@ -271,7 +271,7 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(action, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
   assert.match(action, /pull: true/);
   assert.match(workflow, /needs: \[plan, build, preview-schema-compatibility\]/);
-  assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,
+  assert.equal((workflow.match(/bash scripts\/resolve-claude-code-version\.sh/g) || []).length, 1,
     'the dependency version is resolved once in the plan');
   assert.match(workflow, /if: needs\.plan\.outputs\.should_release == 'true'/);
   assert.match(workflow, /claude-code-version: \$\{\{ needs\.plan\.outputs\.claude_code_version \}\}/);
@@ -348,7 +348,17 @@ test('Kubernetes workflow retries the chart push before it fails a release (#665
 test('Argo refresh runs separately and only for a published stable chart', () => {
   const release = read('.github/workflows/build-kubernetes-images.yml');
   const refresh = read('.github/workflows/refresh-kubernetes-release.yml');
-  assert.doesNotMatch(release, /refresh=hard/);
+  // The publisher asks Argo once, after the tag moved, without waiting for the
+  // comparison (which took a minute under its lock) and without its answer
+  // deciding anything. The separate workflow confirms the refresh.
+  const ask = release.slice(release.indexOf('- name: Ask Argo CD to compare the new release'));
+  const step = ask.slice(0, ask.indexOf('\n      - name: ', 1));
+  assert.equal((release.match(/refresh=hard/g) || []).length, 1);
+  assert.ok(release.indexOf('- name: Promote OCI release tag') < release.indexOf('- name: Ask Argo CD to compare the new release'));
+  assert.match(step, /if: steps\.current_head\.outputs\.publish == 'true'/);
+  assert.match(step, /\[ -n "\$ARGOCD_REFRESH_TOKEN" \] \|\| exit 0/);
+  assert.match(step, /--max-time 3 /);
+  assert.match(step, /refresh=hard' \|\| true\n/);
   assert.match(refresh, /workflows: \[Build Kubernetes images\]\n    branches: \[main\]\n    types: \[completed\]/);
   assert.match(refresh, /workflow_run\.conclusion == 'success'/);
   assert.match(refresh, /workflow_run\.head_repository\.full_name == github\.repository/);

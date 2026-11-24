@@ -60,6 +60,7 @@ import { CORNER_ATTR, panelEdge, STRIP_ATTR } from '../../lib/side-strip';
 import { isBotChatRoute } from '../ai/door';
 import { setListClosed, showsListButton, subscribeListClosed } from '../ai/list-closed';
 import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
+import { backsToBot } from '../improve/improve-store.js';
 import {
   embeddedAllows,
   frameUrl,
@@ -538,7 +539,19 @@ function navigateTop(route: string): void {
  */
 export function expand(): void {
   const route = sidePanelStore.get().route;
-  if (route) navigateTop(route);
+  if (route) {
+    // #7079: a page expanded from the Homeroom bot column goes back there, not
+    // to a Workshop the reader never visited. Record the bot page's address as
+    // the topic's origin first, as the column's title link already does
+    // (./side-panel.tsx), so `topicBackHref` answers the bot's thread and
+    // `topicWorkshopHref` puts the Workshop chip beside it. Any other address
+    // records nothing and keeps its ordinary back chip.
+    const hash = window.location.hash;
+    if (backsToBot(hash)) {
+      try { (window as any).Improve?.enterTopicFrom?.(hash); } catch { /* the page as it opens */ }
+    }
+    navigateTop(route);
+  }
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
 }
 

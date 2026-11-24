@@ -6545,7 +6545,8 @@ html:not([data-skin]) {
   --wip-page-bg-communities: var(--wip-page-bg);
   --wip-soft-line: color-mix(in srgb, var(--wip-ink) 6%, transparent); /* a rule inside a card (over a community's week): softer than the card's hairline */
   --wip-card-line-hover: color-mix(in srgb, var(--wip-ink) 15%, transparent); /* a card's edge under the pointer: a shade deeper, not the ink */
-  --wip-thumb: 6rem;          /* a change's picture in a list: a thumbnail at its side */
+  --wip-scrim: rgb(0 0 0 / 0.62); /* over a card while a sheet on the card beside it is up: the vote's own dim (.rf-scrim), so the two cards dim alike */
+  --wip-thumb: 6rem;         /* a change's picture in a list: a thumbnail at its side */
   --wip-hero-pad: 1.25rem;
   --wip-hero-min: 0;        /* a poster's height, whatever it says */
   --wip-hero-art: 4.5rem;       /* the icon at its side */
@@ -7635,6 +7636,16 @@ html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="all"]) {
   max-width: none;
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
+}
+/* THE HUB IS AT MOST 1132PX WIDE (asked 24 Nov 2026), a request page's
+   width, and #dev-workshop's own auto margins centre it: on a wide window
+   it ran edge to edge, a contributor's name some 1,500px from their count
+   at 1920px. Nothing inside it moves. The hub alone: Needs you, the board
+   and the Workshop keep their widths. From 1281px, so a window of 1280 or
+   less is drawn as before beside the folded menu too, which leaves the hub
+   1,160px there; with less room than the cap nothing changes anyway. */
+@media (min-width: 1281px) {
+  html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="status"]) { max-width: 1132px; }
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { row-gap: var(--wip-row-gap); column-gap: var(--wip-col-gap); }
 /* The hub sits on the page itself, as Home does: the project page's own
@@ -8917,25 +8928,43 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone >
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-btn, .rf-end-back):last-child { margin-bottom: auto; }
 /* WHAT A CHANGE DOES, BESIDE IT (asked 20 Nov 2026). From 1280px a project's Needs you keeps the card that the arrow in
    the change's bar opens (its summary, who made it, the way to its page and the three ways to look closer) open at the
-   change's far side, in the same card past a hairline; review-flow.tsx marks the page (`data-rf-beside`) and takes the
-   card out of hiding. Narrower, the arrow opens it over the change as it always did. */
-html:not([data-skin]) { --wip-needs-side: 22rem; --wip-needs-main: 45rem; } /* beside: the change's own column is 720px where the card alone is 520 (asked 20 Nov 2026) */
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] > .rf-page { width: min(100%, calc(var(--wip-needs-main) + var(--wip-needs-side))); padding-inline-end: var(--wip-needs-side); }
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-wrap { inset-block: 0; inset-inline-start: auto; inset-inline-end: 0; width: var(--wip-needs-side); overflow: visible; pointer-events: auto; border-inline-start: 1px solid var(--rf-line); }
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc { position: static; max-height: 100%; padding: 1rem; border-radius: 0; background: none; box-shadow: none; transform: none; transition: none; }
+   change's far side; review-flow.tsx marks the page (`data-rf-beside`) and takes the card out of hiding. Narrower, the
+   arrow opens it over the change as it always did.
+   A CARD OF ITS OWN (asked 24 Nov 2026), as a request page's timeline is beside its thread: the change's card (its bar,
+   its picture and the vote) keeps its 720px, page ground parts the two by 20px, and what it does is a 332px card on
+   the right, as tall as what it holds, from the top of the change's and never past its foot (its words scroll inside
+   it, as they did). The pair is centred, 1072px together as the one card was. The page wrap is the pair: the change's
+   card is its first column and the side card is placed in the room kept after it. The change's card is not a
+   positioned box here, so the side card, though it is written inside it, is laid out in the pair and not clipped to
+   the change's round corners; the scrim, which no longer meets those corners either, is given them. */
+html:not([data-skin]) { --wip-needs-main: 45rem; --wip-needs-gap: 1.25rem; --wip-needs-side: 20.75rem; } /* 720 + 20 + 332: the change's own column is 720px where the card alone is 520 (asked 20 Nov 2026); the gap and the side card are a request page's timeline's (24 Nov 2026) */
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] {
+  width: min(100%, calc(var(--wip-needs-main) + var(--wip-needs-gap) + var(--wip-needs-side)));
+  margin-inline: auto;
+  padding-inline-end: calc(var(--wip-needs-gap) + var(--wip-needs-side));
+}
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] > .rf-page { position: static; width: 100%; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-scrim { inset-inline-end: calc(var(--wip-needs-gap) + var(--wip-needs-side)); border-radius: var(--wip-card-radius); }
+/* The side card: placed at the pair's far end, top-aligned, and no taller than the pair, which is the change's card's
+   height; a column, so what it holds shrinks to it and its words scroll. */
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-wrap { inset-block: 0 auto; inset-inline: auto 0; width: var(--wip-needs-side); max-height: 100%; display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc { position: static; min-height: 0; padding: 1rem; border-radius: 0; background: none; box-shadow: none; transform: none; transition: none; }
 html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] :is(.rf-desc-foot, .rf-desc-help) { margin-inline: 0; }
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim { display: none; }
 html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle { display: none; }
+/* While a sheet is up on the change (a No's reason, Ask privately, Discussion, Try it) and the scrim dims its card, the
+   side card dims the same, so it does not look like the thing to press; a tap on it puts the sheet away, as a tap on
+   the scrim does (review-flow.tsx). Its dim is the one it has narrower, over the change, unused beside it till now. */
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim { z-index: 1; background: var(--wip-scrim); opacity: 0; pointer-events: none; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] > .rf-page:has(> .rf-scrim-on) .rf-desc-dim { opacity: 1; pointer-events: auto; }
 /* THE VOTE CARD'S INSIDE LINES (proposal, 20 Nov 2026). The card is the look's card (its colour, one hairline, its
    corners) and nothing inside it is ruled off: no line above the vote, a soft hairline round the picture in place of
-   its dark edge and shadow, and beside the change what it does sits on a very soft panel in place of a divider. */
+   its dark edge and shadow. Beside the change, what it does is the same card, on its own (24 Nov 2026). */
 /* The flow's own page colour is the card's, so its bar and the stage behind the picture are the card's colour too. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap { --rf-page: var(--wip-card-bg); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page { border-radius: var(--wip-card-radius); background: var(--wip-card-bg); box-shadow: 0 0 0 1px var(--wip-card-line); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-sheet { background: none; box-shadow: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-plate-btn { box-shadow: 0 0 0 1px var(--wip-card-line); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc-wrap { border-inline-start: 0; padding: 0.75rem; padding-inline-start: 0; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc { height: 100%; border-radius: var(--wip-radius-inner); background: var(--wip-soft-bg); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc-wrap { border-radius: var(--wip-card-radius); background: var(--wip-card-bg); box-shadow: 0 0 0 1px var(--wip-card-line); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc-help { border-radius: 0; background: none; box-shadow: inset 0 1px 0 var(--wip-soft-line); }
 /* THE VOTE CARD'S SMALL CONTROLS ARE THE KIT'S (asked 20 Nov 2026). The three ways to look closer are doors as the
    hub's are: each glyph on a tile of its own mark colour (yellow, blue, green), a soft rule between rows. The way back
@@ -10506,6 +10535,368 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
 /* END OF WHITE CARDS. */
+/* ── SETTINGS AND PROFILE, THE EDITORIAL PAGES (#7072, 24 Nov 2026). The
+   two pages about you are drawn in the brand's editorial voice, in the
+   standard look alone (html:not([data-skin])): a sky band at the head of
+   the page, serif headings, cream paper cards with one thin outline, a
+   green row for the page you are on, and the buttons the look already has
+   (the main action is the sun). Nothing here adds a control, a figure or a
+   route: every part is the one the page already drew, and the brand look
+   keeps its own drawing of both pages.
+   SETTINGS opens under its name and one sentence, on the sky; each part of
+   a page is a card of its own under a serif heading, and the page runs the
+   window's width beside the list of pages. PROFILE opens on who you are,
+   across the page: a larger picture, the name in the serif, the facts and
+   the bio, Edit profile, then your figures as one strip.
+   The serif is the shipped variable Source Serif 4, at weight 600,
+   matching the strong headings in the profile and settings references. The sky is the
+   brand's own picture (public/brand/bg/sky.webp), under a veil of the
+   page's colour so the words on it read in light and in dark.
+   EVERY VALUE IS A TOKEN, --ed-*, declared once here in light and dark. */
+html:not([data-skin]) {
+  --ed-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --ed-title-size: 3rem;       /* the page's name on the sky */
+  --ed-title-size-phone: 1.75rem;
+  --ed-page-size: 1.5rem;         /* a Settings page's own name, over its cards */
+  --ed-head-size: 1.75rem;        /* a card's heading */
+  --ed-head-size-phone: 1.125rem;
+  --ed-lede-size: 1rem;           /* the sentence under the page's name */
+  --ed-paper: #fffdf4;            /* a card: warm paper */
+  --ed-line: rgb(18 26 14 / 0.16);/* its one thin outline */
+  --ed-rule: rgb(18 26 14 / 0.1); /* a rule inside a card */
+  --ed-well: rgb(18 26 14 / 0.035); /* a row of its own inside a card */
+  --ed-radius: 20px;
+  --ed-pad: 1.5rem;
+  --ed-pad-phone: 1rem;
+  --ed-gap: 1rem;                 /* between two cards */
+  --ed-side-w: 16.5rem;           /* Settings' list of pages: room for a page's name and its count */
+  --ed-sky: url('/brand/bg/sky.webp');
+  --ed-sky-veil: linear-gradient(180deg, rgb(255 253 244 / 0.08) 0%, rgb(255 253 244 / 0.5) 62%, rgb(255 253 244 / 0.86) 100%);
+  --ed-sky-ink: #121a0e;
+  --ed-sky-ink-soft: rgb(18 26 14 / 0.78);
+  --ed-sky-h: 9.5rem;             /* the band's least height on a wide page */
+  --ed-sky-h-phone: 6.5rem;
+  --ed-lit-bg: #dcecc4;           /* the page you are on, in the list: the brand's green */
+  --ed-lit-ink: #121a0e;
+  --ed-face: 11.5rem;                /* your picture at the head of Profile */
+  --ed-face-phone: 4.5rem;
+  --ed-face-gap: 0.875rem;        /* between the band's foot and the words beside the picture */
+  --ed-face-ring: 0 0 0 3px var(--ed-paper), 0 0 0 4px var(--ed-line);
+  --ed-name-size: 3rem;
+  --ed-name-size-phone: 1.5rem;
+  --ed-stat-size: 1.5rem;         /* a figure in the strip */
+  --ed-stat-bg: rgb(255 238 111 / 0.3); /* the strip: the sun, thinned */
+}
+html:not([data-skin]).dark {
+  --ed-paper: var(--wip-card-bg);
+  --ed-line: rgb(255 254 234 / 0.18);
+  --ed-rule: rgb(255 254 234 / 0.1);
+  --ed-well: rgb(255 254 234 / 0.045);
+  --ed-sky-veil: linear-gradient(180deg, rgb(13 22 40 / 0.55) 0%, rgb(13 22 40 / 0.72) 62%, rgb(13 22 40 / 0.9) 100%);
+  --ed-sky-ink: #fffeea;
+  --ed-sky-ink-soft: rgb(255 254 234 / 0.8);
+  --ed-lit-bg: rgb(169 207 151 / 0.22);
+  --ed-lit-ink: #fffeea;
+  --ed-stat-bg: rgb(255 238 111 / 0.1);
+}
+
+/* SETTINGS. The page runs the window's width, as the Hub and the Workshop do. */
+html:not([data-skin]) #settings-screen #settings-root { max-width: none; }
+/* Its head: "Settings" and one sentence, on the sky. The markup is the one
+   the frame's looks dressed (features/settings/index.tsx); on a phone it
+   heads the list of pages and gives way to an open page, whose name the
+   top bar says. */
+html:not([data-skin]) #settings-root > .settings-frame-head {
+  display: flex;
+  align-items: flex-end;
+  min-height: var(--ed-sky-h);
+  margin-bottom: var(--ed-gap);
+  padding: var(--ed-pad);
+  border-radius: 0;
+  background: var(--ed-sky-veil), var(--ed-sky) center / cover no-repeat;
+  box-shadow: none;
+}
+html:not([data-skin]) #settings-root .settings-frame-title {
+  margin: 0;
+  color: var(--ed-sky-ink);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-title-size);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+html:not([data-skin]) #settings-root .settings-frame-purpose {
+  margin: 0.25rem 0 0;
+  color: var(--ed-sky-ink-soft);
+  font-size: var(--ed-lede-size);
+  line-height: 1.4;
+}
+@media (max-width: 1023.98px) {
+  html:not([data-skin]) #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head { display: none; }
+  html:not([data-skin]) #settings-root > .settings-frame-head { min-height: var(--ed-sky-h-phone); padding: var(--ed-pad-phone); }
+  html:not([data-skin]) #settings-root .settings-frame-title { font-size: var(--ed-title-size-phone); }
+}
+/* The list of pages is a paper card that ends with its last row, and the
+   page you are on is the green row. */
+html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet {
+  --lit-tint: var(--ed-lit-bg);
+  --lit-ink: var(--ed-lit-ink);
+  --lit-line: transparent;
+  height: auto;
+  max-height: calc(100dvh - var(--platform-header-h) - 2.5rem);
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #settings-nav-desktop .settings-nav-item { font-size: 0.9375rem; }
+@media (min-width: 1024px) { html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet { width: var(--ed-side-w); } }
+/* The open page: no sheet of its own. Each part is a card on the page. */
+html:not([data-skin]) #settings-content-col > #settings-section-content.settings-sheet {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) {
+  max-width: none;
+  margin-top: 0;
+  padding: var(--ed-pad);
+  border: 1px solid var(--ed-line);
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden):has(> :not(.hidden)) {
+  margin-top: var(--ed-gap);
+  padding-top: var(--ed-pad);
+  border-top: 1px solid var(--ed-line);
+}
+/* Username, Email & recovery and Password are one group under the "Sign-in"
+   heading Username carries (#5281), so they are one card: each after the
+   first joins the one above it, with no outline between them. */
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden) ~ :is([data-settings-section="email"], [data-settings-section="password"]):not(.hidden):has(> :not(.hidden)) {
+  margin-top: 0;
+  padding-top: 0.5rem;
+  border-top: 0;
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)):is(
+    :has(+ :is([data-settings-section="email"], [data-settings-section="password"]):not(.hidden) > :not(.hidden)),
+    [data-settings-section="username"]:has(+ [data-settings-section="email"] + [data-settings-section="password"]:not(.hidden) > :not(.hidden))
+  ) {
+  padding-bottom: 0;
+  border-bottom: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden) ~ [data-settings-section="delete-account"]:not(.hidden):has(> *) { margin-top: var(--ed-gap); }
+/* A card's heading is the serif, and the page's own name a step above it. */
+html:not([data-skin]) #settings-section-content h3 {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-head-size);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+html:not([data-skin]) #settings-section-content > .settings-page-title {
+  margin-bottom: var(--ed-gap);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-page-size);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+/* A row of its own inside a card (your profile's row, a sign-in row, a list
+   of rows) is a soft well, not a second outlined card. */
+html:not([data-skin]) #settings-section-content > [data-settings-section] :is(.ui-glist, .ui-card.bg-white) {
+  background: var(--ed-well);
+  box-shadow: none;
+}
+/* A phone's list of pages: each group's card is the same paper. */
+html:not([data-skin]) #settings-mobile-menu-host .ui-glist {
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+@media (max-width: 1023.98px) {
+  html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) { padding-inline: var(--ed-pad-phone); }
+  html:not([data-skin]) #settings-section-content h3 { font-size: var(--ed-head-size-phone); }
+}
+
+/* PROFILE. Your own page runs the window's width, and opens on who you are. */
+html:not([data-skin]) #profile-screen #profile-root:has(#profile-identity-card) { max-width: none; }
+@media (min-width: 1024px) {
+  /* The first column's wrapper steps aside, so its three cards are the
+     grid's own: who you are and your figures across the page, then This
+     week and Account on the left, Your work and Rewards on the right. */
+  html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { grid-template-rows: auto auto auto 1fr; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-identity-card) { display: contents; }
+  html:not([data-skin]) #profile-root #profile-identity-card { grid-column: 1 / -1; grid-row: 1; }
+  html:not([data-skin]) #profile-root #profile-stats { grid-column: 1 / -1; grid-row: 2; }
+  html:not([data-skin]) #profile-root #profile-activity { grid-column: 2; grid-row: 4; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-work) { grid-column: 2; grid-row: 3; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-account) { grid-column: 1; grid-row: 3 / span 2; }
+}
+/* The reference's identity sits ON the landscape, rather than below an
+   empty cover. The square portrait and words share the same baseline. */
+html:not([data-skin]) #profile-root #profile-identity-card {
+  margin-bottom: 0;
+  padding: 2rem var(--ed-pad);
+  border-radius: 0;
+  background: var(--ed-sky-veil), var(--ed-sky) center / cover no-repeat;
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-identity-card .profile-id-avatar {
+  width: var(--ed-face-phone);
+  height: var(--ed-face-phone);
+  border-radius: 1.25rem;
+  box-shadow: var(--ed-face-ring);
+  font-size: 1.75rem;
+}
+html:not([data-skin]) #profile-identity-card #profile-edit-btn {
+  border-color: var(--wip-btn-1-line);
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+  min-height: 3rem;
+  padding-inline: 1.25rem;
+  border-radius: 1rem;
+}
+@media (hover: hover) { html:not([data-skin]) #profile-identity-card #profile-edit-btn:hover { background: var(--wip-btn-1-hover); } }
+html:not([data-skin]) #profile-identity-card .profile-id-name {
+  color: var(--ed-sky-ink);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-name-size-phone);
+  font-weight: 600;
+  line-height: 1.15;
+}
+html:not([data-skin]) #profile-identity-card .profile-id-sub { color: var(--ed-sky-ink-soft); line-height: 1.6; }
+html:not([data-skin]) #profile-identity-card .profile-id-bio { max-width: 38rem; font-size: 1rem; line-height: 1.5; color: var(--ed-sky-ink); }
+@media (min-width: 640px) {
+  html:not([data-skin]) #profile-identity-card .profile-id-avatar { width: var(--ed-face); height: var(--ed-face); font-size: 3rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-name { font-size: var(--ed-name-size); }
+  html:not([data-skin]) #profile-identity-card > div:first-child { align-items: flex-start; }
+  html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { gap: 2rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-bio { margin-top: 0.75rem; }
+}
+/* Your figures: one strip, a figure over its label, a thin rule between two. */
+html:not([data-skin]) #profile-root #profile-stats:not(.hidden) {
+  display: flex;
+  gap: 0;
+  margin-bottom: var(--ed-gap);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-stats > [data-profile-stat]:not(.hidden) {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-stats > [data-profile-stat]:not(.hidden) ~ [data-profile-stat]:not(.hidden) { border-inline-start: 1px solid var(--ed-rule); }
+html:not([data-skin]) #profile-stats > [data-profile-stat] > :first-child {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-stat-size);
+  font-weight: 600;
+}
+/* The cards under them are paper, and a group's name is a serif heading. */
+html:not([data-skin]) #profile-root :is(#profile-activity, section[id^="profile-"] > .ui-glist) {
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #profile-root :is(section[id^="profile-"] > h2, #profile-activity h2) {
+  color: var(--wip-ink);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-head-size);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: none;
+}
+html:not([data-skin]) #profile-root section[id^="profile-"] > h2 { padding-inline: 0.25rem; padding-bottom: 0.625rem; }
+/* Somebody else's page: the same paper, and the name in the serif. */
+html:not([data-skin]) #profile-root #public-profile-card {
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #public-profile-card h2 {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-name-size-phone);
+  font-weight: 600;
+  line-height: 1.15;
+}
+/* A real editor and preferences beside work, as in the profile reference. */
+html:not([data-skin]) #profile-root .profile-details-card {
+  padding: var(--ed-pad);
+  border: 1px solid var(--ed-line);
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+  margin-bottom: var(--ed-gap);
+}
+html:not([data-skin]) #profile-details h2 {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-head-size);
+  font-weight: 600;
+  line-height: 1.2;
+}
+html:not([data-skin]) #profile-details > p { margin: 0.5rem 0 1rem; font-size: 0.875rem; }
+html:not([data-skin]) #profile-details label { display: block; margin: 0.75rem 0 0.25rem; }
+html:not([data-skin]) #profile-details :is(input, textarea) {
+  border: 1px solid var(--ed-line);
+  background: var(--ed-well);
+  border-radius: 0.625rem;
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-details input[readonly] { color: var(--ed-sky-ink-soft); }
+html:not([data-skin]) #profile-details-handle-note { display: block; margin-top: 0.25rem; font-size: 0.75rem; text-decoration: underline; }
+html:not([data-skin]) #profile-details .profile-details-count { display: block; text-align: end; font-size: 0.75rem; margin-top: 0.25rem; }
+html:not([data-skin]) #profile-details .profile-details-actions { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 1rem; }
+html:not([data-skin]) #profile-details button[type="submit"] { background: var(--wip-btn-1-bg); color: var(--wip-btn-1-ink); border: 1px solid var(--wip-btn-1-line); }
+html:not([data-skin]) #profile-details [role="alert"] { color: var(--state-bad); font-size: 0.8125rem; }
+html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { row-gap: 1.25rem; }
+html:not([data-skin]) #profile-root #profile-work { margin-top: 0; }
+html:not([data-skin]) #profile-root #profile-account { margin-top: 0; }
+@media (min-width: 1024px) {
+  html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); }
+  html:not([data-skin]) #settings-root > div:has(> #settings-sidebar-col) { gap: 1rem; }
+  html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet { min-height: 38rem; }
+}
+html:not([data-skin]) #profile-live-projects { margin-bottom: 2rem; }
+html:not([data-skin]) #profile-live-projects > h2 {
+  font-family: var(--ed-serif);
+  font-weight: 600;
+  font-size: var(--ed-head-size);
+  line-height: 1.2;
+}
+html:not([data-skin]) #profile-live-projects > p { margin: 0.5rem 0 1rem; font-size: 0.875rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-card {
+  display: block;
+  padding: 1.125rem;
+  border: 1px solid var(--ed-line);
+  border-radius: 1rem;
+  background: var(--ed-sky-veil), var(--ed-sky) center / cover;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(2) { background: linear-gradient(var(--ed-lit-bg), var(--ed-paper)); }
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3) { background: linear-gradient(var(--ed-stat-bg), var(--ed-paper)); }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 0.75rem; background: var(--ed-paper); }
+html:not([data-skin]) #profile-live-projects h3 { font-family: var(--ed-serif); font-weight: 600; font-size: 1.375rem; line-height: 1.2; margin: 0.75rem 0 0.5rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.45; }
+html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1.5rem; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
+@media (max-width: 1199.98px) {
+  html:not([data-skin]) #profile-live-projects .profile-project-grid { grid-template-columns: 1fr; }
+}
+@media (min-width: 1280px) {
+  html:not([data-skin]) #profile-root #profile-identity-card { padding-bottom: 4.5rem; }
+  html:not([data-skin]) #profile-root #profile-stats { grid-row: 1; align-self: end; justify-self: end; width: 42%; z-index: 1; margin: 0 1.5rem 0.75rem 0; }
+  html:not([data-skin]) #profile-stats > [data-profile-stat] { padding-block: 0.5rem; }
+}
+/* END OF THE EDITORIAL PAGES. */
 /* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's
    whole width from the page's own gutter, not a column of its own in the middle of the window. The thread's card
    takes the room there is and "How it got here" keeps its width beside it. A side panel, and the page while the
@@ -13957,8 +14348,9 @@ html.un-kb #settings-content-col > .settings-sheet {
    no longer opens under "Profile", "Sign-in" and "Delete account" in one
    size. A one-part page is unchanged: its part's heading is its name. */
 .settings-page-title { display: none; }
-/* The head of the page under one of the frame's looks ("Settings" and one
-   sentence, features/settings/index.tsx): the standard look has none. */
+/* The head of the page ("Settings" and one sentence,
+   features/settings/index.tsx): drawn by the frame's looks, and by the
+   standard look's editorial pages (#7072), each in its own block. */
 .settings-frame-head { display: none; }
 /* A mark that only one of the frame's looks draws (a radio row's mark in
    Appearance and Accessibility): the standard look has none. */
@@ -14888,6 +15280,12 @@ html.un-kb .un-modal {
   border-top: 1px solid var(--app-sheet-line);
 }
 
+/* The header, its one line and How to test's steps (24 Nov 2026): a box of
+   their own only beside a thread, where they are the pane's head card
+   ("THE PREVIEW BESIDE A THREAD"); anywhere else they are the overlay's own
+   rows, as they always were. */
+.staging-top { display: contents; }
+
 /* The overlay is `inset: 0` — it covers the status bar, so its own chrome
    bar has to clear the notch. */
 #staging-overlay .staging-chrome-bar {
@@ -14949,8 +15347,9 @@ html.un-kb .un-modal {
 /* 20 Nov 2026 (live-draft review, G): a live draft's own controls, in its
    preview's header now that the thread has no bar. They take the header's
    second row, where a change's Vote and switch would be (a draft has
-   neither): where the draft stands on the left, its one action and Close
-   draft on the right. */
+   neither): where the draft stands on the left, its one action on the
+   right. Discard draft is the title menu's last entry since 24 Nov 2026
+   (.detail-card-menu-end): beside Propose it read as the preview's ×. */
 .staging-draft {
   grid-column: 1 / -1;
   grid-row: 2;
@@ -21816,7 +22215,28 @@ body:has(#ai-screen:not(.hidden)) {
   --ai-room: var(--platform-usable-w);
   --ai-list-min: var(--list-pane-w);
   --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)));
-  --ai-main-w: max(320px, min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+  --ai-main-w: max(var(--ai-main-floor, 320px), min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+}
+/* THE THREAD TAKES THE SPARE ROOM (24 Nov 2026). The list beside an open
+   column is held to 42rem (`--ai-list-max`, the body rule below), and the
+   column used to be held to nothing but 320px: dragged narrower than the
+   room less 42rem, it left the list's side wider than the list, and the
+   list floated between two empty bands (about 135px each with the sidebar
+   folded at 1720px and the column at 715px). Now the column is never
+   narrower than the room less the list's 42rem, so the list's 16px card
+   margins are the only space beside it. A width stored narrower is raised
+   to it when applied and kept as stored, so a window that narrows again
+   gives it back; the divider stops there too, reading the same 42rem
+   (features/side-panel/resize.ts probeLayout). The thread's own 320px,
+   the list's floor and the snap that hides it are as they were. Declared
+   only beside the lists: a preview's columns (`[data-ai-preview]`) keep
+   their own widths, which read `--ai-main-w` as it was, and the frame's
+   looks lay the list out at a width of their own. A phone has no columns. */
+@media (min-width: 768px) {
+  body:has(#ai-screen:not(.hidden):not([data-ai-preview]):not([data-frame-list])) {
+    --ai-list-max: 42rem;
+    --ai-main-floor: max(320px, calc(var(--ai-room) - var(--ai-list-max)));
+  }
 }
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   --ai-edge: var(--platform-strip-w, 0px);
@@ -21851,13 +22271,10 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    have. A row, New chat or a link opens it, and the list gives the lane up
    again. */
 #ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
-/* WITH A THREAD OPEN BESIDE IT (23 Nov 2026) the list is about 270px wide,
-   and from 1024px each row still kept a 48px column for a request's number
-   (and its gap), empty on most rows: a title had 60 to 130px and read
-   "Staging …" twice in a row. The number's column goes while a thread is
-   open beside the list, as it does on every screen under 1024px; the
-   number is on the thread's own head. */
-#ai-screen[data-ai-docked][data-ai-open] [data-ai-line-number] { display: none; }
+/* (23 Nov 2026: the number's column went while a thread was open beside the
+   list. 24 Nov 2026: the three bands' row carries its number under its
+   project's name, or under its title where the list is narrow: THE ROW BY
+   THE LIST'S OWN WIDTH, below.) */
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
    a column inside centres. Here Main is the far edge, with no gutter, so the
@@ -21877,7 +22294,7 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    `max-w-2xl mx-auto`, a single centred page as Home and Needs you are. */
 #ai-screen[data-ai-docked][data-ai-open] .ai-screen-body {
   width: 100%;
-  max-width: 42rem;
+  max-width: var(--ai-list-max, 42rem);
   margin-inline: auto;
 }
 /* THE LIST HIDDEN, ONE PANE (#6963). Dragging the divider past the list's
@@ -21925,24 +22342,82 @@ body:has(#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed]:not(.hidd
    a line. Under 340px of heading the mark steps aside, as a phone's
    conversation drops its avatar, and the name has the room. */
 #ai-screen [data-ai-hero] { container-type: inline-size; }
-@container (max-width: 340px) {
+/* 24 Nov 2026 (the three bands): the head's line is the mark, the counts
+   and New chat's round plus, so the mark keeps its place at the 352px list
+   beside a thread (a 320px line) and steps aside only at the 280px floor. */
+@container (max-width: 299.98px) {
   #ai-screen [data-ai-hero] > img { display: none; }
 }
 @container (max-width: 260px) {
   #ai-screen [data-ai-hero] h1 { font-size: 1.25rem; }
 }
-/* NEW CHAT KEEPS ITS WORDS WHERE THE HEADING HAS ROOM FOR THEM (14 Nov
-   2026). It is the page's one labelled button, a plus and "New chat" in the
-   accent. Beside the bot's picture, its name and search, the words fit from
-   about 400px of heading: a desktop's lists. Narrower (a phone, or the lists
-   beside an open column), the button is the accent disc with its plus, and
-   the words stay its name for a screen reader; a phone's Ask bar says them. */
+/* NEW CHAT KEEPS ITS WORDS WHERE THE LIST HAS ROOM FOR THEM (14 Nov 2026;
+   24 Nov 2026, the three bands: by the list's own width). It is the page's
+   one labelled button, a plus and "New chat". Where the list is narrow (THE
+   ROW BY THE LIST'S OWN WIDTH, below: the 352px beside a thread, a phone),
+   the button is the round plus alone, and the words stay its name for a
+   screen reader; a phone's Ask bar says them. */
 #ai-screen [data-ai-hero] [data-ai-new-chat] { padding-inline: 14px 16px; }
-@container (max-width: 400px) {
+@container ai-list (max-width: 519.98px) {
   #ai-screen [data-ai-hero] [data-ai-new-chat] { padding-inline: 0; }
   #ai-screen [data-ai-hero] [data-ai-new-chat] > span {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+}
+/* THE ROW BY THE LIST'S OWN WIDTH (24 Nov 2026, the three bands,
+   features/ai/lists.tsx). The list is 352px beside a thread until its divider
+   is dragged, and a phone's is about as wide, so the narrow row is the
+   common case and is the default here. Under 520px of list: no project
+   column, no second line and no ⋯; the title takes up to two lines and one
+   small line under it keeps the project and the number; the search field
+   drops its key. From 520px (dragged wider, up to the list's 672px): the
+   project's name over the number, the title over its reason and time, and
+   the ⋯'s room on every row so the pills keep one right edge. Measured on
+   the list, not the window: a container query. */
+#ai-screen .ai-lists { container: ai-list / inline-size; }
+#ai-screen .ai-lists .ai-row-project,
+#ai-screen .ai-lists .ai-row-sub,
+#ai-screen .ai-lists .ai-row-menu,
+#ai-screen .ai-lists .ai-search-key,
+#ai-screen .ai-lists .ai-found-place { display: none; }
+#ai-screen .ai-lists .ai-row-where,
+#ai-screen .ai-lists .ai-found-place-under { display: block; }
+#ai-screen .ai-lists .ai-row-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* A private thread's ⋯ on a wide row: a quiet 32px control in the row's
+   own ink, not the floating disc a thread's head draws. */
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action {
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action:hover { background: var(--messages-surface-2); color: var(--text-primary); }
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+#ai-screen .ai-lists .ai-row-menu .messages-thread-action svg { width: 18px; height: 18px; }
+@container ai-list (min-width: 520px) {
+  /* The project's column grows with the list: 104px at 520, 134px at 672. */
+  #ai-screen .ai-lists .ai-row-project { display: block; width: clamp(96px, 20cqi, 136px); }
+  #ai-screen .ai-lists .ai-row-sub,
+  #ai-screen .ai-lists .ai-found-place { display: block; }
+  #ai-screen .ai-lists .ai-row-menu { display: flex; }
+  #ai-screen .ai-lists .ai-search-key { display: inline-block; }
+  #ai-screen .ai-lists .ai-row-where,
+  #ai-screen .ai-lists .ai-found-place-under { display: none; }
+  #ai-screen .ai-lists .ai-row-title {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    -webkit-line-clamp: unset;
+    overflow-wrap: normal;
   }
 }
 /* The chat fills the column (as a project page's chat does). */
@@ -22164,6 +22639,101 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
   border: 0;
   border-radius: 0;
 }
+/* NEW CHAT IS DRAWN AS CARDS (24 Nov 2026). Since #7039 a new chat is the
+   docked column's resting state (features/ai/index.tsx, THE COLUMN IS NEVER
+   EMPTY BESIDE THE LISTS), and it was the one thing there drawn as a sheet:
+   flush with the column's top and far edges, one rounded corner, while a
+   thread beside the same list is cards on the page's ground. It is drawn as
+   a thread is now. The column paints nothing round it; its head is a title
+   card with a thread's gutter, corners, fill and edge ("THE THREAD'S HEAD
+   IS A CARD"); and under it, 12px down, one card fills the rest of the
+   column and holds the starts, the About and With choosers and the message
+   box, as a thread's messages card holds its replies. The card is the
+   pane's own `::before`, laid in the pane's grid over the rows under the
+   head, so it follows the head's height and the box's rather than an
+   offset; the starts and the box keep their 720px measure inside it. Its ✕
+   is gone there (new-thread.tsx NewThreadDocked). Docked only
+   (`data-bot-new-thread-docked`, from 768px, in the column beside a preview
+   too) and in the standard and brand looks; a phone's drawer and Messages
+   keep the sheet and the ✕. */
+#ai-screen[data-ai-docked] .ai-main-pane:has([data-bot-new-thread-docked]) {
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
+  --thread-gutter: 12px;
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  isolation: isolate;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked]::before {
+  content: "";
+  grid-row: 2 / -1;
+  grid-column: 1;
+  z-index: -1;
+  margin: 12px var(--thread-gutter) 8px;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+}
+/* Each part names its row: the card already holds rows 2 and 3, and an
+   item left to auto-placement would go past it into a row of its own. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > * { grid-column: 1; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header {
+  grid-row: 1;
+  margin-inline: var(--thread-gutter);
+  padding-block: 14px;
+  padding-inline: 16px calc(12px + var(--ai-edge, 0px));
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card-solid);
+  box-shadow: var(--thread-card-edge);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > :is(.messages-thread-scroll, .messages-builder-setup) {
+  grid-row: 2;
+  margin: 12px var(--thread-gutter) 0;
+}
+/* The 720px measure ("A WIDER COLUMN KEEPS A READABLE LINE") inside the
+   card: an item's padding is a share of its grid area, the whole column,
+   so the card's gutters come off it. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-scroll {
+  padding-inline: max(0px, calc((100% - 720px) / 2 - var(--thread-gutter)));
+}
+/* The box's own bar pads its foot for the tab bar and the home indicator
+   (`.platform-safe-bar`, important), so the card's foot is a margin under
+   it, and the box stands a little further in from the card's foot. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-composer {
+  grid-row: 3;
+  margin: 0 var(--thread-gutter) 8px;
+  padding-inline: max(12px, calc((100% - 720px) / 2 - var(--thread-gutter)));
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-composer-card {
+  margin-bottom: 8px;
+}
+/* In the brand look the cards are the look's thread cards, opaque with its
+   lift, as its thread page's are ("A THREAD'S PAGE" in the brand look sets
+   the same three on `.dev-request`; this rule names the bot tab, so
+   scripts/thread-look.js leaves it out of the standard look's copy). On
+   the card the starts and the About and With choosers are white on white:
+   the standard look edges them with the kit's hairline (its
+   `--messages-disc-shadow`), the brand look drew them with a drop shadow
+   alone and they vanished, so here they take the look's edge for a raised
+   thing. The box has the look's field edge already. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
+  --thread-card-look: var(--bl-card);
+  --thread-card-solid-look: var(--bl-card);
+  --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+  --messages-disc-shadow: var(--bl-raise-edge);
+}
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request,
 #ai-screen .dev-private-thread {
   /* The page's gutter, which its head, its cards and its reply box keep. */
@@ -22337,6 +22907,16 @@ body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-d
 .detail-card-version { display: flex; width: calc(100% - 44px); margin-inline-start: 44px; align-items: baseline; gap: 8px; padding: 6px 10px; border-radius: 10px; text-align: start; font-size: 13px; line-height: 18px; color: var(--text-secondary); }
 .detail-card-version b { flex: none; font-weight: 650; color: var(--text-primary); }
 .detail-card-version span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 24 Nov 2026: after the rows and a hairline, apart from what switches the
+   column, an action on the thing shown: a live draft's Discard draft, in
+   red (DetailPicker's `end`). Where the list holds nothing else (a phone,
+   the whole window) it is the list. */
+.detail-card-menu-end { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--app-sheet-line); }
+.detail-card-menu-end[data-alone] { margin-top: 0; padding-top: 0; border-top: 0; }
+.detail-card-row[data-danger], .detail-card-row[data-danger]:hover { color: var(--state-blocked); }
+.detail-card-row[data-danger]:hover { background: var(--state-blocked-bg); }
+.detail-card-row[data-danger] .detail-card-tile { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.detail-card-row:disabled { opacity: 0.5; pointer-events: none; }
 /* The cards, in the two card looks: the thread's paint, on the page's own
    ground. Beside the thread the column paints nothing and keeps the page's
    gutter; on a phone, where it is the whole screen over the drawer, it is
@@ -22386,12 +22966,77 @@ html #ai-screen[data-ai-preview="full"] .detail-card-body[data-detail-body="desi
 @media (max-width: 767px) {
   .detail-card-scrim { display: block; position: fixed; inset: 0; z-index: 59; background: rgba(0, 0, 0, 0.32); }
 }
-/* A running preview's frame stands over the card's body (its frame never
-   moves: features/staging/placement.ts), so it wears the card's corners. */
+/* THE PREVIEW BESIDE A THREAD (24 Nov 2026). A running preview stands over
+   the card's body (its frame never moves: features/staging/placement.ts),
+   and is drawn as the thread beside it is: two cards on the page's own
+   ground, 12px apart, with nothing painted around them. The head card
+   (.staging-top: the header, its one optional line and How to test's steps)
+   is the thread's title card, its radius, fill, edge and lift; the app's
+   frame is the messages card, clipped to its corners. The thread's tokens
+   are set on the thread (the "IN A PANEL TOO" block), which this overlay is
+   not inside, so they are named here again from the same looks. It used to
+   be one sheet, the header glued to the top of the frame. The whole window
+   and the side panel are as they were (.staging-top has no box there). */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-preview-pane .detail-card-body[data-detail-body="preview"] {
+  background: none;
+  box-shadow: none;
+}
 html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] {
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+  gap: 12px;
   border: 0;
-  border-radius: 20px;
-  box-shadow: var(--detail-card-edge);
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+/* The brand look's thread cards, as `.dev-request` paints them there. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] {
+  --thread-card-look: var(--bl-card);
+  --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-top {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge), 0 10px 24px -14px rgba(17, 24, 39, 0.22);
+}
+/* Inside it the rows paint nothing of their own: the line between two is
+   drawn above the lower one, which shows only when it has something. */
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-top > :is(.staging-head, .staging-context, .staging-steps) {
+  background: none;
+  border-bottom: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-top > :is(.staging-context, .staging-steps) {
+  border-top: 1px solid var(--app-sheet-line);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-body {
+  overflow: hidden;
+  border-radius: var(--thread-card-r);
+  box-shadow: var(--thread-card-edge);
+}
+/* The card's inset edge, drawn again over what fills the card (the frame,
+   the loader, the before and after), which would cover the card's own; it
+   takes no press, so a comment's pin lands in the app beneath. On the mat
+   the frame stands clear of the edge and the card's own shows. */
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"]:not([data-mat]) .staging-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  box-shadow: var(--thread-card-edge);
+  pointer-events: none;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"]:not([data-mat]) #staging-iframe,
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-preview-pane [data-detail-body="preview"]) #staging-overlay[data-placement="column"] .staging-pin-layer {
+  border-radius: inherit;
 }
 
 /* ── The AI tab on a phone, as a drawer (features/ai/phone-drawer.tsx) ──
@@ -23609,8 +24254,7 @@ a.dev-ws-hero-pending {
 /* INVITE, AS A CARD (community-card.tsx InviteHeroCard, request 6654):
    Home's New project card on the hub. A lilac card: faces of people already
    here fanned out with an open seat after them, a question, what an invite
-   does, one full-width dark button and how many are in. Under the hero on a
-   phone; beside it on a wide window ("THE HUB IN TWO COLUMNS" below). */
+   does, one full-width dark button and how many are in. Under the hero. */
 .dev-ws-invite-hero {
   position: relative;
   display: flex; flex-direction: column; gap: 10px; min-width: 0;
@@ -23646,30 +24290,6 @@ a.dev-ws-hero-pending {
 .dark .dev-ws-invite-hero-btn { background: #fafafa; color: #18181b; }
 .dark .dev-ws-invite-hero-btn:hover { background: #e4e4e7; }
 .dev-ws-invite-hero-count { margin: 0; font-size: 13px; line-height: 18px; text-align: center; color: var(--text-muted); }
-/* THE HUB IN TWO COLUMNS (request 6654). On a wide window the hub was one
-   760px column with a wide empty margin either side. Its page is 1080px
-   there, and two pairs sit side by side in equal halves: the hero with the
-   Invite card, and For you with Topics. Everything else keeps the full
-   width, in the order it is written. Each pair is side by side only when
-   both are there and adjacent, so a hub without topics, or without the
-   Invite card, is one column as before. Not under a look (`data-skin`),
-   whose kit has a column of its own. */
-@media (min-width: 1100px) {
-  html:not([data-skin]) #dev-workshop:has(> .dev-ws[data-ws-tab="status"]) { max-width: 1080px; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
-    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    column-gap: 16px; align-content: start; align-items: start;
-  }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { grid-column: 1 / -1; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero:has(+ .dev-ws-invite-hero),
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
-  /* Top contributors (request 6837) goes under For you, and Topics beside
-     the two of them. Without Topics it keeps the full width. */
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics]:has(+ [data-ws-hub-contributors]) { grid-row: span 2; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] + [data-ws-hub-contributors] { grid-column: 1; }
-}
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense;
@@ -27106,11 +27726,19 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    THE BRAND LOOK SHARES IT TOO (issue #7059): its blue bar with the sun pill set no seat sizes of its own, so there
    the labels were cut mid-word. */
 /* The lit pill is the tab's own box, so its word has the tab's side padding to the pill's edge: 8px, as Home and You
-   had to spare (phone review #106: "Communities" ran to within 4px of its sun). Below 375px the words need the room. */
+   had to spare (phone review #106: "Communities" ran to within 4px of its sun). Narrower phones need some of that room
+   for the words. At 8px the bar needs 383px (the five labels at 11px, the lit one's bold, the tabs' margins and the
+   bar's own padding), so a 375px phone (iPhone mini, SE, X, 11 Pro) printed "Homeroom…" on every tab and "Communiti…"
+   with Communities lit (mobile polish 02, Nov 2026). Up to 389.98px the padding is 6px, which fits the five at 375 with
+   about 12px to spare and still keeps 6px between the lit word and its pill; below 375px, where the labels drop to
+   10.5px as well, it is 3px. The ellipsis stays for a larger system text size or a longer translated label. */
 @media (max-width: 767.98px) {
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs { grid-template-columns: repeat(5, auto); }
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 8px; }
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label { overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 389.98px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 6px; }
 }
 @media (max-width: 374.98px) {
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 3px; }
@@ -34308,6 +34936,21 @@ html[data-motion="reduce"] #home-create-tile[data-create-enabled="true"]:active 
 html:not([data-skin]).dark:not([data-app-tone="light"]) body #dev-topic-thread { --bl-sun: var(--wip-btn-1-bg, #ffee6f); --bl-sun-lit: var(--wip-btn-1-hover, #fff59f); }
 html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-request { --thread-foot: var(--bl-card); }
 html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-rail { --rail-now-box: var(--bl-card); }
+/* WHERE THE PICTURE GOES (24 Nov 2026). The wells a change's picture
+   stands in (the before and after's box while there is none, the picture's
+   own ground and its screen tiles) and the timeline's current step are holes in the card: they show what is
+   behind it. The generated block below drops the paper look's page ground,
+   so the wallpaper stays, but carries its page colour, and these read it:
+   in light a #f6f2d8 box on the white card, a darker yellow than the
+   #fffeea page beside the card. In dark they were Messages' #3a3a3c, a grey
+   on the navy card. They take the page's own ground now: the wallpaper's in
+   light, and in dark the card's, outlined by their hairline, as #102 made
+   the current step. The paper colour stays where it is a fill that has to
+   stand off a white card (the vote switch's track, a bubble, a hover), so
+   it is not changed in the block. */
+html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) #dev-topic-thread { --thread-well: var(--home-ground, var(--bl-page)); }
+html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) #dev-topic-thread .dev-rail { --rail-now-box: var(--thread-well); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread { --thread-well: var(--bl-card); }
 /* (#113, phone review 23 Nov 2026) One face for a thread card's buttons:
    Preview and Vote are the page's sans, so "Suggest a change privately" and
    the quick replies under Homeroom bot's message are too, instead of the
@@ -34803,6 +35446,28 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
    it is pinned again (the scroller shrinks and scrolls) once the thread is
    taller than the window. */
 .dev-request:has(.dev-thread-card) .dev-request-scroll { flex-grow: 0; }
+/* …BUT A PRIVATE THREAD KEEPS ITS BOX AT THE FOOT (24 Nov 2026). A private
+   thread with Homeroom bot is a chat, and a chat keeps its reply box at the
+   bottom of the column: with a message or two the box stood in the middle
+   of the screen under a short card, the rest of the column bare. There the
+   scroller fills the sheet again, as a column of the cards, and the
+   replies' card fills it down to the reply box: its foot is the 12px the
+   spacer after it leaves over the box (THE FOOT IS A SPACER, below), as a
+   long thread's is. The messages start at the card's top, and one more is
+   added under the last without the card changing height. Nothing in the
+   column shrinks: a thread taller than the column scrolls as it did, and
+   the spacer, an empty item, would otherwise be the first thing a column
+   squeezed. Wherever the page is drawn: beside the lists, beside a
+   preview, and in a phone's drawer. Request and change pages keep the box
+   under their replies (the rule above). */
+#ai-screen .dev-private-thread .dev-request-scroll {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+#ai-screen .dev-private-thread .dev-request-scroll > *,
+#ai-screen .dev-private-thread .dev-request-scroll::after { flex-shrink: 0; }
+#ai-screen .dev-private-thread .dev-request-scroll > [data-thread-page-replies] { flex-grow: 1; }
 /* The author row gives way to the kicker; the timeline says who and when. */
 .dev-thread-card { position: relative; --foot-x: 16px; --foot-b: 16px; }
 /* The card's own gutters, so the foot's band can reach its edges exactly. */
@@ -34868,13 +35533,16 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 }
 
 
-/* Where the picture will be, before there is one. */
+/* Where the picture will be, before there is one. Every well a picture
+   stands in reads --thread-well first: the standard look's thread page sets
+   it to the ground behind its cards (see "WHERE THE PICTURE GOES" above the
+   generated block); every other look leaves it unset. */
 .dev-thread-wait,
 .dev-thread-card .dev-change-shots-plain {
   margin-top: 14px; min-height: 132px; padding: 20px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   border-radius: 16px; text-align: center;
-  background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  background: var(--thread-well, var(--messages-surface-2)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
   color: var(--text-secondary);
 }
 /* The card's picture: the shots viewer read as one picture. The Before and
@@ -34921,7 +35589,7 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-compare {
   --rf-black: var(--text-primary); --rf-cream: var(--bg-primary); --rf-line: var(--app-sheet-line);
   position: relative; min-height: 120px; border-radius: 16px; overflow: hidden; isolation: isolate;
-  background: var(--messages-surface-2);
+  background: var(--thread-well, var(--messages-surface-2));
 }
 .dev-thread-compare::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--app-sheet-line); pointer-events: none; }
 .dev-thread-compare-expand {
@@ -34933,7 +35601,7 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-tiles-said { margin: 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 19px; color: var(--text-secondary); }
 .dev-thread-tiles-said > li + li { margin-top: 4px; }
 .dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
-.dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+.dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--thread-well, var(--messages-surface-2)); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
 .dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
 .dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface), 0 0 0 4px var(--text-primary); }
 .dev-thread-tiles-cap { flex: 1 1 auto; min-width: 0; }
@@ -35896,7 +36564,8 @@ html[data-skin="paper"][data-skin] .fr-facts.fr-f5 .fr-fact .fr-l{white-space:no
 }
 /* No rule of this look names Young Serif since its titles went back to
    Geist. The face stays declared, and its file committed, for the
-   signed-out pages' look, which draws its headlines in it. */
+   signed-out pages' look, which draws its headlines in it, and for the
+   standard look's Settings and Profile (#7072, "THE EDITORIAL PAGES"). */
 @font-face {
   font-family: 'Source Serif 4';
   src: url('/fonts/source-serif-4/source-serif-4-latin-opsz-normal.woff2') format('woff2');

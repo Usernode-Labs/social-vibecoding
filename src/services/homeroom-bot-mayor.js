@@ -8233,9 +8233,11 @@ async function offerProposeDraft(pool, ctx, args = {}) {
 // 20 Nov 2026 (live-draft review, C): a refusal of the draft's own gates
 // (live-drafts.js propose, updateProposal) that passes within a minute or
 // so: a preview still starting after the turn's last save, a proposal busy
-// going live, a branch not made yet. The tap's act is tried again by its
-// work (retryAct), its claim kept.
-const DRAFT_TRY_AGAIN = new Set(['preview_building', 'not_started', 'proposal_busy']);
+// going live, a branch not made yet, or (24 Nov 2026) another Propose of the
+// same draft still running, the preview's own button tapped with this card.
+// The tap's act is tried again by its work (retryAct), its claim kept, and
+// so ends as done or as "already up for a vote".
+const DRAFT_TRY_AGAIN = new Set(['preview_building', 'not_started', 'proposal_busy', 'proposing']);
 
 /**
  * 20 Nov 2026 (live-draft review, C): a tap under this thread's live draft's
@@ -8285,6 +8287,8 @@ async function decideDraftProposal(pool, config, { user, action, yes, ack, deps 
   if (!update && code === 'already_proposed') return ack('It is already up for a vote.', objects.length ? { objects } : {});
   if (update && code === 'nothing_new') return ack('The proposal already has every change in the draft.', objects.length ? { objects } : {});
   if (DRAFT_TRY_AGAIN.has(code) && deps.actKey) throw Object.assign(new Error(code), { status: 503 });
+  // With no work to try again: the other Propose is putting it up, so it is no failure.
+  if (!update && code === 'proposing') return ack('It is going up for a vote already.', objects.length ? { objects } : {});
   const why = code === 'join_required' ? `you need to be a member of ${body.app?.name || 'that project'} first. You can join it from its page.`
     : withoutEmDashes(String(body.message || '')).trim() || 'something changed.';
   return failed(code, `${couldNot}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`);

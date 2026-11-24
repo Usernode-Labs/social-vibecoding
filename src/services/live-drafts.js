@@ -1059,6 +1059,39 @@ function proposalText(draft, edits) {
   ].join('\n');
 }
 
+// 24 Nov 2026: one proposal per draft. Propose's slow work (a change of its
+// own, its branch, the promote) takes seconds, and the draft is marked
+// proposed only after it, so two taps in that window (the Propose under the
+// bot's reply and the preview's own) both passed the check at the top and put
+// the same commit up for a vote twice. A claim taken before that work lets one
+// call through. It is released when that call fails and cleared when the draft
+// is proposed. One older than this is a call that died holding it, and the
+// next tap takes it over.
+const PROPOSE_CLAIM_MS = 3 * 60 * 1000;
+
+/**
+ * The draft's propose claim, or null when another call holds it or the draft
+ * is not open. Resolves the claim's time, to the millisecond, so a release
+ * frees only this one.
+ */
+async function claimPropose(pool, draftId) {
+  const { rows: [row] } = await pool.query(
+    `UPDATE live_drafts SET proposing_at = date_trunc('milliseconds', NOW())
+      WHERE id = $1 AND state = 'open'
+        AND (proposing_at IS NULL OR proposing_at < NOW() - make_interval(secs => $2))
+      RETURNING proposing_at`,
+    [Number(draftId), PROPOSE_CLAIM_MS / 1000],
+  );
+  return row?.proposing_at || null;
+}
+
+async function releasePropose(pool, draftId, at) {
+  await pool.query(
+    'UPDATE live_drafts SET proposing_at = NULL WHERE id = $1 AND proposing_at = $2',
+    [Number(draftId), at],
+  ).catch(() => {});
+}
+
 /**
  * Put an open draft up for a vote, as `user`'s own change (the same promote
  * a change's Propose button runs). 20 Nov 2026 (C): the proposal is a change
@@ -1091,6 +1124,29 @@ async function propose(pool, config, { user, draftId, title = null, deps = {} })
   const name = String(title || edits[edits.length - 1]?.summary || `Changes to ${draft.app_name || draft.app_slug}`)
     .replace(/\s+/g, ' ').trim().slice(0, 120);
 
+  const claimed = await claimPropose(pool, draft.id);
+  if (!claimed) {
+    const now = await byId(pool, draft.id);
+    if (now?.state === 'proposed') {
+      return refuse(409, 'already_proposed', 'This draft is up for a vote already. Update the proposal to add the changes since.',
+        { draft: describe(now) });
+    }
+    if (now?.state !== 'open') return refuse(404, 'no_draft', 'No open draft of yours.');
+    return refuse(409, 'proposing', 'It is being put up for a vote right now.');
+  }
+
+  // A throw past here frees the claim as well, so the next tap is not
+  // refused for PROPOSE_CLAIM_MS.
+  try {
+    return await proposeClaimed(pool, config, { user, draft, repo, edits, name, claimed, deps });
+  } catch (err) {
+    await releasePropose(pool, draft.id, claimed);
+    throw err;
+  }
+}
+
+/** propose, once it holds the draft's claim (`claimed`). */
+async function proposeClaimed(pool, config, { user, draft, repo, edits, name, claimed, deps }) {
   // The proposal: a change of its own, its branch made from the draft's
   // (session-lifecycle.js ensureSessionBranch `fromSessionId`, on a
   // conductor), so it starts exactly at the draft's head.
@@ -1100,9 +1156,12 @@ async function propose(pool, config, { user, draftId, title = null, deps = {} })
      RETURNING *`,
     [draft.app_id, user.id, name],
   );
-  const dropSession = () => pool.query(
-    "DELETE FROM chat_sessions WHERE id = $1 AND status = 'paused' AND pr_number IS NULL", [session.id],
-  ).catch(() => {});
+  const dropSession = async () => {
+    await pool.query(
+      "DELETE FROM chat_sessions WHERE id = $1 AND status = 'paused' AND pr_number IS NULL", [session.id],
+    ).catch(() => {});
+    await releasePropose(pool, draft.id, claimed);
+  };
   let head = null;
   try {
     const lifecycle = deps.sessionLifecycle || require('./session-lifecycle');
@@ -1140,7 +1199,7 @@ async function propose(pool, config, { user, draftId, title = null, deps = {} })
   }
   await pool.query(
     `UPDATE live_drafts SET state = 'proposed', proposal_session_id = $2, proposed_head_sha = $3,
-            proposed_at = NOW(), updated_at = NOW()
+            proposed_at = NOW(), updated_at = NOW(), proposing_at = NULL
       WHERE id = $1 AND state = 'open'`,
     [draft.id, session.id, head],
   );

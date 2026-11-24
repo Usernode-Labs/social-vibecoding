@@ -105,11 +105,11 @@ test('progress: the shards\' counts add up, and the suite is done when every sha
 });
 
 test('how many shards, and who has them', () => {
-  assert.equal(unitSuite.unitSuiteShardCount(undefined), 3);
+  assert.equal(unitSuite.unitSuiteShardCount(undefined), 5);
   assert.equal(unitSuite.unitSuiteShardCount('1'), 1);
-  assert.equal(unitSuite.unitSuiteShardCount('5'), 5);
+  assert.equal(unitSuite.unitSuiteShardCount('3'), 3);
   assert.equal(unitSuite.unitSuiteShardCount('99'), 8);
-  assert.equal(unitSuite.unitSuiteShardCount('x'), 3);
+  assert.equal(unitSuite.unitSuiteShardCount('x'), 5);
   assert.equal(unitSuite.hasShardScript('{"scripts":{"test":"node --test","test:shard":"node --test --test-shard=$TEST_SHARD"}}'), true);
   assert.equal(unitSuite.hasShardScript('{"scripts":{"test":"node --test"}}'), false);
   assert.equal(unitSuite.hasShardScript('{"scripts":{"test:shard":"  "}}'), false);
@@ -138,7 +138,7 @@ test('each Job is told its shard, named and labelled as one, and asks for a shar
   assert.deepEqual(calls.map((c) => c.env.TEST_SHARD), ['1/3', '2/3', '3/3']);
   assert.deepEqual(calls.map((c) => c.nameSuffix), [null, 'u2', 'u3']);
   assert.deepEqual(calls.map((c) => c.unitShard), ['1-of-3', '2-of-3', '3-of-3']);
-  assert.ok(calls.every((c) => c.cpuRequest === '1500m' && c.memory === '3g'), 'a shard\'s share of the quota');
+  assert.ok(calls.every((c) => c.cpuRequest === '900m' && c.memory === '3g'), 'a shard\'s share of the quota');
   assert.ok(calls.every((c) => c.previewRunId === 'run-1' && c.namePrefix === 'sv-unit-early'));
   assert.ok(calls.every((c) => c.env.REPO_URL === 'u' && c.env.GIT_REF === 'r'), 'the same checkout everywhere');
   assert.match(out.stdout, /^# tests 9$/m);
@@ -187,10 +187,10 @@ test('maybeRunUnitSuite splits a repo with test:shard on Kubernetes, and reads i
 
   t.mock.method(github, 'getFileContent', async () => JSON.stringify(pkg));
   const red = await unitSuite.maybeRunUnitSuite(args);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 5);
   assert.equal(red.row.status, 'fail');
-  assert.match(red.row.failureReason, /^tests\/x\.test\.js \(1\): broken \| # tests 10 \| # pass 9 \| # fail 1/);
-  assert.equal(red.row.summary.tests, 10, 'the summary adds the shards up');
+  assert.match(red.row.failureReason, /^tests\/x\.test\.js \(1\): broken \| # tests 16 \| # pass 15 \| # fail 1/);
+  assert.equal(red.row.summary.tests, 16, 'the summary adds the shards up');
   assert.deepEqual(red.failingTests, { tests: [{ file: 'tests/x.test.js', test: 'broken' }], complete: true });
 
   calls.length = 0;

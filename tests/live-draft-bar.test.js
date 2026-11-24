@@ -61,16 +61,47 @@ test('the preview\'s header says where the draft stands in one short line, and o
   assert.equal(liveDraftShown(draft({ state: 'proposed' })), false, 'one proposed before drafts survived Propose is not');
 });
 
-test('the controls are the preview header\'s, beside its way out; Close draft asks first', () => {
+test('the controls are the preview header\'s, beside its way out; Discard draft is the title menu\'s and asks first', () => {
   const overlay = read('frontend/src/features/staging/staging-overlay.tsx');
   assert.match(overlay, /const liveDraft = useDraftForSession\(state\.open \? state\.sessionId : null\);/);
-  assert.match(overlay, /<LiveDraftControls draft=\{liveDraft\} \/>\s*<div className="staging-tools">/);
+  assert.match(overlay, /const draftActs = useLiveDraftActs\(liveDraft\);/);
+  assert.match(overlay, /<LiveDraftControls draft=\{liveDraft\} acts=\{draftActs\} \/>\s*<div className="staging-tools">/);
   const bar = read(BAR);
   assert.match(bar, /data-live-draft-propose=""/);
   assert.match(bar, /data-live-draft-update=""/);
-  assert.match(bar, /data-live-draft-close=""/);
+  // 24 Nov 2026: beside Propose, "Close draft" read as the preview's ×, which
+  // only hides the preview. The header's row keeps its line and its one
+  // action; ending the draft is Discard draft, the title menu's last entry.
+  const acts = { busy: null, error: null, act: async () => {}, discard: async () => {}, discardItem: null };
+  const header = renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 2 }), acts });
+  assert.match(header, /data-live-draft-propose=""/);
+  assert.doesNotMatch(header, /data-live-draft-close|Close draft|Discard draft/, 'no way to end the draft beside Propose');
+  assert.match(bar, /data: \{ 'data-live-draft-close': '' \},/, 'the check hook moves with it, to the menu entry');
+  assert.match(bar, /label: t\('messages:liveDraft\.discard'\),/);
   assert.match(bar, /const ok = await confirmAction\(\{\s*title: t\('messages:liveDraft\.closeConfirm\.title'\)/);
+  assert.match(bar, /confirmLabel: t\('messages:liveDraft\.close'\),\s*danger: true,/);
+  assert.match(bar, /await call\(`\/api\/live-drafts\/\$\{draft\.id\}\/close`, \{ method: 'POST' \}\);/, 'it ends the draft as Close draft did');
+  assert.equal(message('messages:liveDraft.discard'), 'Discard draft');
+  assert.equal(message('messages:liveDraft.close'), 'Discard draft', 'the confirm button says the menu entry\'s words');
+  assert.equal(message('messages:liveDraft.closeConfirm.title'), 'Discard this draft?');
+  // The menu is there whenever the preview is a draft's, beside a thread or
+  // in the whole window (a phone), where Discard draft is its only entry.
+  assert.match(overlay, /const menuHere = pickHere \|\| !!liveDraft;/);
+  assert.match(overlay, /return menuHere \? \(/);
+  assert.match(overlay, /end=\{draftActs\.discardItem\}>/);
+  const card = read('frontend/src/features/detail/detail-card.tsx');
+  assert.match(card, /<div className="detail-card-menu-end" data-alone=\{rows\.length \? undefined : ''\}>/);
+  assert.match(card, /role="menuitem"[\s\S]{0,200}data-danger=\{end\.danger \? '' : undefined\}[\s\S]{0,200}\{\.\.\.end\.data\}/);
   assert.match(read('frontend/src/features/staging/placement.ts'), /sessionId: Number\(input\.sessionId\) \|\| null,/);
+});
+
+test('a refusal on the header\'s line goes once the draft is proposed (24 Nov 2026: two Proposes at once)', () => {
+  // The Propose under the bot's reply and this one, tapped together: this one
+  // is told the draft is being put up for a vote, and that line goes once the
+  // other has proposed it, rather than standing in for "Up for a vote".
+  assert.match(read(BAR), /useEffect\(\(\) => \{ setError\(null\); \}, \[draft\?\.id, draft\?\.state\]\);/);
+  const acts = { busy: null, error: 'It is being put up for a vote right now.', act: async () => {}, discard: async () => {}, discardItem: null };
+  assert.match(renderComponent(BAR, 'LiveDraftControls', { draft: draft({ edits: 2 }), acts }), /It is being put up for a vote right now\./);
 });
 
 test('the messages pane reads the draft on an open thread of theirs, with no bar; a newly opened draft brings its preview up', () => {

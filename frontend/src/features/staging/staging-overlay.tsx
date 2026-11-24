@@ -62,7 +62,7 @@ import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
 import { useDetail } from '../ai/detail';
 import { DetailPicker } from '../detail/detail-card';
 import { useStoreState } from '../../lib/use-store-state';
-import { LiveDraftControls, useDraftForSession } from '../messages/live-draft-bar';
+import { LiveDraftControls, useDraftForSession, useLiveDraftActs } from '../messages/live-draft-bar';
 import { PreviewPinLayer, togglePreviewPins, usePreviewPins } from './preview-pin';
 
 /**
@@ -224,11 +224,16 @@ export function StagingOverlay(): ReactNode {
   const detail = useDetail();
   const pickHere = placement === 'column' && detail?.kind === 'preview' && !!detail.owner;
   // 20 Nov 2026 (live-draft review, G and J): a live draft's preview carries
-  // the draft's own controls in this header (its Propose, Update proposal and
-  // Close draft, and where it stands), and its Comment pins a comment in the
-  // app that goes to the draft's thread. Any other preview is as it was.
+  // the draft's own controls in this header (its Propose or Update proposal,
+  // and where it stands), and its Comment pins a comment in the app that goes
+  // to the draft's thread. Any other preview is as it was.
   const liveDraft = useDraftForSession(state.open ? state.sessionId : null);
+  const draftActs = useLiveDraftActs(liveDraft);
   const pinning = usePreviewPins();
+  // 24 Nov 2026: Discard draft is the title menu's last entry, apart from
+  // what switches the column, so the title is a menu whenever the preview is
+  // a draft's: in the whole window (a phone) and the panel it holds only that.
+  const menuHere = pickHere || !!liveDraft;
 
   return (
     <div
@@ -244,234 +249,244 @@ export function StagingOverlay(): ReactNode {
       aria-label={title || fallback}
     >
       {/*
-          `staging-chrome-bar` is a STYLE HOOK, not decoration: in the whole
-          window this overlay covers the status bar, so app.css adds the top
-          safe-area inset to this bar. Docked in a column or the panel it
-          starts below the shell's header and adds nothing.
+          24 Nov 2026: the header, its one optional line and How to test's
+          steps, as one. Beside a thread (`data-placement="column"`) it is the
+          pane's head card, as the thread's own title card is, and the frame
+          is a card of its own under it (app.css, "THE PREVIEW BESIDE A
+          THREAD"). Anywhere else it is `display: contents`: no box, so the
+          whole window and the panel are laid out as before.
       */}
-      <div ref={headRef} className="staging-chrome-bar staging-head shrink-0">
+      <div className="staging-top">
         {/*
-            The way out, always rendered and wired (#1443,
-            tests/staging-preview-has-an-exit.test.js): Back at the start of
-            the row in the whole window, × at its end when docked. app.css
-            moves it and picks its glyph by `data-placement`.
+            `staging-chrome-bar` is a STYLE HOOK, not decoration: in the whole
+            window this overlay covers the status bar, so app.css adds the top
+            safe-area inset to this bar. Docked in a column or the panel it
+            starts below the shell's header and adds nothing.
         */}
-        <button
-          id="staging-back"
-          type="button"
-          className="staging-disc staging-exit"
-          aria-label={exitLabel}
-          title={exitLabel}
-          onClick={() => stagingHandlers.onBack?.()}
-        >
-          <ChevronLeftIcon className="staging-exit-back w-4 h-4" aria-hidden="true" />
-          <XIcon className="staging-exit-close w-4 h-4" aria-hidden="true" />
-        </button>
-        {/* The project's tile: its emoji, or its picture as the tile's background. */}
-        <span
-          className="staging-tile"
-          aria-hidden="true"
-          data-image={state.appTileImage ? '' : undefined}
-          style={state.appTileImage ? { backgroundImage: `url("${state.appTileImage.replace(/["\\]/g, '')}")` } : undefined}
-        >
-          {state.appTileImage ? '' : state.appTile}
-        </span>
-        {(() => {
-          const titles = (
-            <>
-              {/*
-                  The change's name, else "Flat 4B Chores · Preview"
-                  (AppView._stagingTitle). The id is the old name: it showed the
-                  raw staging address once, which told a newcomer nothing.
-              */}
-              <span id="staging-url-label" className="staging-title" data-pending={pending ? '' : undefined}>{title}</span>
-              <span id="staging-facts" className="staging-facts">
-                {facts.map((part, i) => (
-                  <span key={i} className="staging-fact" data-kind={part.ask ? 'ask' : part.app ? 'app' : undefined}>{part.text}</span>
-                ))}
-              </span>
-            </>
-          );
-          return pickHere && detail ? (
-            <DetailPicker entry={detail} label={{ title: title || fallback, line: state.appName || null }} className="staging-titles staging-pick" anchor={headRef}>
-              {titles}
-              <ChevronDownIcon className="staging-pick-chevron h-4 w-4 shrink-0" aria-hidden="true" />
-            </DetailPicker>
-          ) : <div className="staging-titles">{titles}</div>;
-        })()}
-        {/*
-            The two ways to check a change before voting on it: the running
-            preview, or its before-and-after shots. Drawn like the Light / Dark
-            / System control. Only when the change has verified shots.
-        */}
-        <div
-          id="staging-view-switch"
-          ref={switchRef}
-          className="hidden staging-switch"
-          role="tablist"
-          aria-label={t('devchat:staging.switch.label')}
-        >
-          <button
-            type="button"
-            role="tab"
-            id="staging-view-preview"
-            aria-selected={!showingShots}
-            data-on={!showingShots ? '' : undefined}
-            onClick={() => stagingHandlers.onView?.('preview')}
-          >
-            {t('devchat:staging.switch.preview')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="staging-view-shots"
-            aria-selected={showingShots}
-            data-on={showingShots ? '' : undefined}
-            onClick={() => stagingHandlers.onView?.('shots')}
-          >
-            {t('devchat:staging.switch.shots')}
-          </button>
-        </div>
-        <span className="staging-gap" />
-        {/*
-            The platform's Vote, as on a chat's vote card: it opens the
-            change's Votes card, and says "See the vote" once it is decided.
-        */}
-        <button
-          id="staging-vote-btn"
-          ref={voteRef}
-          type="button"
-          className="hidden staging-vote"
-          data-settled={settled ? '' : undefined}
-          onClick={() => stagingHandlers.onVote?.()}
-        >
-          {previewVoteLabel(state.vote)}
-        </button>
-        {/* G: a live draft's own controls; nothing for any other preview.
-            Always rendered, so the head's children keep their shape. */}
-        <LiveDraftControls draft={liveDraft} />
-        <div className="staging-tools">
-          <button
-            id="staging-comment-btn"
-            type="button"
-            className="staging-disc"
-            aria-label={t('devchat:staging.comment')}
-            title={t('devchat:staging.comment')}
-            aria-pressed={liveDraft ? pinning : undefined}
-            data-on={liveDraft && pinning ? '' : undefined}
-            onClick={() => (liveDraft ? togglePreviewPins() : stagingHandlers.onComment?.())}
-          >
-            <ChatBubbleTailIcon className="w-4 h-4" aria-hidden="true" />
-          </button>
-          <button
-            id="staging-size-btn"
-            ref={sizeRef}
-            type="button"
-            className="hidden staging-disc"
-            aria-label={sizeLabel}
-            title={sizeLabel}
-            aria-pressed={state.expanded}
-            onClick={() => stagingHandlers.onSize?.()}
-          >
-            <ExpandIcon className="staging-size-expand w-4 h-4" aria-hidden="true" />
-            <ArrowsPointingInIcon className="staging-size-dock w-4 h-4" aria-hidden="true" />
-          </button>
+        <div ref={headRef} className="staging-chrome-bar staging-head shrink-0">
           {/*
-              Mirror of the main dev-console button, which the overlay can
-              cover. features/dev-console binds the click and owns this
-              button's `hidden` class and the badge's text: see the note in
-              the file header.
+              The way out, always rendered and wired (#1443,
+              tests/staging-preview-has-an-exit.test.js): Back at the start of
+              the row in the whole window, × at its end when docked. app.css
+              moves it and picks its glyph by `data-placement`.
           */}
           <button
-            id="staging-dev-console-btn"
-            className="relative staging-disc staging-console"
-            aria-label={t('devchat:staging.openConsole')}
+            id="staging-back"
+            type="button"
+            className="staging-disc staging-exit"
+            aria-label={exitLabel}
+            title={exitLabel}
+            onClick={() => stagingHandlers.onBack?.()}
           >
-            <TerminalIcon className="w-4 h-4" />
-            <span
-              id="staging-dev-console-badge"
-              className="hidden absolute -top-1 -end-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+            <ChevronLeftIcon className="staging-exit-back w-4 h-4" aria-hidden="true" />
+            <XIcon className="staging-exit-close w-4 h-4" aria-hidden="true" />
+          </button>
+          {/* The project's tile: its emoji, or its picture as the tile's background. */}
+          <span
+            className="staging-tile"
+            aria-hidden="true"
+            data-image={state.appTileImage ? '' : undefined}
+            style={state.appTileImage ? { backgroundImage: `url("${state.appTileImage.replace(/["\\]/g, '')}")` } : undefined}
+          >
+            {state.appTileImage ? '' : state.appTile}
+          </span>
+          {(() => {
+            const titles = (
+              <>
+                {/*
+                    The change's name, else "Flat 4B Chores · Preview"
+                    (AppView._stagingTitle). The id is the old name: it showed the
+                    raw staging address once, which told a newcomer nothing.
+                */}
+                <span id="staging-url-label" className="staging-title" data-pending={pending ? '' : undefined}>{title}</span>
+                <span id="staging-facts" className="staging-facts">
+                  {facts.map((part, i) => (
+                    <span key={i} className="staging-fact" data-kind={part.ask ? 'ask' : part.app ? 'app' : undefined}>{part.text}</span>
+                  ))}
+                </span>
+              </>
+            );
+            return menuHere ? (
+              <DetailPicker entry={pickHere && detail ? detail : null} label={{ title: title || fallback, line: state.appName || null }} className="staging-titles staging-pick" anchor={headRef} end={draftActs.discardItem}>
+                {titles}
+                <ChevronDownIcon className="staging-pick-chevron h-4 w-4 shrink-0" aria-hidden="true" />
+              </DetailPicker>
+            ) : <div className="staging-titles">{titles}</div>;
+          })()}
+          {/*
+              The two ways to check a change before voting on it: the running
+              preview, or its before-and-after shots. Drawn like the Light / Dark
+              / System control. Only when the change has verified shots.
+          */}
+          <div
+            id="staging-view-switch"
+            ref={switchRef}
+            className="hidden staging-switch"
+            role="tablist"
+            aria-label={t('devchat:staging.switch.label')}
+          >
+            <button
+              type="button"
+              role="tab"
+              id="staging-view-preview"
+              aria-selected={!showingShots}
+              data-on={!showingShots ? '' : undefined}
+              onClick={() => stagingHandlers.onView?.('preview')}
             >
-            </span>
+              {t('devchat:staging.switch.preview')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="staging-view-shots"
+              aria-selected={showingShots}
+              data-on={showingShots ? '' : undefined}
+              onClick={() => stagingHandlers.onView?.('shots')}
+            >
+              {t('devchat:staging.switch.shots')}
+            </button>
+          </div>
+          <span className="staging-gap" />
+          {/*
+              The platform's Vote, as on a chat's vote card: it opens the
+              change's Votes card, and says "See the vote" once it is decided.
+          */}
+          <button
+            id="staging-vote-btn"
+            ref={voteRef}
+            type="button"
+            className="hidden staging-vote"
+            data-settled={settled ? '' : undefined}
+            onClick={() => stagingHandlers.onVote?.()}
+          >
+            {previewVoteLabel(state.vote)}
+          </button>
+          {/* G: a live draft's own controls; nothing for any other preview.
+              Always rendered, so the head's children keep their shape. */}
+          <LiveDraftControls draft={liveDraft} acts={draftActs} />
+          <div className="staging-tools">
+            <button
+              id="staging-comment-btn"
+              type="button"
+              className="staging-disc"
+              aria-label={t('devchat:staging.comment')}
+              title={t('devchat:staging.comment')}
+              aria-pressed={liveDraft ? pinning : undefined}
+              data-on={liveDraft && pinning ? '' : undefined}
+              onClick={() => (liveDraft ? togglePreviewPins() : stagingHandlers.onComment?.())}
+            >
+              <ChatBubbleTailIcon className="w-4 h-4" aria-hidden="true" />
+            </button>
+            <button
+              id="staging-size-btn"
+              ref={sizeRef}
+              type="button"
+              className="hidden staging-disc"
+              aria-label={sizeLabel}
+              title={sizeLabel}
+              aria-pressed={state.expanded}
+              onClick={() => stagingHandlers.onSize?.()}
+            >
+              <ExpandIcon className="staging-size-expand w-4 h-4" aria-hidden="true" />
+              <ArrowsPointingInIcon className="staging-size-dock w-4 h-4" aria-hidden="true" />
+            </button>
+            {/*
+                Mirror of the main dev-console button, which the overlay can
+                cover. features/dev-console binds the click and owns this
+                button's `hidden` class and the badge's text: see the note in
+                the file header.
+            */}
+            <button
+              id="staging-dev-console-btn"
+              className="relative staging-disc staging-console"
+              aria-label={t('devchat:staging.openConsole')}
+            >
+              <TerminalIcon className="w-4 h-4" />
+              <span
+                id="staging-dev-console-badge"
+                className="hidden absolute -top-1 -end-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+              >
+              </span>
+            </button>
+          </div>
+        </div>
+        {/*
+            The one optional line under the header. Each part is rendered always
+            and hidden through a ref, so nothing here moves the frame below.
+        */}
+        <div id="staging-context" ref={contextRef} className="hidden staging-context shrink-0">
+          <span ref={wideRef} className="hidden staging-context-item">
+            <ExpandIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            {t('devchat:staging.wide')}
+          </span>
+          {/*
+              The first visit's line (#16): the change is not live yet, and what
+              is added here stays in the preview, which runs on its own copy of
+              the app's data. Put away for good on this device with Got it.
+          */}
+          <span id="staging-note" ref={noteRef} className="staging-context-item">
+            <span>{previewBannerText(state.solo)}</span>
+            <button type="button" className="staging-link" onClick={() => stagingHandlers.onNoteSeen?.()}>
+              {t('devchat:staging.gotIt')}
+            </button>
+          </span>
+          {/*
+              #127: bot-generated testing guidance. Hidden unless the session
+              carries testing_md / testing_path; wired in AppView.swapToStaging.
+              Its steps open below this line and push the preview down.
+          */}
+          <button
+            id="staging-test-btn"
+            ref={testBtnRef}
+            type="button"
+            className="hidden staging-link"
+            title={state.testBtnTitle || undefined}
+            aria-expanded={!state.testPanelHidden}
+            aria-controls="staging-testing-panel"
+            onClick={() => stagingHandlers.onTest?.()}
+          >
+            <DescriptionIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            {t('devchat:staging.howToTest')}
+            <ChevronDownIcon className="staging-steps-closed w-3 h-3" aria-hidden="true" />
+            <ChevronUpIcon className="staging-steps-open w-3 h-3" aria-hidden="true" />
+          </button>
+          {/*
+              Which moment this preview shows, when its change declared one
+              (AppView.swapToStaging, through stagingBridge.setClock). The
+              button reloads the preview at the other moment (app-view.js
+              re-points the iframe; this row never touches it).
+          */}
+          <span ref={clockRef} className="hidden staging-context-item">
+            <ClockIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span>{state.clockLabel ? previewClockText(state.clockLabel, state.clockAsNow) : ''}</span>
+            <button type="button" className="staging-link" onClick={() => stagingHandlers.onClockToggle?.()}>
+              {previewClockToggleText(state.clockLabel, state.clockAsNow)}
+            </button>
+          </span>
+        </div>
+        {/*
+            #127: the "How to test" steps, in place under the line above, so
+            they push the preview down instead of covering its top. Content is
+            bot-authored markdown rendered through the escaping markdown
+            pipeline in AppView._renderTestingControls.
+        */}
+        <div id="staging-testing-panel" ref={panelRef} className="hidden staging-steps shrink-0">
+          <div
+            id="staging-testing-content"
+            className="staging-steps-content"
+            dangerouslySetInnerHTML={{ __html: state.testHtml }}
+          >
+          </div>
+          <button
+            id="staging-testing-close"
+            type="button"
+            className="staging-steps-close"
+            aria-label={t('devchat:staging.dismissTesting')}
+            onClick={() => stagingHandlers.onTestingClose?.()}
+          >
+            <XIcon className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </div>
-      </div>
-      {/*
-          The one optional line under the header. Each part is rendered always
-          and hidden through a ref, so nothing here moves the frame below.
-      */}
-      <div id="staging-context" ref={contextRef} className="hidden staging-context shrink-0">
-        <span ref={wideRef} className="hidden staging-context-item">
-          <ExpandIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          {t('devchat:staging.wide')}
-        </span>
-        {/*
-            The first visit's line (#16): the change is not live yet, and what
-            is added here stays in the preview, which runs on its own copy of
-            the app's data. Put away for good on this device with Got it.
-        */}
-        <span id="staging-note" ref={noteRef} className="staging-context-item">
-          <span>{previewBannerText(state.solo)}</span>
-          <button type="button" className="staging-link" onClick={() => stagingHandlers.onNoteSeen?.()}>
-            {t('devchat:staging.gotIt')}
-          </button>
-        </span>
-        {/*
-            #127: bot-generated testing guidance. Hidden unless the session
-            carries testing_md / testing_path; wired in AppView.swapToStaging.
-            Its steps open below this line and push the preview down.
-        */}
-        <button
-          id="staging-test-btn"
-          ref={testBtnRef}
-          type="button"
-          className="hidden staging-link"
-          title={state.testBtnTitle || undefined}
-          aria-expanded={!state.testPanelHidden}
-          aria-controls="staging-testing-panel"
-          onClick={() => stagingHandlers.onTest?.()}
-        >
-          <DescriptionIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          {t('devchat:staging.howToTest')}
-          <ChevronDownIcon className="staging-steps-closed w-3 h-3" aria-hidden="true" />
-          <ChevronUpIcon className="staging-steps-open w-3 h-3" aria-hidden="true" />
-        </button>
-        {/*
-            Which moment this preview shows, when its change declared one
-            (AppView.swapToStaging, through stagingBridge.setClock). The
-            button reloads the preview at the other moment (app-view.js
-            re-points the iframe; this row never touches it).
-        */}
-        <span ref={clockRef} className="hidden staging-context-item">
-          <ClockIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          <span>{state.clockLabel ? previewClockText(state.clockLabel, state.clockAsNow) : ''}</span>
-          <button type="button" className="staging-link" onClick={() => stagingHandlers.onClockToggle?.()}>
-            {previewClockToggleText(state.clockLabel, state.clockAsNow)}
-          </button>
-        </span>
-      </div>
-      {/*
-          #127: the "How to test" steps, in place under the line above, so
-          they push the preview down instead of covering its top. Content is
-          bot-authored markdown rendered through the escaping markdown
-          pipeline in AppView._renderTestingControls.
-      */}
-      <div id="staging-testing-panel" ref={panelRef} className="hidden staging-steps shrink-0">
-        <div
-          id="staging-testing-content"
-          className="staging-steps-content"
-          dangerouslySetInnerHTML={{ __html: state.testHtml }}
-        >
-        </div>
-        <button
-          id="staging-testing-close"
-          type="button"
-          className="staging-steps-close"
-          aria-label={t('devchat:staging.dismissTesting')}
-          onClick={() => stagingHandlers.onTestingClose?.()}
-        >
-          <XIcon className="w-3.5 h-3.5" aria-hidden="true" />
-        </button>
       </div>
       <div className="staging-body relative flex-1">
         {/*

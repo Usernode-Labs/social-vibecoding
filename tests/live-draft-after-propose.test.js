@@ -216,6 +216,16 @@ test('what the draft\'s gates say at the tap is what the card says', async () =>
   // Typed, with no work to try again, it is said.
   assert.match((await tapOn('propose_draft', refuse(409, 'preview_building', 'The preview is still being built. Propose it once it is up.')).run()).content,
     /^I couldn't propose it: the preview is still being built\./);
+  // 24 Nov 2026: the preview's own Propose tapped with this card is still
+  // running. Tried again, the tap ends as done or as already up for a vote;
+  // with no work to try again it is said as going up, never as a failure.
+  await assert.rejects(tapOn('propose_draft', refuse(409, 'proposing', 'x'), { actKey: 'action:77' }).run(),
+    (err) => err.message === 'proposing' && mayor.retryAct(err, 'action:77'));
+  const racing = tapOn('propose_draft', refuse(409, 'proposing', 'It is being put up for a vote right now.'));
+  const said = await racing.run();
+  assert.equal(said.content, 'It is going up for a vote already.');
+  assert.equal(said.extra.failed, undefined);
+  assert.ok(!racing.queries.some((q) => /UPDATE bot_cards SET status = 'failed'/.test(q.sql)), 'the card is not marked failed');
 });
 
 test('a plain yes typed under the card never proposes: only the tap does', () => {

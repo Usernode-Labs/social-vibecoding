@@ -128,6 +128,10 @@ async function migrate(config) {
   // week, so Live this week has a closed thread to show. Staging has no
   // model, so the bot's reply is stored rather than asked for.
   await seedStagingClosedPrivateThread(pool);
+  // 24 Nov 2026's shots: an open private thread with only two messages, so
+  // the bot tab's column shows where its reply box stands under a short
+  // thread. Staging has no model, so the bot's reply is stored.
+  await seedStagingShortPrivateThread(pool);
   // #6566's shots: the bot's reply after it filed a problem report, and its
   // answer when asked for the link. Staging has no model, so both replies
   // are stored messages.
@@ -1293,9 +1297,10 @@ async function backfillLinkedIssuesFromPrBodies(pool) {
 // stripSpecWrapperFence(), and write back only the ones that actually change.
 // Covers BOTH the live buffer (chat_sessions.spec_md — what the viewer shows
 // as "latest") and the frozen history (chat_session_specs.content — what older
-// version cards open). Row counts here are tiny (≈ one per session), so a full
-// scan is cheaper than escaping a backtick LIKE prefilter and is robust to
-// leading whitespace.
+// version cards open). Only the specs that can be wrapped are read, those whose
+// first mark is a fence: reading every spec ever written took seconds of every
+// release, and a wrapped one is rare (a spec handed in from the CLI is stored
+// as it came, so this keeps running).
 //
 // Idempotent by construction: once unwrapped, a value no longer opens with a
 // strippable wrapper, so stripSpecWrapperFence() returns it unchanged and no
@@ -1307,7 +1312,7 @@ async function backfillFenceWrappedSpecs(pool) {
   try {
     const { rows: live } = await pool.query(
       `SELECT id, spec_md FROM chat_sessions
-        WHERE spec_md IS NOT NULL AND length(btrim(spec_md)) > 0`
+        WHERE left(spec_md, 4000) ~ '^[^[:alnum:][:punct:]]*[\`~]{3}'`
     );
     for (const row of live) {
       const unwrapped = stripSpecWrapperFence(row.spec_md);
@@ -1319,7 +1324,7 @@ async function backfillFenceWrappedSpecs(pool) {
 
     const { rows: versions } = await pool.query(
       `SELECT session_id, version, content FROM chat_session_specs
-        WHERE content IS NOT NULL AND length(btrim(content)) > 0`
+        WHERE left(content, 4000) ~ '^[^[:alnum:][:punct:]]*[\`~]{3}'`
     );
     for (const row of versions) {
       const unwrapped = stripSpecWrapperFence(row.content);
@@ -3413,6 +3418,88 @@ async function seedStagingClosedPrivateThread(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging closed private thread seeding failed', { message: err.message });
+  }
+}
+
+// 24 Nov 2026: a private thread with Homeroom bot fills the bot tab's column
+// whatever its length, with its reply box at the bottom (app.css, "A PRIVATE
+// THREAD KEEPS ITS BOX AT THE FOOT"). A fresh staging copy's private threads
+// with the bot are each about something else (a filed report, a design, a
+// first version), and staging has no model to start a plain one, so this
+// seeds one that is open and short: the shots' member fixture's
+// (usernode-capture) question and the bot's reply, stored, under a title
+// that says what it is. Nothing here is a signal the bot reads to decide
+// anything. Idempotent through the root message's idempotency key and the
+// private thread's unique root; strictly a no-op outside staging.
+async function seedStagingShortPrivateThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
+        [member.id],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
+       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
+      [conversationId, member.id, bot.id],
+    );
+    const key = 'staging-demo-short-private-thread';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, member.id, key],
+    );
+    let rootId = had.rows[0]?.id;
+    if (!rootId) {
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, 'Staging demo: where does the reply box sit in a short thread?', $3, NOW() - INTERVAL '20 minutes')
+         RETURNING id`,
+        [conversationId, member.id, key],
+      );
+      rootId = root.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: a stored reply. This thread holds two messages, so it is a short one.', $3, NOW() - INTERVAL '19 minutes')`,
+        [conversationId, bot.id, rootId],
+      );
+    }
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const appId = apps.rows[0]?.id || null;
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, title, title_source)
+       VALUES ($1, $2, $3, $4, 'idea', 'open', 'Staging demo: a short private thread', 'person')
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [member.id, conversationId, rootId, appId],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging short private thread seeding failed', { message: err.message });
   }
 }
 
@@ -17627,6 +17714,7 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
+  backfillFenceWrappedSpecs,
   // 20 Nov 2026 (live-draft review): its own suite runs it (tests/live-draft-seed-postgres.test.js).
   seedStagingLiveDraftThread,
   migrateAppDbsToPerRole,
@@ -17661,6 +17749,8 @@ module.exports = {
   seedStagingArtifactsThread,
   // The private thread about a change that is live, which History lists.
   seedStagingLiveChangePrivateThread,
+  // A short open private thread, whose reply box stands at the column's foot.
+  seedStagingShortPrivateThread,
   seedStagingOlderFirstVersionThread,
   // A first version being built, whose plan was answered with Build it.
   seedStagingFirstVersionBuildingThread,

@@ -238,7 +238,10 @@ test('the page draws this list in place of its own under a look, from the same r
   const list = read(LIST);
   assert.doesNotMatch(list, /\bfetch\(|useEffect\(/, 'nothing is read or kept in the list itself');
   assert.match(list, /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/, 'the rows are the ones the standard list draws');
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/);
+  // 24 Nov 2026: the standard list's three bands also hand it Done's kind
+  // chip (History's), which narrows this week's rows too; the look's list
+  // narrows History by its own chips and needs no more.
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found \}\);/);
 });
 
 test('the list\'s New chat opens the same new chat as the standard head\'s', () => {
@@ -279,7 +282,9 @@ test('what the first tour invented is gone: its words left the catalog, and the 
 test('s10: the column draws no head of its own: Main Chat\'s is gone, and a thread and a new chat bring theirs', () => {
   const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
   assert.doesNotMatch(src, /kit\('dhead'\)|data-ai-main-head|data-ai-main-close|ai-main-title|messages:ai\.main\./);
-  assert.match(src, /\{conversationUp \? <EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/> : null\}\n\s+<\/aside>/);
+  // 24 Nov 2026: the docked column says so to a new chat in it, which then
+  // has no ✕ (new-thread.tsx NewThreadDocked); it is still the column's last part.
+  assert.match(src, /\{conversationUp \? \(\s+<NewThreadDocked\.Provider value>\s+<EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/>\s+<\/NewThreadDocked\.Provider>\s+\) : null\}\n\s+<\/aside>/);
 });
 
 test('s11: a request in the column stands under the kit\'s open-item head; on a phone its page keeps the two back chips', () => {

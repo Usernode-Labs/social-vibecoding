@@ -286,6 +286,8 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
   assert.equal(prScan.env.SECURITY_AUDIT_ONLY, undefined, 'PRs retain the blocking scanner default');
   assert.equal(prScan.env.LIVE_WORKER_DIGEST, '${{ steps.live.outputs.worker }}');
+  assert.equal(prScan.env.CLAUDE_CODE_VERSION, '${{ steps.claude.outputs.version }}');
+  assert.match(prScan.run, /--build-arg "CLAUDE_CODE_VERSION=\$\{CLAUDE_CODE_VERSION:\?/);
   assert.match(prScan.run, /--cache-from "type=registry,ref=ghcr\.io\/.*social-vibecoding-worker@\$LIVE_WORKER_DIGEST"/);
   assert.doesNotMatch(prScan.run, /type=gha|--cache-to/,
     'PRs can import layers from the promoted image and publish no cache');
@@ -308,6 +310,25 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.match(check, /docker buildx imagetools inspect "\$BASELINE_IMAGE" --format '\{\{json \.SBOM\}\}'/);
   assert.match(check, /node scripts\/security-findings\.js --assess "\$out" "\$component" "\$baseline"/);
   assert.match(check, /elif \[ -n "\$\{SECURITY_BASELINE_REVISION:-\}" \]/);
+});
+
+test('standalone PRs import only the Buildx layer cache from the main audit and scan their own image', () => {
+  const pr = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
+  const audit = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/security-audit.yml'), 'utf8'));
+  const steps = pr.jobs['security-images'].steps;
+  const find = steps.find((step) => step.id === 'standalone_cache');
+  const scan = steps.find((step) => step.name === 'Build and scan the finished image');
+  const publish = audit.jobs.scan.steps.find((step) => step.id === 'standalone_cache');
+  assert.equal(audit.jobs.scan.if, "github.ref == 'refs/heads/main'");
+  assert.match(publish.run, /--target buildx-tools[\s\S]*--cache-to "type=local,.*mode=min"/);
+  assert.match(find.run, /actions\/workflows\/security-audit\.yml\/runs/);
+  assert.match(find.run, /-f branch=main -f status=success/);
+  assert.match(find.run, /\.head_repository\.full_name == \.repository\.full_name/);
+  assert.match(find.run, /if gh run download "\$run_id"[\s\S]*&& \[ -s "\$cache\/index\.json" \]/);
+  assert.equal(scan.env.STANDALONE_BUILDX_CACHE, '${{ steps.standalone_cache.outputs.path }}');
+  assert.match(scan.run, /\[ "\$COMPONENT" = standalone \] && \[ -n "\$STANDALONE_BUILDX_CACHE" \]/);
+  assert.match(scan.run, /--cache-from "type=local,src=\$STANDALONE_BUILDX_CACHE"/);
+  assert.match(scan.run, /docker buildx build --load[\s\S]*sh scripts\/create-image-sbom\.sh[\s\S]*sh scripts\/check-image-security\.sh/);
 });
 
 test('only a digest already in the stable chart can skip the release scan', (t) => {
@@ -351,6 +372,7 @@ case "$*" in
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
   *"--entrypoint node"*) input=$(cat); [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8
     case "$input" in *ms-playwright*) if [ -n "\${FAKE_BROWSERS:-}" ]; then cat "$FAKE_BROWSERS"; else echo '{}'; fi ;; *) echo '{}' ;; esac ;;
+  "wait "*) echo "\${FAKE_DB_EXIT-0}" ;;
   *" image --download-db-only"*) [ "\${FAKE_DB_FAILURE:-}" != 1 ] || exit 7 ;;
   *" image --skip-db-update"*) [ "\${FAKE_IMAGE_SCAN_FAILURE:-}" != 1 ] || exit 9; cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
   *" sbom "*) if [ "$report" = playwright-browser-advisories.json ]; then cp "$FAKE_BROWSER_ADVISORIES" "$out/$report"; else cp "${path.join(dir, 'report.json')}" "$out/$report"; fi ;;
@@ -480,6 +502,48 @@ test('unchanged vulnerable Buildx warns; an introduced version blocks; audits re
   const merged = imageAssessment([scan, lower], { component: 'standalone', audit: true, now: NOW });
   assert.equal(merged.findings.find((f) => f.id === 'CVE-2026-78661').severity, 'HIGH', 'a second report cannot downgrade the alert');
   assert.throws(() => imageAssessment([{ SchemaVersion: 2, Results: [] }], { component: 'standalone' }), /invalid image scan/);
+});
+
+test('a release scan waits for the advisory database its job started fetching, and fails when that failed', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-db-container-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'image' }] }));
+  const sbom = path.join(dir, 'sbom.json');
+  fs.writeFileSync(sbom, '{}');
+  const calls = path.join(dir, 'calls.log');
+  const run = (exit) => {
+    const out = path.join(dir, `out-${exit}`);
+    fs.rmSync(calls, { force: true });
+    const result = spawnSync('sh', ['scripts/check-image-security.sh', 'fixture', out, sbom, 'platform'], {
+      cwd: ROOT, encoding: 'utf8',
+      env: { ...process.env, PATH: `${fakeDocker(dir)}:${process.env.PATH}`, FAKE_DB_EXIT: exit,
+        SECURITY_TRIVY_DB_CONTAINER: 'security-trivy-db', SECURITY_AUDIT_ONLY: '1' },
+    });
+    return { result, calls: fs.readFileSync(calls, 'utf8'), verdict: JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))) };
+  };
+  const fetched = run('0');
+  assert.equal(fetched.result.status, 0, fetched.result.stderr);
+  assert.equal(fetched.verdict.status, 'clean');
+  assert.match(fetched.calls, /^wait security-trivy-db$/m);
+  assert.doesNotMatch(fetched.calls, /--download-db-only/, 'fetched once, by the job');
+  assert.ok(fetched.calls.indexOf('wait security-trivy-db') < fetched.calls.indexOf(' sbom --skip-db-update'), 'no scanner opens it before');
+  for (const exit of ['1', '137', '']) {
+    const failed = run(exit);
+    assert.notEqual(failed.result.status, 0, `exit ${JSON.stringify(exit)}`);
+    assert.equal(failed.verdict.status, 'unavailable');
+    assert.doesNotMatch(failed.calls, / sbom --skip-db-update/, 'nothing is scanned without it');
+  }
+  const workflow = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/build-kubernetes-images.yml'), 'utf8'));
+  const steps = workflow.jobs.build.steps;
+  const start = steps.findIndex((s) => s.id === 'trivy');
+  assert.equal(steps[start].if, "matrix.component == 'platform'");
+  assert.match(steps[start].run, /docker run --detach --name security-trivy-db -v social-security-trivy-db:\/root\/\.cache\/trivy/);
+  assert.ok(start < steps.findIndex((s) => s.id === 'image'), 'it overlaps the build');
+  const scan = steps.find((s) => s.name === 'Verify runtime and scan the exact image SBOM');
+  assert.equal(scan.env.SECURITY_TRIVY_DB_CONTAINER, '${{ steps.trivy.outputs.container }}');
+  const trivy = /aquasec\/trivy:[\d.]+/.exec(steps[start].run)[0];
+  assert.ok(fs.readFileSync(path.join(ROOT, 'scripts/check-image-security.sh'), 'utf8').includes(`${trivy} image --download-db-only`),
+    'the same scanner version as the scan');
 });
 
 test('a failed full-image scan invalidates an earlier clean assessment and cannot resolve an alert', (t) => {
