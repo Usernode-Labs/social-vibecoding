@@ -90,6 +90,7 @@ import {
   probeLayout,
   readStoredWidth,
   reopenWidth,
+  storedBounds,
   inlineStartOf,
   shownWidth,
   writeStoredWidth,
@@ -513,12 +514,14 @@ export function SidePanelDivider({
   // What is on screen now: the stored width, held inside this window, or the
   // stylesheet's default when there is none. Never writes the store — a
   // window that narrows gives the width back, and one that grows returns it.
+  // A column the stylesheet floors (the bot page's, beside its list) is
+  // given the width as stored and raised there (./resize.ts storedBounds).
   const settle = useCallback(() => {
     const key = resolveKey();
     const probe = measure();
     const b = bounds(probe);
     const stored = readStoredWidth(undefined, key);
-    applyWidth(stored == null ? null : clampWidth(stored, b), undefined, key);
+    applyWidth(stored == null ? null : clampWidth(stored, storedBounds(probe)), undefined, key);
     const panel = panelRef.current;
     // Its width as chosen, which on the Duo held sideways leaves out the
     // column of system chrome it runs under (./resize.ts).
@@ -532,8 +535,14 @@ export function SidePanelDivider({
     if (!shown) return undefined;
     window.addEventListener('resize', settle);
     const other = watch?.current;
-    const observer = other && typeof ResizeObserver === 'function' ? new ResizeObserver(() => settle()) : null;
-    if (observer && other) observer.observe(other);
+    // The rail folding or unfolding moves the room's start edge as a window
+    // resize would (24 Nov 2026): the bot page's column has a floor read off
+    // the room (./resize.ts), so its range is read again then too. Settling
+    // never resizes the rail, so this cannot feed back on itself.
+    const rail = typeof document !== 'undefined' ? document.getElementById('platform-tabs') : null;
+    const observed = [other, rail].filter((node): node is HTMLElement => !!node);
+    const observer = observed.length && typeof ResizeObserver === 'function' ? new ResizeObserver(() => settle()) : null;
+    if (observer) observed.forEach((node) => observer.observe(node));
     return () => {
       window.removeEventListener('resize', settle);
       observer?.disconnect();

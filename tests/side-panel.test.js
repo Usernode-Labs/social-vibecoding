@@ -1419,6 +1419,46 @@ test('a list floor written in rem is read in pixels, against the root font size 
   assert.equal(probeLayout({ ...win, getComputedStyle: () => ({ getPropertyValue: () => '280px', fontSize: '20px' }) }).neighbourMin, 280);
 });
 
+test('beside the bot page\'s list the column takes the spare room: a drag stops where the list is 42rem (24 Nov 2026)', () => {
+  // With the sidebar folded at 1720px the room is 1656px, and the list
+  // beside the column is held to 42rem (672px). Dragged to 715px the column
+  // left the list's side 941px for a 672px list: a band of about 135px each
+  // side of it. app.css floors the column at the room less the list's 42rem
+  // (`--ai-list-max`), and the divider reads the same figure.
+  const { probeLayout, bounds, storedBounds, clampWidth, MIN_PANEL_W } = api.resize;
+  const vars = { '--ai-list-min': '22rem', '--ai-list-max': '42rem' };
+  const ai = { getBoundingClientRect: () => ({ left: 0, width: 1656 }), classList: { contains: () => false } };
+  const rail = { getBoundingClientRect: () => ({ left: 0, right: 64, width: 64 }), classList: { contains: () => false } };
+  const win = {
+    innerWidth: 1720,
+    getComputedStyle: () => ({ getPropertyValue: (name) => vars[name] || '', fontSize: '16px' }),
+    document: {
+      body: {},
+      documentElement: { getAttribute: () => null },
+      getElementById: (id) => (id === 'ai-screen' ? ai : id === 'platform-tabs' ? rail : null),
+    },
+  };
+  const probe = probeLayout(win);
+  assert.equal(probe.floor, 1656 - 672, 'the room less the list\'s 42rem');
+  assert.deepEqual({ ...bounds(probe) }, { min: 984, max: 1304 }, 'a drag stops at the floor; the list keeps its own 22rem floor');
+  assert.equal(clampWidth(715, bounds(probe)), 984, 'dragged to 715px, the column stops at 984px');
+  // A width stored before is applied as stored: the stylesheet raises it on
+  // screen, and a preview's columns, which read the column's width, read it
+  // as chosen. The store is never rewritten.
+  assert.deepEqual({ ...storedBounds(probe) }, { min: MIN_PANEL_W, max: 1304 });
+  assert.equal(clampWidth(715, storedBounds(probe)), 715);
+  // Unfolded (212px of rail) the floor is lower, and below 42rem of room it
+  // is the column's own 320px.
+  rail.getBoundingClientRect = () => ({ left: 0, right: 212, width: 212 });
+  assert.equal(probeLayout(win).floor, 1508 - 672);
+  assert.equal(probeLayout({ ...win, innerWidth: 900 }).floor, MIN_PANEL_W);
+  // Where the stylesheet declares no list measure (a preview's columns, the
+  // frame's looks, a phone, another page) there is no floor, as before.
+  delete vars['--ai-list-max'];
+  assert.equal('floor' in probeLayout(win), false);
+  assert.deepEqual({ ...bounds(probeLayout(win)) }, { min: MIN_PANEL_W, max: 1508 - 352 });
+});
+
 test('the width\'s rules: 320px of panel and 480px of app at the least, whatever the window', () => {
   const { bounds, clampWidth, MIN_PANEL_W, MIN_APP_W } = api.resize;
   assert.equal(MIN_PANEL_W, 320);
@@ -1550,7 +1590,9 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   assert.match(divider, /const resolveKey = useCallback\(\s*\(\) => widthKey \?\? \(aiPageUp\(\) \? AI_MAIN_WIDTH_KEY : WIDTH_KEY\),/,
     'the bot page up, the same handle is Main Chat\'s, under Main\'s key');
   assert.match(divider, /const stored = readStoredWidth\(undefined, key\);/);
-  assert.match(divider, /applyWidth\(stored == null \? null : clampWidth\(stored, b\), undefined, key\);/);
+  // 24 Nov 2026: a stored width is applied as stored, held to the window;
+  // a floor the stylesheet keeps (the bot page's column) raises it there.
+  assert.match(divider, /applyWidth\(stored == null \? null : clampWidth\(stored, storedBounds\(probe\)\), undefined, key\);/);
   assert.match(divider, /applyWidth\(next, undefined, key\);/);
   assert.match(divider, /if \(persist\) writeStoredWidth\(next, undefined, key\);/);
   assert.match(divider, /if \(d\.width != null && !d\.collapsed\) writeStoredWidth\(d\.width, undefined, resolveKey\(\)\);/,

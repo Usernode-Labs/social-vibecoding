@@ -21754,7 +21754,28 @@ body:has(#ai-screen:not(.hidden)) {
   --ai-room: var(--platform-usable-w);
   --ai-list-min: var(--list-pane-w);
   --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)));
-  --ai-main-w: max(320px, min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+  --ai-main-w: max(var(--ai-main-floor, 320px), min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+}
+/* THE THREAD TAKES THE SPARE ROOM (24 Nov 2026). The list beside an open
+   column is held to 42rem (`--ai-list-max`, the body rule below), and the
+   column used to be held to nothing but 320px: dragged narrower than the
+   room less 42rem, it left the list's side wider than the list, and the
+   list floated between two empty bands (about 135px each with the sidebar
+   folded at 1720px and the column at 715px). Now the column is never
+   narrower than the room less the list's 42rem, so the list's 16px card
+   margins are the only space beside it. A width stored narrower is raised
+   to it when applied and kept as stored, so a window that narrows again
+   gives it back; the divider stops there too, reading the same 42rem
+   (features/side-panel/resize.ts probeLayout). The thread's own 320px,
+   the list's floor and the snap that hides it are as they were. Declared
+   only beside the lists: a preview's columns (`[data-ai-preview]`) keep
+   their own widths, which read `--ai-main-w` as it was, and the frame's
+   looks lay the list out at a width of their own. A phone has no columns. */
+@media (min-width: 768px) {
+  body:has(#ai-screen:not(.hidden):not([data-ai-preview]):not([data-frame-list])) {
+    --ai-list-max: 42rem;
+    --ai-main-floor: max(320px, calc(var(--ai-room) - var(--ai-list-max)));
+  }
 }
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   --ai-edge: var(--platform-strip-w, 0px);
@@ -21815,7 +21836,7 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    `max-w-2xl mx-auto`, a single centred page as Home and Needs you are. */
 #ai-screen[data-ai-docked][data-ai-open] .ai-screen-body {
   width: 100%;
-  max-width: 42rem;
+  max-width: var(--ai-list-max, 42rem);
   margin-inline: auto;
 }
 /* THE LIST HIDDEN, ONE PANE (#6963). Dragging the divider past the list's
@@ -34724,6 +34745,28 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
    it is pinned again (the scroller shrinks and scrolls) once the thread is
    taller than the window. */
 .dev-request:has(.dev-thread-card) .dev-request-scroll { flex-grow: 0; }
+/* …BUT A PRIVATE THREAD KEEPS ITS BOX AT THE FOOT (24 Nov 2026). A private
+   thread with Homeroom bot is a chat, and a chat keeps its reply box at the
+   bottom of the column: with a message or two the box stood in the middle
+   of the screen under a short card, the rest of the column bare. There the
+   scroller fills the sheet again, as a column of the cards, and the
+   replies' card fills it down to the reply box: its foot is the 12px the
+   spacer after it leaves over the box (THE FOOT IS A SPACER, below), as a
+   long thread's is. The messages start at the card's top, and one more is
+   added under the last without the card changing height. Nothing in the
+   column shrinks: a thread taller than the column scrolls as it did, and
+   the spacer, an empty item, would otherwise be the first thing a column
+   squeezed. Wherever the page is drawn: beside the lists, beside a
+   preview, and in a phone's drawer. Request and change pages keep the box
+   under their replies (the rule above). */
+#ai-screen .dev-private-thread .dev-request-scroll {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+#ai-screen .dev-private-thread .dev-request-scroll > *,
+#ai-screen .dev-private-thread .dev-request-scroll::after { flex-shrink: 0; }
+#ai-screen .dev-private-thread .dev-request-scroll > [data-thread-page-replies] { flex-grow: 1; }
 /* The author row gives way to the kicker; the timeline says who and when. */
 .dev-thread-card { position: relative; --foot-x: 16px; --foot-b: 16px; }
 /* The card's own gutters, so the foot's band can reach its edges exactly. */
