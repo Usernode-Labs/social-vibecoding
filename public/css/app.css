@@ -20313,8 +20313,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    acting face keeps the `.dev-vote-btn` accent fill; the quiet one is the
    neutral well the inline style used to paint, so a look that is not
    restyled keeps today's colours. Neither is padded out to the board
-   button's width: the pair sits beside the figure. */
-.dev-change-gate-act .dev-vote-btn { min-width: 0; }
+   button's width: the pair sits beside the figure. Both sides are even
+   (#7064): the base button's 8px end made way for a caret these two do not
+   carry, so the label sat nearer its right edge than its icon sat to the
+   left. */
+.dev-change-gate-act .dev-vote-btn { min-width: 0; padding-inline: 11px; }
 .dev-vote-btn-quiet, .dev-vote-btn-quiet:hover { background: var(--state-neutral-bg); color: var(--text-primary); }
 .dev-change-gate-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; line-height: 1.3; }
 .dev-change-gate-name { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }

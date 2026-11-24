@@ -885,7 +885,10 @@ test('a vote to close is drawn with the page\'s card and the foot\'s two buttons
   assert.match(css, /:where\(#dev-topic-thread\) \.dev-change-gate-act \.dev-vote-btn-act \{ background: var\(--bl-sun\); color: var\(--bl-on-sun\); box-shadow: var\(--bl-pill-edge\); \}/);
   // Every look keeps the quiet face's old fill, in the base rules.
   assert.match(css, /\.dev-vote-btn-quiet, \.dev-vote-btn-quiet:hover \{ background: var\(--state-neutral-bg\); color: var\(--text-primary\); \}/);
-  assert.match(css, /\.dev-change-gate-act \.dev-vote-btn \{ min-width: 0; \}/);
+  // Both faces keep even sides, so neither label sits flush with its edge
+  // (the base button's 8px end is the caret's room, and these carry no
+  // caret).
+  assert.match(css, /\.dev-change-gate-act \.dev-vote-btn \{ min-width: 0; padding-inline: 11px; \}/);
 });
 
 test('Needs you\'s card is the look\'s white card from 768px, with the page\'s cream on it', () => {
