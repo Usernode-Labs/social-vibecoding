@@ -2119,7 +2119,7 @@ test('a preview beside the thread: both edges drag, each the width of the column
   // gutter is the gap you see, so the handle is centred in it. That media
   // block is the one edge that adds 8px; every other edge stays on its pane's
   // hairline.
-  const mobileGutter = /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/;
+  const mobileGutter = /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\):not\(\[data-ai-list-closed\]\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/;
   assert.match(css, mobileGutter, 'below 1024px the handle sits halfway across the gap');
   assert.doesNotMatch(css.replace(mobileGutter, ''), /--divider-at:[^;]*\+ 8px/,
     'no other edge sits in the gutter any more');
@@ -3009,14 +3009,29 @@ test('the way back to the list: a round head button first in a thread\'s head an
 
 test('the one-pane rule: the list is not drawn and the pane takes the whole room', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\)\);\n\}/,
-    'the pane and its edge reach the rail, as `--ai-main-w` is what both read');
+  // 24 Nov 2026: the pane stops 16px short of the rail (the list's own card
+  // margin, folded away), so the thread's card sits 28px from the rail and
+  // the bar has a gap to sit in.
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\) - 16px\);\n\}/,
+    'the pane and its edge stop 16px after the rail, as `--ai-main-w` is what both read');
   assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\] \.ai-screen-body \{ display: none; \}/,
     'and the list is out of the page');
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\]\[data-ai-list-closed\] \{ --ai-main-w: calc\(var\(--platform-usable-w\) - var\(--ai-edge, 0px\)\); \}/,
     'the frame looks honour it too');
-  assert.match(css, /body:has\(#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\)\);\n\}/,
-    'a page in Main\'s place, which reads the width from body, takes the room too');
+  assert.match(css, /body:has\(#ai-screen\[data-ai-docked\]\[data-ai-open\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-main-w: calc\(var\(--ai-room\) - var\(--ai-edge, 0px\) - 16px\);\n\}/,
+    'a page in Main\'s place, which reads the width from body, takes the room too and leaves the same gap');
+  // Beside a preview (halves) the thread gives up the same 16px, and the
+  // preview at its widest stops 16px sooner so the thread keeps its 320px.
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\]:not\(\.hidden\)\) \{\n  --ai-preview-w: max\(320px, min\(var\(--ai-preview-chosen-w, calc\(var\(--ai-room\) \/ 2\)\), calc\(var\(--ai-room\) - 16px - 320px\)\)\);\n  --ai-col-w: calc\(var\(--ai-room\) - 16px - var\(--ai-preview-w\)\);\n\}/,
+    'halves with the list put away leave the gap too');
+  // The bar sits in the middle of that 28px gap, (16px - 12px) / 2 off the
+  // pane's edge towards the rail, at every width (unindented: no media block)
+  // and in every look, Main's and the side panel's alike; #6447's 8px
+  // towards the list is the list's.
+  assert.match(css, /\nbody:has\(#ai-screen\[data-ai-list-closed\]:not\(\.hidden\)\) :is\(#ai-main-divider, #side-panel-divider\) \{\n  inset-inline-end: calc\(var\(--divider-at, var\(--side-panel-w\)\) - var\(--divider-w\) \/ 2 \+ \(16px - 12px\) \/ 2\);\n\}/,
+    'the bar in the folded list\'s gap');
+  const placed = css.indexOf('\nbody:has(#ai-screen[data-ai-list-closed]:not(.hidden)) :is(#ai-main-divider, #side-panel-divider) {');
+  assert.ok(placed > css.indexOf('THE BOT TAB\'S OTHER TWO GRIPS'), 'after the grips placed in their gaps, which it does not touch');
 });
 
 test('a page in the column hands the panel\'s own edge the one-pane wiring (#6973)', () => {
