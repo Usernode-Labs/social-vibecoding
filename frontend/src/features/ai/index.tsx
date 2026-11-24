@@ -110,7 +110,7 @@ import {
   probeLayout,
 } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { setDocked, setListClosed, useListClosed } from './list-closed';
+import { listLayout, setDocked, setListClosed, useListClosed } from './list-closed';
 import { columnAddress, columnKey, pageProject, routeOf, type Column, type ColumnDetail } from './column';
 import {
   BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botNewAddress, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
@@ -147,6 +147,8 @@ const WIDE = '(min-width: 768px)';
 /** The narrowest a design's or a plan's preview is in three columns
  *  (app.css, A DESIGN'S PREVIEW, A COLUMN OF ITS OWN). */
 const PREVIEW_MIN_W = 360;
+/** The list's floor beside a thread and a preview (app.css's 480px there). */
+const THREE_LIST_MIN = 480;
 /** This page's address: where a thread opened from it comes back to. */
 const BOT_PAGE = BOT_TAB;
 
@@ -558,7 +560,9 @@ export function AiScreen(): ReactNode {
   // change belongs to the page the column shows.
   const detail = useDetail();
   const three = useWide(THREE_COLUMNS);
-  const layout = detailLayout('bot', { phone, wide: three });
+  // What the window's width makes of a preview. The list put away turns
+  // three columns into halves (below); nothing else changes it.
+  const fits = detailLayout('bot', { phone, wide: three });
   // THE COLUMN BELONGS TO ITS THREAD (20 Nov 2026). What opens beside the
   // thread on screen is that thread's (./detail.ts setDetailOwner); another
   // thread's is never drawn here. Leaving the thread holds it, and coming
@@ -572,6 +576,14 @@ export function AiScreen(): ReactNode {
     ? detail.ref.conversationId === botId && !!openRoot && openRoot === detail.ref.rootId
       && (phone ? level === 1 : docked && !panel.open)
     : !!column && (column.at === 'page' || column.at === 'thread'));
+  // THE LIST HIDDEN (#6963): dragging the divider past the list's floor puts
+  // the page in one pane, and the choice holds across threads and reloads
+  // (./list-closed). AND BESIDE A PREVIEW (24 Nov 2026), wherever three
+  // columns fit: the thread and the preview are left in halves, and the
+  // thread's left edge is still the handle that brings the list back. One
+  // choice, so opening or closing a preview leaves it as it is (listLayout).
+  const listClosed = useListClosed();
+  const { snaps, oneUp, layout } = listLayout({ closed: listClosed, open: columnOpen, preview: detailHere, fits, phone });
   // With a preview beside the thread both edges are handles (#6359), each
   // the width of the column after it, the list taking what is left. In three
   // columns the thread's width runs to where the preview begins, and its
@@ -581,28 +593,27 @@ export function AiScreen(): ReactNode {
   // preview's width changes (`watch` below). The preview's keeps the list's
   // floor and the thread's. In halves the list has stepped aside, so the
   // thread's edge is no handle and the preview's keeps only the thread's floor.
-  const threeUp = detailHere && layout === 'three';
-  // THE LIST HIDDEN (#6963): dragging the divider past the list's floor puts
-  // the page in one pane, and the choice holds across threads and reloads
-  // (./list-closed). A preview beside the thread keeps today's layout; the
-  // choice waits for it to close.
-  const listClosed = useListClosed();
-  const oneUp = listClosed && columnOpen && !detailHere && !phone;
-  // With a preview beside the thread the preview layout wins, and the edge
-  // is the preview's business, not the list's.
-  const snaps = !threeUp && !detailHere;
+  // The list put away is not that: the thread's edge keeps the three
+  // columns' width, bound and preview to watch, so pulling the list back
+  // opens the thread where it was, measured as three columns.
+  const threeFits = detailHere && fits === 'three';
   useEffect(() => {
-    setDocked(docked && !detailHere && !phone);
-  }, [docked, detailHere, phone]);
+    setDocked(docked && snaps && !phone);
+  }, [docked, snaps, phone]);
   const pageInColumn = column?.at === 'page';
   const threadProbe = useCallback(() => {
     const probe = probeLayout();
+    // Three columns hold the list to 480px (app.css), more than the
+    // `--ai-list-min` the probe reads (22rem since #6474), so the handle
+    // stops where the thread is drawn to stop, and the snap that hides the
+    // list is measured from there (24 Nov 2026).
+    const listMin = Math.max(probe.neighbourMin ?? 0, THREE_LIST_MIN);
     const pane = previewRef.current;
     const box = pane ? pane.getBoundingClientRect() : null;
-    if (!box || box.width <= 0) return { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + PREVIEW_MIN_W };
+    if (!box || box.width <= 0) return { ...probe, neighbourMin: listMin + PREVIEW_MIN_W };
     const endAt = inlineStartOf(box);
     const roomEnd = probe.innerWidth - Math.max(0, probe.rightInset || 0);
-    return { ...probe, neighbourMin: (probe.neighbourMin ?? 0) + Math.max(0, roomEnd - endAt), endAt };
+    return { ...probe, neighbourMin: listMin + Math.max(0, roomEnd - endAt), endAt };
   }, []);
   const previewProbe = useCallback(() => {
     const probe = probeLayout();
@@ -616,16 +627,17 @@ export function AiScreen(): ReactNode {
   // is the seam (../side-panel/edge-store). While it is set, the panel's edge
   // sets the column's own width under the thread's key, with the thread's
   // probe (the list's floor plus the preview) and the preview to watch.
-  // Cleared whenever the column is not that page, or the detail or the third
-  // column goes, so the edge is Main's again.
+  // Cleared whenever the column is not that page, or the detail goes, or the
+  // window has no room for the third column, so the edge is Main's again.
+  // Kept while the list is put away beside the detail, as Main's edge is.
   useEffect(() => {
     panelEdgeStore.set({
-      slot: visible && threeUp && pageInColumn
+      slot: visible && threeFits && pageInColumn
         ? { widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef }
         : null,
     });
     return () => { panelEdgeStore.set({ slot: null }); };
-  }, [visible, threeUp, pageInColumn, threadProbe]);
+  }, [visible, threeFits, pageInColumn, threadProbe]);
   // AND THE SAME EDGE HIDES THE LIST (#6973): while a request, change or
   // decision page is the column, the divider people drag is the side panel's
   // own, not Main's, so it is handed the one-pane wiring too. It never
@@ -1348,9 +1360,9 @@ export function AiScreen(): ReactNode {
             shown={columnOpen}
             id="ai-main-divider"
             controls="ai-main-pane"
-            widthKey={threeUp ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
-            probe={threeUp ? threadProbe : undefined}
-            watch={threeUp ? previewRef : undefined}
+            widthKey={threeFits ? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY}
+            probe={threeFits ? threadProbe : undefined}
+            watch={threeFits ? previewRef : undefined}
             collapsed={oneUp}
             onCollapse={snaps ? () => setListClosed(true) : undefined}
             onRestore={snaps ? () => setListClosed(false) : undefined}

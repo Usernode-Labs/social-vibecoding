@@ -475,6 +475,14 @@
     "text": "Live this week",
     "description": "Chip above All items showing that only the changes that went live this week are shown, set by tapping that figure on the Workshop. Pressing the chip removes the filter."
   },
+  "board.filterChip.stageAsked": {
+    "text": "Asked",
+    "description": "Chip above All items showing that only the open requests nobody is building and that are not up for a vote are shown, set by pressing the Asked stop of the path on a project's Workshop. Pressing the chip removes the filter."
+  },
+  "board.filterChip.stageVotes": {
+    "text": "Up for a vote",
+    "description": "Chip above All items showing that only the changes and group decisions up for a vote are shown, set by pressing the Up for a vote stop of the path on a project's Workshop. Pressing the chip removes the filter."
+  },
   "board.filterChip.priorityLow": {
     "text": "Low priority",
     "description": "Chip above the Workshop board showing that only cards the group marked as low priority are shown. Pressing it removes the filter."

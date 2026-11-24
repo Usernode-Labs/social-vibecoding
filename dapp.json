@@ -2135,16 +2135,16 @@
       "expectText": "Submitted features"
     },
     {
-      "name": "A project's Workshop tab opens on its Overview: All items' four number tiles, under the Overview label",
+      "name": "A project's Workshop tab opens on its front page: its one question, a box to Homeroom bot with its mic and send, and four starts under it, Edit the app live first (24 Nov 2026)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"overview\"] + [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] + [data-ws-dash-cell=\"votes\"] + [data-ws-dash-cell=\"shipped\"] > b",
-      "expectText": "by this time last week"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > .dev-ws-front > [data-ws-front=\"hero\"]:has(> .dev-ws-front-ask-side > form[data-ws-front-ask] > input + [data-dictation] + button[data-ws-front-send]) [data-ws-front-starts] > button[data-ws-front-start=\"live\"]:first-child + [data-ws-front-start=\"fix\"] + [data-ws-front-start=\"add\"] + [data-ws-front-start=\"ask\"]:last-child",
+      "expectText": "What should change in Homeroom?"
     },
     {
-      "name": "Workshop: Your work is a row under Overview, opening Homeroom bot narrowed to this project, and under it New chat about the project, which opens a new chat with the bot set to it",
+      "name": "Workshop: Your work is one card beside the question, a door to Homeroom bot narrowed to this project with your threads peeking out of it, or a faint card that is not a door while nothing of yours is here",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"] ~ a[data-ws-desk-new][href=\"#homeroom-bot/new?project=usernode-2d5619\"]",
-      "expectText": "New chat about"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > .dev-ws-front > [data-ws-front=\"hero\"] > [data-ws-desk]:is(:has(> a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"] > .dev-ws-front-stack[aria-hidden=\"true\"] + .dev-ws-front-yours-cap), [data-ws-desk-empty]:has(> [data-ghost] > .dev-ws-front-yours-cap):not(:has(a)))",
+      "expectText": "Your work"
     },
     {
       "name": "Hub: For you's Workshop row opens the project's Workshop",
@@ -2458,10 +2458,10 @@
       "expectText": "No matching cards"
     },
     {
-      "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417)",
+      "name": "Workshop: the Workshop is the place lit, a dot on its row and on Open the board says All items' search is still on, and the search leaves the path whole, with no 'nothing matches' note (#2915, #4417)",
       "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
-      "expectText": "All items"
+      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) [data-ws-front=\"path\"]:has(> .dev-ws-front-head > button[data-ws-all-open] [data-ws-filtered]) [data-ws-front-stop=\"asked\"][data-n]",
+      "expectText": "Open the board"
     },
     {
       "name": "#4417: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for and its requests above the room, then the figures its dapp.json entry names, each with an info button saying what it means; the room is #general's pane: each message's ⋯ offers Reply in thread",
@@ -2516,14 +2516,14 @@
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
     },
     {
-      "name": "What happened lists this week's news as rows, each a link with its dot, under Mark all seen, then a row for each week before it (#2183, #4457)",
+      "name": "The Workshop's Lately lists what went live as links to their pages, says what is new since your last visit beside All of this week, and Live by week draws this week's bar first, each bar opening its week (#2183, #4457; 24 Nov 2026)",
       "path": "/?demo=1&shot=since-visit&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-happened-head]:has(> [data-ws-since-clear]:enabled) + [data-ws-happened]:has(> [data-ws-this-week] > .dev-ws-hlist > .dev-ws-hrow[data-new] .dev-ws-hrow-link[href*=\"/dev/\"]) > .dev-ws-wlist > button.dev-ws-week[data-ws-week]",
-      "expectText": "What happened"
+      "expectSelector": "#dev-workshop [data-ws-front=\"lately-pair\"] > [data-ws-front=\"lately\"]:has(> .dev-ws-front-head > [data-ws-front-fresh] + button[data-ws-week=\"thisWeek\"][data-ws-week-all]):has(+ [data-ws-front=\"weeks\"] > .dev-ws-front-bars > button[data-ws-week=\"thisWeek\"][data-now]:first-child) > .dev-ws-front-list > .dev-ws-front-row > a.dev-ws-front-row-link[href*=\"/dev/\"]",
+      "expectText": "new since you were last here"
     },
     {
-      "name": "What happened with nothing new says so in one line, Mark all seen waits disabled, and this week is still there (#4457)",
-      "path": "/?demo=1&shot=since-seen&ws=workshop#app/usernode-2d5619/workshop",
+      "name": "What happened with nothing new says so in one line, Mark all seen waits disabled, and this week is still there (#4457) (the brand look's Workshop tab, which keeps What happened)",
+      "path": "/?demo=1&shot=since-seen&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-happened-head]:has(> button[data-ws-since-clear][disabled]) + [data-ws-happened] > p[data-ws-since-none] + [data-ws-this-week]",
       "expectText": "Nothing new since you were last here."
     },
@@ -2558,15 +2558,15 @@
       "expectText": "Discussion"
     },
     {
-      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and no Private pill of its own (the heading says it), last on the tab",
-      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
+      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and no Private pill of its own (the heading says it), last on the tab (the brand look's tab; the standard look's front page opens them as a page from its foot)",
+      "path": "/?demo=1&ws=workshop&skin=brand#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"]:not(:has([data-private-badge])) svg",
       "expectText": "Staging demo private request"
     },
     {
-      "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then Your work, with no notices panel (#3487, #3528)",
+      "name": "The Workshop's path: four stops a change travels, in order, under In the workshop now, the approval rule its last line, and for an admin Private requests' quiet row at the page's foot (#3487, #3528, #5048; 24 Nov 2026)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-desk]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > .dev-ws-front:has(> button[data-ws-front-private]:last-child) > [data-ws-front=\"hero\"]:first-child + [data-ws-front=\"path\"]:has(> [data-ws-front-rule]:last-child > [data-ws-approval-rules] > [data-ws-community-rule]) > [data-ws-front-stops] > .dev-ws-front-run[aria-hidden=\"true\"] + [data-ws-front-stop=\"asked\"] + [data-ws-front-stop=\"building\"] + [data-ws-front-stop=\"votes\"] + [data-ws-front-stop=\"live\"]",
       "expectText": "goes live when its checks pass"
     },
     {

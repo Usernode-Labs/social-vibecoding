@@ -2077,7 +2077,7 @@ test('the column is held inside the window, and the panel takes its place at its
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
   assert.match(src, /import \{\n\s+AI_MAIN_WIDTH_KEY,\n\s+AI_PREVIEW_COLUMN_WIDTH_KEY,\n\s+AI_PREVIEW_WIDTH_KEY,[^}]*\} from '\.\.\/side-panel\/resize';/);
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeUp \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeUp \? threadProbe : undefined\}\s+watch=\{threeUp \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"[^>]*>\s+<SidePanelDivider\s+panelRef=\{mainRef\}\s+shown=\{columnOpen\}\s+id="ai-main-divider"\s+controls="ai-main-pane"\s+widthKey=\{threeFits \? AI_PREVIEW_COLUMN_WIDTH_KEY : AI_MAIN_WIDTH_KEY\}\s+probe=\{threeFits \? threadProbe : undefined\}\s+watch=\{threeFits \? previewRef : undefined\}\s+collapsed=\{oneUp\}\s+onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}\s+onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}\s+\/>/,
     'and the edge is the way the list hides and comes back (#6963)');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',\s+widthKey,/);
 });
@@ -2106,10 +2106,19 @@ test('a preview beside the thread: both edges drag, each the width of the column
     'no other edge sits in the gutter any more');
   // The preview's own divider, not drawn where the preview is the whole screen.
   assert.match(src, /\{layout === 'full' \? null : \(\s+<SidePanelDivider\s+panelRef=\{previewRef\}\s+shown=\{columnOpen\}\s+id="ai-preview-divider"\s+controls="ai-preview-pane"\s+widthKey=\{AI_PREVIEW_WIDTH_KEY\}\s+probe=\{previewProbe\}/);
-  assert.match(src, /const threeUp = detailHere && layout === 'three';/);
+  // The thread's edge keeps the three columns' width, bound and preview while
+  // they fit, the list shown or put away (24 Nov 2026).
+  assert.match(src, /const threeFits = detailHere && fits === 'three';/);
+  assert.match(src, /const fits = detailLayout\('bot', \{ phone, wide: three \}\);/);
   assert.match(src, /const endAt = inlineStartOf\(box\);/, 'the thread is measured to where the preview begins');
-  assert.match(src, /neighbourMin: \(probe\.neighbourMin \?\? 0\) \+ Math\.max\(0, roomEnd - endAt\), endAt/,
+  assert.match(src, /neighbourMin: listMin \+ Math\.max\(0, roomEnd - endAt\), endAt/,
     'and its bound keeps the preview as it is drawn, the room app.css leaves the thread');
+  // That room keeps app.css's 480px list beside the preview, not the 22rem
+  // `--ai-list-min` the probe reads: the handle stops where the thread is
+  // drawn to stop, and the snap is measured from there.
+  assert.match(src, /const THREE_LIST_MIN = 480;/);
+  assert.match(src, /const listMin = Math\.max\(probe\.neighbourMin \?\? 0, THREE_LIST_MIN\);/);
+  assert.match(css, /calc\(var\(--ai-room\) - 480px - var\(--ai-preview-w\)\)/, 'the 480px app.css holds the list to');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /new ResizeObserver\(\(\) => settle\(\)\)/,
     'read again when the preview is resized');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /probe: measure = probeLayout,/);
@@ -2136,7 +2145,7 @@ test('a plan opened from a request in the side panel is a third column, not a sh
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ panelEdgeStore \} from '\.\.\/side-panel\/edge-store';/);
   assert.match(src, /const pageInColumn = column\?\.at === 'page';/);
-  assert.match(src, /slot: visible && threeUp && pageInColumn\s+\? \{ widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef \}\s+: null,/);
+  assert.match(src, /slot: visible && threeFits && pageInColumn\s+\? \{ widthKey: AI_PREVIEW_COLUMN_WIDTH_KEY, probe: threadProbe, watch: previewRef \}\s+: null,/);
   // The panel reads it, and falls back to its own defaults with no slot.
   const panel = read('frontend/src/features/side-panel/side-panel.tsx');
   assert.match(panel, /const edges = useStoreState\(panelEdgeStore\);\s+const edge = edges\.slot;/);
@@ -2888,7 +2897,8 @@ test('the list hidden: one store, this device\'s, and only the bot page\'s colum
   assert.equal(read2(showsListButton), false);
   setDocked(true);
   assert.equal(read2(showsListButton), true, 'the bot page\'s column offers it');
-  // A phone, or a preview beside the thread, publishes itself as not docked.
+  // A phone, or a preview in a window too narrow for three columns, publishes
+  // itself as not docked.
   setDocked(false);
   assert.equal(read2(showsListButton), false);
   assert.equal(read2(isListClosed), true, 'the choice is kept for when it is docked again');
@@ -2899,13 +2909,48 @@ test('the list hidden: one store, this device\'s, and only the bot page\'s colum
   delete globalThis.window;
 });
 
-test('the page is one pane only while it is docked, open, and with no preview beside the thread', () => {
+test('the list put away beside a preview (24 Nov 2026): halves where three columns fit, nothing else changes', () => {
+  const { listLayout } = loadTsx('frontend/src/features/ai/list-closed.ts');
+  const at = (o) => listLayout({ closed: false, open: true, preview: false, fits: 'three', phone: false, ...o });
+  // No preview: as it was. The bar snaps, and the choice is one pane.
+  assert.deepEqual(at({}), { snaps: true, oneUp: false, layout: 'three' });
+  assert.deepEqual(at({ closed: true }), { snaps: true, oneUp: true, layout: 'three' });
+  assert.deepEqual(at({ closed: true, fits: 'halves' }), { snaps: true, oneUp: true, layout: 'halves' },
+    'a narrower window with no preview hides the list as it did');
+  // A preview where three columns fit: the bar snaps there too, and the list
+  // put away leaves the thread and the preview in halves.
+  assert.deepEqual(at({ preview: true }), { snaps: true, oneUp: false, layout: 'three' });
+  assert.deepEqual(at({ preview: true, closed: true }), { snaps: true, oneUp: true, layout: 'halves' },
+    'list, thread and preview become thread and preview');
+  // A window whose width already makes halves: no list to hide or restore.
+  assert.deepEqual(at({ preview: true, fits: 'halves' }), { snaps: false, oneUp: false, layout: 'halves' });
+  assert.deepEqual(at({ preview: true, fits: 'halves', closed: true }), { snaps: false, oneUp: false, layout: 'halves' },
+    'the choice is kept and changes nothing there');
+  // A phone and a closed column are untouched by the choice.
+  assert.deepEqual(at({ preview: true, closed: true, fits: 'full', phone: true }), { snaps: false, oneUp: false, layout: 'full' });
+  assert.deepEqual(at({ closed: true, phone: true, fits: 'full' }), { snaps: true, oneUp: false, layout: 'full' });
+  assert.deepEqual(at({ closed: true, open: false }), { snaps: true, oneUp: false, layout: 'three' });
+
+  // The thread's edge stays drawn on the pane's own edge while the list is
+  // put away, and the side panel's does as the column beside a page.
+  const css = read('public/css/app.css');
+  assert.match(css, /#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\] \.ai-main-pane > \.side-panel-divider \{ display: block; \}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\]:not\(\.hidden\)\) #side-panel-divider \{ display: block; \}/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) #ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\] #ai-main-divider,\nbody:has\(#ai-screen\[data-ai-preview="halves"\]\[data-ai-list-closed\]:not\(\.hidden\)\) #side-panel-divider \{\n  --divider-at: calc\(var\(--ai-col-w\) \+ var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\n\}/);
+  // A narrower window's halves still draws neither.
+  assert.match(css, /#ai-screen:not\(\[data-ai-preview="three"\]\)\[data-ai-preview\] \.ai-main-pane > \.side-panel-divider \{ display: none; \}/);
+  assert.match(css, /body:has\(#ai-screen\[data-ai-preview="halves"\]:not\(\.hidden\)\) #side-panel-divider \{\n\s+display: none;\n\}/);
+  // The frame looks, which draw no thread edge at all, keep theirs: the rule
+  // that shows it does not outrank theirs.
+  assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] #ai-main-divider \{ display: none; \}/);
+});
+
+test('the list put away: one pane, or beside a preview the thread and the preview in halves, where three columns fit', () => {
   const index = read('frontend/src/features/ai/index.tsx');
-  assert.match(index, /import \{ setDocked, setListClosed, useListClosed \} from '\.\/list-closed';/);
-  assert.match(index, /const listClosed = useListClosed\(\);\s+const oneUp = listClosed && columnOpen && !detailHere && !phone;/,
-    'a phone, a closed column or a preview keeps today\'s layout');
-  assert.match(index, /const snaps = !threeUp && !detailHere;/);
-  assert.match(index, /setDocked\(docked && !detailHere && !phone\)/, 'the button is offered only where the split is');
+  assert.match(index, /import \{ listLayout, setDocked, setListClosed, useListClosed \} from '\.\/list-closed';/);
+  assert.match(index, /const listClosed = useListClosed\(\);\s+const \{ snaps, oneUp, layout \} = listLayout\(\{ closed: listClosed, open: columnOpen, preview: detailHere, fits, phone \}\);/,
+    'one reading of the choice, the column and the window');
+  assert.match(index, /setDocked\(docked && snaps && !phone\)/, 'the button is offered wherever the list\'s bar snaps');
   assert.match(index, /data-ai-list-closed=\{oneUp \? '' : undefined\}/);
   assert.match(index, /onCollapse=\{snaps \? \(\) => setListClosed\(true\) : undefined\}/);
   assert.match(index, /onRestore=\{snaps \? \(\) => setListClosed\(false\) : undefined\}/);
@@ -2962,11 +3007,11 @@ test('a page in the column hands the panel\'s own edge the one-pane wiring (#697
   const index = read('frontend/src/features/ai/index.tsx');
   assert.match(index,
     /panelEdgeStore\.set\(\{\s+snap: visible && pageInColumn && snaps && !phone\s+\? \{ collapsed: oneUp, onCollapse: \(\) => setListClosed\(true\), onRestore: \(\) => setListClosed\(false\) \}\s+: null,\s+\}\);/,
-    'a page, no preview, not a phone; and it never writes the slot');
+    'a page, not a phone, and no preview unless three columns fit; and it never writes the slot');
   assert.match(index, /return \(\) => \{ panelEdgeStore\.set\(\{ snap: null \}\); \};/,
     'cleared when the page is not the column');
-  assert.match(index, /const oneUp = listClosed && columnOpen && !detailHere && !phone;/,
-    'the same one-pane state the thread column uses');
+  assert.match(index, /const \{ snaps, oneUp, layout \} = listLayout\(/,
+    'the same choice the thread column uses');
   const { panelEdgeStore } = loadTsx('frontend/src/features/side-panel/edge-store.ts');
   assert.equal(panelEdgeStore.get().snap, null, 'the prerender has no wiring');
   assert.match(read('frontend/src/features/side-panel/side-panel.tsx'),

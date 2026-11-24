@@ -89,18 +89,18 @@ test('openBot opens the thread about a change it can name, and carries any other
   await store.openBot(change);
   assert.equal(started.length, 1, 'no number, no thread asked for');
   assert.equal(went[1], '#homeroom-bot/new?project=flat-4b-chores-e98ecd');
-  assert.deepEqual(carry.takeCarried(), { object: change, placeholder: 'What should change?' });
+  assert.deepEqual(carry.takeCarried(), { object: change, placeholder: 'What should change?', words: null, start: null });
   assert.equal(carry.takeCarried(), null, 'once');
   fails = true;
   await store.openBot({ ...change, number: 31 });
   assert.equal(went[2], '#homeroom-bot/new?project=flat-4b-chores-e98ecd', 'a thread that could not be started falls back to the new chat');
-  assert.deepEqual(carry.takeCarried(), { object: change, placeholder: 'What should change?' }, 'its number is the door\'s, never the item\'s');
+  assert.deepEqual(carry.takeCarried(), { object: change, placeholder: 'What should change?', words: null, start: null }, 'its number is the door\'s, never the item\'s');
 
   // A group decision has no thread about it: the same new chat, carrying it.
   const decision = { type: 'governance', proposalId: 8, appSlug: 'flat-4b-chores-e98ecd', title: 'Close #4' };
   await store.openBot(decision);
   assert.equal(went[3], '#homeroom-bot/new?project=flat-4b-chores-e98ecd');
-  assert.deepEqual(carry.takeCarried(), { object: decision, placeholder: 'What should change?' });
+  assert.deepEqual(carry.takeCarried(), { object: decision, placeholder: 'What should change?', words: null, start: null });
 
   // A project alone: a new chat set to it, with nothing attached; nothing at all: a new chat.
   await store.openBot({ type: 'app', appSlug: 'plant-pal', title: 'Plant Pal' });
@@ -118,27 +118,43 @@ test('a carried item waits a moment for its new chat, and is taken once', () => 
   const carry = loadTsx('frontend/src/features/messages/new-chat-carry.ts');
   const item = { type: 'issue', appSlug: 'plant-pal', issueNumber: 4 };
   carry.carryToNewChat(item, 'What should change?', 1000);
-  assert.deepEqual(carry.takeCarried(1000 + carry.CARRY_MS - 1), { object: item, placeholder: 'What should change?' });
+  assert.deepEqual(carry.takeCarried(1000 + carry.CARRY_MS - 1), { object: item, placeholder: 'What should change?', words: null, start: null });
   assert.equal(carry.takeCarried(1000), null, 'once');
   carry.carryToNewChat(item, null, 1000);
   assert.equal(carry.takeCarried(1000 + carry.CARRY_MS), null, 'a door whose address opened no chat does not hand its item to a later one');
   carry.carryToNewChat(item, null, 1000);
   carry.carryToNewChat(null);
   assert.equal(carry.takeCarried(1000), null, 'taken back');
+  // 24 Nov 2026: a project's Workshop box carries its words and the start it
+  // chose (../frontend/src/features/dev-board/workshop/front-page.tsx), the
+  // same way and for the same moment, and no item.
+  carry.carryWordsToNewChat('Make the start button bigger', null, 1000);
+  assert.deepEqual(carry.takeCarried(1000), { object: null, placeholder: null, words: 'Make the start button bigger', start: null });
+  carry.carryWordsToNewChat('', 'fix', 1000);
+  assert.deepEqual(carry.takeCarried(1000), { object: null, placeholder: null, words: null, start: 'fix' }, 'a start alone');
+  carry.carryWordsToNewChat('   ', null, 1000);
+  assert.equal(carry.takeCarried(1000), null, 'blank words and no start carry nothing');
+  carry.carryWordsToNewChat('x'.repeat(9000), 'live', 1000);
+  assert.equal(carry.takeCarried(1000).words.length, 8000, 'no more than the box holds');
+  carry.carryWordsToNewChat('Late', 'ask', 1000);
+  assert.equal(carry.takeCarried(1000 + carry.CARRY_MS), null, 'and no later chat takes them');
 });
 
 test('the new chat takes the carried item: its chip, its prompt, the caret, and only the reference is sent', () => {
   const panel = read('frontend/src/features/messages/new-thread.tsx');
   assert.match(panel, /const held = takeCarried\(\);/);
-  assert.match(panel, /preset = held\n\s+\? \{ project: fresh\?\.project \?\? null, builder: fresh\?\.builder \|\| 'homeroom', object: held\.object, placeholder: held\.placeholder \}\n\s+: fresh \|\| null;/,
+  assert.match(panel, /preset = held\n\s+\? \{\n\s+project: fresh\?\.project \?\? null,\n\s+builder: fresh\?\.builder \|\| 'homeroom',\n\s+object: held\.object \|\| \(held\.words \|\| held\.start \? fresh\?\.object \|\| null : null\),\n\s+placeholder: held\.object \? held\.placeholder : \(fresh\?\.placeholder \?\? null\),\n\s+words: held\.words,\n\s+start: held\.start,\n\s+\}\n\s+: fresh \|\| null;/,
     'what a door carried is what the chat is about');
+  // Words and a start (a project's Workshop box) go in the box as pressing that start would, ready to send.
+  assert.match(panel, /const chosen = from\.start \? starts\.find\(\(start\) => start\.key === from\.start\) \|\| null : null;\n\s+const said = String\(from\.words \|\| ''\);\n\s+setWords\(\(chosen \? withStart\(said, chosen, starts\) : said\)\.slice\(0, 8000\)\);/);
+  assert.match(panel, /useEffect\(\(\) => \{ if \(takeWords\(preset\)\) toField\(\); \}, \[\]\);/, 'once the starts are read, with the caret after them');
   assert.match(panel, /const \[object, setObject\] = useState<StagedObject \| null>\(\(\) => preset\?\.object \|\| null\);/);
   assert.match(panel, /<div className="messages-pending-object" data-bot-new-thread-object=\{object\.type\}>/);
   assert.match(panel, /\{pendingObjectLabel\(object, stagedCard\)\}/, 'the chip reads what a sent card reads');
   assert.match(panel, /<button type="button" onClick=\{\(\) => \{ setObject\(null\); setPrompt\(null\); \}\} aria-label=\{t\('messages:composer\.removeSharedItem'\)\}>×<\/button>/);
   assert.match(panel, /placeholder=\{own \? t\('messages:newThread\.builder\.placeholder'\) : \(object && prompt\) \|\| t\('messages:newThread\.placeholder'\)\}/);
   assert.match(panel, /\.\.\.\(object \? \{ object: referenceOf\(object\) \} : \{\}\),/, 'the staged title is never sent');
-  assert.match(panel, /if \(preset\.object\) toField\(\);/, 'the caret is in the box');
+  assert.match(panel, /if \(takeWords\(preset\) \|\| preset\.object\) toField\(\);/, 'the caret is in the box');
   // The conversation composer keeps its own chip, for an item shared in a chat with people.
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.equal(message('messages:composer.placeholderThread'), 'Reply in thread…');

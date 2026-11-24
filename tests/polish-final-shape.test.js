@@ -163,8 +163,11 @@ test('#19: a channel loads in one state, the room\'s own', () => {
   assert.match(frame, /: opensOnOwnShape\(\) \? DEV_BODY_PLACE_INITIAL : DEV_BODY_WORKSHOP_INITIAL;/,
     'no card list in front of a place that draws its own loading shape');
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(workshop, /if \(pending && \(!v\.slug \|\| \(tab !== 'status' && !channelHere\)\)\) \{/,
+  // 24 Nov 2026: nor does the Workshop's front page, under the standard look (front-page.tsx draws its own parts).
+  assert.match(workshop, /const frontHere = tab === 'workshop' && wipLook && !openWeek;\n\s+if \(pending && \(!v\.slug \|\| \(tab !== 'status' && !channelHere && !frontHere\)\)\) \{/,
     'a channel waits for neither the board nor the record');
+  assert.match(frame, /if \(tab === 'workshop'\) return !document\.documentElement\.hasAttribute\('data-skin'\);/,
+    'and the host opens empty for it, as for the hub');
 });
 
 test('#19: a room\'s picture holds its box until it has drawn', () => {

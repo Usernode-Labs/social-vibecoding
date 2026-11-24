@@ -26,3 +26,12 @@ export function takePendingPrivateRequest(slug: string): number | null {
   pending = null;
   return id;
 }
+
+/**
+ * Whether a door is waiting to open one of this project's private requests,
+ * without taking it: the Workshop's front page opens its Private requests
+ * page for it (./front-page.tsx), whose list then takes it.
+ */
+export function peekPendingPrivateRequest(slug: string): boolean {
+  return !!pending && pending.slug === slug;
+}

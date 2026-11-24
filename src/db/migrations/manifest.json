@@ -567,9 +567,14 @@
       "schemaSha256": "9af6a388e2b35d57133e6099914a6518527bd7513ee9118368dfa682cd490f69"
     },
     {
+      "id": "live-drafts-propose-claim",
+      "sha256": "d0a64d4c669c62f541208f3be16da3ccb6b65d2c9048bcb0ab8ad8622891804a",
+      "schemaSha256": "9521bc6ef2764c2430c56e839bc6ae5d7b3c3656ce2467e07921278b10b682d8"
+    },
+    {
       "id": "live-drafts-built-on",
       "sha256": "14dbc0de5d32e951d9200e68f0e1ac6d0f8cc934c512a0c124ce464df4a241d0",
-      "schemaSha256": "2640fb472a7aac645847e27f70d8c56f7c3fc54b0e4b9bf4e34dd99dcf906e3c"
+      "schemaSha256": "489219b9bf76852e08c517c5e95db9a96eb3ade010639ef70e7a810c8ae991f8"
     }
   ]
 }

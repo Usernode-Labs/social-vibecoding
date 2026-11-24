@@ -60,7 +60,12 @@ function threadsRoutes() {
   // project, as the request and the change are. `?as=change`: the number
   // is a pull request's, and the change's own thread answers (a change's
   // page asks this way; threads.threadForNumber says why).
-  router.get('/api/apps/:slug/threads/:number', async (req, res) => {
+  router.get('/api/apps/:slug/threads/:number', async (req, res, next) => {
+    // `/threads/yours` is the viewer's own threads on the project, a route of
+    // routes/ai-work.js mounted after this one: it is passed on, not answered
+    // as a thread that is not there (24 Nov 2026: the Workshop's front page
+    // reads it on every visit, and a 404 is a console error on the page).
+    if (req.params.number === 'yours') return next();
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!/^[1-9][0-9]{0,8}$/.test(req.params.number)) return res.status(404).json({ error: 'Thread not found' });
