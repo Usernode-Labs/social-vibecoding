@@ -97,3 +97,24 @@ test('#6832: on a 390px phone a five-step row fits the card, with no sideways sc
   const inner = 390 - 32 - 2 * Number(pad[1]);
   assert.ok(inner >= 5 * 56 + 4 * 12, `five steps fit: ${inner}px available, 328px needed`);
 });
+
+test('from 420px a steps picture sets Before beside After, each step as wide as its words', () => {
+  const css = read('public/css/app.css');
+  const m = css.match(/@media \(min-width: 420px\) \{\n  \.dev-ws-diagram-steps-two[\s\S]*?\n\}/);
+  assert.ok(m, 'the wide block exists');
+  const block = m[0];
+  // Two equal columns in one row; in a grid the start side is Before, and
+  // right to left that is the right.
+  assert.match(block, /\.dev-ws-diagram-steps-two \{ display: grid; grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\); column-gap: 24px; \}/);
+  assert.match(block, /\.dev-ws-diagram-steps-row \{ min-width: 0; \}/, 'a side of five steps wraps inside its half');
+  // A hairline before After, logical so it flips with the direction.
+  assert.match(block, /\.dev-ws-diagram-steps-row \+ \.dev-ws-diagram-steps-row \{ padding-inline-start: 24px; border-inline-start: 1px solid var\(--app-sheet-line\); \}/);
+  // A step is 88px to 15rem, on the start edge.
+  assert.match(block, /\.dev-ws-diagram-step-pic \{ width: auto; min-width: 88px; max-width: 15rem; flex: 0 1 auto; text-align: start;/);
+  assert.match(block, /\.dev-ws-diagram-step-pic > svg \{ margin: 0; \}/);
+  assert.doesNotMatch(block, /\b(?:left|right)\b/, 'no physical side');
+  // The narrow block still comes first and still stacks the rows.
+  assert.ok(css.indexOf('@media (max-width: 419px) {\n  .dev-ws-diagram-steps { gap: 12px; }') < css.indexOf(m[0]));
+  assert.match(css, /\.dev-ws-diagram-steps-row \{ display: flex; flex-direction: column; gap: 6px; \}/);
+  assert.match(css, /\.dev-ws-diagram-step-pic \{ width: 88px; flex: none; text-align: center; \}/);
+});
