@@ -72,7 +72,7 @@ test('Create opens the make screen, on importing when asked; there is no dialog 
 
 test('#create opens the make screen and #create/import its import form; each has a check', () => {
   const route = read('public/js/app.js');
-  assert.match(route, /App\.showCreateModal\(\{ import: parts\[1\] === 'import', archive: parts\[1\] === 'archive' \}\);/);
+  assert.match(route, /App\.showCreateModal\(\{ import: parts\[1\] === 'import' \}\);/);
   const dapp = JSON.parse(read('dapp.json'));
   assert.equal(dapp.tests.filter((t) => /#create-card|#create\/options/.test(`${t.expectSelector} ${t.path}`)).length, 0,
     'the dialog\'s checks went with it');
@@ -121,7 +121,7 @@ test('the island opens the Create door over nothing else, on importing when aske
   // #6019 follow-up: a private thread's New project hands it an idea and who
   // it is for; #6781 adds the name the bot suggested. The door still opens
   // over nothing else.
-  assert.match(src, /create\(opts\?: \{ import\?: boolean; archive\?: boolean; idea\?: string \| null; name\?: string \| null; ideaSource\?: IdeaSource; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, name, ideaSource, audience \}, !!opts\?\.archive\);\s+\},/);
+  assert.match(src, /create\(opts\?: \{ import\?: boolean; idea\?: string \| null; name\?: string \| null; ideaSource\?: IdeaSource; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, name, ideaSource, audience \}\);\s+\},/);
   assert.doesNotMatch(src, /made\(made: Made\): boolean|onMoreOptions|dialogs\?\.create/, 'no hand-off from a dialog, and no way to one');
 });
 
@@ -152,7 +152,7 @@ test('the address turns an open Create door between its two forms, and leaves a 
     assert.equal(island.openCreate(setMode, true), false);
   });
   const door = read(ISLAND).slice(read(ISLAND).indexOf("if (mode.kind === 'make' && mode.entry === 'create') {"));
-  assert.match(door, /<MakeScreen\s+(?:\/\/[^\n]*\n\s+)*key=\{mode\.startImport \? 'import' : mode\.startArchive \? 'archive' : 'make'\}/,
+  assert.match(door, /<MakeScreen\s+(?:\/\/[^\n]*\n\s+)*key=\{mode\.startImport \? 'import' : 'make'\}/,
     'turned, the screen opens afresh on the asked-for form, as a cold load does');
 });
 
@@ -218,7 +218,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   const hello = `<h1 id="first-session-make-title" class="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">${message('onboarding:firstSession.make.titleHello', { name: 'Jordan' })}</h1>`;
   assert.ok(first.includes(hello), hello);
   assert.match(first, /Look around first/);
-  assert.doesNotMatch(first, /data-make-close|data-make-import-link|data-make-archive-link|Import from a GitHub repo|Upload a project archive/, 'the first session does not offer an import or an upload');
+  assert.doesNotMatch(first, /data-make-close|data-make-import-link|Import from a GitHub repo/, 'the first session does not offer an import');
 
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.makeTitle('create', 'Jordan'), message('onboarding:firstSession.make.title'));
@@ -239,8 +239,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
 
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /onClick=\{\(\) => setMode\('import'\)\}/);
-  assert.match(src, /onClick=\{\(\) => setMode\('archive'\)\}/);
-  assert.match(src, /useState<'make' \| 'import' \| 'archive'>\(fromCreate && startImport \? 'import' : fromCreate && startArchive \? 'archive' : 'make'\)/, 'only Create imports or uploads');
+  assert.match(src, /useState<'make' \| 'import'>\(fromCreate && startImport \? 'import' : 'make'\)/, 'only Create imports');
   // Polish #8: Escape leaves the way ✕ does, falling and fading before onClose.
   assert.match(src, /if \(e\.key === 'Escape'\) leave\(\);/);
   // One request at a time, as the dialog's Create (QA 2026-09-24 Q5).
@@ -296,54 +295,6 @@ test('the import check reads GET /api/github/verify-access, and says what failed
   assert.deepEqual(await checkRepo('x', answer(200, { owner: 'o', repo: 'r', manifest: null })), { ok: true, fullName: 'o/r', manifest: {}, unread: true });
   assert.deepEqual(await checkRepo('x', answer(403, { error: 'Invite usernode-bot first.' })), { ok: false, error: 'Invite usernode-bot first.' });
   assert.deepEqual(await checkRepo('x', async () => { throw new TypeError('offline'); }), { ok: false, error: 'Network error. Try again.' });
-});
-
-test('the archive upload form: choose a file, its check, the name, Upload it, and a way back', async () => {
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', startArchive: true, onMade() {}, onClose() {} });
-  assert.match(html, /data-make-entry="create"/);
-  assert.match(html, /<form data-make-archive="" class="mx-auto flex w-full max-w-sm grow flex-col px-4 /, 'in the make form\'s own frame');
-  assert.match(html, /<h1 id="first-session-make-title"[^>]*>Upload a project archive<\/h1>/);
-  assert.match(html, /<input[^>]*id="make-archive-choose"[^>]*type="file"/);
-  assert.match(html, /<p\s+id="make-archive-status"/);
-  assert.match(html, /<input[^>]*id="make-archive-name"[^>]*>/);
-  assert.match(html, />Choose a file<\/button>/);
-  assert.match(html, />Upload it<\/button>/);
-  assert.match(html, /data-make-describe=""[^>]*>Describe a new project instead<\/button>/);
-  assert.doesNotMatch(html, /id="make-import-url"|data-first-session-example/, 'the other forms are swapped out, not added to');
-
-  const mod = loadTsx(`${DIR}/archive-upload.tsx`);
-  assert.equal(mod.archiveMissing(false, 'Notes'), 'file', 'a file not chosen is asked for first');
-  assert.equal(mod.archiveMissing(true, '  '), 'name');
-  assert.equal(mod.archiveMissing(true, 'Notes'), null);
-  assert.equal(mod.archiveBaseName('ghost-site.zip'), 'ghost-site');
-  assert.equal(mod.archiveBaseName('site.tar.gz'), 'site');
-  assert.equal(mod.archiveBaseName('site.7z'), 'site');
-  assert.match(message('onboarding:firstSession.archive.title'), /^Upload a project archive$/);
-  assert.equal(message('onboarding:firstSession.archive.found_other', { count: 42 }), '42 files, index.html found.');
-  assert.equal(message('onboarding:firstSession.archive.found_one', { count: 1 }), '1 file, index.html found.');
-  for (const id of ['firstSession.make.archiveLink', 'firstSession.archive.submit', 'firstSession.archive.needed.file',
-    'firstSession.archive.error.tooBig', 'firstSession.archive.error.type', 'firstSession.made.line.unpacking', 'firstSession.made.note.archived']) {
-    assert.ok(message(`onboarding:${id}`).length > 0, id);
-  }
-
-  // The chosen file goes as raw bytes to the check route, and its answer is
-  // what the form shows and names the project from.
-  const seen = [];
-  const file = new File([Buffer.from('PK')], 'ghost-site.zip');
-  const ok = await mod.uploadArchive(file, async (url, init) => {
-    seen.push([url, init.method, init.headers['Content-Type']]);
-    return { ok: true, status: 200, json: async () => ({ id: 'a'.repeat(32), fileCount: 42, name: 'ghost-site' }) };
-  });
-  assert.deepEqual(seen, [['/api/apps/archive?filename=ghost-site.zip', 'POST', 'application/octet-stream']]);
-  assert.deepEqual(ok, { ok: true, id: 'a'.repeat(32), fileCount: 42, name: 'ghost-site' });
-  const wrongType = await mod.uploadArchive(new File([Buffer.from('x')], 'notes.txt'), async () => { throw new Error('should not be called'); });
-  assert.equal(wrongType.ok, false);
-
-  const src = read(`${DIR}/make.tsx`);
-  const archive = src.slice(src.indexOf('const createFromArchive = useCallback('), src.indexOf('const formClass ='));
-  assert.match(archive, /postCreateApp\(\{ name: archiveName, audience: 'invited', archive, from: entry \}\)/, 'a private community, through the same request');
-  assert.match(archive, /archived: true/);
-  assert.ok(src.indexOf('data-make-archive-link') > src.indexOf('data-make-import-link'), 'the archive link sits under the import link');
 });
 
 test('the made screen from Create goes to the project; an import lands there too, with Share invite', () => {

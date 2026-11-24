@@ -109,5 +109,5 @@ test('a form left from Create is kept and opens filled; a made project clears it
   // Kept whichever way the screen goes (✕, Escape, the header, a route), and
   // cleared when the project was made, by any door.
   assert.match(MAKE, /useEffect\(\(\) => \(\) => \{\s*if \(!fromCreate\) return;\s*const kept = madeRef\.current \? null : draftWorthKeeping\(formRef\.current\);\s*keptDraft = kept \? \{ \.\.\.kept, who: whoRef\.current \} : null;\s*\}, \[fromCreate\]\);/);
-  assert.equal((MAKE.match(/madeRef\.current = true;\s*onMade\(/g) || []).length, 3, 'Make it, Import it and Upload it');
+  assert.equal((MAKE.match(/madeRef\.current = true;\s*onMade\(/g) || []).length, 2, 'Make it and Import it');
 });

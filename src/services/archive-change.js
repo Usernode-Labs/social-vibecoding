@@ -12,8 +12,8 @@
 // up for the project's vote as the person's change, like any other change.
 //
 // Nothing is written outside public/: the project keeps its server.js,
-// dapp.json and dependencies exactly as they are, which is the one shape
-// every archive import keeps (archive-import.js projectFiles).
+// dapp.json and dependencies exactly as they are, which is the shape
+// archive-import.js's siteFiles keeps.
 //
 // Reads the archive once, from the bytes the chat stored, so the change is
 // the same on a retry. Never throws for a bad archive or a refused person.

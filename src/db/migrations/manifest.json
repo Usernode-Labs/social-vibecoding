@@ -585,11 +585,6 @@
       "id": "ai-list-visits",
       "sha256": "0cb9df213e66c41cd360399f6b81f5ce942c7ed6803f3a07fcec8c81ecd63f24",
       "schemaSha256": "480929812e89b0eca887a83f65b142dd2021c84cea64509d1b5878c7953b9825"
-    },
-    {
-      "id": "app-archive-uploads",
-      "sha256": "cf9eb841b856e594d2ce6ca0e6f01c8d99821d47770aef7e6597049c956d9043",
-      "schemaSha256": "09679ea3cce99cdad761ab67f058a7d412ec64f62aa5ab8cfd30b4b22216a8f0"
     }
   ]
 }

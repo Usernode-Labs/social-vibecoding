@@ -8,8 +8,8 @@
 //   * the file-count and per-file caps hold;
 //   * Mac clutter is dropped without a word;
 //   * a wrong extension or wrong magic bytes is refused;
-//   * projectFiles keeps the scaffold's dapp.json and server.js, puts the
-//     archive under public/, and inserts the Dev console forwarder once.
+//   * siteFiles puts the archive under public/ and inserts the Dev console
+//     forwarder once.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -217,28 +217,6 @@ test('duplicate paths are refused', async () => {
     { name: 'index.html', data: 'two' },
   ]);
   assert.equal((await archiveImport.read(zip, 'x.zip')).ok, false);
-});
-
-test('projectFiles keeps the scaffold, drops its screen, and adds the archive under public/', () => {
-  const scaffold = [
-    { path: 'public/index.html', content: 'starter page' },
-    { path: 'dapp.json', content: '{"name":"x"}' },
-    { path: 'server.js', content: 'server' },
-  ];
-  const archiveFiles = [
-    { path: 'index.html', content: Buffer.from('<html><head><title>Mine</title></head><body>Mine</body></html>') },
-    { path: 'style.css', content: Buffer.from('body{}') },
-  ];
-  const files = archiveImport.projectFiles(scaffold, archiveFiles);
-  const byPath = Object.fromEntries(files.map((file) => [file.path, file.content]));
-  assert.equal(byPath['dapp.json'], '{"name":"x"}');
-  assert.equal(byPath['server.js'], 'server');
-  assert.equal(byPath['public/index.html'] instanceof Buffer, true);
-  const html = byPath['public/index.html'].toString('utf8');
-  assert.match(html, /<title>Mine<\/title>/);
-  assert.match(html, /usernode-dev-console@1/);
-  assert.equal((html.match(/usernode-dev-console@1/g) || []).length, 1, 'inserted once');
-  assert.equal(byPath['public/style.css'].toString('utf8'), 'body{}');
 });
 
 test('siteFiles is just the archive under public/, forwarder once on its index', () => {

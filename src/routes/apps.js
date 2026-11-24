@@ -1,5 +1,4 @@
 const appAllowance = require('../services/app-allowance');
-const archiveImport = require('../services/archive-import');
 const mailLanguage = require('../services/mail/language');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
@@ -1212,13 +1211,6 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     return { status: 503, body: { error: IMPORT_PAUSED, code: 'github_paused' } };
   }
 
-  // The name an uploaded archive opens on: its file's name without the
-  // archive extension.
-  function archiveName(filename) {
-    const base = String(filename || '').split(/[\\/]/).pop() || '';
-    return base.replace(/\.(?:tar\.gz|tgz|zip|rar|7z)$/i, '').trim().slice(0, 120);
-  }
-
   // The import form's Check (frontend/src/features/first-session/import-repo.tsx)
   // asks this, and POST /api/apps answers the same on submit. Importing from
   // GitHub made the bot a collaborator on the person's repository, and the
@@ -1230,60 +1222,6 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   router.get('/api/github/verify-access', githubLookupLimiter, (req, res) => {
     const refused = importRefusal(req.query.url || '');
     return res.status(refused.status).json(refused.body);
-  });
-
-  // #6994: a website archive chosen on the Create screen is checked here
-  // BEFORE anything is created (frontend/src/features/first-session/
-  // archive-upload.tsx). The original bytes are kept so the project's setup
-  // can write them as its first commit (services/app-creator.js), and the
-  // answer's id is what POST /api/apps links to the new project.
-  //
-  // Raw bytes, as the feedback screenshot route takes them, so an over-cap
-  // upload gets the plain 400 sentence rather than the parser's 413. The
-  // upload is a cookie-authenticated write, so the Homeroom page is the only
-  // browser that may make it (sameOriginBrowserOnly), after its limiter.
-  const archiveBody = express.raw({ type: 'application/octet-stream', limit: archiveImport.MAX_ARCHIVE_BYTES + 1 });
-  router.post('/api/apps/archive', drainGuard, appCreateLimiter, sameOriginBrowserOnly, (req, res, next) => {
-    archiveBody(req, res, (err) => {
-      if (!err) return next();
-      if (err.type === 'entity.too.large') {
-        return res.status(400).json({ error: 'That archive is too big. Upload one up to 25 MB.' });
-      }
-      return res.status(400).json({ error: 'That archive could not be read. Try another file.' });
-    });
-  }, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    // A connector's create takes a name, who it is for, a line and a brief;
-    // an upload belongs on Homeroom itself.
-    if (req.connectorClientId) {
-      return res.status(400).json({ error: 'invalid_request', message: 'A connector cannot upload a project archive. Do it on Homeroom itself.' });
-    }
-    // Without a code host there is no repository to put the files in.
-    if (!github.isEnabled()) {
-      return res.status(503).json({ error: 'Uploading an archive is not available here, because no code host is set up.' });
-    }
-    try {
-      if (!req.user.canAdminWrite) {
-        const allowance = await appAllowance.read(pool, req.user);
-        if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
-      }
-      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      const filename = typeof req.query.filename === 'string' ? req.query.filename.slice(0, 255) : '';
-      const verdict = await archiveImport.read(data, filename);
-      if (!verdict.ok) return res.status(400).json({ error: verdict.error });
-
-      const id = require('crypto').randomBytes(16).toString('hex');
-      const name = archiveName(filename) || 'Untitled';
-      await pool.query(
-        `INSERT INTO app_archive_uploads (id, user_id, filename, size_bytes, data)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [id, req.user.id, filename || 'archive', data.length, data]
-      );
-      return res.json({ id, fileCount: verdict.fileCount, name });
-    } catch (err) {
-      log.error('apps', 'Archive upload failed', { message: err.message });
-      return res.status(500).json({ error: 'Upload failed' });
-    }
   });
 
   router.get('/api/me/app-allowance', async (req, res) => {
@@ -1391,22 +1329,6 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(refused.status).json({ error: refused.body.error });
     }
 
-    // #6994: an uploaded archive (POST /api/apps/archive above) may start the
-    // project instead. It is one unanswered create: never beside a repo, a
-    // design, a thread, a brief or a template. The upload must be this
-    // person's, and not used by a project already.
-    const archiveId = typeof req.body.archive === 'string' && /^[0-9a-f]{32}$/.test(req.body.archive)
-      ? req.body.archive : null;
-    if (req.body.archive != null && !archiveId) {
-      return res.status(400).json({ error: 'That upload is not one Homeroom recognises. Choose the file again.' });
-    }
-    if (archiveId) {
-      const brief = typeof req.body.brief === 'string' && req.body.brief.trim();
-      if (repoUrl || req.body.design != null || req.body.thread != null || brief || template !== appTemplates.DEFAULT_TEMPLATE) {
-        return res.status(400).json({ error: 'An uploaded archive is a project on its own: it starts from no repo, template, design, thread or brief.' });
-      }
-    }
-
     const crypto = require('crypto');
     const code = crypto.randomBytes(3).toString('hex');
     // Length-capped so the derived container name and preview host stay
@@ -1420,18 +1342,6 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!req.user?.canAdminWrite) {
         const allowance = await appAllowance.read(pool, req.user);
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
-      }
-
-      // The upload this create names must be the person's own and unused;
-      // anything else is the same "choose the file again" the form shows
-      // when a link has gone stale.
-      if (archiveId) {
-        const { rows: uploads } = await pool.query(
-          'SELECT user_id, app_id FROM app_archive_uploads WHERE id = $1', [archiveId]);
-        const upload = uploads[0];
-        if (!upload || upload.user_id !== req.user.id || upload.app_id != null) {
-          return res.status(400).json({ error: 'This upload has expired. Choose the file again.' });
-        }
       }
 
       // A Group's invitees resolve BEFORE anything is created: a typo in a
@@ -1596,21 +1506,6 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         );
 
         appRow = rows[0];
-
-        // The upload becomes this project's (services/app-creator.js reads it
-        // back to write the first commit). Checked again under the
-        // transaction: two creates naming one upload must not both seed it.
-        if (archiveId) {
-          const { rowCount } = await db.query(
-            'UPDATE app_archive_uploads SET app_id = $1 WHERE id = $2 AND app_id IS NULL',
-            [appRow.id, archiveId]
-          );
-          if (!rowCount) {
-            const stale = new Error('This upload has expired. Choose the file again.');
-            stale.code = 'ARCHIVE_USED';
-            throw stale;
-          }
-        }
 
         // WHO APPROVES, chosen on the create screen. Written to the row now so
         // the rule holds from the first proposal, and passed to the template
@@ -1870,15 +1765,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const exampleScreen = readyMade ? appTemplates.get(template).exampleScreen || null : null;
       res.status(201).json({
         app: appAccess.stripAppSecrets(appRow), invited,
-        ...(archiveId ? { archived: true } : {}),
         ...(homeroomBot ? { homeroomBot } : {}),
         ...(exampleScreen ? { exampleScreen } : {}),
       });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
-      if (err.code === 'ARCHIVE_USED') {
-        return res.status(400).json({ error: err.message });
-      }
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
       }

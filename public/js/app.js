@@ -5354,7 +5354,7 @@ const App = {
           App.setHeaderTitle('Homeroom');
           Home.load();
         }
-        App.showCreateModal({ import: parts[1] === 'import', archive: parts[1] === 'archive' });
+        App.showCreateModal({ import: parts[1] === 'import' });
         return;
       }
       if (parts[0] === 'leaderboard') {

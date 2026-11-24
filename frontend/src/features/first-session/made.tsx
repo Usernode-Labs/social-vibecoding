@@ -397,13 +397,11 @@ export function stalledOf(appStatus: string | null): Stalled {
 }
 
 /** The build line's words ("Building it"), or what to say without a build. */
-export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true, imported = false, readyMade = false, archived = false): string {
+export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true, imported = false, readyMade = false): string {
   // Before any step: nothing is built on a setup that stopped.
   const stalled = stalledOf(appStatus);
   if (stalled === 'failed') return translate('onboarding:firstSession.made.line.failed');
   if (stalled === 'needs-secrets') return translate('onboarding:firstSession.made.line.needsSecrets');
-  // #6994: an uploaded archive is unpacked into the project, then it runs.
-  if (archived) return appStatus === 'running' ? translate('onboarding:firstSession.made.line.imported') : translate('onboarding:firstSession.made.line.unpacking');
   // An import has no first version: it is coming over, then it runs.
   if (imported) return appStatus === 'running' ? translate('onboarding:firstSession.made.line.imported') : translate('onboarding:firstSession.made.line.importing');
   // Nor has a ready-made app: it is set up, then it is ready.
@@ -450,10 +448,9 @@ export function madeLine(fv: FirstVersion, botBuilds: boolean, live = false, sta
  * which read as random under a card whose name and description already say
  * what it is, beside a setup card that says it is ready to use.
  */
-export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false, archived = false): string | null {
+export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false): string | null {
   if (stalled === 'failed') return translate('onboarding:firstSession.made.note.failed');
   if (stalled === 'needs-secrets') return translate('onboarding:firstSession.made.note.needsSecrets');
-  if (archived) return translate('onboarding:firstSession.made.note.archived');
   if (imported) return translate('onboarding:firstSession.made.note.imported');
   if (readyMade) return null;
   if (!botBuilds) return translate('onboarding:firstSession.made.note.noBot');
@@ -1748,7 +1745,6 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const sent = sentHow !== null;
   const [retrying, setRetrying] = useState(false);
   const imported = !!made.imported;
-  const archived = !!made.archived;
   const readyMade = !!made.readyMade;
   const fromCreate = entry === 'create';
   // Whether a first version has been read as on its way: once it has, a read
@@ -1939,8 +1935,8 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // plain card says the build's words and one line about what happens next.
   const note = card
     ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : t(NO_BOT_NOTE))
-    : buildNote(botBuilds, !!plan, stalled, imported, readyMade, archived);
-  const plainLine = named.words || (line === 'planning' && served === 'plan' ? translate(BUILD_LINE_WORDS.planning) : buildLine(fv, appStatus, botBuilds, imported, readyMade, archived));
+    : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
+  const plainLine = named.words || (line === 'planning' && served === 'plan' ? translate(BUILD_LINE_WORDS.planning) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
   // Something is under way: the project being set up, or the bot's build
   // (not while its plan waits on them, nor on a setup or a build that
   // stopped: then nothing is).

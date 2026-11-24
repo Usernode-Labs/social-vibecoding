@@ -1,7 +1,7 @@
 'use strict';
 
-// Reading an uploaded website archive into the files of a new project
-// (POST /api/apps/archive, then services/app-creator.js's first commit).
+// Reading a website archive attached in a project's chat into that project's
+// public folder (services/archive-change.js, the change the project votes on).
 //
 // An archive is read in memory, never written to disk: the format comes from
 // its magic bytes, the extension must agree, and every entry is checked
@@ -368,9 +368,9 @@ function withForwarder(file) {
 
 /**
  * The archive's own files as the app serves them: every file under public/,
- * its index.html with the Dev console forwarder inserted once. What a new
- * project's first commit keeps, and what a project grew from an archive in
- * the editor puts in place of its public folder (#6994).
+ * its index.html with the Dev console forwarder inserted once. What a project
+ * revamped from an archive in the editor puts in place of its public folder
+ * (#6994).
  */
 function siteFiles(archiveFiles) {
   return (archiveFiles || []).map((file) => {
@@ -379,19 +379,8 @@ function siteFiles(archiveFiles) {
   });
 }
 
-/**
- * A new project's first commit: the empty scaffold's files, without its own
- * public/index.html, with every archive file under public/. The scaffold's
- * dapp.json, server.js and the rest stay exactly as the template wrote them.
- */
-function projectFiles(scaffold, archiveFiles) {
-  const kept = (scaffold || []).filter((file) => file.path !== 'public/index.html');
-  return [...kept, ...siteFiles(archiveFiles)];
-}
-
 module.exports = {
   read,
-  projectFiles,
   siteFiles,
   safePath,
   formatOf,

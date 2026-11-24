@@ -1083,10 +1083,6 @@
     "text": "Import from a GitHub repo",
     "description": "Link under the Make it button, when the screen was opened from the Create button: switches to a form that brings in an existing app from a GitHub repository instead of describing a new one. GitHub is a name."
   },
-  "firstSession.make.archiveLink": {
-    "text": "Upload a project archive",
-    "description": "Link under \"Import from a GitHub repo\" below the Make it button, when the screen was opened from the Create button: opens a form that starts a project from an archive of a website the member already has."
-  },
   "firstSession.make.speed.instant": {
     "text": "<0>Instant</0> · ready to use in about a minute",
     "description": "One line above \"Who can change it\" on the \"What do you want to make?\" screen, after a lightning icon, while Make it would create one of Homeroom's ready-made apps (a starting idea's choice that needs no typing): nothing has to be built, so the project can be used about a minute after Make it is pressed. <0>…</0> is bold. Keep it short: it must fit on one line of a phone screen."
@@ -1206,70 +1202,6 @@
   "firstSession.import.needed.repo": {
     "text": "Check the repo first.",
     "description": "Error under the repository address field when the member pressed Import it before the repository was checked. \"Check\" is a verb."
-  },
-  "firstSession.archive.title": {
-    "text": "Upload a project archive",
-    "description": "Heading of the form that starts a new project from an uploaded archive of a website: the same three words as the link that opens it."
-  },
-  "firstSession.archive.line": {
-    "text": "Bring a website you already have. It starts from its index.html, and your group builds on it from here.",
-    "description": "Sentence under the heading of the archive upload form: what the form does. \"index.html\" is a file name and stays as written."
-  },
-  "firstSession.archive.fileLabel": {
-    "text": "Archive file",
-    "description": "Label over the field where a member chooses the archive to upload: a zip, tar.gz, rar or 7z file of a website."
-  },
-  "firstSession.archive.choose": {
-    "text": "Choose a file",
-    "description": "Button in the archive upload form's file field, before a file is chosen: opens the device's file picker."
-  },
-  "firstSession.archive.chooseAnother": {
-    "text": "Choose another",
-    "description": "The same button once a file is chosen: opens the device's file picker again to replace it."
-  },
-  "firstSession.archive.uploading": {
-    "text": "Checking your archive…",
-    "description": "Status line under the archive file field while the chosen file is sent to Homeroom to be checked."
-  },
-  "firstSession.archive.found_one": {
-    "text": "{{count}} file, index.html found.",
-    "description": "Status line under the archive file field when the archive is fine and holds one file. {{count}} is the number of files; \"index.html\" is a file name and stays as written."
-  },
-  "firstSession.archive.found_other": {
-    "text": "{{count}} files, index.html found.",
-    "description": "Status line under the archive file field when the archive is fine. {{count}} is the number of files; \"index.html\" is a file name and stays as written."
-  },
-  "firstSession.archive.limits": {
-    "text": "A .zip, .tar.gz, .rar or .7z, up to 25 MB and 500 files, with index.html at the top.",
-    "description": "Line under the archive upload form's card: the file types and limits accepted. The extensions and \"index.html\" stay as written; \"MB\" is megabytes."
-  },
-  "firstSession.archive.needed.file": {
-    "text": "Choose an archive first.",
-    "description": "Error under the archive file field when Upload it was pressed before a file was chosen."
-  },
-  "firstSession.archive.needed.name": {
-    "text": "Give it a name to upload it. You can change it later.",
-    "description": "Error under the empty name field when Upload it was pressed. Both \"it\" are the project."
-  },
-  "firstSession.archive.submit": {
-    "text": "Upload it",
-    "description": "Main button on the archive upload form: creates the project from the checked archive. \"Upload\" is a verb and \"it\" is the archive."
-  },
-  "firstSession.archive.submitting": {
-    "text": "Uploading…",
-    "description": "Text of the main button on the archive upload form while the project is being created."
-  },
-  "firstSession.archive.error.network": {
-    "text": "Could not reach Homeroom to check that file. Try again.",
-    "description": "Status line under the archive file field when the check request could not be made or added nothing."
-  },
-  "firstSession.archive.error.tooBig": {
-    "text": "That archive is too big. Upload one up to 25 MB.",
-    "description": "Status line under the archive file field when the chosen file is larger than the limit. \"MB\" is megabytes."
-  },
-  "firstSession.archive.error.type": {
-    "text": "Upload a .zip, .tar.gz, .rar or .7z file.",
-    "description": "Status line under the archive file field when the chosen file is not one of the accepted archive types. The extensions stay as written."
   },
   "firstSession.import.nameLabel": {
     "text": "What should we call it?",
@@ -1567,10 +1499,6 @@
     "text": "Importing it from GitHub…",
     "description": "Status line on the new project's plain card on the screen shown right after a project is made, for a project imported from a GitHub repository: the import is still running. GitHub is a name."
   },
-  "firstSession.made.line.unpacking": {
-    "text": "Unpacking your archive…",
-    "description": "Status line on the new project's plain card on the screen shown right after a project is made from an uploaded archive: the archive's files are being unpacked into the project."
-  },
   "firstSession.made.line.imported": {
     "text": "Imported. It’s running.",
     "description": "Status line on the new project's plain card on the screen shown right after a project is made, for a project imported from a GitHub repository: the import finished and the app is running."
@@ -1606,10 +1534,6 @@
   "firstSession.made.note.imported": {
     "text": "Its repo says what it does. You and anyone you invite build on it from here.",
     "description": "Second line under the new project's card on the screen shown right after a project is made, for a project imported from a GitHub repository. \"Its repo\" is the project's repository; \"build on it\" means making changes to the app."
-  },
-  "firstSession.made.note.archived": {
-    "text": "It starts from its index.html. You and anyone you invite build on it from here.",
-    "description": "Second line under the new project's card on the screen shown right after a project is made from an uploaded archive. \"index.html\" is a file name and stays as written."
   },
   "firstSession.made.note.noBot": {
     "text": "You or anyone you invite can build it from there.",

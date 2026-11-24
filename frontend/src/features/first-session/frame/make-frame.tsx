@@ -30,7 +30,7 @@ export function MakeFrameShell({ rootRef, scrollerRef, rootClass, entry, mode, c
   /** MAKE_ROOT_UNDER_HEADER: app.css gives it the frame's page area. */
   rootClass: string;
   entry: string;
-  mode: 'make' | 'import' | 'archive';
+  mode: 'make' | 'import';
   children?: ReactNode;
 }) {
   return (
@@ -142,7 +142,6 @@ export interface MakeFrameProps {
   title: string;
   onSubmit: () => void;
   onImport: () => void;
-  onArchive: () => void;
   onClose: (() => void) | null;
   /** Making it… */
   busy: boolean;
@@ -185,7 +184,7 @@ export function MakeFrame(p: MakeFrameProps) {
             title={p.title}
             onClose={p.onClose}
             closeLabel={t('core:common.close')}
-            other={<><Btn kind="line" className="d" data-make-import-link="" onClick={p.onImport}>{t('onboarding:firstSession.make.importLink')}</Btn><Btn kind="line" className="d" data-make-archive-link="" onClick={p.onArchive}>{t('onboarding:firstSession.make.archiveLink')}</Btn></>}
+            other={<Btn kind="line" className="d" data-make-import-link="" onClick={p.onImport}>{t('onboarding:firstSession.make.importLink')}</Btn>}
             submit={(
               <Btn type="submit" data-make-submit="" disabled={p.off}>
                 {p.busy ? t('onboarding:firstSession.make.making') : t('onboarding:firstSession.make.submit')}
@@ -342,7 +341,6 @@ export function MakeFrame(p: MakeFrameProps) {
               {/* A phone's head has no room for the second button: the other way to start is the link under the form, where today's form has it. */}
               <div className={k('foot', 'p')}>
                 <button type="button" className={k('link')} data-make-import-link="" onClick={p.onImport}>{t('onboarding:firstSession.make.importLink')}</button>
-                <button type="button" className={k('link')} data-make-archive-link="" onClick={p.onArchive}>{t('onboarding:firstSession.make.archiveLink')}</button>
               </div>
             </div>
             <div className={k('stack')}>

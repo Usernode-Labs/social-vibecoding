@@ -28,7 +28,6 @@ const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = re
 const appTemplates = require('./app-templates');
 const appSketch = require('./app-sketch');
 const appCategory = require('./app-category');
-const archiveImport = require('./archive-import');
 const creationTiming = require('./app-creation-timing');
 const starterImages = require('./starter-images');
 const repoQueue = require('./repo-create-queue');
@@ -90,32 +89,6 @@ function starterFiles(row, { repoUrl = null, sketch = null, category = null } = 
 
 const initMessage = (name) => `Initialize ${name} from Homeroom template`;
 
-// #6994: the website archive a project was made from, if any: the original
-// bytes kept by POST /api/apps/archive, re-read at setup so a Retry writes
-// the same first commit.
-async function archiveForProject(pool, appId) {
-  try {
-    const { rows } = await pool.query(
-      'SELECT filename, data FROM app_archive_uploads WHERE app_id = $1 ORDER BY created_at DESC LIMIT 1',
-      [appId]
-    );
-    return rows[0] || null;
-  } catch (err) {
-    log.warn('app-creator', 'Could not read an archive upload', { appId, err: err.message });
-    return null;
-  }
-}
-
-async function archiveFilesOf(archive) {
-  const read = await archiveImport.read(archive.data, archive.filename);
-  if (!read.ok) {
-    const err = new Error('The uploaded archive is no longer available.');
-    err.stage = 'repo';
-    throw err;
-  }
-  return read.files;
-}
-
 // A step that failed says which part of creation it was, for the record
 // (deployFailure.record), unless it said already (a clone, a repository).
 async function part(stage, fn) {
@@ -139,11 +112,7 @@ async function setUp(config, pool, appId, ctx) {
     return { failed: { stage: 'other', reason: 'This project is no longer being set up.', at: new Date().toISOString() } };
   }
   const fork = !!row.forked_from;
-  // #6994: a project made from an uploaded website archive (POST
-  // /api/apps/archive, linked by POST /api/apps). Its first commit is the
-  // archive's files, and there is no idea to draw a card or a category from.
-  const archive = row.repo_url ? null : await archiveForProject(pool, appId);
-  timing.note('kind', row.repo_url ? 'existing_repo' : archive ? 'archive' : 'new_repo');
+  timing.note('kind', row.repo_url ? 'existing_repo' : 'new_repo');
   timing.note('starter', templateOf(row));
   try {
     reportPhase(appId, row.slug, 'database');
@@ -163,18 +132,17 @@ async function setUp(config, pool, appId, ctx) {
     }))).then((done) => { reportPhase(appId, row.slug, 'repository'); return done; });
     const repository = (async () => {
       const fresh = !fork && !row.repo_url;
-      const sketch = fresh && !archive ? await steps.once('card', () => timing.time('card', () => appSketch.drawFor(pool, appId))) : null;
+      const sketch = fresh ? await steps.once('card', () => timing.time('card', () => appSketch.drawFor(pool, appId))) : null;
       // The kind its idea suggests, worked out from the same words the card
       // is (#6585). Stored, so a resumed setup writes the same files; without
-      // a model it is Other and the directory's sweep sorts it later. An
-      // archive is a website, not an idea: no category is asked of the model.
-      const category = fresh && !archive
+      // a model it is Other and the directory's sweep sorts it later.
+      const category = fresh
         ? await steps.once('category', () => appCategory.forNewProject(
           pool, row, descriptionOf(row) || appSketch.taglineOf(sketch) || ''
         ))
         : null;
       return steps.once('repository', () => timing.time('repository', () => part('repo',
-        () => (fork ? copyFork(config, pool, row) : row.repo_url ? scaffoldImport(row) : seedStarter(config, pool, row, sketch, ctx, category, archive)))));
+        () => (fork ? copyFork(config, pool, row) : row.repo_url ? scaffoldImport(row) : seedStarter(config, pool, row, sketch, ctx, category)))));
     })();
     // Both settle before a failure is reported, so nothing of this attempt
     // runs on after it; a database that failed is reported first.
@@ -201,7 +169,7 @@ async function setUp(config, pool, appId, ctx) {
 // and a refusal for GitHub's secondary limit waits and tries again
 // (services/repo-create-queue.js). A try after a refused push finds its
 // repository there, and adopts it.
-async function seedStarter(config, pool, row, sketch, ctx, category = null, archive = null) {
+async function seedStarter(config, pool, row, sketch, ctx, category = null) {
   if (!github.isEnabled()) return { sha: null, repoUrl: null, offer: null };
   try {
     // A ready-made made as a version of its original (POST /api/apps wrote
@@ -223,19 +191,14 @@ async function seedStarter(config, pool, row, sketch, ctx, category = null, arch
       // (.claude/homeroom-canonical-repo, read by the freshness check). No
       // database URL: none goes into a repository.
       const files = starterFiles(row, { repoUrl, sketch, category });
-      // #6994: an archive's own index.html replaces the starter's screen;
-      // every other file it carried is kept under public/ byte for byte.
-      const committed = archive
-        ? archiveImport.projectFiles(files, await archiveFilesOf(archive))
-        : files;
       // An adopted repository's head is read, never guessed: a read that fails
       // fails the setup (Retry makes it again), rather than push the commit
       // twice.
       const head = repo.adopted ? await github.headCommit(botUsername, row.slug) : null;
       const commit = head && head.message === initMessage(row.name)
         ? head
-        : await github.pushFiles(botUsername, row.slug, committed, { message: initMessage(row.name) });
-      return { repoUrl, files: committed, commit };
+        : await github.pushFiles(botUsername, row.slug, files, { message: initMessage(row.name) });
+      return { repoUrl, files, commit };
     }, { signal: ctx?.signal, label: { appId: row.id, slug: row.slug } });
     const { repoUrl, files, commit } = made;
     const sha = String(commit?.sha || '').toLowerCase() || null;
