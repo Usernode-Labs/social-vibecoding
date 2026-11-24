@@ -137,7 +137,7 @@ import { claimDetail, closeDetail, detailEntry, detailLayout, holdDetail, openDe
 import { DetailPane } from '../detail/detail-pane';
 import {
   applyWorkState, freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, movedSince, needsYou, owedCount, rankProjects,
-  standingsOf, upNext, type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
+  standingsOf, upNext, withoutDismissed, type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
 import type { WorkStatePush } from '../../lib/work-state';
 
@@ -265,6 +265,8 @@ function showAddress(href: string): void {
 function sidePanel(): {
   take?: (route: string, hint?: { place?: AiApp | null; label?: string | null } | null) => boolean;
   close?: () => void;
+  /** Mobile 04: the page the panel took opens at this message of its thread. */
+  revealMessage?: (slug: string, messageId: number) => void;
 } | null {
   return typeof window === 'undefined' ? null : (window as any).UsernodeReact?.sidePanel || null;
 }
@@ -767,13 +769,41 @@ export function AiScreen(): ReactNode {
   const cleared = <T extends { threadId?: number | null; rootId?: number | null; unread?: number }>(row: T): T => (
     (row.threadId && seenThreads.has(row.threadId)) || (!row.threadId && row.rootId && seenRoots.has(row.rootId)) ? { ...row, unread: 0 } : row
   );
+  // 24 Nov 2026 (mobile 04): an @ row's Dismiss takes it out of Needs you at
+  // once, its thread back where it would be (./model.ts withoutDismissed),
+  // by thread and the moment of the @ dismissed: a read already on its way
+  // cannot bring it back, and a newer @ still can. The server keeps it
+  // (POST threads/mentions/dismiss), so a reload agrees.
+  const [dismissed, setDismissed] = useState<ReadonlyMap<number, string | null>>(() => new Map());
+  const listedWork = useMemo(() => withoutDismissed(work, dismissed), [work, dismissed]);
+  const dismissNamed = (row: WorkRow) => {
+    const threadId = row.threadId;
+    const slug = row.app?.slug;
+    if (!threadId || !slug) return;
+    setDismissed((had) => new Map([...had, [threadId, row.at]]));
+    const undo = () => {
+      setDismissed((had) => {
+        if (!had.has(threadId)) return had;
+        const next = new Map(had);
+        next.delete(threadId);
+        return next;
+      });
+      (window as any).PlatformUI?.toast?.(t('messages:ai.named.dismissFailed'));
+    };
+    void fetch(`/api/apps/${encodeURIComponent(slug)}/threads/mentions/dismiss${demoQuery()}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ thread_id: threadId }),
+    }).then((res) => { if (!res.ok) undo(); }).catch(undo);
+  };
   const allRows = useMemo(
-    () => needsYou(needs, work).map(cleared),
-    [needs, work, seenThreads, seenRoots], // eslint-disable-line react-hooks/exhaustive-deps
+    () => needsYou(needs, listedWork).map(cleared),
+    [needs, listedWork, seenThreads, seenRoots], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const rows = useMemo(() => allRows.filter((row) => !row.rootId || !doneRoots.has(row.rootId)), [allRows, doneRoots]);
-  const progress = useMemo(() => inProgress(needs, work).map(cleared), [needs, work, seenThreads, seenRoots]); // eslint-disable-line react-hooks/exhaustive-deps
-  const waiting = useMemo(() => upNext(needs, work).map(cleared), [needs, work, seenThreads, seenRoots]); // eslint-disable-line react-hooks/exhaustive-deps
+  const progress = useMemo(() => inProgress(needs, listedWork).map(cleared), [needs, listedWork, seenThreads, seenRoots]); // eslint-disable-line react-hooks/exhaustive-deps
+  const waiting = useMemo(() => upNext(needs, listedWork).map(cleared), [needs, listedWork, seenThreads, seenRoots]); // eslint-disable-line react-hooks/exhaustive-deps
   const live: AiThread[] = useMemo(() => liveThisWeek(work).map(cleared), [work, seenThreads, seenRoots]); // eslint-disable-line react-hooks/exhaustive-deps
   const owed = owedCount(rows);
   const projects = useMemo(
@@ -944,10 +974,12 @@ export function AiScreen(): ReactNode {
   // window, its own page anywhere else. Every row goes to its own place
   // (#6210): a ▷ plan row to its request's page, where its plan and Build
   // it are, the same place a Vote or Needs reply row for it opens.
-  const openPage = (href: string | null, app: AiApp | null, title: string | null, about: AboutItem | null) => {
+  const openPage = (href: string | null, app: AiApp | null, title: string | null, about: AboutItem | null): boolean => {
     const route = routeOf(href);
     opened.current = route ? { route, about } : null;
-    if (openPublic(href, app, title)) underPanel();
+    const took = openPublic(href, app, title);
+    if (took) underPanel();
+    return took;
   };
   const openRow = (row: WorkRow) => {
     markThreadRead(row.threadId, row.app, row.rootId);
@@ -955,7 +987,15 @@ export function AiScreen(): ReactNode {
       openPrivate(row.rootId);
       return;
     }
-    openPage(row.href, row.app, row.title, aboutRow(row));
+    // Mobile 04: Reply on a thread somebody named you in opens its page at
+    // the message that named you, once its thread is drawn (group-chat.js
+    // revealInThread): this document's, or the column's own when the column
+    // took the page. An @ in a request's own text has no message: its page
+    // opens at the top, where that text is.
+    const messageId = row.named?.messageId;
+    const slug = row.app?.slug;
+    if (messageId && slug) (window as any).GroupChat?.revealInThread?.(slug, messageId);
+    if (openPage(row.href, row.app, row.title, aboutRow(row)) && messageId && slug) sidePanel()?.revealMessage?.(slug, messageId);
   };
   const openThread = (th: AiThread) => {
     markThreadRead(th.threadId, th.app, th.rootId);
@@ -1274,6 +1314,7 @@ export function AiScreen(): ReactNode {
           openRow={openRow}
           openThread={openThread}
           onDone={(rootId) => { setDoneRoots((had) => new Set([...had, rootId])); setMoved((n) => n + 1); }}
+          onDismiss={dismissNamed}
           picked={picked}
           onPick={pick}
           appFor={appFor}

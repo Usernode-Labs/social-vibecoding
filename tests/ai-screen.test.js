@@ -150,7 +150,9 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(rows[4].plan, undefined);
   const index = read('frontend/src/features/ai/index.tsx');
   assert.doesNotMatch(index, /openBotRequest/, 'no row opens Main Chat at a plan');
-  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
+  // 24 Nov 2026 (mobile 04): a thread somebody named you in opens at the
+  // message that named you (group-chat.js revealInThread), on the same page.
+  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}[\s\S]*?const messageId = row\.named\?\.messageId;\s+const slug = row\.app\?\.slug;\s+if \(messageId && slug\) \(window as any\)\.GroupChat\?\.revealInThread\?\.\(slug, messageId\);\s+if \(openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\) && messageId && slug\) sidePanel\(\)\?\.revealMessage\?\.\(slug, messageId\);\s+\};/,
     'every other row opens its own page, and opening it clears what is new');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
@@ -188,7 +190,8 @@ test('each band is one list, newest first, with no project or day headings, and 
   assert.match(lists, /const needs = useHeld\(newestFirst\(needLines\)\);/);
   assert.match(lists, /<BandRows lines=\{needs\.held\} first=\{searching \? Infinity : BAND_FIRST\.needs\} \/>/);
   assert.match(lists, /<BandRows lines=\{progressLines\} first=\{searching \? Infinity : BAND_FIRST\.busy\} \/>/);
-  assert.match(read(LINES), /const progressLines: Line\[\] = newestFirst\(kept\(\[/, 'In progress newest first');
+  // 24 Nov 2026 (mobile 04): newest first, your own before the threads you only wrote or were named in.
+  assert.match(read(LINES), /const progressLines: Line\[\] = ownFirst\(newestFirst\(kept\(\[/, 'In progress newest first, your own first');
   // 1 Nov 2026: the row whose chat is in the column is never folded away:
   // past the first rows, it joins them. #6245: only while the band is
   // folded (open ? -1): an opened band keeps every row's own place.
@@ -1482,8 +1485,10 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   // Phone review #140: a private thread's row is lit whole, its ⋯ inside the tint.
   assert.match(src, /const LIT_ROW_WHOLE = '[^']*rounded-xl bg-\[color:var\(--lit-tint\)\]';/);
   assert.match(src, /const LIT_INK_ROW = `(?![^`]*bg-\[)[^`]*text-\[color:var\(--lit-ink\)\] \$\{FOCUS\}`;/, 'its button keeps the ink and no fill of its own');
-  assert.match(src, /<div className=\{line\.lit && done \? LIT_ROW_WHOLE : 'flex min-w-0 items-center'\} data-ai-row="" data-ai-line-done=\{done \? '' : undefined\}>/);
-  assert.match(src, /<RowButton line=\{line\} inLitRow=\{!!line\.lit && !!done\} \/>/);
+  // Mobile 04: lit whole with its Dismiss too.
+  assert.match(src, /const whole = !!line\.lit && \(!!done \|\| !!dismiss\);/);
+  assert.match(src, /<div className=\{whole \? LIT_ROW_WHOLE : 'flex min-w-0 items-center'\} data-ai-row="" data-ai-line-done=\{done \? '' : undefined\}>/);
+  assert.match(src, /<RowButton line=\{line\} inLitRow=\{whole\} \/>/);
   assert.doesNotMatch(src, /MainChatRow|MAIN_LIT|main\.(lit|unread|open)/);
   // 24 Nov 2026: the lit row's title is in the lit ink too (its button's).
   assert.match(quiet, /data-ai-lit=""[^>]*>[\s\S]*?class="ai-row-title [^"]*font-semibold" data-ai-line-title="">A darker header</);
@@ -1753,8 +1758,10 @@ test('the column from 768px: one thread, or a new chat, alone under its own head
   // A thread asked for: the panel gives the column back, a new chat goes.
   // 1 Nov 2026 (C1): and a design's preview goes, unless it is that thread's.
   assert.match(src, /const showAt = \(next: BotAt\) => \{\s+if \(!next\.threadRootId\) return;\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(next\.threadRootId !== detail\?\.ref\.rootId\) putAway\(\);\s+\}\s+setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId\) embed\(botId, next, \{ threadsOnly: true \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
-  assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);/);
-  assert.match(src, /if \(openPublic\(href, app, title\)\) underPanel\(\);/);
+  // Mobile 04: openPage says whether the column took the page, so Reply can
+  // hand its message to the column's own document.
+  assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\)/);
+  assert.match(src, /const took = openPublic\(href, app, title\);\s+if \(took\) underPanel\(\);\s+return took;/);
   // 3 Nov 2026: the address is the column's, written by one effect (#6215).
   assert.match(src, /const underPanel = \(\) => \{\s+closeNewThread\(\);\s+if \(openRoot\) closeThread\(\);\s+\};/);
   // The panel takes a page beside this page from 768px too.
@@ -1799,7 +1806,7 @@ test('a thread opens on this page: beside the list in its column, or on its page
   // #6153: a request filed from a private thread opens that thread first.
   assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app, th\.rootId\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
     'In progress, Waiting and Live this week');
-  assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/, 'and Needs you');
+  assert.match(src, /if \(openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\) && messageId && slug\) sidePanel\(\)\?\.revealMessage\?\.\(slug, messageId\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
   assert.equal(isTopicHref('#app/garden/dev/issues/12'), true);
   assert.equal(isTopicHref('#app/garden/dev/changes/12'), true);

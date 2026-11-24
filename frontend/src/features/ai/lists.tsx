@@ -197,16 +197,42 @@ function RowButton({ line, inLitRow = false }: { line: Line; inLitRow?: boolean 
 }
 
 /**
+ * 24 Nov 2026 (mobile 04): Dismiss, beside Reply on a thread somebody named
+ * you in: the one Needs you row that asks a courtesy rather than a
+ * decision, so the one that can be waved off. Quiet, as Mark done is in a
+ * private thread's ⋯: grey words, no fill, its own target at the row's end,
+ * on a phone as well (it is outside `ai-row-menu`, which a narrow row drops).
+ */
+const DISMISS = `inline-flex min-h-[44px] md:min-h-[36px] shrink-0 items-center rounded-xl px-2.5 text-[13px] font-semibold text-zinc-500 hover:bg-zinc-900/[0.035] hover:text-zinc-700 active:bg-zinc-900/[0.06] dark:text-zinc-400 dark:hover:bg-white/[0.05] dark:hover:text-zinc-200 dark:active:bg-white/[0.08] ${FOCUS}`;
+
+/**
  * A row, and its ⋯ where it has one (#6159: a private thread's, with Mark
  * done). Every wide row keeps the ⋯'s room (`ai-row-menu`), so the pills
  * line up down the band whichever rows have one; app.css takes it away on a
- * narrow row, where Mark done is the thread's own ⋯ in its head.
+ * narrow row, where Mark done is the thread's own ⋯ in its head. A thread
+ * somebody named you in has Dismiss after its Reply (mobile 04).
  */
 function Row({ line }: { line: Line }): ReactNode {
+  const t = useMessages('messages');
   const done = line.done;
+  const dismiss = line.dismiss;
+  // Lit whole, its ⋯ or its Dismiss inside the tint (phone review #140).
+  const whole = !!line.lit && (!!done || !!dismiss);
   return (
-    <div className={line.lit && done ? LIT_ROW_WHOLE : 'flex min-w-0 items-center'} data-ai-row="" data-ai-line-done={done ? '' : undefined}>
-      <div className="min-w-0 flex-1"><RowButton line={line} inLitRow={!!line.lit && !!done} /></div>
+    <div className={whole ? LIT_ROW_WHOLE : 'flex min-w-0 items-center'} data-ai-row="" data-ai-line-done={done ? '' : undefined}>
+      <div className="min-w-0 flex-1"><RowButton line={line} inLitRow={whole} /></div>
+      {dismiss ? (
+        <button
+          type="button"
+          className={DISMISS}
+          onClick={dismiss}
+          aria-label={t('messages:ai.named.dismissLabel', { title: line.title })}
+          title={t('messages:ai.named.dismissTitle')}
+          data-ai-dismiss=""
+        >
+          {t('messages:ai.named.dismiss')}
+        </button>
+      ) : null}
       <span className="ai-row-menu flex w-8 shrink-0 items-center justify-center">
         {done ? (
           <ThreadDoneMenu rootId={done.rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') done.mark(); }} className="shrink-0" />
@@ -436,7 +462,7 @@ function headWords(needs: number, next: number): { id: string; values: Record<st
 
 export function AiLists({
   newChat = null, search = null, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
-  openRow, openThread, onDone, picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef, doneOpen = 0,
+  openRow, openThread, onDone, onDismiss, picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef, doneOpen = 0,
 }: {
   /** The head's New chat (./new-chat-button.tsx), at the end of its line. */
   newChat?: ReactNode;
@@ -482,6 +508,8 @@ export function AiLists({
   openThread: (t: AiThread) => void;
   /** #6159: a private thread's row was marked done from its ⋯: it leaves the lists at once. */
   onDone?: (rootId: number) => void;
+  /** Mobile 04: Dismiss on a thread somebody named you in: it leaves Needs you at once. */
+  onDismiss?: (row: WorkRow) => void;
   /**
    * The projects the filter narrows every band to (none: All). The page
    * keeps them in its address (./filter-address.ts), so a link can open the
@@ -505,7 +533,7 @@ export function AiLists({
   const {
     searching, ranked, picked, setOnly, toggle, needLines, progressLines, doneLines, liveBehind, onlyApp, nothingHere,
     noMatches, noneWords, foundLines, foundMore, foundFailed, needCount, progressCount, weekCount,
-  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found });
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found });
   // The project picker, open under the filter.
   const [more, setMore] = useState<DOMRect | null>(null);
   const phone = usePhone();

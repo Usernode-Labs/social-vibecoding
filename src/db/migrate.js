@@ -102,6 +102,10 @@ async function migrate(config) {
   // the member list tags them "offered to build". Obviously fake, staging
   // only.
   await seedStagingJoinedBuildOffer(pool);
+  // Mobile 04's shots (24 Nov 2026): somebody named the capture member with
+  // @ in a request's thread, so the Homeroom bot tab's Needs you has its
+  // Reply and Dismiss row. Obviously fake, staging only.
+  await seedStagingNamedInThread(pool);
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
@@ -2120,6 +2124,68 @@ async function seedStagingJoinedBuildOffer(pool) {
   } catch (err) {
     await tx.query('ROLLBACK');
     log.warn('db', 'Staging build-offer seed failed', { message: err.message });
+  } finally { tx.release(); }
+}
+
+// Mobile 04's shots (24 Nov 2026): being named with @ in a thread is Needs
+// you on the Homeroom bot tab until you answer or dismiss it
+// (services/thread-mentions.js). A fresh staging copy names the capture
+// member nowhere, so an obviously fake person names her in the thread of an
+// obviously fake request on the self-hosted Homeroom project (where a
+// request's page opens on a copy, as the bot tab's other seeds use): the
+// message, and the 'mention' notification the socket writes for it. Rows for
+// the fixture account and a fake person; nothing here is a signal the code
+// reads to decide anything. Only an @ from the last week starts a row, so a
+// copy kept longer has the @ moved back to two hours ago on its next boot,
+// unless she has answered it. Idempotent by request number and message text;
+// strictly a no-op outside staging.
+const NAMED_SEED_NUMBER = 907004;
+const NAMED_SEED_TEXT = '@usernode-capture could you check the swap times on this one? (Staging demo: obviously fake.)';
+async function seedStagingNamedInThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    const app = (await tx.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1')).rows[0];
+    if (!member || !app) { await tx.query('ROLLBACK'); return; }
+    const namer = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-namer', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+    await tx.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, 'Staging demo: a sign-up sheet for the plant swap',
+              'Staging demo: obviously fake. Somebody named you in its thread.', $3,
+              NOW() - INTERVAL '1 day', NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [app.id, NAMED_SEED_NUMBER, namer.id]);
+    await tx.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
+       SELECT $1, $2, $3, 'issue', $4, NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages WHERE app_id = $1 AND user_id = $2 AND content = $3)`,
+      [app.id, namer.id, NAMED_SEED_TEXT, NAMED_SEED_NUMBER]);
+    const msg = (await tx.query(
+      'SELECT id, thread_id FROM chat_messages WHERE app_id = $1 AND user_id = $2 AND content = $3 ORDER BY id LIMIT 1',
+      [app.id, namer.id, NAMED_SEED_TEXT])).rows[0];
+    // A week old and not answered yet: two hours ago again.
+    await tx.query(
+      `UPDATE chat_messages m SET created_at = NOW() - INTERVAL '2 hours'
+        WHERE m.id = $1 AND m.created_at < NOW() - INTERVAL '5 days'
+          AND NOT EXISTS (SELECT 1 FROM chat_messages w
+                           WHERE w.thread_id = m.thread_id AND w.user_id = $2 AND w.created_at > m.created_at)`,
+      [msg.id, member.id]);
+    await tx.query(
+      `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
+       SELECT $1, $2, $3, $4, 'mention'
+        WHERE NOT EXISTS (SELECT 1 FROM notifications
+                           WHERE user_id = $1 AND chat_message_id = $3 AND kind = 'mention')`,
+      [member.id, app.id, msg.id, namer.id]);
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging named-in-thread seed failed', { message: err.message });
   } finally { tx.release(); }
 }
 

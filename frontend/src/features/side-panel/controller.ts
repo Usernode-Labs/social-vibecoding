@@ -452,6 +452,36 @@ export function open(route: string, given?: PanelHint | null): void {
   if (ready) go(route);
 }
 
+/**
+ * 24 Nov 2026 (mobile 04): the page just put in the panel opens at one of
+ * its thread's messages, the one that named the viewer with @ (the Homeroom
+ * bot tab's Reply). The panel is its own document, so the request goes to
+ * that document's GroupChat (public/js/group-chat.js revealInThread), which
+ * waits for the thread that holds the message: now when the document is up,
+ * else once it has booted. A request not passed on within REVEAL_MS lapses.
+ */
+const REVEAL_MS = 20000;
+let reveal: { slug: string; id: number; at: number } | null = null;
+export function revealMessage(slug: string, messageId: number): void {
+  if (!slug || !(Number(messageId) > 0)) return;
+  reveal = { slug, id: Number(messageId), at: Date.now() };
+  passReveal();
+}
+function passReveal(): void {
+  if (!reveal || !ready) return;
+  const want = reveal;
+  if (Date.now() - want.at > REVEAL_MS) { reveal = null; return; }
+  try {
+    const gc = (sidePanelRefs.frame?.contentWindow as unknown as
+      { GroupChat?: { revealInThread?: (slug: string, id: number) => void } } | null)?.GroupChat;
+    if (!gc?.revealInThread) return;
+    reveal = null;
+    gc.revealInThread(want.slug, want.id);
+  } catch {
+    reveal = null;
+  }
+}
+
 /** Close: the panel only. The frame stays, so reopening is a navigation. */
 export function close(): void {
   stack = [];
@@ -626,6 +656,9 @@ function embeddedReady(route: string, title: string): void {
     desired = route;
     publish(route);
   }
+  // Mobile 04: a message the page should open at, asked for while the
+  // panel's document was still booting.
+  passReveal();
 }
 
 /**
@@ -866,6 +899,7 @@ export const SidePanel = {
   take,
   open,
   close,
+  revealMessage,
   showList,
   drop,
   back,
