@@ -44,7 +44,11 @@ test('a visit says what each band held: identities and where they stood, nothing
   ]) {
     assert.equal(visits.parseSeen(bad), null, `refused: ${JSON.stringify(bad)?.slice(0, 60)}`);
   }
-  // Bounded: a list never has a thousand rows in view; a body that says so is refused.
+  // Bounded: the lists hold up to 500 threads a kind, so a thousand rows of
+  // In progress fit; a body that says it holds more than the bound is refused.
+  const busy = {};
+  for (let i = 0; i < 1000; i += 1) busy[`thread:${100000 + i}`] = 'waiting:up_for_vote';
+  assert.ok(visits.parseSeen({ busy }), 'a full In progress fits');
   const many = {};
   for (let i = 0; i <= visits.MAX_ENTRIES; i += 1) many[`thread:${i}`] = '';
   assert.equal(visits.parseSeen({ done: many }), null);

@@ -43,8 +43,12 @@ const crypto = require('node:crypto');
 const VISIT_GAP_MS = 10 * 60 * 1000;
 /** The bands a visit remembers, as the page names them. */
 const BANDS = ['needs', 'busy', 'done'];
-/** Bounds on what a visit may say it saw: the page's lists, never more. */
-const MAX_ENTRIES = 1000;
+/**
+ * Bounds on what a visit may say it saw: the page's lists, never more. The
+ * lists hold up to 500 threads a kind (ai-work.js THREADS_MAX), and the
+ * bytes stay under the 64 KB a leaving page's keepalive request may carry.
+ */
+const MAX_ENTRIES = 2000;
 const MAX_KEY = 120;
 const MAX_VALUE = 60;
 const MAX_BYTES = 60000;
