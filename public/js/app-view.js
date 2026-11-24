@@ -31887,18 +31887,21 @@ const AppView = {
     }
   },
 
-  // TRUE only on Android in an installed (standalone / fullscreen) context:
-  // the same two conditions the #2755 CSS rule gates on. `un-android` is set
-  // by the kit's native.js at first paint; iOS never gets it, and a browser
-  // tab is not standalone (there the max value is the collapsed browser
-  // chin, and reserving it would double the gap).
+  // TRUE on Android where the page really owns the bottom edge: an installed
+  // (standalone / fullscreen) app, or the native WebView (#7061). These are
+  // the same conditions the #2755 / #7061 CSS rules gate on. `un-android` is
+  // set by the kit's native.js at first paint; iOS never gets it, and a
+  // browser tab is neither standalone nor native (there the max value is the
+  // collapsed browser chin, and reserving it would double the gap).
   _isAndroidStandalone() {
-    if (typeof document === 'undefined' || typeof window === 'undefined'
-      || typeof window.matchMedia !== 'function') {
-      return false;
-    }
+    if (typeof document === 'undefined') return false;
     const docEl = document.documentElement;
     if (!docEl || !docEl.classList || !docEl.classList.contains('un-android')) return false;
+    if (docEl.classList.contains('in-native-webview')
+      && !docEl.classList.contains('web-browser-chrome')) return true;
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return false;
+    }
     try {
       return window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
     } catch {
