@@ -9956,14 +9956,17 @@ html:not([data-skin]) #platform-tabs :is(.platform-rail-votes, .platform-tab-vot
      cured it; making it `absolute`, dropping its clip and dropping the
      bar's frost did not, so it is the layer being there at all. Chrome and
      Firefox on Linux draw it evenly. So the layer is off while the overlay
-     scrim paints (lib/overlay-scrim.js writes `visibility: visible` on its
-     paint layer while it does, and `hidden` once the dim has gone, so the
-     layer comes back only after the close's fade). Under it the bar shows
-     the body's own wallpaper, the same pixels this layer paints. All that is
-     given up is the layer's one job, page content passing under the bar,
-     and only beneath a dim. Both directions: the right-to-left rule above
-     sets only the clip. */
-  html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[style*="visibility: visible"]) #platform-header#platform-header::before {
+     scrim paints: lib/overlay-scrim.js marks its paint layer
+     `data-painting` while it does, and takes the mark off once the dim has
+     gone, so the layer comes back only after the close's fade. The key is
+     that attribute and never the inline style: a `[style*=…]` inside this
+     `body:has()` made every inline-style write on any page re-match it, and
+     style recalcs ran about a hundred times slower. Under the dim the bar
+     shows the body's own wallpaper, the same pixels this layer paints. All
+     that is given up is the layer's one job, page content passing under the
+     bar, and only beneath a dim. Both directions: the right-to-left rule
+     above sets only the clip. */
+  html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[data-painting]) #platform-header#platform-header::before {
     content: none !important;
   }
   /* Standard (WIP) gives the page and its frame one colour, so there the
