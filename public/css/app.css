@@ -34464,6 +34464,28 @@ html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-scree
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
   }
 }
+/* 24 Nov 2026 (Homeroom polish 08): ON A COMPUTER THE HEAD NEVER SPILLS.
+   Beside an open preview the thread's column can be dragged to 320px
+   (features/side-panel/resize.ts MIN_PANEL_W), a 296px head card. Its tile,
+   Artifacts, ⋯, the line and ×, the gaps and the title's 120px floor came to
+   365px, and since the title would not give, ×, last in the row, slid out of
+   the card and under the preview, where it could not be pressed. In a head
+   under 365px the gaps tighten to 6px, the thin line before × is not drawn
+   (× follows ⋯ at the same gap as the other buttons), and the title may
+   shrink below its floor: about 90-100px in the narrowest column, in its two
+   lines. Every button stays 36px. The phone's head is its own layout, a size
+   down (below), and is left as it is. The width is read off the bar the head
+   fills: a container cannot query itself, and the gap is the head's own, and
+   the bar's content box is the head's whole width, where `bot-thread-head`
+   measures inside its padding (which tightens on scroll). */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar:has(> .messages-thread-header[data-reply-head]) { container: bot-thread-bar / inline-size; }
+@media (min-width: 768px) {
+  @container bot-thread-bar (max-width: 364px) {
+    html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar > .messages-thread-header[data-reply-head] { gap: 6px; }
+    .dev-request-bar > .messages-thread-header[data-reply-head] .dev-thread-bar-text { min-width: 0; }
+    .dev-request-bar > .messages-thread-header[data-reply-head] .dev-thread-exits::before { display: none; }
+  }
+}
 
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action:hover { background: var(--messages-surface-2, var(--state-neutral-bg)); }
 html:is(:not([data-skin]), [data-skin="brand"]) :is(#dev-topic-thread, #ai-screen) .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header > :is(.messages-thread-action, .dev-thread-exits, [data-private-thread-menu]) { margin-top: 6px; }

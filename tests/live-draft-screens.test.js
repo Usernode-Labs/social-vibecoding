@@ -138,6 +138,24 @@ test('H: a narrow head keeps its title; the Artifacts word gives way to its glyp
   assert.match(CSS, /\.messages-thread-action\.messages-thread-preview \.messages-thread-artifacts-word \{\n    position: absolute;/);
 });
 
+// Homeroom polish 08 (24 Nov 2026): beside an open preview the thread's column
+// goes down to 320px, a 296px head card, and its row (tile, Artifacts, ⋯, the
+// line and ×, the gaps and the title's 120px floor) needed 365px: × slid out of
+// the card and under the preview. Under 365px the gaps tighten, the line before
+// × goes and the title may give, on a computer only. The width is the bar's: a
+// container cannot query itself, and the gap is the head's own.
+test('08: on a computer a narrow head never spills: tighter gaps, no line before ×, the title gives', () => {
+  const at = CSS.indexOf('ON A COMPUTER THE HEAD NEVER SPILLS');
+  assert.ok(at > CSS.indexOf('@container bot-thread-head (max-width: 460px) {'), 'after the Artifacts glyph rule');
+  const block = CSS.slice(at, CSS.indexOf('\n}\n', at) + 3);
+  assert.match(block, /\.dev-request-bar:has\(> \.messages-thread-header\[data-reply-head\]\) \{ container: bot-thread-bar \/ inline-size; \}/);
+  assert.match(block, /@media \(min-width: 768px\) \{\n  @container bot-thread-bar \(max-width: 364px\) \{/, 'the phone\'s head is left as it is');
+  assert.match(block, /\.dev-request-bar > \.messages-thread-header\[data-reply-head\] \{ gap: 6px; \}/);
+  assert.match(block, /\.dev-request-bar > \.messages-thread-header\[data-reply-head\] \.dev-thread-bar-text \{ min-width: 0; \}/);
+  assert.match(block, /\.dev-request-bar > \.messages-thread-header\[data-reply-head\] \.dev-thread-exits::before \{ display: none; \}/);
+  assert.doesNotMatch(block, /\.messages-thread-action[^{]*\{[^}]*(width|height):/, 'every button stays 36px');
+});
+
 test('K: an artifact after a thread\'s first is named in the address, the request page\'s door and Make it', () => {
   const { botDetailAt } = loadTsx('frontend/src/features/ai/door.ts');
   assert.deepEqual(botDetailAt('#homeroom-bot/thread/9/design/2'), { kind: 'design', version: 2 }, 'the first, as before');
