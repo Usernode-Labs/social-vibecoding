@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { waitFor } = require('./lib/wait-for');
 
 const liveDrafts = require('../src/services/live-drafts');
 const draftBot = require('../src/services/live-draft-bot');
@@ -201,7 +202,12 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
   };
   const ws = { pushToUser(id, payload) { calls.ws.push({ id, payload }); return 1; } };
   let promoteReply = { status: 200, body: { ok: true, status: 'promoted' } };
-  const platform = { async promoteProposal(args) { calls.promote.push(args); return promoteReply; } };
+  // A promote waits on `promoteGate` while one is set, so a test can hold a
+  // Propose in its slow part.
+  let promoteGate = null;
+  const platform = {
+    async promoteProposal(args) { calls.promote.push(args); if (promoteGate) await promoteGate; return promoteReply; },
+  };
   // C: Update proposal's conductor operation, recorded.
   let operationReply = { ok: true, updated: true, rebuilding: true };
   const platformOperations = { async request(args) { calls.operations = [...(calls.operations || []), args]; return operationReply; } };
@@ -545,10 +551,31 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     const { rows: [{ n: left }] } = await pool.query(
       "SELECT COUNT(*)::int AS n FROM chat_sessions WHERE app_id = $1 AND session_title = 'Fix'", [project.id]);
     assert.equal(left, 0, 'and leaves no proposal behind');
+    const claimOf = async () => (await pool.query('SELECT proposing_at FROM live_drafts WHERE id = $1', [draft.id])).rows[0].proposing_at;
+    assert.equal(await claimOf(), null, 'and frees its claim, so the next tap goes through');
     promoteReply = { status: 200, body: { ok: true, status: 'promoted' } };
-    const out = await liveDrafts.propose(pool, CONFIG, { user: person, draftId: draft.id, deps });
+    // 24 Nov 2026: two Proposes at once (the card under the bot's reply and
+    // the preview's own button) put it up once. A claim left by a call that
+    // died is old, and the first of them takes it over.
+    await pool.query("UPDATE live_drafts SET proposing_at = NOW() - interval '1 hour' WHERE id = $1", [draft.id]);
+    let openGate;
+    promoteGate = new Promise((resolve) => { openGate = resolve; });
+    const promotesBefore = calls.promote.length;
+    const first = liveDrafts.propose(pool, CONFIG, { user: person, draftId: draft.id, deps });
+    await waitFor(() => calls.promote.length > promotesBefore, { label: 'the first Propose to reach its promote' });
+    assert.ok(Date.now() - new Date(await claimOf()).getTime() < 60_000, 'holding a fresh claim');
+    const second = await liveDrafts.propose(pool, CONFIG, { user: person, draftId: draft.id, deps });
+    assert.deepEqual([second.status, second.body.error], [409, 'proposing']);
+    assert.equal(calls.promote.length, promotesBefore + 1, 'the second never promoted');
+    openGate();
+    promoteGate = null;
+    const out = await first;
     assert.equal(out.status, 200, JSON.stringify(out.body));
     assert.equal(out.body.draft.state, 'proposed');
+    assert.equal(await claimOf(), null, 'proposed, the claim is cleared');
+    const { rows: [{ n: proposals }] } = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM chat_sessions WHERE app_id = $1 AND session_title = 'Fix'", [project.id]);
+    assert.equal(proposals, 1, 'one proposal');
     // The proposal is a change of its own, its branch made from the draft's.
     const asked = calls.promote[calls.promote.length - 1];
     assert.notEqual(asked.sessionId, draft.sessionId);

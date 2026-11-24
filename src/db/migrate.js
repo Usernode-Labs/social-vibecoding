@@ -1301,9 +1301,10 @@ async function backfillLinkedIssuesFromPrBodies(pool) {
 // stripSpecWrapperFence(), and write back only the ones that actually change.
 // Covers BOTH the live buffer (chat_sessions.spec_md — what the viewer shows
 // as "latest") and the frozen history (chat_session_specs.content — what older
-// version cards open). Row counts here are tiny (≈ one per session), so a full
-// scan is cheaper than escaping a backtick LIKE prefilter and is robust to
-// leading whitespace.
+// version cards open). Only the specs that can be wrapped are read, those whose
+// first mark is a fence: reading every spec ever written took seconds of every
+// release, and a wrapped one is rare (a spec handed in from the CLI is stored
+// as it came, so this keeps running).
 //
 // Idempotent by construction: once unwrapped, a value no longer opens with a
 // strippable wrapper, so stripSpecWrapperFence() returns it unchanged and no
@@ -1315,7 +1316,7 @@ async function backfillFenceWrappedSpecs(pool) {
   try {
     const { rows: live } = await pool.query(
       `SELECT id, spec_md FROM chat_sessions
-        WHERE spec_md IS NOT NULL AND length(btrim(spec_md)) > 0`
+        WHERE left(spec_md, 4000) ~ '^[^[:alnum:][:punct:]]*[\`~]{3}'`
     );
     for (const row of live) {
       const unwrapped = stripSpecWrapperFence(row.spec_md);
@@ -1327,7 +1328,7 @@ async function backfillFenceWrappedSpecs(pool) {
 
     const { rows: versions } = await pool.query(
       `SELECT session_id, version, content FROM chat_session_specs
-        WHERE content IS NOT NULL AND length(btrim(content)) > 0`
+        WHERE left(content, 4000) ~ '^[^[:alnum:][:punct:]]*[\`~]{3}'`
     );
     for (const row of versions) {
       const unwrapped = stripSpecWrapperFence(row.content);
@@ -17779,6 +17780,7 @@ async function seedStagingPlatformMail(pool) {
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
 module.exports = {
+  backfillFenceWrappedSpecs,
   // 20 Nov 2026 (live-draft review): its own suite runs it (tests/live-draft-seed-postgres.test.js).
   seedStagingLiveDraftThread,
   migrateAppDbsToPerRole,

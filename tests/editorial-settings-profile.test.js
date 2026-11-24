@@ -6,8 +6,7 @@
 //      frame's looks keep their own drawing of both pages.
 //   2. Every colour is a token, declared once in the block's first rule and
 //      given its dark value in the second.
-//   3. Young Serif ships one weight, so a rule that names the serif writes
-//      `font-weight: 400`: nothing is faked bold.
+//   3. Source Serif 4 ships its variable weight range; headings use 600.
 //   4. Nothing is hidden but the page's head on a phone's open page, whose
 //      name the top bar already says.
 //
@@ -83,13 +82,13 @@ test('its colours are tokens, declared once in light and once in dark', () => {
   assert.ok(fs.existsSync(path.join(__dirname, '..', 'public', 'brand', 'bg', 'sky.webp')));
 });
 
-test('the serif is never faked bold', () => {
+test('the editorial serif uses the shipped variable weight', () => {
   const serif = rules().filter((rule) => /font-family: var\(--ed-serif\)/.test(rule.body));
   assert.ok(serif.length >= 6, 'headings on both pages are in the serif');
   for (const rule of serif) {
-    assert.match(rule.body, /font-weight: 400;/, `one weight: ${rule.selector}`);
+    assert.match(rule.body, /font-weight: 600;/, `shipped weight: ${rule.selector}`);
   }
-  assert.match(css, /@font-face \{\s*font-family: 'Young Serif';[^}]*font-weight: 400;/, 'the face ships one weight');
+  assert.match(css, /@font-face \{\s*font-family: 'Source Serif 4';[^}]*font-weight: 200 900;/, 'the face ships the heading weight');
 });
 
 test('nothing is hidden but Settings\' head on a phone\'s open page', () => {
@@ -127,4 +126,24 @@ test('Profile opens on who you are, across the page', () => {
     assert.ok(b.includes(`.${hook}`) || hook === 'profile-id-sub', `and the block reads ${hook}`);
   }
   assert.match(b, /#profile-identity-card #profile-edit-btn \{[^}]*background: var\(--wip-btn-1-bg\);/, 'Edit profile is the main action');
+});
+
+
+test('project cards show each real project once and keep its newest change', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { ProfileLiveProjects } = loadTsx('frontend/src/features/profile/profile-live-projects.tsx', {
+    stubs: { '../../lib/i18n/react': { useMessages: () => (id, params) => params?.title || id } },
+  });
+  const html = renderToHtml(createElement(ProfileLiveProjects, { changes: [
+    { sessionId: 3, title: 'Newest <change>', appSlug: 'garden', appName: 'Garden' },
+    { sessionId: 2, title: 'Another project', appSlug: 'tides', appName: 'Tides' },
+    { sessionId: 1, title: 'Older change', appSlug: 'garden', appName: 'Garden' },
+  ] }));
+  assert.equal((html.match(/class="profile-project-card"/g) || []).length, 2);
+  assert.match(html, /Newest &lt;change&gt;/);
+  assert.doesNotMatch(html, /Older change/);
+  assert.match(html, /href="#app\/garden"/);
+  const empty = renderToHtml(createElement(ProfileLiveProjects, { changes: [] }));
+  assert.match(empty, /profile:projects.empty/);
+  assert.doesNotMatch(empty, /class="profile-project-card"/);
 });

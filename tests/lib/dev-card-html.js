@@ -58,6 +58,19 @@ function mod() {
   return api;
 }
 
+// The brand look's drawing of the same modules (isKitHome false), loaded
+// apart, for a suite that holds what the brand look still draws beside the
+// standard look's (brandWorkshopHtml). Its own copy, so the standard look's
+// renders in the same suite are untouched.
+let brandApi = null;
+function brandMod() {
+  if (!brandApi) {
+    brandApi = loadTsx('tests/fixtures/dev-card-api.ts',
+      { cache: false, stubs: { '../../../lib/skin': { ...loadTsx('frontend/src/lib/skin.ts'), isKitHome: () => false } } });
+  }
+  return brandApi;
+}
+
 /** Render a DevCardModel. */
 function cardHtml(model) {
   return renderToHtml(createElement(mod().DevCard, { model }));
@@ -85,12 +98,11 @@ const mergedRowHtml = (AppView, row) => {
  * way the product passes it: `?ws=` is what `_workshopTabParam` reads, and
  * the view model carries the answer as `tab`.
  */
-function workshopHtml(AppView, tab) {
-  const m = mod();
+function workshopHtml(AppView, tab, m = mod()) {
   if (tab) {
     const prev = AppView._workshopTabParam;
     AppView._workshopTabParam = () => tab;
-    try { return workshopHtml(AppView); } finally { AppView._workshopTabParam = prev; }
+    try { return workshopHtml(AppView, null, m); } finally { AppView._workshopTabParam = prev; }
   }
   // Mirrors `AppView._rerenderWorkshop()`, including its ORDER: the grouping
   // is seeded from the stored preference, and the board's view model is
@@ -102,6 +114,16 @@ function workshopHtml(AppView, tab) {
   if (group === 'stage') m.devKanbanStore.set(AppView._kanbanView());
   m.devWorkshopStore.set(AppView._workshopView());
   return renderToHtml(createElement(m.DevWorkshop));
+}
+
+/**
+ * The same, drawn as the brand look draws it. 24 Nov 2026: the standard
+ * look's Workshop tab is its front page (front-page.tsx); the brand look
+ * keeps the tab it had (the Overview's figures, Your work, What happened),
+ * which the suites that pinned it now render here.
+ */
+function brandWorkshopHtml(AppView, tab) {
+  return workshopHtml(AppView, tab, brandMod());
 }
 
 /**
@@ -270,6 +292,7 @@ const budgets = () => ({ BADGE_MAX: mod().BADGE_MAX });
 
 module.exports = {
   legacyLook,
+  brandWorkshopHtml,
   // The minimal card a topic head needs, for tests that care about the
   // sheet BELOW the card rather than the card itself.
   BLANK_CARD,

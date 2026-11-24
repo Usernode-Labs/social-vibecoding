@@ -567,9 +567,14 @@
       "schemaSha256": "9af6a388e2b35d57133e6099914a6518527bd7513ee9118368dfa682cd490f69"
     },
     {
+      "id": "live-drafts-propose-claim",
+      "sha256": "d0a64d4c669c62f541208f3be16da3ccb6b65d2c9048bcb0ab8ad8622891804a",
+      "schemaSha256": "9521bc6ef2764c2430c56e839bc6ae5d7b3c3656ce2467e07921278b10b682d8"
+    },
+    {
       "id": "thread-mention-dismissals",
       "sha256": "d4315f556738b7a2b1ed8d1e94d81f9e514473797c6da2e37a10ed21c511f1a3",
-      "schemaSha256": "0492a7b40601fca189e3c8ec037a4b149d61f9175fc95453426b6da5d555d12b"
+      "schemaSha256": "59c7aefec14a0c3159b3536996223ae20af180c48bbb2aed96e5b5b41a67e649"
     }
   ]
 }

@@ -61,7 +61,15 @@ fi
 
 # Fetch the public database without project files while the runner pulls
 # and probes the exact image. Wait before any offline scanner opens the DB.
-if [ -z "$layout" ]; then
+if [ -z "$layout" ] && [ -n "${SECURITY_TRIVY_DB_CONTAINER:-}" ]; then
+  # The release job started this download while the image built. `docker wait`
+  # prints its exit code; anything but 0 is a database that was not fetched.
+  (
+    code=$(docker wait "$SECURITY_TRIVY_DB_CONTAINER")
+    [ "$code" = 0 ] || { docker logs "$SECURITY_TRIVY_DB_CONTAINER" 2>&1 | tail -n 20; exit 1; }
+  ) &
+  db_pid=$!
+elif [ -z "$layout" ]; then
   docker run --rm -v social-security-trivy-db:/root/.cache/trivy \
     aquasec/trivy:0.76.1 image --download-db-only &
   db_pid=$!

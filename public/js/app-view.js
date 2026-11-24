@@ -15574,8 +15574,28 @@ const AppView = {
     // Page-counted numbers are floors; server counts never are. The walk
     // marks its own figures with this for the same reason the tiles do.
     const weekCountsPartial = !serverShipped && !!AppView._mergedHasMore;
+    // 24 Nov 2026: the Workshop's path (features/dev-board/workshop/
+    // front-page.tsx) counts its Asked stop with the same lane test the
+    // board narrows to (`_devCardInStage('asked')`), and marks the stops
+    // where the viewer has threads (`_devCardIsYours`, the Yours filter's
+    // reading of "yours": the Homeroom bot tab's threads), each a part of
+    // what its stop counts. The front page asks for this project's list
+    // (`_loadYours`) while it is up, not every page built from this view,
+    // and the page is drawn again when it lands.
+    const yoursIn = (pick) => entries.filter((e) => pick(e) && AppView._devCardIsYours(e.kind === 'my-session' || e.kind === 'shared-session' ? 'session' : e.kind, e.item)).length;
+    const shippedEntry = (e) => e.kind === 'merged' && AppView._devCardInStage('shipped', e.lane, e.kind, e.item);
     const dashboard = {
       open: openEntries.length,
+      asked: openEntries.filter((e) => e.lane === 'open').length,
+      // The digest the weeks are read from has not answered yet (it may
+      // still fail: a failed read is an answer). The Workshop's Live by week
+      // holds its place meanwhile rather than arriving after the rest.
+      weeksPending: !(AppView._workshopThemes && AppView._workshopThemes.slug === slug),
+      mine: meId != null ? {
+        asked: yoursIn((e) => e.lane === 'open'),
+        votes: yoursIn((e) => e.lane === 'review'),
+        live: yoursIn(shippedEntry),
+      } : null,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
       // #4745: the votes figure is tappable. It opens the one waiting item's
@@ -16758,9 +16778,11 @@ const AppView = {
   },
 
   // The stored `stage` filter, or null for anything that is not one of the
-  // three values a figure sets (#5369) — an older tab's storage included.
+  // values a figure sets (#5369) — an older tab's storage included. 24 Nov
+  // 2026: and two of the Workshop path's stops (features/dev-board/workshop/
+  // front-page.tsx), Asked and Up for a vote.
   _kanbanStageValue(stage) {
-    return stage === 'open' || stage === 'unclaimed' || stage === 'shipped' ? stage : null;
+    return stage === 'open' || stage === 'unclaimed' || stage === 'shipped' || stage === 'asked' || stage === 'votes' ? stage : null;
   },
 
   // The Overview figures' own predicates, shared with the narrowing they
@@ -16779,10 +16801,17 @@ const AppView = {
   //               still going live is left out, the same as the figure) and
   //               merged since Monday 00:00 UTC, the week `shippedWeek`
   //               counts.
+  //   'asked'     the path's first stop (24 Nov 2026): the OPEN lane, every
+  //               request nobody is building and that is not up for a vote,
+  //               taken or not — the dashboard's `asked`.
+  //   'votes'     its third: the changes and group decisions up for a vote,
+  //               the review lane the dashboard's `votesWaiting` counts.
   _devCardInStage(stage, lane, kind, item) {
     const wanted = AppView._kanbanStageValue(stage);
     if (!wanted) return true;
     if (wanted === 'open') return lane !== 'done' && lane !== 'shipped';
+    if (wanted === 'asked') return lane === 'open';
+    if (wanted === 'votes') return lane === 'review';
     if (wanted === 'unclaimed') return lane === 'open' && kind === 'issue' && AppView._issueUnclaimed(item);
     // 'shipped': decided by date, not by the lane — the Workshop's shipped
     // lane is a trailing seven days (#1787) where the figure is the calendar
@@ -16850,6 +16879,8 @@ const AppView = {
         for (const n of body.sessions || []) mine.sessions.add(Number(n));
         for (const n of body.decisions || []) mine.decisions.add(Number(n));
         if (AppView._kanbanFilters && AppView._kanbanFilters.yours && App.currentApp === slug) AppView._repaintBoardSurface();
+        // The Workshop's path marks the stops where these are (_workshopView's `mine`).
+        else if (App.currentApp === slug && typeof document !== 'undefined' && document.getElementById('dev-workshop')) AppView._rerenderWorkshop();
       })
       .catch(() => { /* what you started still reads as yours */ });
   },
@@ -17273,6 +17304,8 @@ const AppView = {
     open: 'changes:board.filterChip.stageOpen',
     unclaimed: 'changes:board.filterChip.stageUnclaimed',
     shipped: 'changes:board.filterChip.stageShipped',
+    asked: 'changes:board.filterChip.stageAsked',
+    votes: 'changes:board.filterChip.stageVotes',
   },
   // #5369: an Overview figure's tap — open items, nobody on them, live this
   // week. All items is narrowed to exactly what the figure counts: the
@@ -17281,6 +17314,16 @@ const AppView = {
   // the box the way clearing the Search chip does. The chip's × dismisses it
   // like any other filter; `applyKanbanFilters` spreads the current set, so
   // the dialog's Done keeps it.
+  // 24 Nov 2026: the Workshop path's "Open the board" (features/dev-board/
+  // workshop/front-page.tsx) opens All items with no stage filter: one a
+  // stop set earlier is taken off, and a search or a filter of the
+  // person's own stays (the dot on the door says one is on, #2915).
+  clearWorkshopStage() {
+    const f = AppView._kanbanFilters;
+    if (!f || !AppView._kanbanStageValue(f.stage)) return;
+    AppView._kanbanFilters = { ...f, stage: null };
+    AppView._repaintBoardSurface();
+  },
   openWorkshopStage(stage) {
     if (!AppView._kanbanStageValue(stage)) return;
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage };

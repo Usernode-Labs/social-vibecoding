@@ -203,20 +203,34 @@ function mockPool(existingKeys = []) {
 
 const find = (pool, re) => pool.calls.filter((c) => re.test(c.sql));
 
-test('reconcile upserts each declared entry', async () => {
+test('reconcile upserts every declared entry in one statement', async () => {
   const pool = mockPool([]);
   const result = await appManifest.reconcilePlatformEnv(pool, 7, read([
     { key: 'ALPHA', description: 'a', group: 'Scaling' },
     { key: 'BETA', required: true },
   ]));
   const upserts = find(pool, /INSERT INTO platform_env_declarations/);
-  assert.equal(upserts.length, 2);
+  assert.equal(upserts.length, 1, 'one commit, however many are declared');
   assert.equal(result.declared, 2);
   assert.deepEqual(result.added.sort(), ['ALPHA', 'BETA']);
-  for (const call of upserts) {
-    assert.match(call.sql, /ON CONFLICT \(app_id, key\) DO UPDATE/,
-      'a re-deploy must refresh the description in place, not fail');
-  }
+  assert.match(upserts[0].sql, /ON CONFLICT \(app_id, key\) DO UPDATE/,
+    'a re-deploy must refresh the description in place, not fail');
+  assert.equal(upserts[0].params[0], 7);
+  assert.deepEqual(JSON.parse(upserts[0].params[1]), [
+    { key: 'ALPHA', description: 'a', required: false, private: false, grouping: 'Scaling', default_value: null, unwritable: false },
+    { key: 'BETA', description: '', required: true, private: false, grouping: 'General', default_value: null, unwritable: false },
+  ]);
+});
+
+test('reconcile writes the last entry of a repeated key, and nothing for none', async () => {
+  const pool = mockPool([]);
+  await appManifest.reconcilePlatformEnv(pool, 7, [{ key: 'ALPHA', description: 'first' }, { key: 'ALPHA', description: 'last' }]);
+  const [upsert] = find(pool, /INSERT INTO platform_env_declarations/);
+  assert.deepEqual(JSON.parse(upsert.params[1]).map((d) => [d.key, d.description]), [['ALPHA', 'last']],
+    'a statement may not update the same row twice');
+  const none = mockPool([]);
+  await appManifest.reconcilePlatformEnv(none, 7, []);
+  assert.equal(find(none, /INSERT INTO platform_env_declarations/).length, 0);
 });
 
 test('reconcile removes declarations that left the manifest', async () => {
