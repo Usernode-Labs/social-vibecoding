@@ -1,15 +1,16 @@
 'use strict';
 
-// #6994 (editor): a website archive attached in the Homeroom bot chat, put
-// in place of a project's public folder as a change of the person's own.
+// #6994: a website archive attached in the Homeroom bot chat, put in place
+// of a project's public folder as a change of the person's own.
 //
-// The create screen's upload starts a new project from an archive
-// (routes/apps.js, services/app-creator.js). This is the other half of the
-// same flow: somebody downloaded their site from GitHub as a ZIP, opened the
-// project they already have, and asked Homeroom to build or revamp it from
-// the archive. The archive's files become the app's public folder, the pages
-// the old site had and the archive does not are removed, and the result goes
-// up for the project's vote as the person's change, like any other change.
+// Somebody downloaded their site from GitHub as a ZIP, opened the project
+// they already have, attached the archive in a chat with Homeroom bot and
+// asked it to build or revamp the app from it. The archive's files become
+// the app's public folder, the pages the old site had and the archive does
+// not are removed, and the result goes up for the project's vote as the
+// person's change, like any other change. No archive entry point is offered
+// on the Create screen or in the editor's + button (24 Nov 2026): the chat
+// is the one way in, so onboarding keeps its two ways to start a project.
 //
 // Nothing is written outside public/: the project keeps its server.js,
 // dapp.json and dependencies exactly as they are, which is the shape

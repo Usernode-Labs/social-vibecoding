@@ -369,8 +369,8 @@ function withForwarder(file) {
 /**
  * The archive's own files as the app serves them: every file under public/,
  * its index.html with the Dev console forwarder inserted once. What a project
- * revamped from an archive in the editor puts in place of its public folder
- * (#6994).
+ * revamped from an archive in a chat with Homeroom bot puts in place of its
+ * public folder (#6994).
  */
 function siteFiles(archiveFiles) {
   return (archiveFiles || []).map((file) => {

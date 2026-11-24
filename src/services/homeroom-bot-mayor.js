@@ -864,7 +864,7 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  they are writing about. While it is waiting for approval, a problem they report with it, or anything they want',
     '  different in it, is for that change: call revise_proposal with its proposal id. Never offer a new',
     '  request for something that change should fix: it is not live yet.',
-    // #6994: the archive half of the same flow, from the editor.
+    // #6994: an archive attached in this chat, built into an existing project.
     '- A website archive they attached in this chat (.zip, .tar.gz, .tgz, .rar or .7z) and asked you to build or',
     '  revamp a project from (use_archive): its files replace the project\'s pages, its front page becoming the',
     '  app\'s, and the result goes up for the project\'s vote as their change. Call use_archive with the id',
