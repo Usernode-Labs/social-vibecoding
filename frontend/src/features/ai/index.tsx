@@ -89,7 +89,7 @@ import type { ReactNode } from 'react';
 
 import { MicrophoneIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
-import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { useMessages } from '../../lib/i18n/react';
 import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
 import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
@@ -98,7 +98,6 @@ import { EmbeddedConversation } from '../messages';
 import { NewThreadDocked, closeNewThread, newThreadIn, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
 import { noteThreadNames } from '../messages/private-thread-bar';
 import { keptConversations, openBotConversation } from '../messages/api';
-import { BOT_AVATAR } from '../messages/format';
 import { closeThread, embed, loadConversations, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { panelEdgeStore } from '../side-panel/edge-store';
@@ -131,6 +130,8 @@ import { cleanQuery, useBotSearch } from './search';
 import { clearSearchMark, currentSearchMark } from './search-mark';
 import { communityScopeStore } from '../workshop/community-scope';
 import { NewChatButton } from './new-chat-button';
+import { BOT_SEARCH_SHORTCUT_KEYS, installBotSearchShortcut } from './search-shortcut';
+import { useSearchHint } from '../home/search-hint';
 import { AiDrawer, PHONE_QUERY, ThreadPane } from './phone-drawer';
 import { claimDetail, closeDetail, detailEntry, detailLayout, holdDetail, openDetail, reopenDetail, setDetailOwner, takeHeldDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
@@ -1129,18 +1130,27 @@ export function AiScreen(): ReactNode {
     const scroller = layoutNow === 'phone' ? screen.querySelector<HTMLElement>('.ai-drawer-list') : screen;
     if (scroller) scroller.scrollTop = listTop.current;
   }, [layoutNow]);
-  // SEARCH (#6398, 6 Nov 2026): a round button beside the plus opens a box
-  // under the heading, and every list narrows to the threads whose title,
-  // number or project matches what it says (./lists.tsx). It starts closed
-  // each time the page loads, closing it clears what was typed, and it is
-  // not kept in the address: the chips are what a link carries. Its state
-  // is declared above, with the filter, which empties it when the tab is
-  // left or a door opens History.
+  // SEARCH (#6398, 6 Nov 2026): every list narrows to the threads whose
+  // title, number or project matches what the box says (./lists.tsx). 24 Nov
+  // 2026 (the three bands): on the standard list the box is always there, on
+  // the head card's tools line, rather than behind a round button; the look's
+  // list (./frame-list.tsx) keeps its button, so what it says counts only
+  // while that is open. Its state is declared above, with the filter, which
+  // empties it when the tab is left or a door opens History; it is not kept
+  // in the address: the project filter is what a link carries.
+  // A look of the one frame draws the list with the kit (./frame-list.tsx),
+  // from the same rows and presses. Read after mount (lib/skin.ts says why).
+  const frame = isFrameSkin(useSkin());
+  const asked = frame ? (searchOpen ? query : '') : query;
   useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
+  // Ctrl+K (⌘K) puts the cursor in the box while the tab is showing
+  // (./search-shortcut.ts); the box names the key at its end on a computer.
+  useEffect(() => (frame ? undefined : installBotSearchShortcut(() => (visible ? searchRef.current : null))), [frame, visible]);
+  const searchHint = useSearchHint();
   // 13 Nov 2026: the box also searches what was said, in the person's own
   // threads with the bot, on the server (./search.ts). Asked
   // only once something is typed, so the first render has none of it.
-  const search = useBotSearch(searchOpen ? query : '', {
+  const search = useBotSearch(asked, {
     signedIn: mounted && typeof window !== 'undefined' && !!(window as any).App?.user,
     demo: !!demoQuery(),
   });
@@ -1148,94 +1158,65 @@ export function AiScreen(): ReactNode {
   // marked in its message while it is read. Clearing the box, closing the
   // search or typing something else takes the marks with it; the box is not
   // in the address, so nothing else is left for a reload to find.
-  const marked = cleanQuery(searchOpen ? query : '');
+  const marked = cleanQuery(asked);
   useEffect(() => {
     const mark = currentSearchMark();
     if (mark && mark.q !== marked) clearSearchMark();
   }, [marked]);
 
-  // #6744: the line under the bot's name summarises the lists below it, so it
-  // counts only the projects the chips show, as the "Needs you" heading and
-  // every list do. Search does not narrow it (./lines.ts owedShown does), so it
-  // does not jump while you type; each chip keeps its own project's count.
+  // #6744: the look's line under the bot's name summarises the lists below
+  // it, so it counts only the projects the filter shows, as every list does.
+  // Search does not narrow it (./lines.ts owedShown does), so it does not
+  // jump while you type. (The standard list's head counts its own bands,
+  // ./lists.tsx, from the same rows.)
   const heroShows = showsPicked(picked);
   const heroRows = rows.filter((row) => heroShows(row.app));
   const heroLine = work
     ? heroWords(owedCount(heroRows), progress.filter((th) => heroShows(th.app)).length, freshCount(heroRows))
     : null;
-  // A look of the one frame draws the list with the kit (./frame-list.tsx),
-  // from the same rows and presses. Read after mount (lib/skin.ts says why).
-  const frame = isFrameSkin(useSkin());
-  const hero = (
-    <>
-      <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
-        <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
-        {/* The page is named once on screen, by the bar above (phone review,
-            23 Nov 2026, S14): this card repeated "Homeroom bot" directly
-            under it. The heading stays for a screen reader; what is drawn is
-            the line that counts the lists below. */}
-        <span className="min-w-0 flex-1 flex flex-col">
-          <h1 className="sr-only">{t('messages:ai.hero.name')}</h1>
-          {heroLine ? (
-            <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-              <RichMessage
-                id={heroLine.id}
-                values={heroLine.values}
-                components={[<strong className="font-semibold text-violet-700 dark:text-violet-300" />]}
-              />
-            </span>
-          ) : null}
-        </span>
-        {/* Search, then New chat: the head's one labelled, filled button. */}
+  // THE HEAD CARD'S TOOLS LINE (./lists.tsx draws the card): the search
+  // field, always there. Escape empties it, and a second Escape leaves it.
+  const searchField = (
+    <label className="flex h-9 min-w-[10rem] flex-1 basis-40 items-center gap-2 rounded-[10px] px-3 text-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] focus-within:shadow-[inset_0_0_0_2px_var(--accent)] dark:text-zinc-400" data-ai-search-box="">
+      <SearchIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <input
+        ref={searchRef}
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return;
+          e.stopPropagation();
+          if (query) setQuery('');
+          else e.currentTarget.blur();
+        }}
+        placeholder={t('messages:ai.search.placeholder')}
+        aria-label={t('messages:ai.search.label')}
+        aria-keyshortcuts={searchHint === 'none' ? undefined : BOT_SEARCH_SHORTCUT_KEYS}
+        className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-base text-zinc-900 outline-none placeholder:text-zinc-500 md:text-sm dark:text-zinc-100 dark:placeholder:text-zinc-400 [&::-webkit-search-cancel-button]:hidden"
+        data-ai-search=""
+      />
+      {/* S14: a way to empty the box, drawn only while it holds something;
+          the cursor stays in the box. Otherwise, on a computer, the key that
+          puts the cursor here (after mount: the prerender cannot know the
+          device). app.css takes the key away where the list is narrow. */}
+      {query ? (
         <button
           type="button"
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 [&>svg]:h-5 [&>svg]:w-5"
-          aria-label={t('messages:ai.search.open')}
-          title={t('messages:ai.search.open')}
-          aria-expanded={searchOpen}
-          data-ai-search-toggle=""
-          onClick={() => {
-            if (searchOpen) setQuery('');
-            setSearchOpen((open) => !open);
-          }}
+          className="-me-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 focus-visible:shadow-[inset_0_0_0_2px_var(--accent)] outline-none dark:text-zinc-400 dark:hover:text-zinc-100 [&>svg]:h-4 [&>svg]:w-4"
+          aria-label={t('messages:ai.search.clear')}
+          title={t('messages:ai.search.clear')}
+          data-ai-search-clear=""
+          onClick={(e) => { e.preventDefault(); setQuery(''); searchRef.current?.focus(); }}
         >
-          <SearchIcon aria-hidden="true" />
+          <XIcon aria-hidden="true" strokeWidth="2.25" />
         </button>
-        <NewChatButton onOpen={openNewChat} />
-      </section>
-      {/* The More projects panel's own search box, under the heading and
-          between it and the project chips (./project-picker.tsx). */}
-      {searchOpen ? (
-        <label className="mx-4 mt-3 flex h-[38px] shrink-0 items-center gap-2 rounded-xl bg-zinc-900/[0.05] px-3 text-zinc-500 focus-within:shadow-[inset_0_0_0_2px_var(--accent)] dark:bg-white/[0.08] dark:text-zinc-400">
-          <SearchIcon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
-          <input
-            ref={searchRef}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setQuery(''); setSearchOpen(false); } }}
-            placeholder={t('messages:ai.search.label')}
-            aria-label={t('messages:ai.search.label')}
-            className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-base text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-100 dark:placeholder:text-zinc-400 [&::-webkit-search-cancel-button]:hidden"
-            data-ai-search=""
-          />
-          {/* S14: a way to empty the box without closing it. Drawn only
-              while it holds something; the cursor stays in the box. */}
-          {query ? (
-            <button
-              type="button"
-              className="-me-2 inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 [&>svg]:h-4 [&>svg]:w-4"
-              aria-label={t('messages:ai.search.clear')}
-              title={t('messages:ai.search.clear')}
-              data-ai-search-clear=""
-              onClick={(e) => { e.preventDefault(); setQuery(''); searchRef.current?.focus(); }}
-            >
-              <XIcon aria-hidden="true" strokeWidth="2.25" />
-            </button>
-          ) : null}
-        </label>
-      ) : null}
-    </>
+      ) : searchHint === 'none' ? null : (
+        <kbd className="ai-search-key shrink-0 rounded-md bg-zinc-900/[0.05] px-1.5 py-0.5 font-mono text-[11px] leading-4 text-zinc-500 dark:bg-white/[0.08] dark:text-zinc-400" aria-hidden="true" data-ai-search-key="">
+          {searchHint === 'cmd' ? t('messages:ai.search.keyMac') : t('messages:ai.search.keyOther')}
+        </kbd>
+      )}
+    </label>
   );
 
   const listContent = (
@@ -1275,8 +1256,9 @@ export function AiScreen(): ReactNode {
       ) : (
       <div className="ai-screen-body max-w-2xl mx-auto pb-8">
         <AiLists
-          hero={hero}
-          query={searchOpen ? query : ''}
+          newChat={<NewChatButton onOpen={openNewChat} />}
+          search={searchField}
+          query={asked}
           onQueryClear={endSearch}
           found={search.found}
           onFoundRetry={search.retry}
@@ -1300,6 +1282,7 @@ export function AiScreen(): ReactNode {
           onHistoryKind={pickKind}
           openHistory={openHistory}
           historyRef={historyRef}
+          doneOpen={toHistory}
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
