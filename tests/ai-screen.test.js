@@ -2028,7 +2028,13 @@ test('the column is held inside the window, and the panel takes its place at its
   // room is the page's usable box, the window less the rail and the Duo's
   // column, declared once on body (1 Nov 2026; tests/usable-box.test.js pins
   // how it is made).
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: var\(--list-pane-w\);\s+--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - var\(--list-pane-w\)\)\);\s+--ai-main-w: max\(320px, min\(var\(--ai-main-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: var\(--list-pane-w\);\s+--ai-main-auto: max\(400px, calc\(var\(--ai-room\) - var\(--list-pane-w\)\)\);\s+--ai-main-w: max\(var\(--ai-main-floor, 320px\), min\(var\(--ai-main-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  // 24 Nov 2026: the thread takes the spare room. Beside the lists the
+  // column is never narrower than the room less the list's 42rem, so the
+  // list never floats between two empty bands; a preview's columns, the
+  // frame's looks and a phone keep the column's own 320px.
+  assert.match(css, /@media \(min-width: 768px\) \{\s+body:has\(#ai-screen:not\(\.hidden\):not\(\[data-ai-preview\]\):not\(\[data-frame-list\]\)\) \{\s+--ai-list-max: 42rem;\s+--ai-main-floor: max\(320px, calc\(var\(--ai-room\) - var\(--ai-list-max\)\)\);\s+\}\s+\}/,
+    'the column is floored at the room less the list\'s own measure, beside the lists only');
   // 9 Nov 2026 (#6495): the bot tab's list is the Messages inbox's list while
   // something is open beside it, so the two pages share one measure and the
   // open column gets the room the list lets go. Defined once, read by both.
@@ -2040,7 +2046,7 @@ test('the column is held inside the window, and the panel takes its place at its
   // of its own, `--messages-list-chosen-w`; with none chosen it reads this
   // measure, and the bot tab's list is not touched.
   assert.match(css, /\.messages-list-pane \{\s+position: relative;\s+flex: 0 0 var\(--messages-list-chosen-w, var\(--list-pane-w\)\);\s+width: var\(--messages-list-chosen-w, var\(--list-pane-w\)\);/, 'the inbox reads it');
-  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: 42rem;\s+margin-inline: auto;\s+\}/,
+  assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \.ai-screen-body \{\s+width: 100%;\s+max-width: var\(--ai-list-max, 42rem\);\s+margin-inline: auto;\s+\}/,
     'and the bot tab\'s list fills the room beside the open column, up to 672px, centred in it');
   assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');
   // A wider Main holds its words to the 720px it used to be, so plan cards

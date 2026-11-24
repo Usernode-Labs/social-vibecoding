@@ -21852,7 +21852,28 @@ body:has(#ai-screen:not(.hidden)) {
   --ai-room: var(--platform-usable-w);
   --ai-list-min: var(--list-pane-w);
   --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)));
-  --ai-main-w: max(320px, min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+  --ai-main-w: max(var(--ai-main-floor, 320px), min(var(--ai-main-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+}
+/* THE THREAD TAKES THE SPARE ROOM (24 Nov 2026). The list beside an open
+   column is held to 42rem (`--ai-list-max`, the body rule below), and the
+   column used to be held to nothing but 320px: dragged narrower than the
+   room less 42rem, it left the list's side wider than the list, and the
+   list floated between two empty bands (about 135px each with the sidebar
+   folded at 1720px and the column at 715px). Now the column is never
+   narrower than the room less the list's 42rem, so the list's 16px card
+   margins are the only space beside it. A width stored narrower is raised
+   to it when applied and kept as stored, so a window that narrows again
+   gives it back; the divider stops there too, reading the same 42rem
+   (features/side-panel/resize.ts probeLayout). The thread's own 320px,
+   the list's floor and the snap that hides it are as they were. Declared
+   only beside the lists: a preview's columns (`[data-ai-preview]`) keep
+   their own widths, which read `--ai-main-w` as it was, and the frame's
+   looks lay the list out at a width of their own. A phone has no columns. */
+@media (min-width: 768px) {
+  body:has(#ai-screen:not(.hidden):not([data-ai-preview]):not([data-frame-list])) {
+    --ai-list-max: 42rem;
+    --ai-main-floor: max(320px, calc(var(--ai-room) - var(--ai-list-max)));
+  }
 }
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   --ai-edge: var(--platform-strip-w, 0px);
@@ -21913,7 +21934,7 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    `max-w-2xl mx-auto`, a single centred page as Home and Needs you are. */
 #ai-screen[data-ai-docked][data-ai-open] .ai-screen-body {
   width: 100%;
-  max-width: 42rem;
+  max-width: var(--ai-list-max, 42rem);
   margin-inline: auto;
 }
 /* THE LIST HIDDEN, ONE PANE (#6963). Dragging the divider past the list's
@@ -22199,6 +22220,101 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar { display: none; }
   background: none;
   border: 0;
   border-radius: 0;
+}
+/* NEW CHAT IS DRAWN AS CARDS (24 Nov 2026). Since #7039 a new chat is the
+   docked column's resting state (features/ai/index.tsx, THE COLUMN IS NEVER
+   EMPTY BESIDE THE LISTS), and it was the one thing there drawn as a sheet:
+   flush with the column's top and far edges, one rounded corner, while a
+   thread beside the same list is cards on the page's ground. It is drawn as
+   a thread is now. The column paints nothing round it; its head is a title
+   card with a thread's gutter, corners, fill and edge ("THE THREAD'S HEAD
+   IS A CARD"); and under it, 12px down, one card fills the rest of the
+   column and holds the starts, the About and With choosers and the message
+   box, as a thread's messages card holds its replies. The card is the
+   pane's own `::before`, laid in the pane's grid over the rows under the
+   head, so it follows the head's height and the box's rather than an
+   offset; the starts and the box keep their 720px measure inside it. Its ✕
+   is gone there (new-thread.tsx NewThreadDocked). Docked only
+   (`data-bot-new-thread-docked`, from 768px, in the column beside a preview
+   too) and in the standard and brand looks; a phone's drawer and Messages
+   keep the sheet and the ✕. */
+#ai-screen[data-ai-docked] .ai-main-pane:has([data-bot-new-thread-docked]) {
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
+  --thread-gutter: 12px;
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  isolation: isolate;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked]::before {
+  content: "";
+  grid-row: 2 / -1;
+  grid-column: 1;
+  z-index: -1;
+  margin: 12px var(--thread-gutter) 8px;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+}
+/* Each part names its row: the card already holds rows 2 and 3, and an
+   item left to auto-placement would go past it into a row of its own. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > * { grid-column: 1; }
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-header {
+  grid-row: 1;
+  margin-inline: var(--thread-gutter);
+  padding-block: 14px;
+  padding-inline: 16px calc(12px + var(--ai-edge, 0px));
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card-solid);
+  box-shadow: var(--thread-card-edge);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > :is(.messages-thread-scroll, .messages-builder-setup) {
+  grid-row: 2;
+  margin: 12px var(--thread-gutter) 0;
+}
+/* The 720px measure ("A WIDER COLUMN KEEPS A READABLE LINE") inside the
+   card: an item's padding is a share of its grid area, the whole column,
+   so the card's gutters come off it. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-thread-scroll {
+  padding-inline: max(0px, calc((100% - 720px) / 2 - var(--thread-gutter)));
+}
+/* The box's own bar pads its foot for the tab bar and the home indicator
+   (`.platform-safe-bar`, important), so the card's foot is a margin under
+   it, and the box stands a little further in from the card's foot. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] > .messages-composer {
+  grid-row: 3;
+  margin: 0 var(--thread-gutter) 8px;
+  padding-inline: max(12px, calc((100% - 720px) / 2 - var(--thread-gutter)));
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-composer-card {
+  margin-bottom: 8px;
+}
+/* In the brand look the cards are the look's thread cards, opaque with its
+   lift, as its thread page's are ("A THREAD'S PAGE" in the brand look sets
+   the same three on `.dev-request`; this rule names the bot tab, so
+   scripts/thread-look.js leaves it out of the standard look's copy). On
+   the card the starts and the About and With choosers are white on white:
+   the standard look edges them with the kit's hairline (its
+   `--messages-disc-shadow`), the brand look drew them with a drop shadow
+   alone and they vanished, so here they take the look's edge for a raised
+   thing. The box has the look's field edge already. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
+  --thread-card-look: var(--bl-card);
+  --thread-card-solid-look: var(--bl-card);
+  --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+  --messages-disc-shadow: var(--bl-raise-edge);
 }
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request,
 #ai-screen .dev-private-thread {
@@ -34889,6 +35005,28 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
    it is pinned again (the scroller shrinks and scrolls) once the thread is
    taller than the window. */
 .dev-request:has(.dev-thread-card) .dev-request-scroll { flex-grow: 0; }
+/* …BUT A PRIVATE THREAD KEEPS ITS BOX AT THE FOOT (24 Nov 2026). A private
+   thread with Homeroom bot is a chat, and a chat keeps its reply box at the
+   bottom of the column: with a message or two the box stood in the middle
+   of the screen under a short card, the rest of the column bare. There the
+   scroller fills the sheet again, as a column of the cards, and the
+   replies' card fills it down to the reply box: its foot is the 12px the
+   spacer after it leaves over the box (THE FOOT IS A SPACER, below), as a
+   long thread's is. The messages start at the card's top, and one more is
+   added under the last without the card changing height. Nothing in the
+   column shrinks: a thread taller than the column scrolls as it did, and
+   the spacer, an empty item, would otherwise be the first thing a column
+   squeezed. Wherever the page is drawn: beside the lists, beside a
+   preview, and in a phone's drawer. Request and change pages keep the box
+   under their replies (the rule above). */
+#ai-screen .dev-private-thread .dev-request-scroll {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+#ai-screen .dev-private-thread .dev-request-scroll > *,
+#ai-screen .dev-private-thread .dev-request-scroll::after { flex-shrink: 0; }
+#ai-screen .dev-private-thread .dev-request-scroll > [data-thread-page-replies] { flex-grow: 1; }
 /* The author row gives way to the kicker; the timeline says who and when. */
 .dev-thread-card { position: relative; --foot-x: 16px; --foot-b: 16px; }
 /* The card's own gutters, so the foot's band can reach its edges exactly. */

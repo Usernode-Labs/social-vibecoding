@@ -31,13 +31,16 @@
  * THE LIST AND ONE THREAD (1 Nov 2026; 6 Nov 2026, request #6425; 14 Nov
  * 2026: no Main Chat). Every conversation with the bot is a thread, and this
  * page is the only place one is drawn: every way into the chat lands here
- * (./door.ts), never on the Messages screen. From 768px the page opens on
- * its lists alone, and the column beside them holds one thing at a time: a
+ * (./door.ts), never on the Messages screen. From 768px the page is its
+ * lists and, beside them, a column that holds one thing at a time: a
  * private thread alone under its own head (its name and "Only you can see
  * this thread"; ReplyThreadPanel `alone`), a new chat, or a page. The row of
- * whichever it is is drawn lit. Everything in the column closes with a × (a
- * thread's own, the new chat's, the side panel's for a page), and closing
- * leaves the lists alone. On a phone the list and the column are one drawer,
+ * whichever it is is drawn lit. A thread and a page close with a × (the
+ * thread's own, the side panel's for a page), and since #7039 (23 Nov 2026,
+ * THE COLUMN IS NEVER EMPTY BESIDE THE LISTS, below) closing one lands on a
+ * new chat, the column's resting state: that new chat has no × of its own
+ * (../messages/new-thread.tsx NewThreadDocked), and opening a thread is how
+ * it is left. On a phone the list and the column are one drawer,
  * as Messages' list and a conversation are (./phone-drawer.tsx): a row, New
  * chat or the Ask bar slides it in, and a thread's back arrow slides the
  * list back.
@@ -92,7 +95,7 @@ import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
-import { closeNewThread, newThreadIn, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
+import { NewThreadDocked, closeNewThread, newThreadIn, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
 import { noteThreadNames } from '../messages/private-thread-bar';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
@@ -1371,7 +1374,13 @@ export function AiScreen(): ReactNode {
           />
           {/* A thread is alone under its own head (ReplyThreadPanel `alone`),
               and a new chat under its own: the column draws no bar over them. */}
-          {conversationUp ? <EmbeddedConversation conversationId={botId!} active={visible && columnOpen} at={at} threadsOnly /> : null}
+          {/* The new chat drawn here is the column's resting state, with
+              no × to close it to an empty column (NewThreadDocked). */}
+          {conversationUp ? (
+            <NewThreadDocked.Provider value>
+              <EmbeddedConversation conversationId={botId!} active={visible && columnOpen} at={at} threadsOnly />
+            </NewThreadDocked.Provider>
+          ) : null}
         </aside>
       ) : null}
 
