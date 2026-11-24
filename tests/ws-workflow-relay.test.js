@@ -109,7 +109,7 @@ test('a machine\'s push marked as a board change reaches this process\'s Worksho
   relay({ kind: 'scoped', routing: { appId: 5, appSlug: 'five', boardChange: true }, data: { type: 'issue_update', action: 'voted' }, fromWorkflow: true });
   relay({ kind: 'scoped', routing: { appId: 6, appSlug: 'six' }, data: { type: 'issue_update', action: 'voted' }, fromWorkflow: true });
   relay({ kind: 'scoped', routing: { appId: 7, appSlug: 'seven', boardChange: true }, data: { type: 'issue_update' }, fromWorkflow: false });
-  assert.deepEqual(heard, [{ appId: 5, appSlug: 'five' }], 'once, for the machine\'s marked push only (the emitting route kicks its own)');
+  assert.deepEqual(heard, [{ appId: 5, appSlug: 'five', sessionId: null, action: 'voted' }], 'once, for the machine\'s marked push only (the emitting route kicks its own), with what happened to the card');
 });
 
 test('what another process changed about an app\'s visibility, governance or admins is forgotten here; the bus coming back forgets it all', () => {

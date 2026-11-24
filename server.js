@@ -892,8 +892,12 @@ app.use(platformAboutRoutes(config));
 // reason; the daily re-draft is a clock too (src/workflow/clock/services.ts).
 {
   const workshopThemes = require('./src/services/workshop-themes');
+  const requestSummary = require('./src/services/request-summary');
   if (typeof ws.onBoardChange === 'function') {
     ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
+    // A change put up for a vote rewrites the summary of the requests it is
+    // attached to, so the page's words catch up without a page read.
+    ws.onBoardChange(requestSummary.onBoardChange(getPool(config)));
   }
 }
 app.use(reportSnapshotRoutes(config));
