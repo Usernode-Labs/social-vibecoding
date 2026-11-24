@@ -15,11 +15,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
-import { LockIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
-import { useMessages } from '../../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { agoStamp } from '../../../lib/timestamp';
-import { PRIVATE_REQUEST_OPEN, takePendingPrivateRequest } from './private-request-door';
+import { PageBack } from './page-back';
+import { PRIVATE_REQUEST_OPEN, peekPendingPrivateRequest, takePendingPrivateRequest } from './private-request-door';
 
 interface PrivateRequest {
   id: number;
@@ -164,7 +165,61 @@ function RequestDetail({ slug, request, canWrite, onClosed }: {
   );
 }
 
-export function PrivateRequests({ slug }: { slug: string }): ReactNode {
+/**
+ * THE WORKSHOP'S FRONT PAGE KEEPS ONE QUIET ROW FOR THEM (24 Nov 2026):
+ * a lock, "Private requests", "only admins see these" and a chevron, at the
+ * foot of the page (./front-page.tsx), opening the list as a page of its own
+ * under the Workshop (PrivateRequestsPage). Only for an admin, and only
+ * while there are some, as the section was. A door that names one (the
+ * bell's row) opens that page, whose list then expands it.
+ */
+export function PrivateRequestsDoor({ slug, onOpen }: { slug: string; onOpen: () => void }): ReactNode {
+  const t = useMessages('project');
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!slug || !viewerIsAdmin()) return undefined;
+    let live = true;
+    const read = () => {
+      fetch(`/api/apps/${encodeURIComponent(slug)}/private-requests`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => { if (live && data) setCount(Array.isArray(data.requests) ? data.requests.length : 0); })
+        .catch(() => { /* the row stays as it was */ });
+    };
+    const asked = () => { if (peekPendingPrivateRequest(slug)) onOpen(); };
+    read();
+    asked();
+    window.addEventListener(PRIVATE_REQUESTS_CHANGED, read);
+    window.addEventListener(PRIVATE_REQUEST_OPEN, asked);
+    return () => {
+      live = false;
+      window.removeEventListener(PRIVATE_REQUESTS_CHANGED, read);
+      window.removeEventListener(PRIVATE_REQUEST_OPEN, asked);
+    };
+  }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!count) return null;
+  return (
+    <button type="button" className="dev-ws-front-private" data-ws-front-private="" onClick={onOpen}>
+      <LockIcon className="dev-ws-front-private-lock" aria-hidden="true" />
+      <span className="dev-ws-front-private-text">
+        <RichMessage id="project:workshop.front.private.row" components={[<b />]} />
+      </span>
+      <ChevronRightIcon className="dev-ws-front-chev" aria-hidden="true" />
+    </button>
+  );
+}
+
+/** The private requests as a page under the Workshop, with the way back (the front page's row opens it). */
+export function PrivateRequestsPage({ slug, onBack }: { slug: string; onBack: () => void }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <div className="dev-ws-weekpage" data-ws-private-page="">
+      <PageBack label={t('project:weekPage.back')} title={t('project:workshop.private.title')} onBack={onBack} />
+      <PrivateRequests slug={slug} page />
+    </div>
+  );
+}
+
+export function PrivateRequests({ slug, page = false }: { slug: string; page?: boolean }): ReactNode {
   const t = useMessages('project');
   const [admin, setAdmin] = useState(false);
   const [requests, setRequests] = useState<PrivateRequest[]>([]);
@@ -230,8 +285,9 @@ export function PrivateRequests({ slug }: { slug: string }): ReactNode {
 
   return (
     <>
-      <SectionHeader className="px-1.5 pb-0 pt-3.5" data-ws-part="private">{t('project:workshop.private.title')}</SectionHeader>
-      <p className="px-1.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{t('project:workshop.private.note')}</p>
+      {/* On its own page (PrivateRequestsPage) the page's head names it, so the label goes and the note carries its hook. */}
+      {page ? null : <SectionHeader className="px-1.5 pb-0 pt-3.5" data-ws-part="private">{t('project:workshop.private.title')}</SectionHeader>}
+      <p className="px-1.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-400" data-ws-part={page ? 'private' : undefined}>{t('project:workshop.private.note')}</p>
       <GroupedList className="mx-0" data-ws-private="">
         {requests.map((r) => {
           const open = openId === r.id;

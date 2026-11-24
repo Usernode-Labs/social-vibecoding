@@ -106,7 +106,9 @@ test('the Workshop tab draws no "Lately in this project" panel: Overview leads s
   assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/dev-board/workshop/notices.tsx')), 'the panel is gone');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.doesNotMatch(lander, /WorkshopNotices|NoticesPanel|data-ws-notices|from '\.\/notices'/);
-  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  // 24 Nov 2026: the brand look's tab (the standard look draws the front page, ./front-page.tsx, which has no such panel either).
+  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp && !frontPage && !wipLook ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/front-page.tsx'), /WorkshopNotices|NoticesPanel|data-ws-notices/);
   assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>\n\s*\) : null\}\n\n\s*\{\/\* ── YOUR WORK ──/,
     'the Overview card, then Your work (5 Nov 2026: it was What\'s happening)');
   assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-notice/, 'and none of its CSS');

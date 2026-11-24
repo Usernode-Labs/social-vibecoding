@@ -572,9 +572,14 @@
       "schemaSha256": "9521bc6ef2764c2430c56e839bc6ae5d7b3c3656ce2467e07921278b10b682d8"
     },
     {
+      "id": "live-drafts-built-on",
+      "sha256": "14dbc0de5d32e951d9200e68f0e1ac6d0f8cc934c512a0c124ce464df4a241d0",
+      "schemaSha256": "489219b9bf76852e08c517c5e95db9a96eb3ade010639ef70e7a810c8ae991f8"
+    },
+    {
       "id": "app-archive-uploads",
       "sha256": "cf9eb841b856e594d2ce6ca0e6f01c8d99821d47770aef7e6597049c956d9043",
-      "schemaSha256": "ac4532f2145e0d0ddc94cebaefe41485143ac82d246c039db395e42a0b1288bb"
+      "schemaSha256": "b9019d0ad7bf812f064d32e43b8f3d0b847560f8dc31a09926caf4104c65a669"
     }
   ]
 }

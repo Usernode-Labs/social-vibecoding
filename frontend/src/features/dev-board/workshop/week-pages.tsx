@@ -170,8 +170,36 @@ export interface FetchedWeek {
   seen: CardRow[];
 }
 
+/**
+ * Mark all seen, where the week-by-week log is read (24 Nov 2026). The
+ * Workshop's front page no longer draws the log in place (./front-page.tsx):
+ * a week's page and Earlier weeks are where its unread rows are, so the
+ * control that moves the line to now goes with them. Disabled with nothing
+ * new, as it was over What happened.
+ */
+export interface MarkSeen {
+  /** There is something new since the viewer's last visit. */
+  any: boolean;
+  onClear: () => void;
+}
+
+function MarkSeenButton({ seen }: { seen: MarkSeen }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <button
+      type="button"
+      className="dev-ws-since-clear un-touch-target"
+      data-ws-since-clear=""
+      disabled={!seen.any}
+      onClick={seen.onClear}
+    >
+      {t('project:since.markAllSeen')}
+    </button>
+  );
+}
+
 /** A week's own page inside the Workshop tab, with the way back. */
-export function WeekPage({ week, fetched, slug, openKey, onOpen, onBack }: {
+export function WeekPage({ week, fetched, slug, openKey, onOpen, onBack, seen = null }: {
   week: SinceWeek;
   /** The page's own fetched rows, when AppView supplied them. */
   fetched?: FetchedWeek | null;
@@ -179,6 +207,8 @@ export function WeekPage({ week, fetched, slug, openKey, onOpen, onBack }: {
   openKey: string | null;
   onOpen: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
   onBack: () => void;
+  /** Mark all seen, on a returning visit, where the front page opened this week (MarkSeen). */
+  seen?: MarkSeen | null;
 }): ReactNode {
   const t = useMessages('project');
   const live = weekLive(week);
@@ -208,6 +238,7 @@ export function WeekPage({ week, fetched, slug, openKey, onOpen, onBack }: {
             />
           )}
         </p>
+        {seen ? <MarkSeenButton seen={seen} /> : null}
         {week.line ? <p className="dev-ws-week-lead" data-ws-week-line="">{week.line}</p> : null}
         {loading ? <p className="dev-ws-none" data-ws-week-loading="">{t('project:weekPage.loading')}</p> : null}
         {failed ? <p className="dev-ws-none" data-ws-week-failed="">{t('project:weekPage.failed')}</p> : null}
@@ -411,3 +442,50 @@ export function ThisWeek({ week, slug, openKey, onOpen, onAll, act }: {
 /** How many weeks before this one What happened lists, and how many each "Earlier weeks" adds. */
 export const WEEKS_FIRST = 2;
 export const WEEKS_STEP = 4;
+
+/**
+ * EARLIER WEEKS, a page under the Workshop (24 Nov 2026): what "Earlier
+ * weeks" revealed under What happened before the front page drew the weeks
+ * as three bars (./front-page.tsx). Every week before this one as one row
+ * (WeekRow, its "N new" and what went live), a few at a time, "Earlier
+ * weeks" adding more, back to the week the project began; each opens its
+ * own page. Mark all seen is here too, on a returning visit.
+ */
+export function EarlierWeeks({ weeks, firstWeek, onWeek, onBack, seen = null }: {
+  /** The weeks before this one, newest first. */
+  weeks: SinceWeek[];
+  /** Monday of the week the project began, when the server says. */
+  firstWeek: number | null;
+  onWeek: (week: SinceWeek) => void;
+  onBack: () => void;
+  seen?: MarkSeen | null;
+}): ReactNode {
+  const t = useMessages('project');
+  const [shown, setShown] = useState(WEEKS_FIRST + WEEKS_STEP);
+  return (
+    <div className="dev-ws-weekpage" data-ws-weeks-page="">
+      <PageBack label={t('project:weekPage.back')} title={t('project:happened.earlierWeeks')} onBack={onBack} />
+      {seen ? <div className="dev-ws-weeks-seen"><MarkSeenButton seen={seen} /></div> : null}
+      {weeks.length ? (
+        <div className="dev-ws-wlist">
+          {weeks.slice(0, shown).map((w) => <WeekRow key={w.key} week={w} onOpen={() => onWeek(w)} />)}
+        </div>
+      ) : <p className="dev-ws-none">{t('project:workshop.front.earlier.none')}</p>}
+      {shown < weeks.length ? (
+        <button
+          type="button"
+          className="dev-ws-reveal touch-target-32"
+          data-ws-weeks-more=""
+          onClick={() => setShown(shown + WEEKS_STEP)}
+        >
+          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+          {t('project:happened.earlierWeeks')}
+        </button>
+      ) : firstWeek && weeks.length ? (
+        <p className="dev-ws-week-note" data-ws-week-start="">
+          {t('project:since.projectStarted', { date: weekDate(firstWeek) })}
+        </p>
+      ) : null}
+    </div>
+  );
+}

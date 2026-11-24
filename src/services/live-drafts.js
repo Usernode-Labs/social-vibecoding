@@ -50,6 +50,24 @@
 // thread says so in a line (settle). A draft with no edits that nobody has
 // touched for IDLE_CLOSE_MS closes itself and frees its slot.
 //
+// 24 Nov 2026: a draft can start from a proposal that is up for a vote in
+// the thread's project instead of from main (open's proposal, proposalStart;
+// `built_on_session_id` names it). Asked to "set the preview to the proposal
+// and make changes to it before voting", the bot could only start from main.
+// Its branch is made from the proposal's, so the preview runs that code.
+//   - The person's own proposal: the draft is on it from the start (state
+//     'proposed', linked as proposal_session_id at its head), so an edit is
+//     "not in the proposal yet" and Update proposal moves that proposal to
+//     the draft's head and clears its votes, as for a draft they proposed.
+//   - Someone else's: nobody but its author may move it, so the draft stays
+//     open and is linked to nothing. Its Propose makes the person's own
+//     proposal stacked on that one (chat_sessions.waits_for_session_id, as a
+//     bot build on top of another change is: rules/pr-base.ts), so its vote
+//     sees only this draft's edits and it follows that one onto main. One
+//     that ended by then is proposed against main, and says so.
+// A thread's draft from main with no edits makes way for one on a proposal
+// (the answer says so); one with edits is never switched.
+//
 // An admin can switch drafts off for everyone (`live_drafts_enabled` in
 // platform_settings, Admin › Limits): no new draft opens and no edit runs.
 
@@ -137,14 +155,19 @@ function liveToken(config, draftId) {
 // ── Reading drafts ──────────────────────────────────────────────────────
 
 // `pending_edits`: the edits saved after the head the draft's proposal is at
-// (C), all of them when that head is none of its edits' commits.
+// (C), all of them when that head is none of its edits' commits (a draft
+// opened on its person's own proposal: every edit is after its start).
+// `built_on_*`: the proposal it started from, when it did not start from main.
 const DRAFT_COLUMNS = `d.id, d.app_id, d.user_id, d.private_thread_id, d.root_message_id, d.session_id, d.state,
   d.base_sha, d.head_sha, d.edits, d.live_state, d.last_error, d.created_at, d.updated_at,
   d.proposal_session_id, d.proposed_head_sha, d.proposed_at, d.followup_path, d.followup_armed_at,
+  d.built_on_session_id,
   a.slug AS app_slug, a.name AS app_name, a.repo_url,
   cs.branch_name, cs.status AS session_status, cs.staging_url, cs.staging_commit_sha,
   cs.staging_runtime_kind, cs.staging_runtime_name, cs.pr_number, cs.last_activity_at,
   ps.status AS proposal_status, ps.pr_number AS proposal_pr_number, ps.branch_name AS proposal_branch,
+  bs.status AS built_on_status, bs.pr_number AS built_on_pr_number, bs.branch_name AS built_on_branch,
+  bs.user_id AS built_on_user_id,
   (SELECT pt.conversation_id FROM private_threads pt WHERE pt.id = d.private_thread_id) AS conversation_id,
   (SELECT COUNT(*)::int FROM live_draft_edits e
      WHERE e.draft_id = d.id AND e.id > COALESCE((SELECT MAX(x.id) FROM live_draft_edits x
@@ -152,7 +175,8 @@ const DRAFT_COLUMNS = `d.id, d.app_id, d.user_id, d.private_thread_id, d.root_me
 const DRAFT_JOINS = `FROM live_drafts d
   JOIN apps a ON a.id = d.app_id
   LEFT JOIN chat_sessions cs ON cs.id = d.session_id
-  LEFT JOIN chat_sessions ps ON ps.id = d.proposal_session_id`;
+  LEFT JOIN chat_sessions ps ON ps.id = d.proposal_session_id
+  LEFT JOIN chat_sessions bs ON bs.id = d.built_on_session_id`;
 // A draft that is still worked on: open, or proposed as a change of its own
 // (C). A draft proposed before that was proposed as its own change, its
 // session IS the proposal, and it is never edited again.
@@ -201,8 +225,10 @@ async function forThread(pool, { userId, rootId, deps = {} }) {
 /**
  * Pure (C): why a draft that is still worked on should close now, or null.
  * `proposal_merged` / `proposal_ended`: its proposal went live, or was
- * withdrawn or put away. `idle`: open, no edits, and nobody has opened its
- * preview or spoken to it for IDLE_CLOSE_MS.
+ * withdrawn or put away. `idle`: no edits, and nobody has opened its
+ * preview or spoken to it for IDLE_CLOSE_MS. A draft proposed from its edits
+ * has some; 24 Nov 2026: one opened on its person's own proposal is
+ * proposed from the start, and with no edits it idles out like an open one.
  */
 function closeReason(draft, now = Date.now()) {
   if (!editable(draft)) return null;
@@ -210,7 +236,6 @@ function closeReason(draft, now = Date.now()) {
     const status = String(draft.proposal_status || '');
     if (status === 'merged') return 'proposal_merged';
     if (PROPOSAL_ENDED.includes(status)) return 'proposal_ended';
-    return null;
   }
   if (Number(draft.edits) > 0) return null;
   const seen = Math.max(...[draft.updated_at, draft.last_activity_at, draft.created_at]
@@ -218,10 +243,11 @@ function closeReason(draft, now = Date.now()) {
   return seen > 0 && now - seen > IDLE_CLOSE_MS ? 'idle' : null;
 }
 
-// The line a draft's thread is told when it closes on its own (C).
+// The line a draft's thread is told when it closes on its own (C). Its
+// proposal is the one it made, or (24 Nov 2026) the one it was opened on.
 const CLOSED_LINES = Object.freeze({
-  proposal_merged: (d) => `The proposal from this draft went live on ${d.app_name || d.app_slug}, so the live preview is closed. Ask me to open a new one to keep changing it.`,
-  proposal_ended: (d) => `The proposal from this draft was withdrawn, so the live preview of ${d.app_name || d.app_slug} is closed. Ask me to open a new one to start again.`,
+  proposal_merged: (d) => `This draft's proposal went live on ${d.app_name || d.app_slug}, so the live preview is closed. Ask me to open a new one to keep changing it.`,
+  proposal_ended: (d) => `This draft's proposal was withdrawn, so the live preview of ${d.app_name || d.app_slug} is closed. Ask me to open a new one to start again.`,
   idle: (d) => `The live preview of ${d.app_name || d.app_slug} closed after two hours with no changes. Ask me to open it again any time.`,
 });
 
@@ -300,6 +326,23 @@ function liveStateOf(draft) {
   return draft.live_state;
 }
 
+/**
+ * Pure (24 Nov 2026): the proposal a draft started from, or null for one
+ * that started from main: its PR, whether it is still open or went live, and
+ * whether the draft is on it (`linked`: the person's own proposal).
+ */
+function builtOnOf(draft) {
+  if (!draft || !(Number(draft.built_on_session_id) > 0)) return null;
+  const status = String(draft.built_on_status || '');
+  return {
+    sessionId: Number(draft.built_on_session_id),
+    prNumber: Number(draft.built_on_pr_number) > 0 ? Number(draft.built_on_pr_number) : null,
+    open: !!status && !PROPOSAL_ENDED.includes(status),
+    merged: status === 'merged',
+    linked: Number(draft.built_on_session_id) === Number(draft.proposal_session_id),
+  };
+}
+
 /** Pure: a draft as the client reads it. */
 function describe(draft) {
   if (!draft) return null;
@@ -330,6 +373,9 @@ function describe(draft) {
       pending: Math.max(0, Number(draft.pending_edits) || 0),
       headSha: draft.proposed_head_sha || null,
     } : null,
+    // 24 Nov 2026: the proposal it started from, when not main ("Builds on
+    // PR #N"). `linked`: the person's own, which the draft is on (above).
+    builtOn: builtOnOf(draft),
     error: draft.last_error || null,
     updatedAt: draft.updated_at ? new Date(draft.updated_at).toISOString() : null,
   };
@@ -426,22 +472,85 @@ function platformRunsInPlace(paths) {
   });
 }
 
+// ── Starting from a proposal (24 Nov 2026) ─────────────────────────────
+
+const PROPOSAL_COLUMNS = `cs.id, cs.app_id, cs.user_id, cs.status, cs.pr_number, cs.branch_name, cs.source,
+  cs.imported_pr_head_repo, cs.is_headless`;
+
+/**
+ * The proposal a draft would start from: by its pull request's number in the
+ * project `appId` (the one up for a vote first, when the number names
+ * several), or by its session id. Null when there is none.
+ */
+async function proposalRow(pool, { appId, prNumber = null, sessionId = null }) {
+  const n = Number(prNumber);
+  if (Number.isSafeInteger(n) && n > 0 && n <= 2147483647) {
+    const { rows: [row] } = await pool.query(
+      `SELECT ${PROPOSAL_COLUMNS} FROM chat_sessions cs
+        WHERE cs.app_id = $1 AND cs.pr_number = $2 AND cs.is_headless = FALSE
+        ORDER BY (cs.status = 'promoted') DESC, cs.id DESC LIMIT 1`,
+      [Number(appId), n],
+    );
+    return row || null;
+  }
+  const id = Number(sessionId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const { rows: [row] } = await pool.query(`SELECT ${PROPOSAL_COLUMNS} FROM chat_sessions cs WHERE cs.id = $1`, [id]);
+  return row || null;
+}
+
+/**
+ * Pure: whether a draft may start from `proposal` (a chat_sessions row) in
+ * the thread's project `app`, for `user`, and how. `own`: theirs, so the
+ * draft is on it and Update proposal moves it. Otherwise someone else's: the
+ * draft builds on it, and its Propose is a new proposal of their own stacked
+ * on it. It must be this project's, up for a vote with a pull request, and
+ * its code on a branch of the project's own repository (where the draft's
+ * branch is made from, and where a stacked change's base is: rules/pr-base.ts).
+ * Resolves { ok: true, own } or { ok: false, status, code, message }.
+ */
+function proposalStart(proposal, { app, user }) {
+  const no = (status, code, message) => ({ ok: false, status, code, message });
+  if (!proposal || proposal.is_headless) return no(404, 'no_proposal', 'There is no such proposal on this project.');
+  if (!app || Number(proposal.app_id) !== Number(app.id)) {
+    return no(409, 'other_project', 'That proposal is on another project. A draft here starts only from this project\'s proposals.');
+  }
+  const status = String(proposal.status || '');
+  if (status === 'merging') return no(409, 'not_up_for_vote', 'That proposal passed its vote and is going live, so a draft cannot start from it now.');
+  if (status === 'merged') return no(409, 'not_up_for_vote', 'That proposal already went live, so a draft from main has it now.');
+  if (PROPOSAL_ENDED.includes(status)) return no(409, 'not_up_for_vote', 'That proposal was withdrawn, so a draft cannot start from it.');
+  if (status !== 'promoted' || !(Number(proposal.pr_number) > 0)) {
+    return no(409, 'not_up_for_vote', 'That change is not up for a vote yet, so a draft cannot start from it.');
+  }
+  const home = require('./proposal-update').branchHomeOf({ ...proposal, repo_url: app.repo_url });
+  if (!String(proposal.branch_name || '').trim() || home !== 'app_repo') {
+    return no(409, 'not_in_app_repo', 'That proposal\'s code is in its author\'s own fork, so a draft cannot start from it.');
+  }
+  return { ok: true, own: !!user?.id && Number(proposal.user_id) === Number(user.id) };
+}
+
 /**
  * Open the draft of one of `user`'s private threads that is about a project
  * (`rootId`, its root message), or answer the one already open there.
- * Resolves `{ status, body }`: 200 with `{ ok, draft, reused }`, else why not.
+ * 24 Nov 2026: `proposalNumber` (a PR number in the thread's project) or
+ * `proposalSessionId` starts it from that proposal instead of main
+ * (proposalStart). Resolves `{ status, body }`: 200 with `{ ok, draft,
+ * reused, replaced? }` (`replaced`: the thread's empty draft from main,
+ * closed for this one), else why not.
  */
-async function open(pool, config, { user, rootId, deps = {} }) {
+async function open(pool, config, { user, rootId, proposalNumber = null, proposalSessionId = null, deps = {} }) {
   if (!user?.id) return refuse(401, 'sign_in', 'Sign in first.');
   if (!(await enabled(pool))) return refuse(503, 'drafts_off', 'App previews in chats are switched off right now.');
+  const wantsProposal = Number(proposalNumber) > 0 || Number(proposalSessionId) > 0;
+  // Asked for again (Homeroom bot's open_app_preview): it comes up again.
+  const reuse = (row) => {
+    noteChanged(row, { opened: true }, deps);
+    return { status: 200, body: { ok: true, draft: describe(row), reused: true } };
+  };
   // C: a draft up for a vote is still this thread's draft: it comes up
   // again, never a second one from main.
   const existing = await forThread(pool, { userId: user.id, rootId, deps });
-  if (existing) {
-    // Asked for again (Homeroom bot's open_app_preview): it comes up again too.
-    noteChanged(existing, { opened: true }, deps);
-    return { status: 200, body: { ok: true, draft: describe(existing), reused: true } };
-  }
+  if (existing && !wantsProposal) return reuse(existing);
 
   const access = deps.appAccess || require('./app-access');
   const { rows: [thread] } = await pool.query(
@@ -465,6 +574,58 @@ async function open(pool, config, { user, rootId, deps = {} }) {
   if (!allowed) return refuse(404, 'no_project', 'You cannot change that project.');
   const join = await (deps.communities || require('./communities')).appNeedsJoin(pool, app.slug, user);
   if (join) return { status: 403, body: join };
+
+  // 24 Nov 2026: the proposal it starts from, read in this thread's project.
+  let from = null;
+  let replaced = null;
+  if (wantsProposal) {
+    const row = await proposalRow(pool, { appId: app.id, prNumber: proposalNumber, sessionId: proposalSessionId });
+    if (!row) {
+      return refuse(404, 'no_proposal', Number(proposalNumber) > 0
+        ? `${app.name || app.slug} has no PR #${Number(proposalNumber)}.` : 'There is no such proposal on this project.');
+    }
+    // This thread's draft on it already: it comes up again.
+    if (existing && [existing.built_on_session_id, existing.proposal_session_id].some((id) => Number(id) === Number(row.id))) {
+      return reuse(existing);
+    }
+    const gate = proposalStart(row, { app, user });
+    if (!gate.ok) return refuse(gate.status, gate.code, gate.message);
+    from = { row, own: gate.own, pr: Number(row.pr_number) };
+    if (from.own) {
+      // One draft on a proposal of theirs at a time: two would each move it.
+      const { rows: linked } = await pool.query(
+        `SELECT ${DRAFT_COLUMNS} ${DRAFT_JOINS} WHERE d.proposal_session_id = $1 AND ${EDITABLE_SQL} ORDER BY d.id`,
+        [row.id],
+      );
+      for (const other of linked) {
+        if (!(await settle(pool, other, deps))) continue;
+        if (Number(other.user_id) === Number(user.id) && Number(other.root_message_id) === Number(rootId)) return reuse(other);
+        return refuse(409, 'proposal_has_draft',
+          `PR #${from.pr} already has a live draft, in another thread. Open it there, or close that one first.`);
+      }
+    }
+    // The thread's own draft is never switched with its edits in it; an
+    // empty one makes way, and the answer says so (`replaced`).
+    if (existing) {
+      const on = Number(existing.proposal_pr_number) > 0 ? `PR #${Number(existing.proposal_pr_number)}` : null;
+      const kept = () => refuse(409, 'draft_open', on
+        ? `This thread's draft is on ${on} and has changes of its own. Close it first, or ask in a new thread to start from PR #${from.pr}.`
+        : `This thread's draft has changes of its own. Propose or discard it first, or ask in a new thread to start from PR #${from.pr}.`,
+      { draft: describe(existing) });
+      if (Number(existing.edits) > 0) return kept();
+      // Only while it still has none (an edit may have landed meanwhile).
+      const { rows: [closed] } = await pool.query(
+        `UPDATE live_drafts d SET state = 'closed', updated_at = NOW()
+          WHERE d.id = $1 AND d.edits = 0 AND ${EDITABLE_SQL} RETURNING d.id`,
+        [Number(existing.id)],
+      );
+      if (!closed) return kept();
+      replaced = { id: Number(existing.id), builtOn: builtOnOf(existing) };
+      noteChanged({ ...existing, state: 'closed' }, {}, deps);
+      log.info('live-drafts', 'Empty draft closed for one on a proposal', { draftId: existing.id, proposalSessionId: row.id });
+    }
+  }
+
   // C: the person's drafts that closed on their own (idle, their proposal
   // over) free their slots first.
   const { rows: mine } = await pool.query(
@@ -484,10 +645,15 @@ async function open(pool, config, { user, rootId, deps = {} }) {
   );
   let draft;
   try {
+    // 24 Nov 2026: on the person's own proposal it is that proposal's draft
+    // from the start (C's columns, its head set once the branch is made); on
+    // someone else's it is an open draft that names what it builds on.
     const { rows: [row] } = await pool.query(
-      `INSERT INTO live_drafts (app_id, user_id, private_thread_id, root_message_id, session_id)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [app.id, user.id, thread.id, Number(rootId), session.id],
+      `INSERT INTO live_drafts (app_id, user_id, private_thread_id, root_message_id, session_id,
+                                state, built_on_session_id, proposal_session_id, proposed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $8::int IS NULL THEN NULL ELSE NOW() END) RETURNING id`,
+      [app.id, user.id, thread.id, Number(rootId), session.id, from?.own ? 'proposed' : 'open',
+        from ? Number(from.row.id) : null, from?.own ? Number(from.row.id) : null],
     );
     draft = row;
   } catch (err) {
@@ -497,19 +663,48 @@ async function open(pool, config, { user, rootId, deps = {} }) {
     if (raced) return { status: 200, body: { ok: true, draft: describe(raced), reused: true } };
     throw err;
   }
+  // Two opens on the same proposal of theirs at once (the one-open-draft
+  // index holds only drafts in state 'open'): the first one stands.
+  if (from?.own) {
+    const { rows: [first] } = await pool.query(
+      `SELECT d.id FROM live_drafts d WHERE d.proposal_session_id = $1 AND d.id < $2 AND ${EDITABLE_SQL} ORDER BY d.id LIMIT 1`,
+      [Number(from.row.id), Number(draft.id)],
+    );
+    if (first) {
+      await pool.query('DELETE FROM live_drafts WHERE id = $1', [draft.id]).catch(() => {});
+      await pool.query('DELETE FROM chat_sessions WHERE id = $1', [session.id]).catch(() => {});
+      const other = await byId(pool, first.id);
+      if (other && Number(other.user_id) === Number(user.id) && Number(other.root_message_id) === Number(rootId)) return reuse(other);
+      return refuse(409, 'proposal_has_draft',
+        `PR #${from.pr} already has a live draft, in another thread. Open it there, or close that one first.`);
+    }
+  }
 
   let head = null;
   let asked = null;
   try {
     const lifecycle = deps.sessionLifecycle || require('./session-lifecycle');
+    // From the proposal's branch, never main in its place: the change's own
+    // gate (session-lifecycle.js ensureSessionBranch, branch-operation.js)
+    // refuses when that branch is gone.
     const { branchName } = await lifecycle.ensureSessionBranch({
       pool, sessionId: session.id, userId: user.id, username: user.username, label: 'draft',
+      ...(from ? { fromSessionId: Number(from.row.id) } : {}),
     });
     const github = deps.github || require('./github');
     head = exact(await github.getBranchSha(repo.owner, repo.repo, branchName));
     if (!head) throw new Error('The draft\'s branch has no commit');
+    // It starts exactly at the proposal's head, or not at all: a draft that
+    // says it is on PR #N must hold PR #N's code.
+    if (from && exact(await github.getBranchSha(repo.owner, repo.repo, from.row.branch_name)) !== head) {
+      throw new Error(`The draft did not start at PR #${from.pr}'s code. Close it and ask again.`);
+    }
+    // The proposal it is on is at that head (C's "not in the proposal yet").
     await pool.query(
-      'UPDATE live_drafts SET base_sha = $2, head_sha = $2, updated_at = NOW() WHERE id = $1', [draft.id, head],
+      `UPDATE live_drafts SET base_sha = $2, head_sha = $2,
+              proposed_head_sha = CASE WHEN proposal_session_id IS NULL THEN proposed_head_sha ELSE $2 END,
+              updated_at = NOW() WHERE id = $1`,
+      [draft.id, head],
     );
     const previews = deps.previewWorkflow || require('./preview-workflow');
     asked = await previews.request({
@@ -531,8 +726,11 @@ async function open(pool, config, { user, rootId, deps = {} }) {
   const row = await byId(pool, draft.id);
   // `opened`: their thread's bar brings the preview up beside the chat.
   noteChanged(row, { opened: true }, deps);
-  log.info('live-drafts', 'Draft opened', { draftId: draft.id, appId: app.id, userId: user.id, sessionId: session.id });
-  return { status: 200, body: { ok: true, draft: describe(row), reused: false } };
+  log.info('live-drafts', 'Draft opened', {
+    draftId: draft.id, appId: app.id, userId: user.id, sessionId: session.id,
+    ...(from ? { builtOn: Number(from.row.id), own: from.own } : {}),
+  });
+  return { status: 200, body: { ok: true, draft: describe(row), reused: false, ...(replaced ? { replaced } : {}) } };
 }
 
 // ── The preview's start ─────────────────────────────────────────────────
@@ -1048,11 +1246,39 @@ async function applyEdit(pool, config, { draftId, userId, files, summary, deps =
 
 // ── Putting it up for a vote, or away ───────────────────────────────────
 
+/**
+ * Pure (24 Nov 2026): what a proposal from a draft built on someone else's
+ * proposal goes in on. `stack`: that proposal while it is still open, whose
+ * branch the new one merges into first (a stacked change: rules/pr-base.ts
+ * OPEN_STATUSES); else null, and `ended` says why it goes against main
+ * ('merged': it went live; 'withdrawn': it did not, so its changes come too).
+ * Null for a draft from main or on the person's own proposal.
+ */
+function stackOf(draft) {
+  const on = builtOnOf(draft);
+  if (!on || on.linked) return null;
+  const { OPEN_STATUSES } = require('../workflow/rules/pr-base.ts');
+  const branch = String(draft.built_on_branch || '').trim();
+  const open = OPEN_STATUSES.includes(String(draft.built_on_status || '')) && !!branch;
+  return {
+    prNumber: on.prNumber,
+    stack: open ? { sessionId: on.sessionId, branch: branch.slice(0, 255) } : null,
+    ended: open ? null : (on.merged ? 'merged' : 'withdrawn'),
+  };
+}
+
 /** Pure: the change's description, from what the draft's edits said. */
 function proposalText(draft, edits) {
   const lines = edits.map((e) => `- ${e.summary}`);
+  const on = stackOf(draft);
+  const pr = on?.prNumber ? `PR #${on.prNumber}` : 'another proposal';
+  const builtOn = !on ? []
+    : on.stack ? ['', `Built on ${pr}: this proposal holds only the changes below, and goes in after ${pr} does.`]
+      : on.ended === 'merged' ? ['', `Started from ${pr}, which has gone live since.`]
+        : ['', `Started from ${pr}, which was withdrawn: this proposal also carries ${pr}'s changes.`];
   return [
     `Made with Homeroom bot in a live app preview of ${draft.app_name || draft.app_slug}.`,
+    ...builtOn,
     '',
     'What changed:',
     ...(lines.length ? lines : ['- (no edits)']),
@@ -1150,11 +1376,18 @@ async function proposeClaimed(pool, config, { user, draft, repo, edits, name, cl
   // The proposal: a change of its own, its branch made from the draft's
   // (session-lifecycle.js ensureSessionBranch `fromSessionId`, on a
   // conductor), so it starts exactly at the draft's head.
+  // 24 Nov 2026: a draft built on someone else's open proposal is proposed
+  // stacked on it, as a bot build on top of another change is (#6423): it
+  // waits for that one, and its pull request merges into that one's branch
+  // (pr-metadata.js createPR's base), so the vote sees only this draft's
+  // edits; once that one is on main it is moved there (ParentMerged).
+  const on = stackOf(draft);
   const { rows: [session] } = await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title)
-     VALUES ($1, $2, 'paused', FALSE, '{}', $3)
+    `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title,
+                                waits_for_session_id, imported_pr_base_ref)
+     VALUES ($1, $2, 'paused', FALSE, '{}', $3, $4, $5)
      RETURNING *`,
-    [draft.app_id, user.id, name],
+    [draft.app_id, user.id, name, on?.stack ? on.stack.sessionId : null, on?.stack ? on.stack.branch : null],
   );
   const dropSession = async () => {
     await pool.query(
@@ -1205,8 +1438,18 @@ async function proposeClaimed(pool, config, { user, draft, repo, edits, name, cl
   );
   const now = await byId(pool, draft.id);
   noteChanged(now, {}, deps);
-  log.info('live-drafts', 'Draft proposed', { draftId: draft.id, sessionId: draft.session_id, proposalSessionId: session.id });
-  return { status: 200, body: { ok: true, draft: describe(now), ...(reply.body || {}) } };
+  log.info('live-drafts', 'Draft proposed', {
+    draftId: draft.id, sessionId: draft.session_id, proposalSessionId: session.id,
+    ...(on ? { builtOn: Number(draft.built_on_session_id), stacked: !!on.stack } : {}),
+  });
+  // `builtOn`: what it went in on, for the answer to say (decideDraftProposal).
+  return {
+    status: 200,
+    body: {
+      ok: true, draft: describe(now), ...(reply.body || {}),
+      ...(on ? { builtOn: { prNumber: on.prNumber, stacked: !!on.stack, ended: on.ended } } : {}),
+    },
+  };
 }
 
 /**
@@ -1327,7 +1570,7 @@ module.exports = {
   byId, forThread, threadOf, rootOf, describe, liveStateOf, editsOf, noteChanged,
   editable, proposalOpen, closeReason, settle, repoOf,
   listFiles, readFile, open, supervisorCommand, runtimeFor, noteDeployed,
-  draftableFor, platformRunsInPlace,
+  draftableFor, platformRunsInPlace, proposalRow, proposalStart, builtOnOf, stackOf,
   filesBetween, sendToPreview, syncPreview, applyEdit, proposalText, propose, updateProposal, close,
   previewStatus, changesSince, armFollowup, followUp, followupLine, FOLLOWUP_MAX_AGE_MS,
 };

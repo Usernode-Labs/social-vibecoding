@@ -557,6 +557,35 @@ function designThreadLines(design, { refused = null } = {}) {
 }
 
 /**
+ * Pure (24 Nov 2026): what a turn is told about the proposal a thread's live
+ * draft started from, when it did not start from main (live-drafts.js
+ * builtOnOf): on their own proposal, that it started there (the proposal
+ * lines above say the rest); on someone else's, that it builds on it, never
+ * changes it, and what their Propose is. Empty for a draft from main.
+ */
+function builtOnLines(liveDraft) {
+  const on = require('./live-drafts').builtOnOf(liveDraft);
+  if (!on) return [];
+  const pr = on.prNumber ? `PR #${on.prNumber}` : 'a proposal';
+  if (on.linked) return [`- This draft started from ${pr} itself, their own proposal, not from main.`];
+  const lines = [
+    `- This draft builds on ${pr}, someone else's proposal: it started from ${pr}'s code as it was then, not from main,`,
+    `  and nothing done in it changes ${pr}. Later changes to ${pr} are not in it.`,
+  ];
+  if (liveDraft.state === 'open') {
+    if (on.open) {
+      lines.push(`- Their Propose makes a proposal of their own built on ${pr}: its vote sees only the changes made here, and it`,
+        `  goes in after ${pr} does.`);
+    } else if (on.merged) {
+      lines.push(`- ${pr} has gone live since, so their Propose goes against main.`);
+    } else {
+      lines.push(`- ${pr} was withdrawn, so a proposal from this draft would carry ${pr}'s changes too. Say so before they propose it.`);
+    }
+  }
+  return lines;
+}
+
+/**
  * Pure (step 6): what a turn written in a thread whose live draft is open
  * is told about it (`liveDraft`: a live-drafts row). This turn changes the
  * draft's code itself, with the draft tools its section gives it
@@ -601,6 +630,7 @@ function draftThreadLines(liveDraft, { refused = null, design = null, showing = 
       '  their tap proposes it: you never propose it yourself, and never offer to change a proposal any other way.',
     );
   }
+  lines.push(...builtOnLines(liveDraft));
   // C: a thread with both an artifact and a draft says which is which, and
   // which one they have open when the screen told us.
   if (design) {
@@ -1298,11 +1328,13 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'open_app_preview',
-      description: 'Open a live app preview with them: a draft of a project\'s app runs beside this chat, and from then on what they say in this thread changes the draft, and the preview restarts with each change in a few seconds. Nothing is public until they tap Propose, which puts it to the project\'s vote. Use it when they want to change a project\'s app and watch it change as you talk: they ask for a preview, or to change it live (a message that begins "I want to change an app live"). Only in a private thread, for a project they can change, Homeroom itself only for its admins. It gives you the draft\'s tools for the rest of this turn: when they asked for a change, make it then, and reply.',
+      description: 'Open a live app preview with them: a draft of a project\'s app runs beside this chat, and from then on what they say in this thread changes the draft, and the preview restarts with each change in a few seconds. Nothing is public until they tap Propose, which puts it to the project\'s vote. Use it when they want to change a project\'s app and watch it change as you talk: they ask for a preview, or to change it live (a message that begins "I want to change an app live"). Only in a private thread, for a project they can change, Homeroom itself only for its admins. It gives you the draft\'s tools for the rest of this turn: when they asked for a change, make it then, and reply. A draft starts from main, or from a proposal up for a vote on the project (`proposal`), when they want to try or change that one: on their own proposal, the draft is on it, and Update proposal moves it to the draft and clears its votes; on someone else\'s, the draft builds on it, that proposal is never changed, and their Propose is a new proposal of their own built on it.',
       parameters: {
         type: 'object',
         properties: {
           project: { type: 'string', description: 'The project, by name or slug, when this thread is not about one yet.' },
+          // 24 Nov 2026: resolved in the thread's project, never a session id.
+          proposal: { type: 'integer', description: 'The PR number of a proposal up for a vote on this project to start the draft from, when they want to try or change that proposal. Leave it out to start from main.' },
         },
         additionalProperties: false,
       },
@@ -3511,6 +3543,38 @@ async function startDesign(pool, ctx, args = {}) {
 // answer(): live-draft-bot.js openSession) and makes the change asked for in
 // its next rounds. Later turns in this thread have the draft's tools from the
 // start, while it stays open.
+//
+// 24 Nov 2026: `proposal`, a PR number, starts it from that proposal instead
+// of main. It is read in the thread's project by live-drafts.js open, which
+// says whether the draft is on it (theirs) or builds on it (someone else's);
+// the model never names a session.
+
+/** Pure: the PR number the model named for open_app_preview, or null for none, or { error }. */
+function previewProposalArg(value) {
+  if (value == null || value === '') return null;
+  const n = Number(String(value).trim().replace(/^(?:PR\s*)?#?\s*/i, ''));
+  if (!Number.isSafeInteger(n) || n <= 0 || n > 2147483647) {
+    return { error: '`proposal` is a proposal\'s PR number on this project, like 142. Ask which proposal they mean.' };
+  }
+  return n;
+}
+
+/** Pure: what the turn is told about the proposal a draft it just opened starts from (open's draft, and `replaced`). */
+function previewStartNote(draft, { replaced = null } = {}) {
+  const on = draft?.builtOn || null;
+  const pr = on?.prNumber ? `PR #${on.prNumber}` : 'that proposal';
+  const lines = [];
+  if (replaced) {
+    const was = replaced.builtOn?.prNumber ? `on PR #${replaced.builtOn.prNumber}` : 'from main';
+    lines.push(`This thread's draft ${was} had no changes, so it was closed for this one: say so in a few words.`);
+  }
+  if (on?.linked) {
+    lines.push(`This draft is on ${pr}, their own proposal up for a vote: it starts from its code. A change you save goes into the draft, not ${pr}; it reaches ${pr} only when they tap Update proposal, which clears its votes and runs its checks again. Say that once.`);
+  } else if (on) {
+    lines.push(`This draft builds on ${pr}, someone else's proposal: it starts from that code as it is now, and nothing done here changes ${pr}. When they propose it, the proposal is their own, built on ${pr}, so its vote sees only the changes made here. Say that once.`);
+  }
+  return lines.join(' ');
+}
 
 async function openAppPreview(pool, ctx, args = {}) {
   const rootId = Number(ctx.deps?.threadRootId) || null;
@@ -3534,8 +3598,10 @@ async function openAppPreview(pool, ctx, args = {}) {
       'UPDATE private_threads SET app_id = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2 AND app_id IS NULL',
       [thread.id, ctx.user.id, app.id]);
   }
+  const proposalNumber = previewProposalArg(args.proposal);
+  if (proposalNumber && typeof proposalNumber === 'object') return { ok: false, error: proposalNumber.error };
   const drafts = ctx.deps?.liveDrafts || require('./live-drafts');
-  const out = await drafts.open(pool, ctx.config, { user: ctx.user, rootId });
+  const out = await drafts.open(pool, ctx.config, { user: ctx.user, rootId, ...(proposalNumber ? { proposalNumber } : {}) });
   if (out.status !== 200 || !out.body?.draft?.id) {
     if (out.body?.error === 'join_required' || out.body?.code === 'join_required') {
       return { ok: false, error: 'They have not joined that project: tell them to join it from its page, then ask again.' };
@@ -3557,17 +3623,20 @@ async function openAppPreview(pool, ctx, args = {}) {
         + `tap Update proposal.${loaded?.ok ? ' If they asked for a change, make it now, then reply.' : ' Its code cannot be changed in this turn: say so.'}`,
     };
   }
+  // 24 Nov 2026: a new draft on a proposal says which kind it is.
+  const start = out.body.reused ? '' : previewStartNote(out.body.draft, { replaced: out.body.replaced || null });
+  const lead = start ? `${start} ` : '';
   if (loaded?.ok) {
     return {
       ok: true,
-      note: 'The live preview opens beside the chat now (a minute or two the first time), and the draft\'s tools are yours '
+      note: `${lead}The live preview opens beside the chat now (a minute or two the first time), and the draft's tools are yours `
         + 'for the rest of this turn. If they asked for a change, make it now (read, edit_file, apply_changes), then reply. '
         + 'If they only asked for the preview, reply in a sentence that it is starting, and to say what to change.',
     };
   }
   return {
     ok: true,
-    note: 'The live preview opens beside the chat now. Its code cannot be changed in this turn: reply that it is starting, '
+    note: `${lead}The live preview opens beside the chat now. Its code cannot be changed in this turn: reply that it is starting, `
       + 'and to say what to change.',
   };
 }
@@ -8165,6 +8234,21 @@ function proposalTapsOf(ctx) {
 }
 
 /**
+ * Pure (24 Nov 2026): what a proposal from a draft built on someone else's
+ * proposal goes in on, in one sentence after a space, or '' for any other
+ * draft. `s`: live-drafts.js stackOf's answer ({ prNumber, stack, ended }),
+ * or propose's `builtOn` ({ prNumber, stacked, ended }). Propose's card and
+ * its answer say it.
+ */
+function builtOnWords(s) {
+  if (!s) return '';
+  const pr = s.prNumber ? `PR #${s.prNumber}` : 'the proposal it started from';
+  if (s.stack || s.stacked) return ` It is built on ${pr}, so its vote sees only these changes, and it goes in after ${pr} does.`;
+  if (s.ended === 'merged') return ` ${pr} has gone live since, so it goes against main.`;
+  return ` ${pr} was withdrawn, so it carries ${pr}'s changes too.`;
+}
+
+/**
  * 20 Nov 2026 (live-draft review, C): offer_propose_draft. Nothing is
  * proposed or updated here: the card goes under the reply with Propose (a
  * draft not put to the vote yet) or Update proposal (one whose proposal is up
@@ -8195,7 +8279,7 @@ async function offerProposeDraft(pool, ctx, args = {}) {
     o = {
       kind: 'propose_draft', app, draftId: Number(draft.id), proposeTitle: asked || null,
       title: clip(withoutEmDashes(asked || latest || `Changes to ${name}`), MAX_TITLE_CHARS),
-      details: `${count(edits)}. The project's group votes on it, and this draft stays open here for more.`,
+      details: `${count(edits)}. The project's group votes on it, and this draft stays open here for more.${builtOnWords(require('./live-drafts').stackOf(draft))}`,
     };
   } else {
     const prName = pr ? `PR #${pr}` : 'The proposal';
@@ -8278,9 +8362,10 @@ async function decideDraftProposal(pool, config, { user, action, yes, ack, deps 
   const objects = proposal?.sessionId && action.app_id
     ? [{ type: 'proposal', appId: Number(action.app_id), sessionId: Number(proposal.sessionId) }] : [];
   if (out?.status === 200 && body.ok) {
+    // 24 Nov 2026: and what it went in on, for a draft built on someone else's.
     return ack(update
       ? `Done. ${pr || 'The proposal'} has the draft's changes now. Its votes were cleared and its checks run again.`
-      : `Done. It is going up for a vote on ${name}${pr ? ` as ${pr}` : ''}. The draft stays open here: a change you make now reaches the proposal when you tap Update proposal.`,
+      : `Done. It is going up for a vote on ${name}${pr ? ` as ${pr}` : ''}.${builtOnWords(body.builtOn)} The draft stays open here: a change you make now reaches the proposal when you tap Update proposal.`,
     objects.length ? { objects } : {});
   }
   const code = body.code === 'join_required' ? 'join_required' : String(body.error || 'refused');
@@ -8777,9 +8862,13 @@ module.exports = {
   capabilityGate,
   designThreadLines,
   draftThreadLines,
+  builtOnLines,
+  builtOnWords,
   DESIGN_REPLY_TOOL,
   // Live app drafts: the chat's tool that opens one (services/live-drafts.js).
   openAppPreview,
+  previewProposalArg,
+  previewStartNote,
   WITHDRAW_IT,
   KEEP_IT,
   OFFER_ANSWERS,

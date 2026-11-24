@@ -12,7 +12,9 @@ const { drainGuard } = require('../services/lifecycle');
 // person's own: a draft is theirs alone until they Propose it.
 //
 //   GET  /api/live-drafts?rootId=<n>     the thread's open draft, or null, and whether drafts are on
-//   POST /api/live-drafts {rootId}       open the thread's draft (or answer the one already open)
+//   POST /api/live-drafts {rootId, proposal?}  open the thread's draft (or answer the one already open);
+//                                        `proposal`, a PR number in the thread's project, starts it from
+//                                        that proposal instead of main (24 Nov 2026, live-drafts.js open)
 //   POST /api/live-drafts/:id/preview    they opened its preview: bring it up to the draft's head
 //   POST /api/live-drafts/:id/propose    put it up for a vote, as their own change
 //   POST /api/live-drafts/:id/update     move its proposal to the draft's head (20 Nov 2026, C)
@@ -57,7 +59,10 @@ function liveDraftRoutes(config) {
     const rootId = idOf(req.body?.rootId);
     if (!rootId) return res.status(400).json({ error: 'rootId is required' });
     try {
-      const out = await liveDrafts.open(pool, config, { user: req.user, rootId });
+      // The same gate as Homeroom bot's open_app_preview: read in the thread's project.
+      const proposalNumber = req.body?.proposal == null ? null : idOf(req.body.proposal);
+      if (req.body?.proposal != null && !proposalNumber) return res.status(400).json({ ok: false, error: 'bad_proposal' });
+      const out = await liveDrafts.open(pool, config, { user: req.user, rootId, ...(proposalNumber ? { proposalNumber } : {}) });
       res.status(out.status).json(out.body);
     } catch (err) { failed(res, 'Open', err); }
   });
