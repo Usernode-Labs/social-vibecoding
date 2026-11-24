@@ -2546,9 +2546,9 @@
       "expectText": "general"
     },
     {
-      "name": "On a wide window the sidebar's Recents lists your communities with the one you are on lit, each row carrying its pin after the link (#3709, D; One Home #6361)",
+      "name": "On a wide window the sidebar's Recents lists your communities with the one you are on lit, each row carrying its pin at the row's end (#3709, D; One Home #6361; #7070)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-tabs > #platform-rail-communities > .platform-rail-row[data-rail-row=\"usernode-2d5619\"] > a.platform-rail-community[aria-current=\"page\"] + .platform-rail-pin[aria-pressed]",
+      "expectSelector": "#platform-tabs > #platform-rail-communities > .platform-rail-row[data-rail-row=\"usernode-2d5619\"] > a.platform-rail-community[aria-current=\"page\"] ~ .platform-rail-pin[aria-pressed]",
       "expectText": "Homeroom"
     },
     {
