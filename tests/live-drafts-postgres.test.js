@@ -436,6 +436,68 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     assert.equal(liveDrafts.describe(await liveDrafts.byId(pool, draft.id)).live, 'live');
   });
 
+  // 24 Nov 2026: the follow-up a turn arms when its save, or its look, met a
+  // preview being built: once that preview serves the draft's head, one look
+  // and one line in the thread, and only then; dropped when they wrote since
+  // or when it is old.
+  await t.test('24 Nov: an armed follow-up posts one line once the preview serves the head, and only then', async () => {
+    const draft = await theDraft();
+    const row = () => liveDrafts.byId(pool, draft.id);
+    const looked = [];
+    const followDeps = {
+      ...deps, followupWaitMs: 0, sleep: async () => {},
+      previewLook: {
+        ...require('../src/services/preview-look'),
+        lookAtPreview: async (_c, _p, args) => { looked.push(args.path); return { ok: true, facts: { status: 200, consoleErrors: [] } }; },
+      },
+    };
+    assert.equal(await liveDrafts.armFollowup(pool, { draftId: draft.id, path: '/bake?x=1' }), true);
+    assert.equal((await row()).followup_path, '/bake?x=1');
+    // An address is never armed: it falls back to the app's first page.
+    assert.equal(await liveDrafts.armFollowup(pool, { draftId: draft.id, path: 'https://evil.example/' }), true);
+    assert.equal((await row()).followup_path, '/');
+    await liveDrafts.armFollowup(pool, { draftId: draft.id, path: '/bake?x=1' });
+    // Still behind the head: it stays armed for the next deploy.
+    preview = { status: { head: SHA('1'), ready: true }, apply: () => [200, { ok: true }] };
+    assert.deepEqual(await liveDrafts.followUp(pool, CONFIG, { draftId: draft.id, deps: followDeps }), { skipped: 'not_serving' });
+    assert.ok((await row()).followup_armed_at, 'still armed');
+    assert.deepEqual(looked, []);
+    // Serving the head: one look, one line, and it is spent.
+    const before = said.length;
+    preview = { status: { head: draft.headSha, ready: true }, apply: () => [200, { ok: true }] };
+    const out = await liveDrafts.followUp(pool, CONFIG, { draftId: draft.id, deps: followDeps });
+    assert.equal(out.posted, true, JSON.stringify(out));
+    assert.deepEqual(looked, ['/bake?x=1']);
+    assert.equal(said.length, before + 1);
+    assert.deepEqual([said.at(-1).content, said.at(-1).threadRootId], ['The preview is up with your latest save.', draft.rootId]);
+    assert.match(said.at(-1).idempotencyKey, new RegExp(`^live-draft-followup-${draft.id}-[0-9a-f]{12}$`));
+    assert.equal((await row()).followup_armed_at, null);
+    assert.deepEqual(await liveDrafts.followUp(pool, CONFIG, { draftId: draft.id, deps: followDeps }), { skipped: 'none' });
+  });
+
+  await t.test('24 Nov: a follow-up is dropped once they wrote in the thread, or when it is old', async () => {
+    const draft = await theDraft();
+    const followDeps = {
+      ...deps, followupWaitMs: 0, sleep: async () => {},
+      previewLook: { ...require('../src/services/preview-look'), lookAtPreview: async () => assert.fail('no look for a dropped follow-up') },
+    };
+    preview = { status: { head: draft.headSha, ready: true }, apply: () => [200, { ok: true }] };
+    const before = said.length;
+    await liveDrafts.armFollowup(pool, { draftId: draft.id, path: '/' });
+    const { rows: [pt] } = await pool.query('SELECT conversation_id FROM private_threads WHERE root_message_id = $1', [draft.rootId]);
+    await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+       VALUES ($1, $2, 'and make it red', $3, NOW() + interval '1 second')`,
+      [pt.conversation_id, person.id, draft.rootId],
+    );
+    assert.deepEqual(await liveDrafts.followUp(pool, CONFIG, { draftId: draft.id, deps: followDeps }), { skipped: 'they_wrote' });
+    assert.equal((await liveDrafts.byId(pool, draft.id)).followup_armed_at, null, 'cleared');
+    await pool.query("UPDATE live_drafts SET followup_armed_at = NOW() + interval '5 seconds' WHERE id = $1", [draft.id]);
+    const later = () => Date.now() + liveDrafts.FOLLOWUP_MAX_AGE_MS + 60_000;
+    assert.deepEqual(await liveDrafts.followUp(pool, CONFIG, { draftId: draft.id, deps: { ...followDeps, now: later } }), { skipped: 'stale' });
+    assert.equal(said.length, before, 'nothing was posted');
+  });
+
   await t.test('a new install, or no preview to reach, builds the draft again', async () => {
     let draft = await theDraft();
     preview = { status: { head: draft.headSha }, apply: () => [409, { ok: false, needsRebuild: true, why: 'install' }] };
