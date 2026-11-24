@@ -392,6 +392,50 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     assert.equal(calls.ws[calls.ws.length - 1].payload.reload, false);
   });
 
+  await t.test('a build that fails puts the edit back: the draft says the preview keeps the version before it', async () => {
+    const draft = await theDraft();
+    preview = { status: { head: draft.headSha }, apply: () => [409, { ok: false, needsRebuild: true, why: 'build', log: 'npm ERR! build failed' }] };
+    calls.preview.length = 0;
+    const out = await liveDrafts.applyEdit(pool, CONFIG, {
+      draftId: draft.id, userId: person.id, files: [{ path: 'server.js', content: 'v2b' }], summary: 'Unbuildable', deps,
+    });
+    assert.equal(out.ok, true, 'the edit is saved');
+    assert.deepEqual([out.preview.ok, out.preview.buildFailed, out.preview.crashed, out.preview.log],
+      [false, true, undefined, 'npm ERR! build failed']);
+    assert.equal(calls.preview.length, 0, 'the app\'s own failure builds nothing again');
+    const row = await liveDrafts.byId(pool, draft.id);
+    assert.match(row.last_error, /did not build, so the preview still shows the version before it/);
+    assert.doesNotMatch(row.last_error, /stopped/);
+    assert.equal(calls.ws[calls.ws.length - 1].payload.reload, false);
+  });
+
+  // 24 Nov 2026: an app made from the template compiles Tailwind in
+  // a Dockerfile stage of its own, so the preview's image cannot run `npm run
+  // build`. The edit is kept and runs now; the preview is built again for the
+  // stylesheet.
+  await t.test('a build the preview cannot run keeps the edit, and builds the preview again for it', async () => {
+    const draft = await theDraft();
+    preview = {
+      status: { head: draft.headSha },
+      apply: () => [200, { ok: true, bootMs: 380, head: null, buildSkipped: true, buildLog: 'sh: tailwindcss: not found' }],
+    };
+    calls.preview.length = 0;
+    const out = await liveDrafts.applyEdit(pool, CONFIG, {
+      draftId: draft.id, userId: person.id, files: [{ path: 'server.js', content: 'v2c' }], summary: 'Sourdough bake plan', deps,
+    });
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.preview, { ok: true, bootMs: 380, catchingUp: true });
+    assert.deepEqual([calls.preview.length, calls.preview[0].reason, calls.preview[0].head], [1, 'preview', out.head]);
+    const row = await liveDrafts.byId(pool, draft.id);
+    assert.deepEqual([row.live_state, row.last_error], ['rebuilding', null]);
+    assert.equal(liveDrafts.describe(row).live, 'rebuilding');
+    // Their view reloads now, to the edit the app already runs.
+    assert.equal(calls.ws[calls.ws.length - 1].payload.reload, true);
+    // Once the preview built again serves the head, the draft is live.
+    await publish(draft, out.head);
+    assert.equal(liveDrafts.describe(await liveDrafts.byId(pool, draft.id)).live, 'live');
+  });
+
   await t.test('a new install, or no preview to reach, builds the draft again', async () => {
     let draft = await theDraft();
     preview = { status: { head: draft.headSha }, apply: () => [409, { ok: false, needsRebuild: true, why: 'install' }] };
@@ -635,12 +679,14 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     assert.equal(install.preview, 'rebuilding', JSON.stringify(install));
     assert.match(install.note, /minute or two/);
 
-    // (f) The app's own build step failed: that is the app's own failure.
+    // (f) The app's own build step failed: that is the app's own failure, and
+    // the files were put back, so the preview still runs the version before.
     await serve([409, { ok: false, needsRebuild: true, why: 'build', log: 'npm ERR! build failed' }]);
     const build = await applyChange('build');
-    assert.equal(build.preview, 'crashed', JSON.stringify(build));
+    assert.equal(build.preview, 'build_failed', JSON.stringify(build));
     assert.match(build.log, /npm ERR! build failed/);
     assert.match(build.note, /its build/);
+    assert.match(build.note, /still shows the version before/);
   });
 
   // #6961: a live draft of Homeroom itself, for an admin who can change it.
