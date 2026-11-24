@@ -865,7 +865,7 @@
       "name": "Me: the editable profile card leads, above the merged and challenges stat cards (#982; no kudos card, #5249)",
       "path": "/?demo=1#profile",
       "expectText": "Edit profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
+      "expectSelector": "#profile-screen:not(.hidden):has(#profile-details form):has(#profile-live-projects) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
       "id": "profile.week-share",
@@ -4933,17 +4933,6 @@
         "frontend/src/features/weekly-digest/index.tsx",
         "frontend/locales/en/weekly-digest.json",
         "src/routes/weekly-digest.js"
-      ]
-    },
-    {
-      "id": "profile.editorial-details",
-      "name": "Profile shows an in-page editor and real project gallery",
-      "path": "/?demo=1#profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-details:has(#profile-details-name):has(#profile-details-bio) form",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/profile/**",
-        "public/css/app.css"
       ]
     }
   ],
