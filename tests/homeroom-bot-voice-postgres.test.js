@@ -328,13 +328,13 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     ]);
     const out = await turn(place, model, { through: id - 1, key: 'reads-1' });
     assert.equal(out.outcome, 'replied');
-    assert.equal(model.seen.length, voice.MAX_ROUNDS, 'its eight rounds, the last of them the answer');
+    assert.equal(model.seen.length, voice.MAX_ROUNDS, 'its twelve rounds, the last of them the answer');
     const lastResult = (i) => {
       const results = snaps[i].filter((m) => m.role === 'tool');
       return results.length ? String(results[results.length - 1].content) : '';
     };
-    assert.doesNotMatch(lastResult(4), /reading for this turn is done/, 'the fourth read is served');
-    assert.match(lastResult(5), /reading for this turn is done/, 'the fifth is refused');
+    assert.doesNotMatch(lastResult(8), /reading for this turn is done/, 'the eighth read is served');
+    assert.match(lastResult(9), /reading for this turn is done/, 'the ninth is refused');
     const last = model.seen[voice.MAX_ROUNDS - 1];
     assert.equal(last.toolChoice, 'required');
     assert.deepEqual(last.tools.map((tl) => tl.function.name).sort(), ['reply', 'stay_quiet', 'update_change'],
