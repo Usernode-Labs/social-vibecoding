@@ -31260,9 +31260,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   #platform-rail-pinned:not(.hidden) + #platform-rail-communities > .platform-rail-head { display: none; }
   #platform-rail-search { display: none; }
 
-  /* A row: the link fills it, and the pin and the count sit over its end in
-     their own columns, the pin first, so the count keeps the row's end and
-     does not move when the pin shows. */
+  /* A row: the link fills it, and the count and the pin sit over its end in
+     their own columns, the count first, so the pin keeps the row's end and
+     the count does not move when the pin shows. */
   .platform-rail-row {
     position: relative;
     display: grid;
@@ -31272,17 +31272,16 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   .platform-rail-row > .platform-rail-community { grid-column: 1 / -1; grid-row: 1; padding-inline-end: 38px; }
   .platform-rail-row[data-votes] > .platform-rail-community { padding-inline-end: 62px; }
   .platform-rail-pin {
-    grid-column: 2; grid-row: 1; position: relative; z-index: 2;
+    grid-column: 3; grid-row: 1; position: relative; z-index: 2;
     width: 26px; height: 26px; margin-inline-end: 6px; border-radius: 8px;
     display: grid; place-items: center;
     color: var(--text-muted);
     opacity: 0;
     transition: opacity 120ms ease, background-color 120ms ease;
   }
-  .platform-rail-row[data-votes] > .platform-rail-pin { margin-inline-end: 2px; }
   .platform-rail-row > .platform-rail-votes {
-    grid-column: 3; grid-row: 1; position: relative; z-index: 2;
-    margin-inline-end: 8px; pointer-events: none;
+    grid-column: 2; grid-row: 1; position: relative; z-index: 2;
+    margin-inline-end: 2px; pointer-events: none;
   }
   .platform-rail-pin-glyph { width: 16px; height: 16px; }
   .platform-rail-row:hover > .platform-rail-pin,

@@ -422,9 +422,9 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   const part = open || (sidebarRows && app && (running || onApp === slug));
   return (
     <Fragment>
-      {/* RECENTS' ROW (One Home, #6361): the link fills the row, and the pin
-          and the count sit over its end in their own columns, the pin first,
-          so the count keeps the row's end (app.css .platform-rail-row). */}
+      {/* RECENTS' ROW (One Home, #6361): the link fills the row, and the count
+          and the pin sit over its end in their own columns, the count first,
+          so the pin keeps the row's end (app.css .platform-rail-row). */}
       <div className="platform-rail-row" data-rail-row={slug} {...(votes > 0 ? { 'data-votes': '' } : null)}>
       <a
         className="platform-rail-community"
@@ -471,6 +471,11 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
         <span className="platform-rail-name">{name}</span>
         {votes > 0 ? <span className="sr-only">{t('core:tabs.votesWaiting', { count: votes })}</span> : null}
       </a>
+      {votes > 0 ? (
+        <span className="platform-rail-votes" aria-hidden="true">
+          {votes > 99 ? '99+' : String(votes)}
+        </span>
+      ) : null}
       <button
         type="button"
         className="platform-rail-pin"
@@ -483,11 +488,6 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
         {/* Filled while pinned: app.css keys it off aria-pressed. */}
         <PushPinIcon className="platform-rail-pin-glyph" aria-hidden="true" />
       </button>
-      {votes > 0 ? (
-        <span className="platform-rail-votes" aria-hidden="true">
-          {votes > 99 ? '99+' : String(votes)}
-        </span>
-      ) : null}
       </div>
       <NestSlot open={part} className="platform-rail-nest" rows=".platform-rail-app, .dev-ws-place, .dev-ws-places-head">
         {app ? (
