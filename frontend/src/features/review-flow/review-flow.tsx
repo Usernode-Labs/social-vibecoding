@@ -1084,7 +1084,10 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           <VoteTypeChips tallies={tallies} pressed={filter} onPress={pickFilter} />
         </div>
         <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={beside ? undefined : { top: barTop }} aria-hidden={!desc && !beside} inert={(!desc && !beside) || undefined}>
-          <div className="rf-desc-dim" onClick={() => setDesc(false)} />
+          {/* Over the change it dims the page behind the card and a tap folds the card. Beside the change it is laid over
+              the card while a sheet is up (app.css `[data-rf-beside] .rf-desc-dim`), and a tap puts the sheet away, as
+              one on the scrim does. */}
+          <div className="rf-desc-dim" onClick={() => (beside ? setSheet(votes[item.key] ? 'voted' : 'ask') : setDesc(false))} />
           <div className="rf-desc" id="rf-desc" data-rf-desc="">
             {appName ? <p className="rf-desc-app">{appName}</p> : null}
             <p className="rf-desc-text">{item.summary || item.line}</p>

@@ -43,8 +43,8 @@ const WIP_HIDES = [
   'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-stack, .rf-end-mark)',
   // Needs you does not carry the project's paused-changes notice: voting goes on (20 Nov 2026).
   'html:not([data-skin]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws[data-ws-tab="needs"]) > #dev-code-pause-notice',
-  // From 1280px a project's Needs you shows what a change does beside it: no arrow to open it, no dimming behind it (20 Nov 2026).
-  'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim',
+  // From 1280px a project's Needs you shows what a change does beside it: no arrow to open it (20 Nov 2026). Its dim
+  // stays, unseen, until a sheet is up on the change, when it dims the side card as the scrim does the change (24 Nov 2026).
   'html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle',
   // And the short claim over the picture: the full text is beside it, so it is said once.
   'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row',

@@ -6545,7 +6545,8 @@ html:not([data-skin]) {
   --wip-page-bg-communities: var(--wip-page-bg);
   --wip-soft-line: color-mix(in srgb, var(--wip-ink) 6%, transparent); /* a rule inside a card (over a community's week): softer than the card's hairline */
   --wip-card-line-hover: color-mix(in srgb, var(--wip-ink) 15%, transparent); /* a card's edge under the pointer: a shade deeper, not the ink */
-  --wip-thumb: 6rem;          /* a change's picture in a list: a thumbnail at its side */
+  --wip-scrim: rgb(0 0 0 / 0.62); /* over a card while a sheet on the card beside it is up: the vote's own dim (.rf-scrim), so the two cards dim alike */
+  --wip-thumb: 6rem;         /* a change's picture in a list: a thumbnail at its side */
   --wip-hero-pad: 1.25rem;
   --wip-hero-min: 0;        /* a poster's height, whatever it says */
   --wip-hero-art: 4.5rem;       /* the icon at its side */
@@ -7635,6 +7636,16 @@ html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="all"]) {
   max-width: none;
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
+}
+/* THE HUB IS AT MOST 1132PX WIDE (asked 24 Nov 2026), a request page's
+   width, and #dev-workshop's own auto margins centre it: on a wide window
+   it ran edge to edge, a contributor's name some 1,500px from their count
+   at 1920px. Nothing inside it moves. The hub alone: Needs you, the board
+   and the Workshop keep their widths. From 1281px, so a window of 1280 or
+   less is drawn as before beside the folded menu too, which leaves the hub
+   1,160px there; with less room than the cap nothing changes anyway. */
+@media (min-width: 1281px) {
+  html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="status"]) { max-width: 1132px; }
 }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { row-gap: var(--wip-row-gap); column-gap: var(--wip-col-gap); }
 /* The hub sits on the page itself, as Home does: the project page's own
@@ -8917,25 +8928,43 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone >
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-end-alone > :is(.rf-end-btn, .rf-end-back):last-child { margin-bottom: auto; }
 /* WHAT A CHANGE DOES, BESIDE IT (asked 20 Nov 2026). From 1280px a project's Needs you keeps the card that the arrow in
    the change's bar opens (its summary, who made it, the way to its page and the three ways to look closer) open at the
-   change's far side, in the same card past a hairline; review-flow.tsx marks the page (`data-rf-beside`) and takes the
-   card out of hiding. Narrower, the arrow opens it over the change as it always did. */
-html:not([data-skin]) { --wip-needs-side: 22rem; --wip-needs-main: 45rem; } /* beside: the change's own column is 720px where the card alone is 520 (asked 20 Nov 2026) */
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] > .rf-page { width: min(100%, calc(var(--wip-needs-main) + var(--wip-needs-side))); padding-inline-end: var(--wip-needs-side); }
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-wrap { inset-block: 0; inset-inline-start: auto; inset-inline-end: 0; width: var(--wip-needs-side); overflow: visible; pointer-events: auto; border-inline-start: 1px solid var(--rf-line); }
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc { position: static; max-height: 100%; padding: 1rem; border-radius: 0; background: none; box-shadow: none; transform: none; transition: none; }
+   change's far side; review-flow.tsx marks the page (`data-rf-beside`) and takes the card out of hiding. Narrower, the
+   arrow opens it over the change as it always did.
+   A CARD OF ITS OWN (asked 24 Nov 2026), as a request page's timeline is beside its thread: the change's card (its bar,
+   its picture and the vote) keeps its 720px, page ground parts the two by 20px, and what it does is a 332px card on
+   the right, as tall as what it holds, from the top of the change's and never past its foot (its words scroll inside
+   it, as they did). The pair is centred, 1072px together as the one card was. The page wrap is the pair: the change's
+   card is its first column and the side card is placed in the room kept after it. The change's card is not a
+   positioned box here, so the side card, though it is written inside it, is laid out in the pair and not clipped to
+   the change's round corners; the scrim, which no longer meets those corners either, is given them. */
+html:not([data-skin]) { --wip-needs-main: 45rem; --wip-needs-gap: 1.25rem; --wip-needs-side: 20.75rem; } /* 720 + 20 + 332: the change's own column is 720px where the card alone is 520 (asked 20 Nov 2026); the gap and the side card are a request page's timeline's (24 Nov 2026) */
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] {
+  width: min(100%, calc(var(--wip-needs-main) + var(--wip-needs-gap) + var(--wip-needs-side)));
+  margin-inline: auto;
+  padding-inline-end: calc(var(--wip-needs-gap) + var(--wip-needs-side));
+}
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] > .rf-page { position: static; width: 100%; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-scrim { inset-inline-end: calc(var(--wip-needs-gap) + var(--wip-needs-side)); border-radius: var(--wip-card-radius); }
+/* The side card: placed at the pair's far end, top-aligned, and no taller than the pair, which is the change's card's
+   height; a column, so what it holds shrinks to it and its words scroll. */
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-wrap { inset-block: 0 auto; inset-inline: auto 0; width: var(--wip-needs-side); max-height: 100%; display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc { position: static; min-height: 0; padding: 1rem; border-radius: 0; background: none; box-shadow: none; transform: none; transition: none; }
 html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] :is(.rf-desc-foot, .rf-desc-help) { margin-inline: 0; }
-html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim { display: none; }
 html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-bar-toggle { display: none; }
+/* While a sheet is up on the change (a No's reason, Ask privately, Discussion, Try it) and the scrim dims its card, the
+   side card dims the same, so it does not look like the thing to press; a tap on it puts the sheet away, as a tap on
+   the scrim does (review-flow.tsx). Its dim is the one it has narrower, over the change, unused beside it till now. */
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] .rf-desc-dim { z-index: 1; background: var(--wip-scrim); opacity: 0; pointer-events: none; }
+html:not([data-skin]) #dev-workshop .rf-page-wrap[data-rf-beside] > .rf-page:has(> .rf-scrim-on) .rf-desc-dim { opacity: 1; pointer-events: auto; }
 /* THE VOTE CARD'S INSIDE LINES (proposal, 20 Nov 2026). The card is the look's card (its colour, one hairline, its
    corners) and nothing inside it is ruled off: no line above the vote, a soft hairline round the picture in place of
-   its dark edge and shadow, and beside the change what it does sits on a very soft panel in place of a divider. */
+   its dark edge and shadow. Beside the change, what it does is the same card, on its own (24 Nov 2026). */
 /* The flow's own page colour is the card's, so its bar and the stage behind the picture are the card's colour too. */
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap { --rf-page: var(--wip-card-bg); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page { border-radius: var(--wip-card-radius); background: var(--wip-card-bg); box-shadow: 0 0 0 1px var(--wip-card-line); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-sheet { background: none; box-shadow: none; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-plate-btn { box-shadow: 0 0 0 1px var(--wip-card-line); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc-wrap { border-inline-start: 0; padding: 0.75rem; padding-inline-start: 0; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc { height: 100%; border-radius: var(--wip-radius-inner); background: var(--wip-soft-bg); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc-wrap { border-radius: var(--wip-card-radius); background: var(--wip-card-bg); box-shadow: 0 0 0 1px var(--wip-card-line); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-desc-help { border-radius: 0; background: none; box-shadow: inset 0 1px 0 var(--wip-soft-line); }
 /* THE VOTE CARD'S SMALL CONTROLS ARE THE KIT'S (asked 20 Nov 2026). The three ways to look closer are doors as the
    hub's are: each glyph on a tile of its own mark colour (yellow, blue, green), a soft rule between rows. The way back
@@ -23691,8 +23720,7 @@ a.dev-ws-hero-pending {
 /* INVITE, AS A CARD (community-card.tsx InviteHeroCard, request 6654):
    Home's New project card on the hub. A lilac card: faces of people already
    here fanned out with an open seat after them, a question, what an invite
-   does, one full-width dark button and how many are in. Under the hero on a
-   phone; beside it on a wide window ("THE HUB IN TWO COLUMNS" below). */
+   does, one full-width dark button and how many are in. Under the hero. */
 .dev-ws-invite-hero {
   position: relative;
   display: flex; flex-direction: column; gap: 10px; min-width: 0;
@@ -23728,30 +23756,6 @@ a.dev-ws-hero-pending {
 .dark .dev-ws-invite-hero-btn { background: #fafafa; color: #18181b; }
 .dark .dev-ws-invite-hero-btn:hover { background: #e4e4e7; }
 .dev-ws-invite-hero-count { margin: 0; font-size: 13px; line-height: 18px; text-align: center; color: var(--text-muted); }
-/* THE HUB IN TWO COLUMNS (request 6654). On a wide window the hub was one
-   760px column with a wide empty margin either side. Its page is 1080px
-   there, and two pairs sit side by side in equal halves: the hero with the
-   Invite card, and For you with Topics. Everything else keeps the full
-   width, in the order it is written. Each pair is side by side only when
-   both are there and adjacent, so a hub without topics, or without the
-   Invite card, is one column as before. Not under a look (`data-skin`),
-   whose kit has a column of its own. */
-@media (min-width: 1100px) {
-  html:not([data-skin]) #dev-workshop:has(> .dev-ws[data-ws-tab="status"]) { max-width: 1080px; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
-    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    column-gap: 16px; align-content: start; align-items: start;
-  }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { grid-column: 1 / -1; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero:has(+ .dev-ws-invite-hero),
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
-  /* Top contributors (request 6837) goes under For you, and Topics beside
-     the two of them. Without Topics it keeps the full width. */
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics]:has(+ [data-ws-hub-contributors]) { grid-row: span 2; }
-  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] + [data-ws-hub-contributors] { grid-column: 1; }
-}
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense;

@@ -1492,8 +1492,8 @@ const INVITE_FACES = 3;
  * in the hero's row and was easy to miss. It is a card of its own now, drawn
  * as Home's New project card is: faces of people already here fanned out
  * with an open seat after them, what an invite does, one full-width button
- * and how many people are in. Beside the hero on a wide window, under it on
- * a phone (app.css `.dev-ws-invite-hero`). The button opens the same invite
+ * and how many people are in. Under the hero (app.css
+ * `.dev-ws-invite-hero`). The button opens the same invite
  * pane the small Invite did (openInviteLinks).
  *
  * Its ✕ (request 6687, ./hub-dismissed.ts) closes it for that person on

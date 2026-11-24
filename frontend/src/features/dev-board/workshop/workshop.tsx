@@ -4237,8 +4237,8 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
-      {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
-          under it on a phone. See ./community-card.tsx InviteHeroCard. */}
+      {/* INVITE, AS A CARD (request 6654): under the hero. See
+          ./community-card.tsx InviteHeroCard. */}
       {slug && !kitHub ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
@@ -4311,15 +4311,11 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* TOPICS, at every width (request 6654): each live topic's channel has
           a row here. It was the phone's alone (3 Nov 2026), a wide window
-          listing them in its sidebar only; now a wide window draws For you
-          and Topics side by side (app.css, "THE HUB IN TWO COLUMNS"). See
-          ./hub-cards.tsx TopicsCard. */}
+          listing them in its sidebar only. See ./hub-cards.tsx TopicsCard. */}
       {slug ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
       {/* TOP CONTRIBUTORS (request 6837): who took part most, by name and a
-          count in words. After Topics in the page, so For you and Topics
-          stay a pair; a wide window puts it under For you, beside Topics
-          (app.css, "THE HUB IN TWO COLUMNS"). Nothing until two people have
-          taken part. See ./hub-cards.tsx ContributorsCard. */}
+          count in words, after Topics in the page. Nothing until two people
+          have taken part. See ./hub-cards.tsx ContributorsCard. */}
       {slug ? <ContributorsCard data={community} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its

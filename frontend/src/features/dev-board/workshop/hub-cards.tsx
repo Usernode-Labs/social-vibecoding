@@ -822,7 +822,7 @@ export const HUB_TOPICS_SHOWN = 6;
  * a topic, drawn as the Discussion's row is: its icon, its name and #handle,
  * what it is about, and how much is new in it. The first few are listed and
  * the rest wait behind "Show N more", as the sidebar folds them. Drawn at
- * every width since request 6654: a wide window puts it beside For you.
+ * every width since request 6654.
  */
 export function TopicsCard({ data, onOpen }: {
   data: CommunityPayload | null;
