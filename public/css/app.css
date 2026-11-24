@@ -11271,32 +11271,8 @@ html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1
   html:not([data-skin]) #profile-root #profile-stats { grid-row: 1; align-self: end; justify-self: end; width: 42%; z-index: 1; margin: 0 1.5rem 0.75rem 0; }
   html:not([data-skin]) #profile-stats > [data-profile-stat] { padding-block: 0.5rem; }
 }
-/* The supplied brand pack: an ivory page under a fading cloud-and-star sky.
-   These are page treatments, including the navigation while either is open. */
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) {
-  --wip-nav-bg: var(--ed-ground);
-  --wip-nav-ink: var(--ed-ink);
-  --wip-nav-ink-strong: var(--ed-ink);
-  --wip-nav-mut: var(--ed-muted);
-  --wip-nav-faint: var(--ed-muted);
-  --wip-nav-hover: var(--ed-well);
-  --wip-nav-count-bg: var(--ed-lit-bg);
-  --wip-nav-count-ink: var(--ed-ink);
-  --wip-nav-foot-line: var(--ed-line);
-  --wip-nav-brand-logo: url('/brand/editorial/homeroom-wordmark-black.svg');
-  background: var(--ed-ground);
-}
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs {
-  border-inline-end: 1px solid var(--ed-rule);
-  background: var(--ed-ground);
-}
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-header {
-  border-radius: 0;
-  background: var(--ed-ground);
-  box-shadow: inset 0 -1px 0 var(--ed-rule);
-  color: var(--ed-ink);
-}
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs .platform-tab { font-weight: 400; }
+/* The supplied brand pack styles the Profile and Settings content only.
+   The shared header and platform navigation keep their global shell styles. */
 html:not([data-skin]) :is(#profile-screen, #settings-screen) {
   background: var(--ed-ground);
   border-radius: 0;
@@ -11447,11 +11423,6 @@ html:not([data-skin]) #settings-section-content .ui-link { box-shadow: none; tex
   html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input { min-height: 2.75rem; }
   html:not([data-skin]) #settings-profile-details .profile-details-actions { margin-top: 1rem; }
 }
-@media (min-width: 768px) {
-  html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)):has(#platform-tabs:not(.platform-tabs-folded)) #platform-header {
-    background: linear-gradient(to right, transparent var(--wip-nav-w), var(--ed-ground) var(--wip-nav-w));
-  }
-}
 html:not([data-skin]) #profile-root #profile-work .ui-lrow-tx { display: flex; align-items: center; gap: 1rem; }
 html:not([data-skin]) #profile-root #profile-work .ui-lrow-t { flex: 0 0 8rem; font-size: 0.875rem; font-weight: 500; }
 html:not([data-skin]) #profile-root #profile-work .ui-lrow-s { flex: 1; min-width: 0; margin-top: 0; font-size: 0.8125rem; }
@@ -11511,8 +11482,6 @@ html:not([data-skin]) #settings-profile-card .settings-profile-camera {
 }
 html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { width: 1.125rem; height: 1.125rem; }
 @media (min-width: 1024px) {
-  html:not([data-skin]) body:has(#profile-screen:not(.hidden)) { --wip-nav-w: 216px; }
-  html:not([data-skin]) body:has(#settings-screen:not(.hidden)) { --wip-nav-w: 202px; }
   html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) {
     width: 100%;
     margin-inline: 0;
@@ -11557,14 +11526,6 @@ html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { widt
   html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) :is(.ui-glist, .ui-card.bg-white) {
     background: none;
     border-radius: 0;
-  }
-}
-@media (min-width: 1024px) and (min-height: 850px) {
-  html:not([data-skin]):not(.dark) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs:not(.platform-tabs-folded)::after {
-    height: 6.5rem;
-    margin-inline: 0;
-    background: var(--ed-grass) right bottom / 60rem auto no-repeat;
-    clip-path: ellipse(118% 92% at 92% 100%);
   }
 }
 @media (max-width: 639.98px) {

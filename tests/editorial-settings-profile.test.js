@@ -62,6 +62,13 @@ test('every rule of the editorial pages is the standard look\'s alone', () => {
   assert.ok(!/data-skin="brand"/.test(block()), 'the brand look keeps its own drawing');
 });
 
+test('Profile and Settings leave the shared header and platform navigation untouched', () => {
+  const editorial = block();
+  assert.doesNotMatch(editorial, /#platform-(?:header|tabs)/, 'the global shell controls its own header and navigation');
+  assert.doesNotMatch(editorial, /--wip-nav-[\w-]+\s*:/, 'the pages do not override shared navigation tokens');
+  assert.doesNotMatch(editorial, /--wip-nav-w\s*:/, 'the pages do not change the shared rail width');
+});
+
 test('its colours are tokens, declared once in light and once in dark', () => {
   const all = rules();
   const [light, dark, ...rest] = all;
