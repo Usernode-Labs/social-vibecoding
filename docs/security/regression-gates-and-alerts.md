@@ -17,7 +17,11 @@ with main, and this policy does not add a resync for every unrelated merge.
 The `Security merge gate` job in `kubernetes-pr-checks.yml` requires the
 lockfile audit, five image checks, security regressions, and PostgreSQL
 compatibility checks. A missing, skipped, failed, or cancelled dependency
-keeps the gate red. When GitHub refuses a merge, Homeroom's merge queue
+keeps the gate red. An image check for a change to application code alone
+reports success without building (`scripts/pr-image-inputs.js`): its packages
+come from the Dockerfiles, lockfiles and bases, which such a change leaves as
+the base has them. The rule lists what is known not to matter and builds for
+anything else, and the starter image is always built. When GitHub refuses a merge, Homeroom's merge queue
 records the refusal and retries after four minutes. The check names in
 `security/required-merge-checks.json` are also configured in Settings >
 Branches > main.
@@ -37,7 +41,8 @@ comparisons are unavailable and require retry/review, never a clean verdict
 or a fabricated new vulnerability. The normal runtime probes still gate.
 
 PR-base inventories are built only when a candidate has a potentially blocking
-finding. Every candidate is scanned with the current advisory database.
+finding. Every candidate that is built is scanned with the current advisory
+database.
 Inventories are freshly generated from the exact base, using Docker's normal
 build-layer reuse. PR-written inventory caches are not restored across runs.
 The job summary records baseline build duration; a clean candidate needs no
