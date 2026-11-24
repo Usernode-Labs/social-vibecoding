@@ -59,9 +59,10 @@ import type { YouTab } from './frame/you-tabs';
 import { walletSheetStore } from '../header/wallet-sheet-store';
 import { useFramePage } from '../frame/frame-page-store';
 
-/** The round picture, or the initial-in-a-circle fallback — the idiom the rest
- *  of the app already uses for people. */
-function IdentityAvatar({ url, initial }: { url: string | null; initial: string }): ReactNode {
+/** The round picture, or the brand pair — two of Homeroom's own characters
+ *  side by side — when no photo has been added (#7109). The pair is clipped
+ *  to the same square (or circle, in the other looks) as a real photo. */
+function IdentityAvatar({ url }: { url: string | null }): ReactNode {
   if (url) {
     return (
       <img
@@ -73,13 +74,11 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
   }
   return (
     <div
-      className={
-        'profile-id-avatar w-14 h-14 text-xl rounded-full shrink-0 flex items-center justify-center '
-        + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
-      }
+      className="profile-id-avatar profile-id-pair w-14 h-14 rounded-full shrink-0 flex overflow-hidden bg-violet-100 dark:bg-violet-900/40"
       aria-hidden="true"
     >
-      {initial}
+      <img src="/brand/groups/avatar-m3.webp" alt="" className="w-1/2 h-full object-cover" draggable={false} />
+      <img src="/brand/groups/avatar-f3.webp" alt="" className="w-1/2 h-full object-cover" draggable={false} />
     </div>
   );
 }
@@ -106,7 +105,7 @@ function IdentityCard({ identity, editorial = false }: { identity: any; editoria
       */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex flex-1 min-w-0 items-center gap-3">
-          <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
+          <IdentityAvatar url={identity.avatarUrl} />
           <div className="flex-1 min-w-0">
             {/* Two lines at most, then an ellipsis: a long display name wraps
                 rather than losing its end at the first line. */}

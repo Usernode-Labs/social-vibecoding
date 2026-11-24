@@ -210,7 +210,7 @@ the same name and the page follows.
 | `groups/benefit-comment.webp` | brand drawing: a pencil | 96 × 96 | 4.2 KB |
 | `groups/benefit-talk.webp` | brand drawing: a speech bubble | 96 × 96 | 4.7 KB |
 | `groups/benefit-credit.webp` | brand drawing: a trophy | 96 × 96 | 4.9 KB |
-| `groups/avatar-f1.webp`, `groups/avatar-f3.webp`, `groups/avatar-f4.webp`, `groups/avatar-m3.webp`, `groups/avatar-m4.webp` | brand characters, as the faces of made-up members in the hero's walk-through | 96 × 96 | 1.6 to 2.3 KB each |
+| `groups/avatar-f1.webp`, `groups/avatar-f3.webp`, `groups/avatar-f4.webp`, `groups/avatar-m3.webp`, `groups/avatar-m4.webp` | brand characters, as the faces of made-up members in the hero's walk-through; `avatar-m3` (boy) and `avatar-f3` (girl) are also the profile picture's no-photo fallback | 96 × 96 | 1.6 to 2.3 KB each |
 | `groups/avatar-kai.webp`, `groups/avatar-zoe.webp` | photographs of two faces, for two more made-up members | 96 × 96 | 1.8 and 2.0 KB |
 
 They are decoration (empty `alt`, or a background behind words that read

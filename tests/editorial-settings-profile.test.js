@@ -150,6 +150,9 @@ test('Profile opens on who you are, across the page', () => {
     assert.ok(view.includes(hook), `the card carries ${hook}`);
     assert.ok(b.includes(`.${hook}`) || hook === 'profile-id-sub', `and the block reads ${hook}`);
   }
+  // #7109: the brand pair is clipped to the editorial square by the same
+  // avatar class and its own overflow, so it never spills past the radius.
+  assert.match(view, /profile-id-avatar profile-id-pair[^"`]*overflow-hidden/, 'the pair stays inside the square');
   assert.match(b, /#profile-identity-card #profile-edit-btn \{[^}]*background: var\(--wip-btn-1-bg\);/, 'Edit profile is the main action');
 });
 
