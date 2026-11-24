@@ -78,6 +78,8 @@ const MENU_HIDES = [
   // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
   'html:not([data-skin]) #platform-tabs::before',
   'html:not([data-skin]) body #platform-header#platform-header::before',
+  // Home's and Communities' bar layer is off while the overlay scrim paints: in Firefox on a Mac the scrim over it was a darker band (24 Nov 2026).
+  'html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[style*="visibility: visible"]) #platform-header#platform-header::before',
   // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
   // and the words, headings, pins and nested places are the open menu's (asked 20 Nov 2026); the counts on the
@@ -294,6 +296,20 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
     'so its strip is cut on the other side, and its foot by the bar\'s -mb-2');
   // The layer is never content of its own, so the hidden-rule list does not grow.
   assert.ok(!MENU_HIDES.includes(UNDER));
+  // …BUT NOT UNDER A SCRIM (24 Nov 2026): in Firefox on a Mac the scrim over
+  // this fixed layer composited about 7% darker than over the page, a band
+  // across the bar. While lib/overlay-scrim.js's paint layer is visible, the
+  // layer is off and the bar shows the body's own wallpaper, the same pixels.
+  const SCRIM_UP = `${MENU_SCOPE} body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[style*="visibility: visible"]) #platform-header#platform-header::before`;
+  const off = all.find((r) => r.selector === SCRIM_UP);
+  assert.ok(off, 'Home and Communities turn the layer off while the scrim paints');
+  assert.match(off.body, /^\s*content: none !important;\s*$/, 'and only that: the layer\'s own rule stays as it is');
+  assert.ok(all.indexOf(off) > all.indexOf(under) && all.indexOf(off) > all.indexOf(rtlUnder),
+    'after both directions\' rules, and it out-ranks them by its extra :has()');
+  // The key is what the paint layer writes on itself: visible while it paints, hidden once the dim is gone.
+  const scrim = read('frontend', 'src', 'lib', 'overlay-scrim.js');
+  assert.match(scrim, /visibility: 'visible'/, 'the scrim writes visibility: visible while it paints');
+  assert.match(scrim, /paint\.style\[key\] = next\[key\]/, 'as an inline style, which the selector reads');
 });
 
 test('on a community\'s page the Communities tab gives way to its row', () => {

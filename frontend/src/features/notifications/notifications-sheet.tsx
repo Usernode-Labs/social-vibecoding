@@ -2104,19 +2104,16 @@ export function NotificationsSheetView() {
       >
       {/*
           THE SHEET RISES ON THE LIFT a dev session does — the same radius,
-          hairline and two-layer shadow — on `.dc-lift-panel`, which is that
-          glass plus a third shadow layer: the modal dim, cast OUTWARD by this
-          element instead of painted behind it.
+          hairline and two-layer shadow — on `.dc-lift-panel`.
 
-          That inversion is the whole of why the sheet stopped looking dull.
-          The dim used to live on #notifications-sheet-overlay at `z-40`, under
-          the sheet at `z-50` — and `backdrop-filter` samples whatever is
-          painted behind, so the glass was frosting an already-dimmed page and
-          composited to #cac7c3. An OUTER box-shadow is clipped to outside the
-          border box, so it never enters this element's own backdrop: the sheet
-          frosts the undimmed page while the same declaration darkens
-          everything around it. The overlay is still there and still dismisses
-          on click; it just paints nothing now.
+          The modal dim is not one of its shadow layers. It is a paint layer
+          of its own, <OverlayScrim> at the end of this component
+          (lib/overlay-scrim.js): right after the sheet, at the sheet's
+          z-index, it paints the dim everywhere but a hole cut to the sheet's
+          rounded box, and fades with the overlay's opacity (why it is a
+          layer apart: lib/overlay-scrim.js and `.overlay-scrim` in app.css).
+          #notifications-sheet-overlay is still there and still dismisses on
+          click; it paints nothing.
 
           On top of that surface: a title row of its own — the name, Mark all
           read as a small pill (only on Unread, the tab whose list it empties),
