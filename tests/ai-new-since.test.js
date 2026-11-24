@@ -155,7 +155,7 @@ test('the bands as drawn: the dot, the new rows first, the line, the pill; none 
   assert.equal((needs.match(/data-ai-new=""/g) || []).length, 2);
   // The line is a real separator, with the last visit's time in its words.
   assert.match(needs, /<div role="separator" aria-label="New since [^"]+" class="[^"]*" data-ai-new-line="">/);
-  assert.match(needs, /border-t-\[1\.5px\] border-\[color:var\(--accent\)\]/, '1.5px, in the accent');
+  assert.match(needs, /h-\[1\.5px\] min-w-0 flex-1 rounded-full bg-\[color:var\(--accent\)\]/, '1.5px, in the accent: a bar, which no browser snaps to 1px');
   // The pill: "2 new" beside the heading's own count, which stays 3.
   assert.match(needs, /data-ai-band-count="">3</, 'the heading keeps its total');
   assert.match(needs, /bg-\[color:var\(--accent\)\][^"]*text-\[color:var\(--accent-ink\)\]" aria-hidden="true" data-ai-band-new="">2 new</);

@@ -320,14 +320,16 @@ const MORE = `flex w-full min-h-[44px] md:min-h-[36px] items-center justify-cent
  * Everything above it is new since your last visit, everything below it you
  * have seen. A 1.5px rule in the accent across the band, inset as the rows
  * are, with the time of the last visit at its end ("New since 9:40"). A real
- * element, so a screen reader hears it.
+ * element, so a screen reader hears it. The rule is a filled bar, not a
+ * border: Chrome draws a 1.5px border 1px wide (it snaps border widths to
+ * whole pixels) and leaves a bar's height alone.
  */
 function NewLine({ since }: { since: string }): ReactNode {
   const t = useMessages('messages');
   const words = t('messages:ai.band.newSince', { time: since });
   return (
     <div role="separator" aria-label={words} className="flex items-center gap-2 px-3 py-1.5" data-ai-new-line="">
-      <span className="h-0 min-w-0 flex-1 border-t-[1.5px] border-[color:var(--accent)]" aria-hidden="true" />
+      <span className="h-[1.5px] min-w-0 flex-1 rounded-full bg-[color:var(--accent)]" aria-hidden="true" />
       <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold leading-[18px] text-[color:var(--accent)]" aria-hidden="true">{words}</span>
     </div>
   );

@@ -4891,9 +4891,9 @@
       "expectText": "Restart build"
     },
     {
-      "name": "#6544 (#6019, #6160): the AI tab's In progress band, its own card after Needs you, holds your work under way and what waits on someone else (going live, being built, other people's votes on a change or a group decision), each ending in its grey state",
+      "name": "#6544 (#6019, #6160): the AI tab's In progress band, its own card after Needs you, holds your work under way and what waits on someone else (going live, being built, other people's votes on a change or a group decision), each ending in its grey state; mobile polish 05: with how many are new since your last visit in its heading and a line under the new ones",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"]:has([data-ai-line=\"going_live\"]):has([data-ai-line=\"building\"]) [data-ai-line=\"up_for_vote\"] [data-ai-row-end=\"state\"]",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"]:has([data-ai-line=\"going_live\"]):has([data-ai-line=\"building\"]):has([data-ai-band-new]):has([role=\"separator\"][data-ai-new-line]) [data-ai-line=\"up_for_vote\"] [data-ai-row-end=\"state\"]",
       "expectText": "Going live"
     },
     {
