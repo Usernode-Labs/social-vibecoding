@@ -5051,6 +5051,46 @@
     "text": "{{project}} · #{{number}}",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Tooltip of a row (its whole line; read by a screen reader too) that needs the person: the project and the request or change number."
   },
+  "ai.row.named": {
+    "text": "{{who}} named you · {{project}} · #{{number}}",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Tooltip of a Needs you row (its whole line; read by a screen reader too) for a thread where somebody named the person with @: who named them (a username, \"Homeroom bot\" or \"Somebody\"), the project and the request or change number."
+  },
+  "ai.row.namedPr": {
+    "text": "{{who}} named you · {{project}} · PR {{number}}",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The same tooltip for a change on a project whose code is on GitHub, where a change's number is its pull request's and reads \"PR 12\": who named the person with @, the project and the pull request number."
+  },
+  "ai.row.namedBare": {
+    "text": "{{who}} named you · {{project}}",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). The same tooltip for a thread with no number (a group decision): who named the person with @ and the project."
+  },
+  "ai.why.named": {
+    "text": "{{who}} named you",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Second line of a Needs you row, before when it happened (\"Sam named you · Today\"): somebody named the person with @ in that thread and waits for them to answer. Who named them is a username, \"Homeroom bot\" or \"Somebody\"."
+  },
+  "ai.named.bot": {
+    "text": "Homeroom bot",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Who named the person with @, when it was Homeroom bot, the platform's builder bot (a name): the name at the start of \"Homeroom bot named you\"."
+  },
+  "ai.named.somebody": {
+    "text": "Somebody",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Who named the person with @, when the account that did is no longer there: the word at the start of \"Somebody named you\"."
+  },
+  "ai.named.dismiss": {
+    "text": "Dismiss",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Quiet button at the end of a Needs you row for a thread where somebody named the person with @, beside its Reply pill: takes the row out of Needs you without answering. The thread stays in the person's lists, and a new @ brings the row back. A verb."
+  },
+  "ai.named.dismissLabel": {
+    "text": "Dismiss {{title}}",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Accessible name of the Dismiss button on a Needs you row where somebody named the person with @, followed by the thread's title."
+  },
+  "ai.named.dismissTitle": {
+    "text": "Take it out of Needs you without replying",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Tooltip of the Dismiss button on a Needs you row where somebody named the person with @: what pressing it does."
+  },
+  "ai.named.dismissFailed": {
+    "text": "Couldn’t dismiss it. Try again.",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Short notice shown when the person pressed Dismiss on a Needs you row where somebody named them with @, and it did not go through; the row is back in Needs you."
+  },
   "ai.row.fixYours": {
     "text": "{{project}} · #{{number}} · Your change needs a fix",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a change the person made themselves that waits on them: its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
@@ -5630,6 +5670,10 @@
   "ai.pill.read": {
     "text": "Read",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Pill at the end of a Needs you row for one of the person's private threads with Homeroom bot: the bot has answered and waits for them. A verb: what the person does."
+  },
+  "ai.pill.named": {
+    "text": "Named you",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Pill at the end of a row for a thread (a request's, a change's or a decision's discussion) where somebody named the person with @ and is waiting for them to answer. A short label, not a verb."
   },
   "ai.state.notMoving": {
     "text": "Not moving",

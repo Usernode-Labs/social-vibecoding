@@ -575,15 +575,16 @@ function shapeLiveFeed(rows) {
 // `?in=threads` is the Homeroom bot tab's Needs you (29 Oct 2026,
 // NEEDS_FEED_IN_THREADS_SQL): only the decisions in threads the viewer is in
 // (services/ai-work.js threadsInSql: they asked for it, built a change in
-// it, voted in it, wrote in it, or chose Notify me) and has not muted, and
-// the bot's questions to them, which are theirs wherever they are. Without
-// it, every decision owed, as Communities › Needs you lists them.
+// it, voted in it, wrote in it, chose Notify me, or, since 24 Nov 2026
+// (mobile 04), were named in it with @) and has not muted, and the bot's
+// questions to them, which are theirs wherever they are. Without it, every
+// decision owed, as Communities › Needs you lists them.
 const NEEDS_FEED_MAX = 60;
 const NEEDS_FEED_SUMMARY_MAX = 2000;
 
 const IN_THREADS_WHERE = `
      AND (o.kind = 'question'
-          OR (o.thread_id IN (SELECT mine.thread_id FROM (${threadsInSql('$1')}) mine)
+          OR (o.thread_id IN (SELECT mine.thread_id FROM (${threadsInSql('$1', { named: true })}) mine)
               AND NOT EXISTS (SELECT 1 FROM thread_followers f
                                WHERE f.thread_id = o.thread_id AND f.user_id = $1 AND f.muted_at IS NOT NULL)))`;
 

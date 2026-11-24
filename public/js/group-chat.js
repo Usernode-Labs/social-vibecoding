@@ -2797,6 +2797,13 @@ const GroupChat = {
       { flush: !!(opts && opts.flush) },
     );
     el.dataset.loaded = st.loaded ? '1' : '';
+    // Mobile 04: a message the bot tab's Reply asked for, once the thread is
+    // read, after this render has placed the page (below).
+    if (st.loaded && GroupChat._pendingThreadReveal) {
+      const reveal = () => GroupChat._applyPendingThreadReveal();
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal);
+      else setTimeout(reveal, 0);
+    }
 
     // A catch-up (#4177) changes rows at the bottom and inside the newest
     // page, not above the reader: the "Load earlier" offset below would move
@@ -5520,6 +5527,113 @@ const GroupChat = {
     GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
     setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
     return true;
+  },
+
+  // ── A thread's message, brought into view (24 Nov 2026, mobile 04) ────
+  //
+  // The Homeroom bot tab's Reply, on a thread somebody named you in, opens
+  // that thread's page (a request's, a change's or a decision's) AT the
+  // message that named you. revealMessage above is the app's discussion's;
+  // this is the open thread's stream. Its page opens at its top (#363), so
+  // once the thread's rows are drawn the message is brought to the middle of
+  // the page's scroller and flashed, as a quote's jump-to-original is. Only
+  // a message the thread's loaded page holds can be shown; anything else
+  // leaves the page where it opened. It waits for the thread that holds the
+  // message, and lapses after REVEAL_TTL_MS, as revealMessage's request does.
+  _pendingThreadReveal: null,
+  // Until when the revealed message is being held in view (_holdThreadReveal).
+  _threadRevealHeldUntil: 0,
+
+  // Whether a thread's page is to open at a message rather than at its top:
+  // asked for and not yet shown, or being held in view. A request's page
+  // holds its top while it settles (dev-board/topic/request-head.tsx), and
+  // leaves the scroller to this instead.
+  threadRevealAsked() {
+    return !!GroupChat._pendingThreadReveal || Date.now() < GroupChat._threadRevealHeldUntil;
+  },
+
+  revealInThread(appSlug, messageId) {
+    const id = Number(messageId);
+    if (!appSlug || !Number.isSafeInteger(id) || id <= 0) return;
+    GroupChat._pendingThreadReveal = { slug: appSlug, id, at: Date.now() };
+    // Now, when that thread is the one already open and loaded.
+    GroupChat._applyPendingThreadReveal();
+  },
+
+  _applyPendingThreadReveal(attempt = 0) {
+    const want = GroupChat._pendingThreadReveal;
+    if (!want) return false;
+    if (Date.now() - want.at > GroupChat.REVEAL_TTL_MS) {
+      GroupChat._pendingThreadReveal = null;
+      return false;
+    }
+    const a = GroupChat.activeThread;
+    if (!a || GroupChat.appSlug !== want.slug) return false;
+    const st = GroupChat._threadState(a.type, a.ref);
+    const holds = st.messages.some((m) => Number(m && m.id) === want.id);
+    // Another thread (the one asked for may still be mounting), or not yet
+    // read: the request waits.
+    if (!st.loaded || !holds) return false;
+    const el = GroupChat._threadEl('gc-thread-messages');
+    const scroll = GroupChat._threadScrollEl();
+    const row = el && el.querySelector(`[data-msg-id="${want.id}"]`);
+    if (!row || !scroll) {
+      // Published batched (features/group-chat/mount.ts): the row lands a
+      // frame or so after the render.
+      if (attempt < 30 && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => GroupChat._applyPendingThreadReveal(attempt + 1));
+      } else {
+        GroupChat._pendingThreadReveal = null;
+      }
+      return false;
+    }
+    GroupChat._pendingThreadReveal = null;
+    GroupChat._centerInThread(scroll, row);
+    // Off the newest line, or a new message would carry the reader away.
+    GroupChat._threadPinned = false;
+    GroupChat._revealFlash = { id: want.id, until: Date.now() + 1500 };
+    GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
+    setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
+    GroupChat._holdThreadReveal(want.id);
+    return true;
+  },
+
+  _centerInThread(scroll, row) {
+    const box = scroll.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    const by = (at.top - box.top) - (box.height - at.height) / 2;
+    if (Math.abs(by) > 2) scroll.scrollTop += by;
+  },
+
+  // The page's head (a request's card, its GitHub comments) can be drawn
+  // after the thread's rows, above them, and the page can put its scroller
+  // back at its top while it does: either takes the message out of view. So
+  // it is kept in the middle for a moment, frame by frame, until the page
+  // settles, the thread goes, or the reader scrolls, presses or types.
+  THREAD_REVEAL_HOLD_MS: 4000,
+  _holdThreadReveal(id) {
+    if (typeof requestAnimationFrame !== 'function') return;
+    const until = Date.now() + GroupChat.THREAD_REVEAL_HOLD_MS;
+    GroupChat._threadRevealHeldUntil = until;
+    const doc = typeof document !== 'undefined' ? document : null;
+    const inputs = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+    let theirs = false;
+    const stop = () => { theirs = true; };
+    inputs.forEach((name) => doc?.addEventListener?.(name, stop, { capture: true, passive: true }));
+    const done = () => {
+      inputs.forEach((name) => doc?.removeEventListener?.(name, stop, { capture: true }));
+      if (GroupChat._threadRevealHeldUntil === until) GroupChat._threadRevealHeldUntil = 0;
+    };
+    const step = () => {
+      if (theirs || Date.now() > until) { done(); return; }
+      const scroll = GroupChat._threadScrollEl();
+      const el = GroupChat._threadEl('gc-thread-messages');
+      const row = el && el.querySelector(`[data-msg-id="${id}"]`);
+      if (!scroll || !row) { done(); return; }
+      GroupChat._centerInThread(scroll, row);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   },
 
   // The message a reveal is marking, and until when (#4417 follow-up: a

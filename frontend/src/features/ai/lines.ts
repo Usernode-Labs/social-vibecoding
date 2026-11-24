@@ -68,6 +68,13 @@ export interface Line {
   open: () => void;
   /** #6159: a private thread's row: its ⋯ has Mark done. */
   done?: { rootId: number; mark: () => void } | null;
+  /**
+   * 24 Nov 2026 (mobile 04): a thread somebody named you in: its Dismiss,
+   * beside Reply at the row's end, which waves the @ off.
+   */
+  dismiss?: (() => void) | null;
+  /** Mobile 04: a thread you only wrote or were named in, which In progress draws below your own. */
+  tookPart?: boolean;
   /** History: a row in a private community the person left (its project's name says so). */
   left?: boolean;
   /** When it started needing the viewer, for the day its row is grouped under. */
@@ -84,8 +91,8 @@ export interface Line {
   sub?: string;
   /** The one thing at the row's end. */
   end?: LineEnd;
-  /** Done: which of History's kinds it is, for Done's kind chips. */
-  past?: HistoryKind;
+  /** Done: which of History's kinds it is, for Done's kind chips (`thread` is All's alone). */
+  past?: HistoryKind | 'thread';
 }
 
 /**
@@ -123,6 +130,8 @@ function needGlyph(row: WorkRow): Glyph {
   if (kind === 'fix_yours') return 'warning';
   if (kind === 'bot_fix_failed') return 'warning';
   if (kind === 'private') return 'lock';
+  // Mobile 04: somebody named you; you reply.
+  if (kind === 'named') return 'reply';
   return 'ballot';
 }
 /** In progress's glyph, by its stage. */
@@ -189,6 +198,8 @@ const VERBS: Readonly<Record<string, string>> = {
   // #6389: your own change waits on your fix; its reason line says which.
   'messages:ai.pill.testsFailing': 'messages:ai.pill.fixIt',
   'messages:ai.pill.conflicts': 'messages:ai.pill.fixIt',
+  // Mobile 04: somebody named you with @.
+  'messages:ai.pill.named': 'messages:ai.pill.reply',
 };
 
 /** A Needs you row's verb: its pill's (VERBS where that is no verb), or Read for a private thread. */
@@ -251,6 +262,14 @@ export function dayWord(at: string | null | undefined, t: Say, locale: string | 
   return shortDay(at, locale);
 }
 
+/**
+ * Pure (24 Nov 2026, mobile 04): your own threads first, then the ones you
+ * only wrote or were named in (`tookPart`), each run in the order it came.
+ */
+export function ownFirst<T extends { tookPart?: boolean }>(rows: readonly T[]): T[] {
+  return [...rows.filter((row) => !row.tookPart), ...rows.filter((row) => row.tookPart)];
+}
+
 /** Pure: rows newest first by `at`; a row with no readable time keeps its order after the rest. */
 export function newestFirst<T extends { at?: string | null }>(rows: readonly T[]): T[] {
   return rows
@@ -281,6 +300,8 @@ export interface AiLinesInput {
   openRow: (row: WorkRow) => void;
   openThread: (t: AiThread) => void;
   onDone?: (rootId: number) => void;
+  /** Mobile 04: Dismiss on a thread somebody named you in. */
+  onDismiss?: (row: WorkRow) => void;
   picked?: readonly string[];
   onPick?: (slugs: string[]) => void;
   appFor?: (slug: string) => AiApp | null;
@@ -310,7 +331,7 @@ export function showsPicked(picked: readonly string[]): (app: AiApp | null) => b
  * hook only because it reads the catalog and this tab's build (#6233).
  */
 export function useAiLines({
-  query = '', lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  query = '', lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss,
   picked: pickedIn = [], onPick, appFor, history = null, openHistory, historyKind = null, found,
 }: AiLinesInput) {
   const t = useMessages('messages');
@@ -391,6 +412,7 @@ export function useAiLines({
       fresh: row.unread > 0,
       open: () => openRow(row),
       done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
+      dismiss: row.named && onDismiss ? () => onDismiss(row) : null,
       at: row.at,
       project: projectOf(row.app),
       // A private thread is Only you there, whatever it is about (its reason says that).
@@ -420,6 +442,7 @@ export function useAiLines({
       lit: !!lit && rowKey(th) === lit,
       fresh: (th.unread || 0) > 0,
       moved: th.moved === true,
+      tookPart: th.tookPart === true,
       open: () => openThread(th),
       at: th.at,
       project: projectOf(th.app),
@@ -545,11 +568,13 @@ export function useAiLines({
   // THE THREE BANDS (24 Nov 2026, ./lists.tsx). Every thread is in one of
   // three places, newest first in each, with no project or day headings.
   // In progress is everything under way and everything waiting, the rows
-  // nobody is moving among them, each saying so (`end`).
-  const progressLines: Line[] = newestFirst(kept([
+  // nobody is moving among them, each saying so (`end`). 24 Nov 2026
+  // (mobile 04): your own first, then the ones you only wrote or were named
+  // in, so commenting widely never buries what you asked for or build.
+  const progressLines: Line[] = ownFirst(newestFirst(kept([
     ...progressShown.map(threadLine(nextGlyph)),
     ...waitingShown.map(waitingLine),
-  ]));
+  ])));
   // Done is the whole past: this week's rows (what went live, a private
   // thread marked done), then History's, each thread once, narrowed to the
   // kind its chips pick. History is read newest first and reads that kind

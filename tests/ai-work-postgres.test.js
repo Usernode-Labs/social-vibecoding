@@ -139,8 +139,12 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   // 5 Nov 2026: each row says its stored work state's stage (services/work-state.js).
   const titles = (list) => list.map((r) => `${r.title}:${r.work.stage}`);
-  assert.deepEqual(titles(work.next), ['Filters:going_live', 'Digest:going_live', 'Calendar:building'],
-    'hers, being worked on, soonest first');
+  // 24 Nov 2026 (mobile 04): Export, which she only wrote in, is listed
+  // while it is built, with its stage, below her own.
+  assert.deepEqual(titles(work.next), ['Filters:going_live', 'Digest:going_live', 'Calendar:building', 'Export:building'],
+    'hers, being worked on, soonest first; then one she only wrote in');
+  assert.equal(work.next.find((r) => r.title === 'Export').tookPart, true, 'not hers: drawn below her own');
+  assert.ok(!('tookPart' in work.next.find((r) => r.title === 'Calendar')), 'hers');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
   assert.ok(!work.next.some((r) => r.title === 'Print view'), 'a posted plan is not a change being built');
   // Waiting: a change still waiting on its checks first, then the requests
@@ -157,7 +161,6 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const all = [...work.needs, ...work.next, ...work.waiting, ...work.live];
   assert.ok(!all.some((r) => r.title === 'Dark mode'), 'a vote she owes is Needs you\'s');
   assert.ok(!all.some((r) => r.title === 'Search'), 'one she only voted on');
-  assert.ok(!all.some((r) => r.title === 'Export'), 'one she only wrote in, being built');
   assert.ok(!all.some((r) => r.title === 'Muted one'), 'muted');
   assert.ok(!all.some((r) => r.title === 'Secret'), 'a private project she is not in');
   assert.equal(work.waiting.find((r) => r.title === 'Tags').threadId, Number(tags.thread_id));
@@ -203,6 +206,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   // the end: Homeroom bot's plan for it, waiting for her Build it, is read and
   // listed, and so is Live this week, up to its own most rows. A thread
   // closed with nothing merged can never be listed, so it is not read.
+  // 24 Nov 2026 (mobile 04): with more than 80 live in a week, every one of
+  // them is read (THREADS_MAX).
   const busy = await one(
     `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
      VALUES ('Busy', 'aw-busy', 'running', $1, 'public', 'public') RETURNING id, slug`, [bob.id]);
@@ -239,7 +244,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const busyWork = await aiWork.workFor(pool, { user: { id: cara.id }, deps: { bot, ...planned } });
   assert.deepEqual(busyWork.needs.map((r) => `${r.title}:${r.work.stage}:${r.work.why}`), ['Her old plan:waiting_for_you:plan'],
     'the bot\'s plan waits for her Build it');
-  assert.equal(busyWork.live.length, aiWork.THREADS_MAX, 'Live this week reads its own most rows');
+  assert.ok(aiWork.THREADS_MAX > 80, 'more than the 80 that cut a week off');
+  assert.equal(busyWork.live.length, 90, 'Live this week reads all 90 of her week');
 
   // 30 Oct 2026: claimed, with no change yet. Bob's claim on hers is In
   // progress, named for him; her own claim is hers; a claim older than the

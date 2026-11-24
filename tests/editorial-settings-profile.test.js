@@ -86,14 +86,14 @@ test('the editorial serif uses the shipped variable weight', () => {
   const serif = rules().filter((rule) => /font-family: var\(--ed-serif\)/.test(rule.body));
   assert.ok(serif.length >= 6, 'headings on both pages are in the serif');
   for (const rule of serif) {
-    assert.match(rule.body, /font-weight: 600;/, `shipped weight: ${rule.selector}`);
+    assert.match(rule.body, /font-weight: 460;/, `shipped weight: ${rule.selector}`);
   }
   assert.match(css, /@font-face \{\s*font-family: 'Source Serif 4';[^}]*font-weight: 200 900;/, 'the face ships the heading weight');
 });
 
-test('nothing is hidden but Settings\' head on a phone\'s open page', () => {
+test('only duplicate Settings profile summary decoration is hidden beside the real editor', () => {
   const hidden = rules().filter((rule) => /display:\s*none|visibility:\s*hidden/.test(rule.body)).map((rule) => rule.selector);
-  assert.deepEqual(hidden, [`${SCOPE} #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head`]);
+  assert.deepEqual(hidden, [`${SCOPE} #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head`, `${SCOPE} #settings-profile-card .ui-row-tx`, `${SCOPE} #settings-profile-card > svg`]);
   assert.match(block(), /@media \(max-width: 1023\.98px\) \{\s*html:not\(\[data-skin\]\) #settings-root:has\(#settings-section-content:not\(\.hidden\)\) > \.settings-frame-head \{ display: none; \}/);
 });
 
@@ -146,4 +146,48 @@ test('project cards show each real project once and keep its newest change', () 
   const empty = renderToHtml(createElement(ProfileLiveProjects, { changes: [] }));
   assert.match(empty, /profile:projects.empty/);
   assert.doesNotMatch(empty, /class="profile-project-card"/);
+});
+
+
+test('the shared profile forms keep separate labels, ids and real account values', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const user = { username: 'builder', displayName: 'A <builder>', bio: 'Making things together' };
+  const { ProfileDetailsCard } = loadTsx('frontend/src/features/profile/profile-details-card.tsx', {
+    stubs: {
+      './profile.js': { Profile: { _user: () => user, MAX_BIO: 280 } },
+      '../../lib/i18n/react': { useMessages: () => (id) => id },
+    },
+  });
+  const html = renderToHtml(createElement('div', null,
+    createElement(ProfileDetailsCard, { user }),
+    createElement(ProfileDetailsCard, { user, id: 'settings-profile-details', embedded: true }),
+  ));
+  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(new Set(ids).size, ids.length, 'both mounted pages have unique ids');
+  for (const prefix of ['profile-details', 'settings-profile-details']) {
+    for (const field of ['name', 'handle', 'bio']) {
+      assert.ok(html.includes(`for="${prefix}-${field}"`));
+      assert.ok(ids.includes(`${prefix}-${field}`));
+    }
+  }
+  assert.match(html, /A &lt;builder&gt;/);
+  assert.match(html, /maxLength="40"/);
+  assert.match(html, /maxLength="280"/);
+  assert.equal((html.match(/<form/g) || []).length, 2);
+  assert.equal((html.match(/<h2/g) || []).length, 1, 'Settings uses its existing heading');
+});
+
+
+test('recent activity links real changes and leaves out unknown times', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { ProfileRecentActivity } = loadTsx('frontend/src/features/profile/profile-recent-activity.tsx', {
+    stubs: { '../../lib/i18n/react': { useMessages: () => (id) => id } },
+  });
+  const html = renderToHtml(createElement(ProfileRecentActivity, { changes: [
+    { sessionId: 12, prNumber: 3, title: 'A <change>', appSlug: 'garden', appName: 'Garden', mergedAt: null },
+  ] }));
+  assert.match(html, /href="#app\/garden\/dev\/changes\/3\/12"/);
+  assert.match(html, /A &lt;change&gt;/);
+  assert.doesNotMatch(html, /<time/);
+  assert.equal(renderToHtml(createElement(ProfileRecentActivity, { changes: [] })), '');
 });
