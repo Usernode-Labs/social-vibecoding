@@ -4934,6 +4934,17 @@
         "frontend/locales/en/weekly-digest.json",
         "src/routes/weekly-digest.js"
       ]
+    },
+    {
+      "id": "profile.editorial-details",
+      "name": "Profile shows an in-page editor and real project gallery",
+      "path": "/?demo=1#profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-details:has(#profile-details-name):has(#profile-details-bio) form",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/profile/**",
+        "public/css/app.css"
+      ]
     }
   ],
   "governance": {

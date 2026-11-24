@@ -775,3 +775,34 @@ test('the profile no longer fetches the season challenge list via the old route'
   assert.doesNotMatch(standing, /\/challenges-api\/me\/breakdown/, 'nor does the standing card');
   assert.match(standing, /\/challenges-api\/me\/ranking\?season_id=active/);
 });
+
+
+test('inline profile save leaves a staged photo and its sheet alone', async () => {
+  const saved = { window: globalThis.window, App: globalThis.App, fetch: globalThis.fetch };
+  const calls = [];
+  const app = { user: { username: 'webuser', displayName: 'Before' } };
+  globalThis.window = { App: app, addEventListener() {}, removeEventListener() {} };
+  globalThis.App = app;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ user: { username: 'webuser', displayName: 'After' } }) };
+  };
+  try {
+    const Profile = loadProfileModule();
+    Profile._pendingAvatar = 'remove';
+    let dismissed = false;
+    Profile._dismissSheet = () => { dismissed = true; };
+    Profile._render = () => {};
+    const result = await Profile._save({ displayName: 'After', bio: 'Building together', detailsOnly: true });
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.map((call) => call.url), ['/api/me/profile', '/api/auth/me']);
+    assert.deepEqual(JSON.parse(calls[0].options.body), { displayName: 'After', bio: 'Building together' });
+    assert.equal(app.user.displayName, 'After');
+    assert.equal(Profile._pendingAvatar, 'remove');
+    assert.equal(dismissed, false);
+  } finally {
+    globalThis.window = saved.window;
+    globalThis.App = saved.App;
+    globalThis.fetch = saved.fetch;
+  }
+});

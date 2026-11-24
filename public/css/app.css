@@ -10548,17 +10548,17 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
    window's width beside the list of pages. PROFILE opens on who you are,
    across the page: a larger picture, the name in the serif, the facts and
    the bio, Edit profile, then your figures as one strip.
-   The serif is Young Serif, which ships one weight: every rule that names
-   it writes `font-weight: 400`, so nothing is faked bold. The sky is the
+   The serif is the shipped variable Source Serif 4, at weight 600,
+   matching the strong headings in the profile and settings references. The sky is the
    brand's own picture (public/brand/bg/sky.webp), under a veil of the
    page's colour so the words on it read in light and in dark.
    EVERY VALUE IS A TOKEN, --ed-*, declared once here in light and dark. */
 html:not([data-skin]) {
-  --ed-serif: 'Young Serif', Georgia, 'Times New Roman', serif;
-  --ed-title-size: 2.25rem;       /* the page's name on the sky */
+  --ed-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --ed-title-size: 3rem;       /* the page's name on the sky */
   --ed-title-size-phone: 1.75rem;
   --ed-page-size: 1.5rem;         /* a Settings page's own name, over its cards */
-  --ed-head-size: 1.25rem;        /* a card's heading */
+  --ed-head-size: 1.75rem;        /* a card's heading */
   --ed-head-size-phone: 1.125rem;
   --ed-lede-size: 1rem;           /* the sentence under the page's name */
   --ed-paper: #fffdf4;            /* a card: warm paper */
@@ -10578,11 +10578,11 @@ html:not([data-skin]) {
   --ed-sky-h-phone: 6.5rem;
   --ed-lit-bg: #dcecc4;           /* the page you are on, in the list: the brand's green */
   --ed-lit-ink: #121a0e;
-  --ed-face: 6rem;                /* your picture at the head of Profile */
+  --ed-face: 11.5rem;                /* your picture at the head of Profile */
   --ed-face-phone: 4.5rem;
   --ed-face-gap: 0.875rem;        /* between the band's foot and the words beside the picture */
   --ed-face-ring: 0 0 0 3px var(--ed-paper), 0 0 0 4px var(--ed-line);
-  --ed-name-size: 2rem;
+  --ed-name-size: 3rem;
   --ed-name-size-phone: 1.5rem;
   --ed-stat-size: 1.5rem;         /* a figure in the strip */
   --ed-stat-bg: rgb(255 238 111 / 0.3); /* the strip: the sun, thinned */
@@ -10612,16 +10612,16 @@ html:not([data-skin]) #settings-root > .settings-frame-head {
   min-height: var(--ed-sky-h);
   margin-bottom: var(--ed-gap);
   padding: var(--ed-pad);
-  border-radius: var(--ed-radius);
+  border-radius: 0;
   background: var(--ed-sky-veil), var(--ed-sky) center / cover no-repeat;
-  box-shadow: inset 0 0 0 1px var(--ed-line);
+  box-shadow: none;
 }
 html:not([data-skin]) #settings-root .settings-frame-title {
   margin: 0;
   color: var(--ed-sky-ink);
   font-family: var(--ed-serif);
   font-size: var(--ed-title-size);
-  font-weight: 400;
+  font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.01em;
 }
@@ -10696,7 +10696,7 @@ html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.h
 html:not([data-skin]) #settings-section-content h3 {
   font-family: var(--ed-serif);
   font-size: var(--ed-head-size);
-  font-weight: 400;
+  font-weight: 600;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -10704,7 +10704,7 @@ html:not([data-skin]) #settings-section-content > .settings-page-title {
   margin-bottom: var(--ed-gap);
   font-family: var(--ed-serif);
   font-size: var(--ed-page-size);
-  font-weight: 400;
+  font-weight: 600;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -10734,61 +10734,59 @@ html:not([data-skin]) #profile-screen #profile-root:has(#profile-identity-card) 
   html:not([data-skin]) #profile-root > div > div:has(> #profile-identity-card) { display: contents; }
   html:not([data-skin]) #profile-root #profile-identity-card { grid-column: 1 / -1; grid-row: 1; }
   html:not([data-skin]) #profile-root #profile-stats { grid-column: 1 / -1; grid-row: 2; }
-  html:not([data-skin]) #profile-root #profile-activity { grid-column: 1; grid-row: 3; }
-  html:not([data-skin]) #profile-root > div > div:has(> #profile-work) { grid-column: 2; grid-row: 3 / span 2; }
-  html:not([data-skin]) #profile-root > div > div:has(> #profile-account) { grid-column: 1; grid-row: 4; }
+  html:not([data-skin]) #profile-root #profile-activity { grid-column: 2; grid-row: 4; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-work) { grid-column: 2; grid-row: 3; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-account) { grid-column: 1; grid-row: 3 / span 2; }
 }
-/* Who you are: a paper card under the sky. */
+/* The reference's identity sits ON the landscape, rather than below an
+   empty cover. The square portrait and words share the same baseline. */
 html:not([data-skin]) #profile-root #profile-identity-card {
-  margin-bottom: var(--ed-gap);
-  padding: calc(var(--ed-sky-h-phone) + var(--ed-face-gap)) var(--ed-pad-phone) var(--ed-pad-phone);
-  border-radius: var(--ed-radius);
-  background: linear-gradient(var(--ed-paper), var(--ed-paper)) 0 var(--ed-sky-h-phone) / 100% 100% no-repeat, var(--ed-sky-veil) top / 100% var(--ed-sky-h-phone) no-repeat, var(--ed-sky) top / 100% var(--ed-sky-h-phone) no-repeat, var(--ed-paper);
-  box-shadow: inset 0 0 0 1px var(--ed-line);
+  margin-bottom: 0;
+  padding: 2rem var(--ed-pad);
+  border-radius: 0;
+  background: var(--ed-sky-veil), var(--ed-sky) center / cover no-repeat;
+  box-shadow: none;
 }
 html:not([data-skin]) #profile-identity-card .profile-id-avatar {
   width: var(--ed-face-phone);
   height: var(--ed-face-phone);
-  margin-top: calc(-1 * (var(--ed-face-phone) / 2 + var(--ed-face-gap)));
+  border-radius: 1.25rem;
   box-shadow: var(--ed-face-ring);
   font-size: 1.75rem;
 }
-html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { align-items: flex-start; }
-/* Edit profile is the page's one main action: the sun. */
 html:not([data-skin]) #profile-identity-card #profile-edit-btn {
   border-color: var(--wip-btn-1-line);
   background: var(--wip-btn-1-bg);
   color: var(--wip-btn-1-ink);
+  min-height: 3rem;
+  padding-inline: 1.25rem;
+  border-radius: 1rem;
 }
 @media (hover: hover) { html:not([data-skin]) #profile-identity-card #profile-edit-btn:hover { background: var(--wip-btn-1-hover); } }
-/* Under the words on a phone it starts where they do, beside the larger picture. */
-@media (max-width: 639.98px) { html:not([data-skin]) #profile-identity-card #profile-edit-btn { margin-inline-start: calc(var(--ed-face-phone) + 0.75rem); } }
 html:not([data-skin]) #profile-identity-card .profile-id-name {
-  color: var(--wip-ink);
+  color: var(--ed-sky-ink);
   font-family: var(--ed-serif);
   font-size: var(--ed-name-size-phone);
-  font-weight: 400;
+  font-weight: 600;
   line-height: 1.15;
 }
-html:not([data-skin]) #profile-identity-card .profile-id-bio { max-width: 44rem; font-size: 0.9375rem; line-height: 1.5; }
+html:not([data-skin]) #profile-identity-card .profile-id-sub { color: var(--ed-sky-ink-soft); line-height: 1.6; }
+html:not([data-skin]) #profile-identity-card .profile-id-bio { max-width: 38rem; font-size: 1rem; line-height: 1.5; color: var(--ed-sky-ink); }
 @media (min-width: 640px) {
-  html:not([data-skin]) #profile-root #profile-identity-card {
-    padding: calc(var(--ed-sky-h) + var(--ed-face-gap)) var(--ed-pad) var(--ed-pad);
-    background: linear-gradient(var(--ed-paper), var(--ed-paper)) 0 var(--ed-sky-h) / 100% 100% no-repeat, var(--ed-sky-veil) top / 100% var(--ed-sky-h) no-repeat, var(--ed-sky) top / cover no-repeat, var(--ed-paper);
-  }
-  html:not([data-skin]) #profile-identity-card .profile-id-avatar { width: var(--ed-face); height: var(--ed-face); margin-top: calc(-1 * (var(--ed-face) / 2 + var(--ed-face-gap))); font-size: 2.25rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-avatar { width: var(--ed-face); height: var(--ed-face); font-size: 3rem; }
   html:not([data-skin]) #profile-identity-card .profile-id-name { font-size: var(--ed-name-size); }
   html:not([data-skin]) #profile-identity-card > div:first-child { align-items: flex-start; }
-  html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { gap: 1.25rem; }
+  html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { gap: 2rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-bio { margin-top: 0.75rem; }
 }
 /* Your figures: one strip, a figure over its label, a thin rule between two. */
 html:not([data-skin]) #profile-root #profile-stats:not(.hidden) {
   display: flex;
   gap: 0;
   margin-bottom: var(--ed-gap);
-  border-radius: var(--ed-radius);
-  background: var(--ed-stat-bg);
-  box-shadow: inset 0 0 0 1px var(--ed-line);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
 }
 html:not([data-skin]) #profile-stats > [data-profile-stat]:not(.hidden) {
   flex: 1 1 0;
@@ -10801,7 +10799,7 @@ html:not([data-skin]) #profile-stats > [data-profile-stat]:not(.hidden) ~ [data-
 html:not([data-skin]) #profile-stats > [data-profile-stat] > :first-child {
   font-family: var(--ed-serif);
   font-size: var(--ed-stat-size);
-  font-weight: 400;
+  font-weight: 600;
 }
 /* The cards under them are paper, and a group's name is a serif heading. */
 html:not([data-skin]) #profile-root :is(#profile-activity, section[id^="profile-"] > .ui-glist) {
@@ -10812,7 +10810,7 @@ html:not([data-skin]) #profile-root :is(section[id^="profile-"] > h2, #profile-a
   color: var(--wip-ink);
   font-family: var(--ed-serif);
   font-size: var(--ed-head-size);
-  font-weight: 400;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 1.2;
   text-transform: none;
@@ -10827,8 +10825,76 @@ html:not([data-skin]) #profile-root #public-profile-card {
 html:not([data-skin]) #public-profile-card h2 {
   font-family: var(--ed-serif);
   font-size: var(--ed-name-size-phone);
-  font-weight: 400;
+  font-weight: 600;
   line-height: 1.15;
+}
+/* A real editor and preferences beside work, as in the profile reference. */
+html:not([data-skin]) #profile-root .profile-details-card {
+  padding: var(--ed-pad);
+  border: 1px solid var(--ed-line);
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+  margin-bottom: var(--ed-gap);
+}
+html:not([data-skin]) #profile-details h2 {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-head-size);
+  font-weight: 600;
+  line-height: 1.2;
+}
+html:not([data-skin]) #profile-details > p { margin: 0.5rem 0 1rem; font-size: 0.875rem; }
+html:not([data-skin]) #profile-details label { display: block; margin: 0.75rem 0 0.25rem; }
+html:not([data-skin]) #profile-details :is(input, textarea) {
+  border: 1px solid var(--ed-line);
+  background: var(--ed-well);
+  border-radius: 0.625rem;
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-details input[readonly] { color: var(--ed-sky-ink-soft); }
+html:not([data-skin]) #profile-details-handle-note { display: block; margin-top: 0.25rem; font-size: 0.75rem; text-decoration: underline; }
+html:not([data-skin]) #profile-details .profile-details-count { display: block; text-align: end; font-size: 0.75rem; margin-top: 0.25rem; }
+html:not([data-skin]) #profile-details .profile-details-actions { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 1rem; }
+html:not([data-skin]) #profile-details button[type="submit"] { background: var(--wip-btn-1-bg); color: var(--wip-btn-1-ink); border: 1px solid var(--wip-btn-1-line); }
+html:not([data-skin]) #profile-details [role="alert"] { color: var(--state-bad); font-size: 0.8125rem; }
+html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { row-gap: 1.25rem; }
+html:not([data-skin]) #profile-root #profile-work { margin-top: 0; }
+html:not([data-skin]) #profile-root #profile-account { margin-top: 0; }
+@media (min-width: 1024px) {
+  html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); }
+  html:not([data-skin]) #settings-root > div:has(> #settings-sidebar-col) { gap: 1rem; }
+  html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet { min-height: 38rem; }
+}
+html:not([data-skin]) #profile-live-projects { margin-bottom: 2rem; }
+html:not([data-skin]) #profile-live-projects > h2 {
+  font-family: var(--ed-serif);
+  font-weight: 600;
+  font-size: var(--ed-head-size);
+  line-height: 1.2;
+}
+html:not([data-skin]) #profile-live-projects > p { margin: 0.5rem 0 1rem; font-size: 0.875rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-card {
+  display: block;
+  padding: 1.125rem;
+  border: 1px solid var(--ed-line);
+  border-radius: 1rem;
+  background: var(--ed-sky-veil), var(--ed-sky) center / cover;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(2) { background: linear-gradient(var(--ed-lit-bg), var(--ed-paper)); }
+html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3) { background: linear-gradient(var(--ed-stat-bg), var(--ed-paper)); }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 0.75rem; background: var(--ed-paper); }
+html:not([data-skin]) #profile-live-projects h3 { font-family: var(--ed-serif); font-weight: 600; font-size: 1.375rem; line-height: 1.2; margin: 0.75rem 0 0.5rem; }
+html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.45; }
+html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1.5rem; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
+@media (max-width: 1199.98px) {
+  html:not([data-skin]) #profile-live-projects .profile-project-grid { grid-template-columns: 1fr; }
+}
+@media (min-width: 1280px) {
+  html:not([data-skin]) #profile-root #profile-identity-card { padding-bottom: 4.5rem; }
+  html:not([data-skin]) #profile-root #profile-stats { grid-row: 1; align-self: end; justify-self: end; width: 42%; z-index: 1; margin: 0 1.5rem 0.75rem 0; }
+  html:not([data-skin]) #profile-stats > [data-profile-stat] { padding-block: 0.5rem; }
 }
 /* END OF THE EDITORIAL PAGES. */
 /* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's
