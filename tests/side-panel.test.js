@@ -577,6 +577,34 @@ test('Expand is ONE real navigation of the top window, with its own routing, the
   cleanup();
 });
 
+test('Expand from the Homeroom bot column records the bot page as where the page came from (#7079)', () => {
+  const { win, pushed } = topWindow();
+  win.location = new URL('https://homeroom.test/?demo=1#homeroom-bot/request/notes-ab12/42');
+  const seen = [];
+  win.Improve = { enterTopicFrom: (href) => seen.push([href, pushed.length]) };
+  assert.equal(api.take('app/notes-ab12/dev/issues/42'), true);
+  api.expand();
+  // Once, with the bot's own address, BEFORE the push: the origin is what the
+  // topic route reads as it lands, so a page expanded this way gets the
+  // "‹ Homeroom bot" chip (with "‹ Workshop" beside it) instead of a
+  // "‹ Workshop" chip back to a place the reader never visited.
+  assert.deepEqual(seen, [['#homeroom-bot/request/notes-ab12/42', 0]]);
+  assert.deepEqual(pushed, ['/?demo=1#app/notes-ab12/dev/issues/42'], 'the page itself, as Expand opens it');
+  cleanup();
+});
+
+test('Expand from anywhere but the bot page records no origin, so its back chip is unchanged (#7079)', () => {
+  const { win, pushed } = topWindow();
+  win.location = new URL('https://homeroom.test/app/notes-ab12?demo=1#app/notes-ab12');
+  const seen = [];
+  win.Improve = { enterTopicFrom: (href) => seen.push(href) };
+  api.take('app/notes-ab12/dev/issues/42');
+  api.expand();
+  assert.deepEqual(seen, [], 'an app address is not an origin');
+  assert.deepEqual(pushed, ['/?demo=1#app/notes-ab12/dev/issues/42']);
+  cleanup();
+});
+
 test('Go to community opens the hub full width, leaving the app, because no community is the panel\'s', () => {
   // The app menu's row, beside a running app on a desktop, follows its own
   // link: a community's page is never taken for the panel (./routes.ts), so
