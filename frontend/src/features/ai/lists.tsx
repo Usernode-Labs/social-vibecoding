@@ -59,16 +59,17 @@ import type { ReactNode } from 'react';
 
 import { Chip, FadeRail as KindRail } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
+import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
-  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, SearchIcon, WarningTriangleIcon, XIcon,
+  ArrowPathIcon, ArrowRightIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
+  CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PencilSquareIcon, PlayIcon, ReplyArrowIcon, SearchIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import {
-  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, openRows, recentGroupsFirst,
+  GROUP_FIRST, byDay, byProject, dayKey, groupRows, holdOrder, openRows,
   type AiApp, type AiThread, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -115,18 +116,18 @@ const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-
 const LIT_ROW_WHOLE = 'flex min-w-0 items-center gap-1 rounded-md bg-[color:var(--lit-tint)]';
 const LIT_INK_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md text-[color:var(--lit-ink)]';
 
-function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
+function LineRow({ line, quiet = false, freshTitles = false, action = false }: { line: Line; quiet?: boolean; freshTitles?: boolean; action?: boolean }): ReactNode {
   // #6159: a private thread's row has its ⋯ beside it, with Mark done.
   if (line.done) {
     const { rootId, mark } = line.done;
     return (
       <div className={line.lit ? LIT_ROW_WHOLE : 'flex min-w-0 items-center gap-1'} data-ai-line-done="">
-        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} freshTitles={freshTitles} inLitRow={line.lit} /></div>
+        <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} freshTitles={freshTitles} inLitRow={line.lit} action={action} /></div>
         <ThreadDoneMenu rootId={rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
       </div>
     );
   }
-  return <LineButton line={line} quiet={quiet} freshTitles={freshTitles} />;
+  return <LineButton line={line} quiet={quiet} freshTitles={freshTitles} action={action} />;
 }
 
 /**
@@ -155,12 +156,20 @@ const FOLD_CLIP = 'min-h-0 overflow-hidden -ms-4 ps-4';
 const FOLD_OPEN = 'grid-rows-[1fr] opacity-100 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_200ms_ease-out]';
 const FOLD_SHUT = 'grid-rows-[0fr] opacity-0 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_0s_linear_300ms]';
 
-function LineButton({ line, quiet = false, freshTitles = false, inLitRow = false }: { line: Line; quiet?: boolean; freshTitles?: boolean; inLitRow?: boolean }): ReactNode {
+function LineButton({ line, quiet = false, freshTitles = false, inLitRow = false, action = false }: { line: Line; quiet?: boolean; freshTitles?: boolean; inLitRow?: boolean; action?: boolean }): ReactNode {
   const t = useMessages('messages');
   // #6421: a thread that holds several requests says how many after its title.
   const many = Number(line.requests) > 1;
   const requestsWord = many ? t('messages:ai.row.requests', { count: line.requests }) : '';
   const tooltip = many ? `${line.tooltip} · ${requestsWord}` : line.tooltip;
+  // 24 Nov 2026: the one pill on an action row's right. A private thread
+  // says Continue; what went live or closed this week says Open, unless this
+  // tab is too old for it (Reload).
+  const pillWord = line.group === 'private'
+    ? t('messages:ai.pill.continue')
+    : line.live && !line.owe
+      ? t('messages:ai.pill.open')
+      : line.right;
   return (
     <button
       type="button"
@@ -206,14 +215,39 @@ function LineButton({ line, quiet = false, freshTitles = false, inLitRow = false
           <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 md:hidden" aria-hidden="true" data-ai-line-why="">{line.why}</span>
         ) : null}
       </span>
-      {/* #6389: a pill may be two words ("Tests failing", "Conflicts with
-          main"), so it never wraps: the title truncates instead. */}
-      <span className={line.owe
-        ? 'shrink-0 whitespace-nowrap text-[13px] font-semibold text-violet-700 dark:text-violet-300'
-        : 'shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400'}
-      >
-        {line.right}
-      </span>
+      {action ? (
+        <>
+          {/* 24 Nov 2026: the row's project, beside its title. Under md the
+              tile alone (a lock for a private thread in no project), so the
+              title keeps its room on a phone. */}
+          <span className="flex shrink-0 items-center gap-1.5" data-ai-line-app="">
+            {line.app
+              ? <SmallTile app={line.app} size="head" />
+              : <LockIcon className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />}
+            <span className="hidden max-w-[7.5rem] truncate text-xs text-zinc-500 dark:text-zinc-400 md:block">
+              {line.app ? line.app.name || line.app.slug : t('messages:ai.short.private')}
+            </span>
+          </span>
+          <span className="w-12 shrink-0 text-end text-xs text-zinc-500 dark:text-zinc-400 md:w-16" data-ai-line-day="">{line.day || ''}</span>
+          {/* #6389: a pill may be two words ("Tests failing", "Conflicts with
+              main"), so it never wraps: the title truncates instead. */}
+          <span
+            className={line.owe
+              ? 'h-6 shrink-0 whitespace-nowrap rounded-full bg-[color:var(--accent-tint)] px-2.5 text-[13px] font-semibold leading-6 text-violet-700 dark:text-violet-300'
+              : 'h-6 shrink-0 whitespace-nowrap rounded-full bg-zinc-900/[0.06] px-2.5 text-[13px] leading-6 text-zinc-600 dark:bg-white/[0.08] dark:text-zinc-400'}
+            data-ai-line-pill=""
+          >
+            {pillWord}
+          </span>
+        </>
+      ) : (
+        <span className={line.owe
+          ? 'shrink-0 whitespace-nowrap text-[13px] font-semibold text-violet-700 dark:text-violet-300'
+          : 'shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400'}
+        >
+          {line.right}
+        </span>
+      )}
       <span className="sr-only">{tooltip}</span>
     </button>
   );
@@ -564,77 +598,51 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
   );
 }
 
-function Section({ list, head, owe = false, lines, still = null, quiet = false, empty = null, note = null, keep = false, first, heads, fresh = 0, freshBySlug, freshStyle = false, dayHeads = false, foldFresh = false }: {
-  /** Which list, for the page's checks: work, busy, live. */
-  list: string;
-  /** Said over the rows, whatever they are: why the lists show less than they should. */
-  note?: ReactNode;
-  /** Drawn with no rows too: Needs you's band is in the prerender. */
-  keep?: boolean;
-  head: ReactNode;
-  owe?: boolean;
+/**
+ * 24 Nov 2026: one action group's rows — a flat list, no project headings and
+ * no day dividers (the project and the day are on each row now), newest
+ * first. Its first few show before Show more, as before; a fresh, moved or
+ * lit row is never folded away, and opening keeps the rows in sight where
+ * they were (./model.ts groupRows, openRows). Recently updated also carries
+ * the "Not moving · N" fold at its end.
+ */
+function GroupRows({ lines, first, liftFresh = true, still = null }: {
   lines: Line[];
-  /**
-   * #6158: the rows nobody is moving, in one part of their own at the
-   * bottom of the section, folded until it is opened (or one of them is
-   * where you are).
-   */
-  still?: { head: string; lines: Line[] } | null;
-  quiet?: boolean;
-  empty?: ReactNode;
-  /** Rows a project shows before its own Show more. */
   first: number;
-  /** The project's name over its rows; not when one project's chip says it already. */
-  heads: boolean;
-  /** #6262: how many of its rows have something new, for the band's pill. */
-  fresh?: number;
-  /** #6262: each project's count of new rows, for its name's pill. */
-  freshBySlug?: Record<string, number>;
-  /** #6262: Needs you draws new first, with an Earlier line (GroupList). */
-  freshStyle?: boolean;
-  /** 6 Nov 2026: split each project's rows by day (Needs you, Waiting & in progress). */
-  dayHeads?: boolean;
-  /** #6408: Live this week puts new rows first and folds after its first few whatever is new. */
-  foldFresh?: boolean;
+  /** #6408: Recently updated folds after its first few whatever is new. */
+  liftFresh?: boolean;
+  still?: { head: string; lines: Line[] } | null;
 }): ReactNode {
-  const t = useMessages('messages');
+  // The rows that were in sight when Show more was pressed, by key. Open
+  // while we hold them.
+  const [opened, setOpened] = useState<string[] | null>(null);
   const [stillOpen, setStillOpen] = useState(false);
-  // #6245: while the pointer is over Needs you or a row in it has keyboard
-  // focus, keep the order it was drawn in, so a live refresh cannot slide a
-  // row out from under the one being pressed. Rows that arrived meanwhile
-  // follow the drawn ones; anything that left drops out at once. On release
-  // the list settles into the incoming order.
-  const holdRef = useRef<HTMLElement | null>(null);
-  const drawn = useRef<string[] | null>(null);
-  const [holding, setHolding] = useState(false);
-  const hold = list === 'work';
-  // #6262: Needs you draws what is new first, before the order is held, so
-  // a held list keeps the order it was drawn in (#6245). #6408: Live this
-  // week does the same without the styles, so its first few include any new.
-  // #6672: Needs you then lifts each project by its newest activity, so a
-  // project whose only row is a fresh private chat is not always last.
-  const ordered = freshStyle ? recentGroupsFirst(freshFirst(lines)) : foldFresh ? freshFirst(lines) : lines;
-  const held = hold && holding && drawn.current ? holdOrder(ordered, drawn.current) : ordered;
-  const startHold = () => {
-    if (!hold) return;
-    if (!drawn.current) drawn.current = ordered.map((line) => line.key);
-    setHolding(true);
-  };
-  const endHold = () => {
-    if (!hold) return;
-    drawn.current = null;
-    setHolding(false);
-  };
-  const within = (node: EventTarget | null) => !!holdRef.current && node instanceof Node && holdRef.current.contains(node);
-  if (!lines.length && !still?.lines.length && !empty && !note && !keep) return null;
-  const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
+  const { items, shown, hidden } = opened ? openRows(lines, opened) : groupRows(lines, first, false, liftFresh);
+  const freshHidden = items.slice(shown).filter((line) => line.fresh).length;
+  const draw = (line: Line) => <LineRow key={line.key} line={line} action />;
   // A row in the folded part that is where you are opens it.
   const stillShown = stillOpen || !!still?.lines.some((l) => l.lit);
-  const body = (
+  return (
     <>
-      {note}
-      {!lines.length ? empty : null}
-      <GroupList lines={held} quiet={quiet} heads={heads} first={first} freshStyle={freshStyle} freshProjects={freshBySlug} dayHeads={dayHeads} foldFresh={foldFresh} />
+      {items.slice(0, shown).map(draw)}
+      {hidden ? (
+        <div
+          className={`grid motion-reduce:transition-none ${opened ? FOLD_OPEN : FOLD_SHUT}`}
+          aria-hidden={opened ? undefined : true}
+          inert={!opened}
+          data-ai-group-rest=""
+        >
+          <div className={FOLD_CLIP}>{items.slice(shown).map(draw)}</div>
+        </div>
+      ) : null}
+      {hidden ? (
+        <GroupMore
+          hidden={hidden}
+          fresh={freshHidden}
+          open={!!opened}
+          onClick={() => setOpened((o) => (o ? null : items.slice(0, shown).map((line) => line.key)))}
+        />
+      ) : null}
       {still && still.lines.length ? (
         <div data-ai-still-part="">
           <button
@@ -653,36 +661,116 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
             inert={!stillShown}
             data-ai-still-rest=""
           >
-            <div className={FOLD_CLIP}>
-              <GroupList lines={still.lines} quiet={quiet} heads={heads} first={still.lines.length} dayHeads={dayHeads} />
-            </div>
+            <div className={FOLD_CLIP}>{still.lines.map(draw)}</div>
           </div>
         </div>
       ) : null}
     </>
   );
+}
+
+/** The four action groups, in the order the list draws them (24 Nov 2026). */
+const GROUP_META = {
+  vote: { icon: BallotIcon, title: 'messages:ai.group.vote.title', sub: 'messages:ai.group.vote.sub', owe: true },
+  reply: { icon: ChatIcon, title: 'messages:ai.group.reply.title', sub: 'messages:ai.group.reply.sub', owe: true },
+  private: { icon: PencilSquareIcon, title: 'messages:ai.group.private.title', sub: 'messages:ai.group.private.sub', owe: false },
+  recent: { icon: ArrowPathIcon, title: 'messages:ai.group.recent.title', sub: 'messages:ai.group.recent.sub', owe: false },
+} as const;
+
+type ActionKind = keyof typeof GROUP_META;
+
+/** Pure: the History kind a group's View all narrows to (null: everything). */
+export function groupHistoryKind(group: ActionKind): HistoryKind | null {
+  return group === 'vote' ? 'vote' : group === 'reply' ? 'request' : group === 'private' ? 'solo' : null;
+}
+
+/**
+ * 24 Nov 2026: one action group's sheet — its head (a tile, its name, its
+ * count, one line saying what belongs there, and View all) over its flat
+ * rows. Needs vote and Needs reply wear the accent because they ask
+ * something of the viewer; the other two stay grey.
+ */
+function ActionGroup({ group, lines, count, fresh = 0, first, foldFresh = false, still = null, note = null, onViewAll }: {
+  group: ActionKind;
+  lines: Line[];
+  count: number;
+  fresh?: number;
+  first: number;
+  /** #6408: Recently updated folds after its first few whatever is new. */
+  foldFresh?: boolean;
+  still?: { head: string; lines: Line[] } | null;
+  /** A line under the rows, such as the older-tab Reload note. */
+  note?: ReactNode;
+  onViewAll?: (kind: HistoryKind | null) => void;
+}): ReactNode {
+  const t = useMessages('messages');
+  const meta = GROUP_META[group];
+  const Icon = meta.icon;
+  const kind = groupHistoryKind(group);
+  // #6245: while the pointer or keyboard is in the group, keep the order it
+  // was drawn in, so a live refresh cannot slide a row out from under the
+  // one being pressed. Rows that arrived meanwhile follow the drawn ones;
+  // anything that left drops out at once.
+  const holdRef = useRef<HTMLElement | null>(null);
+  const drawn = useRef<string[] | null>(null);
+  const [holding, setHolding] = useState(false);
+  const startHold = () => {
+    if (!drawn.current) drawn.current = lines.map((line) => line.key);
+    setHolding(true);
+  };
+  const endHold = () => { drawn.current = null; setHolding(false); };
+  const within = (node: EventTarget | null) => !!holdRef.current && node instanceof Node && holdRef.current.contains(node);
+  const held = holding && drawn.current ? holdOrder(lines, drawn.current) : lines;
   return (
-    <section
-      ref={holdRef}
-      className="pb-1"
-      data-ai-list={list}
-      onPointerEnter={startHold}
-      onPointerLeave={endHold}
-      onFocus={(e) => { if (!within(e.relatedTarget)) startHold(); }}
-      onBlur={(e) => { if (!within(e.relatedTarget)) endHold(); }}
-    >
-      <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
-        <SectionHeader className={`px-0 pt-0 pb-0 ${label}`}>
-          {head}
-          {fresh > 0 ? (
-            <span className="ms-1.5 rounded-full bg-violet-600/10 px-2 py-0.5 align-middle text-xs font-semibold tracking-normal text-violet-700 dark:bg-violet-500/20 dark:text-violet-300" data-ai-fresh="">
-              {t('messages:ai.work.fresh', { count: fresh })}
-            </span>
-          ) : null}
-        </SectionHeader>
-      </div>
-      <div className="px-4">{body}</div>
-    </section>
+    <div className={`${PLANE} pb-2`} data-ai-sheet={group}>
+      <section
+        ref={holdRef}
+        className="pb-1"
+        data-ai-list={group}
+        onPointerEnter={startHold}
+        onPointerLeave={endHold}
+        onFocus={(e) => { if (!within(e.relatedTarget)) startHold(); }}
+        onBlur={(e) => { if (!within(e.relatedTarget)) endHold(); }}
+      >
+        <div
+          className={`flex items-center gap-2.5 rounded-t-[20px] px-4 pt-3 pb-2 md:gap-3 ${meta.owe ? 'bg-[color:var(--accent-tint)]' : 'bg-zinc-900/[0.035] dark:bg-white/[0.045]'}`}
+          data-ai-group-head=""
+        >
+          <IconTile size="xs" className={meta.owe ? 'bg-[color:var(--accent-tint)] text-violet-600 dark:text-violet-300' : ''}>
+            <Icon aria-hidden="true" />
+          </IconTile>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1">
+              <span className="truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100" data-ai-group-title="">{t(meta.title)}</span>
+              <span className="shrink-0 rounded-full bg-zinc-900/[0.06] px-1 text-xs font-semibold text-zinc-600 dark:bg-white/[0.08] dark:text-zinc-400" data-ai-group-count="">
+                <span aria-hidden="true">{count}</span>
+                <span className="sr-only">{t('messages:ai.group.count', { count })}</span>
+              </span>
+              {fresh > 0 ? (
+                <span className="hidden shrink-0 items-center rounded-full bg-violet-600/10 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300 sm:inline-flex" data-ai-fresh="">
+                  {t('messages:ai.work.fresh', { count: fresh })}
+                </span>
+              ) : null}
+            </div>
+            <div className="truncate text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-group-sub="">{t(meta.sub)}</div>
+          </div>
+          <button
+            type="button"
+            className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-[color:var(--dc-sheet-solid)] px-2.5 text-[13px] font-semibold shadow-[inset_0_0_0_1px_var(--app-sheet-line)] md:px-3 ${meta.owe ? 'text-violet-700 dark:text-violet-300' : 'text-zinc-600 dark:text-zinc-400'}`}
+            onClick={() => onViewAll?.(kind)}
+            aria-label={t('messages:ai.group.viewAll', { count })}
+            data-ai-view-all={group}
+          >
+            <span aria-hidden="true">{t('messages:ai.group.viewAll', { count })}</span>
+            <ArrowRightIcon className="hidden h-4 w-4 sm:block" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="px-4">
+          <GroupRows lines={held} first={first} liftFresh={!foldFresh} still={still} />
+        </div>
+        {note}
+      </section>
+    </div>
   );
 }
 
@@ -712,7 +800,7 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
 
 export function AiLists({
   hero, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
-  picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
+  picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef, onViewAll,
 }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
@@ -775,18 +863,33 @@ export function AiLists({
   openHistory?: (row: HistoryRow) => void;
   /** The card itself, which #homeroom-bot/history scrolls to. */
   historyRef?: React.Ref<HTMLDivElement>;
+  /**
+   * 24 Nov 2026: a group's View all opens History narrowed to its kind
+   * (`vote` → Votes, `reply` → Requests, `private` → Only you, `recent` →
+   * everything). The page scrolls to History (./index.tsx).
+   */
+  onViewAll?: (kind: HistoryKind | null) => void;
 }): ReactNode {
   const t = useMessages('messages');
   // The rows, the chips' projects, the counts and the notes are built once
   // for this list and the one the looks draw (./lines.ts).
   const {
-    searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
-    needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
-    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
+    searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, stillLines, liveBehind,
+    onlyApp, nothingHere, locale, historyLines, historyMonths, voteLines, replyLines, privateLines, recentLines,
+    heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
   } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
   // More, open under its chip.
   const [more, setMore] = useState<DOMRect | null>(null);
   const phone = usePhone();
+  // 24 Nov 2026: while the lists load or could not be read, or when no group
+  // has a row (and no search is narrowing them), one card says so. Otherwise
+  // a group with nothing in it is not drawn at all.
+  const anyRows = !!(voteLines.length || replyLines.length || privateLines.length || recentLines.length || stillLines.length);
+  // The one card is for when no group has a row: the lists are still loading
+  // (or a search is on and answers with none), a read failed, or there is
+  // simply nothing. Rows that did arrive are always drawn.
+  const showEmpty = !anyRows && (!searching || !ready || !!failed);
+  const firstOf = (ids: 'needs' | 'busy') => (searching ? Infinity : GROUP_FIRST[ids]);
   return (
     <div className="flex flex-col gap-3 pt-4" data-ai-lists="">
       <div className={`${PLANE} pt-1`} data-ai-sheet="head">
@@ -846,80 +949,100 @@ export function AiLists({
           onClose={() => setMore(null)}
         />
       ) : null}
-      {!searching || !ready || needLines.length || failed ? (
-      <div className={`${PLANE} pb-4`} data-ai-sheet="open">
-        <Section
-          list="work"
-          keep
-          head={owedShown ? t('messages:ai.work.titleCount', { count: owedShown }) : t('messages:ai.work.title')}
-          owe={owedShown > 0}
-          lines={needLines}
-          note={failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
-          /* While searching, this card is drawn only when it has a match, so
-             its empty line is never the search's answer: the page says "No
-             threads match" in one note of its own (#6398). */
-          empty={ready ? (
-            <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty={nothingHere ? 'project' : ''}>
-              {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
-            </p>
-          ) : (
-            // L06 (overnight audit, 2 Nov 2026): until the lists are read the
-            // card said nothing at all, an empty card that read as final.
-            // Two rows' lines at the one-line row's spacing instead: two
-            // bars and no more, as the screen is in the prerendered document
-            // (tests/mount-on-reveal.test.js counts its elements). A read
-            // that failed says so in its note (ListsFailed) instead, with no
-            // skeleton under it: no rows are coming (offline test, 2 Nov 2026).
-            failed ? null : (
-              <SkeletonGroup label={t('messages:ai.work.loading')} className="flex flex-col gap-8 py-4" data-ai-loading="">
-                <Skeleton className="w-1/2" />
-                <Skeleton className="w-2/5" />
-              </SkeletonGroup>
-            )
-          )}
-          first={searching ? Infinity : GROUP_FIRST.needs}
-          heads={heads}
-          fresh={freshShown}
-          freshBySlug={freshProjects}
-          freshStyle
-          dayHeads
-        />
-      </div>
-      ) : null}
-      {busyLines.length || stillLines.length ? (
-        <div className={`${PLANE} pb-2`} data-ai-sheet="busy">
-          <Section
-            list="busy"
-            quiet
-            head={t('messages:ai.busy.title', { count: busyLines.length + stillLines.length })}
-            lines={busyLines}
-            still={stillLines.length ? { head: t('messages:ai.up.stillCount', { count: stillLines.length }), lines: stillLines } : null}
-            first={searching ? Infinity : GROUP_FIRST.busy}
-            heads={heads}
-            dayHeads
-          />
+      {showEmpty ? (
+        <div className={`${PLANE} pb-4`} data-ai-sheet="open">
+          <section className="pb-1" data-ai-list="open">
+            <div className="px-4">
+              {failed ? (
+                <ListsFailed failed={failed} onRetry={() => onRetry?.()} />
+              ) : !ready ? (
+                // L06 (overnight audit, 2 Nov 2026): until the lists are read
+                // the card said nothing at all, an empty card that read as
+                // final. Two rows' lines at the one-line row's spacing
+                // instead: two bars and no more, as the screen is in the
+                // prerendered document (tests/mount-on-reveal.test.js counts
+                // its elements).
+                <SkeletonGroup label={t('messages:ai.work.loading')} className="flex flex-col gap-8 py-4" data-ai-loading="">
+                  <Skeleton className="w-1/2" />
+                  <Skeleton className="w-2/5" />
+                </SkeletonGroup>
+              ) : (
+                <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty={nothingHere ? 'project' : ''}>
+                  {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
+                </p>
+              )}
+            </div>
+          </section>
         </div>
-      ) : null}
-      {liveLines.length ? (
-        <div className={`${PLANE} pb-2`} data-ai-sheet="live">
-          <Section list="live" quiet head={t('messages:ai.live.title', { count: liveLines.length })} lines={liveLines} first={searching ? Infinity : GROUP_FIRST.live} heads={heads} foldFresh />
-          {liveBehind ? (
-            // #6233: one Reload under the list, for every row this tab is
-            // older than.
-            <div className="flex items-center gap-2 border-t border-zinc-900/[0.07] px-4 pt-2 pb-1 dark:border-white/[0.08]" data-ai-older-tab="">
-              <span className="min-w-0 flex-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.live.olderTab')}</span>
-              <button
-                type="button"
-                className="shrink-0 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
-                onClick={() => reloadTab()}
-                data-ai-older-tab-reload=""
-              >
-                {t('messages:ai.short.reload')}
-              </button>
+      ) : (
+        <>
+          {failed ? (
+            // Some list could not be read, but others arrived: say so over
+            // the rows that did, rather than replace them (offline test,
+            // 2 Nov 2026).
+            <div className={`${PLANE} px-4`} data-ai-sheet="open">
+              <ListsFailed failed={failed} onRetry={() => onRetry?.()} />
             </div>
           ) : null}
-        </div>
-      ) : null}
+          {voteLines.length ? (
+            <ActionGroup
+              group="vote"
+              lines={voteLines}
+              count={voteLines.length}
+              fresh={voteLines.filter((line) => line.fresh).length}
+              first={firstOf('needs')}
+              onViewAll={onViewAll}
+            />
+          ) : null}
+          {replyLines.length ? (
+            <ActionGroup
+              group="reply"
+              lines={replyLines}
+              count={replyLines.length}
+              fresh={replyLines.filter((line) => line.fresh).length}
+              first={firstOf('needs')}
+              onViewAll={onViewAll}
+            />
+          ) : null}
+          {privateLines.length ? (
+            <ActionGroup
+              group="private"
+              lines={privateLines}
+              count={privateLines.length}
+              fresh={privateLines.filter((line) => line.fresh).length}
+              first={firstOf('busy')}
+              onViewAll={onViewAll}
+            />
+          ) : null}
+          {recentLines.length || stillLines.length ? (
+            <ActionGroup
+              group="recent"
+              lines={recentLines}
+              count={recentLines.length + stillLines.length}
+              fresh={recentLines.filter((line) => line.fresh).length}
+              first={firstOf('busy')}
+              foldFresh
+              still={stillLines.length ? { head: t('messages:ai.up.stillCount', { count: stillLines.length }), lines: stillLines } : null}
+              note={liveBehind ? (
+                // #6233: one Reload under the list, for every row this tab is
+                // older than.
+                <div className="mx-4 flex items-center gap-2 border-t border-zinc-900/[0.07] pt-2 pb-1 dark:border-white/[0.08]" data-ai-older-tab="">
+                  <span className="min-w-0 flex-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.live.olderTab')}</span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                    onClick={() => reloadTab()}
+                    data-ai-older-tab-reload=""
+                  >
+                    {t('messages:ai.short.reload')}
+                  </button>
+                </div>
+              ) : null}
+              onViewAll={onViewAll}
+            />
+          ) : null}
+        </>
+      )}
       {/* #6398: History is searched as far as it has loaded; with no match in
           it, its card folds away like any other section. */}
       {history && (!searching || historyLines.length) ? (

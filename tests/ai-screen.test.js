@@ -186,12 +186,10 @@ test('each section groups its rows by project, and a project shows its first few
   // past the first rows, it joins them. #6245: only while the group is
   // folded (open ? -1): an opened group keeps every row's own place.
   assert.match(read(MODEL), /const litAt = open \? -1 : items\.findIndex\(\(row\) => row\.lit\);/);
-  // #6262: Needs you orders its rows with the new ones first, before the
-  // drawn order is held, then folds through the same pure rule (which never
-  // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/);
-  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
-    'the new first, then the drawn order held');
+  // #6262: a new row is never folded, and the drawn order is held while the
+  // pointer or keyboard is in the group.
+  assert.match(lists, /const held = holding && drawn\.current \? holdOrder\(lines, drawn\.current\) : lines;/,
+    'the drawn order held while the pointer or keyboard is on it');
   assert.match(lists, /const rows = dayHeads \? byDay\(g\.items\) : g\.items;\n\s+const \{ items, shown, hidden \} = kept \? openRows\(rows, kept\) : groupRows\(rows, first, false, !foldFresh\);/,
     'the group draws through the pure order rules: folded, and opened with what was in sight kept');
   // 6 Nov 2026: the drawn rows carry their day divider, and the fold splits
@@ -287,12 +285,12 @@ test('#6245: a row pressed in an opened group keeps its place, and a live refres
   assert.deepEqual(holdOrder([], drawn), [], 'an emptied list holds nothing');
 
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
-    'only Needs you holds its order, only while held');
-  assert.match(lists, /onPointerEnter=\{startHold\}\s+onPointerLeave=\{endHold\}/, 'the pointer over the list holds it');
+  assert.match(lists, /const held = holding && drawn\.current \? holdOrder\(lines, drawn\.current\) : lines;/,
+    'the drawn order is held while the pointer or keyboard is on a group');
+  assert.match(lists, /onPointerEnter=\{startHold\}\s+onPointerLeave=\{endHold\}/, 'the pointer over the group holds it');
   assert.match(lists, /onFocus=\{\(e\) => \{ if \(!within\(e\.relatedTarget\)\) startHold\(\); \}\}/,
     'a row with keyboard focus holds it too');
-  assert.match(lists, /<GroupList lines=\{held\}/, 'and it draws the held order');
+  assert.match(lists, /<GroupRows lines=\{held\}/, 'and it draws the held order');
 
   // Rendered folded, the lit row is still the sixth drawn: today's rule.
   const { renderComponent } = require('./lib/render-tsx');
@@ -371,10 +369,9 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   });
   assert.match(html, /data-ai-dot=""/, 'a new row has its dot');
   assert.match(html, /font-bold text-zinc-900 dark:text-zinc-100">New one</, 'and a bold title');
-  assert.match(html, /data-ai-earlier=""/, 'Needs you draws the Earlier line');
-  assert.ok(html.includes('2 new'), 'the heading pill counts them');
-  assert.ok(html.includes('1 new'), 'a project names its own count');
-  assert.match(html, /data-ai-chip="garden"[\s\S]*?data-ai-fresh=""/, 'a chip carries its number');
+  assert.ok(html.includes('2 new'), 'the group\'s head counts them');
+  assert.doesNotMatch(html, /data-ai-earlier=""/, 'no Earlier line: the group is the place');
+  assert.match(html, /data-ai-chip="games"[\s\S]*?data-ai-fresh=""/, 'a chip carries its number');
   // Nothing new: no dot, no Earlier line, no pill anywhere.
   const quiet = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
     hero: null, ready: true, owed: 2,
@@ -423,10 +420,12 @@ test('#6672: Needs you orders its projects by their newest activity', () => {
     { key: 'recipe', app: recipe, at: now },
   ]).map((r) => r.key), ['garden-newer', 'garden-older', 'recipe'], 'a group\'s rows keep their order; a tie keeps its place');
 
-  // Both faces of the list apply it, Needs you only, after the new-first pass.
-  const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/,
-    'Needs you lifts the projects after its new-first pass');
+  // The standard list now gives a private thread a group of its own, so it
+  // no longer competes for a place inside Needs you; the kit face still
+  // lifts each project by its newest activity.
+  assert.match(read('frontend/src/features/ai/lines.ts'),
+    /const privateLines = byDay\(needLines\.filter\(\(line\) => line\.group === 'private'\)\);/,
+    'a private thread has its own group');
   assert.match(read('frontend/src/features/ai/frame-list.tsx'),
     /const needs = useHeld\(recentGroupsFirst\(freshFirst\(needLines\)\)\);/,
     'the kit face draws the same order');
@@ -497,10 +496,11 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
   assert.deepEqual([groupRows(movedRows, GROUP_FIRST.live, false, false).shown], [3], 'Live folds a moved row too');
 
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const freshHidden = foldFresh \? items\.slice\(shown\)\.filter\(\(line\) => line\.fresh\)\.length : 0;/,
+  assert.match(lists, /const freshHidden = items\.slice\(shown\)\.filter\(\(line\) => line\.fresh\)\.length;/,
     'the fold counts the new rows it holds');
-  assert.match(lists, /<Section list="live" quiet head=\{t\('messages:ai\.live\.title', \{ count: liveLines\.length \}\)\} lines=\{liveLines\}[^>]*foldFresh \/>/,
-    'Live this week is the section that folds what is new');
+  assert.match(lists, /<GroupRows lines=\{held\} first=\{first\} liftFresh=\{!foldFresh\} still=\{still\} \/>/,
+    'the group hands the fold the option that does not lift new rows');
+  assert.match(lists, /group="recent"[\s\S]{0,600}?foldFresh/, 'Recently updated is the group that folds what is new');
   assert.equal(message('messages:ai.work.showMoreFresh', { count: 73, fresh: 44 }), 'Show 73 more · 44 new');
 
   // Rendered: a project's eight live rows, six new, show three rows and the
@@ -513,7 +513,7 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
     hero: null, ready: true, owed: 0,
     rows: [], lit: null, progress: [], waiting: [], live, openRow() {}, openThread() {},
   });
-  const sheet = html.slice(html.indexOf('data-ai-sheet="live"'));
+  const sheet = html.slice(html.indexOf('data-ai-sheet="recent"'));
   const shown = sheet.slice(0, sheet.indexOf('data-ai-group-rest'));
   assert.equal((shown.match(/data-ai-line=/g) || []).length, 3, 'three rows before the fold');
   assert.match(sheet, /Show 5 more · 3 new/, 'the fold says how many new rows it holds');
@@ -523,7 +523,7 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
     hero: null, ready: true, owed: 0,
     rows: [], lit: null, progress: [], waiting: [], live: older, openRow() {}, openThread() {},
   });
-  const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="live"'));
+  const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="recent"'));
   assert.match(calmSheet, /Show 5 more/, 'nothing new in the fold says only how many');
   assert.ok(!/Show 5 more ·/.test(calmSheet), 'and does not mention new ones');
 });
@@ -591,12 +591,10 @@ test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded o
   assert.ok(room >= at, `the fold keeps ${room * 4}px for a dot ${at * 4}px outside its row`);
 });
 
-// 6 Nov 2026 (Evan): "in Needs you and Waiting & in progress, keep the
-// project groups, and inside each group split the rows by day with the small
-// caps dividers and a thin rule ... Leave History's month headings as they
-// are." A project's rows are split by the reader's own calendar day: Today,
-// Yesterday, then the weekday and date. Nothing else grows a day heading.
-test('6 Nov 2026: Needs you and Waiting & in progress split each project by day, History keeps its months', () => {
+// 24 Nov 2026 (request #7068): the four action groups draw flat rows, newest
+// first, with the day on each row rather than a day divider under a project.
+// History keeps its months and grows none of these.
+test('24 Nov 2026: the action groups draw flat rows, newest first, each with its day; History keeps its months', () => {
   const { dayKey, byDay } = loadTsx(MODEL);
   // Noon, so the test's own clock cannot turn a day into its neighbour.
   const at = (daysAgo) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - daysAgo); return d.toISOString(); };
@@ -612,44 +610,38 @@ test('6 Nov 2026: Needs you and Waiting & in progress split each project by day,
 
   const { renderComponent } = require('./lib/render-tsx');
   const LISTS = 'frontend/src/features/ai/lists.tsx';
-  const line = (key, title, when) => ({
+  const vote = (key, title, when) => ({
     key, title, app, who: 'all', at: when, unread: 0, threadId: null,
     sub: { id: 'messages:ai.row.where', values: { project: app.name, number: 1 } },
     pill: { id: 'messages:ai.pill.vote' }, href: '#app/garden/dev/issues/1', rootId: null,
   });
   const html = renderComponent(LISTS, 'AiLists', {
-    hero: null, ready: true, owed: 3,
-    rows: [line('need:proposal:1', 'Today one', today), line('need:proposal:3', 'Yesterday one', yesterday),
-      line('need:proposal:2', 'Today two', today), line('need:proposal:4', 'Older one', older)],
+    hero: null, ready: true, owed: 4,
+    rows: [vote('need:proposal:1', 'Today one', today), vote('need:proposal:3', 'Yesterday one', yesterday),
+      vote('need:proposal:2', 'Today two', today), vote('need:proposal:4', 'Older one', older)],
     lit: null,
     progress: [thread(1, 71, 'vote', { at: today, group: 'next' }), thread(2, 72, 'building', { at: yesterday, group: 'next' })],
     waiting: [], live: [],
     openRow() {}, openThread() {},
   });
   const sheet = (name) => html.slice(html.indexOf(`data-ai-sheet="${name}"`), html.indexOf('data-ai-sheet="', html.indexOf(`data-ai-sheet="${name}"`) + 1));
-  const needs = sheet('open');
-  const busy = sheet('busy');
-  // Inside the project group, one divider each day, in the order the rows come.
-  assert.ok(needs.indexOf('data-ai-group="garden"') < needs.indexOf('data-ai-day='), 'the day sits inside the project group');
-  assert.equal((needs.match(/data-ai-day="/g) || []).length, 3, 'Today, Yesterday and the older day, once each');
-  assert.ok(needs.indexOf(message('messages:ai.short.today')) < needs.indexOf('Today one'));
-  assert.ok(needs.indexOf('Today one') < needs.indexOf('Today two'), 'the day\'s rows are one run, whatever order they came in');
-  assert.ok(needs.indexOf('Today two') < needs.indexOf(message('messages:ai.short.yesterday')), 'a second row of the same day adds no divider');
-  assert.ok(needs.indexOf(message('messages:ai.short.yesterday')) < needs.indexOf('Yesterday one'));
-  assert.ok(needs.indexOf('Yesterday one') < needs.indexOf('Older one'));
-  const label = (key) => {
-    const found = new RegExp(`data-ai-day="${key}"><span[^>]*>([^<]+)</span>`).exec(needs);
-    return found ? found[1] : '';
-  };
-  assert.equal(label(dayKey(today)), message('messages:ai.short.today'));
-  assert.equal(label(dayKey(yesterday)), message('messages:ai.short.yesterday'));
-  assert.match(label(dayKey(older)), /\d/, 'an older day says its date');
-  // Waiting & in progress splits the same way, under its own project group.
-  assert.match(busy, /data-ai-group="garden"/);
-  assert.equal((busy.match(/data-ai-day="/g) || []).length, 2);
-  assert.ok(busy.indexOf(message('messages:ai.short.today')) < busy.indexOf(message('messages:ai.short.yesterday')));
+  // A flat list: no project heads, no day dividers, and the newest row first.
+  const votes = sheet('vote');
+  assert.doesNotMatch(votes, /data-ai-day=|data-ai-group=/, 'no project head and no day divider');
+  assert.ok(votes.indexOf('Today one') < votes.indexOf('Today two'), 'a day\'s rows keep the order they came in');
+  assert.ok(votes.indexOf('Today two') < votes.indexOf('Yesterday one'));
+  assert.ok(votes.indexOf('Yesterday one') < votes.indexOf('Older one'), 'newest first');
+  // Each row says its own day and its own project.
+  assert.match(votes, /data-ai-line-app=""/);
+  assert.match(votes, /data-ai-line-day="">Today</);
+  assert.match(votes, /data-ai-line-day="">Yesterday</);
+  assert.equal((votes.match(/data-ai-line-day=""/g) || []).length, 4, 'one day cell a row, nothing else');
+  // Recently updated is busy plus live, flat, with no day divider either.
+  const recent = sheet('recent');
+  assert.doesNotMatch(recent, /data-ai-day=|data-ai-group=/);
+  assert.ok(recent.indexOf('T1') < recent.indexOf('T2'));
 
-  // History keeps its month headings, and Live this week keeps none of these.
+  // History keeps its month headings, and grows none of these.
   const history = {
     rows: [{ key: 'thread:9', threadId: 9, number: 392, title: 'Watering reminders', app, href: '#app/garden/dev/issues/392', at: older, kind: 'change', outcome: 'live', by: 'bot' }],
     next: null, ready: true, loading: false, failed: false, more() {}, retry() {},
@@ -661,9 +653,8 @@ test('6 Nov 2026: Needs you and Waiting & in progress split each project by day,
   });
   const historySheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="history"'));
   assert.match(historySheet, /data-ai-history-month="/, 'History still groups by month');
-  assert.doesNotMatch(historySheet, /data-ai-day=/, 'and grows no day divider');
-  const liveSheet = withHistory.slice(withHistory.indexOf('data-ai-sheet="live"'), withHistory.indexOf('data-ai-sheet="history"'));
-  assert.doesNotMatch(liveSheet, /data-ai-day=/, 'Live this week keeps its day on the right');
+  assert.doesNotMatch(historySheet, /data-ai-day=|data-ai-line-day=/, 'and grows no day column');
+  assert.match(withHistory.slice(0, withHistory.indexOf('data-ai-sheet="history"')), /data-ai-sheet="recent"/, 'Recently updated is above History');
 });
 
 test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {
@@ -995,9 +986,9 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   assert.match(html, /Not moving · 2/, 'its count is only the rows nobody is moving');
   assert.match(html, /data-ai-still-rest=""/, 'and a fold of its own');
   assert.match(html, /aria-expanded="false"/, 'closed until pressed');
-  // #6160 moved these rows to the card of their own, whose head counts the
-  // whole card: the rows moving and the rows folded under Not moving.
-  assert.match(html, /Waiting &amp; in progress · 3/, 'the card\'s head still counts every row');
+  // 24 Nov 2026: these rows live in Recently updated, whose head counts the
+  // whole group: the rows moving and the rows folded under Not moving.
+  assert.match(html, /data-ai-group-title="">Recently updated<\/span><span[^>]*data-ai-group-count=""><span aria-hidden="true">3<\/span>/, 'the group\'s head still counts every row');
   assert.match(html, /Number 2 in line/, 'the moving rows lead the list');
   const src = read('frontend/src/features/ai/lists.tsx');
   assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
@@ -1270,9 +1261,9 @@ test('Homeroom bot answers "where do things stand?" from the lists this page dra
 test('Needs you here is the threads you are in, counted in the label\'s ink, with no link to every vote', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /readJson<\{ items\?: NeedItem\[\] \}>\(`\/api\/workshop\/needs-feed\?in=threads\$\{qs \? '&demo=1' : ''\}`, init\)/);
-  assert.match(read('frontend/src/features/ai/lists.tsx'),
-    /head=\{owedShown \? t\('messages:ai\.work\.titleCount', \{ count: owedShown \}\) : t\('messages:ai\.work\.title'\)\}/,
-    'the count is in the label\'s own words, not a link');
+  assert.match(src, /heroWords\(owedCount\(heroRows\), progress\.filter\(\(th\) => heroShows\(th\.app\)\)\.length, freshCount\(heroRows\)\)/,
+    'the count is the hero line, in words, not a link');
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /data-ai-group-count=""/, 'each group counts its own rows');
   assert.ok(!src.includes('ws=needs#communities'), 'All votes is gone');
   assert.equal(message('messages:ai.work.title'), 'Needs you');
   assert.equal(message('messages:ai.work.titleCount', { count: 5 }), 'Needs you · 5');
@@ -1466,13 +1457,13 @@ test('every door into the bot\'s chat lands on its tab, never the Messages scree
   assert.deepEqual(entries.map((e) => e.key), ['person:3']);
 });
 
-test('the screen renders as the prerender does: hidden, the bot\'s name, New chat, Needs you, the Ask bar, no rows', () => {
+test('the screen renders as the prerender does: hidden, the bot\'s name, New chat, one loading card, the Ask bar, no rows', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/index.tsx', 'AiScreen', {});
   // (React hoists the bot's picture as an image preload ahead of it.)
   assert.match(html, /^(<link rel="preload" as="image" href="\/brand\/homeroom-mark\.png"\/>)?<main id="ai-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce=""/);
   assert.match(html, /<h1 class="[^"]*">Homeroom bot<\/h1>/);
-  assert.match(html, /Needs you/);
+  assert.match(html, /data-ai-loading=""/, 'one card waits with its two bars');
   assert.match(html, /<a href="#homeroom-bot\/new" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
   assert.ok(!html.includes('data-ai-line'), 'no rows before the effects read them');
   assert.ok(!html.includes('ai-drawer'), 'and no drawer before mount, on a phone either');
@@ -1498,7 +1489,7 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   // has no row for the chat itself; the title's sheet is followed by Needs you.
   const none = renderComponent(LISTS, 'AiLists', props());
   assert.doesNotMatch(none, /data-ai-main-row|data-ai-main-unread|data-ai-sheet="main"|Main Chat/);
-  assert.match(none, /data-ai-sheet="head">[\s\S]*?<\/div><div class="[^"]*" data-ai-sheet="open">/, 'Needs you follows the head');
+  assert.match(none, /data-ai-sheet="head">[\s\S]*?data-ai-sheet="private"/, 'a private thread\'s group follows the head');
   assert.throws(() => message('messages:ai.main.new', { count: 1 }));
   assert.throws(() => message('messages:store.header.main'));
   const quiet = renderComponent(LISTS, 'AiLists', props('private:730'));
@@ -1511,7 +1502,7 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   assert.match(src, /const LIT_ROW_WHOLE = '[^']*rounded-md bg-\[color:var\(--lit-tint\)\]';/);
   assert.match(src, /const LIT_INK_ROW = '(?![^']*bg-)[^']*text-\[color:var\(--lit-ink\)\]';/, 'its button keeps the ink and no fill of its own');
   assert.match(src, /<div className=\{line\.lit \? LIT_ROW_WHOLE : 'flex min-w-0 items-center gap-1'\} data-ai-line-done="">/);
-  assert.match(src, /<LineButton line=\{line\} quiet=\{quiet\} freshTitles=\{freshTitles\} inLitRow=\{line\.lit\} \/>/);
+  assert.match(src, /<LineButton line=\{line\} quiet=\{quiet\} freshTitles=\{freshTitles\} inLitRow=\{line\.lit\} action=\{action\} \/>/);
   assert.doesNotMatch(src, /MainChatRow|MAIN_LIT|main\.(lit|unread|open)/);
   // A private thread's own new mark (no Main Chat counts it): the server's
   // count on its row, as any thread's (#6262).
@@ -1537,71 +1528,108 @@ test('there is no Main Chat row: Needs you leads the lists, a private thread\'s 
   assert.match(index, /const keep = openRoot && had\.has\(openRoot\) \? \[openRoot\] : \[\];/, 'a reply that lands later is new again');
 });
 
-// #6160 (2 Nov 2026): In progress and Waiting were two sections inside the
-// Needs you card, under a line each, so on a busy account that card of
-// to-dos ran on long past what needed you. They are one quieter card of
-// their own now, between Needs you and Live this week, drawn as that is.
-test('#6160: Waiting & in progress is a card of its own between Needs you and Live this week, quieter rows, work under way first', () => {
+// 24 Nov 2026 (request #7068): Needs you, Waiting & in progress and Live this
+// week give way to four action groups — Needs vote, Needs reply, Drafts /
+// private and Recently updated. Each group has a head (a tile, its name, its
+// count, one line and View all), and each row carries its project, its day and
+// one pill.
+test('24 Nov 2026 (#7068): the lists are four action groups, each row with its project, its day and one pill', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const LISTS = 'frontend/src/features/ai/lists.tsx';
-  const bakery = { slug: 'bakery', name: 'Bakery orders', icon_url: null, icon_emoji: null };
-  const row = (threadId, a, what, extra = {}) => ({
-    ...thread(threadId, 100 + threadId, what, { group: 'next', ...extra }),
-    title: `${a.name} ${what} ${threadId}`, app: a, href: `#app/${a.slug}/dev/issues/${100 + threadId}`,
+  const at = (daysAgo) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - daysAgo); return d.toISOString(); };
+  const today = at(0);
+  const yesterday = at(1);
+  const need = (key, title, pill, extra = {}) => ({
+    key, title, app, who: 'all', at: today, unread: 0, threadId: null,
+    sub: { id: 'messages:ai.row.where', values: { project: app.name, number: 1 } },
+    pill, href: '#app/garden/dev/issues/1', rootId: null, ...extra,
   });
-  // Under way first, then what waits: two projects, one with more rows than
-  // it shows before its own Show more.
-  const progress = [row(1, app, 'going_live'), row(2, bakery, 'building', { by: 'bot' })];
-  const waiting = [
-    row(3, app, 'vote'), row(4, bakery, 'not_picked_up'),
-    row(5, app, 'checking'), row(6, bakery, 'held'),
-    row(7, app, 'queued'), row(8, app, 'not_picked_up'),
+  const rows = [
+    need('need:proposal:1', 'Vote one', { id: 'messages:ai.pill.vote' }),
+    need('need:proposal:2', 'Approve one', { id: 'messages:ai.pill.approve' }),
+    need('need:ballot:3', 'Pick one', { id: 'messages:ai.pill.pick' }),
+    need('need:question:4', 'Question one', { id: 'messages:ai.pill.answer' }),
+    need('plan:51', 'Plan one', { id: 'messages:ai.pill.buildIt' }, { threadId: 51 }),
+    need('fix_yours:52', 'Fix one', { id: 'messages:ai.pill.fixIt' }, { threadId: 52 }),
+    need('private:91', 'Private one', null, { app: null, threadId: null }),
   ];
-  const live = [{ ...row(9, app, 'live'), group: 'live' }];
   const props = (extra = {}) => ({
-    hero: null, ready: true, rows: [], owed: 0,
-    progress: [], waiting: [], live: [], openRow() {}, openThread() {}, ...extra,
+    hero: null, ready: true, owed: 6, rows,
+    progress: [thread(1, 71, 'going_live', { at: today, group: 'next' })],
+    waiting: [thread(2, 72, 'not_picked_up', { at: yesterday })],
+    live: [thread(3, 73, 'live', { at: today, group: 'live' })],
+    openRow() {}, openThread() {}, ...extra,
   });
-  const html = renderComponent(LISTS, 'AiLists', props({ progress, waiting, live }));
+  const html = renderComponent(LISTS, 'AiLists', props());
+  const sheet = (name) => html.slice(html.indexOf(`data-ai-sheet="${name}"`), html.indexOf('data-ai-sheet="', html.indexOf(`data-ai-sheet="${name}"`) + 1));
+  // The sheets run head, vote, reply, private, recent.
+  const atOf = (name) => html.indexOf(`data-ai-sheet="${name}"`);
+  assert.ok(atOf('head') >= 0 && atOf('head') < atOf('vote'), 'head first');
+  assert.ok(atOf('vote') < atOf('reply') && atOf('reply') < atOf('private') && atOf('private') < atOf('recent'),
+    'then vote, reply, private and recent, in that order');
 
-  const open = html.indexOf('data-ai-sheet="open"');
-  const busy = html.indexOf('data-ai-sheet="busy"');
-  const liveAt = html.indexOf('data-ai-sheet="live"');
-  assert.ok(open >= 0 && busy > open && liveAt > busy, 'a sheet between Needs you and Live this week');
+  // A Vote, an approval and a pick land in Needs vote.
+  const vote = sheet('vote');
+  for (const title of ['Vote one', 'Approve one', 'Pick one']) assert.ok(vote.includes(title), title);
+  assert.doesNotMatch(vote, /Question one|Plan one|Private one/);
+  assert.match(vote, /data-ai-group-head=""/);
+  assert.match(vote, /data-ai-view-all="vote"/);
+  // A question, a plan and a fix you owe land in Needs reply.
+  const reply = sheet('reply');
+  for (const title of ['Question one', 'Plan one', 'Fix one']) assert.ok(reply.includes(title), title);
+  assert.match(reply, /data-ai-line="plan"/);
+  assert.match(reply, /data-ai-line="fix_yours"/);
+  assert.match(reply, /data-ai-view-all="reply"/);
+  // A private thread lands in Drafts / private, and its pill says Continue.
+  const priv = sheet('private');
+  assert.match(priv, /Private one/);
+  assert.match(priv, /data-ai-line="private"/);
+  assert.match(priv, new RegExp(`data-ai-line-pill="">${message('messages:ai.pill.continue')}<`));
+  assert.match(priv, /data-ai-view-all="private"/);
+  // Recently updated holds the work under way and what went live, and folds
+  // the rows nobody is moving under "Not moving".
+  const recent = sheet('recent');
+  assert.match(recent, /T1/);
+  assert.match(recent, /data-ai-line="going_live"/);
+  assert.match(recent, /data-ai-line="live"/);
+  assert.match(recent, new RegExp(`data-ai-line-pill="">${message('messages:ai.pill.open')}<`), 'a live row says Open');
+  assert.match(recent, new RegExp(`>${message('messages:ai.up.stillCount', { count: 1 })}<`), 'the Not moving fold');
+  assert.match(recent, /data-ai-view-all="recent"/);
 
-  // Needs you's card ends where your to-dos end: no In progress or Waiting
-  // section, no lines, and none of their rows.
-  const openSheet = html.slice(open, busy);
-  assert.doesNotMatch(openSheet, /data-ai-list="(?:next|up)"/, 'the two sections are gone from Needs you');
-  assert.doesNotMatch(openSheet, /data-ai-line="going_live"/);
-  assert.match(openSheet, /data-ai-list="work"[^>]*><div class="[^"]*" data-ai-band="">/, 'Needs you keeps its own band');
+  // A row carries its project, its day and one pill.
+  const rowStart = vote.indexOf('data-ai-line="need"');
+  const row = vote.slice(rowStart, vote.indexOf('data-ai-line="need"', rowStart + 1));
+  assert.match(row, /data-ai-line-app=""/);
+  assert.match(row, /data-ai-line-day="">Today</);
+  assert.match(row, new RegExp(`data-ai-line-pill="">${message('messages:ai.pill.vote')}<`));
+  assert.equal((row.match(/data-ai-line-pill=""/g) || []).length, 1, 'exactly one pill a row');
 
-  // A card like Live this week: its own band, the quieter rows, and a count
-  // of everything in it, work under way and waiting together.
-  const busySheet = html.slice(busy, liveAt);
-  assert.match(busySheet, /data-ai-list="busy"><div class="[^"]*" data-ai-band="">/);
-  assert.match(busySheet, /Waiting &amp; in progress · 8/);
-  assert.match(busySheet, /class="flex w-full min-h-\[40px\] md:min-h-\[32px\][^"]*"[^>]*data-ai-line="going_live"/, 'the quiet row');
-  assert.match(busySheet, /text-\[13px\] leading-5 text-zinc-600 dark:text-zinc-400/, 'the quiet title');
-  assert.equal((busySheet.match(/data-ai-band=""/g) || []).length, 1, 'one band, as Live this week has');
+  // A group with nothing in it is not drawn.
+  const onlyVote = renderComponent(LISTS, 'AiLists', props({ rows: [rows[0]], progress: [], waiting: [], live: [] }));
+  for (const name of ['reply', 'private', 'recent']) assert.doesNotMatch(onlyVote, new RegExp(`data-ai-sheet="${name}"`), name);
 
-  // One list, grouped by project: under way before waiting, and each
-  // project's rows under its own name.
-  const garden = busySheet.slice(busySheet.indexOf('data-ai-group="garden"'), busySheet.indexOf('data-ai-group="bakery"'));
-  assert.ok(garden.indexOf('data-ai-line="going_live"') < garden.indexOf('data-ai-line="up_for_vote"'), 'work under way comes first');
-  assert.match(garden, />Garden club</, 'under its project\'s name');
-  // Four of the garden's rows are moving: three, then its own Show more for
-  // the last. Its two not picked up rows fold under Not moving below.
-  assert.match(garden, /Show 1 more/);
-  assert.match(garden, /data-ai-group-rest=""/);
-  assert.match(busySheet, /Not moving · 2/);
-  // The bakery's two moving rows show whole.
-  assert.doesNotMatch(busySheet.slice(busySheet.indexOf('data-ai-group="bakery"')), /data-ai-group-rest=""/);
+  // Loading, failed and empty all use the one open sheet.
+  const loading = renderComponent(LISTS, 'AiLists', props({ ready: false, rows: [], progress: [], waiting: [], live: [] }));
+  assert.match(loading, /data-ai-sheet="open"/);
+  assert.match(loading, /data-ai-loading=""/);
+  assert.doesNotMatch(loading, /data-ai-sheet="(?:vote|reply|private|recent)"/);
+  const failed = renderComponent(LISTS, 'AiLists', props({ failed: 'failed' }));
+  assert.match(failed, /data-ai-sheet="open"/);
+  assert.match(failed, /data-ai-failed="failed"/);
+  const empty = renderComponent(LISTS, 'AiLists', props({ rows: [], progress: [], waiting: [], live: [] }));
+  assert.match(empty, /data-ai-sheet="open"/);
+  assert.match(empty, /data-ai-empty=""/);
+  assert.doesNotMatch(empty, /data-ai-sheet="(?:vote|reply|private|recent)"/);
 
-  // Nothing under way or waiting, no card, as Live this week has none.
-  const empty = renderComponent(LISTS, 'AiLists', props());
-  assert.doesNotMatch(empty, /data-ai-sheet="busy"/);
-  assert.doesNotMatch(empty, /data-ai-list="busy"/);
+  // View all narrows History to the group's kind.
+  const { groupHistoryKind } = loadTsx(LISTS);
+  assert.equal(groupHistoryKind('vote'), 'vote');
+  assert.equal(groupHistoryKind('reply'), 'request');
+  assert.equal(groupHistoryKind('private'), 'solo');
+  assert.equal(groupHistoryKind('recent'), null);
+  assert.match(read(LISTS), /onClick=\{\(\) => onViewAll\?\.\(kind\)\}/);
+  // A live row this tab is older than still says Reload instead of Open.
+  assert.match(read('frontend/src/features/ai/lines.ts'), /right: lacks \? t\('messages:ai\.short\.reload'\)/);
 });
 
 // #6680 (15 Nov 2026): #6153 folded a design thread filed as a request into
@@ -1763,8 +1791,8 @@ test('#6271: a private thread marked done this week is Live this week\'s, and on
   assert.match(html, /Garden club · Private thread · Closed/, 'its project, in front of "Private thread · Closed"');
   assert.match(html, /Private thread · Closed/);
   assert.match(html, /data-ai-line="closed" data-ai-lit="" aria-current="true"/, 'lit while its thread is in the column');
-  assert.match(html, /data-ai-group="none"[\s\S]*?An app for our garden plot rota/, 'one with no project is under Only you');
-  assert.ok(html.indexOf('data-ai-line="live"') < html.indexOf('data-ai-line="closed"'), 'under the project after its live row');
+  assert.match(html, /data-ai-line="closed"[\s\S]*?data-ai-line-app="">[\s\S]*?Only you/, 'a closed thread in no project shows Only you where its project goes');
+  assert.ok(html.indexOf('data-ai-line="closed"') < html.indexOf('data-ai-line="live"'), 'newest first: this week\'s dated closed rows lead the undated live one');
 });
 
 test('the column from 768px: one thread, or a new chat, alone under its own head; a page the panel holds gives the lists back when it closes', () => {
@@ -2487,10 +2515,9 @@ test('#6398: the search narrows every list by title, number or project, and says
   const byTitle = html({ query: 'migration' });
   assert.match(byTitle, /make the migration job cheaper/);
   assert.doesNotMatch(byTitle, /Dark mode|reuse image scan|Seed the garden|Ship the seed/, 'only the matching row');
-  assert.doesNotMatch(byTitle, /data-ai-list="busy"/, 'In progress & waiting has no match, so its card is gone');
-  assert.doesNotMatch(byTitle, /data-ai-list="live"/, 'nor Live this week');
-  assert.equal(message('messages:ai.work.titleCount', { count: 1 }), 'Needs you · 1');
-  assert.match(byTitle, /Needs you · 1/, 'the Needs you count over its rows is its matches');
+  assert.doesNotMatch(byTitle, /data-ai-list="reply"/, 'Needs reply has no match, so its group is gone');
+  assert.doesNotMatch(byTitle, /data-ai-list="recent"/, 'nor Recently updated');
+  assert.match(byTitle, /data-ai-sheet="vote"[\s\S]*?data-ai-group-count=""><span aria-hidden="true">1<\/span>/, 'the Needs vote group counts its one match');
 
   // A number matches with or without the #, as the row shows it.
   for (const query of ['6011', '#6011']) {
@@ -2520,7 +2547,7 @@ test('#6398: the search narrows every list by title, number or project, and says
   const none = html({ query: 'zzz' });
   assert.match(none, /<div class="[^"]*" data-ai-search-empty=""><p class="[^"]*">No threads match “zzz”<\/p><\/div>/);
   assert.ok(none.includes(message('messages:ai.search.noneThreads', { query: 'zzz' })));
-  assert.doesNotMatch(none, /data-ai-list="(?:work|busy|live|history|found)"/, 'every card folds away');
+  assert.doesNotMatch(none, /data-ai-list="(?:vote|reply|private|recent|history|found)"/, 'every card folds away');
 
   // Before the lists are read, the skeleton stays and no note is shown.
   const loading = html({ query: 'zzz', ready: false });
@@ -2577,7 +2604,7 @@ test('the search lists the messages that match under the threads, each a link to
     hit({ messageId: 88, rootId: 60, threadTitle: 'A calendar for the garden', mine: false, snippet: '…so we could improve it later', ranges: [[13, 20]] }),
   ]);
   const both = html({ query: 'improve', found });
-  assert.ok(both.indexOf('data-ai-list="busy"') > 0 && both.indexOf('data-ai-list="busy"') < both.indexOf('data-ai-list="found"'), 'the messages come after the matching threads');
+  assert.ok(both.indexOf('data-ai-list="recent"') > 0 && both.indexOf('data-ai-list="recent"') < both.indexOf('data-ai-list="found"'), 'the messages come after the matching threads');
   assert.equal(message('messages:ai.search.messages', { count: 2 }), 'In your messages · 2');
   const card = both.slice(both.indexOf('data-ai-sheet="found"'));
   assert.match(card, /<h2 class="[^"]*\buppercase\b[^"]*">In your messages · 2<\/h2>/, 'the small caps section label the other cards wear');
@@ -2614,7 +2641,7 @@ test('the search lists the messages that match under the threads, each a link to
 
   // Only messages match: no thread card, no "nothing matches" note.
   const onlyMessages = html({ query: 'my app', found: answered('my app', [hit({ ranges: [[18, 24]] })]) });
-  assert.doesNotMatch(onlyMessages, /data-ai-list="(?:work|busy|live|history)"/);
+  assert.doesNotMatch(onlyMessages, /data-ai-list="(?:vote|reply|private|recent|history)"/);
   assert.doesNotMatch(onlyMessages, /data-ai-search-empty/, 'a message matched, so the page does not say nothing did');
   assert.match(onlyMessages, /data-ai-list="found"/);
 
@@ -2641,7 +2668,7 @@ test('the search lists the messages that match under the threads, each a link to
 
   // The messages could not be read: said plainly, with Try again; the threads still answer.
   const failed = html({ query: 'improve', found: { q: 'improve', rows: [], more: false, state: 'failed' } });
-  assert.match(failed, /data-ai-list="busy"/, 'the threads are still searched');
+  assert.match(failed, /data-ai-list="recent"/, 'the threads are still searched');
   assert.match(failed, /data-ai-search-failed="" role="status"><p class="[^"]*">Your messages could not be searched\.<\/p><button type="button"[^>]*data-ai-search-retry="">Try again<\/button>/);
   assert.doesNotMatch(failed, /data-ai-search-empty/);
   const failedBare = html({ query: 'zzz', found: { q: 'zzz', rows: [], more: false, state: 'failed' } });

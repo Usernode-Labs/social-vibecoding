@@ -18,7 +18,7 @@ import { rowKey } from './column';
 import { botTabAddress } from './door';
 import { byMonth, historyGlyph, historyTooltip, historyWords, type HistoryRow, type HistoryState } from './history';
 import {
-  changeOnGithub, freshByProject, freshCount, nextWords, notMoving, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
+  byDay, changeOnGithub, freshByProject, freshCount, nextWords, notMoving, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { cleanQuery, foundDay, markParts, type Found, type MarkPart } from './search';
@@ -59,6 +59,20 @@ export interface Line {
   left?: boolean;
   /** When it started needing the viewer, for the day its row is grouped under. */
   at?: string | null;
+  /**
+   * 24 Nov 2026: the day its row says in its own column (Today, Yesterday or
+   * the weekday), for the four action groups' flat rows. History leaves it
+   * out: its rows say what became of them on the right, as before.
+   */
+  day?: string;
+  /**
+   * Which action group a Needs you row belongs to (24 Nov 2026): a vote,
+   * approval or pick is `vote`; a private thread is `private`; anything else
+   * waiting on the person is `reply`.
+   */
+  group?: 'vote' | 'reply' | 'private';
+  /** A live or just-closed line (Recently updated): its pill says Open. */
+  live?: boolean;
 }
 
 /**
@@ -239,6 +253,11 @@ export function useAiLines({
   const freshShown = freshCount(needRowsShown);
   const freshProjects = freshByProject(needRowsShown);
 
+  // 24 Nov 2026: a Needs you row asks for a vote (or an approval, or a pick
+  // between changes) or for something else; a private thread is its own.
+  const VOTE_PILLS = new Set(['messages:ai.pill.vote', 'messages:ai.pill.approve', 'messages:ai.pill.pick']);
+  const needGroup = (row: WorkRow): 'vote' | 'reply' | 'private' =>
+    row.key.startsWith('private:') ? 'private' : row.pill && VOTE_PILLS.has(row.pill.id) ? 'vote' : 'reply';
   const needLines: Line[] = kept(needRowsShown.map((row) => ({
     key: row.key,
     kind: row.key.startsWith('need:') ? 'need' : row.key.split(':')[0],
@@ -258,6 +277,8 @@ export function useAiLines({
     open: () => openRow(row),
     done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
     at: row.at,
+    day: dayOf(row.at, t),
+    group: needGroup(row),
   })));
   const threadLine = (glyph: (th: AiThread) => Glyph) => (th: AiThread): Line => ({
     key: String(th.threadId),
@@ -279,6 +300,7 @@ export function useAiLines({
     moved: th.moved === true,
     open: () => openThread(th),
     at: th.at,
+    day: dayOf(th.at, t),
   });
   const progressShown = progress.filter((x) => shows(x.app));
   const waitingShown = waiting.filter((x) => shows(x.app));
@@ -318,6 +340,9 @@ export function useAiLines({
         owe: false,
         lit: !!lit && rowKey(th) === lit,
         open: () => openThread(th),
+        at: th.at,
+        day: dayOf(th.at, t),
+        live: true,
       };
     }
     // #6233: Live, but this tab runs the build before it: the row asks for
@@ -328,9 +353,17 @@ export function useAiLines({
       right: lacks ? t('messages:ai.short.reload') : dayOf(th.at, t),
       owe: lacks,
       tooltip: t(prWord('messages:ai.live.row', changeOnGithub(th)), { project: th.app?.name || '', number: th.number || '' }),
+      live: true,
     };
   }));
   const liveBehind = liveLines.some((line) => line.owe);
+  // 24 Nov 2026: the four action groups. Needs you splits by what it asks
+  // (vote, reply, private); work under way and what went live share one
+  // group, newest first. `stillLines` stays apart for its own fold.
+  const voteLines = byDay(needLines.filter((line) => line.group === 'vote'));
+  const replyLines = byDay(needLines.filter((line) => line.group !== 'vote' && line.group !== 'private'));
+  const privateLines = byDay(needLines.filter((line) => line.group === 'private'));
+  const recentLines = byDay([...busyLines, ...liveLines]);
   // A project picked with nothing of yours on any list: Needs you says so,
   // by its name, rather than the lists quietly showing every project.
   const onlyApp = picked.length === 1 ? ranked.find((p) => p.app.slug === picked[0])?.app || null : null;
@@ -405,6 +438,7 @@ export function useAiLines({
   return {
     say, searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
     needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
+    voteLines, replyLines, privateLines, recentLines,
     owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
     // #6744: the counts the project filter shows, for anything that summarises
     // the lists (the hero under the bot's name asks the same question).

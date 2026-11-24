@@ -704,8 +704,13 @@ carry most of them.
   **The Homeroom bot tab's lists are the one exception** (30 Oct 2026,
   `frontend/src/features/ai/lists.tsx`): every thread you are in across
   projects, so a row is one 14px line (a glyph, its number from 768px, its
-  title and one word on the right), grouped under its project's name
-  instead of a tile on each row, 36px on a desktop and 44px on a phone. The
+  title, its project's tile and name from 768px, its day, and one pill on the
+  right), 36px on a desktop and 44px on a phone. Since 24 Nov 2026 the rows
+  are grouped by what they ask — **Needs vote**, **Needs reply**, **Drafts /
+  private** and **Recently updated** — each group a card with its own head
+  (a tile, its name, its count, one line saying what belongs there, and View
+  all), instead of sitting under a project's name. The project is on each
+  row. The
   line a second row would carry is its tooltip; a phone, where nothing
   hovers, shows it as a 12px second line only where it is news (a request
   the bot handed back, a vote that frees a build slot). The word on the

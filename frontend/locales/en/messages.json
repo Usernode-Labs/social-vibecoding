@@ -5015,6 +5015,54 @@
     "text": "Nothing needs you right now.",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Shown in the Needs you list when it is empty."
   },
+  "ai.group.vote.title": {
+    "text": "Needs vote",
+    "description": "The Homeroom bot tab's list: the name of the group of threads waiting for the person to vote, approve something, or pick between changes. It is the first group, above Needs reply."
+  },
+  "ai.group.vote.sub": {
+    "text": "Decisions and approvals waiting on you.",
+    "description": "The Homeroom bot tab's list: one line under the Needs vote group's name, saying what belongs in that group."
+  },
+  "ai.group.reply.title": {
+    "text": "Needs reply",
+    "description": "The Homeroom bot tab's list: the name of the group of threads waiting for the person's answer, such as a question from Homeroom bot, a plan to build, or a fix they owe."
+  },
+  "ai.group.reply.sub": {
+    "text": "Questions, plans and hand-backs waiting on your answer.",
+    "description": "The Homeroom bot tab's list: one line under the Needs reply group's name, saying what belongs in that group."
+  },
+  "ai.group.private.title": {
+    "text": "Drafts / private",
+    "description": "The Homeroom bot tab's list: the name of the group of the person's private threads with Homeroom bot, which nobody else can see, including their drafts and a project's first version."
+  },
+  "ai.group.private.sub": {
+    "text": "Your drafts and private threads. Only you can see them.",
+    "description": "The Homeroom bot tab's list: one line under the Drafts / private group's name, saying what belongs in that group."
+  },
+  "ai.group.recent.title": {
+    "text": "Recently updated",
+    "description": "The Homeroom bot tab's list: the name of the last group, holding the person's work under way, work waiting on someone else, and what went live or closed this week."
+  },
+  "ai.group.recent.sub": {
+    "text": "Your work under way, waiting, and live this week.",
+    "description": "The Homeroom bot tab's list: one line under the Recently updated group's name, saying what belongs in that group."
+  },
+  "ai.group.count_one": {
+    "text": "{{count}} thread",
+    "description": "The Homeroom bot tab's list: spoken by a screen reader for the bare number beside a group's name, saying it counts threads. Shown visually as the number alone in a small pill."
+  },
+  "ai.group.count_other": {
+    "text": "{{count}} threads",
+    "description": "The Homeroom bot tab's list: spoken by a screen reader for the bare number beside a group's name, saying it counts threads. Shown visually as the number alone in a small pill."
+  },
+  "ai.group.viewAll_one": {
+    "text": "View {{count}}",
+    "description": "The Homeroom bot tab's list: the button on a group's head that opens History narrowed to that group. {{count}} is how many threads the group holds."
+  },
+  "ai.group.viewAll_other": {
+    "text": "View all {{count}}",
+    "description": "The Homeroom bot tab's list: the button on a group's head that opens History narrowed to that group. {{count}} is how many threads the group holds."
+  },
   "ai.work.unreachable": {
     "text": "Not saved on this phone yet. Your lists will load when you’re back online.",
     "description": "The AI tab's main view: shown at the top of the Needs you list, above a Try again button, when the person's lists (what needs them, what is in progress, what is waiting) could not be fetched because there was no connection and this device has no saved copy of them."
@@ -5194,6 +5242,14 @@
   "ai.pill.needsYou": {
     "text": "Take a look",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Pill at the end of a row that waits on the person, when it says no more than that. A verb."
+  },
+  "ai.pill.continue": {
+    "text": "Continue",
+    "description": "The Homeroom bot tab's list: the pill at the end of a private thread's row (a draft, a project's first version, Earlier chat), which opens that thread to carry on. A verb."
+  },
+  "ai.pill.open": {
+    "text": "Open",
+    "description": "The Homeroom bot tab's list: the pill at the end of a row for work that went live or closed this week, which opens it. A verb."
   },
   "ai.busy.title_one": {
     "text": "Waiting & in progress · {{count}}",

@@ -124,7 +124,7 @@ test('History: by month, then by project, quiet rows that say how each thing end
   assert.match(html, /data-ai-sheet="history"/);
   assert.match(html, new RegExp(message('messages:ai.history.title')));
   const at = (needle) => html.indexOf(needle);
-  assert.ok(at('data-ai-sheet="live"') === -1 || at('data-ai-sheet="live"') < at('data-ai-sheet="history"'), 'below Live this week');
+  assert.ok(at('data-ai-sheet="recent"') === -1 || at('data-ai-sheet="recent"') < at('data-ai-sheet="history"'), 'below Recently updated');
   assert.ok(at('data-ai-history-month="2026-10"') < at('data-ai-history-month="2026-09"'), 'newest month first');
   assert.match(html, /data-ai-line="history-change"/);
   assert.match(html, new RegExp(message('messages:ai.history.yesPassed')));

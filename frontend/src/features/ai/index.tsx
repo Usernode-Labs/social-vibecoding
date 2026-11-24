@@ -1297,6 +1297,7 @@ export function AiScreen(): ReactNode {
           onHistoryKind={pickKind}
           openHistory={openHistory}
           historyRef={historyRef}
+          onViewAll={(kind) => { pickKind(kind); setToHistory((n) => n + 1); }}
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
