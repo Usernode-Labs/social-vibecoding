@@ -108,8 +108,9 @@ test('the Homeroom bot tab\'s History against the full schema', { timeout: 12000
   await closedChange(garden, 10, ada, 9);
   // Hers, closed with nothing built: her request, closed.
   await request(garden, 11, ada, 'Sign in with a code', 'closed');
-  // Still on the lists: hers live yesterday (Live this week), and Bob's that
-  // she only wrote in, live long ago (nobody's history).
+  // Still on the lists: hers live yesterday (Live this week). And Bob's that
+  // she only wrote in, live long ago: 24 Nov 2026 (mobile 04), History's
+  // under All, with how it ended.
   await request(garden, 13, ada, 'Weekly digest');
   await live(garden, 14, ada, 13, 1);
   await request(garden, 15, bob, 'Tag filter');
@@ -146,6 +147,7 @@ test('the Homeroom bot tab\'s History against the full schema', { timeout: 12000
     'Rename to Garden club:vote:passed',
     'Sign in with a code:request:closed',
     'Swap requests:change:live',
+    'Tag filter:thread:live',
     'Watering reminders:change:live',
   ].sort());
   const of = (title) => page.rows.find((r) => r.title === title);
@@ -157,7 +159,10 @@ test('the Homeroom bot tab\'s History against the full schema', { timeout: 12000
   assert.equal(of('Swap requests').left, true, 'a private project she is not in');
   assert.ok(!page.rows.some((r) => r.title === 'Club colours'), 'her vote there goes');
   assert.ok(!page.rows.some((r) => r.title === 'Weekly digest'), 'live this week is the lists\' own');
-  assert.ok(!page.rows.some((r) => r.title === 'Tag filter'), 'one she only wrote in is nobody\'s history');
+  // 24 Nov 2026 (mobile 04): a finished thread she only wrote in is in
+  // History, under none of the four kinds (All's), with how it ended.
+  assert.equal(of('Tag filter').kind, 'thread', 'one she only wrote in: in History, a kind of its own');
+  assert.ok(!aiHistory.KINDS.has('thread'), 'no kind chip narrows to it');
   const at = page.rows.map((r) => r.at);
   assert.deepEqual(at, [...at].sort().reverse(), 'newest first');
   assert.equal(of('Plot map').href, '#app/ah-garden/dev/issues/1');

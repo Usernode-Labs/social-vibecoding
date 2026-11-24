@@ -577,9 +577,14 @@
       "schemaSha256": "489219b9bf76852e08c517c5e95db9a96eb3ade010639ef70e7a810c8ae991f8"
     },
     {
+      "id": "thread-mention-dismissals",
+      "sha256": "d4315f556738b7a2b1ed8d1e94d81f9e514473797c6da2e37a10ed21c511f1a3",
+      "schemaSha256": "40bd67b5de987ee2cb8d6a5ac9d1d483e9d7951b020913dd11fe203a2d6e2dfa"
+    },
+    {
       "id": "app-archive-uploads",
       "sha256": "cf9eb841b856e594d2ce6ca0e6f01c8d99821d47770aef7e6597049c956d9043",
-      "schemaSha256": "b9019d0ad7bf812f064d32e43b8f3d0b847560f8dc31a09926caf4104c65a669"
+      "schemaSha256": "bf89c80be9594f2ee5c19230f16cc51d255eb7f2a8a137054dc9307da11fe4f4"
     }
   ]
 }

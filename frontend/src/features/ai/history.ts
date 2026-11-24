@@ -43,7 +43,11 @@ export interface HistoryRow {
   app: AiApp | null;
   href: string | null;
   at: string | null;
-  kind: HistoryKind;
+  /**
+   * One of the four kinds its chips narrow to, or (24 Nov 2026, mobile 04)
+   * `thread`: a thread you only wrote or were named in, which only All lists.
+   */
+  kind: HistoryKind | 'thread';
   outcome: 'live' | 'closed' | 'shipped' | 'merged' | 'passed' | 'withdrawn' | 'done' | 'put_away' | 'filed_shipped' | 'filed_closed';
   by?: 'you' | 'bot';
   myVote?: 'yes' | 'no';

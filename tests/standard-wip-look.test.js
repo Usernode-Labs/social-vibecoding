@@ -77,6 +77,8 @@ const MENU_HIDES = [
   // The sidebar's glass sheet and the top bar's fill: the panel and the page are the ground now.
   'html:not([data-skin]) #platform-tabs::before',
   'html:not([data-skin]) body #platform-header#platform-header::before',
+  // Home's and Communities' bar layer is off while the overlay scrim paints: in Firefox on a Mac the scrim over it was a darker band (24 Nov 2026).
+  'html:not([data-skin]) body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[data-painting]) #platform-header#platform-header::before',
   // Folded, the menu is a strip of icons and logos: the fold button has the logo's line, so the brand is not drawn in the strip (the top bar says it there),
   'html:not([data-skin]) #platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)::before',
   // and the words, headings, pins and nested places are the open menu's (asked 20 Nov 2026); the counts on the
@@ -293,6 +295,28 @@ test('the top bar has a foot: a hairline from the menu\'s edge to the window\'s,
     'so its strip is cut on the other side, and its foot by the bar\'s -mb-2');
   // The layer is never content of its own, so the hidden-rule list does not grow.
   assert.ok(!MENU_HIDES.includes(UNDER));
+  // …BUT NOT UNDER A SCRIM (24 Nov 2026): in Firefox on a Mac the scrim over
+  // this fixed layer composited about 7% darker than over the page, a band
+  // across the bar. While lib/overlay-scrim.js's paint layer is painting
+  // (`data-painting`), the layer is off and the bar shows the body's own
+  // wallpaper, the same pixels.
+  const SCRIM_UP = `${MENU_SCOPE} body:has(:is(#home-screen, #communities-screen):not(.hidden)):has(.overlay-scrim[data-painting]) #platform-header#platform-header::before`;
+  const off = all.find((r) => r.selector === SCRIM_UP);
+  assert.ok(off, 'Home and Communities turn the layer off while the scrim paints');
+  assert.match(off.body, /^\s*content: none !important;\s*$/, 'and only that: the layer\'s own rule stays as it is');
+  assert.ok(all.indexOf(off) > all.indexOf(under) && all.indexOf(off) > all.indexOf(rtlUnder),
+    'after both directions\' rules, and it out-ranks them by its extra :has()');
+  // The key is the paint layer's own mark (tests/overlay-scrim.test.js holds that it follows the dim).
+  assert.match(read('frontend', 'src', 'lib', 'overlay-scrim.js'), /data\.painting = ''/, 'the scrim marks itself while it paints');
+  // NEVER THE INLINE STYLE. The first version read `[style*="visibility: visible"]`
+  // inside this body:has(): every inline-style write on any page then
+  // re-matched it, style recalcs ran about a hundred times slower and the
+  // Dev board's declared checks timed out (PR #7089). No :has() in app.css
+  // reads the style attribute.
+  const sheet = read('public', 'css', 'app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of sheet.matchAll(/:has\(([^{}]*)\{/g)) {
+    assert.doesNotMatch(m[1], /\[style[\]*^$|~]?=?/, `a :has() keyed on the style attribute: ${m[0].slice(0, 160)}`);
+  }
 });
 
 test('on a community\'s page the Communities tab gives way to its row', () => {

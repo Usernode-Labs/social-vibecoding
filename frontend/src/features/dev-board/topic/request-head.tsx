@@ -841,6 +841,10 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     const closeId = layout.close ? layout.close.id : null;
     if (closeId != null && isVotesInViewAsked(`close:${closeId}`)) return undefined;
     if (typeof document === 'undefined') return undefined;
+    // 24 Nov 2026 (mobile 04): nor when a door asked for one of its thread's
+    // messages (the Homeroom bot tab's Reply on an @), which the thread
+    // brings into view and holds there itself (group-chat.js revealInThread).
+    if ((window as unknown as { GroupChat?: { threadRevealAsked?: () => boolean } }).GroupChat?.threadRevealAsked?.()) return undefined;
     return holdTopInView(document.getElementById('gc-thread-scroll'));
   }, [r.number, layout.close?.id]);
   // Once a change is built for it (or a vote to close it is open), the
