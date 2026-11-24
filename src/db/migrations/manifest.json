@@ -565,6 +565,11 @@
       "id": "live-drafts-preview-followup",
       "sha256": "0a8c41143d3521adbd9ec77af0d5a3943f257acf23e15dfa6251ade09a77b61b",
       "schemaSha256": "9af6a388e2b35d57133e6099914a6518527bd7513ee9118368dfa682cd490f69"
+    },
+    {
+      "id": "live-drafts-built-on",
+      "sha256": "14dbc0de5d32e951d9200e68f0e1ac6d0f8cc934c512a0c124ce464df4a241d0",
+      "schemaSha256": "2640fb472a7aac645847e27f70d8c56f7c3fc54b0e4b9bf4e34dd99dcf906e3c"
     }
   ]
 }

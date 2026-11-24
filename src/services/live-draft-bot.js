@@ -434,14 +434,19 @@ function statusWords({ state, status, draft, edits = [] }) {
 /**
  * Pure (24 Nov 2026): where read_file's `at` points: { sha, label } for
  * "main" (the draft's start) or a save's number, null when `at` is not
- * given, or { error }.
+ * given, or { error }. A draft started from a proposal (live-drafts.js
+ * builtOnOf) starts at that proposal's code, not main's, and says so.
  */
 function resolveAt(at, { draft, edits = [] } = {}) {
   if (at == null || at === '') return null;
   const text = String(at).trim().toLowerCase();
   if (['main', 'start', 'base'].includes(text)) {
     const sha = String(draft?.base_sha || '').toLowerCase();
-    return /^[0-9a-f]{40}$/.test(sha) ? { sha, label: 'main, before this draft changed anything' } : { error: 'This draft has no start recorded, so it cannot be read as it was.' };
+    const on = require('./live-drafts').builtOnOf(draft);
+    const label = on
+      ? `${on.prNumber ? `PR #${on.prNumber}` : 'the proposal'} as this draft started from it, before this draft changed anything`
+      : 'main, before this draft changed anything';
+    return /^[0-9a-f]{40}$/.test(sha) ? { sha, label } : { error: 'This draft has no start recorded, so it cannot be read as it was.' };
   }
   const n = Number(text.replace(/^save\s+/, ''));
   const list = Array.isArray(edits) ? edits : [];
@@ -533,7 +538,7 @@ const TOOLS = Object.freeze([
       name: 'read_file',
       description: 'Read a file of the draft, with its lines numbered, from `fromLine` (1 by default). '
         + 'It includes any edits you made this turn. A long file comes in parts: `nextLine` says where the next starts. '
-        + '`at` reads it as it was instead: "main" (before this draft changed anything) or a save\'s number from the '
+        + '`at` reads it as it was instead: "main" (before this draft changed anything: main, or the proposal it started from) or a save\'s number from the '
         + 'list of saves, for putting something back as it was.',
       parameters: {
         type: 'object',
@@ -726,6 +731,20 @@ function draftSkill() {
  * turn opens one with open_app_preview). What a draft does is the skill; what
  * is this draft's own (what was saved, the app's notes, its files) is here.
  */
+/**
+ * Pure (24 Nov 2026): where the draft started, in one line for its prompt:
+ * main, or the proposal it was opened on (live-drafts.js builtOnOf), the
+ * person's own (the draft is on it) or someone else's (it builds on it).
+ */
+function startLine(draft) {
+  const on = require('./live-drafts').builtOnOf(draft);
+  if (!on) return 'This draft started from main.';
+  const pr = on.prNumber ? `PR #${on.prNumber}` : 'a proposal';
+  return on.linked
+    ? `This draft started from ${pr}, their own proposal up for a vote, and is on it: Update proposal moves ${pr} to what you save.`
+    : `This draft started from ${pr}, someone else's proposal, and builds on it: nothing you save changes ${pr}.`;
+}
+
 function draftPrompt({ username, draft, edits, files, notes, opening = false, recent = null, preview = null }) {
   const name = draft.app_name || draft.app_slug;
   const listed = files.slice(0, MAX_LISTED).map((f) => f.path).join('\n');
@@ -740,6 +759,7 @@ function draftPrompt({ username, draft, edits, files, notes, opening = false, re
   return [
     'THIS THREAD\'S LIVE DRAFT',
     `You are changing the app "${name}" together with @${username}, in a live draft, with the draft tools.`,
+    startLine(draft),
     '',
     require('./design-bot').fillSkill(skill.rules, { applies: MAX_APPLIES, looks: MAX_LOOKS, statuses: MAX_STATUS }),
     '',
@@ -1190,5 +1210,5 @@ module.exports = {
   NEAR_LIMIT_NOTE, LAST_ROUND_DRAFT_NOTE, changedRegion, changedFiles, recentFileOf,
   MAX_LOOKS, notLookable, NOT_LOOKABLE_WORDS, LOOK_FAILED, withoutVersionLines,
   MAX_STATUS, PREVIEW_STATE_LINES, SIGNED_IN_AS, FOLLOWUP_NOTE, PICTURE_LEFT_OUT,
-  previewStateOf, redactLog, servesWords, statusWords, resolveAt, lineDiff, changesWords, savedLines,
+  previewStateOf, redactLog, servesWords, statusWords, resolveAt, lineDiff, changesWords, savedLines, startLine,
 };
