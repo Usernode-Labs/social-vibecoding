@@ -2244,6 +2244,63 @@ test('the chart: a drag past the list\'s floor hides it, and back out brings it 
   delete globalThis.document;
 });
 
+test('beside a preview, pulling the list back opens the thread inside the three columns it returns to (24 Nov 2026)', () => {
+  // With the list put away beside a preview, the thread and the preview are
+  // in halves; the list's return makes three columns again. The width the
+  // thread reopens at is read once that is drawn (flushSync), so it is the
+  // width last chosen, not one squeezed into the halves the drag left.
+  const { SidePanelDivider } = loadTsx('frontend/src/features/side-panel/side-panel.tsx');
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const inRender = (fn) => { let out; const Probe = () => { out = fn(); return null; }; renderToHtml(createElement(Probe)); return out; };
+  const width = 1720;
+  const props = new Map();
+  const mem = new Map([[api.resize.AI_PREVIEW_COLUMN_WIDTH_KEY, '420']]);
+  const doc = {
+    documentElement: {
+      dir: 'ltr',
+      classList: { add() {}, remove() {}, contains: () => false },
+      style: { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) },
+    },
+    body: null,
+    getElementById: () => null,
+  };
+  globalThis.window = {
+    innerWidth: width,
+    localStorage: { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) },
+    document: doc,
+  };
+  globalThis.document = doc;
+  // Halves: the preview is half of the 1476px room, so beside a 480px list
+  // the thread would have no room at all. Three columns: a 556px preview.
+  let three = false;
+  const measure = () => {
+    const preview = three ? 556 : 738;
+    return { innerWidth: width, appLeft: 244, neighbourMin: 480 + preview, endAt: width - preview };
+  };
+  const panel = { getBoundingClientRect: () => ({ left: 244, right: width - 738, width: 738 }) };
+  const calls = [];
+  const el = inRender(() => SidePanelDivider({
+    panelRef: { current: panel }, shown: true, id: 'ai-main-divider', controls: 'ai-main-pane',
+    widthKey: api.resize.AI_PREVIEW_COLUMN_WIDTH_KEY, probe: measure,
+    collapsed: true,
+    onCollapse: () => calls.push('collapse'),
+    onRestore: () => { calls.push('restore'); three = true; },
+  }));
+  const target = { setPointerCapture() {}, releasePointerCapture() {} };
+  el.props.onPointerDown({ button: 0, pointerId: 1, clientX: 244, preventDefault() {}, currentTarget: target });
+  el.props.onPointerMove({ pointerId: 1, clientX: 300, currentTarget: target });
+  assert.deepEqual(calls, ['restore'], 'back out past the snap distance');
+  assert.equal(props.get('--ai-col-chosen-w'), '420px', 'the thread reopens at the width last chosen');
+  el.props.onPointerUp({ pointerId: 1, clientX: 300, currentTarget: target });
+  assert.equal(mem.get(api.resize.AI_PREVIEW_COLUMN_WIDTH_KEY), '420', 'and that is the width kept');
+  delete globalThis.window;
+  delete globalThis.document;
+  const src = read('frontend/src/features/side-panel/side-panel.tsx');
+  assert.match(src, /import \{ flushSync \} from 'react-dom';/);
+  assert.match(src, /flushSync\(\(\) => \{ onRestore\?\.\(\); \}\);\s+const key = resolveKey\(\);\s+const back = bounds\(measure\(\)\);\s+const next = reopenWidth\(readStoredWidth\(undefined, key\), back\);/,
+    'the room is read after the list is drawn back');
+});
+
 test('beside a request, change or decision page the same edge hides the list, and the frame is told (#6973)', () => {
   // The page in the panel is another document: it cannot read the list store,
   // so the controller marks its <html> (LIST_HIDDEN_CLASS) and app.css shows

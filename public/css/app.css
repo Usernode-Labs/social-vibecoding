@@ -22785,6 +22785,19 @@ body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-d
   width: var(--ai-col-w);
   inset-inline-end: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
 }
+/* THE LIST PUT AWAY BESIDE A PREVIEW (24 Nov 2026). Where three columns fit,
+   the list's bar hides the list with a preview open too, and the thread and
+   the preview are left in halves (features/ai/index.tsx). Unlike a narrower
+   window's halves the list has only been put away, so the thread's left
+   edge stays the handle that pulls it back, on the pane's own edge as in
+   three columns. A request, change or decision page in the thread's place
+   keeps the side panel's edge the same way. */
+#ai-screen[data-ai-preview="halves"][data-ai-list-closed] .ai-main-pane > .side-panel-divider { display: block; }
+body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden)) #side-panel-divider { display: block; }
+body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="halves"][data-ai-list-closed] #ai-main-divider,
+body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden)) #side-panel-divider {
+  --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px));
+}
 /* A phone: the whole of the page, over the drawer, its arrow back to the thread. */
 #ai-screen[data-ai-preview="full"] .ai-preview-pane {
   position: absolute;
