@@ -2385,9 +2385,13 @@ test('one column state: where each row goes, the row it lights and its address',
   // 5 Nov 2026: the column's address carries the filter the chips set
   // (./filter-address.ts), and the chips write it back in place: two writers,
   // the column's and the filter's, besides its definition.
+  // 24 Nov 2026: a group's View all is a third, writing History's own
+  // address (`#homeroom-bot/history?kind=…`), not a bare `?kind=`, so the
+  // card is what the address asks for on a reload.
   assert.match(src, /showAddress\(withFilter\(columnAddress\(columnShown\), \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
   assert.match(src, /showAddress\(withFilter\(window\.location\.hash, \{ projects: next\.picked, kind: next\.historyKind \}\)\);/);
-  assert.equal((src.match(/showAddress\(/g) || []).length, 3, 'the column\'s writer and the filter\'s, besides its definition');
+  assert.match(src, /showAddress\(historyAddress\(kind, picked\)\);/);
+  assert.equal((src.match(/showAddress\(/g) || []).length, 4, 'the column\'s writer, the filter\'s and View all\'s, besides its definition');
   assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(row\) === lit,/);
   assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(th\) === lit,/);
 });

@@ -122,7 +122,7 @@ import { AiLists } from './lists';
 import { AiFrameList } from './frame-list';
 import { showsPicked } from './lines';
 import { isFrameSkin, useSkin } from '../../lib/skin';
-import { historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
+import { historyAddress, historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
 import { cleanQuery, useBotSearch } from './search';
 import { clearSearchMark, currentSearchMark } from './search-mark';
@@ -402,6 +402,22 @@ export function AiScreen(): ReactNode {
   const pickKind = (kind: HistoryKind | null) => {
     setHistoryKind(kind);
     writeFilter({ picked, historyKind: kind });
+  };
+  // A group's View all opens the tab's History card, narrowed to that kind
+  // (24 Nov 2026). The address says so (`#homeroom-bot/history?kind=vote`),
+  // not just the filter: the card is what was asked for, so a reload or a
+  // copied link lands on it, and the address reader scrolled to it once in
+  // place (`historyAsked`). `pickKind` alone would leave a bare `?kind=`
+  // address and lose History on the next visit.
+  const viewAll = (kind: HistoryKind | null) => {
+    setHistoryKind(kind);
+    if (typeof window !== 'undefined' && isBotTabHash(window.location.hash)) {
+      showAddress(historyAddress(kind, picked));
+    } else {
+      writeFilter({ picked, historyKind: kind });
+    }
+    setToHistory((n) => n + 1);
+    endSearch();
   };
   // A project a link picked that no list names yet: its chip, from what
   // the Communities tab knows of it, else by its address alone, so the
@@ -1297,7 +1313,7 @@ export function AiScreen(): ReactNode {
           onHistoryKind={pickKind}
           openHistory={openHistory}
           historyRef={historyRef}
-          onViewAll={(kind) => { pickKind(kind); setToHistory((n) => n + 1); }}
+          onViewAll={viewAll}
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
