@@ -34420,6 +34420,11 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .cm-card [data-home-community-votes] { top: -7px; inset-inline-end: -5px; min-width: 20px; height: 20px; padding: 0 5px; font-size: 11px; }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) :is(.messages-composer-card, .gc-composer-card) { background: var(--bl-raise); box-shadow: var(--bl-field-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card:focus-within { box-shadow: var(--bl-field-edge), 0 0 0 2px var(--accent); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card .messages-send:not([data-bot-stop]) { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); opacity: 1; }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card .messages-send:not([data-bot-stop]):not(:disabled):hover { background: var(--bl-sun-lit); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card .messages-send:not([data-bot-stop]):not(:disabled):active { box-shadow: var(--bl-pill-edge-down); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card .messages-send:not([data-bot-stop]):disabled,
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send:not([data-bot-stop]) { background: var(--bl-raise); color: var(--bl-label); box-shadow: var(--bl-raise-edge); opacity: 1; }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .platform-tab-badge { background: var(--thread-ff8a78); color: var(--thread-121a0e); font-variant-numeric: tabular-nums; }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .uppercase,
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .messages-section-head,
@@ -36919,6 +36924,31 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card:focus-within {
   box-shadow: var(--bl-field-edge), 0 0 0 2px var(--accent);
+}
+/* #7069: the box's send disc is the look's main action, as New chat and a
+   vote's Send are: sun with the ink outline once there is something to
+   send, and the look's raised plain disc while the box is empty. The base
+   disc (the accent, faded while disabled) read here as a washed blue
+   button. Stop, in Send's place while Homeroom bot works, keeps its own
+   style. Size, radius and placement are untouched. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card .messages-send:not([data-bot-stop]) {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+  opacity: 1;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card .messages-send:not([data-bot-stop]):not(:disabled):hover {
+  background: var(--bl-sun-lit);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card .messages-send:not([data-bot-stop]):not(:disabled):active {
+  box-shadow: var(--bl-pill-edge-down);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card .messages-send:not([data-bot-stop]):disabled,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send:not([data-bot-stop]) {
+  background: var(--bl-raise);
+  color: var(--bl-label);
+  box-shadow: var(--bl-raise-edge);
+  opacity: 1;
 }
 /* THE COLUMN'S HEADER beside Homeroom bot's page, over a request, a change
    or a decision opened there. The standard header is the sheet's
