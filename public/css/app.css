@@ -23040,6 +23040,20 @@ button.dev-ws-recent-card {
      the row fit inside the gutters without wrapping or scrolling sideways. */
   .dev-ws-item > .dev-ws-diagram { padding-inline: 12px; }
 }
+/* From 420px Before and After sit side by side, as the "seen" kind's two
+   sides do: two equal columns, Before on the start side, a hairline before
+   After with 24px either side of it. Each side's steps still run in a row
+   and wrap inside their own half. A step is as wide as its words need,
+   between 88px and 15rem, its drawing, caption and note on the start edge,
+   so a note takes two lines rather than five. Below 420px the stacked rows
+   above are unchanged; right to left, Before is on the right. */
+@media (min-width: 420px) {
+  .dev-ws-diagram-steps-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 24px; }
+  .dev-ws-diagram-steps-row { min-width: 0; }
+  .dev-ws-diagram-steps-row + .dev-ws-diagram-steps-row { padding-inline-start: 24px; border-inline-start: 1px solid var(--app-sheet-line); }
+  .dev-ws-diagram-step-pic { width: auto; min-width: 88px; max-width: 15rem; flex: 0 1 auto; text-align: start; overflow-wrap: anywhere; }
+  .dev-ws-diagram-step-pic > svg { margin: 0; }
+}
 
 /* Mermaid: the library's SVG, scaled to the sheet. */
 .dev-ws-diagram-svg { display: flex; justify-content: center; min-height: 0; }

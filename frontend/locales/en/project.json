@@ -484,7 +484,7 @@
     "description": "Heading of the card at the top of a project's Hub when nothing is open and nothing has ever been merged, for a person Homeroom bot builds changes for there. \"Change\" is a verb; the project is what changes."
   },
   "hub.startHere.bot.text": {
-    "text": "Say it in your own words. Homeroom bot makes the change for you.",
+    "text": "Describe what you want. Homeroom bot makes the change for you.",
     "description": "Text of the card at the top of a project's Hub when nothing is open and nothing has ever been merged, under the heading \"What do you want to change?\". \"Homeroom bot\" is the name of Homeroom's assistant, which builds changes to the project; keep it as it is. \"Change\" is a noun here."
   },
   "hub.startHere.bot.button": {
@@ -6872,7 +6872,7 @@
     "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, once the request or the change is closed."
   },
   "topic.card.ownWords": {
-    "text": "{{name}}’s own words.",
+    "text": "Written by {{name}}.",
     "description": "Small line under the request's text on a request's page: the text above is exactly what the person who asked wrote, not a summary. {{name}} is their username."
   },
   "topic.card.summaryBy": {

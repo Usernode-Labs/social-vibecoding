@@ -495,7 +495,7 @@ test('a request with a summary shows it on the card, says what it was written fr
   });
   const own = renderComponent(REQUEST, 'RequestHead', { r: view() });
   assert.match(own, /Settings is three taps away\./);
-  assert.match(own, /<p class="dev-thread-by" data-thread-by="asker"><span>maya’s own words\.<\/span><\/p>/);
+  assert.match(own, /<p class="dev-thread-by" data-thread-by="asker"><span>Written by maya\.<\/span><\/p>/);
   const withSummary = renderComponent(REQUEST, 'RequestHead', { r: view({ summary: { text: 'maya asked for a switch. <b>Homeroom bot</b> has a plan.', basis: 'plan' } }) });
   assert.match(withSummary, /<p>maya asked for a switch\. &lt;b&gt;Homeroom bot&lt;\/b&gt; has a plan\.<\/p>/, 'plain text, escaped');
   assert.doesNotMatch(withSummary, /Settings is three taps away\./, 'the asker\'s words are the Asked step\'s, not the card\'s');
