@@ -7237,6 +7237,67 @@ html:not([data-skin]):where([data-motion="reduce"]) a.wip-row { transition: none
 .wip-skel-pill { width: 3rem; height: 1.5rem; border-radius: var(--wip-radius-pill); }
 /* A card's placeholder: a picture's 16:10 and the three lines of words under it. */
 .wip-skel-card { height: auto; padding-bottom: calc(62.5% + 4.5rem); border-radius: var(--wip-card-radius); }
+/* RECENT ACTIVITY (features/home/needs-you-card.tsx, 24 Nov 2026): Home's
+   row of project cards, one per project the viewer has work in, each the
+   page's card (.wip-card) about 150px wide, so two and a bit show on a
+   375px phone and the cut third says the row scrolls. The row runs to both
+   edges of the screen and starts its first card on the page's gutter; it
+   snaps to cards and draws no scrollbar. Where it has room for every card
+   it does not scroll. As the posters' row does, it reaches past the cards
+   for what a card draws outside its box (the shadow under the pointer, the
+   focus ring), and its margins give that room back. */
+.wip-activity-rail {
+  display: flex;
+  gap: 10px;
+  margin-block: -0.25rem -1rem;
+  margin-inline: calc(-1 * var(--wip-gutter, 12px));
+  padding-block: 0.25rem 1rem;
+  padding-inline: var(--wip-gutter, 12px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--wip-gutter, 12px);
+  scrollbar-width: none;
+}
+.wip-activity-rail::-webkit-scrollbar { width: 0; height: 0; }
+.wip-activity-rail > li { display: flex; flex: none; scroll-snap-align: start; }
+/* A card: its icon and the chevron at its top corner, its name and up to
+   two lines of what is going on, then when it was last active at its foot.
+   The words keep room for two lines whatever a card says, and the card a
+   floor of that height, so every card is one height and a placeholder is
+   the card it stands for. */
+.wip-activity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 150px;
+  min-height: 9.75rem; /* 12 + 40 + 10 + 56 + 10 + 16 + 12 */
+  padding: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+.wip-activity-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+.wip-activity-words { display: flex; flex-direction: column; min-width: 0; min-height: 3.5rem; }
+.wip-activity-when { margin-top: auto; }
+.wip-activity-card .wip-skel-icon { width: 2.5rem; height: 2.5rem; border-radius: 1rem; }
+.wip-activity-card .wip-skel-lines { padding-top: 0.25rem; }
+/* Under the pointer, or reached by the keyboard, its edge deepens half a
+   shade and a faint shadow comes up under it, slowly, as a challenge's
+   poster does; nothing moves. Only where a pointer hovers: a tap on a phone
+   can leave a card :hover. (The brand look keeps its own lift, so the fade
+   is the standard look's.) */
+html:not([data-skin]) .wip-activity-card { transition: box-shadow 0.45s cubic-bezier(0.22, 0.61, 0.36, 1); }
+@media (hover: hover) {
+  .wip-activity-card[href]:hover { box-shadow: inset 0 0 0 1px var(--wip-card-line-hover, var(--wip-card-line)), 0 8px 22px -14px var(--wip-card-line-hover, var(--wip-card-line)); }
+  .wip-activity-card[href]:hover .wip-item-title { color: var(--wip-ink-action); }
+}
+.wip-activity-card:focus-visible { outline: 2px solid var(--wip-ink-action); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-skin]) .wip-activity-card { transition: none; }
+}
+html:not([data-skin]):where([data-motion="reduce"]) .wip-activity-card { transition: none; }
 /* A filter line: the choices at its start (they scroll sideways when they
    do not fit) and one menu at its end, close over the list they filter. */
 .wip-filterbar {
@@ -37367,12 +37428,12 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   font-size: 11px;
 }
 @media (min-width: 1280px) {
-  /* RECENT THREADS BESIDE PINNED APPS. From 1280px, while there are recent
-     threads to list, the card is a column at Pinned apps' side rather than a
-     row under it: the two start on the same line, the column lists as many
-     threads as fit beside Pinned apps (its heading opens the rest), and a
-     short list ends after its last row. Home's column is
-     wider for it. The launcher grid keeps its own box (the note on
+  /* RECENT ACTIVITY BESIDE PINNED APPS. From 1280px, while there is
+     recent activity to show, the card is a column at Pinned apps' side
+     rather than a row under it: the two start on the same line, and the
+     column holds the project cards two across, as many rows as fit beside
+     Pinned apps, the rest scrolling in it (a row cut at the column's foot
+     says so). Home's column is wider for it. The launcher grid keeps its own box (the note on
      `#app-list` above): the card it sat on is drawn by the box around it,
      which is what stretches, and the grid rides its middle. With no recent
      threads, or with no apps section, nothing here applies and Home is one
@@ -37444,66 +37505,51 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     overflow: hidden;
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card {
-    --wip-cols: 1;
-    /* It ends after its last row: a short list leaves no empty block under it. */
-    flex: none;
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel {
-    flex: none;
-    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  /* The cards fill the column two across, a card gap apart, and scroll in it
+     upward rather than sideways. The column clips at its own edges, so the
+     row keeps no gutter there, and a card's focus ring is drawn inside it. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-rail {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    min-height: 0;
+    margin-inline: 0;
+    padding-inline: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scroll-snap-type: y proximity;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows {
-    margin-top: 0;
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-rail > li {
+    width: calc(50% - 5px);
   }
-}
-/* ON A PHONE NEEDS YOU IS A ROW OF CARDS that scrolls sideways, as Next
-   challenges is: each decision a card of its own, the next one showing at
-   the edge, and the row snaps card by card. A list of eight was a screen
-   and a half to scroll past before Challenges. The row runs to both edges
-   of the screen; the heading over it still opens all of Needs you. */
-@media (max-width: 767.98px) {
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card > .wip-panel {
-    padding: 0;
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-card {
+    width: 100%;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-rows {
-    display: flex;
-    gap: 10px;
-    margin: 0 -12px;
-    padding: 2px 12px 18px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scroll-snap-type: x mandatory;
-    scroll-padding-inline: 12px;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-rows::-webkit-scrollbar {
-    display: none;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-rows > li {
-    flex: 0 0 78%;
-    scroll-snap-align: start;
-    padding: 6px 10px;
-    border-radius: 16px;
-    background: var(--bl-card);
-    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-card:focus-visible {
+    outline-offset: -2px;
   }
 }
-/* A RECENT THREAD'S ROW HAS AIR ABOVE AND BELOW IT (19 Nov 2026). The kit's
-   row is padded `0.5rem var(--wip-cell-pad)`, and this look never sets
-   --wip-cell-pad, so the whole declaration fell away: each row's lines sat
-   on the hairlines either side of it. The rows start at the card's own
-   inset, as they did, so only the top and bottom are padded. On a phone
-   each row is a card of its own with its own padding (the block above). */
-@media (min-width: 768px) {
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-row {
-    padding: 0.5rem 0;
-  }
+/* RECENT ACTIVITY IN THIS LOOK (24 Nov 2026): the same row of project
+   cards as the standard look's, at every width (features/home/
+   needs-you-card.tsx), each the look's card with its lift, and what needs
+   the viewer in the look's sky, as a link and a count are here. The row
+   reaches further below its cards for the lift, and gives that room back.
+   (It was a row of thread cards on a phone, and a list beside Pinned apps
+   from 1280px.) */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-activity-rail {
+  margin-bottom: -1.5rem;
+  padding-bottom: 1.5rem;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-activity-card {
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card [data-ask] {
+  color: var(--bl-sky);
 }
 /* A REPLY BOX on its sheet. The standard interface draws it white on a
    half-clear sheet, so the tinted page shows round it; here the sheet is
