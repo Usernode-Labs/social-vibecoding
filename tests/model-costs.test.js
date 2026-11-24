@@ -521,7 +521,7 @@ test('nothing turns an observed figure into an estimate on its own', () => {
 
 test('the Model costs section is registered, routed and audited', () => {
   const console_ = read('frontend/src/features/admin/admin-console.js');
-  assert.match(console_, /\{ key: 'model-costs', label: 'Model costs', group: 'Platform' \}/);
+  assert.match(console_, /\{ key: 'model-costs', label: 'Model costs', group: 'AI & Quality' \}/);
   assert.match(console_, /'model-costs': 'AdminModelCosts'/);
   assert.match(console_, /'model-costs': '<svg/, 'the nav entry has an icon like its neighbours');
   assert.match(read('frontend/src/features/admin/sections.ts'), /admin-model-costs\.tsx/);

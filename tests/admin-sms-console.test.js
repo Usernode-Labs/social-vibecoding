@@ -430,9 +430,9 @@ test('any admin reads the delivery log; non-admins do not', async () => {
 
 test('the console lists SMS delivery in Platform, right after Email delivery', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
-  const mailAt = consoleJs.indexOf("{ key: 'mail', label: 'Email delivery', group: 'Platform' }");
-  const smsAt = consoleJs.indexOf("{ key: 'sms', label: 'SMS delivery', group: 'Platform' }");
-  const signInAt = consoleJs.indexOf("{ key: 'sign-in', label: 'Sign-in providers', group: 'Platform' }");
+  const mailAt = consoleJs.indexOf("{ key: 'mail', label: 'Email delivery', group: 'Operations' }");
+  const smsAt = consoleJs.indexOf("{ key: 'sms', label: 'SMS delivery', group: 'Operations' }");
+  const signInAt = consoleJs.indexOf("{ key: 'sign-in', label: 'Sign-in providers', group: 'Configuration' }");
   assert.ok(mailAt > 0 && smsAt > mailAt && signInAt > smsAt);
   assert.match(consoleJs, /sms: 'AdminSms'/);
   assert.match(consoleJs, /'sms': '<svg/);

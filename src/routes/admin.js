@@ -199,6 +199,28 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Dashboard (#7081) ──────────────────────────────────────
+  //
+  // The console's landing page: counts over a period beside the period
+  // before it, the open moderation cases and the latest changes to go live.
+  // Read-only; full and view-only admins both read it (adminMiddleware
+  // above). The counting is services/admin-dashboard.js.
+  router.get('/api/admin/dashboard', async (req, res) => {
+    const adminDashboard = require('../services/admin-dashboard');
+    const days = adminDashboard.parseDays(req.query.days);
+    if (days == null) {
+      return res.status(400).json({ error: `days must be one of ${adminDashboard.PERIODS.join(', ')}` });
+    }
+    try {
+      return res.json(await adminDashboard.gather(pool, { days }));
+    } catch (err) {
+      log.warn('admin', 'Dashboard failed', {
+        code: err && err.code ? String(err.code).slice(0, 64) : 'query_failed',
+      });
+      return res.status(500).json({ error: 'Could not load the dashboard' });
+    }
+  });
+
   // ── Mobile push diagnostics ────────────────────────────────
   //
   // Read-only operational visibility over the private push tables. The

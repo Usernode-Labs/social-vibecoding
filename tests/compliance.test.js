@@ -161,7 +161,7 @@ test('a scan stores every check, an error included, and a check that throws does
 
 test('the console wires the section: menu entry, module, ownership audit', () => {
   const consoleSrc = read('frontend/src/features/admin/admin-console.js');
-  assert.match(consoleSrc, /\{ key: 'compliance', label: 'Compliance', group: 'Operations' \}/);
+  assert.match(consoleSrc, /\{ key: 'compliance', label: 'Compliance', group: 'Governance' \}/);
   assert.match(consoleSrc, /compliance: 'AdminCompliance'/);
   assert.match(read('frontend/src/features/admin/sections.ts'), /import '\.\/admin-compliance\.tsx';/);
   const audit = read('scripts/audit-react-ownership.mjs');

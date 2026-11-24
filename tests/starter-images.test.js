@@ -303,7 +303,7 @@ test('a clock only the newest build runs builds them ahead, each key a target, a
 
 test('Admin > Templates lists every ready-made app, with Rebuild for writers', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
-  assert.match(consoleJs, /\{ key: 'templates', label: 'Templates', group: 'Platform' \},/);
+  assert.match(consoleJs, /\{ key: 'templates', label: 'Templates', group: 'Content' \},/);
   assert.match(consoleJs, /templates: 'AdminTemplates',/);
   assert.match(consoleJs, /'templates': '<svg /);
   assert.match(read('frontend/src/features/admin/sections.ts'), /import '\.\/admin-templates\.tsx';/);

@@ -145,10 +145,13 @@ export function searchSections(sections, query) {
  * The home page's one-line status from /api/admin/overview: the stuck apps
  * and orphan workers are what need a person. Null until the data is in.
  */
-export function needsYouSentence(data) {
+export function needsYouSentence(data, dashboard) {
   if (!data || typeof data !== 'object') return null;
+  // #7081: an open moderation case needs somebody too, once the dashboard's
+  // read is in. Without it the sentence counts what the overview knows.
+  const cases = dashboard && dashboard.moderation ? Number(dashboard.moderation.open) || 0 : 0;
   const n = (Array.isArray(data.stuckApps) ? data.stuckApps.length : 0)
-    + (Array.isArray(data.orphanWorkers) ? data.orphanWorkers.length : 0);
+    + (Array.isArray(data.orphanWorkers) ? data.orphanWorkers.length : 0) + cases;
   if (n === 0) return 'Nothing needs you right now';
   return n === 1 ? '1 thing needs you' : `${n} things need you`;
 }
@@ -158,4 +161,90 @@ export function pinnedSections(visible) {
   return PINNED_KEYS
     .map((k) => visible.find((s) => s.key === k))
     .filter(Boolean);
+}
+
+// ── Dashboard (#7081) ───────────────────────────────────────────────────
+//
+// The home page's figures come from GET /api/admin/dashboard
+// (src/services/admin-dashboard.js): counts for a period, each beside the
+// count for the period before it. The rules for reading them are here, so
+// the page states nothing a test cannot check.
+
+/** The periods the dashboard offers, in days, and the one it opens on. */
+export const DASHBOARD_PERIODS = Object.freeze([7, 30, 90]);
+export const DASHBOARD_DEFAULT_DAYS = 30;
+
+/**
+ * How a count moved against the period before it. `dir` is 'up', 'down' or
+ * 'flat'; `text` is the words beside the figure. With nothing before there
+ * is no percentage to state, so the words say that instead of inventing one.
+ */
+export function deltaOf(now, before) {
+  const a = Number(now) || 0;
+  const b = Number(before) || 0;
+  if (a === b) return { dir: 'flat', text: b === 0 ? 'None before either' : 'Same as before' };
+  if (b === 0) return { dir: 'up', text: 'None the period before' };
+  const pct = Math.round(Math.abs(a - b) / b * 100);
+  const shown = pct === 0 ? 'under 1%' : `${pct}%`;
+  return a > b ? { dir: 'up', text: `Up ${shown}` } : { dir: 'down', text: `Down ${shown}` };
+}
+
+/** "the 30 days before", for the line under a figure. */
+export function beforeWords(days) {
+  return `vs the ${Number(days) || DASHBOARD_DEFAULT_DAYS} days before`;
+}
+
+/**
+ * What needs an admin, most pressing first, from the two reads the home page
+ * makes: the overview (stuck apps, orphan workers) and the dashboard (open
+ * moderation cases). Each names the section that deals with it. Empty when
+ * nothing does; null while neither read is in.
+ */
+export function attentionItems(overview, dashboard) {
+  if (!overview && !dashboard) return null;
+  const out = [];
+  const open = dashboard && dashboard.moderation ? Number(dashboard.moderation.open) || 0 : 0;
+  if (open > 0) {
+    out.push({ key: 'moderation', section: 'reports', tone: 'warn', text: open === 1 ? '1 moderation case is open' : `${open} moderation cases are open` });
+  }
+  const stuck = overview && Array.isArray(overview.stuckApps) ? overview.stuckApps.length : 0;
+  if (stuck > 0) {
+    out.push({ key: 'stuck', section: 'status', tone: 'bad', text: stuck === 1 ? '1 project is stuck being made' : `${stuck} projects are stuck being made` });
+  }
+  const orphans = overview && Array.isArray(overview.orphanWorkers) ? overview.orphanWorkers.length : 0;
+  if (orphans > 0) {
+    out.push({ key: 'orphans', section: 'status', tone: 'warn', text: orphans === 1 ? '1 worker has no session' : `${orphans} workers have no session` });
+  }
+  return out;
+}
+
+/** "3 hours ago" for a queue row; '' for a date that cannot be read. */
+export function agoWords(iso, nowMs = Date.now()) {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const mins = Math.max(0, Math.round((nowMs - t) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins === 1 ? '1 minute ago' : `${mins} minutes ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? '1 day ago' : `${days} days ago`;
+}
+
+// What a moderation case is about and why it was reported, in words. The
+// keys are the server's own (moderation_cases.target_type, the report
+// reasons); an unknown one is shown as it is rather than hidden.
+const TARGET_WORDS = Object.freeze({ app: 'Project', user: 'Person', app_message: 'Project message', conversation_message: 'Message' });
+export function targetWords(type) {
+  return TARGET_WORDS[type] || String(type || '').replace(/_/g, ' ');
+}
+export function reasonWords(reason) {
+  const s = String(reason || '').replace(/_/g, ' ').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+/** The sections the home page offers as quick actions, the visible ones, in this order. */
+export const QUICK_KEYS = Object.freeze(['reports', 'users', 'waitlist', 'approvals', 'status', 'support']);
+export function quickSections(visible) {
+  return QUICK_KEYS.map((k) => visible.find((s) => s.key === k)).filter(Boolean);
 }

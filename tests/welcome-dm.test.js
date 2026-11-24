@@ -78,7 +78,7 @@ test('the sweep is a scheduled job of the workflow, and the write is for full ad
 
 test('the section is registered everywhere a console section has to be', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
-  assert.match(consoleJs, /\{ key: 'welcome-dm', label: 'Welcome messages', group: 'People' \}/);
+  assert.match(consoleJs, /\{ key: 'welcome-dm', label: 'Welcome messages', group: 'Growth' \}/);
   assert.match(consoleJs, /'welcome-dm': 'AdminWelcomeDm'/);
   assert.match(consoleJs, /'welcome-dm': '<svg/, 'the nav entry has an icon like its neighbours');
   assert.match(read('frontend/src/features/admin/sections.ts'), /import '\.\/admin-welcome-dm\.tsx';/);

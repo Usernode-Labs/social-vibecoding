@@ -65,18 +65,20 @@ test('AdminConsole.SECTIONS promotes every programme screen under the #1179 grou
   assert.doesNotMatch(consoleJs, /label: 'Seasons, Events & Challenges'/,
     'the umbrella entry is gone from the menu');
   const EXPECT = {
-    'seasons': ['Seasons', 'Programme'],
-    'season-events': ['Season events', 'Programme'],
-    'challenge-templates': ['Challenge templates', 'Programme'],
-    'waitlist': ['Waitlist', 'People'],
-    'onchain-accounts': ['Onchain accounts', 'People'],
-    'user-activities': ['User activities', 'People'],
-    'delegations': ['Delegations', 'People'],
-    'settings': ['Settings', 'Platform'],
-    'app-version': ['App version', 'Platform'],
-    'text-translations': ['Translations', 'Platform'],
-    'sql-console': ['SQL console', 'Platform'],
-    'api-tester': ['API tester', 'Platform'],
+    // Regrouped by #7081: Programme, People and Platform became Content,
+    // Community, Growth and Configuration. Every key and label is the same.
+    'seasons': ['Seasons', 'Content'],
+    'season-events': ['Season events', 'Content'],
+    'challenge-templates': ['Challenge templates', 'Content'],
+    'waitlist': ['Waitlist', 'Growth'],
+    'onchain-accounts': ['Onchain accounts', 'Community'],
+    'user-activities': ['User activities', 'Community'],
+    'delegations': ['Delegations', 'Community'],
+    'settings': ['Settings', 'Configuration'],
+    'app-version': ['App version', 'Configuration'],
+    'text-translations': ['Translations', 'Content'],
+    'sql-console': ['SQL console', 'Configuration'],
+    'api-tester': ['API tester', 'Configuration'],
   };
   for (const [key, [label, group]] of Object.entries(EXPECT)) {
     assert.match(consoleJs, new RegExp(`\\{ key: '${key}', label: '${label}', group: '${group}' \\}`),
@@ -84,7 +86,7 @@ test('AdminConsole.SECTIONS promotes every programme screen under the #1179 grou
   }
   // The existing platform-accounts Users entry survives the merge — one
   // Users menu entry, both surfaces (see the renderUsersSection test below).
-  assert.match(consoleJs, /\{ key: 'users', label: 'Users', group: 'People' \}/,
+  assert.match(consoleJs, /\{ key: 'users', label: 'Users', group: 'Community' \}/,
     'the existing Users entry is kept');
   const matches = consoleJs.match(/key: 'seasons'/g) || [];
   assert.equal(matches.length, 1, "'seasons' appears exactly once in SECTIONS (the Seasons screen itself)");

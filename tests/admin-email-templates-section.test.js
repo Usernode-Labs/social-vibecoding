@@ -102,7 +102,7 @@ const count = (html, re) => (html.match(re) || []).length;
 test('the section is registered everywhere the console reads, inside the registry rules', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
   const sections = consoleJs.slice(consoleJs.indexOf('SECTIONS: ['), consoleJs.indexOf('isOpen()'));
-  assert.match(sections, /\{ key: 'email-templates', label: 'Email templates', group: 'Platform' \}/);
+  assert.match(sections, /\{ key: 'email-templates', label: 'Email templates', group: 'Content' \}/);
   assert.ok(sections.indexOf("key: 'email-templates'") > sections.indexOf("key: 'mail'"), 'beside Email delivery');
   assert.match(consoleJs, /'email-templates': 'AdminEmailTemplates'/);
   assert.match(consoleJs, /'email-templates': '<svg class="w-5 h-5 shrink-0"/, 'it has a nav icon');

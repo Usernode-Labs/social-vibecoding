@@ -776,6 +776,24 @@ Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
 a change to the rule. Make it here as well.
 
+**The console wears the brand through its own registry (#7081, 24 Nov
+2026).** `AdminUI.card` and the title recipes carry two hooks, `adm-card` and
+`adm-title`, and the standard look draws them as warm paper with one thin
+outline and a Young Serif heading (one weight: `font-weight: 400`) from one
+block of `public/css/app.css`, "THE ADMIN CONSOLE, IN THE BRAND". Its
+`--adm-*` tokens are declared on `:root` for every look, in light and dark,
+because the dashboard's recipes (`AdminUI.metric`, `AdminUI.delta`) read
+them; the drawing after them is scoped to `html:not([data-skin])`. Buttons in
+the console are flat (the sun for the main action, paper for the secondary):
+the shell's sticker buttons exclude `#admin-screen`. The menu's eight groups
+(Overview, Community, Growth, Governance, Operations, AI & Quality, Content,
+Configuration) are the `group` of each `SECTIONS` entry; a new section picks
+one of them. The home page's figures are counts from
+`GET /api/admin/dashboard` (`src/services/admin-dashboard.js`), read-only
+behind the admin gate, and the rules for reading them are pure functions in
+`admin-workspace.js`. A figure that has not arrived is a dash: never write a
+number into the page. `tests/admin-dashboard.test.js` holds all of it.
+
 ### The console is React — add a section the same way
 
 **Every admin section renders from React.** `admin-console.js` is a chassis

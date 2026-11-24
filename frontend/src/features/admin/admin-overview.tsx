@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
-import { needsYouSentence, pinnedSections } from './admin-workspace.js';
+import {
+  DASHBOARD_DEFAULT_DAYS, DASHBOARD_PERIODS, agoWords, attentionItems, beforeWords, deltaOf,
+  needsYouSentence, pinnedSections, quickSections, reasonWords, targetWords,
+} from './admin-workspace.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Operations overview — the console's landing section (#admin, #admin/overview).
@@ -57,8 +60,80 @@ const GROUP_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zin
 const ROW = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800';
 const MUTED_SM = 'text-xs text-zinc-500 dark:text-zinc-400';
 
+// ── The dashboard (#7081) ──
+//
+// The home page reads a second endpoint, GET /api/admin/dashboard
+// (src/services/admin-dashboard.js): counts of rows that already exist, for
+// a period the admin picks (7, 30 or 90 days), each beside the same count
+// for the period before. Every figure on the page is one of those counts or
+// one of the three the overview read already gave. Nothing is estimated, and
+// a figure that has not arrived is a dash, never a number.
+//
+// What the page says about them (how a count moved, what needs somebody, how
+// long ago) is decided in ./admin-workspace.js, as the tabs and the search
+// are, so tests/admin-workspace.test.js holds the rules without a DOM.
+
+interface Pair { now: number; before: number }
+interface QueueRow { id: number; targetType: string; label: string; status: string; reports: number; reason: string | null; updatedAt: string }
+interface ShippedRow { id: number; title: string | null; appSlug: string; appName: string; mergedAt: string }
+interface DashboardData {
+  days: number;
+  totals: { users: number; apps: number; communities: number };
+  period: { newUsers: Pair; newApps: Pair; proposals: Pair; votes: Pair; voters: Pair; shipped: Pair };
+  moderation: { open: number; fresh: number; queue: QueueRow[] };
+  shipped: ShippedRow[];
+}
+
+const count = (n: number) => Number(n || 0).toLocaleString('en-US');
+const ARROW = { up: '↑', down: '↓', flat: '→' } as const;
+// The registry is never indexed by a computed key (its header says why):
+// each member is named once here, and the page picks from these.
+const DELTA = { up: AdminUI.delta.up, down: AdminUI.delta.down, flat: AdminUI.delta.flat } as const;
+const METRIC = { sky: AdminUI.metric.sky, leaf: AdminUI.metric.leaf, sun: AdminUI.metric.sun, plain: AdminUI.metric.plain } as const;
+
+function Delta({ pair }: { pair: Pair }) {
+  const d = deltaOf(pair.now, pair.before);
+  return (
+    <span className={DELTA[d.dir as 'up' | 'down' | 'flat']}>
+      <span aria-hidden="true">{ARROW[d.dir as 'up' | 'down' | 'flat']}</span>{d.text}
+    </span>
+  );
+}
+
+// One figure. `value` is null until its read lands: a dash then, so a tile
+// never shows a number it was not given.
+// `lead` is what the movement is about when it is not the figure itself: a
+// total's tile says "37 new" before "Up 68%", so the arrow is never read as
+// the total's.
+function Metric({ id, tone, label, value, lead, note, pair, onOpen, opens }: {
+  id: string; tone: 'sky' | 'leaf' | 'sun' | 'plain'; label: string; value: number | null;
+  lead?: string; note?: string; pair?: Pair | null; onOpen?: () => void; opens?: string;
+}) {
+  const body = (
+    <>
+      <div className={AdminUI.metricLabel}>{label}</div>
+      <div id={id} className={AdminUI.metricValue}>{value == null ? '—' : count(value)}</div>
+      <div className={`${AdminUI.metricNote} flex flex-wrap items-center gap-x-2 gap-y-1`}>
+        {lead ? <span className="font-medium text-[color:var(--adm-ink)]">{lead}</span> : null}
+        {pair && value != null ? <Delta pair={pair} /> : null}
+        {note ? <span>{note}</span> : null}
+      </div>
+    </>
+  );
+  if (!onOpen) return <div className={METRIC[tone]}>{body}</div>;
+  return (
+    <button type="button" onClick={onOpen} aria-label={`${label}: open ${opens}`}
+      className={`${METRIC[tone]} block w-full text-start transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500`}>
+      {body}
+    </button>
+  );
+}
+
 function OverviewSection({ compact }: { compact?: boolean }) {
   const [data, setData] = useState<OverviewData | null>(null);
+  const [dash, setDash] = useState<DashboardData | null>(null);
+  const [dashFailed, setDashFailed] = useState(false);
+  const [days, setDays] = useState<number>(DASHBOARD_DEFAULT_DAYS);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -70,7 +145,21 @@ function OverviewSection({ compact }: { compact?: boolean }) {
     setData(payload);
   }, []);
 
+  // The counts, for the period on screen. A newer period's answer wins over
+  // an older one still in flight. A failed read says so and offers Retry; the
+  // figures it would have filled stay dashes.
+  const asked = useRef(0);
+  const loadDash = useCallback(async (period: number) => {
+    const mine = ++asked.current;
+    setDashFailed(false);
+    const { ok, data: payload } = await (window as any).AdminConsole.fetchJson(`/api/admin/dashboard?days=${period}`);
+    if (!alive.current || mine !== asked.current) return;
+    if (!ok || !payload || typeof payload !== 'object' || !payload.period) { setDash(null); setDashFailed(true); return; }
+    setDash(payload);
+  }, []);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadDash(days); }, [loadDash, days]);
 
   const stuck = data?.stuckApps || [];
   const orphans = data?.orphanWorkers || [];
@@ -81,7 +170,7 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   const ops = (
     <div className={`${AdminUI.card} p-4`}>
       <div className="flex items-center justify-between mb-3">
-        <h2 className={AdminUI.cardTitle}>Operations</h2>
+        <h2 className={AdminUI.cardTitle}>{compact ? 'Operations' : 'Platform health'}</h2>
         <button id="admin-refresh-overview" type="button" className={`${AdminUI.btn.link} text-xs`}
           onClick={load}>Refresh</button>
       </div>
@@ -157,25 +246,180 @@ function OverviewSection({ compact }: { compact?: boolean }) {
     </div>
   );
 
-  if (compact) return ops;
-
   const consoleApi = (window as any).AdminConsole;
   const visible: Section[] = consoleApi?._visibleSections?.() || [];
+  const canOpen = (key: string) => visible.some((x) => x.key === key);
+  const go = (key: string) => () => consoleApi?.goTo?.(key);
+  const opener = (key: string) => (canOpen(key) ? go(key) : undefined);
+  const labelOf = (key: string) => visible.find((x) => x.key === key)?.label || key;
+  const before = beforeWords(dash?.days || days);
+  const p = dash?.period || null;
+
+  // The figures: what exists, then what happened in the period.
+  const metrics = (
+    <div id="admin-dash-metrics" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <Metric id="admin-dash-users" tone="sky" label="Accounts" value={dash ? dash.totals.users : null}
+        lead={p ? `${count(p.newUsers.now)} new` : undefined} note={p ? before : undefined} pair={p?.newUsers}
+        onOpen={opener('users')} opens={labelOf('users')} />
+      <Metric id="admin-dash-apps" tone="leaf" label="Projects" value={dash ? dash.totals.apps : null}
+        lead={p ? `${count(p.newApps.now)} new` : undefined} note={p ? before : undefined} pair={p?.newApps}
+        onOpen={opener('apps')} opens={labelOf('apps')} />
+      <Metric id="admin-dash-communities" tone="plain" label="Communities" value={dash ? dash.totals.communities : null}
+        note="One for each project today" />
+      <Metric id="admin-dash-moderation" tone={dash && dash.moderation.open > 0 ? 'sun' : 'plain'} label="Open moderation cases"
+        value={dash ? dash.moderation.open : null}
+        note={dash ? (dash.moderation.fresh ? `${count(dash.moderation.fresh)} not looked at yet` : 'None waiting to be looked at') : undefined}
+        onOpen={opener('reports')} opens={labelOf('reports')} />
+      <Metric id="admin-dash-proposals" tone="plain" label="Changes put to a vote" value={p ? p.proposals.now : null} note={before} pair={p?.proposals} />
+      <Metric id="admin-dash-votes" tone="plain" label="Votes cast" value={p ? p.votes.now : null} note={before} pair={p?.votes} />
+      <Metric id="admin-dash-voters" tone="plain" label="People who voted" value={p ? p.voters.now : null} note={before} pair={p?.voters} />
+      <Metric id="admin-dash-shipped" tone="leaf" label="Changes gone live" value={p ? p.shipped.now : null} note={before} pair={p?.shipped} />
+    </div>
+  );
+
+  const failed = dashFailed ? (
+    <div id="admin-dash-error" role="alert" className={`${AdminUI.card} p-4 flex flex-wrap items-center gap-3`}>
+      <p className="flex-1 min-w-0 text-sm text-red-700 dark:text-red-300">The figures could not be loaded. Nothing is shown in their place.</p>
+      <button type="button" className={AdminUI.btn.outlineSm} onClick={() => loadDash(days)}>Try again</button>
+    </div>
+  ) : null;
+
+  const attention = attentionItems(data, dash);
+  const TONE = { warn: AdminUI.badge.warn, bad: AdminUI.badge.destructive } as const;
+  const attentionCard = (
+    <section aria-labelledby="admin-dash-attention-title" className={`${AdminUI.card} p-4`}>
+      <h2 id="admin-dash-attention-title" className={AdminUI.cardTitle}>Needs attention</h2>
+      {attention == null ? <p className={`${AdminUI.loading} mt-3`}>Loading…</p> : null}
+      {attention && !attention.length ? (
+        <p id="admin-dash-attention-clear" className="mt-3 flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+          <span className={AdminUI.badge.success}>All clear</span>No open moderation case, stuck project or orphan worker.
+        </p>
+      ) : null}
+      {attention && attention.length ? (
+        <ul id="admin-dash-attention" className="mt-1">
+          {attention.map((item) => (
+            <li key={item.key} className={AdminUI.listRow}>
+              <span className={TONE[item.tone as 'warn' | 'bad']}>{item.tone === 'bad' ? 'Problem' : 'Waiting'}</span>
+              <span className="flex-1 min-w-0 text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.text}</span>
+              {canOpen(item.section) ? (
+                <button type="button" className={AdminUI.btn.outlineSm} data-admin-section={item.section} onClick={go(item.section)}>
+                  {`Open ${labelOf(item.section)}`}
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+
+  if (compact) {
+    // A phone's level 1, above the section menu: what needs somebody first,
+    // then the figures two to a row, then the operations card as before.
+    return (
+      <div id="admin-dash-phone" className="space-y-4">
+        {attentionCard}
+        {failed}
+        {metrics}
+        {ops}
+      </div>
+    );
+  }
+
   const pinned: Section[] = pinnedSections(visible);
+  const quick: Section[] = quickSections(visible);
   const groups: Array<{ name: string; items: Section[] }> = (consoleApi?._groupedSections?.() || [])
     .map((g: { name: string; items: Section[] }) => ({ ...g, items: g.items.filter((x) => x.key !== 'overview') }))
     .filter((g: { items: Section[] }) => g.items.length);
-  const sentence = needsYouSentence(data);
-  const needs = (stuck.length + orphans.length) > 0;
+  const sentence = needsYouSentence(data, dash);
+  const needs = (stuck.length + orphans.length + (dash?.moderation.open || 0)) > 0;
+  const queue = dash?.moderation.queue || [];
+  const shipped = dash?.shipped || [];
 
   return (
-    <div id="admin-home" className="space-y-10 pb-4">
-      <header>
-        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Admin home</h1>
-        <p id="admin-home-status" className={`mt-1 text-sm ${needs ? 'font-medium text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>
-          {sentence || 'Checking what needs you…'}
-        </p>
+    <div id="admin-home" className="space-y-8 pb-4">
+      <header className="adm-hero flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className={AdminUI.pageTitle}>Admin home</h1>
+          <p id="admin-home-status" className={`mt-1 text-sm ${needs ? 'font-medium text-amber-800 dark:text-amber-300' : 'text-zinc-600 dark:text-zinc-400'}`}>
+            {sentence || 'Checking what needs you…'}
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          <span>Period</span>
+          <select id="admin-dash-period" className={`${AdminUI.select} w-auto min-h-[40px]`} value={days}
+            onChange={(e) => setDays(Number(e.target.value))}>
+            {DASHBOARD_PERIODS.map((d) => <option key={d} value={d}>{`Last ${d} days`}</option>)}
+          </select>
+        </label>
       </header>
+      {failed}
+      {metrics}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+        {attentionCard}
+        <section aria-labelledby="admin-dash-quick-title" className={`${AdminUI.card} p-4`}>
+          <h2 id="admin-dash-quick-title" className={AdminUI.cardTitle}>Quick actions</h2>
+          <div id="admin-dash-quick" className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {quick.map((x) => (
+              <button key={x.key} type="button" data-admin-section={x.key} onClick={go(x.key)}
+                className={`${AdminUI.btn.outline} min-h-[44px] justify-start`}>
+                <span aria-hidden="true" className="shrink-0" dangerouslySetInnerHTML={{ __html: consoleApi?.NAV_ICONS?.[x.key] || '' }} />
+                <span className="min-w-0 truncate">{x.label}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+        <section aria-labelledby="admin-dash-queue-title" className={`${AdminUI.card} p-4`}>
+          <div className={AdminUI.cardHeader}>
+            <h2 id="admin-dash-queue-title" className={AdminUI.cardTitle}>
+              Moderation queue
+              {dash && dash.moderation.open ? <span className={`${AdminUI.badge.warn} ms-2 align-middle`}>{`${count(dash.moderation.open)} open`}</span> : null}
+            </h2>
+            {canOpen('reports') ? <button type="button" className={`${AdminUI.btn.link} text-sm`} data-admin-section="reports" onClick={go('reports')}>View all</button> : null}
+          </div>
+          {!dash && !dashFailed ? <p className={AdminUI.loading}>Loading…</p> : null}
+          {dashFailed ? <p className={AdminUI.muted}>Not loaded.</p> : null}
+          {dash && !queue.length ? <p id="admin-dash-queue-empty" className={AdminUI.muted}>No open cases. Reports people send appear here.</p> : null}
+          {queue.length ? (
+            <ul id="admin-dash-queue">
+              {queue.map((row) => (
+                <li key={row.id} className={AdminUI.listRow}>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.label}</div>
+                    <div className={MUTED_SM}>
+                      {[targetWords(row.targetType), reasonWords(row.reason), row.reports === 1 ? '1 report' : `${row.reports} reports`, agoWords(row.updatedAt)]
+                        .filter(Boolean).join(' · ')}
+                    </div>
+                  </div>
+                  <span className={row.status === 'new' ? AdminUI.badge.warn : AdminUI.badge.default}>{row.status === 'new' ? 'New' : 'In review'}</span>
+                  {canOpen('reports') ? <button type="button" className={AdminUI.btn.primarySm} onClick={go('reports')}>Review</button> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+        <section aria-labelledby="admin-dash-shipped-title" className={`${AdminUI.card} p-4`}>
+          <div className={AdminUI.cardHeader}>
+            <h2 id="admin-dash-shipped-title" className={AdminUI.cardTitle}>Recently gone live</h2>
+          </div>
+          {!dash && !dashFailed ? <p className={AdminUI.loading}>Loading…</p> : null}
+          {dashFailed ? <p className={AdminUI.muted}>Not loaded.</p> : null}
+          {dash && !shipped.length ? <p id="admin-dash-shipped-empty" className={AdminUI.muted}>No change has gone live yet.</p> : null}
+          {shipped.length ? (
+            <ul id="admin-dash-shipped-list">
+              {shipped.map((row) => (
+                <li key={row.id} className={AdminUI.listRow}>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.title || `Change ${row.id}`}</div>
+                    <div className={MUTED_SM}>{`${row.appName} · ${agoWords(row.mergedAt)}`}</div>
+                  </div>
+                  <span className={AdminUI.badge.success}>Live</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      </div>
       {ops}
       {pinned.length ? (
         <section aria-labelledby="admin-home-pinned-title">

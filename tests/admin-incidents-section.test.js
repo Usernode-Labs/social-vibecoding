@@ -16,7 +16,7 @@ const SECTION = 'frontend/src/features/admin/admin-incidents.tsx';
 
 test('it sits in Operations, beside Health & status, and is not public', () => {
   const src = read('frontend/src/features/admin/admin-console.js');
-  const entry = /\{ key: 'incidents', label: 'Unexpected events', group: 'Operations' \}/;
+  const entry = /\{ key: 'incidents', label: 'Unexpected events', group: 'Overview' \}/;
   assert.match(src, entry, 'admin-only: no `public: true`');
   const sections = src.slice(src.indexOf('SECTIONS: ['), src.indexOf('LEGACY_SECTION_KEYS'));
   const at = (key) => sections.indexOf(`{ key: '${key}'`);

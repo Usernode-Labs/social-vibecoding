@@ -120,9 +120,12 @@ export const AdminUI = Object.freeze({
   // Surfaces — a floating card: no border, no shadow, the language's radius.
   // The language separates by FIGURE/GROUND, so the card is the surface and
   // the hairline it used to trace is what the ground now does.
-  card: 'bg-white dark:bg-zinc-900 rounded-2xl',
+  // `adm-card` and `adm-title` are hooks, not utilities: the standard look
+  // draws a card as warm paper with one thin outline and a title in the
+  // serif from them (app.css, "THE ADMIN CONSOLE, IN THE BRAND", #7081).
+  card: 'adm-card bg-white dark:bg-zinc-900 rounded-2xl',
   cardHeader: 'flex items-center justify-between gap-2 mb-4',
-  cardTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  cardTitle: 'adm-title text-lg font-semibold text-zinc-900 dark:text-zinc-100',
   cardDescription: 'text-sm text-zinc-500 dark:text-zinc-400',
   // Tables — topochain data-table. NOTE: deliberately no sideways-scroll
   // utility on the wrapper — nothing in the console scrolls horizontally
@@ -181,7 +184,30 @@ export const AdminUI = Object.freeze({
   dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4',
   dialogPanel: 'w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl p-6 shadow-xl',
   // Typography / misc.
-  sectionTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  sectionTitle: 'adm-title text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  // A page's own name and the sentence under it (#7081).
+  pageTitle: 'adm-title adm-page-title text-2xl font-semibold text-zinc-900 dark:text-zinc-100',
+  pageLede: 'mt-1 text-sm text-zinc-600 dark:text-zinc-400',
+  // A figure on the dashboard: a pastel tile, the figure, what it counts and
+  // how it moved. The tints are the brand's sky, green and sun, as tokens
+  // (--adm-*, app.css) with a dark value each; `plain` is the card's own.
+  metric: Object.freeze({
+    sky: 'adm-metric rounded-2xl p-4 bg-[color:var(--adm-sky)] text-[color:var(--adm-ink)]',
+    leaf: 'adm-metric rounded-2xl p-4 bg-[color:var(--adm-leaf)] text-[color:var(--adm-ink)]',
+    sun: 'adm-metric rounded-2xl p-4 bg-[color:var(--adm-sun)] text-[color:var(--adm-ink)]',
+    plain: 'adm-metric adm-card rounded-2xl p-4 bg-white dark:bg-zinc-900 text-[color:var(--adm-ink)]',
+  }),
+  metricValue: 'adm-figure mt-2 text-3xl font-semibold tabular-nums leading-none',
+  metricLabel: 'mt-1.5 text-sm font-medium',
+  metricNote: 'mt-2 text-xs text-[color:var(--adm-ink-soft)]',
+  // How a figure moved against the period before: words, never colour alone.
+  delta: Object.freeze({
+    up: 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-[color:var(--adm-chip)] text-[color:var(--adm-up)]',
+    down: 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-[color:var(--adm-chip)] text-[color:var(--adm-down)]',
+    flat: 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-[color:var(--adm-chip)] text-[color:var(--adm-ink-soft)]',
+  }),
+  // A row of a list inside a card: the thing, its facts, one action.
+  listRow: 'flex flex-wrap items-center gap-x-3 gap-y-2 py-3 border-b border-zinc-100 dark:border-zinc-800/60 last:border-b-0',
   muted: 'text-sm text-zinc-500 dark:text-zinc-400',
   // Loading — ONE spelling of "waiting for data" for the whole console. The
   // eleven programme screens draw a shaped placeholder (topochain/ui.tsx's
@@ -211,7 +237,7 @@ if (typeof window !== 'undefined') window.AdminUI = AdminUI;
 
 import { TABS_KEY, parseStoredTabs, addTab, closeTab, searchSections } from './admin-workspace.js';
 
-// Which menu groups (Operations, Programme, People, Insights, Platform) the
+// Which menu groups (Overview, Community, Growth, Governance, …) the
 // viewer has COLLAPSED on the phone's level-1 menu, persisted per browser
 // (#1152). The desktop sidebar that shared it became the top bar (#6456). Versioned key, same
 // shape as Notifications' notif_expanded_groups_v1.
@@ -275,14 +301,81 @@ const AdminConsole = {
   // the heading they sit under — in the desktop sidebar AND in the mobile
   // level-1 menu, which share _groupedSections(). Order here IS menu order.
   SECTIONS: [
-    { key: 'overview', label: 'Overview', group: 'Operations' },
+    // REGROUPED (#7081, 24 Nov 2026) from Operations / Programme / People /
+    // Insights / Platform into eight groups named for what an admin comes to
+    // do: Overview, Community, Growth, Governance, Operations, AI & Quality,
+    // Content, Configuration. Every key, label and route is the one it was;
+    // only the heading a section sits under, and its place in the menu, moved.
+    { key: 'overview', label: 'Overview', group: 'Overview' },
     // Health & status and Node & chain are the two `public` sections —
     // see the PUBLIC MODE note above.
-    { key: 'status', label: 'Health & status', group: 'Operations', public: true },
-    { key: 'node', label: 'Node & chain', group: 'Operations', public: true },
+    { key: 'status', label: 'Health & status', group: 'Overview', public: true },
     // #4296: errors the platform is designed never to make, logged by
     // services/platform-incidents.js. Admin-only; view-only admins read it.
-    { key: 'incidents', label: 'Unexpected events', group: 'Operations' },
+    { key: 'incidents', label: 'Unexpected events', group: 'Overview' },
+
+    { key: 'users', label: 'Users', group: 'Community' },
+    // The Users section carries BOTH user surfaces since #1179: the
+    // platform accounts card (roles, quotas, caps) and the programme
+    // users card (enrolment, podium/log settings, CSV import/export) —
+    // one menu entry, merged. See features/admin/admin-users.tsx.
+    // Support (#admin/support): one read-mostly screen per participant for
+    // answering account, points, event and kudos questions. See
+    // features/admin/admin-support.tsx.
+    { key: 'support', label: 'Support', group: 'Community' },
+    { key: 'reports', label: 'Moderation', group: 'Community' },
+    // Apps & usage: every app with its members, contributors and activity
+    // (features/admin/admin-apps-usage.tsx, services/admin-apps-usage.js).
+    // First under Insights: it is the one-screen answer to "what exists and
+    // what is being used". Read-only; view-only admins read it.
+    { key: 'apps', label: 'Apps & usage', group: 'Community' },
+    { key: 'codes', label: 'Invite links', group: 'Community' },
+    { key: 'limits', label: 'Limits', group: 'Community' },
+    // Access review (#5133): every account with admin rights, what each can
+    // do (exports, SQL console), and the quarterly review that confirms the
+    // list. Full admins only. See features/admin/admin-access-review.tsx.
+    { key: 'access-review', label: 'Access review', group: 'Community' },
+    // Test accounts: make a new account for first-time-user testing, see the
+    // live ones, retire one when done (routes/test-accounts.js, the routes
+    // the connector's *_test_account tools wrap). Full admins only, the list
+    // included. See features/admin/admin-test-accounts.tsx.
+    { key: 'test-accounts', label: 'Test accounts', group: 'Community' },
+    { key: 'user-activities', label: 'User activities', group: 'Community' },
+    { key: 'onchain-accounts', label: 'Onchain accounts', group: 'Community' },
+    // Read-only view over the testnet accounts' staking delegation
+    // periods (the mobile app is the delegation actor; admins only look).
+    { key: 'delegations', label: 'Delegations', group: 'Community' },
+
+    // Journey (#3369): the user journey and the North Star, active groups.
+    // Its own definitions and routes (/api/admin/journey/*); Analytics is
+    // deliberately left as it is. See features/admin/admin-journey.tsx.
+    { key: 'journey', label: 'Journey', group: 'Growth' },
+    // Onboarding flows: every person as one thread from where they arrived
+    // from to where they are now, over all time, in five views. Journey reads
+    // the same people week by week. See features/admin/admin-onboarding-flows.tsx.
+    { key: 'onboarding-flows', label: 'Onboarding flows', group: 'Growth' },
+    { key: 'analytics', label: 'Analytics', group: 'Growth' },
+    // Programme people screens, promoted by the same #1179 reshuffle.
+    { key: 'waitlist', label: 'Waitlist', group: 'Growth' },
+    // Welcome messages: somebody let in gets a group with the people chosen
+    // there, opened by a message from the first of them. Beside Waitlist
+    // because both are about the moment someone is let in.
+    { key: 'welcome-dm', label: 'Welcome messages', group: 'Growth' },
+
+    // #6643: changes held until an admin votes yes on them, and what became
+    // of the ones before. See features/admin/admin-approvals.tsx.
+    { key: 'approvals', label: 'Approvals', group: 'Governance' },
+    { key: 'features', label: 'Submitted features', group: 'Governance' },
+    // The watch-only small-change tag: which proposal versions read as small
+    // and undoable, and what ruled the rest out (features/admin/admin-small-changes.tsx).
+    { key: 'small-changes', label: 'Small changes', group: 'Governance' },
+    // Compliance (#5634): the compliance plan's items, each one's status as
+    // an admin set it, and the weekly scan of what a machine can check. Every
+    // admin reads it. See features/admin/admin-compliance.tsx.
+    { key: 'compliance', label: 'Compliance', group: 'Governance' },
+    { key: 'campaigns', label: 'Maintenance campaigns', group: 'Governance' },
+
+    { key: 'node', label: 'Node & chain', group: 'Operations', public: true },
     { key: 'push', label: 'Push delivery', group: 'Operations' },
     { key: 'merges', label: 'Merge debug', group: 'Operations' },
     { key: 'rollover', label: 'Container rollover', group: 'Operations' },
@@ -290,14 +383,46 @@ const AdminConsole = {
     // The workflow machines (src/workflow/): what needs a person, the
     // instances by state, and each one's timeline. See admin-workflows.tsx.
     { key: 'workflows', label: 'Workflows', group: 'Operations' },
-    // Compliance (#5634): the compliance plan's items, each one's status as
-    // an admin set it, and the weekly scan of what a machine can check. Every
-    // admin reads it. See features/admin/admin-compliance.tsx.
-    { key: 'compliance', label: 'Compliance', group: 'Operations' },
-    // #6643: changes held until an admin votes yes on them, and what became
-    // of the ones before. See features/admin/admin-approvals.tsx.
-    { key: 'approvals', label: 'Approvals', group: 'Operations' },
+    // #2253: how much of its database each app is using against the
+    // per-app cap, and the levers that undo a freeze.
+    { key: 'storage', label: 'App storage', group: 'Operations' },
+    // #4405: every custom domain a project has claimed, and the levers that
+    // check, disable, enable or remove one.
+    { key: 'domains', label: 'Domains', group: 'Operations' },
+    { key: 'db-export', label: 'Database export', group: 'Operations' },
+    // Platform outbound mail: configuration, a test send, and the
+    // delivery ledger. Separate from the programme's Settings section
+    // (which keeps its own read-only status/activity card) because the
+    // audience is every mail flow, not just the programme's.
+    { key: 'mail', label: 'Email delivery', group: 'Operations' },
+    // Firebase Phone Auth's texts: whether phone sign-in is set up, and a
+    // test send through the real path (features/admin/admin-sms.tsx).
+    { key: 'sms', label: 'SMS delivery', group: 'Operations' },
 
+    // #2684: the Homeroom bot's shadow-mode verdicts — what it would have
+    // asked or built on each open request — and the ratings that calibrate it.
+    { key: 'homeroom-bot', label: 'Homeroom bot', group: 'AI & Quality' },
+    // #2570: the note and the expected cost the model picker states for
+    // each model, beside what changes on that model actually cost.
+    { key: 'model-costs', label: 'Model costs', group: 'AI & Quality' },
+    // Estimator accuracy (#898): platform analytics, split out of the
+    // Analytics section, which is otherwise entirely USER analytics.
+    { key: 'estimator', label: 'Estimator accuracy', group: 'AI & Quality' },
+    { key: 'gallery', label: 'Screenshot gallery', group: 'AI & Quality' },
+    // The last full end-to-end sweep of the product against production.
+    // A generated REPORT, not a runner — the counterpart to the unit and
+    // dapp suites, which cover components rather than journeys.
+    { key: 'e2e', label: 'E2E coverage', group: 'AI & Quality' },
+
+    // The home screen's "Featured apps" row. NOT the `features` key
+    // above — that one is "Submitted features" (user feature requests).
+    { key: 'featured-apps', label: 'Featured apps', group: 'Content' },
+    // Ready-made apps' images, built ahead of the projects made from them,
+    // and Rebuild (features/admin/admin-templates.tsx, services/starter-images.js).
+    { key: 'templates', label: 'Templates', group: 'Content' },
+    // What every platform email says: its templates and the layouts they are
+    // wrapped in, edited and previewed here (features/admin/admin-email-templates.tsx).
+    { key: 'email-templates', label: 'Email templates', group: 'Content' },
     // Programme (#1179): what the programme IS — the seasons, the events
     // inside them, and the template library challenges are stamped out of.
     // These screens (and the People/Platform ones below marked #1179)
@@ -312,117 +437,26 @@ const AdminConsole = {
     // _setSub/_syncHash pattern — so this file still needs no multi-level
     // routing. Maintenance campaigns does the same for
     // #admin/campaigns/<id>.
-    { key: 'seasons', label: 'Seasons', group: 'Programme' },
-    { key: 'season-events', label: 'Season events', group: 'Programme' },
-    { key: 'challenge-templates', label: 'Challenge templates', group: 'Programme' },
+    { key: 'seasons', label: 'Seasons', group: 'Content' },
+    { key: 'season-events', label: 'Season events', group: 'Content' },
+    { key: 'challenge-templates', label: 'Challenge templates', group: 'Content' },
     // The rules that credit challenges automatically, and the service
     // that applies them. Under Programme rather than Platform: it is
     // about what a season pays for, not about how the box is run.
-    { key: 'challenge-scoring', label: 'Challenge scoring', group: 'Programme' },
+    { key: 'challenge-scoring', label: 'Challenge scoring', group: 'Content' },
+    { key: 'text-translations', label: 'Translations', group: 'Content' },
 
-    // The Users section carries BOTH user surfaces since #1179: the
-    // platform accounts card (roles, quotas, caps) and the programme
-    // users card (enrolment, podium/log settings, CSV import/export) —
-    // one menu entry, merged. See features/admin/admin-users.tsx.
-    // Support (#admin/support): one read-mostly screen per participant for
-    // answering account, points, event and kudos questions. See
-    // features/admin/admin-support.tsx.
-    { key: 'support', label: 'Support', group: 'People' },
-    { key: 'users', label: 'Users', group: 'People' },
-    // Test accounts: make a new account for first-time-user testing, see the
-    // live ones, retire one when done (routes/test-accounts.js, the routes
-    // the connector's *_test_account tools wrap). Full admins only, the list
-    // included. See features/admin/admin-test-accounts.tsx.
-    { key: 'test-accounts', label: 'Test accounts', group: 'People' },
-    // Access review (#5133): every account with admin rights, what each can
-    // do (exports, SQL console), and the quarterly review that confirms the
-    // list. Full admins only. See features/admin/admin-access-review.tsx.
-    { key: 'access-review', label: 'Access review', group: 'People' },
-    { key: 'reports', label: 'Moderation', group: 'People' },
-    { key: 'codes', label: 'Invite links', group: 'People' },
-    { key: 'limits', label: 'Limits', group: 'People' },
-    // Programme people screens, promoted by the same #1179 reshuffle.
-    { key: 'waitlist', label: 'Waitlist', group: 'People' },
-    // Welcome messages: somebody let in gets a group with the people chosen
-    // there, opened by a message from the first of them. Beside Waitlist
-    // because both are about the moment someone is let in.
-    { key: 'welcome-dm', label: 'Welcome messages', group: 'People' },
-    { key: 'onchain-accounts', label: 'Onchain accounts', group: 'People' },
-    { key: 'user-activities', label: 'User activities', group: 'People' },
-    // Read-only view over the testnet accounts' staking delegation
-    // periods (the mobile app is the delegation actor; admins only look).
-    { key: 'delegations', label: 'Delegations', group: 'People' },
-
-    // Apps & usage: every app with its members, contributors and activity
-    // (features/admin/admin-apps-usage.tsx, services/admin-apps-usage.js).
-    // First under Insights: it is the one-screen answer to "what exists and
-    // what is being used". Read-only; view-only admins read it.
-    { key: 'apps', label: 'Apps & usage', group: 'Insights' },
-    // Journey (#3369): the user journey and the North Star, active groups.
-    // Its own definitions and routes (/api/admin/journey/*); Analytics is
-    // deliberately left as it is. See features/admin/admin-journey.tsx.
-    { key: 'journey', label: 'Journey', group: 'Insights' },
-    // Onboarding flows: every person as one thread from where they arrived
-    // from to where they are now, over all time, in five views. Journey reads
-    // the same people week by week. See features/admin/admin-onboarding-flows.tsx.
-    { key: 'onboarding-flows', label: 'Onboarding flows', group: 'Insights' },
-    { key: 'analytics', label: 'Analytics', group: 'Insights' },
-    // Estimator accuracy (#898): platform analytics, split out of the
-    // Analytics section, which is otherwise entirely USER analytics.
-    { key: 'estimator', label: 'Estimator accuracy', group: 'Insights' },
-    { key: 'gallery', label: 'Screenshot gallery', group: 'Insights' },
-    { key: 'features', label: 'Submitted features', group: 'Insights' },
-    // The last full end-to-end sweep of the product against production.
-    // A generated REPORT, not a runner — the counterpart to the unit and
-    // dapp suites, which cover components rather than journeys.
-    { key: 'e2e', label: 'E2E coverage', group: 'Insights' },
-
-    { key: 'campaigns', label: 'Maintenance campaigns', group: 'Platform' },
-    // The home screen's "Featured apps" row. NOT the `features` key
-    // above — that one is "Submitted features" (user feature requests).
-    { key: 'featured-apps', label: 'Featured apps', group: 'Platform' },
-    { key: 'db-export', label: 'Database export', group: 'Platform' },
-    // #2253: how much of its database each app is using against the
-    // per-app cap, and the levers that undo a freeze.
-    { key: 'storage', label: 'App storage', group: 'Platform' },
-    // #4405: every custom domain a project has claimed, and the levers that
-    // check, disable, enable or remove one.
-    { key: 'domains', label: 'Domains', group: 'Platform' },
-    // Ready-made apps' images, built ahead of the projects made from them,
-    // and Rebuild (features/admin/admin-templates.tsx, services/starter-images.js).
-    { key: 'templates', label: 'Templates', group: 'Platform' },
-    // #2570: the note and the expected cost the model picker states for
-    // each model, beside what changes on that model actually cost.
-    { key: 'model-costs', label: 'Model costs', group: 'Platform' },
-    // #2684: the Homeroom bot's shadow-mode verdicts — what it would have
-    // asked or built on each open request — and the ratings that calibrate it.
-    { key: 'homeroom-bot', label: 'Homeroom bot', group: 'Platform' },
-    // The watch-only small-change tag: which proposal versions read as small
-    // and undoable, and what ruled the rest out (features/admin/admin-small-changes.tsx).
-    { key: 'small-changes', label: 'Small changes', group: 'Platform' },
-    // Platform outbound mail: configuration, a test send, and the
-    // delivery ledger. Separate from the programme's Settings section
-    // (which keeps its own read-only status/activity card) because the
-    // audience is every mail flow, not just the programme's.
-    { key: 'mail', label: 'Email delivery', group: 'Platform' },
-    // What every platform email says: its templates and the layouts they are
-    // wrapped in, edited and previewed here (features/admin/admin-email-templates.tsx).
-    { key: 'email-templates', label: 'Email templates', group: 'Platform' },
-    // Firebase Phone Auth's texts: whether phone sign-in is set up, and a
-    // test send through the real path (features/admin/admin-sms.tsx).
-    { key: 'sms', label: 'SMS delivery', group: 'Platform' },
-    // Continue with Apple / Continue with Google on the sign-in sheet: the
-    // keys from each provider, and the switch that offers it
-    // (features/admin/admin-sign-in.tsx, services/sign-in-providers.js).
-    { key: 'sign-in', label: 'Sign-in providers', group: 'Platform' },
     // Programme operator tooling, promoted by #1179 — deliberately last:
     // these are the sharp ones (raw SQL, arbitrary API calls, the
     // settings that change how the mobile app behaves).
-    { key: 'settings', label: 'Settings', group: 'Platform' },
-    { key: 'app-version', label: 'App version', group: 'Platform' },
-    { key: 'text-translations', label: 'Translations', group: 'Platform' },
-    { key: 'sql-console', label: 'SQL console', group: 'Platform' },
-    { key: 'api-tester', label: 'API tester', group: 'Platform' },
+    { key: 'settings', label: 'Settings', group: 'Configuration' },
+    // Continue with Apple / Continue with Google on the sign-in sheet: the
+    // keys from each provider, and the switch that offers it
+    // (features/admin/admin-sign-in.tsx, services/sign-in-providers.js).
+    { key: 'sign-in', label: 'Sign-in providers', group: 'Configuration' },
+    { key: 'app-version', label: 'App version', group: 'Configuration' },
+    { key: 'sql-console', label: 'SQL console', group: 'Configuration' },
+    { key: 'api-tester', label: 'API tester', group: 'Configuration' },
   ],
 
   // Retired section keys that must keep resolving forever, so links and

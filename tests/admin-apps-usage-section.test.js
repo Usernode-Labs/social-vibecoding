@@ -16,12 +16,13 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const SECTION = 'frontend/src/features/admin/admin-apps-usage.tsx';
 const usage = require('../src/services/admin-apps-usage');
 
-test('it sits first under Insights and is not public', () => {
+test('it sits under Community, after Moderation, and is not public', () => {
   const src = read('frontend/src/features/admin/admin-console.js');
-  assert.match(src, /\{ key: 'apps', label: 'Apps & usage', group: 'Insights' \}/, 'admin-only: no `public: true`');
+  assert.match(src, /\{ key: 'apps', label: 'Apps & usage', group: 'Community' \}/, 'admin-only: no `public: true`');
   const sections = src.slice(src.indexOf('SECTIONS: ['), src.indexOf('LEGACY_SECTION_KEYS'));
   const at = (key) => sections.indexOf(`{ key: '${key}'`);
-  assert.ok(at('apps') < at('journey') && at('apps') > at('delegations'), 'the first Insights entry');
+  // Under Community since the regroup (#7081); it was the first Insights entry.
+  assert.ok(at('apps') > at('reports') && at('apps') < at('journey'), 'after Moderation, before Growth starts');
   assert.match(src, /apps: 'AdminAppsUsage',/);
   assert.match(src, /'apps': '<svg /, 'a nav icon like every section');
   assert.match(read('frontend/src/features/admin/sections.ts'), /import '\.\/admin-apps-usage\.tsx';/);

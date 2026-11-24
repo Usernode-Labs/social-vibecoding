@@ -114,7 +114,7 @@ function watchLeaks() {
 
 test('the section is registered everywhere a console section has to be', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
-  assert.match(consoleJs, /\{ key: 'test-accounts', label: 'Test accounts', group: 'People' \}/,
+  assert.match(consoleJs, /\{ key: 'test-accounts', label: 'Test accounts', group: 'Community' \}/,
     'a menu entry under People');
   assert.match(consoleJs, /'test-accounts': 'AdminTestAccounts',/, 'SECTION_MODULES dispatches to the module');
   assert.match(consoleJs, /'test-accounts': '<svg /, 'the menu entry has an icon like its neighbours');

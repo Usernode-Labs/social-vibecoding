@@ -405,7 +405,7 @@ test('export.csv walks every page: a full chunk is followed by the next cursor',
 test('the section is registered everywhere the console reads, inside the registry rules', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
   const sectionBlock = consoleJs.slice(consoleJs.indexOf('SECTIONS: ['), consoleJs.indexOf('isOpen()'));
-  assert.match(sectionBlock, /\{ key: 'homeroom-bot', label: 'Homeroom bot', group: 'Platform' \}/);
+  assert.match(sectionBlock, /\{ key: 'homeroom-bot', label: 'Homeroom bot', group: 'AI & Quality' \}/);
   assert.match(consoleJs, /'homeroom-bot': 'AdminHomeroomBot'/);
   const sections = read('frontend/src/features/admin/sections.ts');
   assert.ok(sections.includes("import './admin-homeroom-bot.tsx';"), 'the barrel imports the module');

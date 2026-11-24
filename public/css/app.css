@@ -10535,6 +10535,113 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
 /* END OF WHITE CARDS. */
+/* ── THE ADMIN CONSOLE, IN THE BRAND (#7081, 24 Nov 2026). The console is
+   drawn in the voice Settings and Profile took (#7072): warm paper cards
+   with one thin outline, headings in the serif, the brand's sky, green and
+   sun as soft tiles for the dashboard's figures, and a green ground for the
+   section you are in. It stays a tool: no picture, no band of sky, and the
+   tables keep their density.
+   TWO PARTS. The tokens, --adm-*, are every look's (the dashboard's tiles
+   read them through the AdminUI registry's recipes, admin-console.js), so
+   they are declared on :root and again for dark. The drawing after them is
+   the standard look's alone (html:not([data-skin])); the brand look keeps
+   its own drawing of the console's cards.
+   The serif is Young Serif, which ships one weight: every rule that names
+   it writes `font-weight: 400`.
+   EVERY VALUE IS A TOKEN, declared once here in light and dark. */
+:root {
+  --adm-serif: 'Young Serif', Georgia, 'Times New Roman', serif;
+  --adm-ink: #121a0e;
+  --adm-ink-soft: rgb(18 26 14 / 0.68);
+  --adm-page: #f7f6f1;               /* the console's ground: the page's cream */
+  --adm-paper: #fffdf4;              /* a card */
+  --adm-line: rgb(18 26 14 / 0.16);  /* its one thin outline */
+  --adm-sky: #d9ecfb;                /* a figure's tile: the brand's sky, */
+  --adm-leaf: #dcecc4;               /* its green, */
+  --adm-sun: #fff3a8;                /* and its sun, each thinned */
+  --adm-chip: rgb(255 255 255 / 0.7);/* the ground under "Up 12%" on a tile */
+  --adm-up: #2f6b1e;
+  --adm-down: #a3281a;
+  --adm-lit: #dcecc4;                /* the section you are in, in the bar and the strip */
+  --adm-lit-ink: #121a0e;
+  --adm-radius: 20px;
+  --adm-title-size: 1.25rem;
+  --adm-page-title-size: 2rem;
+  --adm-page-title-size-phone: 1.625rem;
+}
+:root.dark {
+  --adm-ink: #fffeea;
+  --adm-ink-soft: rgb(255 254 234 / 0.7);
+  --adm-page: #121211;
+  --adm-paper: #1b1b19;
+  --adm-line: rgb(255 254 234 / 0.18);
+  --adm-sky: rgb(48 144 225 / 0.2);
+  --adm-leaf: rgb(169 207 151 / 0.2);
+  --adm-sun: rgb(255 238 111 / 0.16);
+  --adm-chip: rgb(0 0 0 / 0.28);
+  --adm-up: #b4dba2;
+  --adm-down: #ff9c8a;
+  --adm-lit: rgb(169 207 151 / 0.22);
+  --adm-lit-ink: #fffeea;
+}
+/* The console stands on the page's cream, not on a grey of its own. */
+html:not([data-skin]) #admin-screen { background-color: var(--adm-page); }
+/* A card is paper with one thin outline; a figure's tile takes the outline too. */
+html:not([data-skin]) #admin-screen .adm-card {
+  border-radius: var(--adm-radius);
+  background-color: var(--adm-paper);
+  box-shadow: inset 0 0 0 1px var(--adm-line);
+}
+html:not([data-skin]) #admin-screen .adm-metric {
+  border-radius: var(--adm-radius);
+  box-shadow: inset 0 0 0 1px var(--adm-line);
+}
+html:not([data-skin]) #admin-screen .adm-metric.adm-card { background-color: var(--adm-paper); }
+/* Headings are the serif, a page's own name a step above a card's. */
+html:not([data-skin]) #admin-screen :is(.adm-title, #admin-section-content h1) {
+  font-family: var(--adm-serif);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+html:not([data-skin]) #admin-screen .adm-title { font-size: var(--adm-title-size); line-height: 1.25; }
+html:not([data-skin]) #admin-screen :is(.adm-page-title, #admin-section-content h1) { font-size: var(--adm-page-title-size); line-height: 1.15; }
+html:not([data-skin]) #admin-screen .adm-figure { font-family: var(--adm-serif); font-weight: 400; }
+@media (max-width: 767.98px) {
+  html:not([data-skin]) #admin-screen :is(.adm-page-title, #admin-section-content h1) { font-size: var(--adm-page-title-size-phone); }
+}
+/* The bar and the strip of open sections: where you are is the green ground. */
+html:not([data-skin]) #admin-nav-desktop :is([data-admin-topnav-home], [data-admin-topnav-group], [role="menuitem"])[aria-current] {
+  background-color: var(--adm-lit);
+  color: var(--adm-lit-ink);
+}
+html:not([data-skin]) #admin-nav-desktop [data-admin-tab][aria-current="page"] {
+  background-color: var(--adm-paper);
+  box-shadow: inset 0 0 0 1px var(--adm-line);
+  color: var(--adm-ink);
+}
+html:not([data-skin]) #admin-nav-desktop [data-admin-topnav-menu] {
+  border-radius: var(--adm-radius);
+  background-color: var(--adm-paper);
+}
+/* BUTTONS. The standard look's sticker buttons leave the console alone
+   (its rules exclude #admin-screen: a hard edge under every button of a
+   dense table is too loud). The console takes the same two fills flat: the
+   main action is the sun with a thin dark outline, the secondary one is
+   paper with the card's outline. Red stays red. A switch, a tab, a choice
+   and a menu row are not these buttons. */
+html:not([data-skin]) #admin-screen :is(button, a).bg-violet-600:not([role="switch"], [role="tab"], [role="radio"], [role="menuitem"]) {
+  background-color: var(--wip-btn-1-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-btn-1-line);
+  color: var(--wip-btn-1-ink);
+}
+html:not([data-skin]) #admin-screen :is(button, a).bg-violet-600:not([role="switch"], [role="tab"], [role="radio"], [role="menuitem"]):hover:not(:disabled) { background-color: var(--wip-btn-1-hover); }
+html:not([data-skin]) #admin-screen :is(button, a).bg-zinc-100.rounded-lg:not([role="switch"], [role="tab"], [role="radio"], [role="menuitem"], #admin-nav-desktop *) {
+  background-color: var(--wip-btn-2-bg);
+  box-shadow: inset 0 0 0 1px var(--adm-line);
+  color: var(--wip-btn-2-ink);
+}
+html:not([data-skin]) #admin-screen :is(button, a).bg-zinc-100.rounded-lg:not([role="switch"], [role="tab"], [role="radio"], [role="menuitem"], #admin-nav-desktop *):hover:not(:disabled) { background-color: var(--wip-btn-2-hover); }
+/* END OF THE ADMIN CONSOLE, IN THE BRAND. */
 /* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's
    whole width from the page's own gutter, not a column of its own in the middle of the window. The thread's card
    takes the room there is and "How it got here" keeps its width beside it. A side panel, and the page while the
@@ -36120,7 +36227,8 @@ html[data-skin="paper"][data-skin] .fr-facts.fr-f5 .fr-fact .fr-l{white-space:no
 }
 /* No rule of this look names Young Serif since its titles went back to
    Geist. The face stays declared, and its file committed, for the
-   signed-out pages' look, which draws its headlines in it. */
+   signed-out pages' look, which draws its headlines in it, and for the
+   admin console's headings (#7081, "THE ADMIN CONSOLE, IN THE BRAND"). */
 @font-face {
   font-family: 'Source Serif 4';
   src: url('/fonts/source-serif-4/source-serif-4-latin-opsz-normal.woff2') format('woff2');

@@ -289,7 +289,7 @@ test('the App limit card renders its ids and stays disabled until it has read th
 
 test('the section is called Limits now that it holds more than spend', () => {
   assert.match(read('frontend/src/features/admin/admin-console.js'),
-    /\{ key: 'limits', label: 'Limits', group: 'People' \}/);
+    /\{ key: 'limits', label: 'Limits', group: 'Community' \}/);
 });
 
 test('#6901: the App limit card says how many were turned away, and nothing at zero', () => {

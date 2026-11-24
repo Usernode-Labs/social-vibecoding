@@ -228,7 +228,7 @@ test('what the review says matches the gates: exports are requireAdminWrite, the
 
 test('the section is registered, full-admin only on screen, and drawn from the AdminUI registry', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
-  assert.match(consoleJs, /\{ key: 'access-review', label: 'Access review', group: 'People' \}/);
+  assert.match(consoleJs, /\{ key: 'access-review', label: 'Access review', group: 'Community' \}/);
   assert.match(consoleJs, /'access-review': 'AdminAccessReview'/);
   assert.match(read('frontend/src/features/admin/sections.ts'), /import '\.\/admin-access-review\.tsx';/);
   const tsx = read('frontend/src/features/admin/admin-access-review.tsx');

@@ -144,7 +144,7 @@ test('the home page keeps the ids declared checks select, and goes through the c
     assert.ok(overviewTsx.includes(`id="${id}"`), `#${id} is still rendered`);
   }
   assert.match(overviewTsx, />Admin home</);
-  assert.match(overviewTsx, /needsYouSentence\(data\)/, 'the sentence comes from /api/admin/overview');
+  assert.match(overviewTsx, /needsYouSentence\(data, dash\)/, 'the sentence comes from /api/admin/overview, and counts open moderation cases (#7081)');
   assert.match(overviewTsx, /pinnedSections\(visible\)/);
   assert.match(overviewTsx, /_visibleSections\?\.\(\)/, 'only the viewer\'s sections');
   assert.match(overviewTsx, /_groupedSections\?\.\(\)/, 'All sections is grouped as the bar is');
@@ -152,9 +152,10 @@ test('the home page keeps the ids declared checks select, and goes through the c
   assert.match(overviewTsx, /data-admin-section=\{section\.key\}/);
   assert.match(overviewTsx, /NAV_ICONS\?\.\[section\.key\]/, 'the glyph is the chassis\'s own static icon');
   assert.doesNotMatch(overviewTsx, /<a\s/, 'no anchors: nothing a server sent becomes a link');
-  // A phone's level 1 keeps the tiles alone above the chassis's own menu.
+  // A phone's level 1, above the chassis's own menu: what needs somebody,
+  // the figures two to a row, then the tiles (#7081; it was the tiles alone).
   assert.match(overviewTsx, /compact=\{el\.id === 'admin-mobile-overview'\}/);
-  assert.match(overviewTsx, /if \(compact\) return ops;/);
+  assert.match(overviewTsx, /if \(compact\) \{[\s\S]{0,400}<div id="admin-dash-phone" className="space-y-4">\s*\{attentionCard\}\s*\{failed\}\s*\{metrics\}\s*\{ops\}/);
 });
 
 // ── The chassis ─────────────────────────────────────────────────────────
@@ -258,8 +259,9 @@ test('the declared checks pin the bar and the tabs instead of the sidebar', () =
   assert.ok(home, 'a check on /#admin selects the bar with Home lit');
   assert.match(home.expectSelector, /\[data-admin-search-open\]/);
   assert.match(home.expectSelector, /\[data-admin-tab="overview"\]/);
-  const users = tests.find((t) => t.path === '/#admin/users' && /data-admin-topnav-group="People"/.test(t.expectSelector || ''));
-  assert.ok(users, 'a check on /#admin/users marks People as the current group');
-  assert.match(users.expectSelector, /\[data-admin-topnav-group="People"\]\[aria-current="true"\]/);
+  const users = tests.find((t) => t.path === '/#admin/users' && /data-admin-topnav-group="Community"/.test(t.expectSelector || ''));
+  // Users sits under Community since the regroup (#7081); it was People.
+  assert.ok(users, 'a check on /#admin/users marks Community as the current group');
+  assert.match(users.expectSelector, /\[data-admin-topnav-group="Community"\]\[aria-current="true"\]/);
   assert.match(users.expectSelector, /\[data-admin-tab="users"\]\[aria-current="page"\]/);
 });

@@ -15,7 +15,7 @@ const SRC = fs.readFileSync(
 );
 
 function sectionKeys() {
-  return [...SRC.matchAll(/\{ key: '([a-z0-9-]+)', label: '[^']+', group: '[A-Za-z]+'[^}]*\}/g)]
+  return [...SRC.matchAll(/\{ key: '([a-z0-9-]+)', label: '[^']+', group: '[^']+'[^}]*\}/g)]
     .map((m) => m[1]);
 }
 
