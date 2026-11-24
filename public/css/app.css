@@ -27660,11 +27660,19 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    THE BRAND LOOK SHARES IT TOO (issue #7059): its blue bar with the sun pill set no seat sizes of its own, so there
    the labels were cut mid-word. */
 /* The lit pill is the tab's own box, so its word has the tab's side padding to the pill's edge: 8px, as Home and You
-   had to spare (phone review #106: "Communities" ran to within 4px of its sun). Below 375px the words need the room. */
+   had to spare (phone review #106: "Communities" ran to within 4px of its sun). Narrower phones need some of that room
+   for the words. At 8px the bar needs 383px (the five labels at 11px, the lit one's bold, the tabs' margins and the
+   bar's own padding), so a 375px phone (iPhone mini, SE, X, 11 Pro) printed "Homeroom…" on every tab and "Communiti…"
+   with Communities lit (mobile polish 02, Nov 2026). Up to 389.98px the padding is 6px, which fits the five at 375 with
+   about 12px to spare and still keeps 6px between the lit word and its pill; below 375px, where the labels drop to
+   10.5px as well, it is 3px. The ellipsis stays for a larger system text size or a longer translated label. */
 @media (max-width: 767.98px) {
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs { grid-template-columns: repeat(5, auto); }
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 8px; }
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label { overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 389.98px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 6px; }
 }
 @media (max-width: 374.98px) {
   html:is(:not([data-skin]), [data-skin="brand"]):not([data-side-strip]) #platform-tabs .platform-tab { padding-inline: 3px; }
