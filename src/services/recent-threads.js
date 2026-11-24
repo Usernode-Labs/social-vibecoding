@@ -20,9 +20,10 @@
 //   - issue_claims: a Claim that ran out is not something they did in the
 //     thread either; the AI tab's week-limited version is its own.
 //
-// and plus the two mention kinds, which the AI tab leaves out because a
-// mention is conversational rather than work: a 'mention' notification in a
-// thread's chat, and an 'issue_mention' naming a request.
+// and plus the two mention kinds: a 'mention' notification in a thread's
+// chat, and an 'issue_mention' naming a request. Since 24 Nov 2026 (mobile
+// 04) the AI tab reads them too (threadsInSql's `named` branches, and
+// services/thread-mentions.js for its Needs you row).
 //
 // A thread's row is the thread it was merged INTO when it was merged away
 // (`threads.merged_into`), so one discussion is one row.

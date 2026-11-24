@@ -1245,7 +1245,9 @@ test('Needs you here is the threads you are in, counted in the label\'s ink, wit
   // The most rows are not spent on threads that are never listed, and Live
   // this week has its own, apart from the rest, their own first (30 Oct 2026).
   const { THREADS_SQL } = require('../src/services/ai-work');
-  assert.match(THREADS_SQL, /AND \(mine\.own OR ch\.status IS NULL OR ch\.status = 'merged' OR ch\.user_id = \$1\)/);
+  // 24 Nov 2026 (mobile 04): a thread she wrote or was named in is read
+  // while it moves; one she only voted in is not.
+  assert.match(THREADS_SQL, /AND \(mine\.own OR mine\.wrote OR ch\.status IS NULL OR ch\.status = 'merged' OR ch\.user_id = \$1\)/);
   assert.match(THREADS_SQL, /AND \(t\.state = 'open' OR \(t\.closed_at > NOW\(\) - make_interval\(days => \$5\) AND ch\.status = 'merged'\)\)/,
     'a closed thread is read only for its merged change');
   assert.match(THREADS_SQL, /PARTITION BY COALESCE\(ch\.status = 'merged', FALSE\)\s+ORDER BY mine\.own DESC,/);

@@ -565,6 +565,11 @@
       "id": "live-drafts-preview-followup",
       "sha256": "0a8c41143d3521adbd9ec77af0d5a3943f257acf23e15dfa6251ade09a77b61b",
       "schemaSha256": "9af6a388e2b35d57133e6099914a6518527bd7513ee9118368dfa682cd490f69"
+    },
+    {
+      "id": "thread-mention-dismissals",
+      "sha256": "d4315f556738b7a2b1ed8d1e94d81f9e514473797c6da2e37a10ed21c511f1a3",
+      "schemaSha256": "0492a7b40601fca189e3c8ec037a4b149d61f9175fc95453426b6da5d555d12b"
     }
   ]
 }
