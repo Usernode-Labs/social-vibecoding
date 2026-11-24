@@ -35052,6 +35052,34 @@ html.in-side-panel.side-panel-beside-ai body:has(#dev-topic-thread .dev-thread-c
 html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-screen:not(.hidden)) .side-panel[data-thread-pill] > .side-panel-divider {
   inset-inline-end: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2 + 2px);
 }
+/* THE BOT TAB'S OTHER TWO GRIPS, IN THEIR GAPS TOO (24 Nov 2026). The rule
+   above is the side panel's bar; Main's bar and the preview's took the line
+   as it is, so on a computer the list's grip sat 2px right of its gap's
+   middle and the preview's 6px, on the preview card's own edge. Each moves
+   half the difference of the two cards' insets towards the wider side:
+     the list and the thread: the list's cards keep 16px from the line (`mx-4`,
+       PLANE in features/ai/lists.tsx), the thread's 12px (`--thread-gutter`,
+       on `#ai-screen .dev-private-thread` and New chat's
+       `[data-bot-new-thread-docked]`), so the grip sits 2px towards the list;
+     the thread and the preview: the thread's 12px again, the preview's card
+       none (`.ai-preview-pane:has(> .detail-card)` pads only its far side),
+       so the grip sits 6px towards the thread.
+   The gutter is declared on the thread's page, below the pane that holds the
+   bar, so it cannot be read here: the figures are those insets written out,
+   to be changed with them. A drag still starts from the pane's own edge
+   (side-panel.tsx reads the pane's box, not the handle's, on the press), so
+   a grab does not move it, and `inset-inline-end` mirrors it in Arabic. From
+   1024px only: below it the list's bar keeps #6447's own place, and the
+   preview's is left as it was. With the list hidden (#6963) there is no list
+   card: the bar stays on the thread's edge, beside the rail. */
+@media (min-width: 1024px) {
+  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen:not([data-ai-list-closed]) #ai-main-divider {
+    inset-inline-end: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2 + (16px - 12px) / 2);
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-preview-pane:has(> .detail-card) > #ai-preview-divider {
+    inset-inline-end: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2 + (12px - 0px) / 2);
+  }
+}
 
 /* THE LINE BETWEEN TWO COLUMNS IS A HANDLE YOU CAN SEE UNDER THE POINTER
    (18 Nov 2026): the Workshop's list and its panel, the bot's list and its
