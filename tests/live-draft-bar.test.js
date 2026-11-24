@@ -100,7 +100,58 @@ test('the messages pane reads the draft on an open thread of theirs, with no bar
   assert.doesNotMatch(pane, /<LiveDraftBar/);
   assert.match(pane, /import \{ useLiveDraft \} from '\.\/live-draft-bar';/);
   assert.match(pane, /const liveDraft = useLiveDraft\(privateMine && privateRoot && privateWhere\?\.state === 'open' \? privateRoot : null\);/);
-  assert.match(read(BAR), /if \(detail\.opened && shown\) openPreview\(next\);/);
+  const { draftPreviewStep } = loadTsx(BAR);
+  const step = (over) => draftPreviewStep({ draft: draft(), last: null, paneHere: false, framed: false, ...over });
+  assert.equal(step({ opened: true, draft: draft({ live: 'starting' }) }), 'open');
+  assert.equal(step({ opened: true, draft: draft({ state: 'closed' }) }), null, 'not one that is closed');
+  const bar = read(BAR);
+  assert.match(bar, /const step = draftPreviewStep\(\{[\s\S]{0,200}paneHere: paneOn\(next\.sessionId\), framed: frameShowsPreview\(\),\s*\}\);/);
+  assert.match(bar, /if \(step === 'open'\) openPreview\(next\);\s*else if \(step === 'reload'\) void reloadPreview\(next\.sessionId, next\.app\.slug\);/);
+});
+
+// 24 Nov 2026: a cleared frame's `src` property reads back as Homeroom's own
+// page, so the old "has it a src" guard never fired. Only an address on the
+// preview's own origin is a preview in the frame.
+test('a frame shows a preview only when its src attribute is an address on another origin', () => {
+  const { showsPreview } = loadTsx(BAR);
+  const HOME = 'https://app.onhomeroom.com';
+  assert.equal(showsPreview(null, HOME), false, 'no attribute');
+  assert.equal(showsPreview('', HOME), false, 'cleared');
+  assert.equal(showsPreview('about:blank', HOME), false);
+  assert.equal(showsPreview('https://app.onhomeroom.com/', HOME), false, 'Homeroom\'s own page');
+  assert.equal(showsPreview('https://app.onhomeroom.com/app/gym/dev?x=1#chat', HOME), false);
+  assert.equal(showsPreview('/app/gym', HOME), false, 'a path is Homeroom\'s own');
+  assert.equal(showsPreview('javascript:void(0)', HOME), false);
+  assert.equal(showsPreview('https://gym--s41.onhomeroom.dev/?token=x', HOME), true);
+  assert.equal(showsPreview('http://localhost:4100/', 'http://localhost:3000'), true, 'a local preview on its own port');
+  assert.equal(showsPreview('not a url', HOME), false);
+  const bar = read(BAR);
+  assert.match(bar, /showsPreview\(frame\.getAttribute\('src'\), home\)/, 'the attribute is read, never the property');
+  assert.doesNotMatch(bar, /frame\.src\b/);
+  // reloadPreview never points the frame at Homeroom's own page.
+  assert.match(bar, /if \(!frame \|\| !frameShowsPreview\(frame\)\) return;\s*let src = frame\.getAttribute\('src'\) as string;/);
+});
+
+test('a preview still starting when its pane opened comes up by itself when it goes live', () => {
+  const { draftPreviewStep } = loadTsx(BAR);
+  const step = (over) => draftPreviewStep({ draft: draft(), last: 'live', paneHere: true, framed: true, ...over });
+  // The pane opened on a dead end, or a loader: the frame holds no preview.
+  assert.equal(step({ last: 'starting', reload: true, framed: false }), 'open', 'deployed: the pane is opened on it again');
+  assert.equal(step({ last: 'starting', framed: false }), 'open', 'starting to live, with no reload asked');
+  assert.equal(step({ last: 'rebuilding', framed: false }), 'open');
+  assert.equal(step({ reload: true, framed: false }), 'open', 'a saved edit while the frame holds none');
+  // The frame shows the preview: it is reloaded, as before.
+  assert.equal(step({ reload: true }), 'reload');
+  assert.equal(step({ last: 'rebuilding' }), 'reload', 'built again');
+  assert.equal(step({ last: 'starting' }), 'reload');
+  // Not on this draft's pane: the reload is left to reloadPreview's own guard.
+  assert.equal(step({ last: 'starting', reload: true, paneHere: false, framed: false }), 'reload');
+  // Nothing came up and nothing was asked.
+  assert.equal(step({}), null);
+  assert.equal(step({ last: 'starting', draft: draft({ live: 'starting' }), framed: false }), null);
+  assert.equal(step({ last: 'live', draft: draft({ live: 'rebuilding' }), framed: false }), null);
+  assert.equal(step({ last: 'starting', draft: draft({ live: 'failed' }), framed: false }), null);
+  assert.equal(step({ reload: true, framed: false, draft: draft({ state: 'closed' }) }), 'reload', 'a closed draft is never opened again');
 });
 
 test('app.js hands the draft\'s socket frame on as the bar\'s window event', () => {

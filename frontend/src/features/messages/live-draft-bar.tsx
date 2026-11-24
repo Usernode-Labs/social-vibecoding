@@ -182,13 +182,71 @@ function openPreview(draft: LiveDraft) {
   void view.ensureStaging(draft.sessionId, null, null, { readOnly: true, app: { slug: draft.app.slug } });
 }
 
+/**
+ * Pure (24 Nov 2026): whether a frame whose `src` ATTRIBUTE is `src` shows a
+ * preview: an http(s) address on another origin than Homeroom's (`home`).
+ * Empty and about:blank are not one. The `src` property is never what is
+ * read: a cleared frame's reads back as Homeroom's own page.
+ */
+export function showsPreview(src: string | null | undefined, home: string): boolean {
+  if (!src || src === 'about:blank') return false;
+  let url: URL;
+  try { url = home ? new URL(src, home) : new URL(src); } catch { return false; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+  try { return url.origin !== new URL(home).origin; } catch { return true; }
+}
+
+function frameShowsPreview(frame: HTMLIFrameElement | null = stagingBridge.frame()): boolean {
+  const home = typeof location !== 'undefined' ? location.origin : '';
+  return !!frame && showsPreview(frame.getAttribute('src'), home);
+}
+
+// The pane is open on this session's preview: the one this page last opened,
+// and the one the pane says it shows (../staging/placement.ts).
+function paneOn(sessionId: number | null): boolean {
+  const st = stagingStore.get();
+  return !!sessionId && sessionId === shownSession && st.open
+    && (st.sessionId == null || st.sessionId === sessionId);
+}
+
+/**
+ * Pure (24 Nov 2026): what a `live_draft_changed` frame does to the preview.
+ * 'open' brings it up (ensureStaging asks the server again), 'reload' points
+ * the frame at the draft's newest edit, null leaves it. A preview still
+ * starting when its pane opened has no preview in its frame (a dead end, or
+ * a loader): when it comes up, or a reload is asked for, the pane is opened
+ * on it again, so it comes up by itself.
+ */
+export function draftPreviewStep(input: {
+  draft: LiveDraft;
+  /** Where the preview stood before this frame. */
+  last: LiveDraft['live'];
+  opened?: boolean;
+  reload?: boolean;
+  /** The pane is open on this draft's preview. */
+  paneHere: boolean;
+  /** Its frame shows a preview (showsPreview). */
+  framed: boolean;
+}): 'open' | 'reload' | null {
+  const { draft, last } = input;
+  const shown = liveDraftShown(draft);
+  // Opened just now (by asking Homeroom bot): its preview comes up beside the chat.
+  if (input.opened && shown) return 'open';
+  // Started, or built again (a new package): the frame shows it once it serves.
+  const cameUp = shown && draft.live === 'live' && (last === 'starting' || last === 'rebuilding');
+  if (!input.reload && !cameUp) return null;
+  if (shown && input.paneHere && !input.framed) return 'open';
+  return 'reload';
+}
+
 // The frame shows the draft's newest edit: the same address, with a sign-in
 // token minted now (the one it opened with lasts an hour).
 async function reloadPreview(sessionId: number | null, slug: string) {
-  if (!sessionId || sessionId !== shownSession || !stagingStore.get().open) return;
+  if (!paneOn(sessionId)) return;
   const frame = stagingBridge.frame();
-  if (!frame || !frame.src) return;
-  let src = frame.src;
+  // 24 Nov 2026: never Homeroom's own page, which a cleared frame's `src` reads as.
+  if (!frame || !frameShowsPreview(frame)) return;
+  let src = frame.getAttribute('src') as string;
   try {
     const view = (window as any).AppView;
     const token = typeof view?._mintToken === 'function' ? await view._mintToken(slug) : null;
@@ -235,14 +293,16 @@ export function useLiveDraft(rootId: number | null | undefined): LiveDraft | nul
       const next: LiveDraft | null = detail.draft || null;
       if (!next || Number(next.rootId) !== Number(rootId)) return;
       const shown = liveDraftShown(next);
-      // Built again (a new package): the frame shows it once it serves.
-      const rebuilt = shown && lastLive.current === 'rebuilding' && next.live === 'live';
+      const last = lastLive.current;
       lastLive.current = next.live;
       setDraft(shown ? next : null);
       noteDraft(next);
-      // Opened just now (by asking Homeroom bot): its preview comes up beside the chat.
-      if (detail.opened && shown) openPreview(next);
-      else if (detail.reload || rebuilt) void reloadPreview(next.sessionId, next.app.slug);
+      const step = draftPreviewStep({
+        draft: next, last, opened: !!detail.opened, reload: !!detail.reload,
+        paneHere: paneOn(next.sessionId), framed: frameShowsPreview(),
+      });
+      if (step === 'open') openPreview(next);
+      else if (step === 'reload') void reloadPreview(next.sessionId, next.app.slug);
     };
     window.addEventListener(LIVE_DRAFT_EVENT, heard);
     return () => window.removeEventListener(LIVE_DRAFT_EVENT, heard);
