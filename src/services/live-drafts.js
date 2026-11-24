@@ -22,6 +22,16 @@
 // `needsRebuild` by the supervisor: the preview is built again from the
 // branch, the ordinary way.
 //
+// 24 Nov 2026: the supervisor also runs the app's build script. An app made
+// from the template compiles Tailwind in a Dockerfile stage of its own, so
+// its preview's image has no `tailwindcss` to run, and every edit failed
+// there and was put back. Now a build whose command is not installed keeps
+// the edit (`buildSkipped`): the app restarts with it, and the preview is
+// also built again the ordinary way (`catchingUp`), so what the build makes
+// (the stylesheet) catches up a minute or two later. A build that runs and
+// fails still puts the files back, and the preview keeps the version before
+// the edit (`buildFailed`): the app did not stop.
+//
 // A preview that slept and woke, or was rebuilt, runs its image again, whose
 // commit may be older than the draft's: the supervisor says which commit its
 // files are at, and syncPreview sends what changed since.
@@ -701,7 +711,12 @@ async function rebuild(pool, config, draft, why, deps = {}) {
  * preview, with whatever else it lacks since the commit its files are at.
  * Resolves what the preview said:
  *   { ok: true, bootMs }                 the app runs the head
+ *   { ok: true, bootMs, catchingUp }     the app runs the head, and the preview
+ *                                        is also built again for what the app's
+ *                                        build makes (the image cannot run it)
  *   { ok: false, crashed: true, log }    the files are in, the app did not start
+ *   { ok: false, buildFailed: true, log } the app's build failed: the files were
+ *                                        put back, the app runs the version before
  *   { ok: true, rebuilding: true, why }  built again instead (a new install,
  *                                        no supervisor, or no preview to reach)
  */
@@ -737,9 +752,10 @@ async function sendToPreview(pool, config, { draft, files, since, head, deps = {
   }
   if (applied.status === 409 && applied.body?.needsRebuild) {
     // The app's own build step failed after the edit: that is the app's
-    // failure, and the supervisor already put its files back.
+    // failure, and the supervisor already put its files back, so the app is
+    // still up with the version before the edit. It did not stop.
     if (applied.body.why === 'build') {
-      return { ok: false, crashed: true, why: 'build', log: String(applied.body.log || '').slice(-4000) };
+      return { ok: false, buildFailed: true, why: 'build', log: String(applied.body.log || '').slice(-4000) };
     }
     return rebuild(pool, config, { ...draft, head_sha: head }, applied.body.why || 'install', deps);
   }
@@ -749,6 +765,12 @@ async function sendToPreview(pool, config, { draft, files, since, head, deps = {
       where: 'live draft preview', cause: `supervisor_${applied.status}`,
     }, deps);
     return { ok: false, platform: true, why: 'supervisor', error };
+  }
+  if (applied.body?.ok && applied.body.buildSkipped) {
+    // The app runs the edit, but this image could not run its build: build
+    // the preview again the ordinary way, so what the build makes catches up.
+    const again = await rebuild(pool, config, { ...draft, head_sha: head }, 'build_tools', deps);
+    return { ok: true, bootMs: applied.body.bootMs ?? null, catchingUp: !!(again.ok && again.rebuilding) };
   }
   if (applied.body?.ok) return { ok: true, bootMs: applied.body.bootMs ?? null };
   return { ok: false, crashed: true, why: applied.body?.why || 'exited', log: String(applied.body?.log || '').slice(-4000) };
@@ -773,6 +795,10 @@ async function syncPreview(pool, config, { draft, deps = {} }) {
       method: 'POST', body: { files, head: exact(draft.head_sha) }, timeoutMs: APPLY_TIMEOUT_MS, deps,
     });
     if (applied.status === 409 && applied.body?.needsRebuild) return rebuild(pool, config, draft, 'install', deps);
+    // Up to date, but this image could not run the app's build: build it
+    // again the ordinary way (it converges: a preview built at the head has
+    // nothing to sync, so nothing to build again).
+    if (applied.body?.ok && applied.body.buildSkipped) return rebuild(pool, config, draft, 'build_tools', deps);
     return { ok: !!applied.body?.ok, synced: true };
   } catch (err) {
     log.warn('live-drafts', 'Could not bring a draft\'s preview up to date', { draftId: draft?.id, err: err.message });
@@ -822,11 +848,15 @@ async function applyEdit(pool, config, { draftId, userId, files, summary, deps =
   );
   await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [draft.session_id]).catch(() => {});
   const preview = await sendToPreview(pool, config, { draft, files: list, since, head, deps });
-  if (preview.ok && !preview.rebuilding) {
+  // Catching up, the draft stays 'rebuilding' (rebuild set it): the app runs
+  // the edit now, and its view reloads again when the new preview is up.
+  if (preview.ok && !preview.rebuilding && !preview.catchingUp) {
     await pool.query("UPDATE live_drafts SET live_state = 'live', last_error = NULL WHERE id = $1", [draft.id]);
   } else if (!preview.ok) {
     await pool.query('UPDATE live_drafts SET last_error = $2 WHERE id = $1', [draft.id,
-      preview.crashed ? 'The last change stopped the app from starting.' : String(preview.error || '').slice(0, 500)]);
+      preview.crashed ? 'The last change stopped the app from starting.'
+        : preview.buildFailed ? 'The last change did not build, so the preview still shows the version before it.'
+          : String(preview.error || '').slice(0, 500)]);
   }
   const now = await byId(pool, draft.id);
   noteChanged(now, { reload: !!preview.ok && !preview.rebuilding }, deps);

@@ -49,9 +49,21 @@ test('appliedWords says what the preview did, never more', () => {
   assert.deepEqual([lost.saved, lost.preview], [false, 'platform']);
   assert.match(lost.note, /Not saved/);
   assert.doesNotMatch(lost.note, /fix the cause/);
-  // The app's own build step failing is the app's, and says so.
-  assert.match(draftBot.appliedWords({ ok: true, preview: { ok: false, crashed: true, why: 'build', log: 'x' } }).note,
-    /fix the cause or its build/);
+  // The app's own build step failing is the app's, and says so; the files were
+  // put back, so the preview still runs the version before, not a stopped app.
+  const unbuilt = draftBot.appliedWords({ ok: true, preview: { ok: false, buildFailed: true, why: 'build', log: 'x' } });
+  assert.deepEqual([unbuilt.saved, unbuilt.preview, unbuilt.log], [true, 'build_failed', 'x']);
+  assert.match(unbuilt.note, /fix the cause or its build/);
+  assert.match(unbuilt.note, /still shows the version before/);
+  assert.doesNotMatch(unbuilt.note, /did not start/);
+  // 24 Nov 2026: a build the preview's image cannot run (no tailwindcss there)
+  // kept the edit; the preview is built again for the stylesheet. Homeroom's,
+  // not the app's, so no fix is asked for.
+  const catching = draftBot.appliedWords({ ok: true, preview: { ok: true, bootMs: 300, catchingUp: true } });
+  assert.deepEqual([catching.saved, catching.preview, catching.catchingUp], [true, 'restarted', true]);
+  assert.match(catching.note, /shows it now/);
+  assert.match(catching.note, /built again the ordinary way/);
+  assert.match(catching.note, /change no code for it/);
 });
 
 test('the draft prompt is the skill, written against the chat\'s question rule', () => {
@@ -687,6 +699,8 @@ test('A: notLookable reads the last apply first, then what the draft\'s row serv
   assert.equal(draftBot.notLookable(up, { ok: true, preview: { ok: true } }), null);
   assert.equal(draftBot.notLookable(up, { ok: true, preview: { rebuilding: true } }), 'building');
   assert.equal(draftBot.notLookable(up, { ok: true, preview: { crashed: true } }), 'crashed');
+  assert.equal(draftBot.notLookable(up, { ok: true, preview: { ok: false, buildFailed: true } }), 'build_failed');
+  assert.equal(draftBot.notLookable(up, { ok: true, preview: { ok: true, catchingUp: true } }), null, 'the app runs the edit now');
   assert.equal(draftBot.notLookable(up, { ok: false, platform: true }), 'platform');
   assert.equal(draftBot.notLookable(up, { ok: false }), 'not_saved');
   assert.equal(draftBot.notLookable({}, null), 'not_up');

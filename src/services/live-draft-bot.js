@@ -242,13 +242,28 @@ function appliedWords(result) {
         : 'Saved. The preview is being built again to show it: about a minute or two.',
     };
   }
+  if (p.ok && p.catchingUp) {
+    return {
+      saved: true, preview: 'restarted', bootMs: p.bootMs ?? null, catchingUp: true,
+      note: 'Saved, and the app restarted with it, so their view shows it now. The app\'s own build step (its stylesheet) '
+        + 'cannot run inside the live preview, so the preview is also being built again the ordinary way, in about a minute '
+        + 'or two; anything only that build makes, such as a style class this change adds, shows after that. This is '
+        + 'Homeroom\'s preview, not the app: change no code for it.',
+    };
+  }
   if (p.ok) return { saved: true, preview: 'restarted', bootMs: p.bootMs ?? null, note: 'Saved, and the app restarted with it. Their view reloads by itself.' };
+  if (p.buildFailed) {
+    return {
+      saved: true, preview: 'build_failed', log: clip(p.log || '', 3000),
+      note: 'Saved in the draft, but the app\'s build step failed on it, so the preview still shows the version before '
+        + 'this change: the app is running, it just does not have this change. Read the log, fix the cause or its build '
+        + '(or put the file back as it was), and apply again.',
+    };
+  }
   if (p.crashed) {
     return {
       saved: true, preview: 'crashed', log: clip(p.log || '', 3000),
-      note: 'Saved, but the app did not start with it. Read the log, '
-        + (p.why === 'build' ? 'fix the cause or its build (or put the file back as it was)' : 'fix the cause (or put the file back as it was)')
-        + ', and apply again.',
+      note: 'Saved, but the app did not start with it. Read the log, fix the cause (or put the file back as it was), and apply again.',
     };
   }
   return { saved: true, preview: 'unknown', note: clip(p.error || 'The preview did not answer.', 300) };
@@ -267,6 +282,7 @@ function notLookable(draft, lastApply = null) {
     if (!lastApply.ok) return 'not_saved';
     if (p.rebuilding) return 'building';
     if (p.crashed) return 'crashed';
+    if (p.buildFailed) return 'build_failed';
   }
   if (!draft?.staging_runtime_name) return 'not_up';
   if (draft.live_state === 'failed') return 'not_up';
@@ -283,6 +299,7 @@ const EXPECT = 'Say the change is applied and what you expect it to show, in tho
 const NOT_LOOKABLE_WORDS = Object.freeze({
   building: `The preview is still being built with the change, so it cannot be looked at yet. ${EXPECT}`,
   crashed: 'The app did not start with your last save, so there is nothing to look at: read the log apply_changes gave, fix the cause, and apply again.',
+  build_failed: 'Your last save did not build, so the preview still shows the version before it: looking would show the old version. Read the log apply_changes gave, fix the cause, and apply again.',
   not_saved: 'Your last apply saved nothing, so the preview has not changed: there is nothing new to look at.',
   platform: `Homeroom had a problem on its side, so the preview cannot be looked at just now. Change no code for it. ${EXPECT}`,
   not_up: `The preview is not running just now, so it cannot be looked at. ${EXPECT}`,
