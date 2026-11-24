@@ -15579,9 +15579,9 @@ const AppView = {
     // board narrows to (`_devCardInStage('asked')`), and marks the stops
     // where the viewer has threads (`_devCardIsYours`, the Yours filter's
     // reading of "yours": the Homeroom bot tab's threads), each a part of
-    // what its stop counts. The list of this project's threads is asked for
-    // here, once a project, and the page is drawn again when it lands.
-    if (meId != null) AppView._loadYours();
+    // what its stop counts. The front page asks for this project's list
+    // (`_loadYours`) while it is up, not every page built from this view,
+    // and the page is drawn again when it lands.
     const yoursIn = (pick) => entries.filter((e) => pick(e) && AppView._devCardIsYours(e.kind === 'my-session' || e.kind === 'shared-session' ? 'session' : e.kind, e.item)).length;
     const shippedEntry = (e) => e.kind === 'merged' && AppView._devCardInStage('shipped', e.lane, e.kind, e.item);
     const dashboard = {

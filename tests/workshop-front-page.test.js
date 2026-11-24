@@ -245,5 +245,8 @@ test('the viewer\'s threads it marks are read from their own route, which the th
   const server = read('server.js');
   assert.ok(server.indexOf("require('./src/routes/threads')") < server.indexOf("require('./src/routes/ai-work')"), 'the threads routes are mounted first');
   assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/apps\/:slug\/threads\/yours',/);
-  assert.match(read('public/js/app-view.js'), /if \(meId != null\) AppView\._loadYours\(\);/);
+  // Asked for while the front page is up, once a project: never by every page built from the board's view
+  // (each declared check is a fresh page, and the read shares a rate limit with the chat's other reads).
+  assert.match(SRC, /useEffect\(\(\) => \{ if \(slug && viewer\) callAppView\('_loadYours'\); \}, \[slug, viewer\]\);/);
+  assert.doesNotMatch(read('public/js/app-view.js'), /if \(meId != null\) AppView\._loadYours\(\);/);
 });

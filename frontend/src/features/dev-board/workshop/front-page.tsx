@@ -70,6 +70,7 @@ import { platformSlug } from '../../messages/channel-hub';
 import { BOT_AVATAR, swatchFor } from '../../messages/format';
 import { carryWordsToNewChat } from '../../messages/new-chat-carry';
 import { LIVE_START, NEW_THREAD_STARTS, offersLive } from '../../messages/new-thread';
+import { callAppView } from '../card/fold';
 import type { DevWorkshopView } from '../card/model';
 import { slotCounts, useBotSlots } from './bot-slots';
 import { ApprovalLine, ruleSentence, useCommunity } from './community-card';
@@ -212,6 +213,11 @@ export interface WorkshopFrontProps {
 }
 
 export function WorkshopFront(props: WorkshopFrontProps): ReactNode {
+  // The viewer's threads on this project, which the path marks: asked for
+  // once a project while this page is up (AppView._loadYours, the Yours
+  // filter's list), never by every page the board's view is built for.
+  const { slug, viewer } = props;
+  useEffect(() => { if (slug && viewer) callAppView('_loadYours'); }, [slug, viewer]);
   return (
     <div className="dev-ws-front" data-ws-front-page="">
       <Hero {...props} />
