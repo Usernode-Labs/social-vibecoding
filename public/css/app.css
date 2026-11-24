@@ -22203,12 +22203,19 @@ html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messag
 html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] .messages-composer-card {
   margin-bottom: 8px;
 }
-/* On the card the starts and the About and With choosers are white on
-   white. The standard look already edges them with the kit's hairline (its
-   `--messages-disc-shadow`); the brand look drew them with a drop shadow
-   alone, and they vanished into the card, so here they take the look's
-   edge for a raised thing. The box has the look's field edge already. */
+/* In the brand look the cards are the look's thread cards, opaque with its
+   lift, as its thread page's are ("A THREAD'S PAGE" in the brand look sets
+   the same three on `.dev-request`; this rule names the bot tab, so
+   scripts/thread-look.js leaves it out of the standard look's copy). On
+   the card the starts and the About and With choosers are white on white:
+   the standard look edges them with the kit's hairline (its
+   `--messages-disc-shadow`), the brand look drew them with a drop shadow
+   alone and they vanished, so here they take the look's edge for a raised
+   thing. The box has the look's field edge already. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #ai-screen .ai-main-pane .messages-layout > [data-bot-new-thread-docked] {
+  --thread-card-look: var(--bl-card);
+  --thread-card-solid-look: var(--bl-card);
+  --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
   --messages-disc-shadow: var(--bl-raise-edge);
 }
 :is(html.in-side-panel.side-panel-beside-ai, .dev-ws-side) .dev-request,
@@ -37139,10 +37146,8 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
    look's cards: opaque on the page, with the lift every card here has. The
    step the thread stands on is the ink marker in a sun ring, and its second
    line is on the sun wash, as a thing to do is. The rail's heading is a
-   sentence, as every label over a group is. The docked column's New chat
-   is drawn as a thread's cards (NEW CHAT IS DRAWN AS CARDS), so it takes
-   the same three. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-request, [data-bot-new-thread-docked]) {
+   sentence, as every label over a group is. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request {
   --thread-card-look: var(--bl-card);
   --thread-card-solid-look: var(--bl-card);
   --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);

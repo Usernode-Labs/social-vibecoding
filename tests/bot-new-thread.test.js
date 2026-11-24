@@ -154,7 +154,7 @@ test('docked beside the bot tab\'s lists, New chat is the column\'s resting stat
   assert.match(css, new RegExp(`${pane} \\{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\\(0, 1fr\\) auto;`));
   assert.match(css, new RegExp(`${pane}::before \\{[^}]*grid-row: 2 / -1;[^}]*margin: 12px var\\(--thread-gutter\\) 8px;[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
   assert.match(css, new RegExp(`${pane} > \\.messages-thread-header \\{[^}]*margin-inline: var\\(--thread-gutter\\);[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card-solid\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
-  assert.match(css, /:is\(\.dev-request, \[data-bot-new-thread-docked\]\) \{\n  --thread-card-look: var\(--bl-card\);/, 'the brand look gives it the thread\'s cards');
+  assert.match(css, /html\[data-skin="brand"\][^{]*#ai-screen \.ai-main-pane \.messages-layout > \[data-bot-new-thread-docked\] \{\n  --thread-card-look: var\(--bl-card\);\n  --thread-card-solid-look: var\(--bl-card\);\n  --thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);\n  --messages-disc-shadow: var\(--bl-raise-edge\);/, 'the brand look gives it the thread\'s cards, and edges the starts and choosers');
 });
 
 test('the kind is read off the start a message begins with, and a tap writes the start into the box', () => {
