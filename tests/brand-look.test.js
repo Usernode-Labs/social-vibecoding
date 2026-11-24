@@ -735,47 +735,43 @@ test('Home takes Standard (WIP)\'s New project button and Needs you card, in the
   assert.match(at('#home-screen .home-main > #home-join-section').body, /order:\s*6;/);
 });
 
-test('Recent threads stands beside Pinned apps on a wide screen, and is a sideways row of cards on a phone', () => {
+test('Recent activity stands beside Pinned apps on a wide screen, its project cards two across, and is a sideways row of them on a phone', () => {
   const block = lookBlock();
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   // Only while the card and the apps section are both drawn: otherwise Home is one column as it was.
   const BOTH = '#home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden]))';
-  const wide = block.slice(block.indexOf('RECENT THREADS BESIDE PINNED APPS'), block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
-  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('RECENT THREADS BESIDE PINNED APPS')) > 0, 'from 1280px');
+  const wide = block.slice(block.indexOf('RECENT ACTIVITY BESIDE PINNED APPS'), block.indexOf('RECENT ACTIVITY IN THIS LOOK'));
+  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('RECENT ACTIVITY BESIDE PINNED APPS')) > 0, 'from 1280px');
   assert.match(at(`${BOTH} .home-body-fill`).body, /display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 320px;/);
   assert.match(at(`${BOTH} .home-main`).body, /display:\s*contents;/);
   assert.match(at('#home-screen:has(#home-needs-card) .home-main > #home-apps-section:not([hidden])').body, /grid-column:\s*1;\s*grid-row:\s*1;/);
   const beside = at('#home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card)').body;
   assert.match(beside, /grid-column:\s*2;\s*grid-row:\s*1;/);
   // Pinned apps alone sets the row's height: the column stretches to it and
-  // holds its rows to it, so the number of rows the card draws cannot change
-  // the box it was worked out from.
+  // holds its cards to it, so the cards it draws cannot change the box they
+  // are laid out in.
   assert.match(beside, /contain:\s*size;/, 'the column adds no height of its own to the row');
-  assert.match(beside, /min-height:\s*200px;/, 'a floor of a heading and about two rows');
+  assert.match(beside, /min-height:\s*200px;/);
   assert.match(beside, /overflow:\s*hidden;/);
-  // A short list ends after its last row instead of matching Pinned apps' height.
+  // The card fills the column, and its project cards are two across, scrolling in it upward.
   const card = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card').body;
-  const panel = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel').body;
-  assert.doesNotMatch(card, /flex:\s*1 1 auto;/, 'the card is its own height');
-  assert.doesNotMatch(panel, /flex:\s*1 1 auto;/, 'and so is its panel');
-  assert.match(card, /flex:\s*none;/);
-  assert.match(panel, /flex:\s*none;/);
-  // 19 Nov 2026: no "N more" row; the heading opens the rest.
-  assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth any more');
-  assert.doesNotMatch(block, /#home-needs-card \.wip-row-more/);
-  // The look sets no --wip-cell-pad, so the kit row's padding fell away: a recent thread's row is padded top and bottom.
-  assert.match(block, /@media \(min-width: 768px\) \{\s*html\[data-skin="brand"\][^{]*#home-needs-card \.wip-row \{\s*padding: 0\.5rem 0;/);
+  assert.match(card, /flex:\s*1 1 auto;\s*min-height:\s*0;/);
+  const rail = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-rail').body;
+  assert.match(rail, /flex-wrap:\s*wrap;/);
+  assert.match(rail, /margin-inline:\s*0;\s*padding-inline:\s*0;/, 'the column clips at its edges: no gutter there');
+  assert.match(rail, /overflow-x:\s*hidden;\s*overflow-y:\s*auto;/);
+  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-rail > li').body, /width:\s*calc\(50% - 5px\);/);
+  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-activity-card:focus-visible').body, /outline-offset:\s*-2px;/, 'the ring inside the column');
+  // The thread list's rules went with it: no row, no panel, no "N more".
+  assert.doesNotMatch(block, /#home-needs-card (?:> )?\.wip-(?:rows|row|panel)\b/);
+  assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/);
   // The launcher grid is repainted, never moved: the card is the box around it.
   assert.match(at('#home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) #app-list').body, /^\s*background-color:\s*transparent;\s*box-shadow:\s*none;\s*$/);
   assert.match(wide, /> \.home-area-label \+ div \{[\s\S]*?background-color:\s*var\(--bl-card\);/);
-  // On a phone the list is a row that scrolls and snaps card by card.
-  const phone = block.slice(block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
-  assert.match(phone, /^[^{]*\*\/\s*@media \(max-width: 767\.98px\) \{/);
-  const rows = at('#home-needs-card .wip-rows').body;
-  assert.match(rows, /display:\s*flex;/);
-  assert.match(rows, /overflow-x:\s*auto;/);
-  assert.match(rows, /scroll-snap-type:\s*x mandatory;/);
-  assert.match(at('#home-needs-card .wip-rows > li').body, /flex:\s*0 0 78%;\s*scroll-snap-align:\s*start;/, 'the next card shows at the edge');
+  // At every width each project card is the look's card with its lift, and what needs the viewer is the sky.
+  assert.match(at('#home-needs-card .wip-activity-card').body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift-home\);/);
+  assert.match(at('#home-needs-card [data-ask]').body, /color:\s*var\(--bl-sky\);/);
+  assert.match(at('#home-needs-card .wip-activity-rail').body, /margin-bottom:\s*-1\.5rem;\s*padding-bottom:\s*1\.5rem;/, 'room below the cards for the lift, given back');
 });
 
 test('the Communities page wears the look: its button, its cards, and no count on its tab', () => {
