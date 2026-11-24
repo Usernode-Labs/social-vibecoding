@@ -238,3 +238,12 @@ test('its words are whole messages in the project catalog, each with a descripti
   assert.equal(message('project:workshop.front.path.title'), 'In the workshop now');
   assert.equal(message('project:workshop.front.lately.fresh', { count: 4 }), '4 new since you were last here');
 });
+
+test('the viewer\'s threads it marks are read from their own route, which the thread-by-number route passes on', () => {
+  const threads = read('src/routes/threads.js');
+  assert.match(threads, /router\.get\('\/api\/apps\/:slug\/threads\/:number', async \(req, res, next\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(req\.params\.number === 'yours'\) return next\(\);/);
+  const server = read('server.js');
+  assert.ok(server.indexOf("require('./src/routes/threads')") < server.indexOf("require('./src/routes/ai-work')"), 'the threads routes are mounted first');
+  assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/apps\/:slug\/threads\/yours',/);
+  assert.match(read('public/js/app-view.js'), /if \(meId != null\) AppView\._loadYours\(\);/);
+});
