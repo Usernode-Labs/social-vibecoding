@@ -397,14 +397,18 @@ export function AiScreen(): ReactNode {
     setHistoryKind(kindOf(hash));
     if (historyAsked(hash)) { setToHistory((n) => n + 1); endSearch(); }
     // Opening Waiting on you reads the lists again, so something finished
-    // elsewhere (another screen, another device) is not still listed.
-    if (waitingAsked(hash)) {
-      if (!waitingWas.current) { waitingWas.current = true; setMoved((n) => n + 1); }
+    // elsewhere (another screen, another device) is not still listed. Coming
+    // back to it from a row reads them again too: the vote or answer may
+    // have been saved on the page that row opened (#7103), and that row
+    // must not linger.
+    const askedWaiting = waitingAsked(hash);
+    if (askedWaiting) {
+      if (!waitingWas.current) setMoved((n) => n + 1);
       setWaitingOpen(true);
     } else if (bareTab(hash)) {
-      waitingWas.current = false;
       setWaitingOpen(false);
     }
+    waitingWas.current = askedWaiting;
   };
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;

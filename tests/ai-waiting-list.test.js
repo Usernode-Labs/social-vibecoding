@@ -17,6 +17,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
@@ -118,6 +119,16 @@ test('Waiting on you says when it is empty, loading or unreadable', () => {
   assert.match(searched, /data-ai-empty="waiting"/);
   assert.match(searched, new RegExp(message('messages:ai.search.noneThreads', { query: 'zzz' })));
   assert.doesNotMatch(searched, new RegExp(`>${message('messages:ai.waiting.empty')}<`));
+});
+
+test('coming back to Waiting on you from a row reads the list again', () => {
+  // A row opened from the list takes the item's address, so the waiting
+  // view sees it was left; returning bumps the lists' read, and a vote or
+  // answer saved on that page drops its row and the count (index.tsx).
+  const src = fs.readFileSync('frontend/src/features/ai/index.tsx', 'utf8');
+  assert.match(src, /const askedWaiting = waitingAsked\(hash\);/);
+  assert.match(src, /if \(!waitingWas\.current\) setMoved\(\(n\) => n \+ 1\);/);
+  assert.match(src, /waitingWas\.current = askedWaiting;/, 'a row\'s address means the next waiting address is a return');
 });
 
 test('a vote a work_state push closes leaves the rows and the count at once', () => {
