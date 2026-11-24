@@ -127,6 +127,36 @@ test('the blank thread reads nothing and saves nothing in its first render, and 
   for (const start of mod.NEW_THREAD_STARTS) assert.ok(mod.CHANGE_KINDS.includes(start.kind), `${start.key} is for a kind the server knows`);
 });
 
+test('docked beside the bot tab\'s lists, New chat is the column\'s resting state: drawn as cards, with no ✕ (24 Nov 2026)', () => {
+  const { mod } = load();
+  const close = new RegExp(`aria-label="${escapeRe(message('messages:newThread.close'))}"`);
+  // A phone's drawer and Messages: the ✕ is there, and closes the new chat.
+  const loose = renderToHtml(createElement(mod.NewThreadPanel, { conversationId: 7 }));
+  assert.match(loose, close);
+  assert.doesNotMatch(loose, /data-bot-new-thread-docked/);
+  // The docked column (#7039 never leaves it empty): no ✕, and no control in its place.
+  const docked = renderToHtml(createElement(mod.NewThreadDocked.Provider, { value: true }, createElement(mod.NewThreadPanel, { conversationId: 7 })));
+  assert.doesNotMatch(docked, close);
+  assert.match(docked, /data-bot-new-thread-docked=""/);
+  const head = docked.match(/<header class="messages-thread-header">([\s\S]*?)<\/header>/);
+  assert.ok(head, 'the head is drawn');
+  assert.doesNotMatch(head[1], /<button/, 'nothing to press in the head while the list is there');
+  assert.match(head[1], new RegExp(escapeRe(message('messages:newThread.title'))));
+  assert.match(head[1], new RegExp(escapeRe(message('messages:newThread.sub'))));
+  // Only the bot tab's docked column provides it.
+  const ai = read('frontend/src/features/ai/index.tsx');
+  assert.equal((ai.match(/<NewThreadDocked\.Provider value>/g) || []).length, 1);
+  // The look: no sheet round it, a title card, and one card under it for the
+  // starts, the choosers and the box, laid in the pane's grid (no offset).
+  const css = read('public/css/app.css');
+  const pane = 'html:is\\(:not\\(\\[data-skin\\]\\), \\[data-skin="brand"\\]\\) #ai-screen \\.ai-main-pane \\.messages-layout > \\[data-bot-new-thread-docked\\]';
+  assert.match(css, /#ai-screen\[data-ai-docked\] \.ai-main-pane:has\(\[data-bot-new-thread-docked\]\) \{\s+background: none;\s+border: 0;\s+border-radius: 0;\s+\}/);
+  assert.match(css, new RegExp(`${pane} \\{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\\(0, 1fr\\) auto;`));
+  assert.match(css, new RegExp(`${pane}::before \\{[^}]*grid-row: 2 / -1;[^}]*margin: 12px var\\(--thread-gutter\\) 8px;[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
+  assert.match(css, new RegExp(`${pane} > \\.messages-thread-header \\{[^}]*margin-inline: var\\(--thread-gutter\\);[^}]*border-radius: var\\(--thread-card-r\\);[^}]*background: var\\(--thread-card-solid\\);[^}]*box-shadow: var\\(--thread-card-edge\\);`));
+  assert.match(css, /:is\(\.dev-request, \[data-bot-new-thread-docked\]\) \{\n  --thread-card-look: var\(--bl-card\);/, 'the brand look gives it the thread\'s cards');
+});
+
 test('the kind is read off the start a message begins with, and a tap writes the start into the box', () => {
   const { mod } = load();
   const starts = mod.NEW_THREAD_STARTS.map((start) => ({ ...start, text: message(start.text) }));

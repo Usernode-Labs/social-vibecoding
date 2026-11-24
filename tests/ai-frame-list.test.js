@@ -279,7 +279,9 @@ test('what the first tour invented is gone: its words left the catalog, and the 
 test('s10: the column draws no head of its own: Main Chat\'s is gone, and a thread and a new chat bring theirs', () => {
   const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
   assert.doesNotMatch(src, /kit\('dhead'\)|data-ai-main-head|data-ai-main-close|ai-main-title|messages:ai\.main\./);
-  assert.match(src, /\{conversationUp \? <EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/> : null\}\n\s+<\/aside>/);
+  // 24 Nov 2026: the docked column says so to a new chat in it, which then
+  // has no ✕ (new-thread.tsx NewThreadDocked); it is still the column's last part.
+  assert.match(src, /\{conversationUp \? \(\s+<NewThreadDocked\.Provider value>\s+<EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/>\s+<\/NewThreadDocked\.Provider>\s+\) : null\}\n\s+<\/aside>/);
 });
 
 test('s11: a request in the column stands under the kit\'s open-item head; on a phone its page keeps the two back chips', () => {

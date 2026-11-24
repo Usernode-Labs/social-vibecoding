@@ -52,7 +52,7 @@
  * (../dictation/speak-button.tsx) and the accent send disc.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
 import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, ListBulletIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
@@ -238,9 +238,22 @@ function key(): string {
   return out;
 }
 
+/**
+ * THE DOCKED COLUMN'S RESTING STATE (24 Nov 2026). From 768px the bot tab's
+ * column is never empty (../ai/index.tsx, THE COLUMN IS NEVER EMPTY BESIDE
+ * THE LISTS, #7039): with nothing else open there it holds a new chat. A ✕
+ * on that new chat closed it only for the page to start another at once,
+ * so there it has none, and it is drawn as a thread is (app.css, NEW CHAT
+ * IS DRAWN AS CARDS); opening a thread is how it is left. The bot tab says
+ * so around its docked column only: a phone's drawer and Messages keep the
+ * ✕, and it still works there.
+ */
+export const NewThreadDocked = createContext(false);
+
 /** The new chat itself, in a thread pane's place. */
 export function NewThreadPanel({ conversationId }: { conversationId: number }): ReactNode {
   const t = useMessages('messages');
+  const docked = useContext(NewThreadDocked);
   // #6963: the bot tab's list is hidden, and a new chat under its own head
   // offers the same way back to it.
   const showList = useShowListButton();
@@ -514,7 +527,7 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   };
 
   return (
-    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
+    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-docked={docked ? '' : undefined} data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
       <header className="messages-thread-header">
         {showList ? (
           <button type="button" className="messages-thread-action messages-thread-back" data-reply-show-list=""
@@ -531,9 +544,11 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
               : own ? t('messages:newThread.builder.sub', { builder: ownName, product: BUILDER_PRODUCT[own] }) : t('messages:newThread.sub')}
           </div>
         </div>
-        <button type="button" className="messages-thread-action" aria-label={t('messages:newThread.close')} title={t('messages:newThread.close')} onClick={() => closeNewThread()}>
-          <XIcon aria-hidden="true" />
-        </button>
+        {docked ? null : (
+          <button type="button" className="messages-thread-action" aria-label={t('messages:newThread.close')} title={t('messages:newThread.close')} onClick={() => closeNewThread()}>
+            <XIcon aria-hidden="true" />
+          </button>
+        )}
       </header>
       {/* Claude Code or ChatGPT picked, and Homeroom's connector is not in it
           yet: the steps to add it, where the starts and the box go. Those two
