@@ -34936,6 +34936,21 @@ html[data-motion="reduce"] #home-create-tile[data-create-enabled="true"]:active 
 html:not([data-skin]).dark:not([data-app-tone="light"]) body #dev-topic-thread { --bl-sun: var(--wip-btn-1-bg, #ffee6f); --bl-sun-lit: var(--wip-btn-1-hover, #fff59f); }
 html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-request { --thread-foot: var(--bl-card); }
 html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread .dev-rail { --rail-now-box: var(--bl-card); }
+/* WHERE THE PICTURE GOES (24 Nov 2026). The wells a change's picture
+   stands in (the before and after's box while there is none, the picture's
+   own ground and its screen tiles) and the timeline's current step are holes in the card: they show what is
+   behind it. The generated block below drops the paper look's page ground,
+   so the wallpaper stays, but carries its page colour, and these read it:
+   in light a #f6f2d8 box on the white card, a darker yellow than the
+   #fffeea page beside the card. In dark they were Messages' #3a3a3c, a grey
+   on the navy card. They take the page's own ground now: the wallpaper's in
+   light, and in dark the card's, outlined by their hairline, as #102 made
+   the current step. The paper colour stays where it is a fill that has to
+   stand off a white card (the vote switch's track, a bubble, a hover), so
+   it is not changed in the block. */
+html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) #dev-topic-thread { --thread-well: var(--home-ground, var(--bl-page)); }
+html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) #dev-topic-thread .dev-rail { --rail-now-box: var(--thread-well); }
+html:not([data-skin]).dark:not([data-app-tone="light"]) #dev-topic-thread { --thread-well: var(--bl-card); }
 /* (#113, phone review 23 Nov 2026) One face for a thread card's buttons:
    Preview and Vote are the page's sans, so "Suggest a change privately" and
    the quick replies under Homeroom bot's message are too, instead of the
@@ -35518,13 +35533,16 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 }
 
 
-/* Where the picture will be, before there is one. */
+/* Where the picture will be, before there is one. Every well a picture
+   stands in reads --thread-well first: the standard look's thread page sets
+   it to the ground behind its cards (see "WHERE THE PICTURE GOES" above the
+   generated block); every other look leaves it unset. */
 .dev-thread-wait,
 .dev-thread-card .dev-change-shots-plain {
   margin-top: 14px; min-height: 132px; padding: 20px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   border-radius: 16px; text-align: center;
-  background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  background: var(--thread-well, var(--messages-surface-2)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
   color: var(--text-secondary);
 }
 /* The card's picture: the shots viewer read as one picture. The Before and
@@ -35571,7 +35589,7 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-compare {
   --rf-black: var(--text-primary); --rf-cream: var(--bg-primary); --rf-line: var(--app-sheet-line);
   position: relative; min-height: 120px; border-radius: 16px; overflow: hidden; isolation: isolate;
-  background: var(--messages-surface-2);
+  background: var(--thread-well, var(--messages-surface-2));
 }
 .dev-thread-compare::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--app-sheet-line); pointer-events: none; }
 .dev-thread-compare-expand {
@@ -35583,7 +35601,7 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-tiles-said { margin: 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 19px; color: var(--text-secondary); }
 .dev-thread-tiles-said > li + li { margin-top: 4px; }
 .dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
-.dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+.dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--thread-well, var(--messages-surface-2)); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
 .dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
 .dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface), 0 0 0 4px var(--text-primary); }
 .dev-thread-tiles-cap { flex: 1 1 auto; min-width: 0; }
