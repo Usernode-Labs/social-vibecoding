@@ -311,12 +311,14 @@ test('#home-screen reads the token instead of a second env() of its own', () => 
 });
 
 test('no bare env(safe-area-inset-bottom) survives in app.css', () => {
-  // Exactly two places may name it: the :root token and the
-  // platform-surface restatement — both as the var() fallback. Anything
-  // else is a second source of truth that will drift.
+  // Exactly two places may name it as a var() fallback: the :root token and the
+  // platform-surface restatement. The token's OWN definition (#7061) is the one
+  // place allowed to name env() directly — it is the source of truth those
+  // fallbacks read through. Anything else is a second source that will drift.
   const lines = APP_CSS.split('\n');
   const bare = [];
   lines.forEach((line, i) => {
+    if (/--un-safe-inset-bottom:\s*max\(env\(safe-area-inset-bottom, 0px\)/.test(line)) return;
     const re = /env\(safe-area-inset-bottom/g;
     let m;
     while ((m = re.exec(line))) {

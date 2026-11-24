@@ -2263,13 +2263,17 @@ function doingFor(name, args = {}, { project = null, version = null, kind = null
     case 'list_files':
     case 'search_code':
     case 'read_file':
+    // 24 Nov 2026: what the draft changed so far is its code too.
+    case 'draft_changes':
       return project ? { kind: 'code', project: String(project) } : { kind: 'code' };
     case 'edit_file':
     case 'write_file':
     case 'apply_changes':
       return { kind: 'changing_draft' };
-    // 20 Nov 2026 (live-draft review, A): "Looking at the preview".
+    // 20 Nov 2026 (live-draft review, A): "Looking at the preview". 24 Nov
+    // 2026: reading where it stands is looking at it too.
     case 'look_at_preview':
+    case 'preview_status':
       return { kind: 'looking_preview' };
     // #6994: "Putting the archive in place".
     case 'use_archive':
@@ -4829,8 +4833,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       };
       const openDraft = async ({ draft: row, opening = false }) => {
         try {
-          // A: a look's picture only for a model that can see it.
-          return await draftBot.openSession(pool, config, { user, draft: row, opening, imageInput, deps });
+          // A: a look's picture only for a model that can see it; 24 Nov 2026:
+          // for one that cannot, a small model on the bot's key describes it.
+          return await draftBot.openSession(pool, config, { user, draft: row, opening, imageInput, botId: bot.id, deps });
         } catch (err) {
           t.failures.push(`context:draft:${codeOf(err)}`);
           log.warn('homeroom-bot-mayor', 'Could not open a thread\'s live draft for this turn', { userId: user.id, err: clip(err?.message, 200) });

@@ -197,6 +197,9 @@ const NOTHING = new Set([
   'write_artifact', 'edit_artifact', 'show_artifact', 'compare_artifacts',
   // 20 Nov 2026 (live-draft review, C): a card under the reply; its tap acts.
   'offer_propose_draft',
+  // 24 Nov 2026: where a draft's preview stands, and what the draft changed,
+  // only read.
+  'preview_status', 'draft_changes',
 ]);
 // A read, by its name (the platform's and the admin's among them).
 const READ = /^(?:list|get|read)_[a-z_]+$/;

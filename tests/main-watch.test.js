@@ -428,6 +428,139 @@ test('runMainSuite: a resumed run with no admitted row, or no Jobs left, runs th
   } finally { suite.restore(); stubs.restore(); }
 });
 
+// ── A run a newer merge made pointless ───────────────────────────────────
+//
+// 23 Nov 2026: 25 of main's 42 verdicts on the platform were of runs a newer
+// merge had taken the row from; each that had its slot ran to the end. A
+// running run is stopped only when nobody reads its verdict: a superseded
+// green is read for a later red's suspects (main-red-fix.suspectsFor).
+
+const NEWER = 'e'.repeat(40);
+
+// A pool that answers the watch: `tip` is apps.main_check_sha, `newerGreen`
+// whether a run claimed after this one has passed, `held` whether this
+// process still owns the run's queue row.
+function watchPool({ tip = SHA, newerGreen = false, held = true } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/SELECT a\.main_check_sha,/.test(sql)) return { rows: [{ main_check_sha: tip, newer_green: newerGreen }], rowCount: 1 };
+      if (/DELETE FROM check_runs WHERE run_id = \$1 AND owner = \$2 RETURNING run_id/.test(sql)) {
+        return held ? { rows: [{ run_id: params[0] }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+
+// A suite that runs for `ms` unless the signal it was given stops it.
+function slowSuite(ms) {
+  return stubSuite((args) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(pass), ms);
+    args.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(args.signal.reason); }, { once: true });
+  }));
+}
+
+function watching(t) {
+  const saved = process.env.MAIN_WATCH_STOP_POLL_MS;
+  process.env.MAIN_WATCH_STOP_POLL_MS = '100';
+  t.after(() => { if (saved === undefined) delete process.env.MAIN_WATCH_STOP_POLL_MS; else process.env.MAIN_WATCH_STOP_POLL_MS = saved; });
+  const enqueued = grantingQueue(t);
+  const deleted = [];
+  t.mock.method(kubernetes, 'deleteRunCheckJobs', async (cfg, args) => { deleted.push(args); return 1; });
+  return { enqueued, deleted };
+}
+
+const fenced = (pool) => pool.calls.filter((c) => /DELETE FROM check_runs WHERE run_id = \$1 AND owner = \$2/.test(c.sql));
+const stoppedEvents = (pool) => pool.calls.filter((c) => /INSERT INTO events/.test(c.sql) && c.params[3] === 'main_check_stopped');
+
+test('runMainSuite: a running run a newer merge\'s green made pointless is stopped, its Jobs deleted and its slot freed', async (t) => {
+  const { enqueued, deleted } = watching(t);
+  const pool = watchPool({ tip: NEWER, newerGreen: true });
+  const suite = slowSuite(10_000);
+  try {
+    const started = Date.now();
+    const out = await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, phase: 'first' });
+    assert.equal(out.state, 'superseded', 'the machine records nothing for it, as for a run that left the line');
+    assert.ok(Date.now() - started < 3000, 'stopped within a poll or two, not at the end of its suite');
+    const runId = enqueued[0].runId;
+    assert.ok(suite.calls[0].signal.aborted, 'its runner was told to stop');
+    assert.deepEqual(fenced(pool).map((c) => c.params), [[runId, require('../src/services/check-runs').selfOwner()]],
+      'its queue row taken from this process alone: the slot is free at once');
+    assert.deepEqual(deleted, [{ sessionId: 'main-12', previewRunId: runId }], 'and its Jobs deleted');
+    const [event] = stoppedEvents(pool);
+    assert.ok(event, 'counted, so the saving can be measured');
+    assert.equal(event.params[1], 12);
+    const meta = JSON.parse(event.params[4]);
+    assert.deepEqual([meta.runId, meta.sha, meta.tipSha, meta.phase, meta.why], [runId, SHA, NEWER, 'first', 'newer_green']);
+    assert.ok(Number.isInteger(meta.ranMs) && meta.ranMs >= 0, 'with how long it had run');
+    const unread = pool.calls.find((c) => /SELECT a\.main_check_sha,/.test(c.sql));
+    assert.match(unread.sql, /v\.state = 'passing' AND v\.superseded = FALSE\s+AND v\.sha <> \$2 AND v\.created_at >= cr\.started_at/,
+      'a green recorded for the row\'s own run since this one started: a run claimed after it');
+    assert.deepEqual(unread.params, [12, SHA, runId]);
+  } finally { suite.restore(); }
+});
+
+test('runMainSuite: a superseded recheck is stopped though no newer run has passed: its verdict is thrown away', async (t) => {
+  const { deleted } = watching(t);
+  const pool = watchPool({ tip: NEWER, newerGreen: false });
+  const suite = slowSuite(10_000);
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, phase: 'recheck' });
+    assert.equal(out.state, 'superseded');
+    assert.equal(deleted.length, 1);
+    assert.equal(JSON.parse(stoppedEvents(pool)[0].params[4]).why, 'recheck');
+  } finally { suite.restore(); }
+});
+
+test('runMainSuite: the run for the tip is never stopped, nor a superseded one whose green may still be read', async (t) => {
+  const { deleted } = watching(t);
+  for (const [why, pool, phase] of [
+    ['the row is about this commit', watchPool({ tip: SHA, newerGreen: true }), 'first'],
+    ['the row is about this commit, a recheck', watchPool({ tip: SHA.toUpperCase(), newerGreen: false }), 'recheck'],
+    ['superseded, but no newer run has passed: its green may be a later red\'s newest', watchPool({ tip: NEWER, newerGreen: false }), 'first'],
+    ['a superseded confirmation: its green would be a flake, and a green', watchPool({ tip: NEWER, newerGreen: false }), 'confirm'],
+    ['another process holds the run now', watchPool({ tip: NEWER, newerGreen: true, held: false }), 'first'],
+  ]) {
+    const suite = slowSuite(450);
+    try {
+      const out = await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, phase });
+      assert.equal(out.state, 'passing', why);
+      assert.ok(pool.calls.filter((c) => /SELECT a\.main_check_sha,/.test(c.sql)).length >= 2, `${why}: asked while it ran`);
+      assert.equal(stoppedEvents(pool).length, 0, why);
+    } finally { suite.restore(); }
+  }
+  assert.deepEqual(deleted, [], 'no Job of theirs deleted');
+});
+
+test('runMainSuite: a run that cannot be asked about runs on, and the watch ends with the run', async (t) => {
+  watching(t);
+  const pool = watchPool();
+  const query = pool.query;
+  pool.query = async (sql, params) => {
+    if (/SELECT a\.main_check_sha,/.test(sql)) throw new Error('connection reset');
+    return query(sql, params);
+  };
+  const suite = slowSuite(300);
+  try {
+    assert.equal((await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, phase: 'recheck' })).state, 'passing');
+    const asked = pool.calls.length;
+    await new Promise((r) => setTimeout(r, 350));
+    assert.equal(pool.calls.length, asked, 'nothing polls once the run is over');
+  } finally { suite.restore(); }
+});
+
+test('the main-check work passes the run\'s phase to the run', () => {
+  const services = require('node:fs').readFileSync(path.join(__dirname, '..', 'src/workflow/main-check/services.ts'), 'utf8');
+  assert.match(services, /phase: typeof ctx\.input\.phase === 'string' \? ctx\.input\.phase : null,/);
+  const machine = require('node:fs').readFileSync(path.join(__dirname, '..', 'src/workflow/main-check/machine.ts'), 'utf8');
+  assert.match(machine, /input: \{ appId: d\.appId, sha: run\.sha, phase: run\.phase,/, 'the machine puts it on the work');
+  assert.match(machine, /const keepIt = old && old\.phase !== 'recheck' && \(v\.state === 'passing' \|\| v\.state === 'failing'\);/,
+    'a superseded recheck\'s verdict is never kept; a stopped run\'s \'superseded\' is kept by none');
+});
+
 // ── mergePause ───────────────────────────────────────────────────────────
 
 test('runMainSuite: a resumed run is adopted before any copy is looked for', async () => {

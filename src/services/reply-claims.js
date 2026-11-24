@@ -250,6 +250,27 @@ const DRAFT_LOOKS = new RegExp([
 // apply itself said), or an earlier change told of.
 const DRAFT_NOT_LOOKS = /\b(?:runs?|running|starts?|started|restart(?:s|ed)?|boots?|back up|up again|earlier|previous(?:ly)?|last time)\b/i;
 
+// 24 Nov 2026: in one thread, during a rebuild, the bot said "say 'try now'
+// again once it has had a moment and I will look". The preview reloads
+// their view by itself, so asking them to prompt again is never right
+// (DRAFT_ASK_AGAIN), and a look or a line promised for later is right only
+// when this turn armed the follow-up that posts one (live-draft-bot.js
+// draftFollowup; live-drafts.js followUp). "Ask me again in a few minutes",
+// which a failure on Homeroom's side says, and "let me know if you want it
+// bigger" are no such thing.
+const UP_WORDS = String.raw`(?:up|ready|built|done|finished|loaded|back|running)`;
+const DRAFT_ASK_AGAIN = new RegExp([
+  String.raw`\b(?:say|type|send|write)\s+["“'‘]?(?:try (?:it )?(?:now|again)|check again|look again)\b`,
+  String.raw`\b(?:ask me|tell me|let me know|ping me|message me|remind me)\s+(?:again\s+)?(?:once|when|after)\b[^.!?\n]{0,60}?\b${UP_WORDS}\b`,
+  String.raw`\bask (?:me )?again\b[^.!?\n]{0,50}?\b(?:once|when|after)\b[^.!?\n]{0,50}?\b${UP_WORDS}\b`,
+].join('|'), 'i');
+const DRAFT_LATER_LOOK = new RegExp([
+  String.raw`\bI(?:'ll|’ll| will)\s+(?:then\s+|also\s+)?(?:look|check|take a look|have a look|verify)\b[^.!?\n]{0,60}?\b(?:once|when|after)\b`,
+  String.raw`\b(?:once|when|after)\b[^.!?\n]{0,60}?\b${UP_WORDS}\b[^.!?\n]{0,30}?\bI(?:'ll|’ll| will)\s+(?:look|check|take a look|have a look|verify)\b`,
+  String.raw`\b(?:I(?:'ll|’ll| will)|Homeroom (?:will|posts))\s+(?:post|send|write|drop|let you know|tell you)\b[^.!?\n]{0,60}?\b(?:once|when|after)\b`,
+].join('|'), 'i');
+const DRAFT_LATER = new RegExp(`${DRAFT_ASK_AGAIN.source}|${DRAFT_LATER_LOOK.source}`, 'i');
+
 // #6151: a filed design (design-bot.js) said not to be built, or to need
 // somebody else to start it: "I can't build it myself", "someone on the
 // project has to start it", "building starts on the project's side".
@@ -698,6 +719,17 @@ const CLAIMS = Object.freeze([
     said: 'says it is fixed or how the preview looks now, without looking at it since your last save',
   },
   {
+    // 24 Nov 2026: asks them to prompt again for the preview, or promises a
+    // look or a line later, when nothing is set to post one (DRAFT_LATER).
+    kind: 'draft_later',
+    proof: 'turn',
+    re: DRAFT_LATER,
+    applies: (t) => !!t.liveDraft,
+    when: (sentence, t) => DRAFT_ASK_AGAIN.test(sentence) || !t.draftFollowup,
+    turn: () => false,
+    said: 'asks them to tell you when the preview is up or to ask again, or promises a look or a line later that nothing is set to do',
+  },
+  {
     // 20 Nov 2026 (live-draft review, C): an offer or a promise to change a
     // proposal that nothing in this turn can change (proposalOfferUnbacked).
     // Only the chat carries the facts (proposalTaps); its buttons are checked
@@ -831,7 +863,7 @@ function mentions(text, { receipt = null } = {}) {
 // followedUp, steered, pictures, attached, closedThread; and, on
 // a design thread, design, drew, filedDesign, designBuilds; in a plain
 // page's thread (artifacts), page, drew; with a live draft
-// open (step 6), liveDraft, draftSaved, draftLooked; on the voice,
+// open (step 6), liveDraft, draftSaved, draftLooked, draftFollowup (24 Nov 2026); on the voice,
 // readChanges; on the chat (E, 20 Nov 2026), webSearched.
 
 // ── What a turn's tools returned ──────────────────────────────────────────
@@ -1687,6 +1719,10 @@ function repairNote(problems, { tools = null } = {}) {
       ? ' You have not looked at the preview since your last save this turn, so you cannot say it is fixed or how it looks now. Look with look_at_preview, then say what it shows; if you cannot look, say the change is applied and what you expect it to show, in those words.'
       : ' Nothing looked at the preview since the last save: say the change is applied and what you expect it to show, never that it is fixed or how it looks now.')
     : '';
+  // 24 Nov 2026: asked to prompt again, or a later look promised with none set.
+  const draftLater = kinds.has('draft_later')
+    ? ' Their view of the preview reloads by itself when it is up, so never ask them to say anything again or to tell you when it is up. Say the change is saved and what you expect it to show; say a line follows here once it is up only when a tool said Homeroom will post one.'
+    : '';
   // #6159: there is no control on their side; close_thread finishes a private thread.
   const noControl = kinds.has('no_control')
     ? ` There is no such control on their side${offered('close_thread') ? ': to finish this private thread, call close_thread.' : '.'}`
@@ -1719,7 +1755,7 @@ function repairNote(problems, { tools = null } = {}) {
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${draftLooks}${proposalAction}${noControl}${notBuilt}${unread}${searched}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${draftLooks}${draftLater}${proposalAction}${noControl}${notBuilt}${unread}${searched}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 

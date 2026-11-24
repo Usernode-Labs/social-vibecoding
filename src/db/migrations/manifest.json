@@ -562,9 +562,14 @@
       "schemaSha256": "688b8af7998594e3dd25024f17d587859648074154b242cc0d21e2334cffbb3c"
     },
     {
+      "id": "live-drafts-preview-followup",
+      "sha256": "0a8c41143d3521adbd9ec77af0d5a3943f257acf23e15dfa6251ade09a77b61b",
+      "schemaSha256": "9af6a388e2b35d57133e6099914a6518527bd7513ee9118368dfa682cd490f69"
+    },
+    {
       "id": "app-archive-uploads",
       "sha256": "cf9eb841b856e594d2ce6ca0e6f01c8d99821d47770aef7e6597049c956d9043",
-      "schemaSha256": "a7ecaf6c9a5b4367d217f5cd5b554113cd6b7683f1989b3d683acd38d6b13312"
+      "schemaSha256": "c9f993d0ac890ab0438a79771ef752ef0f1af08d56b4cf9f69b84e648d91e489"
     }
   ]
 }

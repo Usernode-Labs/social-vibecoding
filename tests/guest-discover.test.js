@@ -59,13 +59,18 @@ const APPS = [
 
 // ─── guest-data.ts ────────────────────────────────────────────────
 
-test('the sorts: most active, newest, most built, most members, ties in the directory\'s order', () => {
+test('the sorts: most active, newest, most built, most members, alphabetical, ties in the directory\'s order', () => {
   const { sortApps } = loadTsx(DATA);
   const slugs = (sort) => sortApps(APPS, sort).map((a) => a.slug);
   assert.deepEqual(slugs('trending'), ['game-corner', 'todo-list', 'fresh-one']);
   assert.deepEqual(slugs('new'), ['fresh-one', 'game-corner', 'todo-list']);
   assert.deepEqual(slugs('built'), ['fresh-one', 'game-corner', 'todo-list']);
   assert.deepEqual(slugs('popular'), ['game-corner', 'todo-list', 'fresh-one'], 'the most members first');
+  assert.deepEqual(slugs('name'), ['fresh-one', 'game-corner', 'todo-list'], 'A to Z by name');
+  // Case and accents do not move a name along: "Álpha" sorts with "alpha".
+  assert.deepEqual(sortApps([{ slug: 'b', name: 'beta' }, { slug: 'a', name: 'Álpha' }], 'name').map((a) => a.slug), ['a', 'b']);
+  assert.deepEqual(sortApps([{ slug: 'x', name: 'Same' }, { slug: 'y', name: 'same' }], 'name').map((a) => a.slug), ['x', 'y'],
+    'two equal names keep the directory order');
   const tie = [{ slug: 'a', active_users: 1 }, { slug: 'b', active_users: 1 }];
   assert.deepEqual(sortApps(tie, 'trending').map((a) => a.slug), ['a', 'b']);
   const memberTie = [{ slug: 'a', member_count: 2 }, { slug: 'b', member_count: 2 }];
@@ -620,12 +625,13 @@ test('the kinds, and the sort of the rest; what an account adds is the hero\'s, 
   const sort = html.match(/<select[^>]*data-home-join-sort=""[^>]*>([\s\S]*?)<\/select>/);
   assert.ok(sort, 'the rest has a sort menu');
   assert.match(sort[0], new RegExp(`aria-label="${message('home:join.sort.label')}"`));
-  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending'],
-    'New, Popular and Most active, in that order');
+  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending', 'name'],
+    'New, Popular, Most active and A to Z, in that order');
   assert.match(sort[1], new RegExp(`<option value="trending" selected="">${message('home:join.sort.active')}</option>`),
     'most active until another is picked');
   assert.equal(message('home:join.sort.new'), 'New');
   assert.equal(message('home:join.sort.popular'), 'Popular');
+  assert.equal(message('home:join.sort.name'), 'A to Z');
   // One card is nothing to order: the menu is not drawn.
   const one = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: APPS.filter((a) => a.slug === 'fresh-one') }));
   assert.doesNotMatch(one, /data-home-join-sort=/, 'one card, no sort');

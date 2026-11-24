@@ -190,10 +190,10 @@ test('a part inside a part: the inner one opens with the outer, not after it', (
 
 test('in its app, the row\'s votes move to Needs you under it instead of vanishing (audit N04)', () => {
   const info = { chess: { ...CHESS.chess, needs: 2 } };
-  // Folded (another page): the row carries the figure, after its pin (One
+  // Folded (another page): the row carries the figure, before its pin (One
   // Home, #6361), and says it in words inside its link.
   const folded = drawRow({ onPage: 'other' }, { info });
-  assert.match(folded, /<button type="button" class="platform-rail-pin"[^>]*>[\s\S]*?<\/button><span class="platform-rail-votes" aria-hidden="true">2<\/span><\/div>/);
+  assert.match(folded, /<span class="platform-rail-votes" aria-hidden="true">2<\/span><button type="button" class="platform-rail-pin"[^>]*>[\s\S]*?<\/button><\/div>/);
   assert.match(folded, new RegExp(`<span class="sr-only">${message('core:tabs.votesWaiting', { count: 2 })}</span></a>`));
   // In its app the part opens: the row gives its figure to Needs you.
   const inApp = drawRow({ onApp: 'chess', live: ['chess'] }, { info });

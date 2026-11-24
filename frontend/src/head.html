@@ -475,12 +475,8 @@
     //                      styling": the standard pages in the website's
     //                      colours and typefaces. The id is the old New
     //                      look's, whose switch is gone.
-    //                    → 'wip'    "Homeroom brand kit (WIP)": the
-    //                      standard look with the changes still being
-    //                      tried on it, drawn with the brand kit's
-    //                      token set
-    //                      Both are drawn in light and dark, and are
-    //                      the Look menu's, an admin's preview.
+    //                      Drawn in light and dark; the Look menu's,
+    //                      an admin's preview.
     //                    → anything else, a retired look's id among them
     //                      ('brandkit', 'workbench', 'today', 'playground',
     //                      gone 12 Nov 2026; 'glass', 'pastel', 'mosaic',
@@ -500,13 +496,12 @@
     // parameter out of the address, so a reload keeps what was picked.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
-      // The two looks the Look menu offers after Standard (20 Nov 2026: it
-      // keeps three). The same list is MENU_SKINS in src/lib/skin.ts.
-      // 'brand' keeps the standard pages. 'wip' is the standard look itself,
-      // where a change to it is tried before it is the standard's. It sets no
-      // data-skin (no rule of a look applies), only data-skin-wip for a rule
-      // of its own, and data-wip-tokens for the token set that draws it.
-      const SKINS = ['wip', 'brand'];
+      // The one look the Look menu offers after Standard. The same list is
+      // MENU_SKINS in src/lib/skin.ts. 'brand' keeps the standard pages.
+      // ('wip', "Homeroom brand kit (WIP)", where a change to the standard
+      // look was tried first, was removed on 24 Nov 2026: a device that had
+      // it saved reads as the standard look.)
+      const SKINS = ['brand'];
       const _listeners = [];
 
       let pinned = null;
@@ -516,13 +511,6 @@
         const want = new URLSearchParams(window.location.search).get('skin');
         if (want === 'standard' || SKINS.includes(want)) pinned = want;
       } catch {}
-
-      // The set of --wip-* values that draws 'wip'. It had a choice of four
-      // (as drawn, the brand kit, its second version, Highlighter); since 20
-      // Nov 2026 the brand kit is the one drawing of that look, so
-      // nothing is stored or pinned for it ('homeroom:wip-tokens' and
-      // `?tokens=` are read no more).
-      const WIP_TOKENS = 'brand';
 
       function get() {
         if (pinned) return pinned;
@@ -541,17 +529,13 @@
       function apply() {
         const root = document.documentElement;
         const skin = get();
-        if (skin === 'wip') root.setAttribute('data-skin-wip', '');
-        else root.removeAttribute('data-skin-wip');
         // Settings > Experimental > Advanced mode, on <html> for the looks
         // that keep a detail for it (the same device key the switch writes,
         // features/settings/interface-mode.ts). Advanced unless Basic is saved.
         let basic = false;
         try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
         root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
-        if (skin === 'wip') root.setAttribute('data-wip-tokens', WIP_TOKENS);
-        else root.removeAttribute('data-wip-tokens');
-        if (skin !== 'standard' && skin !== 'wip') {
+        if (skin !== 'standard') {
           root.setAttribute('data-skin', skin);
         } else {
           root.removeAttribute('data-skin');

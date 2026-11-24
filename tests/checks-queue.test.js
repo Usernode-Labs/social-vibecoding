@@ -91,6 +91,131 @@ test('a dead admitted run holds its slot only while its Jobs may still be runnin
   assert.equal(plan.admit.length, 1, 'so the waiting run takes the second slot');
 });
 
+// 23 Nov 2026: PR 7029's run settled at 17:27 (its preview work item
+// succeeded), but its row's delete was lost on a draining conductor. The
+// row, admitted at 17:18, counted until its Jobs' deadline ran out at about
+// 17:36, nine minutes of one slot in four, and then sat in the table.
+test('a row whose preview work item reported holds no slot, alive or within its deadline', () => {
+  const settled = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'settled', run_finished: true });
+  const reported = promoted({ admitted: true, alive: true, run_status: 'reported', run_finished: true });
+  const running = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'running', run_finished: false });
+  const waiting = promoted();
+  const plan = checksQueue.planAdmission([settled, reported, running, waiting], { cap: 2 });
+  assert.equal(plan.byRun.get(settled.run_id).holding, false, 'its run is over: nobody reads its Jobs');
+  assert.equal(plan.byRun.get(reported.run_id).holding, false, 'a heartbeat not yet stale says nothing once the handler returned');
+  assert.equal(plan.byRun.get(running.run_id).holding, true, 'a run still going holds until its deadline, as before');
+  assert.deepEqual(plan.admit, [waiting.run_id], 'so the waiting run takes the freed slot');
+
+  // The machine cancelled the run, and the clean-up that stops its Jobs
+  // (checks.cancel) has not run yet: QUEUE_SQL leaves run_finished false.
+  const cancelled = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'settled', run_finished: false });
+  assert.equal(checksQueue.planAdmission([cancelled], { cap: 1 }).byRun.get(cancelled.run_id).holding, true,
+    'its Jobs may still be on the cluster');
+
+  // A row of a finished run waiting in line (its finally lost the delete) is not in line.
+  const left = promoted({ run_status: 'settled', run_finished: true });
+  const behind = promoted();
+  const line = checksQueue.planAdmission([left, behind], { cap: 1 });
+  assert.equal(line.byRun.get(left.run_id).ahead, null);
+  assert.deepEqual(line.admit, [behind.run_id]);
+});
+
+test('a row of a merged or archived session holds no slot once its owner is gone', () => {
+  const dead = promoted({ admitted: true, alive: false, withinDeadline: true, session_ended: true });
+  const live = promoted({ admitted: true, alive: true, session_ended: true });
+  const plan = checksQueue.planAdmission([dead, live, promoted()], { cap: 2 });
+  assert.equal(plan.byRun.get(dead.run_id).holding, false, 'the retire stops an ended session\'s Jobs');
+  assert.equal(plan.byRun.get(live.run_id).holding, true, 'a run its owner is still running holds until it ends');
+  assert.equal(plan.admit.length, 1);
+});
+
+test('a settled run whose early unit Jobs are still stopping counts only until their deadline', () => {
+  const lingering = promoted({ admitted: true, alive: false, withinDeadline: true, lingering: true, run_finished: true });
+  const past = promoted({ admitted: true, alive: false, withinDeadline: false, lingering: true });
+  const plan = checksQueue.planAdmission([lingering, past], { cap: 4 });
+  assert.equal(plan.byRun.get(lingering.run_id).holding, true, 'its work item reported, but its Pods may still run');
+  assert.equal(plan.byRun.get(past.run_id).holding, false);
+  assert.deepEqual(plan.sweep.map((s) => [s.runId, s.why]), [[past.run_id, 'deadline']],
+    'and the pass deletes it then, not before');
+});
+
+test('the sweep takes finished, ended and abandoned rows, and never a live, waiting or main-watch one', () => {
+  const finished = promoted({ admitted: true, alive: true, run_status: 'settled', run_finished: true });
+  const ended = draft({ admitted: true, alive: false, withinDeadline: true, session_ended: true });
+  const leftover = promoted({
+    admitted: true, alive: false, withinDeadline: false, owner: 'conductor-6b85:7:exited', exited: true,
+    run_status: null, run_finished: null,
+  });
+  const silent = promoted({ admitted: true, alive: false, withinDeadline: false, expired: true });
+  const kept = [
+    // A run under way, admitted or waiting in line.
+    promoted({ admitted: true, alive: true, run_status: 'running', run_finished: false }),
+    promoted({ alive: true, run_status: 'running', run_finished: false }),
+    // Dead, but its work item will come back for it: the retry collects its
+    // Jobs, or asks for a slot in its place.
+    promoted({ admitted: true, alive: false, withinDeadline: false, exited: true, run_status: 'queued' }),
+    promoted({ alive: false, exited: true, run_status: 'running' }),
+    promoted({ admitted: true, alive: false, withinDeadline: true, session_ended: true, run_status: 'running' }),
+    // Handed over moments ago: its Jobs may still be running.
+    promoted({ admitted: true, alive: false, withinDeadline: true, exited: true, run_status: null }),
+    // Dead a while, but neither handed over nor silent for long.
+    promoted({ admitted: true, alive: false, withinDeadline: false }),
+    // main-watch's: its next attempt adopts it.
+    main({ admitted: true, alive: false, withinDeadline: false, exited: true, expired: true }),
+  ];
+  const self = promoted({ run_status: 'settled', run_finished: true });
+  const plan = checksQueue.planAdmission([finished, ended, leftover, silent, ...kept, self], { cap: 4, self: self.run_id });
+  assert.deepEqual(plan.sweep.map((s) => [s.runId, s.why]), [
+    [finished.run_id, 'finished'], [ended.run_id, 'ended'], [leftover.run_id, 'abandoned'], [silent.run_id, 'abandoned'],
+  ]);
+  assert.equal(plan.sweep[0].sessionId, finished.session_id, 'the log names the proposal');
+  for (const r of kept) assert.equal(checksQueue.sweepReason(r, r.alive), null, JSON.stringify(r));
+});
+
+test('the admission pass deletes the swept rows, proposal rows only, and says how many', async (t) => {
+  t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity', async () => ({ available: true, cap: 4 }));
+  const finished = promoted({ admitted: true, alive: false, withinDeadline: true, run_status: 'settled', run_finished: true });
+  const running = promoted({ admitted: true, alive: true, run_status: 'running', run_finished: false });
+  const statements = [];
+  const client = {
+    async query(sql, params) {
+      statements.push({ sql: String(sql), params });
+      if (/FROM check_runs cr/.test(sql)) return { rows: [finished, running] };
+      if (/^DELETE FROM check_runs WHERE run_id = ANY/.test(String(sql).trim())) {
+        return { rows: params[0].map((run_id) => ({ run_id })), rowCount: params[0].length };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  const logged = [];
+  t.mock.method(require('../src/services/logger'), 'info', (scope, msg, data) => logged.push({ msg, data }));
+  const plan = await checksQueue.admit({ async connect() { return client; } });
+  const sweep = statements.find((s) => /DELETE FROM check_runs WHERE run_id = ANY\(\$1::uuid\[\]\) AND kind = 'proposal'/.test(s.sql));
+  assert.ok(sweep, 'one delete, under the admission lock');
+  assert.deepEqual(sweep.params[0], [finished.run_id]);
+  assert.ok(statements.findIndex((s) => /pg_advisory_xact_lock/.test(s.sql)) < statements.indexOf(sweep));
+  assert.deepEqual(plan.swept, [{ runId: finished.run_id, sessionId: finished.session_id, why: 'finished' }]);
+  const line = logged.find((l) => l.msg === 'Cleared the checks rows of runs that are over');
+  assert.equal(line.data.removed, 1);
+});
+
+test('QUEUE_SQL reads a preview run against its work item by its identity key, and the cancel that follows a cancel', () => {
+  const src = stripComments(read('src/services/checks-queue.js'));
+  const sql = src.slice(src.indexOf('const QUEUE_SQL = `'), src.indexOf('function runOver('));
+  assert.match(sql, /w\.machine = 'preview' AND w\.key = 'session:' \|\| cr\.session_id::text\s+AND w\.kind = 'checks\.run' AND w\.work_key = cr\.manifest->>'runKey'/,
+    'machine, key, kind and work key: wf_work\'s unique identity, one index lookup a row');
+  assert.match(sql, /\(wk\.status IN \('reported', 'settled'\) AND \(NOT wk\.cancelled OR wk\.cancel_done\)\) AS run_finished/);
+  assert.match(sql, /c\.kind = 'checks\.cancel'\s+AND c\.work_key = 'cancel:' \|\| w\.work_key/);
+  assert.match(sql, /cs\.status IN \('merged', 'archived'\)\)\) AS session_ended/);
+  // The preview machine's names for them.
+  const machine = read('src/workflow/preview/machine.ts');
+  assert.match(machine, /run: 'checks\.run',/);
+  assert.match(machine, /cancel: 'checks\.cancel',/);
+  assert.match(machine, /\{ kind: WORK\.cancel, key: `cancel:\$\{d\.run\.key\}`/);
+  assert.match(machine, /\{ kind: WORK\.run, key, input: \{\s+sessionId: d\.sessionId, appId: d\.appId, n: served\.n, head: served\.head, runId: key,/);
+});
+
 test('an unavailable dedicated pool queues proposals and main-watch without revoking running work', () => {
   const running = promoted({ admitted: true });
   const waiting = [main(), promoted(), draft()];
@@ -183,6 +308,137 @@ test('main-watch has a slot of its own besides the cap, and goes first for any f
   const waiting = promoted();
   plan = checksQueue.planAdmission([...full, waiting], { cap: 2 });
   assert.deepEqual(plan.admit, [], 'the reserved slot is main-watch\'s alone');
+});
+
+test('the pilot lends one slot to the first waiting proposal while extra main-watch already holds a slot', () => {
+  const mains = [main({ admitted: true }), main({ admitted: true })];
+  const waitingMain = main();
+  const proposals = Array.from({ length: 3 }, () => promoted({ admitted: true }));
+  const first = promoted();
+  const second = handoff();
+  const rows = [...mains, waitingMain, ...proposals, first, second];
+
+  assert.deepEqual(checksQueue.planAdmission(rows, { cap: 4, poolCap: 5 }).admit, []);
+  const plan = checksQueue.planAdmission(rows, { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(plan.admit, [first.run_id]);
+  assert.equal(plan.proposalOverflowRunId, first.run_id);
+  assert.deepEqual(plan.holding, { main: 2, proposal: 4 });
+  assert.equal(plan.byRun.get(waitingMain.run_id).ahead, 0);
+  assert.equal(plan.byRun.get(second.run_id).ahead, 1);
+
+  const nextPass = rows.map((r) => r === first
+    ? { ...r, admitted_at: new Date(), proposal_overflow: true } : r);
+  assert.deepEqual(checksQueue.planAdmission(nextPass,
+    { cap: 4, poolCap: 6, proposalOverflowPilot: true }).admit, [],
+  'repeated passes keep the single overflow grant and four-proposal ceiling');
+});
+
+test('the pilot requires a finite capacity of five and a healthy pool with the ordinary cap of four', () => {
+  const waiting = promoted();
+  const rows = [
+    main({ admitted: true }), main({ admitted: true }),
+    ...Array.from({ length: 3 }, () => promoted({ admitted: true })),
+    waiting,
+  ];
+  for (const options of [
+    { cap: 4, poolCap: Infinity }, { cap: 4, poolCap: 4 },
+    { cap: 3, poolCap: 5 }, { cap: 4, poolCap: 5, available: false },
+  ]) {
+    assert.deepEqual(checksQueue.planAdmission(rows, { ...options, proposalOverflowPilot: true }).admit, []);
+  }
+});
+
+test('a waiting main-watch run takes the first ordinary slot and only existing main holds activate the pilot', () => {
+  const firstMain = main({ admitted: true });
+  const secondMain = main();
+  const proposals = Array.from({ length: 3 }, () => promoted({ admitted: true }));
+  const waiting = promoted();
+  const options = { cap: 4, poolCap: 5, proposalOverflowPilot: true };
+  assert.deepEqual(checksQueue.planAdmission([firstMain, secondMain, ...proposals, waiting], options).admit,
+    [secondMain.run_id]);
+
+  const started = { ...secondMain, admitted_at: new Date() };
+  assert.deepEqual(checksQueue.planAdmission([firstMain, started, ...proposals, waiting], options).admit,
+    [waiting.run_id]);
+  const reserved = checksQueue.planAdmission([secondMain, ...proposals, promoted({ admitted: true }), waiting], options);
+  assert.deepEqual(reserved.admit, [secondMain.run_id], 'the first main-watch slot remains reserved');
+});
+
+test('an existing pilot proposal keeps its slot through lower capacity and main-watch completion', () => {
+  const firstMain = main({ admitted: true });
+  const extraMain = main({ admitted: true, alive: false, withinDeadline: true });
+  const proposals = Array.from({ length: 3 }, () => promoted({ admitted: true }));
+  const waiting = promoted();
+  const pilot = checksQueue.planAdmission([firstMain, extraMain, ...proposals, waiting],
+    { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(pilot.admit, [waiting.run_id], 'a main-watch run with Jobs still within deadline counts');
+
+  const holder = { ...waiting, admitted_at: new Date(), proposal_overflow: true };
+  const next = promoted();
+  const nextMain = main();
+  const rows = [nextMain, firstMain, extraMain, ...proposals.slice(1), holder, next];
+  for (const options of [{ cap: 4, poolCap: 4, proposalOverflowPilot: true }, { cap: 4, poolCap: 5 }]) {
+    const plan = checksQueue.planAdmission(rows, options);
+    assert.deepEqual(plan.admit, []);
+    assert.equal(plan.byRun.get(holder.run_id).holding, true);
+  }
+
+  const released = checksQueue.planAdmission([firstMain, ...proposals, holder, next],
+    { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(released.admit, [], 'a free ordinary slot cannot start a fifth proposal');
+  assert.deepEqual(released.holding, { main: 1, proposal: 4 });
+  const withMain = checksQueue.planAdmission([nextMain, firstMain, ...proposals, holder, next],
+    { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(withMain.admit, [nextMain.run_id], 'the main hold never depends on a future main admission');
+});
+
+test('a held pilot proposal leaves a released ordinary slot available to the next main-watch run', () => {
+  const mains = [main({ admitted: true }), main({ admitted: true })];
+  const waitingMain = main();
+  const ordinary = [promoted({ admitted: true }), promoted({ admitted: true })];
+  const overflow = promoted({ admitted: true, proposal_overflow: true, alive: false });
+  const waitingProposal = promoted();
+  const rows = [...mains, waitingMain, ...ordinary, overflow, waitingProposal];
+  const plan = checksQueue.planAdmission(rows, { cap: 4, poolCap: 5, proposalOverflowPilot: true });
+  assert.deepEqual(plan.admit, [waitingMain.run_id]);
+  assert.equal(plan.proposalOverflowRunId, null);
+  assert.equal(plan.byRun.get(overflow.run_id).holding, true, 'its Jobs may still run after a lease loss');
+  assert.deepEqual(plan.holding, { main: 3, proposal: 3 });
+});
+
+test('the admission transaction passes physical capacity and the runtime pilot flag to the planner', async (t) => {
+  const flag = 'CHECKS_PROPOSAL_OVERFLOW_PILOT';
+  const previous = process.env[flag];
+  delete process.env[flag];
+  t.after(() => {
+    if (previous === undefined) delete process.env[flag];
+    else process.env[flag] = previous;
+  });
+  const capacity = t.mock.method(require('../src/services/kubernetes'), 'checkPoolCapacity',
+    async () => ({ available: true, cap: 5 }));
+  const waiting = promoted();
+  const rows = [
+    main({ admitted: true }), main({ admitted: true }),
+    ...Array.from({ length: 3 }, () => promoted({ admitted: true })),
+    waiting,
+  ];
+  const grants = [];
+  const client = {
+    async query(sql, params) {
+      if (sql.includes('FROM check_runs cr')) return { rows };
+      if (sql.includes('SET admitted_at = NOW()')) grants.push({ ids: params[0], overflow: params[1] });
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { async connect() { return client; } };
+  assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, []);
+  process.env[flag] = 'true';
+  assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, [waiting.run_id]);
+  assert.deepEqual(grants, [{ ids: [waiting.run_id], overflow: waiting.run_id }]);
+
+  capacity.mock.mockImplementation(async () => ({ available: true }));
+  assert.deepEqual((await checksQueue.admit(pool, { cap: 4 })).admit, [], 'missing capacity cannot grant a slot');
 });
 
 // ── A waiting run is not stuck ──────────────────────────────────────────
@@ -284,7 +540,7 @@ test('a run the machine cancels while it waits leaves the line at once', () => {
 
 test('every run\'s row going wakes this process\'s waiters', () => {
   const src = stripComments(read('src/services/check-runs.js'));
-  assert.match(src, /async function finish\(pool, runId\) \{[\s\S]{0,400}\} finally \{\s+require\('\.\/checks-queue'\)\.slotFreed\(\);/);
+  assert.match(src, /async function finish\(pool, runId, \{[^}]*\} = \{\}\) \{[\s\S]{0,900}\} finally \{\s+require\('\.\/checks-queue'\)\.slotFreed\(\);/);
 });
 
 test('a retried run asks for its slot in the place its earlier claim had in line', () => {
@@ -389,9 +645,10 @@ test('the card says "Waiting for a checks slot (2 ahead)", offers no re-run, and
   assert.doesNotMatch(`${note.heading} ${text}`, /—/, 'user-facing copy carries no em dash');
 
   assert.equal(AppView._checksLine({ state: 'active' }, QUEUED, false), 'Waiting for a slot · 2 ahead');
-  // #4452: the change page's Testing card says it, still moving.
-  assert.equal(AppView._changeTestingView(QUEUED).note.join(' '), 'Waiting for a checks slot (2 ahead)');
-  assert.equal(AppView._changeTestingView({ ...QUEUED, checks_progress: null }).note.join(' '), 'Waiting for a checks slot');
+  // #4452: the change page's Testing card says it, still moving, as the
+  // first sentence of its note (23 Nov 2026: with its own full stop).
+  assert.equal(AppView._changeTestingView(QUEUED).note.join(' '), 'Waiting for a checks slot (2 ahead).');
+  assert.equal(AppView._changeTestingView({ ...QUEUED, checks_progress: null }).note.join(' '), 'Waiting for a checks slot.');
   assert.equal(AppView._changeTestingView(QUEUED).figure, 'Waiting for a slot');
   assert.equal(AppView._changeTestingView(QUEUED).done, false);
 });
@@ -482,8 +739,53 @@ test('the proposal page itself says where a waiting run is in line, without open
   const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: mock }));
   const text = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase();
   assert.ok(text.includes(want), `the page says "${declared.expectText}"; it read: ${text.slice(0, 600)}`);
-  assert.match(page, /data-change-gate="testing" data-done="false"[\s\S]*?<p class="dev-change-gate-note">Waiting for a checks slot \(2 ahead\)<\/p>/,
+  assert.match(page, /data-change-gate="testing" data-done="false"[\s\S]*?<p class="dev-change-gate-note">Waiting for a checks slot \(2 ahead\)\.<\/p>/,
     'on the Testing card\'s line');
+});
+
+// 23 Nov 2026: the Testing card's note read "Waiting for a checks slot (2
+// ahead) This wait is longer than usual.": the place in line is the
+// heading's words, with no full stop, joined to the next sentence by the
+// catalog's pair (project:sentences.pair, which expects each to end as a
+// sentence). The note now opens with the place in line as a sentence of its
+// own, a whole message per case, so every language ends it as it ends a
+// sentence; the heading, the chip and the status pill keep the title.
+test('a queued run\'s note reads as two sentences: its place in line, then its wait', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const { sentences } = loadTsx('frontend/src/features/dev-board/topic/request-head.tsx');
+  const AppView = makeAppView();
+  const est = { buildMs: 180000, checksMs: 540000, runs: 12, rough: false, slots: 4 };
+  const now = Date.now();
+  const at = (ms) => new Date(now - ms).toISOString();
+  const queued = (ahead, sinceMs) => ({ ...QUEUED, checks_estimate: est, checks_checked_at: at(sinceMs),
+    checks_progress: { ...QUEUED.checks_progress, queue: { ahead, since: at(sinceMs) } } });
+  // Waited past what its place in line suggested.
+  assert.equal(sentences(AppView._changeTestingView(queued(2, 60 * 60000)).note),
+    'Waiting for a checks slot (2 ahead). This wait is longer than usual.');
+  // Still inside its wait.
+  assert.match(sentences(AppView._changeTestingView(queued(2, 3 * 60000)).note),
+    /^Waiting for a checks slot \(2 ahead\)\. About \d+ minutes? until it starts\.$/);
+  assert.equal(sentences(AppView._changeTestingView(queued(0, 60 * 60000)).note),
+    'Waiting for a checks slot (next in line). This wait is longer than usual.');
+  assert.equal(sentences(AppView._changeTestingView(queued(1, 60 * 60000)).note),
+    'Waiting for a checks slot (1 ahead). This wait is longer than usual.');
+  // The heading and its chip keep the title, which is not a sentence.
+  assert.equal(AppView._checksPhaseCopy('queued', queued(2, 0)).title, 'Waiting for a checks slot (2 ahead)');
+  assert.equal(AppView._checksPhaseCopy('queued', queued(2, 0)).sentence, 'Waiting for a checks slot (2 ahead).');
+  assert.equal(AppView._checksPhaseCopy('testing').sentence, AppView._checksPhaseCopy('testing').title,
+    'a title that already ends as a sentence is its own sentence');
+
+  // Every sentence form ends with the full stop its title has not, in the
+  // English the translations are made from.
+  const english = JSON.parse(read('frontend/locales/en/changes.json'));
+  for (const [title, sentence] of [
+    ['checks.phase.queued.title', 'checks.phase.queued.sentence'],
+    ['checks.phase.queued.titleNext', 'checks.phase.queued.sentenceNext'],
+    ['checks.phase.queued.titleAhead_one', 'checks.phase.queued.sentenceAhead_one'],
+    ['checks.phase.queued.titleAhead_other', 'checks.phase.queued.sentenceAhead_other'],
+  ]) {
+    assert.equal(english[sentence].text, `${english[title].text}.`, sentence);
+  }
 });
 
 test('the Helm chart passes the cap through, documented beside CAPTURE_CPUS', () => {

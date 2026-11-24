@@ -26,7 +26,8 @@
  * the rest under "More communities" whenever Featured is shown, under All or
  * a chosen kind (#6584, #6597): every community of the kind that Featured
  * does not already show, in the sort picked beside that heading (New,
- * Popular or Most active; most active until somebody picks another), so no
+ * Popular, Most active or A to Z; most active until somebody picks another),
+ * so no
  * community appears twice. The heading tells the rest apart from Featured;
  * when every community of the kind is featured there is nothing left and
  * it is not drawn. No heading while searching, or with nothing featured:
@@ -55,7 +56,7 @@ import { matchesQuery } from './use-home-query';
 export const JOIN_PAGE = 8;
 
 /** The sorts the "More communities" control offers, in the order it shows them. */
-export const JOIN_SORTS = ['new', 'popular', 'trending'] as const;
+export const JOIN_SORTS = ['new', 'popular', 'trending', 'name'] as const;
 export type JoinSort = (typeof JOIN_SORTS)[number];
 
 /** The cards' grid (app.css `.cm-grid`), and the larger first row's. */
@@ -93,7 +94,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   // pages (Home, and the Communities page): the visitor's landing draws this
   // same list, and keeps the standard drawing of it.
   const live = useLiveSkin();
-  const wip = live === 'wip' || (isKitHome(live) && signedIn);
+  const wip = isKitHome(live) && signedIn;
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);

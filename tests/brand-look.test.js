@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.wipTokens\.brand'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard and its work-in-progress copy (one entry, the brand kit, since 20 Nov 2026): it is the one look that redraws the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard (its work-in-progress copy was removed on 24 Nov 2026, #7071): it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -247,6 +247,14 @@ test('every rule of the look is scoped to the flag, in one of its two modes or i
   assert.ok(selectors > 100, 'the block is read whole');
   assert.ok(seen.either > seen.light + seen.dark, 'most of the look is written once, for both modes');
   assert.ok(seen.light > 10 && seen.dark > 10, 'and each mode has its own tokens and its own utility ramp');
+});
+
+test('the brand look\'s phone bar sizes each seat to its own label (#7059)', () => {
+  // The word-sized seats used to be the standard look's alone, so the brand
+  // look's blue bar cut Home and the long labels mid-word.
+  assert.match(read('public', 'css', 'app.css'),
+    /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\):not\(\[data-side-strip\]\) #platform-tabs \{ grid-template-columns: repeat\(5, auto\); \}/,
+    'the brand look starts each seat from its label');
 });
 
 test('the block lives last and redeclares none of the counted wallpaper tokens', () => {
@@ -706,7 +714,7 @@ test('Home takes Standard (WIP)\'s New project button and Needs you card, in the
   assert.match(island, /<WipCard on=\{wip\}>/, 'Pinned apps keeps the look\'s own card, not WIP\'s');
   const home = read('frontend', 'src', 'features', 'home', 'home.js');
   const side = home.slice(home.indexOf('hasSideCard() {'), home.indexOf('_wireRowBudget() {'));
-  assert.match(side, /if \(skin !== 'brand' && skin !== 'wip' && skin !== 'standard'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
+  assert.match(side, /if \(skin !== 'brand' && skin !== 'standard'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
     'the grid drops its tile only where the search row shows the button');
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   const tokens = at(':is(#home-screen, #communities-screen)').body;
@@ -847,6 +855,40 @@ test('the board is calm: Vote and what is running are the sky, and a vote under 
     assert.ok(valueOf(ruleAt(mode).body, '--bl-row-on'), `${mode} sets the open row's fill`);
     assert.ok(valueOf(ruleAt(mode).body, '--bl-row-on-edge'), `${mode} sets its edge`);
   }
+});
+
+test('a vote to close is drawn with the page\'s card and the foot\'s two buttons (#7064)', () => {
+  // The card was white on the white thread card, with no edge, and Yes was
+  // the sky (the generic Vote face) beside a quiet grey patch: neither is
+  // what the page's own buttons look like.
+  const src = read('frontend', 'src', 'features', 'dev-board', 'topic', 'thread-changes.tsx');
+  assert.doesNotMatch(src, /style=\{sending \? \{ minWidth/, 'neither face carries an inline colour');
+  assert.match(src, /className=\{act \? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'\}/);
+  assert.equal((src.match(/const act = !sending && \(on \|\| \(!mine && side === 'up'\)\);/g) || []).length, 2,
+    'the request\'s close vote and the decision page\'s card');
+  const gate = ruleAt(`${EITHER} .dev-change-pair .dev-change-gate`);
+  assert.ok(gate, 'the card is the look\'s own, in both modes');
+  assert.match(gate.body, /background:\s*var\(--bl-card\);/);
+  assert.match(gate.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\);/);
+  const act = ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-act`);
+  assert.ok(act, 'the acting face');
+  assert.match(act.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(act.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(act.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-act:hover`).body, /background:\s*var\(--bl-sun-lit\);/);
+  const quiet = ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-quiet`);
+  assert.ok(quiet, 'and the quiet one');
+  assert.match(quiet.body, /background:\s*var\(--bl-raise\);/);
+  assert.match(quiet.body, /box-shadow:\s*var\(--bl-raise-edge\);/);
+  // The standard look's thread page carries the same rules (scripts/thread-look.js).
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /:where\(#dev-topic-thread\) \.dev-change-gate-act \.dev-vote-btn-act \{ background: var\(--bl-sun\); color: var\(--bl-on-sun\); box-shadow: var\(--bl-pill-edge\); \}/);
+  // Every look keeps the quiet face's old fill, in the base rules.
+  assert.match(css, /\.dev-vote-btn-quiet, \.dev-vote-btn-quiet:hover \{ background: var\(--state-neutral-bg\); color: var\(--text-primary\); \}/);
+  // Both faces keep even sides, so neither label sits flush with its edge
+  // (the base button's 8px end is the caret's room, and these carry no
+  // caret).
+  assert.match(css, /\.dev-change-gate-act \.dev-vote-btn \{ min-width: 0; padding-inline: 11px; \}/);
 });
 
 test('Needs you\'s card is the look\'s white card from 768px, with the page\'s cream on it', () => {

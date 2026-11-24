@@ -1574,16 +1574,19 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
               {(['up', 'down'] as const).map((side) => {
                 const on = mine === (side === 'up' ? 'yes' : 'no');
                 const sending = sendingSide === (side === 'up' ? 'yes' : 'no');
+                // The one face that acts wears the skin's filled button; the
+                // other is quiet, and a side on its way is quiet as it reads
+                // "Sending…" (#7064).
+                const act = !sending && (on || (!mine && side === 'up'));
                 return (
                   <button
                     key={side}
                     type="button"
-                    className="dev-vote-btn"
+                    className={act ? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'}
                     aria-pressed={on}
                     aria-disabled={busy || undefined}
                     data-close-vote={side}
                     data-sending={sending ? 'true' : undefined}
-                    style={sending ? { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' } : on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
                     onClick={(e) => { void vote(side, e.currentTarget); }}
                   >
                     {sending ? null : (side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />)}
@@ -1711,16 +1714,19 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
               {(['up', 'down'] as const).map((side) => {
                 const on = mine === (side === 'up' ? 'yes' : 'no');
                 const sending = sendingSide === (side === 'up' ? 'yes' : 'no');
+                // The one face that acts wears the skin's filled button; the
+                // other is quiet, and a side on its way is quiet as it reads
+                // "Sending…" (#7064).
+                const act = !sending && (on || (!mine && side === 'up'));
                 return (
                   <button
                     key={side}
                     type="button"
-                    className="dev-vote-btn"
+                    className={act ? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'}
                     aria-pressed={on}
                     aria-disabled={busy || undefined}
                     data-close-vote={side}
                     data-sending={sending ? 'true' : undefined}
-                    style={sending ? { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' } : on || (!mine && side === 'up') ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
                     onClick={(e) => { void vote(side, e.currentTarget); }}
                   >
                     {sending ? null : (side === 'up' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <XIcon className="h-3.5 w-3.5" aria-hidden="true" />)}

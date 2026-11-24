@@ -891,11 +891,15 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   );
   // The picker's header, which names both of its homes.
   const heading = approve ? t('project:card.vote.dialog.approval') : t('project:card.vote.dialog.vote');
-  // The picker is portaled out of the page, so the thread page's scoped look
-  // cannot reach it: mark it, and the page's carried rules (scripts/thread-look.js)
-  // paint it in the page's own colours. It renders only after the button that
-  // opens it has mounted, so the ref is there to ask.
+  // The picker is portaled out of the page, so the page's scoped look cannot
+  // reach it: mark it, and the page's own rules paint it. A button on the
+  // thread page marks it "thread" (the carried rules, scripts/thread-look.js);
+  // a button on the All items board marks it "board" (app.css).
+  // It renders only after the button that opens it has mounted, so the ref is
+  // there to ask.
   const threadLook = !!btnRef.current?.closest('#dev-topic-thread');
+  const boardLook = !threadLook && !!btnRef.current?.closest('.dev-ws[data-ws-tab="all"] #dev-kanban');
+  const voteLook = threadLook ? 'thread' : (boardLook ? 'board' : undefined);
   const popover = open && pos ? createPortal(
     <div
       ref={popRef}
@@ -903,7 +907,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       role="dialog"
       aria-label={heading}
       data-side={side}
-      data-vote-look={threadLook ? 'thread' : undefined}
+      data-vote-look={voteLook}
       style={{ top: `${pos.top}px`, left: `${pos.left}px`, maxHeight: popMaxH ? `${popMaxH}px` : undefined, overflowY: popMaxH ? 'auto' : undefined }}
       onClick={(ev) => ev.stopPropagation()}
     >
@@ -912,7 +916,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     document.body,
   ) : null;
   const sheet = sheetEl ? createPortal(
-    <div className="dev-vote-sheet" role="dialog" aria-label={heading} data-vote-sheet="" data-side={side} data-vote-look={threadLook ? 'thread' : undefined}>
+    <div className="dev-vote-sheet" role="dialog" aria-label={heading} data-vote-sheet="" data-side={side} data-vote-look={voteLook}>
       {picker}
     </div>,
     sheetEl,

@@ -756,8 +756,8 @@
 
       // The Look menu (an admin's preview of the looks), kept on the device
       // by the head's window.Skin: the change is the save, and the look
-      // applies at once. Its options are the looks the head stores ('wip'
-      // and 'brand', lib/skin.ts MENU_SKINS); nothing stored reads as
+      // applies at once. Its options are the looks the head stores
+      // ('brand', lib/skin.ts MENU_SKINS); nothing stored reads as
       // Standard.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {

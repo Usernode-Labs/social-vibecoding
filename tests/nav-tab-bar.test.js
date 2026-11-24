@@ -305,12 +305,14 @@ test('the bar sits lower on iOS, and only there (#2766)', () => {
     'Android\'s inset is the navigation bar: borrowing from it puts the tabs under it');
 });
 
-test('an installed Android app spends the navigation bar\'s full height (#2755)', () => {
-  const block = /@media \(display-mode: standalone\), \(display-mode: fullscreen\) \{\s*html\.un-android,\s*html\.un-android #app-view\[data-app-surface="platform"\] \{\s*--platform-safe-bottom: ([^;]+);/.exec(css);
-  assert.ok(block, 'standalone Android restates the inset on both the root and the platform surface');
+test('an installed Android app spends the navigation bar\'s full height (#2755, #7061)', () => {
+  const block = /@media \(display-mode: standalone\), \(display-mode: fullscreen\) \{\s*html\.un-android:not\(\.un-kb\) \{\s*--un-safe-inset-bottom: ([^;]+);/.exec(css);
+  assert.ok(block, 'standalone Android writes the nav bar\'s max into the kit token');
   assert.equal(block[1],
-    'max(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)), env(safe-area-max-inset-bottom, 0px))',
-    'the larger of the live inset and the navigation bar\'s full height, still in the kit form');
+    'max(env(safe-area-inset-bottom, 0px), env(safe-area-max-inset-bottom, 0px))',
+    'the larger of the live inset and the navigation bar\'s full height, in the token every bottom rule reads');
+  assert.match(css, /--platform-safe-bottom: var\(--un-safe-inset-bottom, env\(safe-area-inset-bottom, 0px\)\);/,
+    'the bar\'s own token still resolves through the kit token, so it inherits the max');
 });
 
 test('a drag that starts on the bar never pans the document (#2771)', () => {

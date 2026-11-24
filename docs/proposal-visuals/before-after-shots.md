@@ -1039,6 +1039,19 @@ this has no `screens`: its card flips a screen per change and size, with
 nothing outlined. The Workshop feed's picture still leads with the element
 shot when it is big enough to read (at least 120×40 CSS px on both sides).
 
+The comparison runs in a worker thread (`shots-diff-worker.js`). A run's own
+comparison waits for a worker when the process's two are taken (a bounded
+line) and has a minute (`RUN_COMPARE_TIMEOUT_MS`); the close-ups an agent's
+tool asks for and a still's checks as `save_shot` saves it are still refused
+at the limit, with their short deadlines. When the comparison fails anyway,
+the run still publishes a screen for each change and size from the PNGs'
+headers (`shots-diff.fallbackScreens`: nothing outlined, each change framed
+where its browser measured its element shot, and no change marked
+unchanged), its verdict says `screensFallback`, and the shots machine
+compares it again from the published shots (`shots.recompare`: four tries in
+about an hour), putting the real screens in place on the same run
+(23 Nov 2026: PR 7037's card fell back to the older viewer without this).
+
 The whole screens are also taken in dark mode (#4459): a run opens each page
 again with the mode parameter (`un-theme=dark` for an app built on Homeroom,
 `theme=dark` for Homeroom itself) and saves one dark screen shot per side and

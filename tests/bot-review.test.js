@@ -1082,3 +1082,24 @@ test('recipeHarness: an Anthropic model runs in Claude Code; everything else kee
     openrouterModelHarnesses: registry.parseOpenRouterHarnessMap('z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex'),
   }), 'codex');
 });
+
+test('24 Nov 2026: a reviewer call takes a short answer and a component of its own (a draft look\'s picture)', async () => {
+  const seen = [];
+  const deps = {
+    credentialStore: {
+      async readMetadata() { return { status: 'valid', revision: 3, metadata: {} }; },
+      async readSecret() { return 'sk-or-bot'; },
+    },
+    agentModels: { async resolveModelPricing() { return { id: OPUS, supportsImages: true }; } },
+    managedOpenRouter: { MANAGED_SOURCE: 'managed' },
+    openrouterMayor: {
+      createClient() {
+        return { async streamChat(args) { seen.push([args.maxTokens, args.telemetryContext.component]); return { text: 'ok', usage: {} }; }, estimateCostCents() { return 0; } };
+      },
+    },
+  };
+  await review.callReviewer({ pool: {}, userId: 5, model: OPUS, system: 'S', content: [], deps });
+  await review.callReviewer({ pool: {}, userId: 5, model: OPUS, system: 'S', content: [], maxTokens: 400, component: 'draft_look_vision', deps });
+  await review.callReviewer({ pool: {}, userId: 5, model: OPUS, system: 'S', content: [], maxTokens: 10 ** 9, deps });
+  assert.deepEqual(seen, [[8192, 'homeroom_bot_review'], [400, 'draft_look_vision'], [8192, 'homeroom_bot_review']]);
+});

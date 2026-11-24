@@ -101,7 +101,7 @@ export function newAccountsWait(options: { waitlist_enabled?: boolean } | null |
 }
 
 /** The sorts Discover offers, in the order its control shows them. */
-export const SORTS = ['trending', 'new', 'built', 'popular'] as const;
+export const SORTS = ['trending', 'new', 'built', 'popular', 'name'] as const;
 export type GuestSort = (typeof SORTS)[number];
 
 /**
@@ -113,6 +113,9 @@ export type GuestSort = (typeof SORTS)[number];
 export const CATEGORIES = [
   'games', 'social', 'tools', 'learning', 'creative', 'money', 'health', 'food', 'other',
 ] as const;
+
+/** A to Z reads names as words, so case and accents do not move a name along. */
+const NAME_ORDER = new Intl.Collator(undefined, { sensitivity: 'base' });
 
 /** How many people built it: the directory's contributors, counted. */
 export function buildersOf(app: GuestApp): number {
@@ -132,10 +135,15 @@ function createdAt(app: GuestApp): number {
  * led the list with test and diagnostic apps nobody uses, above a game 42
  * people play (Evan's review of the live page, 21 Oct 2026); what a visitor
  * can try is Featured's job, and its cards carry Try it wherever they sort.
- * Ties keep the directory's own order.
+ * `'name'` is A to Z, ignoring case and accents. Ties keep the directory's own
+ * order.
  */
 export function sortApps(apps: readonly GuestApp[], sort: GuestSort): GuestApp[] {
   const indexed = apps.map((app, i) => ({ app, i }));
+  if (sort === 'name') {
+    indexed.sort((a, b) => NAME_ORDER.compare(a.app.name || '', b.app.name || '') || a.i - b.i);
+    return indexed.map((x) => x.app);
+  }
   const key = (app: GuestApp): number => {
     if (sort === 'new') return createdAt(app);
     if (sort === 'built') return buildersOf(app);

@@ -24,8 +24,10 @@ export const ROW_ACTION = 'ui-link shrink-0 -my-1 rounded-lg px-2 py-1 text-[15p
   + 'text-violet-700 hover:text-violet-500 dark:text-violet-400 dark:hover:text-violet-300 '
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
 
-/** The open form under its row: inset to the row's text, a hairline above. */
-export const ROW_EDITOR = 'border-t border-zinc-200 dark:border-zinc-800 px-4 pt-3 pb-4 space-y-3';
+/** The open form under its row: inset to the row's text, a hairline above.
+ * `kb-form` with `kb-form-actions` below: with the keys up the field a tap
+ * focuses is revealed with this row of buttons (lib/keyboard-surface.ts). */
+export const ROW_EDITOR = 'kb-form border-t border-zinc-200 dark:border-zinc-800 px-4 pt-3 pb-4 space-y-3';
 
 /** A form's own small title, which says what the open form will do. */
 export const EDITOR_TITLE = 'text-[15px] font-[650] text-zinc-900 dark:text-zinc-100';
@@ -34,7 +36,7 @@ export const EDITOR_TITLE = 'text-[15px] font-[650] text-zinc-900 dark:text-zinc
 export const EDITOR_NOTE = 'ui-hint text-xs text-zinc-500 dark:text-zinc-400';
 
 /** Submit and Cancel, side by side and as wide as their words. */
-export const EDITOR_ACTIONS = 'flex flex-wrap items-center gap-2';
+export const EDITOR_ACTIONS = 'kb-form-actions flex flex-wrap items-center gap-2';
 
 export function SignInRow({ title, value, action }: {
   title: ReactNode;

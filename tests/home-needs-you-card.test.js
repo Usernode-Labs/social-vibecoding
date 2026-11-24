@@ -371,7 +371,7 @@ test('Standard (WIP): a board card\'s line says who and when first, then the ite
   assert.equal(message('project:workRow.code.change', { number: 5990 }), 'PR#5990');
 });
 
-test('Standard (WIP): the board ties a request to the changes made for it, and opens on the board', () => {
+test('The board ties a request to the changes made for it (the kit\'s board, the standard look\'s since 20 Nov 2026)', () => {
   const { tiesOf } = loadTsx('frontend/src/features/dev-board/workshop/board-links.ts');
   const row = (noun, num, links) => ({
     getAttribute: (name) => ({ 'data-ws-noun': noun, 'data-ws-num': String(num), 'data-ws-for': links || null })[name] ?? null,
@@ -393,10 +393,9 @@ test('Standard (WIP): the board ties a request to the changes made for it, and o
   assert.doesNotMatch(src, /classList|setAttribute\('class'|\.style\./, 'no class or style is written to a row');
   const row2 = read('frontend/src/features/dev-board/workshop/work-row.tsx');
   assert.match(row2, /\{\.\.\.\(board && wipLook && b\.n \? \{\s*'data-ws-noun': b\.noun,\s*'data-ws-num': String\(b\.n\),/);
-  // The Workshop's door opens the board under this look alone (the standard look's opens the overview, below), and the board is by stage alone.
+  // The door that opened the Workshop on the board was Standard (WIP)'s alone, and went with that look (24 Nov 2026, #7071). The board is by stage alone.
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /const boardDoor = useLiveSkin\(\) === 'wip';/);
-  assert.match(ws, /if \(!boardDoor \|\| tab !== 'workshop'\) return;\s*if \(was === 'all' \|\| was === 'bot'\) return;\s*if \(traversed\.current\) \{ traversed\.current = false; return; \}\s*cameFrom\.current = 'all';\s*setTab\('all'\);/);
+  assert.doesNotMatch(ws, /boardDoor|traversed\.current/, 'nothing moves the Workshop on to All items');
   assert.doesNotMatch(ws, /_setWorkshopGroup|GroupStrip/, 'in every look since request 6708: there is no switch to put on By stage');
   assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
   // Advanced mode is on <html> for the look's one detail kept for it.
@@ -410,17 +409,15 @@ test('The standard look: the Workshop opens on its overview, and the board is th
   // The standard look draws the kit's board (its ties, its cards), but the door that skips the overview is Standard (WIP)'s.
   assert.equal(isKitHome('standard'), true);
   assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
-  assert.match(ws, /const boardDoor = useLiveSkin\(\) === 'wip';/, 'the door reads the look itself, not isKitHome');
-  assert.match(ws, /\}, \[tab, boardDoor\]\);/, 'and nothing else moves the Workshop on to All items');
+  assert.doesNotMatch(ws, /boardDoor/, 'and no look skips the overview any more (Standard (WIP), whose door did, was removed on 24 Nov 2026)');
   // The board shows its own head, "‹ All items", in the standard look: the only rules that hide it belong to other looks.
   const css = read('public/css/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
   const hiding = [...css.replace(/@media[^{]*\{/g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((m) => /\.dev-ws-pagehead\b/.test(m[1]) && /display:\s*none/.test(m[2]))
     .flatMap((m) => m[1].split(/,(?![^(]*\))/).map((s) => s.trim()).filter((s) => /\.dev-ws-pagehead\b/.test(s)));
-  assert.ok(hiding.includes('html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead'), 'Standard (WIP) puts it away');
-  for (const one of hiding) assert.match(one, /^html\[data-skin(-wip)?\]/, `"${one}" hides the board's way back in the standard look`);
+  for (const one of hiding) assert.match(one, /^html\[data-skin\]/, `"${one}" hides the board's way back in the standard look`);
   // "All items" is the page's one heading, so the place's name over it is the quiet one, as "Hub" is over the hub.
-  assert.ok(css.includes('html:not([data-skin]):not([data-skin-wip]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }'));
+  assert.ok(css.includes('html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }'));
   // The overview's declared checks run in the standard look again (#6936 had moved them to the brand look).
   const overview = JSON.parse(read('dapp.json')).tests.filter((check) => (check.expectSelector || '').includes('[data-ws-part="overview"]'));
   assert.ok(overview.length >= 3, 'the overview has declared checks');
@@ -450,30 +447,26 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   assert.doesNotMatch(css, /#home-needs-card \.wip-item-kind/);
 });
 
-test('Standard (WIP): one token set draws it, the brand kit, and the others are gone', () => {
+test('The brand kit\'s token set draws the standard look; Standard (WIP) and every other set are gone', () => {
   const css = read('public/css/app.css');
-  // The sets drawn and removed: eight on 19 Nov 2026, then the brand kit's second drawing and Highlighter on 20 Nov 2026.
-  for (const gone of ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill', 'brand2', 'highlighter']) {
+  // The sets drawn and removed: eight on 19 Nov 2026, the brand kit's second drawing and Highlighter on 20 Nov 2026,
+  // and on 24 Nov 2026 (#7071) the look that chose among them, "Homeroom brand kit (WIP)", with its own copy of the brand set.
+  for (const gone of ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill', 'brand2', 'highlighter', 'brand']) {
     assert.ok(!css.includes(`[data-wip-tokens="${gone}"]`), `${gone} has no rule`);
     assert.ok(!read('frontend/locales/en/settings.json').includes(`"experimental.wipTokens.${gone}"`), `${gone} has no name`);
   }
-  // Every named set left in the stylesheet is the one the head draws the look with.
-  assert.deepEqual([...new Set([...css.matchAll(/\[data-wip-tokens="([a-z0-9]+)"\]/g)].map((m) => m[1]))], ['brand']);
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(rules, /data-wip-tokens|data-skin-wip/, 'no rule asks for the removed look or a token set');
   const head = read('frontend/src/head.html');
-  assert.match(head, /const WIP_TOKENS = 'brand';/);
-  assert.match(head, /if \(skin === 'wip'\) root\.setAttribute\('data-wip-tokens', WIP_TOKENS\);\s*else root\.removeAttribute\('data-wip-tokens'\);/,
-    'on whenever the look is, so a rule that asks for a token set always applies under it');
-  assert.doesNotMatch(head, /TOKEN_SETS|homeroom:wip-tokens'\)|getTokens|setTokens/, 'nothing is stored or pinned for it');
-  // It has a light rule and a dark rule.
+  assert.doesNotMatch(head, /WIP_TOKENS|setAttribute\('data-wip-tokens'|setAttribute\('data-skin-wip'|TOKEN_SETS|homeroom:wip-tokens'\)|getTokens|setTokens/,
+    'the head writes nothing for it, and nothing is stored or pinned');
+  // The standard look is drawn with the brand kit's values.
   assert.match(css, /html:not\(\[data-skin\]\) \{[^}]*--wip-font: 'Geist',/);
-  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\]\.dark \{[^}]*--lit-ink: #fffeea;/);
-  // The menus name the look by it: one entry, no 'wip:<set>' entries, no second menu.
+  // The menus do not name it.
   const picker = read('frontend/src/features/frame/look-picker.tsx');
-  assert.ok(picker.includes("wip: 'settings:experimental.wipTokens.brand',"));
-  assert.equal(message('settings:experimental.wipTokens.brand'), 'Homeroom brand kit (WIP)');
-  assert.doesNotMatch(picker, /data-look-tokens/, 'no second menu for token sets');
+  assert.doesNotMatch(picker, /wipTokens|data-look-tokens/);
   const skinMod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
-  assert.deepEqual([...skinMod.LOOK_CHOICES], ['standard', 'wip', 'brand']);
+  assert.deepEqual([...skinMod.LOOK_CHOICES], ['standard', 'brand']);
   assert.equal(skinMod.WIP_TOKEN_SETS, undefined);
   assert.equal(skinMod.parseLookChoice, undefined);
   // The sidebar's logotype is drawn in the menu's own ink, over nothing of the bar's glass.

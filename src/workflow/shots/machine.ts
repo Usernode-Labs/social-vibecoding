@@ -43,6 +43,7 @@ export const WORK = Object.freeze({
   copies: 'shots.copies',
   agent: 'shots.agent',
   publish: 'shots.publish',
+  recompare: 'shots.recompare',
   cleanup: 'shots.cleanup',
   prBlock: 'github.prShotsBlock',
 });
@@ -188,6 +189,10 @@ export const MAX_AGENT_BUSY_RETRIES = 2;
 // A platform fault's one retry waits this long (GitHub's hourly limit says
 // when it resets).
 export const PLATFORM_RETRY_MS = 60 * 1000;
+// A published run whose comparison could not be made is compared again this
+// long after it published (shots.recompare; the work item's own retries
+// space the later tries).
+export const RECOMPARE_AFTER_MS = 2 * 60 * 1000;
 // The platform's own faults, by kind: the copies' database, a clone, the
 // worker's bootstrap, GitHub's limit, the agent's process, copies that never
 // finished, a run a release cut off, the revision step itself never ending.
@@ -795,18 +800,37 @@ function agentDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
 }
 
 // Published: with the comparison's outlines, or without them when the
-// comparison could not be made.
+// comparison could not be made. Then (23 Nov 2026) it is made again in the
+// background (shots.recompare), and its screens replace the stand-ins the
+// card drew meanwhile: the comparison reported it fell back
+// (`screensFallback`: screens with nothing outlined), or it never reported
+// (the step failed for good, or ran past its deadline). A run that took
+// only its after side has nothing to compare.
 function publishDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<SState> {
   const r = s.data.run!;
   const p = r.publish!;
   const compared = result(e)?.verdict;
+  const again = !r.afterOnly && (!compared || (compared as any).screensFallback === true);
+  const verdict = compared || (again ? { ...(p.verdict as object), screensFallback: true } as Json : p.verdict);
   const { d, cancel, work } = endRun(s, f);
   return step({ name: 'published', data: d }, {
     timer: null,
-    writes: [{ type: 'published', runId: r.id, slots: p.slots, verdict: compared || p.verdict, planHash: p.manifestHash }, settledNote(d)],
+    writes: [{ type: 'published', runId: r.id, slots: p.slots, verdict, planHash: p.manifestHash }, settledNote(d)],
     cancel: e.type === 'WorkSucceeded' ? cancel.filter((c) => c.kind !== WORK.publish) : cancel,
-    work: [...work, ...settledWork(d, ctx)],
+    work: [...work, ...settledWork(d, ctx),
+      ...(again ? [{ kind: WORK.recompare, key: `recompare:${r.id}`, input: { runId: r.id }, notBefore: later(ctx, RECOMPARE_AFTER_MS) }] : [])],
   });
+}
+
+// A published run compared again: its screens replace the stand-ins, on
+// that run only while it is still published with them (the write's fence).
+// Whatever else came of it (nothing to do, or every try failed) leaves the
+// run as it is.
+function recompared(s: Live, e: Event<WorkResultPayload>): Outcome<SState> {
+  const verdict = result(e)?.verdict;
+  if (!verdict) return step(s);
+  const runIdOf = String(e.payload.workKey).slice('recompare:'.length);
+  return step(s, { writes: [{ type: 'recompared', runId: runIdOf, verdict }] });
 }
 
 // A run's copies are gone: its row says so (the retention prune waits for
@@ -824,6 +848,7 @@ function cleaned(s: Live, e: Event<WorkResultPayload>): Outcome<SState> {
 const workDone: Handler = (s, e, f, ctx, deps) => {
   const p = e.payload as WorkResultPayload;
   if (p.kind === WORK.cleanup) return cleaned(s, e);
+  if (p.kind === WORK.recompare) return recompared(s, e);
   if (p.kind === WORK.prBlock) return step(s);
   // Copies of a run that ended while they were built: now their cleanup.
   const waited = p.kind === WORK.copies ? s.data.cleaning.find((c) => c.awaitCopies && p.workKey === `copies:${c.n}`) : null;
@@ -1152,6 +1177,18 @@ const WRITES = {
        ON CONFLICT DO NOTHING`, [w.runId, w.slots]);
     await moveRun(tx, w.runId, 'verified', { hardVerdict: w.verdict, planHash: w.planHash });
     await showRun(tx, ctx, w.runId);
+  },
+  // A published run's screens, compared again after its first comparison
+  // fell back (recompared): only while it is still published with the
+  // stand-ins, so a run since gone stale, waived or compared keeps what it
+  // has. The slot shows them (showRun, which writes it only while it is
+  // this run's) and its card hears it.
+  recompared: async (tx: Tx, w: any, ctx: any) => {
+    const { rowCount } = await tx.query(
+      `UPDATE shot_runs SET hard_verdict = $2::jsonb, updated_at = NOW()
+        WHERE id = $1 AND state = 'verified' AND hard_verdict->>'screensFallback' = 'true'`,
+      [w.runId, JSON.stringify(w.verdict)]);
+    if (rowCount) await showRun(tx, ctx, w.runId);
   },
   waived: async (tx: Tx, w: any, ctx: any) => {
     await tx.query(

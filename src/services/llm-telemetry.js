@@ -47,6 +47,9 @@ const COMPONENTS = new Set([
   'homeroom_bot_spec',
   // The reviewer's look at a first version's screenshots (services/bot-review.js).
   'homeroom_bot_review',
+  // 24 Nov 2026: a live draft's look at its preview, its picture read by a
+  // small model for a bot that reads text only (services/preview-look.js).
+  'draft_look_vision',
   // #3654: a benchmark trial of one of its stages, on a candidate model.
   'homeroom_bench',
   // The hub's since-your-last-visit line (services/since-summary.js).

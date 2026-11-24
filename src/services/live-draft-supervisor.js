@@ -17,6 +17,15 @@
 //     tail of its output). A change to what the app installs (package.json's
 //     dependencies, its lockfile) is not applied: it answers needsRebuild,
 //     and the platform builds the branch again the ordinary way.
+//   - Before the restart it runs the app's `build` script, when it has one.
+//     A build that fails puts the files back (needsRebuild, why 'build').
+//     A build whose command is not installed in this image (exit 127) is a
+//     different thing: the app template compiles its stylesheet in a
+//     Dockerfile stage of its own and installs the runtime without dev
+//     dependencies, so `tailwindcss` is not here to run. Then the edit is
+//     kept and the app restarted, so it shows at once, and the answer says
+//     `buildSkipped`: the platform builds the preview again the ordinary
+//     way, where the build's tools are, to bring what it makes up to date.
 //   - GET /__usernode_live__/status, with the secret, says how the app is,
 //     and which commit its files are at (`head`): the image's own
 //     (USERNODE_LIVE_HEAD) until an edit names the commit it brings. A
@@ -48,6 +57,10 @@ const BUILD_TIMEOUT_MS = 120 * 1000;
 const WAIT_FOR_APP_MS = 20 * 1000;
 const STOP_GRACE_MS = 3000;
 const AUTO_RESTART_GAP_MS = 30 * 1000;
+// What a shell exits with when the command it was asked to run is not there.
+// npm passes a script's code through, so `npm run build` that calls a missing
+// `tailwindcss` exits with it too, as does a missing npm itself.
+const COMMAND_NOT_FOUND = 127;
 // Files the image's install step reads: a change to one is a new install.
 const INSTALL_FILES = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml']);
 const INSTALL_KEYS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'overrides', 'engines'];
@@ -295,10 +308,10 @@ function start(options = {}) {
       child.stdout.on('data', relay);
       child.stderr.on('data', relay);
       const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, BUILD_TIMEOUT_MS);
-      child.once('error', (err) => { clearTimeout(timer); resolve({ ok: false, log: err.message }); });
+      child.once('error', (err) => { clearTimeout(timer); resolve({ ok: false, code: null, log: err.message }); });
       child.once('exit', (code) => {
         clearTimeout(timer);
-        resolve(code === 0 ? { ok: true } : { ok: false, log: log.since(mark).slice(-4000) });
+        resolve(code === 0 ? { ok: true } : { ok: false, code, log: log.since(mark).slice(-4000) });
       });
     });
   }
@@ -357,16 +370,27 @@ function start(options = {}) {
     // The files are now the commit the edit names (or no known commit).
     state.head = /^[0-9a-f]{40}$/i.test(String(body?.head || '')) ? String(body.head).toLowerCase() : null;
     const script = buildScript(readText(path.join(appDir, 'package.json')));
+    let buildSkipped = null;
     if (script) {
       const built = await runBuild(script);
-      if (!built.ok) {
+      if (!built.ok && built.code === COMMAND_NOT_FOUND) {
+        // This image cannot run the build (see the header): keep the edit,
+        // and leave what the build makes as the image built it.
+        buildSkipped = { log: built.log };
+      } else if (!built.ok) {
         undoFiles(undo);
         state.head = before;
         return { status: 409, body: { ok: false, needsRebuild: true, why: 'build', log: built.log, head: state.head } };
       }
     }
     const result = await restart();
-    return { status: 200, body: { ...result, restarts: state.restarts, head: state.head } };
+    return {
+      status: 200,
+      body: {
+        ...result, restarts: state.restarts, head: state.head,
+        ...(buildSkipped ? { buildSkipped: true, buildLog: buildSkipped.log } : {}),
+      },
+    };
   }
 
   function readBody(req) {

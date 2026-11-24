@@ -3152,9 +3152,6 @@ export function DevWorkshop(): ReactNode {
   const wipLook = isKitHome(useLiveSkin());
   // The hub and the board are the kit's in the standard look too since 20 Nov 2026 (lib/skin.ts isKitHome).
   const kitHub = isKitHome(useLiveSkin());
-  // The Workshop's door opens the board under Standard (WIP) alone (below). The standard look took the kit's board and
-  // not its door: there the Workshop opens on its overview, and the board is the page under it (asked 20 Nov 2026).
-  const boardDoor = useLiveSkin() === 'wip';
   const [tab, setTab] = useState<TabKey>(() => freshTab(v.slug) || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -3289,39 +3286,9 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab(v.slug) || 'status');
   }, [v.slug]);
-  // STANDARD (WIP): THE WORKSHOP'S DOOR OPENS ITS BOARD. Under that look a
-  // way into the Workshop (the places list, the hub's card, a
-  // `?ws=workshop` link) lands on All items, the board, and not on the
-  // Workshop's overview. One rule after every way in, so none of them
-  // changes: when the place becomes the Workshop, it is moved on to All
-  // items, before paint. The overview is still there one step up: All
-  // items' own way back opens it (a step from All items or the bot's slots
-  // is left alone), and so does Back or Forward onto an entry that was the
-  // overview (the router marks those `traversal`). Under that look alone
-  // (`boardDoor`): the standard look's Workshop opens on its overview.
-  const cameFrom = useRef<TabKey | null>(null);
-  const traversed = useRef(false);
-  useEffect(() => {
-    const onDoor = (event: Event) => {
-      const door = (event as CustomEvent<{ tab: TabKey; traversal?: boolean } | null>).detail;
-      traversed.current = !!(door && door.traversal && door.tab === 'workshop');
-    };
-    window.addEventListener('usernode:workshop-tab', onDoor, true);
-    return () => window.removeEventListener('usernode:workshop-tab', onDoor, true);
-  }, []);
   // Standard (WIP), on the board: resting on a card draws what it is tied to
   // (./board-links.ts). Its layer is its own; nothing is written to the board.
   useEffect(() => (wipLook && tab === 'all' ? watchBoardLinks() : undefined), [wipLook, tab]);
-  useLayoutEffect(() => {
-    const was = cameFrom.current;
-    cameFrom.current = tab;
-    if (!boardDoor || tab !== 'workshop') return;
-    if (was === 'all' || was === 'bot') return;
-    if (traversed.current) { traversed.current = false; return; }
-    cameFrom.current = 'all';
-    setTab('all');
-    callAppView('_setWorkshopTab', 'all', v.slug);
-  }, [tab, boardDoor]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
   // moment the browser tab comes back to the front — the moment a stale

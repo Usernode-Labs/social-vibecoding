@@ -27,7 +27,10 @@ export function InboxToEnd({ scroller }: { scroller: RefObject<HTMLDivElement | 
   const name = t('messages:inbox.toEnd.name');
   return (
     <div className="relative z-10 shrink-0" data-inbox-to-end="">
-      <div className="pointer-events-none absolute inset-x-0 flex justify-center" style={{ bottom: 'calc(var(--platform-tabs-h, 0px) + 12px)' }}>
+      {/* 12px over the tab bar, in the lane the list leaves for it (app.css,
+          "OLDEST CHATS HAS A LANE OF ITS OWN"); on the keys while they are
+          up, when the bar is gone and the list ends there. */}
+      <div className="pointer-events-none absolute inset-x-0 flex justify-center" style={{ bottom: 'calc(var(--platform-tabs-h, 0px) + var(--un-kb-inset, 0px) + 12px)' }}>
         <button
           type="button" inert={!shown} aria-label={name} title={name}
           className={`pointer-events-auto relative flex h-9 items-center justify-center gap-1.5 rounded-full bg-white ps-3 pe-3.5 text-[0.8125rem] font-semibold text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] dark:bg-zinc-800 dark:text-zinc-200 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none ${shown ? 'translate-y-0 scale-100 opacity-100' : 'pointer-events-none translate-y-2 scale-90 opacity-0'}`}
