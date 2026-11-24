@@ -7,6 +7,7 @@ const threadReads = require('../services/thread-reads');
 const aiWork = require('../services/ai-work');
 const aiHistory = require('../services/ai-history');
 const aiSearch = require('../services/ai-search');
+const threadMentions = require('../services/thread-mentions');
 const log = require('../services/logger');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { appChatReadLimiter, userDirectoryLimiter } = require('../middleware/rate-limits');
@@ -15,7 +16,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // GET /api/ai/work (#6019 follow-up): what the AI tab's main view lists
 // beside the Needs you feed, for the signed-in person (services/ai-work.js).
-//   → { private: PrivateRow[], needs: Row[], next: Row[], waiting: Row[], live: Row[] }
+//   → { private: PrivateRow[], needs: Row[], next: Row[], waiting: Row[], live: Row[], named: NamedRow[] }
 //
 // `?demo=1` on staging adds a few obviously fake rows of each kind, so the
 // view's declared checks and its before & after shots have something to
@@ -370,6 +371,34 @@ function aiWorkRoutes(config = {}) {
       return res.json({ ok: true, unread: moved.unread });
     } catch (err) {
       log.error('ai-work', 'Failed to mark a thread read', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 24 Nov 2026 (mobile 04): Dismiss on a Needs you row for a thread somebody
+  // named the viewer in with @ (services/thread-mentions.js). It waves off
+  // every @ of them in that thread so far; a newer one brings the row back.
+  // Body: { thread_id }. Per person and per thread, and neither the bell's
+  // read mark nor the thread's read cursor. Waving something off is not
+  // taking part, so there is no join gate; the thread must be this app's.
+  router.post('/api/apps/:slug/threads/mentions/dismiss', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const raw = req.body && req.body.thread_id != null ? Number(req.body.thread_id) : NaN;
+      // ?demo=1 on staging names mock rows with negative ids: nothing to keep.
+      if (IS_STAGING && req.query.demo === '1' && Number.isInteger(raw) && raw < 0) return res.json({ ok: true });
+      if (!Number.isInteger(raw) || raw <= 0) return res.status(400).json({ error: 'Invalid thread' });
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const { rows } = await pool.query('SELECT id FROM threads WHERE id = $1 AND app_id = $2', [raw, app.id]);
+      if (!rows.length) return res.status(404).json({ error: 'Thread not found' });
+      await threadMentions.dismiss(pool, { userId: req.user.id, threadId: raw });
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('ai-work', 'Failed to dismiss a thread\'s @', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

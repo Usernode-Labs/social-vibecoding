@@ -23,7 +23,9 @@
 // viewer's own, and is not from somebody the viewer blocked — the same
 // predicate app-chat.js unreadCount applies to a project's channel.
 
-const MAX_IDS = 500;
+// 24 Nov 2026 (mobile 04): the bot tab reads up to 500 threads of each kind
+// (ai-work.js THREADS_MAX), so one read can name a thousand.
+const MAX_IDS = 1000;
 
 function idsOf(threadIds) {
   const ids = [];

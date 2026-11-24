@@ -241,7 +241,8 @@ test('the page draws this list in place of its own under a look, from the same r
   // 24 Nov 2026: the standard list's three bands also hand it Done's kind
   // chip (History's), which narrows this week's rows too; the look's list
   // narrows History by its own chips and needs no more.
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found \}\);/);
+  // 24 Nov 2026 (mobile 04): the standard list's rows also carry Dismiss, on a thread somebody named you in.
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found \}\);/);
 });
 
 test('the list\'s New chat opens the same new chat as the standard head\'s', () => {
