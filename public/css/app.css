@@ -20309,6 +20309,16 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-change-gate-main { min-width: 0; }
 .dev-change-gate-act { display: flex; align-items: center; gap: 8px; }
+/* The card's Yes and No (#7064): one face acts, the other is quiet. The
+   acting face keeps the `.dev-vote-btn` accent fill; the quiet one is the
+   neutral well the inline style used to paint, so a look that is not
+   restyled keeps today's colours. Neither is padded out to the board
+   button's width: the pair sits beside the figure. Both sides are even
+   (#7064): the base button's 8px end made way for a caret these two do not
+   carry, so the label sat nearer its right edge than its icon sat to the
+   left. */
+.dev-change-gate-act .dev-vote-btn { min-width: 0; padding-inline: 11px; }
+.dev-vote-btn-quiet, .dev-vote-btn-quiet:hover { background: var(--state-neutral-bg); color: var(--text-primary); }
 .dev-change-gate-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; line-height: 1.3; }
 .dev-change-gate-name { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .dev-change-gate-check { width: 14px; height: 14px; color: var(--state-ok); stroke-width: 2.5; }
@@ -34374,6 +34384,10 @@ html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([dat
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary) { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-float-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary) { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-pair .dev-change-gate { background: var(--bl-card); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-act { background: var(--bl-sun); color: var(--bl-on-sun); box-shadow: var(--bl-pill-edge); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-act:hover { background: var(--bl-sun-lit); }
+html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-change-gate-act .dev-vote-btn-quiet { background: var(--bl-raise); color: var(--text-primary); box-shadow: var(--bl-raise-edge); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-rail { --rail-now-box: var(--bl-page); --rail-now-box-line: var(--app-sheet-line); --rail-note-plain: transparent; }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) .dev-thread-card { --thread-fact: var(--bl-card); }
 html:not([data-skin]):is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :where(#dev-topic-thread) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-before:checked) .shots-seg-before,
@@ -37006,6 +37020,28 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary) {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
+}
+/* THE VOTES AND TESTED CARDS wear the page's card and buttons (#7064). In
+   this look the thread is a white card, and the gate's own surface was white
+   on white: no edge, so the card was not a card. It is the look's card with
+   its hairline. Yes was the sky (the generic Vote face, above), a blue on a
+   page whose one action is the sun, so the acting face takes the foot's sun
+   pill, and the quiet one a white pill on a line, as the pills beside it
+   are. The extra `.dev-change-gate-act` outweighs the generic Vote rule. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-change-pair .dev-change-gate {
+  background: var(--bl-card);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-change-gate-act .dev-vote-btn-act {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-change-gate-act .dev-vote-btn-act:hover { background: var(--bl-sun-lit); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-change-gate-act .dev-vote-btn-quiet {
   background: var(--bl-raise);
   color: var(--text-primary);
   box-shadow: var(--bl-raise-edge);
