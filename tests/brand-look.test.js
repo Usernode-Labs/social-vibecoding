@@ -857,6 +857,37 @@ test('the board is calm: Vote and what is running are the sky, and a vote under 
   }
 });
 
+test('a vote to close is drawn with the page\'s card and the foot\'s two buttons (#7064)', () => {
+  // The card was white on the white thread card, with no edge, and Yes was
+  // the sky (the generic Vote face) beside a quiet grey patch: neither is
+  // what the page's own buttons look like.
+  const src = read('frontend', 'src', 'features', 'dev-board', 'topic', 'thread-changes.tsx');
+  assert.doesNotMatch(src, /style=\{sending \? \{ minWidth/, 'neither face carries an inline colour');
+  assert.match(src, /className=\{act \? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'\}/);
+  assert.equal((src.match(/const act = !sending && \(on \|\| \(!mine && side === 'up'\)\);/g) || []).length, 2,
+    'the request\'s close vote and the decision page\'s card');
+  const gate = ruleAt(`${EITHER} .dev-change-pair .dev-change-gate`);
+  assert.ok(gate, 'the card is the look\'s own, in both modes');
+  assert.match(gate.body, /background:\s*var\(--bl-card\);/);
+  assert.match(gate.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\);/);
+  const act = ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-act`);
+  assert.ok(act, 'the acting face');
+  assert.match(act.body, /background:\s*var\(--bl-sun\);/);
+  assert.match(act.body, /color:\s*var\(--bl-on-sun\);/);
+  assert.match(act.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-act:hover`).body, /background:\s*var\(--bl-sun-lit\);/);
+  const quiet = ruleAt(`${EITHER} .dev-change-gate-act .dev-vote-btn-quiet`);
+  assert.ok(quiet, 'and the quiet one');
+  assert.match(quiet.body, /background:\s*var\(--bl-raise\);/);
+  assert.match(quiet.body, /box-shadow:\s*var\(--bl-raise-edge\);/);
+  // The standard look's thread page carries the same rules (scripts/thread-look.js).
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /:where\(#dev-topic-thread\) \.dev-change-gate-act \.dev-vote-btn-act \{ background: var\(--bl-sun\); color: var\(--bl-on-sun\); box-shadow: var\(--bl-pill-edge\); \}/);
+  // Every look keeps the quiet face's old fill, in the base rules.
+  assert.match(css, /\.dev-vote-btn-quiet, \.dev-vote-btn-quiet:hover \{ background: var\(--state-neutral-bg\); color: var\(--text-primary\); \}/);
+  assert.match(css, /\.dev-change-gate-act \.dev-vote-btn \{ min-width: 0; \}/);
+});
+
 test('Needs you\'s card is the look\'s white card from 768px, with the page\'s cream on it', () => {
   // The review flow draws from --rf-* tokens, and its page was the page's
   // own ground: a cream card on the cream page.
