@@ -61,7 +61,7 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
   if (url) {
     return (
       <img
-        className="w-14 h-14 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
+        className="profile-id-avatar w-14 h-14 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
         src={url}
         alt=""
       />
@@ -70,7 +70,7 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
   return (
     <div
       className={
-        'w-14 h-14 text-xl rounded-full shrink-0 flex items-center justify-center '
+        'profile-id-avatar w-14 h-14 text-xl rounded-full shrink-0 flex items-center justify-center '
         + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
       }
       aria-hidden="true"
@@ -82,7 +82,10 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
 
 /** Identity card (#982) — who this profile belongs to, and the way in to
  *  editing it. The prototype's compact card: the name, one muted line of
- *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio. */
+ *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio.
+ *  The `profile-id-*` classes are hooks for the standard look's header
+ *  (#7072, app.css "SETTINGS AND PROFILE, THE EDITORIAL PAGES"): the card
+ *  spans the page there, with a larger picture and the name in the serif. */
 function IdentityCard({ identity }: { identity: any }): ReactNode {
   const t = useMessages('profile');
   return (
@@ -103,11 +106,11 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           <div className="flex-1 min-w-0">
             {/* Two lines at most, then an ellipsis: a long display name wraps
                 rather than losing its end at the first line. */}
-            <div className="text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
+            <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
             {identity.sub ? (
               // Wraps rather than truncating: a fact cut off mid-word is not
               // a fact.
-              <div className="text-sm text-zinc-500 dark:text-zinc-400">
+              <div className="profile-id-sub text-sm text-zinc-500 dark:text-zinc-400">
                 {identity.sub}
               </div>
             ) : null}
@@ -163,7 +166,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
             otherwise fit, so ordinary prose still wraps at spaces and nothing
             else about the card changes.
         */
-        <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
+        <p className="profile-id-bio text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
           {identity.bio}
         </p>
       ) : null}

@@ -10444,6 +10444,302 @@ html:not([data-skin]) #settings-root .ui-card.bg-white {
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
 /* END OF WHITE CARDS. */
+/* ── SETTINGS AND PROFILE, THE EDITORIAL PAGES (#7072, 24 Nov 2026). The
+   two pages about you are drawn in the brand's editorial voice, in the
+   standard look alone (html:not([data-skin])): a sky band at the head of
+   the page, serif headings, cream paper cards with one thin outline, a
+   green row for the page you are on, and the buttons the look already has
+   (the main action is the sun). Nothing here adds a control, a figure or a
+   route: every part is the one the page already drew, and the brand look
+   keeps its own drawing of both pages.
+   SETTINGS opens under its name and one sentence, on the sky; each part of
+   a page is a card of its own under a serif heading, and the page runs the
+   window's width beside the list of pages. PROFILE opens on who you are,
+   across the page: a larger picture, the name in the serif, the facts and
+   the bio, Edit profile, then your figures as one strip.
+   The serif is Young Serif, which ships one weight: every rule that names
+   it writes `font-weight: 400`, so nothing is faked bold. The sky is the
+   brand's own picture (public/brand/bg/sky.webp), under a veil of the
+   page's colour so the words on it read in light and in dark.
+   EVERY VALUE IS A TOKEN, --ed-*, declared once here in light and dark. */
+html:not([data-skin]) {
+  --ed-serif: 'Young Serif', Georgia, 'Times New Roman', serif;
+  --ed-title-size: 2.25rem;       /* the page's name on the sky */
+  --ed-title-size-phone: 1.75rem;
+  --ed-page-size: 1.5rem;         /* a Settings page's own name, over its cards */
+  --ed-head-size: 1.25rem;        /* a card's heading */
+  --ed-head-size-phone: 1.125rem;
+  --ed-lede-size: 1rem;           /* the sentence under the page's name */
+  --ed-paper: #fffdf4;            /* a card: warm paper */
+  --ed-line: rgb(18 26 14 / 0.16);/* its one thin outline */
+  --ed-rule: rgb(18 26 14 / 0.1); /* a rule inside a card */
+  --ed-well: rgb(18 26 14 / 0.035); /* a row of its own inside a card */
+  --ed-radius: 20px;
+  --ed-pad: 1.5rem;
+  --ed-pad-phone: 1rem;
+  --ed-gap: 1rem;                 /* between two cards */
+  --ed-side-w: 16.5rem;           /* Settings' list of pages: room for a page's name and its count */
+  --ed-sky: url('/brand/bg/sky.webp');
+  --ed-sky-veil: linear-gradient(180deg, rgb(255 253 244 / 0.08) 0%, rgb(255 253 244 / 0.5) 62%, rgb(255 253 244 / 0.86) 100%);
+  --ed-sky-ink: #121a0e;
+  --ed-sky-ink-soft: rgb(18 26 14 / 0.78);
+  --ed-sky-h: 9.5rem;             /* the band's least height on a wide page */
+  --ed-sky-h-phone: 6.5rem;
+  --ed-lit-bg: #dcecc4;           /* the page you are on, in the list: the brand's green */
+  --ed-lit-ink: #121a0e;
+  --ed-face: 6rem;                /* your picture at the head of Profile */
+  --ed-face-phone: 4.5rem;
+  --ed-face-gap: 0.875rem;        /* between the band's foot and the words beside the picture */
+  --ed-face-ring: 0 0 0 3px var(--ed-paper), 0 0 0 4px var(--ed-line);
+  --ed-name-size: 2rem;
+  --ed-name-size-phone: 1.5rem;
+  --ed-stat-size: 1.5rem;         /* a figure in the strip */
+  --ed-stat-bg: rgb(255 238 111 / 0.3); /* the strip: the sun, thinned */
+}
+html:not([data-skin]).dark {
+  --ed-paper: var(--wip-card-bg);
+  --ed-line: rgb(255 254 234 / 0.18);
+  --ed-rule: rgb(255 254 234 / 0.1);
+  --ed-well: rgb(255 254 234 / 0.045);
+  --ed-sky-veil: linear-gradient(180deg, rgb(13 22 40 / 0.55) 0%, rgb(13 22 40 / 0.72) 62%, rgb(13 22 40 / 0.9) 100%);
+  --ed-sky-ink: #fffeea;
+  --ed-sky-ink-soft: rgb(255 254 234 / 0.8);
+  --ed-lit-bg: rgb(169 207 151 / 0.22);
+  --ed-lit-ink: #fffeea;
+  --ed-stat-bg: rgb(255 238 111 / 0.1);
+}
+
+/* SETTINGS. The page runs the window's width, as the Hub and the Workshop do. */
+html:not([data-skin]) #settings-screen #settings-root { max-width: none; }
+/* Its head: "Settings" and one sentence, on the sky. The markup is the one
+   the frame's looks dressed (features/settings/index.tsx); on a phone it
+   heads the list of pages and gives way to an open page, whose name the
+   top bar says. */
+html:not([data-skin]) #settings-root > .settings-frame-head {
+  display: flex;
+  align-items: flex-end;
+  min-height: var(--ed-sky-h);
+  margin-bottom: var(--ed-gap);
+  padding: var(--ed-pad);
+  border-radius: var(--ed-radius);
+  background: var(--ed-sky-veil), var(--ed-sky) center / cover no-repeat;
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #settings-root .settings-frame-title {
+  margin: 0;
+  color: var(--ed-sky-ink);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-title-size);
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+html:not([data-skin]) #settings-root .settings-frame-purpose {
+  margin: 0.25rem 0 0;
+  color: var(--ed-sky-ink-soft);
+  font-size: var(--ed-lede-size);
+  line-height: 1.4;
+}
+@media (max-width: 1023.98px) {
+  html:not([data-skin]) #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head { display: none; }
+  html:not([data-skin]) #settings-root > .settings-frame-head { min-height: var(--ed-sky-h-phone); padding: var(--ed-pad-phone); }
+  html:not([data-skin]) #settings-root .settings-frame-title { font-size: var(--ed-title-size-phone); }
+}
+/* The list of pages is a paper card that ends with its last row, and the
+   page you are on is the green row. */
+html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet {
+  --lit-tint: var(--ed-lit-bg);
+  --lit-ink: var(--ed-lit-ink);
+  --lit-line: transparent;
+  height: auto;
+  max-height: calc(100dvh - var(--platform-header-h) - 2.5rem);
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #settings-nav-desktop .settings-nav-item { font-size: 0.9375rem; }
+@media (min-width: 1024px) { html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet { width: var(--ed-side-w); } }
+/* The open page: no sheet of its own. Each part is a card on the page. */
+html:not([data-skin]) #settings-content-col > #settings-section-content.settings-sheet {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) {
+  max-width: none;
+  margin-top: 0;
+  padding: var(--ed-pad);
+  border: 1px solid var(--ed-line);
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden) ~ [data-settings-section]:not(.hidden):has(> :not(.hidden)) {
+  margin-top: var(--ed-gap);
+  padding-top: var(--ed-pad);
+  border-top: 1px solid var(--ed-line);
+}
+/* Username, Email & recovery and Password are one group under the "Sign-in"
+   heading Username carries (#5281), so they are one card: each after the
+   first joins the one above it, with no outline between them. */
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden) ~ :is([data-settings-section="email"], [data-settings-section="password"]):not(.hidden):has(> :not(.hidden)) {
+  margin-top: 0;
+  padding-top: 0.5rem;
+  border-top: 0;
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)):is(
+    :has(+ :is([data-settings-section="email"], [data-settings-section="password"]):not(.hidden) > :not(.hidden)),
+    [data-settings-section="username"]:has(+ [data-settings-section="email"] + [data-settings-section="password"]:not(.hidden) > :not(.hidden))
+  ) {
+  padding-bottom: 0;
+  border-bottom: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden) ~ [data-settings-section="delete-account"]:not(.hidden):has(> *) { margin-top: var(--ed-gap); }
+/* A card's heading is the serif, and the page's own name a step above it. */
+html:not([data-skin]) #settings-section-content h3 {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-head-size);
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+html:not([data-skin]) #settings-section-content > .settings-page-title {
+  margin-bottom: var(--ed-gap);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-page-size);
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+/* A row of its own inside a card (your profile's row, a sign-in row, a list
+   of rows) is a soft well, not a second outlined card. */
+html:not([data-skin]) #settings-section-content > [data-settings-section] :is(.ui-glist, .ui-card.bg-white) {
+  background: var(--ed-well);
+  box-shadow: none;
+}
+/* A phone's list of pages: each group's card is the same paper. */
+html:not([data-skin]) #settings-mobile-menu-host .ui-glist {
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+@media (max-width: 1023.98px) {
+  html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.hidden):has(> :not(.hidden)) { padding-inline: var(--ed-pad-phone); }
+  html:not([data-skin]) #settings-section-content h3 { font-size: var(--ed-head-size-phone); }
+}
+
+/* PROFILE. Your own page runs the window's width, and opens on who you are. */
+html:not([data-skin]) #profile-screen #profile-root:has(#profile-identity-card) { max-width: none; }
+@media (min-width: 1024px) {
+  /* The first column's wrapper steps aside, so its three cards are the
+     grid's own: who you are and your figures across the page, then This
+     week and Account on the left, Your work and Rewards on the right. */
+  html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) { grid-template-rows: auto auto auto 1fr; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-identity-card) { display: contents; }
+  html:not([data-skin]) #profile-root #profile-identity-card { grid-column: 1 / -1; grid-row: 1; }
+  html:not([data-skin]) #profile-root #profile-stats { grid-column: 1 / -1; grid-row: 2; }
+  html:not([data-skin]) #profile-root #profile-activity { grid-column: 1; grid-row: 3; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-work) { grid-column: 2; grid-row: 3 / span 2; }
+  html:not([data-skin]) #profile-root > div > div:has(> #profile-account) { grid-column: 1; grid-row: 4; }
+}
+/* Who you are: a paper card under the sky. */
+html:not([data-skin]) #profile-root #profile-identity-card {
+  margin-bottom: var(--ed-gap);
+  padding: calc(var(--ed-sky-h-phone) + var(--ed-face-gap)) var(--ed-pad-phone) var(--ed-pad-phone);
+  border-radius: var(--ed-radius);
+  background: linear-gradient(var(--ed-paper), var(--ed-paper)) 0 var(--ed-sky-h-phone) / 100% 100% no-repeat, var(--ed-sky-veil) top / 100% var(--ed-sky-h-phone) no-repeat, var(--ed-sky) top / 100% var(--ed-sky-h-phone) no-repeat, var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #profile-identity-card .profile-id-avatar {
+  width: var(--ed-face-phone);
+  height: var(--ed-face-phone);
+  margin-top: calc(-1 * (var(--ed-face-phone) / 2 + var(--ed-face-gap)));
+  box-shadow: var(--ed-face-ring);
+  font-size: 1.75rem;
+}
+html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { align-items: flex-start; }
+/* Edit profile is the page's one main action: the sun. */
+html:not([data-skin]) #profile-identity-card #profile-edit-btn {
+  border-color: var(--wip-btn-1-line);
+  background: var(--wip-btn-1-bg);
+  color: var(--wip-btn-1-ink);
+}
+@media (hover: hover) { html:not([data-skin]) #profile-identity-card #profile-edit-btn:hover { background: var(--wip-btn-1-hover); } }
+/* Under the words on a phone it starts where they do, beside the larger picture. */
+@media (max-width: 639.98px) { html:not([data-skin]) #profile-identity-card #profile-edit-btn { margin-inline-start: calc(var(--ed-face-phone) + 0.75rem); } }
+html:not([data-skin]) #profile-identity-card .profile-id-name {
+  color: var(--wip-ink);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-name-size-phone);
+  font-weight: 400;
+  line-height: 1.15;
+}
+html:not([data-skin]) #profile-identity-card .profile-id-bio { max-width: 44rem; font-size: 0.9375rem; line-height: 1.5; }
+@media (min-width: 640px) {
+  html:not([data-skin]) #profile-root #profile-identity-card {
+    padding: calc(var(--ed-sky-h) + var(--ed-face-gap)) var(--ed-pad) var(--ed-pad);
+    background: linear-gradient(var(--ed-paper), var(--ed-paper)) 0 var(--ed-sky-h) / 100% 100% no-repeat, var(--ed-sky-veil) top / 100% var(--ed-sky-h) no-repeat, var(--ed-sky) top / cover no-repeat, var(--ed-paper);
+  }
+  html:not([data-skin]) #profile-identity-card .profile-id-avatar { width: var(--ed-face); height: var(--ed-face); margin-top: calc(-1 * (var(--ed-face) / 2 + var(--ed-face-gap))); font-size: 2.25rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-name { font-size: var(--ed-name-size); }
+  html:not([data-skin]) #profile-identity-card > div:first-child { align-items: flex-start; }
+  html:not([data-skin]) #profile-identity-card > div:first-child > div:first-child { gap: 1.25rem; }
+}
+/* Your figures: one strip, a figure over its label, a thin rule between two. */
+html:not([data-skin]) #profile-root #profile-stats:not(.hidden) {
+  display: flex;
+  gap: 0;
+  margin-bottom: var(--ed-gap);
+  border-radius: var(--ed-radius);
+  background: var(--ed-stat-bg);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #profile-stats > [data-profile-stat]:not(.hidden) {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html:not([data-skin]) #profile-stats > [data-profile-stat]:not(.hidden) ~ [data-profile-stat]:not(.hidden) { border-inline-start: 1px solid var(--ed-rule); }
+html:not([data-skin]) #profile-stats > [data-profile-stat] > :first-child {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-stat-size);
+  font-weight: 400;
+}
+/* The cards under them are paper, and a group's name is a serif heading. */
+html:not([data-skin]) #profile-root :is(#profile-activity, section[id^="profile-"] > .ui-glist) {
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #profile-root :is(section[id^="profile-"] > h2, #profile-activity h2) {
+  color: var(--wip-ink);
+  font-family: var(--ed-serif);
+  font-size: var(--ed-head-size);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: none;
+}
+html:not([data-skin]) #profile-root section[id^="profile-"] > h2 { padding-inline: 0.25rem; padding-bottom: 0.625rem; }
+/* Somebody else's page: the same paper, and the name in the serif. */
+html:not([data-skin]) #profile-root #public-profile-card {
+  border-radius: var(--ed-radius);
+  background: var(--ed-paper);
+  box-shadow: inset 0 0 0 1px var(--ed-line);
+}
+html:not([data-skin]) #public-profile-card h2 {
+  font-family: var(--ed-serif);
+  font-size: var(--ed-name-size-phone);
+  font-weight: 400;
+  line-height: 1.15;
+}
+/* END OF THE EDITORIAL PAGES. */
 /* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's
    whole width from the page's own gutter, not a column of its own in the middle of the window. The thread's card
    takes the room there is and "How it got here" keeps its width beside it. A side panel, and the page while the
@@ -13895,8 +14191,9 @@ html.un-kb #settings-content-col > .settings-sheet {
    no longer opens under "Profile", "Sign-in" and "Delete account" in one
    size. A one-part page is unchanged: its part's heading is its name. */
 .settings-page-title { display: none; }
-/* The head of the page under one of the frame's looks ("Settings" and one
-   sentence, features/settings/index.tsx): the standard look has none. */
+/* The head of the page ("Settings" and one sentence,
+   features/settings/index.tsx): drawn by the frame's looks, and by the
+   standard look's editorial pages (#7072), each in its own block. */
 .settings-frame-head { display: none; }
 /* A mark that only one of the frame's looks draws (a radio row's mark in
    Appearance and Accessibility): the standard look has none. */
@@ -35817,7 +36114,8 @@ html[data-skin="paper"][data-skin] .fr-facts.fr-f5 .fr-fact .fr-l{white-space:no
 }
 /* No rule of this look names Young Serif since its titles went back to
    Geist. The face stays declared, and its file committed, for the
-   signed-out pages' look, which draws its headlines in it. */
+   signed-out pages' look, which draws its headlines in it, and for the
+   standard look's Settings and Profile (#7072, "THE EDITORIAL PAGES"). */
 @font-face {
   font-family: 'Source Serif 4';
   src: url('/fonts/source-serif-4/source-serif-4-latin-opsz-normal.woff2') format('woff2');

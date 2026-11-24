@@ -772,6 +772,18 @@ carry most of them.
   keeps the rules above. `tests/guest-discover.test.js` and
   `tests/guest-communities.test.js` hold it.
 
+- **Settings and Profile wear the brand's editorial voice in the standard
+  look (#7072, 24 Nov 2026).** A sky band at the head of the page, headings
+  in Young Serif (one weight: write `font-weight: 400` with it), paper cards
+  with one thin outline, and a green row for the Settings page you are on.
+  It is one block of `public/css/app.css` ("SETTINGS AND PROFILE, THE
+  EDITORIAL PAGES"), scoped to `html:not([data-skin])`, whose every value is
+  an `--ed-*` token declared once in light and dark. The two pages are the
+  exception to "a label over a card is small caps": a group's name on Profile
+  and a part's heading in Settings are serif headings there. The brand look
+  and the other screens keep the rules above.
+  `tests/editorial-settings-profile.test.js` holds it.
+
 Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
 a change to the rule. Make it here as well.
