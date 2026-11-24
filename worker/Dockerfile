@@ -134,19 +134,6 @@ RUN initdb -U postgres --auth=trust -D /home/node/pgdata \
      } >> /home/node/pgdata/postgresql.conf
 USER root
 
-# Kubernetes resolves the current Claude Code release before it looks up a
-# reusable image, includes that exact version in the reuse key, and passes it
-# here. That makes the published image reproducible while ensuring a new CLI
-# release selects a new worker image. Standalone Docker builds keep `latest`
-# as the default and use CLAUDE_CODE_CACHE_BUST (today's UTC date, supplied by
-# ensureWorkerImage()) to re-pull it once per day. Stale CLIs otherwise fail
-# before doing any work when a model raises its minimum supported version.
-ARG CLAUDE_CODE_VERSION=latest
-ARG CLAUDE_CODE_CACHE_BUST=unset
-RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
-  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-  && claude --version
-
 # ── Codex CLI (codex_openrouter backend; plan.md PR5) ─────────────────
 # PINNED (not day-bumped) — bump deliberately. Codex runs non-interactively
 # (codex exec --json), through a worker-local request adapter to OpenRouter.
@@ -158,23 +145,6 @@ RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUS
 ARG CODEX_VERSION=0.146.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
 RUN npm install -g @modelcontextprotocol/sdk@1.32.2 zod@3.25.76
-# Preserve the pinned CLI's full coding-agent/tool instructions as the base for
-# custom OpenRouter model entries. The per-turn builder replaces only the
-# misleading OpenAI-model identity sentence before copying that text into its
-# one-model catalog; it does not inherit OpenAI-only tool modes or capabilities
-# from the bundled models. Codex requires an explicitly selected
-# CODEX_HOME to exist before startup; otherwise `codex debug models` exits 1.
-# (This layer sits after the day-bumped claude-code layer, so it re-runs on
-# every cache-bust rollover — the 2026-08-11 rollover broke every worker
-# image build until the dir was pre-created; see #1096/#1097.)
-# Keep it outside /tmp because Codex deliberately refuses to create its PATH
-# helper aliases beneath temporary directories.
-RUN install -d -m 700 /var/lib/usernode-codex-bootstrap \
-  && CODEX_HOME=/var/lib/usernode-codex-bootstrap \
-       codex debug models --bundled > /usr/local/share/usernode-codex-bundled-models.json \
-  && node -e "const c=require('/usr/local/share/usernode-codex-bundled-models.json');if(!Array.isArray(c.models)||!c.models.some(m=>typeof m.base_instructions==='string'&&m.base_instructions.trim()))throw new Error('Codex model catalog has no base instructions')" \
-  && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
-  && rm -rf /var/lib/usernode-codex-bootstrap
 
 # #6536: the sync parse gate transforms .ts/.tsx/.jsx with the esbuild the
 # frontend pins, so it works even when the checkout's own packages are not
@@ -191,7 +161,7 @@ COPY --from=esbuild-build /out/esbuild /usr/local/bin/esbuild
 # errors before committing (see app-conventions.md "In-loop browser",
 # worker/run-cc.sh, src/services/in-loop-browser.js).
 #
-# Unlike the Claude Code layer above, the MCP version is PINNED (not
+# Unlike the Claude Code layer below, the MCP version is PINNED (not
 # day-bumped) — bump deliberately. The MCP package bundles its OWN
 # `playwright` dependency, and the Chromium revision it launches is tied
 # to THAT version — not to any separately-pinned playwright. Installing
@@ -224,6 +194,27 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
 # verify-shots-browser-mcp.js below proves the result in a real browser.
 COPY patch-playwright-mcp.js /usr/local/bin/patch-playwright-mcp.js
 RUN node /usr/local/bin/patch-playwright-mcp.js
+
+# Kubernetes resolves an exact Claude Code version for the build and the
+# image reuse key. Standalone Docker builds default to latest and refresh
+# it daily with the cache-bust argument from ensureWorkerImage(). Keep both
+# arguments below the stable tools so CLI updates leave those layers cached,
+# and before the worker scripts so script edits can reuse the CLI install.
+ARG CLAUDE_CODE_VERSION=latest
+ARG CLAUDE_CODE_CACHE_BUST=unset
+RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
+  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+  && claude --version
+
+# Preserve the pinned Codex CLI's bundled instructions for custom OpenRouter
+# models. Regenerate the catalog on a Claude Code refresh as before. Codex
+# needs an existing CODEX_HOME outside /tmp to create its PATH helper aliases.
+RUN install -d -m 700 /var/lib/usernode-codex-bootstrap \
+  && CODEX_HOME=/var/lib/usernode-codex-bootstrap \
+       codex debug models --bundled > /usr/local/share/usernode-codex-bundled-models.json \
+  && node -e "const c=require('/usr/local/share/usernode-codex-bundled-models.json');if(!Array.isArray(c.models)||!c.models.some(m=>typeof m.base_instructions==='string'&&m.base_instructions.trim()))throw new Error('Codex model catalog has no base instructions')" \
+  && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
+  && rm -rf /var/lib/usernode-codex-bootstrap
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
