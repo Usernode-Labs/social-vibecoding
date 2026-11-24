@@ -5709,12 +5709,22 @@ function refChipHref(isPr, num) {
 // no `#<digit>` or `#<letter>` after a permitted boundary (`"#app/…` sits
 // after `"`, which renderChannelChips excludes), so the later passes never
 // match inside it.
+// #7066: a number the words name as a change ("Change #N", "proposal #N",
+// "pull request #N") is a change, the same rule the server's
+// src/services/request-mentions.js applies. A bare `#N` stays a request.
+// `PR#N` keeps its short label; every other label keeps the writer's words.
+function refLabel(prefix, num) {
+  if (/^pr ?#$/i.test(prefix)) return `PR#${num}`;
+  if (prefix === '#') return `#${num}`;
+  return `${prefix}${num}`;
+}
+
 function renderRefChips(html) {
-  return html.replace(/(^|[^\w&])(pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
-    const isPr = prefix.length > 1; // `PR#` / `PR #` vs bare `#`
+  return html.replace(/(^|[^\w&])((?:change|proposal|pull request) ?#|pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
+    const isPr = prefix.length > 1; // anything but a bare `#`
     const cls = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
     const type = isPr ? 'pr' : 'issue';
-    const label = isPr ? `PR#${num}` : `#${num}`;
+    const label = refLabel(prefix, num);
     const href = refChipHref(isPr, num);
     if (href) {
       return `${pre}<a class="${cls}" href="${href}" data-ref-type="${type}" data-ref-number="${num}">${label}</a>`;
@@ -5840,7 +5850,7 @@ function replaceTextWithSegments(textNode, segs) {
         el.setAttribute('role', 'link');
         el.setAttribute('tabindex', '0');
       }
-      el.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+      el.textContent = seg.label || (seg.isPr ? `PR#${seg.num}` : `#${seg.num}`);
       frag.appendChild(el);
     }
   }
@@ -5861,7 +5871,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
   // never competes with `#123`. Only a handle in `channels` is one; any other
   // `#word` is left as text.
   // B9: "@Homeroom bot", the bot's display form, is one mention too.
-  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
+  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|((?:change|proposal|pull request) ?#|pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
   const known = channels || new Set();
   const segs = [];
   let pos = 0;
@@ -5882,7 +5892,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
     } else if (m[6] != null) {
       segs.push({ type: 'channel', handle: m[6].toLowerCase() });
     } else {
-      segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5] });
+      segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5], label: refLabel(m[4], m[5]) });
     }
     pos = m.index + m[0].length;
   }
