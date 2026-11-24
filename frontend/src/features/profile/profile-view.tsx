@@ -38,6 +38,8 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
+import { ProfileLiveProjects } from './profile-live-projects';
+import { ProfileDetailsCard } from './profile-details-card';
 import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { AppSlotsSheet } from './app-slots-sheet';
 import { FeedbackSheet } from './feedback-sheet';
@@ -121,6 +123,25 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
                 (phone review #99). Edit profile, below, starts on the same
                 edge.
             */}
+      {/*
+          The bio is deliberately plain text, not markdown: React renders it as
+          a text child, which is the whole safety story — no HTML string is ever
+          built for it, here or anywhere.
+      */}
+      {identity.bio ? (
+        /*
+            `break-words` is load-bearing (#1612): a bio is free text, so it can
+            be one 280-character word or a pasted URL with no space in it, and
+            `whitespace-pre-line` alone leaves that on a single line — it spills
+            past the card and gives the whole screen a horizontal scrollbar.
+            `overflow-wrap: break-word` breaks such a run only when it would not
+            otherwise fit, so ordinary prose still wraps at spaces and nothing
+            else about the card changes.
+        */
+        <p className="profile-id-bio text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
+          {identity.bio}
+        </p>
+      ) : null}
             {identity.chips.length ? (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
                 {identity.chips.map((chip: any) => (
@@ -151,25 +172,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           {t('profile:identity.edit')}
         </Button>
       </div>
-      {/*
-          The bio is deliberately plain text, not markdown: React renders it as
-          a text child, which is the whole safety story — no HTML string is ever
-          built for it, here or anywhere.
-      */}
-      {identity.bio ? (
-        /*
-            `break-words` is load-bearing (#1612): a bio is free text, so it can
-            be one 280-character word or a pasted URL with no space in it, and
-            `whitespace-pre-line` alone leaves that on a single line — it spills
-            past the card and gives the whole screen a horizontal scrollbar.
-            `overflow-wrap: break-word` breaks such a run only when it would not
-            otherwise fit, so ordinary prose still wraps at spaces and nothing
-            else about the card changes.
-        */
-        <p className="profile-id-bio text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
-          {identity.bio}
-        </p>
-      ) : null}
+
     </div>
   );
 }
@@ -476,7 +479,9 @@ export function ProfileRoot(): ReactNode {
   const t = useMessages('profile');
   // Under one of the frame's looks your own page is the kit's (the tour's
   // s44); a public profile and the states before the data keep theirs.
-  const frame = isFrameSkin(useLiveSkin());
+  const skin = useLiveSkin();
+  const frame = isFrameSkin(skin);
+  const editorial = skin === 'standard';
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
@@ -583,10 +588,12 @@ export function ProfileRoot(): ReactNode {
           <ActivityCard activity={view.activity} />
         </div>
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {editorial ? <ProfileLiveProjects changes={state.data?.summary?.contributions || []} /> : null}
           <WorkPanel rows={view.rows} />
           <RewardsPanel rows={view.rows} />
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
+          {editorial ? <ProfileDetailsCard key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`} /> : null}
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
           <AdminPanel />

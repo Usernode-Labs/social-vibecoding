@@ -23,6 +23,30 @@ const plan = workflow.jobs.plan.steps;
 const behindStep = plan.find((s) => s.name === 'Check whether this run can release');
 const selectStep = plan.find((s) => s.name === 'Select release work');
 
+// Fetching every file took 5 s of each of these two jobs; they read scripts and
+// the chart. What a step names must be in what its job checks out.
+test('the plan and publish jobs check out only what their steps read', () => {
+  for (const [job, kept] of [['plan', ['scripts']], ['release', ['deploy/helm', 'scripts']]]) {
+    const { steps } = workflow.jobs[job];
+    assert.equal(steps[0].uses, 'actions/checkout@v6');
+    assert.deepEqual(steps[0].with['sparse-checkout'].trim().split(/\s+/), kept, job);
+    for (const step of steps) {
+      assert.doesNotMatch(String(step.uses || ''), /^\.\//, `${job}: a local action is not checked out`);
+      for (const [, file] of String(step.run || '').matchAll(/(?<![\w./$-])((?:scripts|deploy|src|docs|worker|capture|security)\/[\w./-]+)/g)) {
+        assert.ok(kept.some((dir) => file.startsWith(`${dir}/`)), `${job} reads ${file}`);
+        assert.ok(fs.existsSync(path.join(ROOT, file)), file);
+      }
+    }
+  }
+  // The scripts they run load only scripts (and node's own modules).
+  for (const script of ['live-release', 'promote-kubernetes-chart', 'choose-kubernetes-release', 'reuse-kubernetes-postgres-check']) {
+    const source = fs.readFileSync(path.join(ROOT, 'scripts', `${script}.js`), 'utf8');
+    for (const [, spec] of source.matchAll(/require\('([^']+)'\)/g)) {
+      assert.ok(spec.startsWith('node:') || spec.startsWith('./'), `${script} loads ${spec}`);
+    }
+  }
+});
+
 const sha = (c) => c.repeat(40);
 const OLD = sha('a'); // the newest release's revision
 const MINE = sha('b'); // this run's revision

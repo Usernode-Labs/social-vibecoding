@@ -94,21 +94,29 @@ const UNIT_SUITE_MAX_BUFFER = 32 * 1024 * 1024;
 // reason, main-watch and the harvest see one suite. UNIT_SUITE_SHARDS=1
 // runs one Job, as before; a repo without `test:shard` always does.
 //
+// Five shards, not three (24 Nov 2026). The run waits for its slowest shard,
+// and a shard is CPU-bound: at three, each sat at its 8-CPU limit for minutes
+// (throttled in 45% of its scheduling periods) while most of the 96-CPU checks
+// node was idle. Five is what the worker namespace's 60-pod quota has room
+// for: four proposal runs and a check of main hold 25 unit pods and 12 browser
+// pods, beside the 18 worker pods of the week's peak. Six could fill all 60.
+//
 // Each shard asks the scheduler for UNIT_SUITE_SHARD_CPU_REQUEST (it may
-// burst to UNIT_SUITE_CPUS): three shards ask for 4.5 CPUs where one Job
-// asked for 4, so the checks queue's four runs still fit the worker
-// namespace's 48-CPU quota beside their browser-check shards.
+// burst to UNIT_SUITE_CPUS): five shards ask for the 4.5 CPUs three did, so a
+// run's share of a busy node, and how many runs the pool has room for, stay
+// what they were.
+const DEFAULT_UNIT_SUITE_SHARDS = 5;
 function unitSuiteShardCount(raw = process.env.UNIT_SUITE_SHARDS) {
-  if (raw == null || String(raw).trim() === '') return 3;
+  if (raw == null || String(raw).trim() === '') return DEFAULT_UNIT_SUITE_SHARDS;
   const n = Number.parseInt(raw, 10);
-  return Number.isInteger(n) && n >= 1 ? Math.min(n, 8) : 3;
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, 8) : DEFAULT_UNIT_SUITE_SHARDS;
 }
-const UNIT_SUITE_SHARD_CPU_REQUEST = process.env.UNIT_SUITE_SHARD_CPU_REQUEST || '1500m';
+const UNIT_SUITE_SHARD_CPU_REQUEST = process.env.UNIT_SUITE_SHARD_CPU_REQUEST || '900m';
 // A shard's memory limit. A whole-suite pod peaked at 1.1-1.9 GiB on 10 Oct
-// 2026 (Postgres and seven test processes), and a shard runs the same seven
-// at once. Three shards at 3g beside three 6g browser shards keep the queue's
-// four runs and main-watch inside the worker namespace's 128Gi of limits,
-// where 4g each would not.
+// 2026 (Postgres and seven test processes), a shard runs the same seven at
+// once, and one of three peaked at 2.8 GiB in the burst of 23 Nov. Five shards
+// at 3g beside three 6g browser shards keep the queue's four runs and
+// main-watch at 147 GiB of the worker namespace's 320Gi of limits.
 const UNIT_SUITE_SHARD_MEMORY = process.env.UNIT_SUITE_SHARD_MEMORY || '3g';
 
 // Does this package.json declare the command a shard runs?

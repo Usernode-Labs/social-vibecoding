@@ -50,7 +50,7 @@ async function denied(c, sql) {
 }
 
 test('extension inventory bounds connections and closes a failed batch before rejecting', async t => {
-  const databases = ['app_a', 'app_b', 'app_c', 'app_d', 'platform'];
+  const databases = [...Array.from({ length: 16 }, (_, i) => `app_${String.fromCharCode(97 + i)}`), 'platform'];
   const scanned = [];
   const failure = new Error('fixture extension read failed');
   let failRead = false;
@@ -74,13 +74,13 @@ test('extension inventory bounds connections and closes a failed batch before re
     ['pg_stat_statements'], [], ['extra'], ['extra', 'pg_stat_statements'],
   ]);
   assert.deepEqual(scanned, databases);
-  assert.equal(peak, 4);
+  assert.equal(peak, 16);
   assert.equal(open, 0);
 
   failRead = true;
   scanned.length = 0;
   await assert.rejects(extensionPlans(url, 'platform'), error => error === failure);
-  assert.deepEqual(scanned, databases.slice(0, 4));
+  assert.deepEqual(scanned, databases.slice(0, 16));
   assert.equal(open, 0);
 });
 

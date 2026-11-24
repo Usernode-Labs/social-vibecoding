@@ -774,7 +774,7 @@ carry most of them.
 
 - **Settings and Profile wear the brand's editorial voice in the standard
   look (#7072, 24 Nov 2026).** A sky band at the head of the page, headings
-  in Young Serif (one weight: write `font-weight: 400` with it), paper cards
+  in Source Serif 4 (the shipped variable face, at weight 600), paper cards
   with one thin outline, and a green row for the Settings page you are on.
   It is one block of `public/css/app.css` ("SETTINGS AND PROFILE, THE
   EDITORIAL PAGES"), scoped to `html:not([data-skin])`, whose every value is

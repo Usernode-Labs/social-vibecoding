@@ -164,7 +164,10 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // What's happening, your work and what is new for you); WHAT HAPPENED,
   // this week and a row for each week before it, its new requests nobody has
   // picked up ending with Build it.
-  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
+  // 24 Nov 2026: that is the brand look's tab. The standard look draws the
+  // front page in its place (./front-page.tsx; tests/workshop-front-page.test.js).
+  assert.match(LANDER, /\{tab === 'workshop' && !weekUp && !frontPage && wipLook \? \(\n\s*<WorkshopFront\n/);
+  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp && !frontPage && !wipLook ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   // #4457: a week's page replaces the tab's body.
   const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<ApprovalLine', '<YourWorkCard',
@@ -182,7 +185,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // The Overview label opens the Workshop page, All items straight under it;
   // the approval rule is the card's last line, and only there.
-  assert.match(ws, /^\{tab === 'workshop' && !weekUp \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*<SectionHeader className="px-1\.5 pb-0 pt-2" data-ws-part="overview">\{t\('project:workshop\.part\.overview'\)\}<\/SectionHeader>\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
+  assert.match(ws, /^\{tab === 'workshop' && !weekUp && !frontPage && !wipLook \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*<SectionHeader className="px-1\.5 pb-0 pt-2" data-ws-part="overview">\{t\('project:workshop\.part\.overview'\)\}<\/SectionHeader>\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
     'the Overview opens the Workshop page');
   assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>/, 'the rule ends the card');
   assert.equal(ws.split('<ApprovalLine').length - 1, 1, 'and only there');

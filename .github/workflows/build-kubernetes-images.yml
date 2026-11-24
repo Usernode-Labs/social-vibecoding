@@ -29,7 +29,11 @@ jobs:
       should_release: ${{ steps.release.outputs.should_release }}
       postgres_verified: ${{ steps.postgres.outputs.verified }}
     steps:
+      # This job reads scripts and the commit's tree, not its files: about 5 s
+      # less than fetching them all.
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
@@ -128,6 +132,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The platform image is new in every release, so its scan always needs the
+      # advisory database: about 14 s of download, which overlaps the build
+      # here. The scan waits for it and fails if it failed.
+      - name: Start fetching the advisory database
+        if: matrix.component == 'platform'
+        id: trivy
+        run: |
+          docker run --detach --name security-trivy-db -v social-security-trivy-db:/root/.cache/trivy \
+            aquasec/trivy:0.76.1 image --download-db-only
+          echo 'container=security-trivy-db' >> "$GITHUB_OUTPUT"
+
       - name: Build or reuse ${{ matrix.component }} image
         id: image
         uses: ./.github/actions/build-kubernetes-image
@@ -150,6 +165,7 @@ jobs:
           REPORT: ${{ runner.temp }}/security-${{ matrix.component }}
           LIVE_DIGEST: ${{ steps.live.outputs[matrix.component] }}
           SECURITY_AUDIT_ONLY: '1'
+          SECURITY_TRIVY_DB_CONTAINER: ${{ steps.trivy.outputs.container }}
         run: |
           if [ -n "$LIVE_DIGEST" ] && [ "${IMAGE##*@}" = "$LIVE_DIGEST" ]; then
             # The daily audit scans the live images. Record reuse without a new verdict.
@@ -248,6 +264,10 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            deploy/helm
+            scripts
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
@@ -420,6 +440,20 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
         run: node scripts/promote-kubernetes-chart.js
+
+      # Ask Argo CD to look now. The refresh workflow asks again once this run
+      # ends, and confirms it; it starts about 18 s from here. Argo answers only
+      # when it has compared, so the request is given 3 s and its answer is not
+      # read: whatever happens here, the release is published.
+      - name: Ask Argo CD to compare the new release
+        if: steps.current_head.outputs.publish == 'true'
+        env:
+          ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
+        run: |
+          [ -n "$ARGOCD_REFRESH_TOKEN" ] || exit 0
+          curl --silent --output /dev/null --max-time 3 \
+            --header "Authorization: Bearer ${ARGOCD_REFRESH_TOKEN}" \
+            'https://argocd.platform.beta.usernodelabs.org/api/v1/applications/social-vibecoding-platform?refresh=hard' || true
 
       - name: Record atomic release
         if: steps.current_head.outputs.publish == 'true'

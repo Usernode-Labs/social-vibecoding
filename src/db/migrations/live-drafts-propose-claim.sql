@@ -1,0 +1,15 @@
+-- 24 Nov 2026: one proposal per live draft (services/live-drafts.js
+-- propose). One draft went up for a vote twice, as two proposals of the same
+-- commit about two seconds apart: the Propose under Homeroom bot's reply and
+-- the preview's own Propose were tapped together, and both passed the
+-- "already proposed?" check before either had marked the draft proposed.
+--
+--   proposing_at  when a Propose took the draft's claim, to the millisecond;
+--                 NULL when no Propose is running. A second Propose while it
+--                 is held is told the draft is being put up for a vote. It is
+--                 freed when that Propose fails and cleared when the draft is
+--                 proposed, and one older than three minutes is taken over
+--
+-- Only ADDS a nullable column, so a build from before keeps reading and
+-- writing live_drafts as it did. The table stays staging:private.
+ALTER TABLE live_drafts ADD COLUMN IF NOT EXISTS proposing_at TIMESTAMPTZ;

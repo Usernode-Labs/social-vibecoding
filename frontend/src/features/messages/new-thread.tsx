@@ -164,6 +164,14 @@ export interface NewThreadPreset {
   object?: StagedObject | null;
   /** What the box asks while that item is attached (a catalog text, already read). */
   placeholder?: string | null;
+  /**
+   * 24 Nov 2026: words for the box, as a project's Workshop box took them
+   * (./new-chat-carry.ts carryWordsToNewChat). They wait in the box, ready
+   * to send; nothing is sent for the person.
+   */
+  words?: string | null;
+  /** And a start to choose, by its key, as pressing it here would (`begin`). */
+  start?: string | null;
 }
 
 // The last door's settings, and how many doors have named any: a thread
@@ -185,9 +193,17 @@ export function startNewThread(conversationId: number, fresh?: NewThreadPreset |
   closeThread();
   const held = takeCarried();
   // What a door just carried is what this chat is about, over anything the
-  // page would have attached on its own.
+  // page would have attached on its own. Words and a start (a project's
+  // Workshop box) carry no item, so the page's own item, if any, stays.
   preset = held
-    ? { project: fresh?.project ?? null, builder: fresh?.builder || 'homeroom', object: held.object, placeholder: held.placeholder }
+    ? {
+        project: fresh?.project ?? null,
+        builder: fresh?.builder || 'homeroom',
+        object: held.object || (held.words || held.start ? fresh?.object || null : null),
+        placeholder: held.object ? held.placeholder : (fresh?.placeholder ?? null),
+        words: held.words,
+        start: held.start,
+      }
     : fresh || null;
   if (preset) presetTurn += 1;
   blankIn = conversationId;
@@ -315,6 +331,15 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const starts = offered.map((start) => ({ ...start, text: t(start.text) }));
   const begun = startOf(words, starts);
   const drawing = begun?.kind === 'design';
+  // What a door carried for the box (a project's Workshop): its words, and
+  // the start it chose, written in as pressing that start here would.
+  const takeWords = (from: NewThreadPreset | null) => {
+    if (!from || (!from.words && !from.start)) return false;
+    const chosen = from.start ? starts.find((start) => start.key === from.start) || null : null;
+    const said = String(from.words || '');
+    setWords((chosen ? withStart(said, chosen, starts) : said).slice(0, 8000));
+    return true;
+  };
 
   // A door named the project or who works on it while this thread was
   // already open: it takes them too. The first render read them above.
@@ -332,8 +357,10 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     setObject(preset.object || null);
     setPrompt(preset.placeholder || null);
     setMissed(false);
-    if (preset.object) toField();
+    if (takeWords(preset) || preset.object) toField();
   }, [turn]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The words a door carried go in once the starts are read, with the caret after them.
+  useEffect(() => { if (takeWords(preset)) toField(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // A door's item arrives with the caret in the box, ready for the question.
   useEffect(() => { if (object) toField(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // #7069: New chat puts the caret in the box, so the person can type at
