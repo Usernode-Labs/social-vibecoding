@@ -609,8 +609,11 @@ test('Geist Mono and Young Serif load from our own origin, with their licences b
     assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
   }
   // Standard (WIP)'s second brand token set named it too, until it was removed on 20 Nov 2026.
-  const outsideSerif = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
-  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look and the signed-out pages\' names Young Serif');
+  // The standard look's Settings and Profile draw their headings in it since #7072 (24 Nov 2026), in a block of their own.
+  const outsideSerif = outsideTheLooks()
+    .replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '')
+    .replace(/SETTINGS AND PROFILE, THE EDITORIAL PAGES[\s\S]*?END OF THE EDITORIAL PAGES\./, '');
+  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look, the signed-out pages and the editorial pages names Young Serif');
 });
 
 test('the empty-state figures are committed beside their provenance, and drawn only by this look', () => {
