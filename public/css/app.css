@@ -6421,6 +6421,15 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
 }
 
+/* The Workshop front page's three dots, travelling its path from the start
+   to the end (the standard look's block below, "A project's Workshop: its
+   front page"): a keyframe is no rule of a look, so it stands outside it. */
+@keyframes ws-front-run {
+  0% { inset-inline-start: 2%; opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { inset-inline-start: 98%; opacity: 0; }
+}
 /* ============================================================
    STANDARD (WIP): the standard look's own kit. It began as Standard (WIP),
    "Homeroom brand kit (WIP)", a look where changes to the standard one
@@ -6725,6 +6734,31 @@ html:not([data-skin]) {
   --wip-meter: #3090e1;
   /* The shell's own marks on a page of this config: where you are, in the
      kit's ink on a wash of it, not the standard blue. */
+  /* The Workshop's front page (24 Nov 2026): the path's four stops, the hub
+     hero's three brand colours and the vote's near-black, each with the ink
+     its icon wears and a pale halo; the vote pill; the hero's own ground, a
+     step between the page and a card; its soft rings, a field's stronger
+     hairline, and the lift under the box and the small cards. */
+  --wip-path-ask: #ffee6f;
+  --wip-path-ask-ink: #121a0e;
+  --wip-path-ask-halo: rgb(255 238 111 / 0.28);
+  --wip-path-build: #3c7bd8;
+  --wip-path-build-ink: #ffffff;
+  --wip-path-build-halo: rgb(60 123 216 / 0.14);
+  --wip-path-vote: #1c1c1e;
+  --wip-path-vote-ink: #ffffff;
+  --wip-path-vote-halo: rgb(113 113 122 / 0.14);
+  --wip-path-live: #a9cf97;
+  --wip-path-live-ink: #1c3a18;
+  --wip-path-live-halo: rgb(169 207 151 / 0.26);
+  --wip-path-pill-bg: #1c1c1e;
+  --wip-path-pill-ink: #ffffff;
+  --wip-path-pill-hover: #3f3f46;
+  --wip-front-hero-bg: color-mix(in srgb, var(--wip-page-bg) 60%, var(--wip-card-bg));
+  --wip-front-ring: rgb(28 28 30 / 0.07);
+  --wip-front-line-strong: rgb(0 0 0 / 0.16);
+  --wip-front-lift: 0 1px 2px rgb(0 0 0 / 0.06), 0 10px 24px -16px rgb(17 24 39 / 0.35);
+  --wip-front-mini-shadow: 0 8px 18px -10px rgb(0 0 0 / 0.28);
 }
 /* In the dark it is the kit's other pairing, cream on black. */
 html:not([data-skin]).dark {
@@ -6760,6 +6794,20 @@ html:not([data-skin]).dark {
   --wip-fold-edge: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-fold-edge-down: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-count-line: transparent;
+  /* The Workshop's front page: on black the vote's stop and its pill are the kit's cream, with black on it. */
+  --wip-path-vote: #fffeea;
+  --wip-path-vote-ink: #121a0e;
+  --wip-path-vote-halo: rgb(255 254 234 / 0.12);
+  --wip-path-build-halo: rgb(60 123 216 / 0.26);
+  --wip-path-ask-halo: rgb(255 238 111 / 0.16);
+  --wip-path-live-halo: rgb(169 207 151 / 0.18);
+  --wip-path-pill-bg: #fffeea;
+  --wip-path-pill-ink: #000000;
+  --wip-path-pill-hover: rgb(255 254 234 / 0.84);
+  --wip-front-ring: rgb(255 255 255 / 0.07);
+  --wip-front-line-strong: rgb(255 254 234 / 0.24);
+  --wip-front-lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 24px -16px rgb(0 0 0 / 0.7);
+  --wip-front-mini-shadow: 0 8px 18px -10px rgb(0 0 0 / 0.6);
 }
 /* How many columns a list of the look has, by the room there is: one, two
    from 640px, and four from 1024px, where Pinned projects' own four columns
@@ -8291,17 +8339,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .w
 html:not([data-skin]) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) > .dev-ws-placebar,
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
 
-/* ── A project's Workshop ───────────────────────────────────── */
-/* The Workshop is drawn as the hub is: the page's whole width on the
-   wallpaper, under its name in the band, every section a label over the
-   look's cards. Its figures are four cards of one shape, as the hub's For
-   you row is (a mark, the number over what it counts), with the bot's line
-   and the approval rule as two slim cards under them; "See all" stands at
-   the end of the Overview label's line. Under them, from 1280px (the sidebar takes 212 of them), What
-   happened and the viewer's own card stand side by side, each under its
-   label; narrower, and for a visitor, who has no card, the page is one
-   column in the order it is written. The pages under the Workshop (a week,
-   the bot's slots) keep the reading column they had. */
+/* ── A project's Workshop: its front page (24 Nov 2026) ─────────
+   One column, at most 1132px and centred (the hub's and a request page's
+   width), on the wallpaper: the hero (the page's one question, its box and
+   starts, Your work beside them over soft rings), the path a change
+   travels ("In the workshop now"), then Lately and Live by week side by
+   side, and Private requests' quiet row for admins
+   (features/dev-board/workshop/front-page.tsx). Below 700px of its own
+   width it is one column: the hero stacks, the path runs down the left
+   with no dots, and the two cards follow each other. The pages under the
+   Workshop (a week, Earlier weeks, Private requests, the bot's slots) keep
+   the reading column they had. */
 html:not([data-skin]) body #dev-workshop:has(> .dev-ws[data-ws-tab="workshop"]) {
   max-width: none;
   font-family: var(--wip-font);
@@ -8317,8 +8365,15 @@ html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body >
 }
 html:not([data-skin]) body #app-content > :has(> #dev-forum-scroll > #dev-body > #dev-workshop > .dev-ws[data-ws-tab="workshop"]) { background-color: transparent; }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-placebar { max-width: none; margin-inline: 0; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:not(:has(> [data-ws-dashboard])) { width: 100%; max-width: 760px; margin-inline: auto; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]) { gap: 0.5rem var(--wip-card-gap); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:not(:has(> .dev-ws-front)) { width: 100%; max-width: 760px; margin-inline: auto; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> .dev-ws-front) { width: 100%; max-width: 1132px; margin-inline: auto; }
+/* From 768px the top bar names the place once the page has said where it is, and the place bar folds away (the
+   collapse further down); the front page draws while the board is still read, so its bar is folded from the start
+   and nothing moves up when the name arrives. */
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"]:has(> .dev-ws-tabbody > .dev-ws-front) > .dev-ws-placebar { height: 0; min-height: 0; margin: 0; padding: 0; overflow: hidden; border: 0; box-shadow: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> .dev-ws-front) { padding-block-start: 0.75rem; }
+}
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-strip {
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
@@ -8326,16 +8381,14 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-stri
   -webkit-backdrop-filter: none;
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
-/* A section's label: Home's, from the same tokens; a section's room is over its label. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :is(h2[data-ws-part], .dev-ws-parthead) { margin: 1rem 0 0; padding: 0; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > h2[data-ws-part="overview"] { margin-top: 0.25rem; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { display: block; }
-/* The label follows its card in the document and stands over it on the page. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work { order: 1; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > :has(+ .dev-ws-part-work) { order: 2; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-part-work ~ * { order: 3; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody :is(h2[data-ws-part], .dev-ws-parthead > h2) {
-  padding: 0;
+html:not([data-skin]) #dev-workshop .dev-ws-front { container: ws-front / inline-size; display: grid; gap: 0.875rem; min-width: 0; font-family: var(--wip-font); color: var(--wip-ink); }
+/* Every door: a ring for the keyboard, and nothing moves for anyone who asked for less motion. */
+html:not([data-skin]) #dev-workshop .dev-ws-front :is(a, button):focus-visible { outline: 2px solid var(--wip-ink); outline-offset: 3px; }
+html:not([data-skin]) #dev-workshop .dev-ws-front :is(a, button) { -webkit-tap-highlight-color: transparent; }
+html:not([data-skin]) #dev-workshop .dev-ws-front .dev-ws-front-chev { width: 0.9375rem; height: 0.9375rem; flex: none; color: var(--wip-ink-muted); transition: translate 160ms ease-out, color 160ms ease-out; }
+/* A label over a card's contents: small caps, the shell's one uppercase. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-label {
+  margin: 0;
   font-family: var(--wip-label-font);
   font-size: var(--wip-label-size);
   font-weight: var(--wip-label-weight);
@@ -8343,154 +8396,367 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-ta
   text-transform: var(--wip-label-case);
   color: var(--wip-label-ink);
 }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > .dev-ws-parthead { align-items: center; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody .dev-ws-since-clear { color: var(--wip-ink-muted); }
-/* The figures: no card of their own, four cards. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] {
+html:not([data-skin]) #dev-workshop .dev-ws-front-head { display: flex; align-items: center; gap: 0.75rem; min-height: 2rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-head > .dev-ws-front-go { margin-inline-start: auto; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-aside { min-width: 0; font-size: 0.8125rem; color: var(--wip-ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  min-height: 2rem;
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: none;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--wip-ink);
+  white-space: nowrap;
+  cursor: pointer;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-go:hover { text-decoration: underline; text-underline-offset: 3px; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-go:hover > .dev-ws-front-chev { translate: 2px 0; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-go:active { background-color: var(--wip-item-press); }
+
+/* 1. THE HERO: the question and its box on the left, Your work on the right. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-hero {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--wip-col-gap);
-  padding: 0;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
+  grid-template-columns: minmax(0, 1fr) 21.25rem;
+  gap: 1.75rem;
+  align-items: center;
+  min-height: 13.5rem;
+  padding: 1.625rem 1.875rem;
+  border-radius: 20px;
+  background-color: var(--wip-front-hero-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  overflow: hidden;
 }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head { position: absolute; inset-block-start: -1.75rem; inset-inline-end: 0.25rem; }
-/* The card's own heading is said, not shown: the four cards have no card to head, and "See all" follows it. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-head-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open {
-  /* Home's way to all of a section (.wip-head-more): the label's own type and ink, its chevron in the action colour (phone review #63). */
-  font-family: var(--wip-label-font);
-  font-size: var(--wip-label-size);
-  font-weight: var(--wip-label-weight);
-  letter-spacing: var(--wip-label-track);
-  text-transform: var(--wip-label-case);
-  color: var(--wip-label-ink);
-}
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open:hover { color: var(--wip-ink); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-head > .dev-ws-hub-open > svg { color: var(--wip-ink-action); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > .dev-ws-dash { display: contents; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  column-gap: var(--wip-tile-gap);
-  /* From the top, every card alike (phone review #64): centred, a card with a third line (4 on you, from 3 last week) held its mark and number lower than its neighbour's. */
-  align-items: start;
-  align-content: start;
-  width: 100%;
-  min-height: 4.5rem;
-  margin: 0;
-  padding: 0.875rem 1rem;
-  border: 0;
-  border-radius: var(--wip-card-radius);
+html:not([data-skin]) #dev-workshop .dev-ws-front-ask-side { min-width: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-title { margin: 0; font-size: 2rem; line-height: 1.12; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-ask {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 3.25rem;
+  max-width: 29.375rem;
+  margin: 1rem 0 0;
+  padding: 0 0.375rem 0 1.25rem;
+  border-radius: 1.625rem;
   background-color: var(--wip-card-bg);
-  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
-  font: inherit;
-  text-align: start;
+  box-shadow: inset 0 0 0 1px var(--wip-front-line-strong), var(--wip-front-lift);
 }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell[data-ws-dash-open] { cursor: pointer; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell[data-ws-dash-open]:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-mark {
-  grid-column: 1;
-  grid-row: 1 / span 2;
+html:not([data-skin]) #dev-workshop .dev-ws-front-ask:focus-within { box-shadow: inset 0 0 0 2px var(--wip-ink), var(--wip-front-lift); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-ask-input { flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; font: inherit; font-size: 0.9375rem; color: var(--wip-ink); outline: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-ask-input::placeholder { color: var(--wip-ink-muted); opacity: 1; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-send {
   display: grid;
   place-items: center;
+  flex: none;
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: var(--wip-radius-inner);
-  background-color: var(--wip-mark-2-bg);
-  color: var(--wip-mark-2-ink);
-}
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="unclaimed"] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="votes"] > .dev-ws-dash-mark { background-color: var(--wip-mark-1-bg); color: var(--wip-mark-1-ink); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell="shipped"] > .dev-ws-dash-mark { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
-/* A zero wears no colour (phone review #64): a green tick over "0 live this week" read as good news. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell][data-zero] > .dev-ws-dash-mark { background-color: var(--wip-ghost); color: var(--wip-ink-soft); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-cell > b {
-  grid-column: 2;
-  grid-row: 1;
-  font-size: 1.5rem;
-  font-weight: 750;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-  color: var(--wip-ink);
-}
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-label {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: start;
-  display: block;
-  margin: 0;
-  font-size: var(--wip-link-size);
-  line-height: 1.3;
-  color: var(--wip-ink-muted);
-}
-/* The mark says what the dot said. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot { display: none; }
-/* It wraps (phone review #23): "from 3 by this time last week" on one line needed 173px of a 193px card and ran off it and off the screen, and on the Duo sideways it let the page be dragged sideways. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 3; grid-row: 1 / span 2; min-width: 0; margin: 0; font-size: 0.75rem; color: var(--wip-ink-muted); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="owed"] {
-  justify-self: start;
-  white-space: nowrap;
-  padding: 0.1875rem 0.625rem;
-  border-radius: var(--wip-radius-pill);
-  background: var(--wip-cta-from);
-  font-weight: 700;
-  color: var(--wip-cta-ink);
-}
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub[data-ws-dash-sub="asof"] { grid-column: 2; grid-row: 3; white-space: normal; }
-/* Where the row of figures is narrow (a phone's two across, a small window's four), a card has no room for a third column: what hangs beside the figure goes under its label. The row is its own container (the Overview's `container-type`). */
-@container (max-width: 1000px) {
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { grid-template-columns: auto minmax(0, 1fr); }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-sub { grid-column: 2; grid-row: 3; justify-self: start; margin-top: 0.25rem; }
-}
-@media (max-width: 767.98px) {
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] [data-ws-dash-cell] { padding: 0.75rem; }
-}
-/* The bot's line and the rule: two slim cards, each half the row. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > :is([data-ws-bot-slots-door], [data-ws-approval-rules], [data-ws-dash-none]) {
-  grid-column: 1 / -1;
-  align-items: center;
-  min-height: 3rem;
-  margin: 0;
-  padding: 0.75rem 1rem;
+  padding: 0;
   border: 0;
-  border-radius: var(--wip-card-radius);
+  border-radius: 9999px;
+  background-color: var(--wip-cta-from);
+  color: var(--wip-cta-ink);
+  cursor: pointer;
+  transition: filter 140ms ease-out, scale 140ms ease-out, opacity 140ms ease-out;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-send > svg { width: 1.25rem; height: 1.25rem; stroke-width: 2.4; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-send:not(:disabled):hover { filter: brightness(1.25); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-send:not(:disabled):active { scale: 0.94; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-send:disabled { opacity: 0.35; cursor: default; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-starts { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-top: 0.75rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 0;
+  border-radius: 9999px;
   background-color: var(--wip-card-bg);
-  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
-  font-size: var(--wip-link-size);
-  color: var(--wip-ink-soft);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--wip-ink);
+  cursor: pointer;
+  transition: translate 140ms ease-out, box-shadow 140ms ease-out, scale 140ms ease-out;
 }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] > [data-ws-bot-slots-door]:hover { box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
-@media (min-width: 768px) {
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard]:has(> [data-ws-bot-slots-door]):has(> [data-ws-approval-rules]) > :is([data-ws-bot-slots-door], [data-ws-approval-rules]) { grid-column: span 2; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-start > svg { width: 0.9375rem; height: 0.9375rem; flex: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-start[data-tone="live"] { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); font-weight: 600; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wip-mark-2-ink) 30%, transparent); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-start:hover { translate: 0 -1px; box-shadow: inset 0 0 0 1px var(--wip-front-line-strong), var(--wip-front-lift); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-start[data-tone="live"]:hover { box-shadow: inset 0 0 0 1px var(--wip-mark-2-ink), var(--wip-front-lift); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-start:active { translate: 0 0; scale: 0.97; }
+
+/* Your work: the door, its threads peeking out of its top, soft rings behind. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-side { position: relative; min-width: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-side::before {
+  content: "";
+  position: absolute;
+  inset: -8.75rem -7.5rem -7.5rem -3.75rem;
+  background: repeating-radial-gradient(circle at 50% 46%, transparent 0 46px, var(--wip-front-ring) 46px 47px);
+  -webkit-mask-image: radial-gradient(circle at 50% 46%, var(--wip-ink) 30%, transparent 68%);
+  mask-image: radial-gradient(circle at 50% 46%, var(--wip-ink) 30%, transparent 68%);
+  pointer-events: none;
 }
-@media (min-width: 1280px) {
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-content: start;
-    align-items: start;
-  }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > * { grid-column: 1 / -1; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-parthead { grid-column: 1; order: 3; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > .dev-ws-part-work { grid-column: 2; order: 4; align-self: center; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > [data-ws-happened] { grid-column: 1; order: 5; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > :has(+ .dev-ws-part-work) { grid-column: 2; order: 6; }
-  html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody:has(> [data-ws-dashboard]):has(> .dev-ws-part-work):has(> [data-ws-happened]) > [data-ws-happened] ~ * { order: 7; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours { position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: 18px; color: inherit; text-decoration: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stack { position: relative; display: block; height: 4.625rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini {
+  position: absolute;
+  top: 0.875rem;
+  width: 44%;
+  height: 5.625rem;
+  padding: 0.625rem;
+  border-radius: 14px;
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-front-mini-shadow);
+  transition: translate 160ms ease-out;
 }
-/* What happened has no card around it (asked 23 Nov 2026): this week is a
-   card, and each week before it a card of its own, as the figures are; the
-   line that nothing is new and "Earlier weeks" stand on the page. */
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-happened] { gap: var(--wip-col-gap); padding: 0; border-radius: 0; background: none; box-shadow: none; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-none { margin: 0; padding: 0 0.25rem; color: var(--wip-ink-muted); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-hweek { padding: 0.75rem 1rem; border-radius: var(--wip-card-radius); background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > .dev-ws-wlist { gap: var(--wip-col-gap); margin: 0; border: 0; }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] .dev-ws-week { padding: 0.875rem 1rem; border: 0; border-radius: var(--wip-card-radius); background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] .dev-ws-week:hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
-html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-happened] > [data-ws-weeks-more] { margin: 0; padding-block: 0.375rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini:nth-child(1) { inset-inline-start: 7%; rotate: -6deg; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini:nth-child(2) { inset-inline-start: 28%; top: 0.25rem; rotate: 1deg; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini:nth-child(3) { inset-inline-start: 49%; top: 0.75rem; rotate: 7deg; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini-glyph { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 11px; background-color: var(--wip-soft-bg-on); color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini-glyph > svg { width: 1.1875rem; height: 1.1875rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini[data-hot] .dev-ws-front-mini-glyph { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-mini[data-ghost] { background-color: color-mix(in srgb, var(--wip-card-bg) 55%, transparent); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours-cap {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 4rem;
+  padding: 0.6875rem 0.75rem 0.6875rem 0.875rem;
+  border-radius: 16px;
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-front-lift);
+  transition: box-shadow 160ms ease-out;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours-cap > img { width: 2.125rem; height: 2.125rem; flex: none; border-radius: 10px; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours-text { display: block; flex: 1 1 auto; min-width: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours-text > b { display: block; font-size: 0.9375rem; font-weight: 650; line-height: 1.3; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours-text > span { display: block; font-size: 0.8125rem; line-height: 1.35; color: var(--wip-ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-ask-n { font-weight: 650; color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours[data-ghost] .dev-ws-front-yours-cap { background-color: color-mix(in srgb, var(--wip-card-bg) 55%, var(--wip-front-hero-bg)); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-yours[data-ghost] .dev-ws-front-yours-cap > img { opacity: 0.45; }
+html:not([data-skin]) #dev-workshop a.dev-ws-front-yours:hover .dev-ws-front-mini { translate: 0 -7px; }
+html:not([data-skin]) #dev-workshop a.dev-ws-front-yours:hover .dev-ws-front-yours-cap { box-shadow: inset 0 0 0 1px var(--wip-front-line-strong), var(--wip-front-lift); }
+html:not([data-skin]) #dev-workshop a.dev-ws-front-yours:hover .dev-ws-front-yours-text > b { text-decoration: underline; text-underline-offset: 3px; }
+html:not([data-skin]) #dev-workshop a.dev-ws-front-yours:hover .dev-ws-front-chev { translate: 4px 0; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop a.dev-ws-front-yours:active .dev-ws-front-yours-cap { scale: 0.985; }
+html:not([data-skin]) #dev-workshop a.dev-ws-front-yours:focus-visible { outline-offset: 4px; }
+
+/* 2. THE PATH: four stops on one track, yellow to blue to green. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-path { min-height: 15.5rem; padding: 1rem 1.375rem; border-radius: 20px; background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stops { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 0.375rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stops::before {
+  content: "";
+  position: absolute;
+  inset-inline: 12.5%;
+  top: 3.5625rem;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--wip-path-ask), var(--wip-path-build) 45%, var(--wip-path-build) 60%, var(--wip-path-live));
+  opacity: 0.9;
+}
+html:not([data-skin])[dir="rtl"] #dev-workshop .dev-ws-front-stops::before { background: linear-gradient(to left, var(--wip-path-ask), var(--wip-path-build) 45%, var(--wip-path-build) 60%, var(--wip-path-live)); }
+/* The page's one motion: three dots travel the track, start to end; for nobody who asked for less, and not on a phone. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-run { position: absolute; inset-inline: 12.5%; top: 3.5rem; height: 8px; pointer-events: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-run > i { position: absolute; top: 0; inset-inline-start: 2%; width: 8px; height: 8px; margin-inline-start: -4px; border-radius: 50%; background-color: var(--wip-card-bg); box-shadow: 0 0 0 1.5px var(--wip-ink); opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-skin]) #dev-workshop .dev-ws-front-run > i { animation: ws-front-run 12s linear infinite; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-run > i:nth-child(2) { animation-delay: -4s; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-run > i:nth-child(3) { animation-delay: -8s; }
+}
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-front-run > i { animation: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-front-run > i:nth-child(2) { animation: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-front-run > i:nth-child(3) { animation: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stop { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; min-height: 10rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stop-door {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 0.375rem 0.25rem;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-mine { display: inline-flex; align-items: center; gap: 0.3125rem; min-height: 1.625rem; font-size: 0.75rem; font-weight: 600; color: var(--wip-mark-2-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-faces { display: inline-flex; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-face { display: grid; place-items: center; width: 1.125rem; height: 1.125rem; border-radius: 50%; object-fit: cover; font-style: normal; font-size: 0.625rem; font-weight: 700; color: var(--wip-face-ink); box-shadow: 0 0 0 2px var(--wip-card-bg); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-face + .dev-ws-front-face { margin-inline-start: -0.5625rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 3.75rem;
+  height: 3.75rem;
+  margin-bottom: 0.5rem;
+  border-radius: 50%;
+  box-shadow: 0 0 0 5px var(--wip-card-bg), 0 0 0 11px var(--ws-front-halo, transparent);
+  transition: translate 160ms ease-out, scale 160ms ease-out;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-node > svg { width: 1.6875rem; height: 1.6875rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-node[data-node="asked"] { background-color: var(--wip-path-ask); color: var(--wip-path-ask-ink); --ws-front-halo: var(--wip-path-ask-halo); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-node[data-node="building"] { background-color: var(--wip-path-build); color: var(--wip-path-build-ink); --ws-front-halo: var(--wip-path-build-halo); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-node[data-node="votes"] { background-color: var(--wip-path-vote); color: var(--wip-path-vote-ink); --ws-front-halo: var(--wip-path-vote-halo); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-node[data-node="live"] { background-color: var(--wip-path-live); color: var(--wip-path-live-ink); --ws-front-halo: var(--wip-path-live-halo); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-word { font-size: 0.90625rem; font-weight: 650; line-height: 1.3; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-line { font-size: 0.8125rem; line-height: 1.35; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stop-door:hover .dev-ws-front-node { translate: 0 -2px; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stop-door:hover .dev-ws-front-word { text-decoration: underline; text-underline-offset: 3px; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-stop-door:active .dev-ws-front-node { translate: 0 0; scale: 0.95; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  margin-top: 0.125rem;
+  padding: 0 0.625rem;
+  border: 0;
+  border-radius: 9999px;
+  background-color: var(--wip-path-pill-bg);
+  color: var(--wip-path-pill-ink);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: translate 140ms ease-out, background-color 140ms ease-out, scale 140ms ease-out;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-pill:hover { translate: 0 -1px; background-color: var(--wip-path-pill-hover); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-pill:active { translate: 0 0; scale: 0.97; }
+/* The approval rule, one quiet line under a hairline: it explains the last step. Its line is held while the project's record is read. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-rule { min-height: 2.5625rem; margin: 0.875rem 0 0; padding: 0.75rem 0 0; border-top: 1px solid var(--wip-card-line); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-rule > [data-ws-approval-rules] { display: flex; align-items: center; gap: 0.5rem; margin: 0; padding: 0; border: 0; font-size: 0.8125rem; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-rule > [data-ws-approval-rules] b { color: var(--wip-ink); font-weight: 600; }
+
+/* 3. LATELY AND LIVE BY WEEK, side by side. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-pair { display: grid; grid-template-columns: minmax(0, 1fr) 22.5rem; gap: 0.875rem; align-items: stretch; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-pair[data-one] { grid-template-columns: minmax(0, 1fr); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-card { min-width: 0; min-height: 12.125rem; padding: 1rem 1.375rem 0.75rem; border-radius: 20px; background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
+/* A project where nothing has gone live: Lately's one line, and no room held for rows that are not coming. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-pair[data-never] > .dev-ws-front-card { min-height: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-list { margin: 0.25rem 0 0; padding: 0; list-style: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row { min-width: 0; border-top: 1px solid var(--wip-card-line); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row:first-child { border-top: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row-link { display: flex; align-items: center; gap: 0.625rem; min-width: 0; min-height: 2.5rem; margin-inline: -0.5rem; padding: 0.5rem; border-radius: 8px; font-size: 0.875rem; color: var(--wip-ink); text-decoration: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row-link > span { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row-link:hover { background-color: var(--wip-item-hover); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row-link:hover > span { text-decoration: underline; text-underline-offset: 3px; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row-link:active { background-color: var(--wip-item-press); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row-link[aria-current="true"] { background-color: var(--wip-item-hover); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-tick { width: 1rem; height: 1rem; flex: none; color: var(--wip-mark-3-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-none { margin: 0.5rem 0 0.25rem; font-size: 0.875rem; color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-row[data-skeleton] { display: flex; align-items: center; min-height: 2.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bone { display: block; width: 70%; height: 0.75rem; border-radius: 6px; background-color: var(--wip-skeleton); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bars { display: grid; gap: 0.375rem; margin-top: 0.625rem; padding-bottom: 0.25rem; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr) 2.75rem;
+  gap: 0.5rem;
+  align-items: center;
+  min-height: 2.25rem;
+  margin-inline: -0.5rem;
+  padding: 0 0.5rem;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 0.78125rem;
+  color: var(--wip-ink-muted);
+  text-align: start;
+  cursor: pointer;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar[data-skeleton] { display: flex; cursor: default; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar-track { display: block; min-width: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar-track > u { display: block; height: 8px; border-radius: 4px; background-color: var(--wip-path-live); opacity: 0.55; text-decoration: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar[data-now] .dev-ws-front-bar-track > u { opacity: 1; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar > b { font-weight: 650; color: var(--wip-ink); text-align: end; font-variant-numeric: tabular-nums; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar:not([data-skeleton]):hover { background-color: var(--wip-item-hover); color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-bar:not([data-skeleton]):active { background-color: var(--wip-item-press); }
+
+/* 4. PRIVATE REQUESTS: one quiet row at the foot, for admins. */
+html:not([data-skin]) #dev-workshop .dev-ws-front-private {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.75rem 1.125rem;
+  border: 0;
+  border-radius: 16px;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--wip-ink-muted);
+  text-align: start;
+  cursor: pointer;
+}
+html:not([data-skin]) #dev-workshop .dev-ws-front-private b { font-weight: 600; color: var(--wip-ink); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-private-lock { width: 1.0625rem; height: 1.0625rem; flex: none; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-private-text { flex: 1 1 auto; min-width: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-private:hover { background-color: color-mix(in srgb, var(--wip-card-bg) 60%, transparent); box-shadow: inset 0 0 0 1px var(--wip-front-line-strong); }
+html:not([data-skin]) #dev-workshop .dev-ws-front-private:hover > .dev-ws-front-chev { translate: 2px 0; }
+html:not([data-skin]) #dev-workshop .dev-ws-front-private:active { background-color: var(--wip-item-press); }
+/* A chevron's nudge goes the way the page reads (the glyph itself mirrors, @/components/ui/icons directional). */
+html:not([data-skin])[dir="rtl"] #dev-workshop .dev-ws-front :is(.dev-ws-front-go, .dev-ws-front-private):hover > .dev-ws-front-chev { translate: -2px 0; }
+html:not([data-skin])[dir="rtl"] #dev-workshop a.dev-ws-front-yours:hover .dev-ws-front-chev { translate: -4px 0; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-skin]) #dev-workshop .dev-ws-front * { transition: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front :is(a, button):is(:hover, :active) :is(.dev-ws-front-mini, .dev-ws-front-node, .dev-ws-front-chev, .dev-ws-front-yours-cap),
+  html:not([data-skin]) #dev-workshop .dev-ws-front :is(.dev-ws-front-start, .dev-ws-front-pill, .dev-ws-front-send):is(:hover, :active) { translate: none; scale: none; }
+  html:not([data-skin])[dir="rtl"] #dev-workshop .dev-ws-front :is(a, button):hover .dev-ws-front-chev { translate: none; }
+}
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-front * { transition: none; }
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-front :is(a, button):is(:hover, :active) :is(.dev-ws-front-mini, .dev-ws-front-node, .dev-ws-front-chev, .dev-ws-front-yours-cap),
+html:not([data-skin]):where([data-motion="reduce"]) #dev-workshop .dev-ws-front :is(.dev-ws-front-start, .dev-ws-front-pill, .dev-ws-front-send):is(:hover, :active) { translate: none; scale: none; }
+html:not([data-skin])[dir="rtl"]:where([data-motion="reduce"]) #dev-workshop .dev-ws-front :is(a, button):hover .dev-ws-front-chev { translate: none; }
+
+/* ONE COLUMN, where the page is narrow (a phone, a small window beside the sidebar). */
+@container ws-front (max-width: 700px) {
+  html:not([data-skin]) #dev-workshop .dev-ws-front-hero { grid-template-columns: minmax(0, 1fr); gap: 1.125rem; min-height: 0; padding: 1.375rem 1.125rem 1.125rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-title { font-size: 1.5625rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-ask { max-width: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-start { min-height: 2.25rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-side::before { content: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-path { min-height: 0; padding: 0.875rem 1rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-stops { grid-template-columns: minmax(0, 1fr); gap: 0.875rem; margin-top: 0.75rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-stops > .dev-ws-front-stop { min-height: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-stops::before,
+  html:not([data-skin])[dir="rtl"] #dev-workshop .dev-ws-front-stops::before { inset-inline: 27px auto; top: 1.5rem; bottom: 2.125rem; width: 6px; height: auto; background: linear-gradient(to bottom, var(--wip-path-ask), var(--wip-path-build) 45%, var(--wip-path-build) 60%, var(--wip-path-live)); }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-run > i { animation: none; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-stop { display: grid; grid-template-columns: 3.75rem minmax(0, 1fr); column-gap: 0.875rem; align-items: center; justify-items: start; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-stop-door { grid-column: 1 / -1; display: grid; grid-template-columns: 3.75rem minmax(0, 1fr); column-gap: 0.875rem; row-gap: 0; align-items: center; justify-items: start; width: 100%; padding: 0; text-align: start; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-node { grid-column: 1; grid-row: 1 / span 3; margin: 0; box-shadow: 0 0 0 5px var(--wip-card-bg); }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-word { grid-column: 2; grid-row: 1; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-line { grid-column: 2; grid-row: 2; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-mine { grid-column: 2; grid-row: 3; min-height: 0; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-pill { grid-column: 2; margin-top: 0.375rem; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-rule > [data-ws-approval-rules] { align-items: flex-start; }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-pair { grid-template-columns: minmax(0, 1fr); }
+  html:not([data-skin]) #dev-workshop .dev-ws-front-card { min-height: 0; padding: 0.875rem 1rem 0.625rem; }
+}
+/* What happened's weeks, on Earlier weeks: each week a card of its own; the reveal and the first week's note on the page. */
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-weeks-page] > .dev-ws-wlist { display: flex; flex-direction: column; gap: var(--wip-col-gap); margin: 0; border: 0; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-weeks-page] .dev-ws-week { padding: 0.875rem 1rem; border: 0; border-radius: var(--wip-card-radius); background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-weeks-page] .dev-ws-week:hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] [data-ws-weeks-page] > [data-ws-weeks-more] { margin: 0; padding-block: 0.375rem; }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] :is([data-ws-weeks-page], [data-ws-week-page]) .dev-ws-since-clear { color: var(--wip-ink-muted); }
+html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] .dev-ws-weeks-seen { display: flex; justify-content: flex-end; margin-block-end: 0.5rem; }
 /* The bot's slots, a page under the Workshop: on the wallpaper as its parent
    is, with no frame of its own around its sections (its cards are the only
    cards), in the reading column a list of rows wants. */

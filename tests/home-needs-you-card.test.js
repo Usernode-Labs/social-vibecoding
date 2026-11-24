@@ -418,10 +418,12 @@ test('The standard look: the Workshop opens on its overview, and the board is th
   for (const one of hiding) assert.match(one, /^html\[data-skin\]/, `"${one}" hides the board's way back in the standard look`);
   // "All items" is the page's one heading, so the place's name over it is the quiet one, as "Hub" is over the hub.
   assert.ok(css.includes('html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-placebar .dev-ws-place-title { font-size: var(--wip-title-size); font-weight: 600; color: var(--wip-ink-muted); }'));
-  // The overview's declared checks run in the standard look again (#6936 had moved them to the brand look).
-  const overview = JSON.parse(read('dapp.json')).tests.filter((check) => (check.expectSelector || '').includes('[data-ws-part="overview"]'));
-  assert.ok(overview.length >= 3, 'the overview has declared checks');
-  for (const check of overview) assert.doesNotMatch(check.path, /[?&]skin=/, `"${check.name}" runs in the standard look`);
+  // The Workshop tab's declared checks run in the standard look (#6936 had moved them to the brand look). 24 Nov
+  // 2026: the overview is the front page there (front-page.tsx); the brand look's tab keeps two of its own (?skin=brand).
+  const front = JSON.parse(read('dapp.json')).tests.filter((check) => (check.expectSelector || '').includes('[data-ws-front'));
+  assert.ok(front.length >= 4, 'the front page has declared checks');
+  for (const check of front) assert.doesNotMatch(check.path, /[?&]skin=/, `"${check.name}" runs in the standard look`);
+  assert.ok(!JSON.parse(read('dapp.json')).tests.some((check) => (check.expectSelector || '').includes('[data-ws-part="overview"]')), 'and nothing looks for the overview it replaced');
 });
 
 test('Standard (WIP): the menu is the token set\'s own panel, and a pinned project says who is in it', () => {

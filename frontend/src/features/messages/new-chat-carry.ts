@@ -10,6 +10,14 @@
  *
  * Its own module so the store (the door's half) and the panel (the taker)
  * can both import it without importing each other.
+ *
+ * WORDS AND A START TOO (24 Nov 2026). A project's Workshop asks "What
+ * should change in Garden club?" over a box of its own and four starts
+ * (../dev-board/workshop/front-page.tsx). What was typed there, and which
+ * start was pressed, wait here the same way, for the same moment: the new
+ * chat opens with the words in its box and the start chosen, exactly as
+ * pressing that start inside New chat would (./new-thread.tsx `begin`).
+ * Nothing is sent for the person.
  */
 
 import type { StagedObject } from './types';
@@ -17,16 +25,34 @@ import type { StagedObject } from './types';
 /** How long a carried item waits for its new chat. */
 export const CARRY_MS = 10_000;
 
-let carried: { object: StagedObject; placeholder: string | null; at: number } | null = null;
+/** What waits for the new chat: an item and the question asked over it, or words and a start. */
+export interface Carried {
+  object: StagedObject | null;
+  placeholder: string | null;
+  /** Words for the box, as typed (none for an item's door). */
+  words: string | null;
+  /** The key of a start to choose (./new-thread.tsx NEW_THREAD_STARTS, LIVE_START), or null. */
+  start: string | null;
+}
+
+let carried: (Carried & { at: number }) | null = null;
 
 /** Hand an item to the new chat about to open; null takes back what was waiting. */
 export function carryToNewChat(object: StagedObject | null | undefined, placeholder: string | null = null, now: number = Date.now()): void {
-  carried = object ? { object, placeholder, at: now } : null;
+  carried = object ? { object, placeholder, words: null, start: null, at: now } : null;
 }
 
-/** The item waiting, once: null when there is none, or it waited too long. */
-export function takeCarried(now: number = Date.now()): { object: StagedObject; placeholder: string | null } | null {
+/** Hand words for the box, and a start to choose, to the new chat about to open. */
+export function carryWordsToNewChat(words: string | null | undefined, start: string | null = null, now: number = Date.now()): void {
+  const said = typeof words === 'string' ? words.slice(0, 8000) : '';
+  carried = said.trim() || start ? { object: null, placeholder: null, words: said.trim() ? said : null, start, at: now } : null;
+}
+
+/** What is waiting, once: null when there is none, or it waited too long. */
+export function takeCarried(now: number = Date.now()): Carried | null {
   const held = carried;
   carried = null;
-  return held && now - held.at < CARRY_MS ? { object: held.object, placeholder: held.placeholder } : null;
+  return held && now - held.at < CARRY_MS
+    ? { object: held.object, placeholder: held.placeholder, words: held.words, start: held.start }
+    : null;
 }

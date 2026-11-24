@@ -755,6 +755,222 @@
     "text": "Ask Homeroom bot for a change, a fix or an answer",
     "description": "The line under the title of the New chat row on a project's Workshop tab (\"New chat about Garden club\"): what the person can ask Homeroom bot for in the chat it opens."
   },
+  "workshop.front.title": {
+    "text": "What should change in {{project}}?",
+    "description": "The one large heading of the Workshop tab's front page, under the standard look, over a message box to Homeroom bot. {{project}} is the project's name, for example \"What should change in Homeroom?\"."
+  },
+  "workshop.front.ask.placeholder": {
+    "text": "Tell Homeroom bot what to change…",
+    "description": "Placeholder of the message box under the heading of the Workshop tab's front page, under the standard look. Sending what is typed opens a new chat with Homeroom bot about the project, with the words in its box."
+  },
+  "workshop.front.ask.label": {
+    "text": "Tell Homeroom bot what should change in {{project}}",
+    "description": "Accessible name of the message box on the Workshop tab's front page, under the standard look. {{project}} is the project's name."
+  },
+  "workshop.front.ask.send": {
+    "text": "Open a new chat with this",
+    "description": "Accessible name and tooltip of the round send button of the message box on the Workshop tab's front page, under the standard look: it opens a new chat with Homeroom bot about the project with the typed words in its box, ready to send. Nothing is sent yet."
+  },
+  "workshop.front.start.label": {
+    "text": "Ways to start",
+    "description": "Accessible name of the row of starts under the message box on the Workshop tab's front page, under the standard look."
+  },
+  "workshop.front.start.live": {
+    "text": "Edit the app live",
+    "description": "First start under the message box on the Workshop tab's front page, under the standard look, with a small preview icon and the accent tint: opens a new chat with Homeroom bot set to change the project live, which opens a live draft of the app beside the chat. Shown only where that start is offered."
+  },
+  "workshop.front.start.fix": {
+    "text": "Fix an issue",
+    "description": "A start under the message box on the Workshop tab's front page, under the standard look: opens a new chat with Homeroom bot that begins \"I want to fix an issue\", as the same start inside New chat does."
+  },
+  "workshop.front.start.add": {
+    "text": "Add a feature",
+    "description": "A start under the message box on the Workshop tab's front page, under the standard look: opens a new chat with Homeroom bot that begins \"I want to add a feature\", as the same start inside New chat does."
+  },
+  "workshop.front.start.ask": {
+    "text": "Ask a question",
+    "description": "A start under the message box on the Workshop tab's front page, under the standard look: opens a new chat with Homeroom bot that begins \"I have a question about\", as the same start inside New chat does."
+  },
+  "workshop.front.yours.both_one": {
+    "text": "<0>{{count}} needs you</0> · {{progress}} in progress",
+    "description": "Second line of the Your work card beside the heading of the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them ({{count}}) and how many are being worked on ({{progress}}). <0> is the first count, in the accent. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.yours.needs_one": {
+    "text": "<0>{{count}} needs you</0>",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them. <0> is the count, in the accent."
+  },
+  "workshop.front.yours.both_other": {
+    "text": "<0>{{count}} need you</0> · {{progress}} in progress",
+    "description": "Second line of the Your work card beside the heading of the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them ({{count}}) and how many are being worked on ({{progress}}). <0> is the first count, in the accent. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.yours.needs_other": {
+    "text": "<0>{{count}} need you</0>",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project need them. <0> is the count, in the accent."
+  },
+  "workshop.front.yours.progress_one": {
+    "text": "{{count}} in progress",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project are being worked on, when none needs them."
+  },
+  "workshop.front.yours.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project wait on somebody else, when nothing needs them or is in progress."
+  },
+  "workshop.front.yours.progress_other": {
+    "text": "{{count}} in progress",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project are being worked on, when none needs them."
+  },
+  "workshop.front.yours.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "Second line of the Your work card on the Workshop tab's front page, under the standard look: how many of the person's threads in this project wait on somebody else, when nothing needs them or is in progress."
+  },
+  "workshop.front.yours.empty": {
+    "text": "What you ask for shows up here.",
+    "description": "Second line of the faint Your work card on the Workshop tab's front page, under the standard look, for a visitor or a member with nothing of theirs in this project yet. It is not a link."
+  },
+  "workshop.front.path.title": {
+    "text": "In the workshop now",
+    "description": "Small-caps label of the card on the Workshop tab's front page, under the standard look that draws how a change travels: four stops, Asked, Being built, Up for a vote and Live."
+  },
+  "workshop.front.path.board": {
+    "text": "Open the board",
+    "description": "Link at the top right of the \"In the workshop now\" card on the Workshop tab's front page, under the standard look: opens the project's board (All items) with no stage filter."
+  },
+  "workshop.front.path.boardFiltered": {
+    "text": "Open the board<0></0><1> (filtered)</1>",
+    "description": "The same link as \"Open the board\" on the Workshop tab's front page, under the standard look, while a search or filter is still on in All items. <0></0> is a small dot drawn after the words; <1> is said to screen readers only."
+  },
+  "workshop.front.path.asked.word": {
+    "text": "Asked",
+    "description": "Word under the first stop of the path on the Workshop tab's front page, under the standard look (a yellow circle): the requests nobody is building yet and that are not up for a vote. Pressing it opens the board narrowed to them."
+  },
+  "workshop.front.path.asked.line_one": {
+    "text": "{{count}} waiting",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+  },
+  "workshop.front.path.asked.line_other": {
+    "text": "{{count}} waiting",
+    "description": "Line under \"Asked\" on the path of the Workshop tab's front page, under the standard look: how many requests are waiting. Never shown for zero."
+  },
+  "workshop.front.path.building.word": {
+    "text": "Being built",
+    "description": "Word under the second stop of the path on the Workshop tab's front page, under the standard look (a blue circle): what Homeroom bot is building for this project. Pressing it opens Homeroom bot's builds for the project."
+  },
+  "workshop.front.path.building.line_one": {
+    "text": "{{count}} right now",
+    "description": "Line under \"Being built\" on the path of the Workshop tab's front page, under the standard look: how many builds Homeroom bot has under way or waiting their turn on the project. Never shown for zero."
+  },
+  "workshop.front.path.building.line_other": {
+    "text": "{{count}} right now",
+    "description": "Line under \"Being built\" on the path of the Workshop tab's front page, under the standard look: how many builds Homeroom bot has under way or waiting their turn on the project. Never shown for zero."
+  },
+  "workshop.front.path.votes.word": {
+    "text": "Up for a vote",
+    "description": "Word under the third stop of the path on the Workshop tab's front page, under the standard look (a near-black circle): the changes and group decisions waiting for votes. Pressing it opens the board narrowed to them."
+  },
+  "workshop.front.path.votes.yours": {
+    "text": "Ready for your yes",
+    "description": "The third stop's word on the path of the Workshop tab's front page, under the standard look on a project whose approval rule is the reader's own yes (a project that is just theirs): the changes waiting for it."
+  },
+  "workshop.front.path.votes.line_one": {
+    "text": "{{count}} open",
+    "description": "Line under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many changes and decisions are up for a vote. Not shown when the pill says how many wait on the reader, nor for zero."
+  },
+  "workshop.front.path.votes.line_other": {
+    "text": "{{count}} open",
+    "description": "Line under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many changes and decisions are up for a vote. Not shown when the pill says how many wait on the reader, nor for zero."
+  },
+  "workshop.front.path.live.word": {
+    "text": "Live",
+    "description": "Word under the last stop of the path on the Workshop tab's front page, under the standard look (a green circle): the changes that went live. Pressing it opens this week's log."
+  },
+  "workshop.front.path.live.line_one": {
+    "text": "{{count}} this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look: how many changes went live this week. Never shown for zero."
+  },
+  "workshop.front.path.live.lineAtLeast_one": {
+    "text": "{{count}}+ this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look when the count is a floor (only part of the history is loaded): at least {{count}} changes went live this week."
+  },
+  "workshop.front.path.mine_one": {
+    "text": "{{count}} of yours",
+    "description": "In the accent, with the reader's small picture, over a stop of the path on the Workshop tab's front page, under the standard look: how many of the reader's own threads are at that stop."
+  },
+  "workshop.front.path.pill_one": {
+    "text": "{{count}} needs your vote",
+    "description": "Black pill under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many votes wait on the reader. Pressing it opens Needs you for the project. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.path.pillYours_one": {
+    "text": "{{count}} needs your yes",
+    "description": "Black pill under \"Ready for your yes\" on the path of the Workshop tab's front page, under the standard look, on a project that is just the reader's: how many changes wait for their yes. Pressing it opens Needs you."
+  },
+  "workshop.front.path.live.line_other": {
+    "text": "{{count}} this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look: how many changes went live this week. Never shown for zero."
+  },
+  "workshop.front.path.live.lineAtLeast_other": {
+    "text": "{{count}}+ this week",
+    "description": "Line under \"Live\" on the path of the Workshop tab's front page, under the standard look when the count is a floor (only part of the history is loaded): at least {{count}} changes went live this week."
+  },
+  "workshop.front.path.mine_other": {
+    "text": "{{count}} of yours",
+    "description": "In the accent, with the reader's small picture, over a stop of the path on the Workshop tab's front page, under the standard look: how many of the reader's own threads are at that stop."
+  },
+  "workshop.front.path.pill_other": {
+    "text": "{{count}} need your vote",
+    "description": "Black pill under \"Up for a vote\" on the path of the Workshop tab's front page, under the standard look: how many votes wait on the reader. Pressing it opens Needs you for the project. English may write the singular without the number; keep {{count}} where the language needs it."
+  },
+  "workshop.front.path.pillYours_other": {
+    "text": "{{count}} need your yes",
+    "description": "Black pill under \"Ready for your yes\" on the path of the Workshop tab's front page, under the standard look, on a project that is just the reader's: how many changes wait for their yes. Pressing it opens Needs you."
+  },
+  "workshop.front.lately.title": {
+    "text": "Lately",
+    "description": "Small-caps label of the card on the Workshop tab's front page, under the standard look listing the three last changes that went live, title only."
+  },
+  "workshop.front.lately.fresh_one": {
+    "text": "{{count}} new since you were last here",
+    "description": "Beside the \"Lately\" label on the Workshop tab's front page, under the standard look: how many things moved this week since the reader last opened the Workshop. Not shown for zero, nor on a first visit."
+  },
+  "workshop.front.lately.fresh_other": {
+    "text": "{{count}} new since you were last here",
+    "description": "Beside the \"Lately\" label on the Workshop tab's front page, under the standard look: how many things moved this week since the reader last opened the Workshop. Not shown for zero, nor on a first visit."
+  },
+  "workshop.front.lately.none": {
+    "text": "Nothing has gone live yet.",
+    "description": "The one line of the Lately card on the Workshop tab's front page, under the standard look for a project where no change has gone live."
+  },
+  "workshop.front.weeks.title": {
+    "text": "Live by week",
+    "description": "Small-caps label of the card on the Workshop tab's front page, under the standard look with three bars: how many changes went live this week so far and in each of the two weeks before it."
+  },
+  "workshop.front.weeks.now": {
+    "text": "This week so far",
+    "description": "Label of the first bar in the Live by week card on the Workshop tab's front page, under the standard look: the week that has not finished yet."
+  },
+  "workshop.front.weeks.bar_one": {
+    "text": "{{week}}: {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look, which opens that week's log. {{week}} is the week's label (\"This week so far\", \"Last week\" or its dates)."
+  },
+  "workshop.front.weeks.bar_other": {
+    "text": "{{week}}: {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look, which opens that week's log. {{week}} is the week's label (\"This week so far\", \"Last week\" or its dates)."
+  },
+  "workshop.front.weeks.barAtLeast_one": {
+    "text": "{{week}}: at least {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look when its count is a floor (only part of the history is loaded). {{week}} is the week's label."
+  },
+  "workshop.front.weeks.barAtLeast_other": {
+    "text": "{{week}}: at least {{count}} went live",
+    "description": "Accessible name of a bar in the Live by week card on the Workshop tab's front page, under the standard look when its count is a floor (only part of the history is loaded). {{week}} is the week's label."
+  },
+  "workshop.front.earlier.none": {
+    "text": "No earlier weeks yet.",
+    "description": "Line on the Earlier weeks page under the Workshop (opened from the Workshop tab's front page, under the standard look) for a project in its first week."
+  },
+  "workshop.front.private.row": {
+    "text": "<0>Private requests</0> · only admins see these",
+    "description": "The quiet row at the foot of the Workshop tab's front page, under the standard look, for platform admins only, with a lock: opens the list of private requests. <0> is the name, in bold."
+  },
   "workshop.desk.both": {
     "text": "Needs you: <0>{{needs}}</0> · In progress: {{progress}}",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."

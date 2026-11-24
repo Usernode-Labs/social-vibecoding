@@ -50,8 +50,7 @@ const WIP_HIDES = [
   'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-page-wrap[data-rf-beside] .rf-claim-row',
   // Messages' empty pane holds the guide from 768px: its own heading and line give way to the guide's.
   'html:not([data-skin]) .messages-layout.messages-list-page > .messages-thread-pane.messages-no-selection > :is(h2, p)',
-  // The Workshop's figures are four cards, each with a mark: the mark says what the label's dot said (asked 23 Nov 2026).
-  'html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="workshop"] > .dev-ws-tabbody > [data-ws-dashboard] .dev-ws-dash-dot',
+  // (24 Nov 2026: the Workshop's four figure cards, and the dot they hid, went with its front page: the path's stops say it.)
   // Beside the open sidebar, on Homeroom's own pages, the bar shows the place alone: the panel's brand is the community's name already.
   'html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg):has(.header-place-name) > #header-app-tile, html:not([data-skin]) body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(.header-place-name) > span > #header-title-name:has(> svg)',
   // A request's page has no title of its own while the top bar names the place.
