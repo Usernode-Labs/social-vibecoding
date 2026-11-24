@@ -117,6 +117,24 @@ test('Settings opens under its name on the sky, and its parts are cards', () => 
   assert.match(src, /<header className="settings-frame-head">/, 'the head is in the document for it');
 });
 
+test('the sky starts at the top bar\'s line on a computer and a tablet', () => {
+  const b = block();
+  // The screen closes the bar's 8px foot; the root gives it back as padding,
+  // so the cards stay put and only the sky's top edge moves up.
+  assert.match(
+    b,
+    /@media \(min-width: 768px\) \{\s*html:not\(\[data-skin\]\) :is\(#profile-screen:has\(#profile-identity-card\), #settings-screen\) \{ margin-top: -0\.5rem; \}\s*html:not\(\[data-skin\]\) :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ padding-top: 0\.5rem; \}/,
+    'the screen tucks up and the root pads the same 8px back',
+  );
+  // Under 1024px the sky is placed from the padding edge, so the same 8px
+  // comes off its position; above it the border-box origin needs no move.
+  assert.match(
+    b,
+    /@media \(min-width: 768px\) and \(max-width: 1023\.98px\) \{\s*html:not\(\[data-skin\]\) :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ background-position: center -0\.5rem; \}/,
+    'the tablet sky is moved up with the padding',
+  );
+});
+
 test('Profile opens on who you are, across the page', () => {
   const b = block();
   assert.match(b, /#profile-root > div > div:has\(> #profile-identity-card\) \{ display: contents; \}/);
