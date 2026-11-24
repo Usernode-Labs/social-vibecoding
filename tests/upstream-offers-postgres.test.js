@@ -78,6 +78,9 @@ test('upstream offers: mark, the clock\'s reads, one open update, keeps, members
     const createdAtOf = async (appId) => (await pool.query(
       'SELECT created_at FROM upstream_offers WHERE app_id = $1', [appId])).rows[0].created_at;
     await save(legacy.id, 'skipped', { fromSha: B });
+    // Dated an hour back: the driver reads the column to the millisecond, and
+    // on a fast machine two statements in a row share one.
+    await pool.query("UPDATE upstream_offers SET created_at = created_at - INTERVAL '1 hour' WHERE app_id = $1", [legacy.id]);
     const firstDate = await createdAtOf(legacy.id);
     await pool.query(SQL.mark);
     const secondDate = await createdAtOf(legacy.id);

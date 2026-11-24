@@ -244,7 +244,7 @@ const shardOut = (root, head, { ok = 2 } = {}) => [
   `# tests ${ok}`, `# pass ${ok}`, '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 900',
 ].join('\n');
 
-function mockRun(t, { heads = [SHA, SHA, SHA], fail = false, tree = TREE } = {}) {
+function mockRun(t, { heads = Array(8).fill(SHA), fail = false, tree = TREE } = {}) {
   reuse._clearTreeCache();
   t.mock.method(github, 'isEnabled', () => true);
   t.mock.method(github, 'getCommitTree', async () => {
@@ -276,13 +276,13 @@ test('a pass is recorded with the run, the commit every shard checked out, the d
   const jobs = mockRun(t);
   const pool = recordingPool();
   const outcome = await unitSuite.maybeRunUnitSuite(runArgs(pool));
-  assert.equal(jobs.length, 3);
+  assert.equal(jobs.length, 5);
   assert.equal(outcome.row.status, 'pass');
   const [ins] = inserts(pool);
   assert.ok(ins, 'recorded');
   assert.deepEqual(ins.params.slice(0, 7),
     [10, 'usernode-labs/social-vibecoding', SHA, DIGEST, unitSuite.jobHash(), 8401, 'run-a']);
-  assert.equal(JSON.parse(ins.params[7]).tests, 6, 'the summary of the whole suite');
+  assert.equal(JSON.parse(ins.params[7]).tests, 10, 'the summary of the whole suite');
   assert.match(ins.sql, /INSERT INTO unit_suite_passes \(app_id, repo, commit_sha, image, job_definition, session_id, run_id, summary, tree_sha\)/);
   assert.equal(ins.params[8], null, 'recorded by commit first: nothing waits on GitHub');
   // Then the commit's tree, as GitHub has it, on the rows of that commit.
@@ -343,8 +343,8 @@ test('another project\'s pass is recorded by commit and its tree is never read',
 test('nothing is recorded for a red suite, another checkout, no commit, Docker, or with reuse off', async (t) => {
   const cases = [
     ['a red suite', { fail: true }, {}],
-    ['a shard on another commit (the branch moved)', { heads: [SHA, OTHER, SHA] }, {}],
-    ['a shard that never said', { heads: [SHA, SHA] }, {}],
+    ['a shard on another commit (the branch moved)', { heads: [SHA, OTHER, SHA, SHA, SHA] }, {}],
+    ['a shard that never said', { heads: [SHA, SHA, SHA, SHA] }, {}],
     ['no judged commit (main-watch)', {}, { commitSha: null }],
     ['Docker', {}, { config: { workerRuntime: 'docker' } }],
   ];

@@ -968,7 +968,7 @@ test('Prometheus capacity mode needs no cluster-wide node permission and fails c
 
 test('capacity shard budgets match the runner parsers for invalid and valid counts', (t) => {
   const pool = require('../src/services/check-pool');
-  const { unitSuiteShardCount } = require('../src/services/unit-suite');
+  const { unitSuiteShardCount, jobDefinition } = require('../src/services/unit-suite');
   const { captureShardCount } = require('../src/services/visuals');
   const keys = ['UNIT_SUITE_SHARDS', 'CAPTURE_SHARDS'];
   const saved = keys.map((key) => process.env[key]);
@@ -981,6 +981,7 @@ test('capacity shard budgets match the runner parsers for invalid and valid coun
     const unit = unitSuiteShardCount(raw); const capture = captureShardCount(raw);
     assert.equal(budget.pods, unit + capture, raw);
     assert.equal(budget.mainMemory, unit * 1024 ** 3, raw);
+    assert.equal(budget.mainCpu, Math.max(4, unit * pool.quantity(jobDefinition().shardCpuRequest)), raw);
     assert.equal(budget.memory, (unit + capture * 3) * 1024 ** 3, raw);
   }
 });
