@@ -229,3 +229,7 @@ The pack’s Source Serif 4 headline weight is 460; Geist is its UI face.
 The supplied `homeroom-brand-bg.json` sky and stars are byte-for-byte the
 existing `bg/sky.webp` and `bg/stars.webp`; the editorial pages reuse those
 original files without re-encoding them.
+
+`editorial/grass-cut.webp` is the unmodified `assets/pictures/grass-cut.webp`
+from the same pack. Profile and Settings show a small grassy section of it
+at the desktop rail’s foot.

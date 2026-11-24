@@ -2,7 +2,7 @@ import type * as React from 'react';
 import { useCallback, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
-import { ChevronRightIcon } from '@/components/ui/icons';
+import { CameraIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { ProfileDetailsCard } from '../../profile/profile-details-card';
 import { useLiveSkin } from '../../../lib/skin';
@@ -91,6 +91,7 @@ export function ProfileSection() {
           className="ui-card ui-row flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
         >
           <Avatar user={user} />
+          {editorial ? <span className="settings-profile-camera" aria-hidden="true"><CameraIcon /></span> : null}
           <span className="ui-row-tx flex-1 min-w-0">
             <span className="ui-row-t block text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
               {displayNameOf(user)}

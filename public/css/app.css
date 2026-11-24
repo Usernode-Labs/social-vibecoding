@@ -10562,6 +10562,7 @@ html:not([data-skin]) {
   --ed-button-ink: #000000;
   --ed-button-line: rgb(0 0 0 / 0.6);
   --ed-stars: url('/brand/bg/stars.webp');
+  --ed-grass: url('/brand/editorial/grass-cut.webp');
   --ed-page-veil: linear-gradient(180deg, rgb(255 252 243 / 0.02), rgb(255 252 243 / 0.7) 11rem, #fffcf3 17rem);
   --ed-card-veil: linear-gradient(180deg, rgb(255 253 246 / 0.2), #fffdf6 68%);
   --ed-green-card: linear-gradient(180deg, #e0f0d6, #fffdf6 68%);
@@ -11053,7 +11054,7 @@ html:not([data-skin]) #settings-section-content > [data-settings-section]:not(.h
 html:not([data-skin]) #settings-section-content h3 { font-size: 1.75rem; letter-spacing: -0.035em; margin-bottom: 0.25rem; }
 html:not([data-skin]) #settings-profile-section .settings-profile-layout { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 1.5rem; align-items: center; }
 html:not([data-skin]) #settings-profile-section #settings-profile-card { display: flex; flex-direction: column; padding: 0; gap: 0.5rem; background: none; border-radius: 0; box-shadow: none; }
-html:not([data-skin]) #settings-profile-card > :is(img, span[aria-hidden="true"]) { width: 7.5rem; height: 7.5rem; border-radius: 0.875rem; font-size: 2.5rem; }
+html:not([data-skin]) #settings-profile-card > :is(img, span[aria-hidden="true"]:first-child) { width: 7.5rem; height: 7.5rem; border-radius: 0.875rem; font-size: 2.5rem; }
 html:not([data-skin]) #settings-profile-card .ui-row-tx { display: none; }
 html:not([data-skin]) #settings-profile-card > svg { display: none; }
 html:not([data-skin]) #settings-profile-card .ui-link { font-size: 0.8125rem; }
@@ -11087,7 +11088,7 @@ html:not([data-skin]) #settings-section-content .ui-link { box-shadow: none; tex
   html:not([data-skin]) #profile-identity-card #profile-edit-btn { margin-inline-start: 0; }
   html:not([data-skin]) #settings-profile-section .settings-profile-layout { grid-template-columns: 1fr; gap: 1rem; }
   html:not([data-skin]) #settings-profile-section #settings-profile-card { flex-direction: row; justify-content: flex-start; }
-  html:not([data-skin]) #settings-profile-card > :is(img, span[aria-hidden="true"]) { width: 4rem; height: 4rem; }
+  html:not([data-skin]) #settings-profile-card > :is(img, span[aria-hidden="true"]:first-child) { width: 4rem; height: 4rem; }
   html:not([data-skin]) #settings-profile-details form { grid-template-columns: 1fr; gap: 0.25rem; }
   html:not([data-skin]) #settings-profile-details :is(.profile-details-handle-note, .profile-details-count, [role="alert"], .profile-details-actions) { grid-column: 1; }
   html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input { min-height: 2.75rem; }
@@ -11126,6 +11127,97 @@ html:not([data-skin]) #profile-recent-activity .profile-recent-copy strong { fon
 html:not([data-skin]) #profile-recent-activity time { color: var(--ed-muted); font-size: 0.75rem; flex: none; }
 @media (max-width: 639.98px) {
   html:not([data-skin]) #profile-recent-activity .profile-recent-copy > span { display: block; }
+}
+/* Align the desktop pages to the original 1536px references. The sky is
+   the full content pane's backdrop, with the paper cards flowing over it. */
+html:not([data-skin]) #profile-identity-card #profile-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+html:not([data-skin]) #profile-identity-card #profile-edit-btn svg { width: 1.125rem; height: 1.125rem; flex: none; }
+html:not([data-skin]) #profile-identity-card .profile-id-name {
+  letter-spacing: -0.035em;
+}
+html:not([data-skin]) #settings-profile-section #settings-profile-card {
+  position: relative;
+  justify-self: center;
+}
+html:not([data-skin]) #settings-profile-card .settings-profile-camera {
+  position: absolute;
+  inset-inline-end: -0.5rem;
+  inset-block-end: 1rem;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--ed-rule);
+  background: var(--ed-paper);
+  color: var(--ed-ink);
+}
+html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { width: 1.125rem; height: 1.125rem; }
+@media (min-width: 1024px) {
+  html:not([data-skin]) body:has(#profile-screen:not(.hidden)) { --wip-nav-w: 216px; }
+  html:not([data-skin]) body:has(#settings-screen:not(.hidden)) { --wip-nav-w: 202px; }
+  html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) {
+    width: 100%;
+    margin-inline: 0;
+    padding-inline: 2rem;
+    background-origin: border-box;
+  }
+  html:not([data-skin]) #profile-screen #profile-root:has(#profile-identity-card) { padding-inline-start: 2.25rem; }
+  html:not([data-skin]) #profile-root #profile-identity-card { padding: 3.5rem 0 2rem 1.5rem; }
+  html:not([data-skin]) #profile-identity-card .profile-id-avatar { width: 12rem; height: 12rem; }
+  html:not([data-skin]) #profile-identity-card #profile-edit-btn { margin-top: 1rem; min-height: 3.125rem; }
+  html:not([data-skin]) #profile-root > div:has(> div > #profile-identity-card) {
+    grid-template-columns: minmax(17rem, 22.5rem) minmax(0, 1fr);
+    column-gap: 2.625rem;
+  }
+  html:not([data-skin]) #profile-live-projects .profile-project-grid { gap: 2rem; }
+  html:not([data-skin]) #profile-live-projects .profile-project-card { min-height: 12.75rem; }
+  html:not([data-skin]) body :is(#settings-screen, #profile-screen:has(#profile-identity-card)) { padding-inline: var(--platform-rail-w, 0px) 0; }
+  html:not([data-skin]) body #settings-screen #settings-root { padding-inline-start: 1.375rem; }
+  html:not([data-skin]) #settings-root > .settings-frame-head { min-height: 10rem; padding-inline-start: 0.75rem; }
+  html:not([data-skin]) #settings-root #settings-sidebar-col.settings-side-sheet { width: 16rem; }
+  html:not([data-skin]) #settings-section-content > .settings-page-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  html:not([data-skin]) #settings-profile-details .profile-details-input:is(textarea) { min-height: 3.5rem; }
+
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow {
+    min-height: 2.75rem;
+    padding: 0.375rem 0;
+  }
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow-tx {
+    display: grid;
+    grid-template-columns: minmax(7rem, 24%) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 1rem;
+  }
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) .ui-lrow-s { margin: 0; }
+  html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) :is(.ui-glist, .ui-card.bg-white) {
+    background: none;
+    border-radius: 0;
+  }
+}
+@media (min-width: 1024px) and (min-height: 850px) {
+  html:not([data-skin]):not(.dark) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs:not(.platform-tabs-folded)::after {
+    height: 6.5rem;
+    margin-inline: 0;
+    background: var(--ed-grass) right bottom / 60rem auto no-repeat;
+    clip-path: ellipse(118% 92% at 92% 100%);
+  }
+}
+@media (max-width: 639.98px) {
+  html:not([data-skin]) #settings-profile-section #settings-profile-card { justify-self: start; }
+  html:not([data-skin]) #settings-profile-card .settings-profile-camera { inset-inline-start: 2.75rem; inset-block-end: -0.25rem; width: 1.625rem; height: 1.625rem; }
+  html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { width: 0.875rem; height: 0.875rem; }
 }
 /* END OF THE EDITORIAL PAGES. */
 /* IN THE STANDARD LOOK THE PAGE IS LAID OUT AS THE HUB, NEEDS YOU AND THE BOARD ARE (asked 20 Nov 2026): the page's

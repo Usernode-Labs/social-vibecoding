@@ -17,6 +17,7 @@ export function ProfileDetailsCard({ id = 'profile-details', embedded = false, u
   const [name, setName] = useState(user.displayName || '');
   const [bio, setBio] = useState(user.bio || '');
   const [saving, setSaving] = useState(false);
+  const dirty = name !== (user.displayName || '') || bio !== (user.bio || '');
   const [error, setError] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   return (
@@ -24,7 +25,7 @@ export function ProfileDetailsCard({ id = 'profile-details', embedded = false, u
       {!embedded ? <><h2>{t('profile:details.title')}</h2><p>{t('profile:details.intro')}</p></> : null}
       <form onSubmit={async (event) => {
         event.preventDefault();
-        if (saving) return;
+        if (saving || (embedded && !dirty)) return;
         setSaving(true);
         setError('');
         setErrors({});
@@ -43,14 +44,14 @@ export function ProfileDetailsCard({ id = 'profile-details', embedded = false, u
         <Input className="profile-details-input" id={`${id}-handle`} value={user.username ? `@${user.username}` : ''} readOnly aria-describedby={`${id}-handle-note`} />
         <a className="profile-details-handle-note" id={`${id}-handle-note`} href="#settings/username">{t('profile:details.handleNote')}</a>
         <Label className="profile-details-label" htmlFor={`${id}-bio`}>{t('profile:edit.about.bio')}</Label>
-        <Textarea className="profile-details-input" id={`${id}-bio`} value={bio} maxLength={Profile.MAX_BIO} rows={3} onChange={(event) => setBio(event.target.value)} aria-invalid={!!errors.bio} aria-describedby={errors.bio ? `${id}-bio-error` : undefined} />
+        <Textarea className="profile-details-input" id={`${id}-bio`} value={bio} maxLength={Profile.MAX_BIO} rows={embedded ? 2 : 3} onChange={(event) => setBio(event.target.value)} aria-invalid={!!errors.bio} aria-describedby={errors.bio ? `${id}-bio-error` : undefined} />
         <output className="profile-details-count" htmlFor={`${id}-bio`}>{bio.length}/{Profile.MAX_BIO}</output>
         {errors.bio ? <p id={`${id}-bio-error`} role="alert">{errors.bio}</p> : null}
         {error ? <p role="alert">{error}</p> : null}
-        <div className="profile-details-actions">
+        {!embedded || dirty || saving || error || Object.keys(errors).length ? <div className="profile-details-actions">
           <Button type="submit" disabled={saving}>{t('profile:details.save')}</Button>
           <Button type="button" variant="neutral" disabled={saving} onClick={() => { setName(user.displayName || ''); setBio(user.bio || ''); setError(''); setErrors({}); }}>{t('core:common.cancel')}</Button>
-        </div>
+        </div> : null}
       </form>
     </section>
   );

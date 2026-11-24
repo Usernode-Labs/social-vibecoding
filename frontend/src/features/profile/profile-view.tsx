@@ -27,7 +27,7 @@ import { type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { k } from '@/components/ui/kit';
 import { PLANE_CARD } from '@/components/ui/grouped-list';
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, PencilSquareIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
@@ -111,7 +111,7 @@ function IdentityCard({ identity, editorial = false }: { identity: any; editoria
             {/* Two lines at most, then an ellipsis: a long display name wraps
                 rather than losing its end at the first line. */}
             <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
-            {editorial && identity.username ? <div className="profile-id-handle">{identity.username}</div> : null}
+            {editorial && identity.username && identity.username !== identity.name ? <div className="profile-id-handle">{identity.username}</div> : null}
             {!editorial && identity.sub ? (
               // Wraps rather than truncating: a fact cut off mid-word is not
               // a fact.
@@ -173,6 +173,7 @@ function IdentityCard({ identity, editorial = false }: { identity: any; editoria
           className="self-start ms-[68px] sm:self-auto sm:ms-0"
           onClick={() => Profile.showEditSheet()}
         >
+          {editorial ? <PencilSquareIcon aria-hidden="true" /> : null}
           {t('profile:identity.edit')}
         </Button>
       </div>
