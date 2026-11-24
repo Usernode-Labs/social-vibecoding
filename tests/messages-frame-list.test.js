@@ -44,7 +44,7 @@ const titles = (html) => [...html.matchAll(/<span class="fr-t">(?:<span class="f
 test('the list is the kit\'s pane: the head with one sentence and one action, the People tab, the product\'s search under it', () => {
   const html = render();
   assert.match(html, /^<div class="fr fr-pane" data-messages-frame-list=""><div class="fr-scroll"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Messages<\/h1><p class="fr-purpose">People and groups you talk to\.<\/p><\/div><div class="fr-acts"><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>New message<\/button><\/div><\/div>/s);
-  assert.match(html, /<nav class="fr-tabs"><button type="button" class="fr-tab fr-on" aria-pressed="true">People<span class="fr-n">2<\/span><\/button><\/nav><div class="fr-search">/,
+  assert.match(html, /<nav class="fr-tabs"><button type="button" class="fr-tab fr-on" aria-pressed="true">DMs &amp; groups<span class="fr-n">2<\/span><\/button><\/nav><div class="fr-search">/,
     'People, the one tab, says how many messages from people are unread, as the standard heading does');
   assert.doesNotMatch(html, /Agents|Changes your agents are building/, 'Agents is no tab of Messages any more');
   assert.match(html, /<input type="search" class="fr-v" placeholder="Search people and chats" aria-label="Search people and chats" value=""\/>/, 'the standard search\'s own words');

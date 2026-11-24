@@ -352,7 +352,7 @@ test('the transcript row wears the chip and data-posted-via only for an agent ro
   // under it; an ordinary agent row and a person's own row do not.
   const skipped = renderToHtml(createElement(MessageRow, { msg: { ...rowBase, postedVia: 'agent', botSkipped: true } }));
   assert.match(skipped, /<p class="[^"]*\bgc-msg-bot-skip\b[^"]*"[^>]*data-bot-skip=""/);
-  assert.match(skipped, /doesn(?:&#x27;|'|’)?t answer this message; @ it in your own words to ask it\./);
+  assert.match(skipped, /doesn(?:&#x27;|'|’)?t answer this message\. @ it yourself to ask\./);
   assert.match(skipped, /data-posted-via="agent"/, 'it keeps its "via agent" chip');
   assert.ok(!/data-bot-skip/.test(agent), 'an answered agent message says nothing');
   assert.ok(!/data-bot-skip/.test(person), 'and never a person\'s own message');

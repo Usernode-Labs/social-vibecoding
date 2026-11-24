@@ -704,7 +704,7 @@ test('the game\'s box reads as a field to type in, and the tiles are two by two'
   // A field, plainly: white, ringed in the accent while it is empty, with a
   // label above it. The blank's words are tinted; the box is not.
   assert.match(src, /\{t\('onboarding:firstSession\.make\.finishLabel'\)\}/);
-  assert.equal(message('onboarding:firstSession.make.finishLabel'), 'Finish it in your own words');
+  assert.equal(message('onboarding:firstSession.make.finishLabel'), 'Finish the sentence');
   assert.match(src, /className=\{`\$\{WORDS_BOX\} \$\{words\.trim\(\) \? WORDS_FILLED : WORDS_EMPTY\}`\}/);
   assert.match(src, /const WORDS_EMPTY = 'shadow-\[inset_0_0_0_2px_var\(--accent\),/);
   // The box's example is one whole message, "For example, …".

@@ -140,7 +140,7 @@ function liveToken(config, draftId) {
 // (C), all of them when that head is none of its edits' commits.
 const DRAFT_COLUMNS = `d.id, d.app_id, d.user_id, d.private_thread_id, d.root_message_id, d.session_id, d.state,
   d.base_sha, d.head_sha, d.edits, d.live_state, d.last_error, d.created_at, d.updated_at,
-  d.proposal_session_id, d.proposed_head_sha, d.proposed_at,
+  d.proposal_session_id, d.proposed_head_sha, d.proposed_at, d.followup_path, d.followup_armed_at,
   a.slug AS app_slug, a.name AS app_name, a.repo_url,
   cs.branch_name, cs.status AS session_status, cs.staging_url, cs.staging_commit_sha,
   cs.staging_runtime_kind, cs.staging_runtime_name, cs.pr_number, cs.last_activity_at,
@@ -608,6 +608,11 @@ async function noteDeployed(config, { sessionId, runtime = null, deps = {} }) {
       });
     }
     noteChanged(await byId(pool, draft.id), { reload: true }, deps);
+    // 24 Nov 2026: a follow-up a turn armed (armFollowup) runs once this
+    // preview serves the draft's head. Not awaited: the deploy never waits
+    // on a look. followUp never throws.
+    const pending = followUp(pool, config, { draftId: draft.id, runtime, deps });
+    if (deps.awaitFollowUp) await pending;
   } catch (err) {
     log.warn('live-drafts', 'Could not note a draft\'s preview', { sessionId, err: err.message });
   }
@@ -803,6 +808,184 @@ async function syncPreview(pool, config, { draft, deps = {} }) {
   } catch (err) {
     log.warn('live-drafts', 'Could not bring a draft\'s preview up to date', { draftId: draft?.id, err: err.message });
     return { ok: false };
+  }
+}
+
+// ── What the draft bot reads of its preview (24 Nov 2026) ──────────────
+//
+// In one thread the bot told the person the running preview was "not
+// running", and during a rebuild said "say 'try now' again and I will look":
+// it had only the last thing its own tools said. It can now read where the
+// preview stands (previewStatus, the supervisor's own status), what the draft
+// changed since it started (changesSince), and a turn whose save or look met
+// a preview being built arms one follow-up (armFollowup): once that preview
+// serves the draft's head, Homeroom looks at it and posts one line in the
+// thread (followUp), so nobody has to ask again.
+
+// A follow-up waits this long for the preview to serve the head after a deploy.
+const FOLLOWUP_WAIT_MS = 60 * 1000;
+const FOLLOWUP_POLL_MS = 3000;
+// One older than this is dropped: whatever they asked about has moved on.
+const FOLLOWUP_MAX_AGE_MS = 15 * 60 * 1000;
+// What changesSince reads at most: the files, and each one's size.
+const MAX_CHANGED_READ = 20;
+const MAX_CHANGED_FILE_CHARS = 200 * 1024;
+
+/**
+ * The draft's preview, as its supervisor says it is (GET status): { reachable,
+ * supervised, ready, running, head, restarts, startedAt, lastExit, log } or
+ * { reachable: false }. Never throws.
+ */
+async function previewStatus(config, draft, deps = {}) {
+  try {
+    const status = await control(config, draft, 'status', { deps });
+    if (!status.reachable) return { reachable: false };
+    if (!status.supervised || status.status !== 200) return { reachable: true, supervised: !!status.supervised };
+    const b = status.body || {};
+    return {
+      reachable: true, supervised: true, ready: !!b.ready, running: !!b.running, head: exact(b.head),
+      restarts: Number(b.restarts) || 0, startedAt: b.startedAt || null, lastExit: b.lastExit || null,
+      log: typeof b.log === 'string' ? b.log : '',
+    };
+  } catch (err) {
+    return { reachable: false, error: err.message };
+  }
+}
+
+/**
+ * What the draft changed since it started (its base) up to its head: each
+ * file with its text at both, `before`/`after` (null where it was not there),
+ * at most MAX_CHANGED_READ of them and `more` for the rest. Resolves
+ * { files, more } or null when they cannot be read.
+ */
+async function changesSince(draft, deps = {}) {
+  const repo = repoOf(draft);
+  const base = exact(draft?.base_sha);
+  const head = exact(draft?.head_sha);
+  if (!repo || !base || !head) return null;
+  if (base === head) return { files: [], more: 0 };
+  const github = deps.github || require('./github');
+  let paths;
+  try {
+    paths = await github.listChangedFiles(repo.owner, repo.repo, `${base}...${head}`);
+  } catch { return null; }
+  if (!Array.isArray(paths)) return null;
+  const safe = paths.map((p) => supervisor().safePath(p)).filter(Boolean);
+  const files = [];
+  for (const p of safe.slice(0, MAX_CHANGED_READ)) {
+    const at = async (sha) => {
+      const text = await github.getFileContent(repo.owner, repo.repo, p, sha).catch(() => null);
+      return typeof text === 'string' && text.length <= MAX_CHANGED_FILE_CHARS ? text : (text == null ? null : false);
+    };
+    files.push({ path: p, before: await at(base), after: await at(head) });
+  }
+  return { files, more: Math.max(0, safe.length - files.length) };
+}
+
+/**
+ * Arm the draft's one follow-up (see above): its preview is being built
+ * again, and `path` is the page to look at once it is up. Resolves whether
+ * it is armed. Never throws.
+ */
+async function armFollowup(pool, { draftId, path = '/', deps = {} }) {
+  try {
+    const page = require('./preview-look').previewPath(path) || '/';
+    const { rows: [row] } = await pool.query(
+      `UPDATE live_drafts d SET followup_path = $2, followup_armed_at = NOW()
+        WHERE d.id = $1 AND ${EDITABLE_SQL} RETURNING d.id`,
+      [Number(draftId), page],
+    );
+    return !!row;
+  } catch (err) {
+    log.warn('live-drafts', 'Could not arm a draft\'s follow-up', { draftId, err: err.message });
+    return false;
+  }
+}
+
+/** Pure: the follow-up's one line, from what its look saw (or did not). No claim the change is right. */
+function followupLine(look, path = '/') {
+  const page = String(path || '/').slice(0, 80);
+  const base = 'The preview is up with your latest save.';
+  if (!look?.ok) return base;
+  const status = Number(look.facts?.status) || 0;
+  if (status >= 400) return `${base} The page at ${page} answered with an error (HTTP ${status}), though.`;
+  const errors = Array.isArray(look.facts?.consoleErrors) ? look.facts.consoleErrors.length : 0;
+  if (errors) return `${base} The page at ${page} logged ${errors === 1 ? 'an error' : `${errors} errors`} in the browser, though.`;
+  return base;
+}
+
+/**
+ * Run the draft's armed follow-up, once its preview serves the head: look at
+ * the page it names, then post one line in the thread (followupLine). Dropped,
+ * and cleared, when the draft is no longer worked on, when it is older than
+ * FOLLOWUP_MAX_AGE_MS, or when the person wrote in the thread since it was
+ * armed (the turn that answers them says where it stands). Resolves
+ * { posted } or { skipped: why }. Never throws.
+ */
+async function followUp(pool, config, { draftId, runtime = null, deps = {} }) {
+  try {
+    const now = () => (deps.now ? deps.now() : Date.now());
+    const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    // The runtime a deploy just said, ahead of the session's own row (as
+    // noteDeployed's sync reads it).
+    const read = async () => {
+      const row = await byId(pool, draftId);
+      return row && runtime?.runtimeName
+        ? { ...row, staging_runtime_kind: runtime.runtimeKind || row.staging_runtime_kind, staging_runtime_name: runtime.runtimeName }
+        : row;
+    };
+    let draft = await read();
+    if (!draft?.followup_armed_at) return { skipped: 'none' };
+    const armedAt = new Date(draft.followup_armed_at);
+    // The row's own time, to the millisecond a Date holds (Postgres keeps
+    // microseconds): a follow-up armed again since is not the one cleared.
+    const SAME_ARM = "date_trunc('milliseconds', followup_armed_at) = $2";
+    const clear = () => pool.query(
+      `UPDATE live_drafts SET followup_armed_at = NULL WHERE id = $1 AND ${SAME_ARM}`, [Number(draft.id), armedAt],
+    ).catch(() => null);
+    if (!editable(draft)) { await clear(); return { skipped: 'closed' }; }
+    if (now() - armedAt.getTime() > FOLLOWUP_MAX_AGE_MS) { await clear(); return { skipped: 'stale' }; }
+    const { rows: [spoke] } = await pool.query(
+      `SELECT 1 FROM conversation_messages
+        WHERE thread_root_id = $1 AND sender_id = $2 AND created_at > $3 LIMIT 1`,
+      [Number(draft.root_message_id), Number(draft.user_id), armedAt],
+    );
+    if (spoke) { await clear(); return { skipped: 'they_wrote' }; }
+    // It runs only on a preview that serves the head: a deploy that is
+    // still behind (its sync built it again) leaves it armed for the next.
+    const until = now() + (deps.followupWaitMs ?? FOLLOWUP_WAIT_MS);
+    let serving = false;
+    for (;;) {
+      const status = await previewStatus(config, draft, deps);
+      serving = !!(status.ready && status.head && status.head === exact(draft.head_sha));
+      if (serving || now() >= until) break;
+      await sleep(FOLLOWUP_POLL_MS);
+      draft = (await read()) || draft;
+    }
+    if (!serving) return { skipped: 'not_serving' };
+    // Once: whoever clears it runs it.
+    const { rows: [claimed] } = await pool.query(
+      `UPDATE live_drafts SET followup_armed_at = NULL WHERE id = $1 AND ${SAME_ARM} RETURNING id`,
+      [Number(draft.id), armedAt],
+    );
+    if (!claimed) return { skipped: 'taken' };
+    const previewLook = deps.previewLook || require('./preview-look');
+    const path = previewLook.previewPath(draft.followup_path) || '/';
+    const look = await previewLook.lookAtPreview(config, pool, { draft, path, deps });
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    const bot = deps.bot || await dm.botAccount(pool);
+    if (!bot) return { skipped: 'no_bot' };
+    const content = followupLine(look, path);
+    await dm.sendDm(pool, {
+      bot, userId: Number(draft.user_id), threadRootId: Number(draft.root_message_id), moment: null,
+      idempotencyKey: `live-draft-followup-${Number(draft.id)}-${String(draft.head_sha || '').slice(0, 12)}`,
+      content,
+    });
+    log.info('live-drafts', 'Draft follow-up posted', { draftId: draft.id, looked: !!look?.ok });
+    return { posted: true, content };
+  } catch (err) {
+    log.warn('live-drafts', 'A draft follow-up did not run', { draftId, err: err.message });
+    return { skipped: 'failed' };
   }
 }
 
@@ -1087,4 +1270,5 @@ module.exports = {
   listFiles, readFile, open, supervisorCommand, runtimeFor, noteDeployed,
   draftableFor, platformRunsInPlace,
   filesBetween, sendToPreview, syncPreview, applyEdit, proposalText, propose, updateProposal, close,
+  previewStatus, changesSince, armFollowup, followUp, followupLine, FOLLOWUP_MAX_AGE_MS,
 };

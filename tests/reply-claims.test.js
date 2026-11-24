@@ -505,3 +505,60 @@ test('C: only the chat carries the facts; another surface\'s replies are left as
   assert.deepEqual(claims.keptButtons(BUTTONS_1605, null), BUTTONS_1605);
   assert.deepEqual(claims.proposalNumbers('PR #142, PR 7, pull request #3 and proposal #6011; #9 is a request'), [142, 7, 3, 6011]);
 });
+
+// ── 24 Nov 2026: a draft reply that asks them to prompt again ───────────────
+//
+// During a rebuild the bot said "say 'try now' again once it has had a moment
+// and I will look". The preview reloads their view by itself, so asking them
+// to prompt again is never right, and a look or a line promised for later is
+// right only when the turn armed the follow-up that posts one.
+
+test('24 Nov: draft_later holds asking them to prompt again, and a later look with no follow-up set', () => {
+  const found = (text, turn) => claims.check(claims.mentions(text), { turn }).map((p) => p.kind);
+  const draft = { liveDraft: true, draftSaved: true };
+  const armed = { ...draft, draftFollowup: true };
+  // Never right, follow-up or not.
+  for (const said of [
+    'It is building right now. That takes about a minute or two; say "try now" again once it has had a moment and I will look at the sourdough instructions in the preview.',
+    'Let me know when it\'s up and I\'ll take a look.',
+    'Tell me once it\'s ready.',
+    'Ask me again when the preview is built.',
+    'Ping me after it has finished building.',
+  ]) {
+    assert.deepEqual(found(said, draft), ['draft_later'], said);
+    assert.deepEqual(found(said, armed), ['draft_later'], `${said} (armed)`);
+  }
+  // Right only with the follow-up armed.
+  for (const said of [
+    'I\'ll look at it once it\'s built.',
+    'Once it\'s up, I\'ll check the bake steps.',
+    'I\'ll post here when it\'s up.',
+    'Homeroom will post a line here once it is up.',
+  ]) {
+    assert.deepEqual(found(said, draft), ['draft_later'], said);
+    assert.deepEqual(found(said, armed), [], `${said} (armed)`);
+  }
+  // No such thing.
+  for (const said of [
+    'Ask me again in a few minutes.',
+    'Let me know if you want the button bigger.',
+    'It reloads by itself when it is up.',
+    'When it is up, the bake steps will read 260°C.',
+    'I\'ll check the code for the timer.',
+    'The preview is being built again, about a minute or two.',
+  ]) {
+    assert.deepEqual(found(said, draft), [], said);
+  }
+  assert.deepEqual(found('Let me know when it\'s up.', {}), [], 'only a draft turn');
+});
+
+test('24 Nov: the draft_later repair says their view reloads by itself, with no em dash', () => {
+  const problem = [{ kind: 'draft_later', said: 'asks them to tell you when the preview is up or to ask again, or promises a look or a line later that nothing is set to do' }];
+  const note = claims.repairNote(problem, { tools: new Set(['reply', 'look_at_preview']) });
+  assert.match(note, /Their view of the preview reloads by itself when it is up, so never ask them to say anything again or to tell you when it is up\./);
+  assert.match(note, /say a line follows here once it is up only when a tool said Homeroom will post one/);
+  assert.doesNotMatch(note, /—/);
+  const text = 'Saved. Say "try now" again once it has had a moment and I will look. I expect the bake line to read 260°C.';
+  const ctx = { liveDraft: true, draftSaved: true };
+  assert.equal(claims.cut(text, claims.check(claims.mentions(text), { turn: ctx }), ctx), 'Saved. I expect the bake line to read 260°C.');
+});

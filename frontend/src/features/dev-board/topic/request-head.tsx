@@ -245,11 +245,64 @@ const FOLD_MS = 240;
 const FOLD_EASE = 'cubic-bezier(.32, .72, 0, 1)';
 
 /**
- * The request's words, set apart as a quote and folded at four lines. "Show
- * more" (the hub's own reveal, `.dev-ws-reveal-start`) opens it by
- * animating the text's height between the fold and its full length; reduced
- * motion snaps. Whether there is anything to fold is measured, so a short
- * request has no control under it.
+ * The fewest lines a fold may hide. Folded, the words show four lines and a
+ * "Show more" row under them; a fold that hid one or two lines would stand
+ * as tall as the words whole and save nothing, so up to six lines show in
+ * full and seven or more fold.
+ */
+export const FOLD_HIDES_AT_LEAST = 3;
+
+/**
+ * One line of the words, in pixels: their computed line height (24px in
+ * the card look, 1.5 of the text's own size elsewhere). `normal` is read as
+ * the 1.5 the words are set in.
+ */
+export function wordsLineHeight(style: { lineHeight: string; fontSize: string }): number {
+  const lh = parseFloat(style.lineHeight);
+  const fs = parseFloat(style.fontSize);
+  // A unitless number is a multiple of the font size; a length ends in px.
+  if (Number.isFinite(lh) && lh > 0) return /px$/.test(style.lineHeight.trim()) || !(fs > 0) ? lh : lh * fs;
+  return Number.isFinite(fs) && fs > 0 ? fs * 1.5 : 0;
+}
+
+/**
+ * Pure: does folding at four lines hide enough to be worth a "Show more"?
+ * `hiddenPx` is what the fold leaves out (the words' whole height less
+ * their folded height), `linePx` one line of them. A box with no layout yet
+ * (a section that is shut) measures nothing and does not fold. A pixel of
+ * slack absorbs the rounding of fractional line heights.
+ */
+export function foldHidesEnough(hiddenPx: number, linePx: number): boolean {
+  if (!(linePx > 0) || !(hiddenPx > 0)) return false;
+  return hiddenPx + 1 >= linePx * FOLD_HIDES_AT_LEAST;
+}
+
+/**
+ * Measure the words both ways and say whether they fold, or null while
+ * they have no box. Whole, the paragraphs' last margin falls outside the
+ * box; folded, the clamp's box is its own block, so the gap between them is
+ * the lines and paragraph breaks the fold would hide. The clamp class is put
+ * back as React last rendered it before anything paints.
+ */
+function measureFold(el: HTMLElement): boolean | null {
+  if (typeof window === 'undefined' || !el.getClientRects().length) return null;
+  const had = el.classList.contains('line-clamp-4');
+  if (had) el.classList.remove('line-clamp-4');
+  const whole = el.getBoundingClientRect().height;
+  el.classList.add('line-clamp-4');
+  const folded = el.getBoundingClientRect().height;
+  if (!had) el.classList.remove('line-clamp-4');
+  return foldHidesEnough(whole - folded, wordsLineHeight(window.getComputedStyle(el)));
+}
+
+/**
+ * The request's words, set apart as a quote and folded at four lines when
+ * that hides three lines or more (FOLD_HIDES_AT_LEAST). "Show more" (the
+ * hub's own reveal, `.dev-ws-reveal-start`) opens it by animating the text's
+ * height between the fold and its full length; reduced motion snaps.
+ * Whether there is enough to fold is measured before the first paint, and
+ * again when the words or the column's width change, so words that fit in
+ * six lines show whole, with no clamp and no control under them.
  *
  * Its screenshots (./request-shots.ts): a picture that carries a C
  * comment's pin shows the comment over it, with a button to hide it (#4482);
@@ -303,13 +356,34 @@ export function RequestWords({ html, translate, note }: {
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
-  const [folds, setFolds] = useState(false);
+  // null until measured: the first render keeps the clamp and draws no
+  // control (the server's markup), and the layout effect settles it before
+  // the first paint. false shows the words whole, with no clamp at all, so
+  // no line is ever cut with an ellipsis that nothing opens.
+  const [folds, setFolds] = useState<boolean | null>(null);
   const moving = useRef(false);
   useLayoutEffect(() => {
     const el = text.current;
-    if (!el || open) return;
-    // Clamped, it is shorter than its content exactly when it folds something.
-    setFolds(el.scrollHeight > el.clientHeight + 1);
+    if (!el || open) return undefined;
+    const measure = () => {
+      if (moving.current) return;
+      const next = measureFold(el);
+      if (next !== null) setFolds(next);
+    };
+    measure();
+    // The column's width decides how many lines the words take (a pane
+    // resized, a phone turned, a shut section opened); a translation swaps
+    // the words, which reruns this. The measure puts the clamp back as it
+    // found it, so the observer sees no change of its own making.
+    let width = el.getBoundingClientRect().width;
+    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      const now = el.getBoundingClientRect().width;
+      if (now === width) return;
+      width = now;
+      measure();
+    }) : null;
+    watch?.observe(el);
+    return () => watch?.disconnect();
   }, [words, open]);
   const toggle = () => {
     const el = text.current;
@@ -350,7 +424,7 @@ export function RequestWords({ html, translate, note }: {
     if (togglePinShot(event.target, event.currentTarget)) event.preventDefault();
   };
   if (!words && !shots && !translate && !note) return null;
-  const showMore = words && (folds || open);
+  const showMore = words && (folds === true || open);
   const more = showMore ? (
     <button
       type="button"
@@ -367,8 +441,9 @@ export function RequestWords({ html, translate, note }: {
       {/* PlatformMarkdown.render's output, sanitised where it is built. The
           clamp class is React's; the fold writes the node's height only for
           the length of the animation, and puts the clamp back as it ends so
-          React's next render agrees with the DOM. */}
-      {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
+          React's next render agrees with the DOM. Words that do not fold
+          carry no clamp at all. */}
+      {words ? <div ref={text} className={`dev-request-ask-text${open || folds === false ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
       {translate ? <div className="mt-1 flex flex-wrap items-center gap-4">{more}{translate}</div> : more}
       {note}
       {shots ? <div ref={shotBox} className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}

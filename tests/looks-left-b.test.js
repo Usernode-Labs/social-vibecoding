@@ -110,8 +110,8 @@ const inbox = (over) => renderComponent(LIST, 'MessagesFrameList', {
 // the "2 working" beside the tab's name.
 test('Messages: under a look the list is conversations alone, with no change row, dot or Agents tab', () => {
   const html = inbox({ unread: 3 });
-  assert.match(html, /<nav class="fr-tabs"><button type="button" class="fr-tab fr-on" aria-pressed="true">People<span class="fr-n">3<\/span><\/button><\/nav>/,
-    'People is the one tab, with the unread count the standard heading carries');
+  assert.match(html, /<nav class="fr-tabs"><button type="button" class="fr-tab fr-on" aria-pressed="true">DMs &amp; groups<span class="fr-n">3<\/span><\/button><\/nav>/,
+    'DMs & groups (People until 24 Nov 2026) is the one tab, with the unread count the standard heading carries');
   assert.doesNotMatch(html, /Agents|working|data-inbox-unseen|data-session-unread/);
   const pane = read('frontend/src/features/messages/index.tsx');
   assert.doesNotMatch(pane, /sessionUnreadIds|notificationsStore|asides\.agents/, 'nothing reads a change\'s news or work any more');
