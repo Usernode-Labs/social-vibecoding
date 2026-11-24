@@ -11284,6 +11284,26 @@ html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-ca
   background: var(--ed-page-veil), var(--ed-stars) center top / 100% 18rem no-repeat, var(--ed-sky) center top / 100% 18rem no-repeat;
   background-blend-mode: normal, screen, normal;
 }
+/* THE SKY MEETS THE BAR (#7107). From 768px the bar is drawn without a fill
+   and its foot line sits 8px above its box's bottom, so the screen began
+   8px below the line and that strip showed the ground above the sky. The
+   screen tucks those 8px back up under the bar's transparent foot, and the
+   root gives them back as top padding, so the sky starts at the line while
+   every card, the identity block, the Settings head and the sidebar stay
+   where they were. Below 768px the phone's bar is opaque and overlapped the
+   page already, so there is nothing to close. */
+@media (min-width: 768px) {
+  html:not([data-skin]) :is(#profile-screen:has(#profile-identity-card), #settings-screen) { margin-top: -0.5rem; }
+  html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) { padding-top: 0.5rem; }
+}
+/* Under 1024px the sky's layers are placed from the padding edge, so the top
+   padding above would hold them 8px below the line again. Their position
+   moves up the same 8px, at the same width, so the top of the sky still
+   meets the bar. From 1024px the origin is the border box and no move is
+   needed. */
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) { background-position: center -0.5rem; }
+}
 html:not([data-skin]) #profile-root #profile-identity-card {
   padding: 2rem 0 1.5rem;
   background: none;
