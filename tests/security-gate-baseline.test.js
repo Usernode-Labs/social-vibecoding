@@ -317,7 +317,6 @@ test('standalone PRs import only the Buildx layer cache from the main audit and 
   const audit = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/security-audit.yml'), 'utf8'));
   const steps = pr.jobs['security-images'].steps;
   const find = steps.find((step) => step.id === 'standalone_cache');
-  const restore = steps.find((step) => step.id === 'restore_standalone_cache');
   const scan = steps.find((step) => step.name === 'Build and scan the finished image');
   const publish = audit.jobs.scan.steps.find((step) => step.id === 'standalone_cache');
   assert.equal(audit.jobs.scan.if, "github.ref == 'refs/heads/main'");
@@ -325,10 +324,10 @@ test('standalone PRs import only the Buildx layer cache from the main audit and 
   assert.match(find.run, /actions\/workflows\/security-audit\.yml\/runs/);
   assert.match(find.run, /-f branch=main -f status=success/);
   assert.match(find.run, /\.head_repository\.full_name == \.repository\.full_name/);
-  assert.equal(restore.with['run-id'], '${{ steps.standalone_cache.outputs.run_id }}');
-  assert.equal(restore['continue-on-error'], true);
-  assert.match(scan.run, /\[ "\$COMPONENT" = standalone \] && \[ "\$STANDALONE_CACHE_RESTORED" = true \]/);
-  assert.match(scan.run, /--cache-from "type=local,src=\$RUNNER_TEMP\/standalone-buildx-cache"/);
+  assert.match(find.run, /if gh run download "\$run_id"[\s\S]*&& \[ -s "\$cache\/index\.json" \]/);
+  assert.equal(scan.env.STANDALONE_BUILDX_CACHE, '${{ steps.standalone_cache.outputs.path }}');
+  assert.match(scan.run, /\[ "\$COMPONENT" = standalone \] && \[ -n "\$STANDALONE_BUILDX_CACHE" \]/);
+  assert.match(scan.run, /--cache-from "type=local,src=\$STANDALONE_BUILDX_CACHE"/);
   assert.match(scan.run, /docker buildx build --load[\s\S]*sh scripts\/create-image-sbom\.sh[\s\S]*sh scripts\/check-image-security\.sh/);
 });
 

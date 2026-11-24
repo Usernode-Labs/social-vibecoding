@@ -99,7 +99,7 @@ jobs:
           version="$(bash scripts/resolve-claude-code-version.sh)"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'Claude Code: `%s`\n' "$version" >> "$GITHUB_STEP_SUMMARY"
-      - name: Find standalone Buildx cache from the main security audit
+      - name: Restore standalone Buildx cache from the main security audit
         if: matrix.component == 'standalone'
         id: standalone_cache
         shell: bash
@@ -114,20 +114,14 @@ jobs:
             name="standalone-buildx-cache-$attempt"
             artifacts="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" -f "name=$name")" || continue
             if jq -e --arg name "$name" 'any(.artifacts[]; .name == $name and .expired == false)' <<< "$artifacts" >/dev/null; then
-              printf 'run_id=%s\nname=%s\n' "$run_id" "$name" >> "$GITHUB_OUTPUT"
-              break
+              cache="$(mktemp -d "$RUNNER_TEMP/standalone-buildx-cache.XXXXXX")"
+              if gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$name" --dir "$cache" \
+                && [ -s "$cache/index.json" ]; then
+                printf 'path=%s\n' "$cache" >> "$GITHUB_OUTPUT"
+                break
+              fi
             fi
           done <<< "$runs"
-      - name: Restore trusted standalone Buildx cache
-        id: restore_standalone_cache
-        if: matrix.component == 'standalone' && steps.standalone_cache.outputs.run_id != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.standalone_cache.outputs.run_id }}
-          name: ${{ steps.standalone_cache.outputs.name }}
-          path: ${{ runner.temp }}/standalone-buildx-cache
       # Baselines are built lazily from the exact PR base. Never restore an
       # inventory cache that an earlier PR revision could have written.
       - name: Build and scan the finished image
@@ -140,7 +134,7 @@ jobs:
           SECURITY_SCAN_PLATFORM: linux/amd64
           LIVE_WORKER_DIGEST: ${{ steps.live.outputs.worker }}
           CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
-          STANDALONE_CACHE_RESTORED: ${{ steps.restore_standalone_cache.outcome == 'success' }}
+          STANDALONE_BUILDX_CACHE: ${{ steps.standalone_cache.outputs.path }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/security-$COMPONENT"
@@ -152,9 +146,8 @@ jobs:
             DOCKERFILE="$CONTEXT/Dockerfile"
           fi
           build_args=(--pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE")
-          if [ "$COMPONENT" = standalone ] && [ "$STANDALONE_CACHE_RESTORED" = true ] \
-            && [ -s "$RUNNER_TEMP/standalone-buildx-cache/index.json" ]; then
-            build_args+=(--cache-from "type=local,src=$RUNNER_TEMP/standalone-buildx-cache")
+          if [ "$COMPONENT" = standalone ] && [ -n "$STANDALONE_BUILDX_CACHE" ]; then
+            build_args+=(--cache-from "type=local,src=$STANDALONE_BUILDX_CACHE")
           fi
           if [ "$COMPONENT" = worker ] && [[ "$LIVE_WORKER_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
             # Import build layers only from the image promoted by main. The
