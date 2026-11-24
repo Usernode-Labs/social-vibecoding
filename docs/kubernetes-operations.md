@@ -28,7 +28,9 @@ Code version. A new version changes the worker's reuse key. During quiet
 periods, dispatch the workflow to pick up a release without a source push.
 
 Pull request checks run in `kubernetes-pr-checks.yml`. The required Security
-merge gate covers its security and database jobs. The release can reuse a
+merge gate covers its security and database jobs. The image jobs build and
+scan when a change can reach an image's packages, and otherwise report success
+without building (`scripts/pr-image-inputs.js`; the job summary says which). The release can reuse a
 passing PostgreSQL 17/18 run for the merged PR when it tested the same Git
 tree. The planner checks the result from the exact run attempt. If the tree
 differs or the result is missing, expired, or unreadable, the release runs
