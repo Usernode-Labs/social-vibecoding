@@ -4470,12 +4470,15 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    green; an opaque colour took it back at once). So the bar here has an
    opaque ground under its glass, the glass's own solid plane colour. The
    layer covers it whole (its washes end on the ground colour), so nothing
-   on the bar changes; only the strip does. */
+   on the bar changes; only the strip does.
+   A bar whose ground is a colour of its own names it in
+   `--platform-header-solid`: the phone's blue bar does ("THE PHONE'S TOP BAR
+   IS THE TAB BAR'S BLUE"), so the strip turns blue with it. */
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
              #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
-  background-color: var(--dc-sheet-solid);
+  background-color: var(--platform-header-solid, var(--dc-sheet-solid));
 }
 /* …AND ON THE APP TAB, WHERE THE PAGE IS NOT THE SCROLLER (newcomer run
    six, 14 Oct 2026, iPhone Safari 26). Safari takes the strip's colour from
@@ -24721,6 +24724,100 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   }
   html.web-browser-chrome[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
     padding-top: 0.75rem !important;
+  }
+}
+/* ── THE PHONE'S TOP BAR IS THE TAB BAR'S BLUE, FLAT (Mobile 01, 24 Nov 2026)
+   Under 768px the header on the top-level screens was the faked glass: the
+   wallpaper under a pale wash, with a rounded foot and no edge, so it melted
+   into the page while the tab bar at the bottom is a solid blue band. It is
+   now that band's colour, flat, with white ink: the project's bar above,
+   drawn in `--wip-nav-bg`, the tab bar's own token (THE LEFT MENU AND THE TOP
+   BAR), so the two bars cannot drift apart and the dark value follows.
+
+   WHERE: every route the glass is drawn on ("…AND THE HEADER", near the
+   top), and a project page the platform draws (`data-app-surface=
+   "platform"`) while it has no community tint.
+   NOT: from 768px, a different drawing; a project's bar, whose rule above
+   outranks this one (the conditions here are in `:where()`, so they add no
+   weight, and the top-level selector needs no tint exception: on the frame
+   where Home is up and the tint not yet taken off, the bar is blue, never
+   glass); a running app (its surface is "app", and its bar takes the app's
+   tone); a look (html[data-skin]: the brand kit draws its own navy bar); the
+   iPhone Duo's side strip, where the clock is in the column of chrome over
+   the wallpaper and the bar keeps its glass; the signed-out landing's own
+   header.
+
+   SAFARI'S STRIP takes its colour from the bar's opaque `background-color`
+   ("THE STRIP OVER THE BAR FOLLOWS IT HOME"). That rule outranks this one,
+   so it reads `--platform-header-solid`, which this sets.
+   THE CLOCK in the app is told the ground is dark here
+   (NativeChrome.statusBarToneFor, `phoneBar`, public/js/native-chrome.js).
+   THE ROW IS CENTRED, as on a project's bar (#4237) and on every desktop
+   bar: with the band opaque to its 52px foot, pt-2/pb-4 sat the row 4px
+   above its middle, and it jumped 4px going into a project. The same 52px,
+   split 12 and 12 (tests/header-height-parity.test.js). Not under the Duo's
+   top band, which places the row on the clock's line itself.
+   The 8px the surfaces below tuck under the foot (`-mb-2`) are covered now,
+   as under a project's bar: each screen's first element starts with 16px or
+   more of its own padding. The side panel, which starts in those 8px, is
+   drawn from 768px only. */
+@media (max-width: 767.98px) {
+  html:where(:not([data-skin]):not([data-side-strip])) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+      #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+      #profile-proposals-screen):not(.hidden)) #platform-header,
+  html:where(:not([data-skin]):not([data-side-strip]):not([data-community-tint])) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+    --fake-glass-tint: var(--wip-nav-bg);
+    --platform-header-solid: var(--wip-nav-bg);
+    --brand-ink: #fff;
+    --brand-tint: rgba(255, 255, 255, .16);
+    --brand-line: rgba(255, 255, 255, .32);
+    --text-primary: #fff;
+    --text-secondary: rgba(255, 255, 255, .86);
+    --text-muted: rgba(255, 255, 255, .82);
+    --text-faint: rgba(255, 255, 255, .62);
+    --lit-ink: #fff;
+    --lit-tint: rgba(255, 255, 255, .2);
+    --lit-line: transparent;
+    background-color: var(--wip-nav-bg);
+    color: #fff;
+    clip-path: inset(0);
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+    box-shadow: none;
+  }
+  html:where(:not([data-skin]):not([data-side-strip]):not([data-top-band])) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+      #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+      #profile-proposals-screen):not(.hidden)) #platform-header,
+  html:where(:not([data-skin]):not([data-side-strip]):not([data-top-band]):not([data-community-tint])) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+    padding-bottom: 0.75rem;
+  }
+  @supports (padding: env(safe-area-inset-top)) {
+    html:where(:not([data-skin]):not([data-side-strip]):not([data-top-band])) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+        #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+        #profile-proposals-screen):not(.hidden)) #platform-header.un-safe-top-extend,
+    html:where(:not([data-skin]):not([data-side-strip]):not([data-top-band]):not([data-community-tint])) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header.un-safe-top-extend {
+      padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+    html.web-browser-chrome:where(:not([data-skin]):not([data-side-strip]):not([data-top-band])) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
+        #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
+        #profile-proposals-screen):not(.hidden)) #platform-header.un-safe-top-extend,
+    html.web-browser-chrome:where(:not([data-skin]):not([data-side-strip]):not([data-top-band]):not([data-community-tint])) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header.un-safe-top-extend {
+      padding-top: 0.75rem !important;
+    }
+  }
+  /* THE DRAWER'S UNTINT (header-drawer.tsx DrawerUntint, below) is "the bar
+     as it is off a community", laid over a project's colour and faded with
+     the drawer's depth: so it is this blue, and the ink it mixes back to is
+     this white, or a swipe from a project to the top level would pass
+     through the pale glass and its dark ink. */
+  html:not([data-skin]):not([data-side-strip]) .nav-drawer-untint {
+    background: var(--wip-nav-bg);
+  }
+  html:not([data-skin]):not([data-side-strip])[data-nav-drawer] body {
+    --nav-brand-ink: #fff;
+    --nav-brand-tint: rgba(255, 255, 255, .16);
+    --nav-brand-line: rgba(255, 255, 255, .32);
+    --nav-ink: #fff;
   }
 }
 /* THE BAND: the place bar (#4417, place-bar.tsx; it held the four tabs,

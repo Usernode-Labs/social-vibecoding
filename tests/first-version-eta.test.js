@@ -474,7 +474,9 @@ test('on the App tab and the other screens the document does not scroll, the bar
   assert.deepEqual(glass.filter((id) => !pages.includes(id.slice(1))), sticky, 'every opaque-ground route that is not a page scroller, and only those');
   // Its ground is the opaque one the strip takes (run three's rule), and the
   // hub keeps its tinted, sticky bar: the strip turns teal there again.
-  assert.match(css, /html\.un-ios\.web-browser-chrome:not\(\[data-community-tint\]\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s+background-color: var\(--dc-sheet-solid\);\s+\}/);
+  // (Mobile 01: a bar with a ground of its own, the phone's blue one, names
+  // it in --platform-header-solid; every other bar keeps the plane colour.)
+  assert.match(css, /html\.un-ios\.web-browser-chrome:not\(\[data-community-tint\]\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s+background-color: var\(--platform-header-solid, var\(--dc-sheet-solid\)\);\s+\}/);
   assert.match(css, /html\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header \{[^}]*background-color: var\(--community-tint\);/);
   assert.match(css, /html\[data-browser-scroller\] :is\(#platform-header, #landing-header\) \{\s+position: sticky;/);
   // The App tab is a scroller-less platform page: pageScroller answers only
