@@ -385,7 +385,7 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   // the tile, where the search row waits to be pulled into view: the brand
   // look first, and the standard look and Standard (WIP) since the phone
   // review of 23 Nov 2026 (nothing on screen started a project at rest).
-  for (const skin of ['brand', 'standard', 'wip']) {
+  for (const skin of ['brand', 'standard']) {
     sandbox.Skin = { get: () => skin };
     Home.render();
     assert.equal(model().create.inCard, false, `the tile stays on a phone under ${skin}`);
@@ -394,7 +394,7 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   sandbox.Skin = { get: () => 'standard' };
   Home.render();
   assert.equal(model().create.inCard, true, 'from 768px the standard look has the button on its search row');
-  sandbox.Skin = { get: () => 'wip' };
+  sandbox.Skin = { get: () => 'brand' };
   Home.render();
   const state = model();
   assert.equal(state.create.inCard, true);

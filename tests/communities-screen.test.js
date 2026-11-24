@@ -194,7 +194,8 @@ test('Standard (WIP) draws the page as Home is: its ground, the community cards,
   const path = require('node:path');
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
   const page = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'communities', 'index.tsx'), 'utf8');
-  assert.match(css, /html\[data-skin-wip\] #communities-screen \{\s*background-color: var\(--wip-page-bg-communities\);/);
+  // Standard (WIP)'s own ground for the page went with that look (24 Nov 2026, #7071): the standard look keeps its wallpaper.
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ''), /data-skin-wip/);
   assert.match(css, /html:not\(\[data-skin\]\) #communities-screen \.home-column \{ max-width: none; \}/);
   // The standard look's page too (20 Nov 2026), on its own wallpaper: the page's ground is Standard (WIP)'s alone.
   assert.match(page, /const wip = isKitHome\(skin\);/);

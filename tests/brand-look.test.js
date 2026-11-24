@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.wipTokens\.brand'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard and its work-in-progress copy (one entry, the brand kit, since 20 Nov 2026): it is the one look that redraws the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard (its work-in-progress copy was removed on 24 Nov 2026, #7071): it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -714,7 +714,7 @@ test('Home takes Standard (WIP)\'s New project button and Needs you card, in the
   assert.match(island, /<WipCard on=\{wip\}>/, 'Pinned apps keeps the look\'s own card, not WIP\'s');
   const home = read('frontend', 'src', 'features', 'home', 'home.js');
   const side = home.slice(home.indexOf('hasSideCard() {'), home.indexOf('_wireRowBudget() {'));
-  assert.match(side, /if \(skin !== 'brand' && skin !== 'wip' && skin !== 'standard'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
+  assert.match(side, /if \(skin !== 'brand' && skin !== 'standard'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
     'the grid drops its tile only where the search row shows the button');
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   const tokens = at(':is(#home-screen, #communities-screen)').body;

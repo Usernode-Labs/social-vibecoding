@@ -94,7 +94,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   // pages (Home, and the Communities page): the visitor's landing draws this
   // same list, and keeps the standard drawing of it.
   const live = useLiveSkin();
-  const wip = live === 'wip' || (isKitHome(live) && signedIn);
+  const wip = isKitHome(live) && signedIn;
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);
