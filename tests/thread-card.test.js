@@ -677,7 +677,9 @@ test('a run that worked out its screens is drawn with the Needs you slider, not 
   // Phone review #27: the caption's strip and the switch's are part of the
   // picture's height, and the screen is placed between them.
   assert.match(picture, /return \{ height: room \+ CAP_STRIP \+ FOOT_STRIP, place: withinStrips\(placeBox\(screen, focus, \{ w: width, h: room \}, 1\)\) \};/);
-  assert.match(picture, /ground="var\(--messages-surface-2\)"/, 'the ground is the card\'s own, never a tint');
+  // The ground is the well's (app.css "WHERE THE PICTURE GOES"): the same box
+  // before the shots come in and around a screen narrower than the picture.
+  assert.match(picture, /ground="var\(--thread-well, var\(--messages-surface-2\)\)"/, 'the ground is the well\'s, never a tint');
   assert.doesNotMatch(picture, /shots-box|shots-flip-chip|groundFor/);
   assert.match(picture, /kind: 'shots', ref: \{ changeId: s\.changeId \}/, 'Expand opens the full viewer in the detail column');
   // The slider prints the page's own words for a change that is live or closed.
