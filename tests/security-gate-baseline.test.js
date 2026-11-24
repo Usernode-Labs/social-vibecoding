@@ -286,6 +286,8 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.equal(prScan.env.SECURITY_SCAN_PLATFORM, 'linux/amd64');
   assert.equal(prScan.env.SECURITY_AUDIT_ONLY, undefined, 'PRs retain the blocking scanner default');
   assert.equal(prScan.env.LIVE_WORKER_DIGEST, '${{ steps.live.outputs.worker }}');
+  assert.equal(prScan.env.CLAUDE_CODE_VERSION, '${{ steps.claude.outputs.version }}');
+  assert.match(prScan.run, /--build-arg "CLAUDE_CODE_VERSION=\$\{CLAUDE_CODE_VERSION:\?/);
   assert.match(prScan.run, /--cache-from "type=registry,ref=ghcr\.io\/.*social-vibecoding-worker@\$LIVE_WORKER_DIGEST"/);
   assert.doesNotMatch(prScan.run, /type=gha|--cache-to/,
     'PRs can import layers from the promoted image and publish no cache');
@@ -308,6 +310,25 @@ test('PR findings block against the exact base; post-merge findings are advisory
   assert.match(check, /docker buildx imagetools inspect "\$BASELINE_IMAGE" --format '\{\{json \.SBOM\}\}'/);
   assert.match(check, /node scripts\/security-findings\.js --assess "\$out" "\$component" "\$baseline"/);
   assert.match(check, /elif \[ -n "\$\{SECURITY_BASELINE_REVISION:-\}" \]/);
+});
+
+test('standalone PRs import only the Buildx layer cache from the main audit and scan their own image', () => {
+  const pr = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/kubernetes-pr-checks.yml'), 'utf8'));
+  const audit = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/security-audit.yml'), 'utf8'));
+  const steps = pr.jobs['security-images'].steps;
+  const find = steps.find((step) => step.id === 'standalone_cache');
+  const scan = steps.find((step) => step.name === 'Build and scan the finished image');
+  const publish = audit.jobs.scan.steps.find((step) => step.id === 'standalone_cache');
+  assert.equal(audit.jobs.scan.if, "github.ref == 'refs/heads/main'");
+  assert.match(publish.run, /--target buildx-tools[\s\S]*--cache-to "type=local,.*mode=min"/);
+  assert.match(find.run, /actions\/workflows\/security-audit\.yml\/runs/);
+  assert.match(find.run, /-f branch=main -f status=success/);
+  assert.match(find.run, /\.head_repository\.full_name == \.repository\.full_name/);
+  assert.match(find.run, /if gh run download "\$run_id"[\s\S]*&& \[ -s "\$cache\/index\.json" \]/);
+  assert.equal(scan.env.STANDALONE_BUILDX_CACHE, '${{ steps.standalone_cache.outputs.path }}');
+  assert.match(scan.run, /\[ "\$COMPONENT" = standalone \] && \[ -n "\$STANDALONE_BUILDX_CACHE" \]/);
+  assert.match(scan.run, /--cache-from "type=local,src=\$STANDALONE_BUILDX_CACHE"/);
+  assert.match(scan.run, /docker buildx build --load[\s\S]*sh scripts\/create-image-sbom\.sh[\s\S]*sh scripts\/check-image-security\.sh/);
 });
 
 test('only a digest already in the stable chart can skip the release scan', (t) => {
