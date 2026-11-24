@@ -139,10 +139,16 @@ const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 // card list first was a second, different loading state in front of theirs.
 const DEV_BODY_PLACE_INITIAL = { __html: '<div id="dev-workshop"></div>' };
 
-/** Whether the page opens on a place that draws its own loading shape. */
+/**
+ * Whether the page opens on a place that draws its own loading shape. 24 Nov
+ * 2026: the Workshop tab too under the standard look (no `data-skin`), whose
+ * front page draws its own parts while the board is read
+ * (workshop/front-page.tsx); the brand look keeps the card list.
+ */
 function opensOnOwnShape(): boolean {
   try {
     const tab = (window as any).AppView?._workshopTab?.();
+    if (tab === 'workshop') return !document.documentElement.hasAttribute('data-skin');
     return tab === 'status' || isChannelPlace(tab);
   } catch {
     return false;
