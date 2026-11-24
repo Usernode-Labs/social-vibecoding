@@ -42,7 +42,10 @@
 'use strict';
 
 // Materialize the ignored SQL input even for direct node --test invocations.
-require('../../src/db/schema-source').ensureSchema();
+const schemaPath = require('node:path').resolve(__dirname, '../../src/db/schema.sql');
+if (process.env.TEST_SHARD_VALIDATED_SCHEMA !== `${process.ppid}:${schemaPath}`) {
+  require('../../src/db/schema-source').ensureSchema();
+}
 
 const net = require('net');
 

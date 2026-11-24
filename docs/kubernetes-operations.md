@@ -1,5 +1,7 @@
 # Kubernetes runtime operations
 
+<!-- Control revision for the paired readiness benchmark. -->
+
 Use this runbook when `APP_RUNTIME=kubernetes`. The standalone Compose and
 host-deployer instructions in `README.md` and `SELF-HOSTING.md` describe the
 Docker installation. Kubernetes platform, worker, and capture images have no
