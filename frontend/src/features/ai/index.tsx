@@ -124,7 +124,7 @@ import { AiLists } from './lists';
 import { AiFrameList } from './frame-list';
 import { showsPicked } from './lines';
 import { isFrameSkin, useSkin } from '../../lib/skin';
-import { historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
+import { bareTab, historyAsked, isBotTabHash, kindOf, projectsOf, waitingAddress, waitingAsked, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
 import { cleanQuery, useBotSearch } from './search';
 import { clearSearchMark, currentSearchMark } from './search-mark';
@@ -368,6 +368,12 @@ export function AiScreen(): ReactNode {
   const [picked, setPicked] = useState<string[]>([]);
   const [historyKind, setHistoryKind] = useState<HistoryKind | null>(null);
   const [toHistory, setToHistory] = useState(0);
+  // WAITING ON YOU (24 Nov 2026): the list the head's Needs you count opens,
+  // every thing that needs you in one card, with its own address
+  // (`#homeroom-bot/waiting`, ./filter-address.ts). A row opened from it
+  // keeps it; Back to the bare tab leaves it.
+  const [waitingOpen, setWaitingOpen] = useState(false);
+  const waitingWas = useRef(false);
   const historyRef = useRef<HTMLDivElement | null>(null);
   // THE SEARCH BOX DOES NOT OUTLIVE THE VISIT (phone review, 23 Nov 2026, #3
   // and S14). This screen stays mounted while another is shown, so what was
@@ -390,6 +396,15 @@ export function AiScreen(): ReactNode {
     setPicked(projectsOf(hash));
     setHistoryKind(kindOf(hash));
     if (historyAsked(hash)) { setToHistory((n) => n + 1); endSearch(); }
+    // Opening Waiting on you reads the lists again, so something finished
+    // elsewhere (another screen, another device) is not still listed.
+    if (waitingAsked(hash)) {
+      if (!waitingWas.current) { waitingWas.current = true; setMoved((n) => n + 1); }
+      setWaitingOpen(true);
+    } else if (bareTab(hash)) {
+      waitingWas.current = false;
+      setWaitingOpen(false);
+    }
   };
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -412,6 +427,20 @@ export function AiScreen(): ReactNode {
   const pickKind = (kind: HistoryKind | null) => {
     setHistoryKind(kind);
     writeFilter({ picked, historyKind: kind });
+  };
+  // The head's Needs you count opens Waiting on you, in its own address (a
+  // link and a reload find it), and reads the lists again as it opens.
+  const openWaiting = () => {
+    waitingWas.current = true;
+    setWaitingOpen(true);
+    setMoved((n) => n + 1);
+    showAddress(waitingAddress(picked));
+  };
+  // All threads: back to the tab itself, the head and its three bands.
+  const closeWaiting = () => {
+    waitingWas.current = false;
+    setWaitingOpen(false);
+    showAddress(withFilter('#homeroom-bot', { projects: picked }));
   };
   // A project a link picked that no list names yet: its chip, from what
   // the Communities tab knows of it, else by its address alone, so the
@@ -1067,12 +1096,19 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (!mounted || !visible || !botId) return;
     const before = addressed.current;
-    const now = `${shown}|${detailSlot ? JSON.stringify(detailSlot) : ''}`;
+    const now = `${shown}|${detailSlot ? JSON.stringify(detailSlot) : ''}|${waitingOpen ? 'waiting' : ''}`;
     addressed.current = now;
     if (before === undefined) return;
     if (before === now) return;
-    showAddress(withFilter(columnAddress(columnShown), { projects: filterRef.current.picked, kind: filterRef.current.historyKind }));
-  }, [mounted, visible, botId, shown, detailSlot]); // eslint-disable-line react-hooks/exhaustive-deps
+    // #7103: while Waiting on you is the list, the column's own resting
+    // state (a new chat) keeps the waiting address rather than the bare
+    // tab's, so closing an item opened from it, or a window that changes
+    // layout, comes back to the list. An item in the column still writes
+    // its own address; All threads writes the bare tab's itself.
+    const href = columnAddress(columnShown);
+    const base = waitingOpen && href === BOT_TAB ? waitingAddress() : href;
+    showAddress(withFilter(base, { projects: filterRef.current.picked, kind: filterRef.current.historyKind }));
+  }, [mounted, visible, botId, shown, detailSlot, waitingOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   // A page the side panel takes is the column's: no design preview beside it.
   useEffect(() => { if (panel.open && detail?.kind === 'design') putAway(); }, [panel.open, detail]); // eslint-disable-line react-hooks/exhaustive-deps
   // On a phone the column slides back to the list; the address is the page's.
@@ -1344,6 +1380,9 @@ export function AiScreen(): ReactNode {
           historyRef={historyRef}
           doneOpen={toHistory}
           visit={lastVisit}
+          waitingOpen={waitingOpen}
+          onOpenWaiting={openWaiting}
+          onCloseWaiting={closeWaiting}
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
