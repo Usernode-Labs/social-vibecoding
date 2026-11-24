@@ -30376,6 +30376,10 @@ const AppView = {
   //                caller that is not on that app's screen (Homeroom bot's
   //                ready card). Defaults to the app on screen.
   //   opts.readOnly — overrides AppView.readOnly for that caller.
+  //   opts.waitForStart — a live draft's preview, which may still be
+  //                starting (features/messages/live-draft-bar.tsx): an
+  //                answer that it is not up yet is a wait, not a dead end
+  //                (_waitForStagingStart).
   _finishStagingTelemetry(attemptId, outcome, detail) {
     if (attemptId) window.UITelemetry?.outcome?.(attemptId, outcome, detail);
     if (AppView._stagingTelemetryAttempt === attemptId) AppView._stagingTelemetryAttempt = null;
@@ -30402,6 +30406,16 @@ const AppView = {
     const app = AppView._stagingApp(opts);
     const slug = app?.slug;
     const readOnly = AppView._stagingReadOnly(opts);
+    // Asked again for a live draft's preview while it is waiting for that
+    // preview to start (the draft's reload frame does): the wait stands and
+    // the server is asked once more, rather than the open starting over.
+    const parked = AppView._pendingStagingPreview;
+    if (opts && opts.waitForStart && parked && parked.waitForStart
+        && parked.sessionId === sessionId && parked.slug === slug
+        && parked.loadId === AppView._stagingLoadId
+        && typeof staging.isOpen === 'function' && staging.isOpen()) {
+      return AppView._recheckStagingStart(parked);
+    }
     const inheritedTelemetryAttempt = opts && opts.telemetryAttempt;
     const telemetryAttempt = inheritedTelemetryAttempt
       || window.UITelemetry?.attempt?.('preview_open', {
@@ -30566,6 +30580,15 @@ const AppView = {
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
+    // A live draft's preview that is still starting: the server answers
+    // missing until its address is written, and unhealthy or edge while it
+    // comes up. That is a wait, parked like a rebuild's, so the preview
+    // opens by itself once it is up.
+    if (data.status === 'unavailable' && opts && opts.waitForStart
+        && AppView.STAGING_START_REASONS.includes(data.reason)) {
+      AppView._waitForStagingStart({ sessionId, slug, testing, loadId, retry, telemetryAttempt, opts });
+      return;
+    }
     if (data.status === 'unavailable') {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       // Stopped (previews stop after a while unused): it says so, and how
@@ -30616,6 +30639,9 @@ const AppView = {
       telemetryAttempt,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
+      // A live draft's preview woken here keeps waiting if it is not quite
+      // up when its staging_awake lands, rather than showing a dead end.
+      ...(opts && opts.waitForStart ? { waitForStart: true, rechecks: 0 } : {}),
     };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
@@ -30630,6 +30656,99 @@ const AppView = {
         offerShots: true,
       });
     }, 180000);
+  },
+
+  // What preview-status answers about a preview that is still starting
+  // (src/routes/sessions.js inspectPreview): no address yet, or up but not
+  // yet answering, itself or through its public address.
+  STAGING_START_REASONS: ['missing', 'unhealthy', 'edge'],
+  STAGING_START_GIVE_UP_MS: 180000,
+  // Asked again on its own, in case its staging_ready is missed: every ten
+  // seconds, for as long as the give-up time.
+  STAGING_START_RECHECK_MS: 10000,
+  STAGING_START_RECHECKS: 18,
+  _stagingStartTimer: null,
+
+  // A live draft's preview is starting (ensureStaging's opts.waitForStart).
+  // The loader says so, and the marker is parked as for a rebuild (the same
+  // fields, read-only kept), so staging_ready / staging_awake bring it back
+  // through ensureStaging's ready gate. The same bounded give-up as a
+  // rebuild's, with words that are true for a start, and the marker stays
+  // parked after it.
+  _waitForStagingStart({ sessionId, slug, testing, loadId, retry, telemetryAttempt, opts }) {
+    AppView._setStagingLoader(true, {
+      title: PlatformI18n.t('changes:frame.loader.starting'),
+      sub: PlatformI18n.t('changes:frame.loader.startingSub'),
+      offerShots: true,
+    });
+    const pending = {
+      sessionId, slug, testing, loadId, retry,
+      telemetryAttempt,
+      app: opts && opts.app ? opts.app : null,
+      readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
+      waitForStart: true,
+      rechecks: 0,
+    };
+    AppView._pendingStagingPreview = pending;
+    if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
+    AppView._stagingRebuildTimer = setTimeout(() => {
+      if (loadId !== AppView._stagingLoadId || AppView._pendingStagingPreview !== pending) return;
+      AppView._setStagingLoader(true, {
+        title: PlatformI18n.t('changes:frame.loader.slow'),
+        sub: PlatformI18n.t('changes:frame.loader.slowStart'),
+        ...AppView._offerStagingPreviewRetry(retry),
+        offerShots: true,
+      });
+    }, AppView.STAGING_START_GIVE_UP_MS);
+    AppView._scheduleStagingStartRecheck(pending);
+  },
+
+  _scheduleStagingStartRecheck(pending) {
+    if (AppView._stagingStartTimer) clearTimeout(AppView._stagingStartTimer);
+    AppView._stagingStartTimer = null;
+    if ((pending.rechecks || 0) >= AppView.STAGING_START_RECHECKS) return;
+    AppView._stagingStartTimer = setTimeout(() => {
+      AppView._stagingStartTimer = null;
+      if (AppView._pendingStagingPreview !== pending) return;
+      pending.rechecks = (pending.rechecks || 0) + 1;
+      AppView._recheckStagingStart(pending);
+    }, AppView.STAGING_START_RECHECK_MS);
+  },
+
+  // Asks preview-status once more about a preview still starting. Still not
+  // up: the wait goes on. Any other answer goes through ensureStaging again,
+  // whose branches decide, ready or not.
+  async _recheckStagingStart(pending) {
+    const current = () => AppView._pendingStagingPreview === pending && pending.loadId === AppView._stagingLoadId;
+    if (!current()) return;
+    let data = null;
+    try {
+      let demo = '';
+      try { demo = AppView._demoQS(); } catch { demo = ''; }
+      const res = await fetch(`/api/sessions/${pending.sessionId}/preview-status${demo}`);
+      data = res.ok ? await res.json().catch(() => null) : null;
+    } catch { data = null; }
+    if (!current()) return;
+    const stillStarting = !data || data.status === 'rebuilding'
+      || (data.status === 'unavailable' && AppView.STAGING_START_REASONS.includes(data.reason));
+    if (stillStarting) {
+      AppView._scheduleStagingStartRecheck(pending);
+      return;
+    }
+    if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    AppView._pendingStagingPreview = null;
+    return AppView._reopenParkedStaging(pending, data.url || null);
+  },
+
+  // The parked open again, with what it was asked with.
+  _reopenParkedStaging(pending, url) {
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
+    return AppView.ensureStaging(pending.sessionId, url, pending.testing, {
+      telemetryAttempt: pending.telemetryAttempt,
+      ...(pending.app ? { app: pending.app } : {}),
+      ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
+      ...(pending.waitForStart ? { waitForStart: true } : {}),
+    });
   },
 
   // #439: terminal loader state when a rebuild can't proceed (no changes,
@@ -30673,6 +30792,7 @@ const AppView = {
       return;
     }
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
     AppView._pendingStagingPreview = null;
     if (failed) {
       AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'unavailable' });
@@ -30689,11 +30809,8 @@ const AppView = {
       // not prove the new runtime still answers by the time this browser
       // receives the event. Re-enter ensure-staging so the exact same
       // revision/health/edge gate runs before iframe navigation (#2328).
-      return AppView.ensureStaging(sessionId, url, pending.testing, {
-        telemetryAttempt: pending.telemetryAttempt,
-        ...(pending.app ? { app: pending.app } : {}),
-        ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
-      });
+      // A live draft's start keeps waiting if it is not up by then.
+      return AppView._reopenParkedStaging(pending, url);
     }
     AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
     AppView._showStagingUnavailable(pending.loadId, PlatformI18n.t('changes:frame.unavailable.noAddress'), pending.retry);
@@ -31710,6 +31827,7 @@ const AppView = {
     }
     AppView._pendingStagingPreview = null;
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    if (AppView._stagingStartTimer) { clearTimeout(AppView._stagingStartTimer); AppView._stagingStartTimer = null; }
     // #816: drop the iframe-load watch + its safety timeout so a late load
     // event from the preview being torn down here can't re-touch the loader.
     if (AppView._stagingIframeTimer) { clearTimeout(AppView._stagingIframeTimer); AppView._stagingIframeTimer = null; }

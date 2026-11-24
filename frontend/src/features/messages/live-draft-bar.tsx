@@ -62,6 +62,11 @@ export interface LiveDraft {
   editable?: boolean;
   /** C: its proposal while it is one, and how many edits are not in it yet. */
   proposal?: { sessionId: number; prNumber: number | null; open: boolean; pending: number; headSha: string | null } | null;
+  /**
+   * 24 Nov 2026: the proposal it started from, or null for main. `linked`:
+   * the person's own, which the draft is on from the start.
+   */
+  builtOn?: { sessionId: number; prNumber: number | null; open: boolean; merged: boolean; linked: boolean } | null;
 }
 
 /** Pure (C): whether a draft is still shown: open, or up for a vote and still edited. */
@@ -91,6 +96,15 @@ export function draftHeadLine(draft: LiveDraft): { id: string; values?: Record<s
   const proposal = draft.state === 'proposed' ? draft.proposal : null;
   if (proposal) {
     if (proposal.pending > 0) return { id: 'messages:liveDraft.head.pending', values: { count: proposal.pending }, bad: false };
+    // Started on their own proposal and not changed yet: it is on that PR,
+    // with nothing of its own ("Up for a vote with every change" said a
+    // change was made).
+    if (draft.builtOn?.linked && !draft.edits) {
+      const number = draft.builtOn.prNumber ?? proposal.prNumber;
+      return number
+        ? { id: 'messages:liveDraft.head.onProposal', values: { number }, bad: false }
+        : { id: 'messages:liveDraft.head.none', bad: false };
+    }
     return { id: 'messages:liveDraft.head.inProposal', bad: false };
   }
   if (!draft.edits) return { id: 'messages:liveDraft.head.none', bad: false };
@@ -173,13 +187,28 @@ export function openLivePreview(draft: LiveDraft) {
   openPreview(draft);
 }
 
+/**
+ * Pure (24 Nov 2026): what a draft's preview is opened with. The look-only
+ * open: the draft's preview is built by the server, never by this press
+ * (services/live-drafts.js open). `waitForStart`: a preview not up yet is
+ * still starting (the server says "live" a moment before its address is
+ * written), so the pane waits for it and opens it by itself, rather than
+ * saying it stopped and that somebody who works on the project can start it
+ * (AppView.ensureStaging). Not for one that could not start: that is said.
+ */
+export function draftPreviewOpts(draft: LiveDraft): { readOnly: true; app: { slug: string }; waitForStart?: true } {
+  return {
+    readOnly: true,
+    app: { slug: draft.app.slug },
+    ...(draft.live === 'failed' ? {} : { waitForStart: true as const }),
+  };
+}
+
 function openPreview(draft: LiveDraft) {
   const view = typeof window !== 'undefined' ? (window as any).AppView : null;
   if (!draft.sessionId || !view || typeof view.ensureStaging !== 'function') return;
   shownSession = draft.sessionId;
-  // The look-only open: the draft's preview is built by the server, never
-  // by this press (services/live-drafts.js open).
-  void view.ensureStaging(draft.sessionId, null, null, { readOnly: true, app: { slug: draft.app.slug } });
+  void view.ensureStaging(draft.sessionId, null, null, draftPreviewOpts(draft));
 }
 
 /**

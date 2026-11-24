@@ -6523,6 +6523,10 @@
     "text": "{{count}} changes not in the proposal yet",
     "description": "Short status in the header of a live draft's preview after it was proposed: changes made in the draft since, which reach the proposal only with Update proposal. Plural form."
   },
+  "liveDraft.head.onProposal": {
+    "text": "On PR #{{number}} · no changes yet",
+    "description": "Short status in the header of a live draft's preview when the draft was started on the person's own proposal and Homeroom bot has not changed anything in it yet. {{number}} is that proposal's number."
+  },
   "liveDraft.head.inProposal": {
     "text": "Up for a vote with every change",
     "description": "Short status in the header of a live draft's preview once it is proposed and the proposal has every change made in the draft."
