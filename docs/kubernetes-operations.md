@@ -77,8 +77,10 @@ check Jobs. Keep each change with its owner; source commits do not themselves
 change the cluster. Review the normal release/GitOps diff before deployment.
 
 Argo notices a new chart on its periodic reconcile, up to three minutes
-after the push. After a successful chart push, `refresh-kubernetes-release.yml`
-requests a hard refresh to bypass Argo's cached chart lookup. This workflow
+after the push. The publisher asks Argo once, as soon as the release tag has
+moved, without waiting for the answer. After a successful chart push,
+`refresh-kubernetes-release.yml` requests a hard refresh to bypass Argo's cached
+chart lookup, unless Argo has already started on the release. This workflow
 runs outside the release queue and reports refresh failures independently
 of the release result. Periodic reconciliation handles unused or failed
 refresh requests.

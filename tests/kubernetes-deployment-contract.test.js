@@ -348,7 +348,17 @@ test('Kubernetes workflow retries the chart push before it fails a release (#665
 test('Argo refresh runs separately and only for a published stable chart', () => {
   const release = read('.github/workflows/build-kubernetes-images.yml');
   const refresh = read('.github/workflows/refresh-kubernetes-release.yml');
-  assert.doesNotMatch(release, /refresh=hard/);
+  // The publisher asks Argo once, after the tag moved, without waiting for the
+  // comparison (which took a minute under its lock) and without its answer
+  // deciding anything. The separate workflow confirms the refresh.
+  const ask = release.slice(release.indexOf('- name: Ask Argo CD to compare the new release'));
+  const step = ask.slice(0, ask.indexOf('\n      - name: ', 1));
+  assert.equal((release.match(/refresh=hard/g) || []).length, 1);
+  assert.ok(release.indexOf('- name: Promote OCI release tag') < release.indexOf('- name: Ask Argo CD to compare the new release'));
+  assert.match(step, /if: steps\.current_head\.outputs\.publish == 'true'/);
+  assert.match(step, /\[ -n "\$ARGOCD_REFRESH_TOKEN" \] \|\| exit 0/);
+  assert.match(step, /--max-time 3 /);
+  assert.match(step, /refresh=hard' \|\| true\n/);
   assert.match(refresh, /workflows: \[Build Kubernetes images\]\n    branches: \[main\]\n    types: \[completed\]/);
   assert.match(refresh, /workflow_run\.conclusion == 'success'/);
   assert.match(refresh, /workflow_run\.head_repository\.full_name == github\.repository/);
