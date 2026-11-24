@@ -9,6 +9,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -55,14 +56,27 @@ test('the model is given the request, the plan and each change, labelled and cli
   assert.match(summary.promptInput(inputs({ plan: 'A plan.' })), /CHANGES BUILT FOR IT: none yet\./);
 });
 
-// A pool that plays request_summaries, the shared plan and the changes.
-function fakePool({ plan = null, changes = [] } = {}) {
-  const state = { row: null, plan, changes, queries: [] };
+// A pool that plays request_summaries, the shared plan, the changes, and the
+// request rows `refresh` reads.
+function fakePool({ plan = null, changes = [], request = null, attached = [] } = {}) {
+  const state = { row: null, plan, changes, request, attached, queries: [] };
   const query = async (sql, args) => {
     state.queries.push(sql);
     if (/FROM chat_session_specs/.test(sql)) return { rows: state.plan ? [{ content: state.plan }] : [] };
     if (/FROM chat_sessions cs/.test(sql)) {
       return { rows: state.changes.map((c) => ({ id: c.id, pr_title: c.title, pr_summary_md: c.summary, status: c.merged ? 'merged' : 'promoted', username: c.by })) };
+    }
+    if (/SELECT DISTINCT r\.number/.test(sql)) return { rows: state.attached.map((number) => ({ number })) };
+    if (/FROM requests r\s+LEFT JOIN users/.test(sql)) {
+      const r = state.request;
+      return { rows: r ? [{
+        title: r.title ?? 'Dark mode switch',
+        body: r.body ?? 'Settings is three taps away.',
+        state: r.state ?? 'open',
+        author_login: r.author_login ?? null,
+        created_by_username: r.created_by_username ?? 'maya',
+        issue_username: r.issue_username ?? null,
+      }] : [] };
     }
     if (/^SELECT input_key/.test(sql.trim())) return { rows: state.row ? [state.row] : [] };
     if (/^INSERT INTO request_summaries/.test(sql.trim())) {
@@ -148,13 +162,76 @@ test('with no model (a staging copy) nothing is written, and a broken read is a 
   assert.equal(await summary.forRequest({ query: async () => { throw new Error('db down'); } }, { appId: 7, number: 12, issue, asker: 'maya' }, { enabled: true }), null);
 });
 
+test('a plan is summarised first, and a change attached afterwards is written again', async () => {
+  const pool = fakePool({ plan: 'A moon button.' });
+  const seen = [];
+  const deps = { enabled: true, wait: true, generate: async ({ input }) => { seen.push(input); return { summary: `Summary ${seen.length}.` }; } };
+  assert.deepEqual(await ask(pool, deps), { text: 'Summary 1.', basis: 'plan' });
+  assert.match(seen[0], /CHANGES BUILT FOR IT: none yet\./, 'nothing was built when the plan was written');
+  pool.state.changes = [change()];
+  assert.deepEqual(await ask(pool, deps), { text: 'Summary 2.', basis: 'change' }, 'a change built for it is new to say');
+  assert.match(seen[1], /CHANGE\s+\(up for a vote\)/, 'the model is told where the change stands');
+  assert.doesNotMatch(seen[1], /none yet/, 'and never that nothing is built');
+});
+
+test('the key names the v2 inputs, so a summary written before it is written again', () => {
+  assert.match(read('src/services/request-summary.js'), /'v2'/, 'every stored row mismatches and is rewritten on its next read');
+  const v1 = crypto.createHash('sha256')
+    .update(['v1', 'Dark mode switch', 'Settings is three taps away.', 'maya', '', '51:A moon button beside the bell:Adds a moon button to the header.:open'].join('\u0000'))
+    .digest('hex');
+  assert.notEqual(summary.inputKey(inputs({ changes: [change()] })), v1);
+});
+
+test('a change put up for a vote rewrites the summary of the request it is attached to', async () => {
+  const pool = fakePool({ plan: 'A moon button.', request: {}, attached: [12] });
+  let calls = 0;
+  const deps = { enabled: true, wait: true, generate: async () => { calls += 1; return { summary: 'The new words.' }; } };
+  const listener = summary.onBoardChange(pool, deps);
+  await listener({ appId: 7, appSlug: 'demo', sessionId: 51, action: 'promoted' });
+  assert.equal(calls, 1, 'the summary is written without a page read');
+  assert.deepEqual({ text: pool.state.row.summary, basis: pool.state.row.basis }, { text: 'The new words.', basis: 'plan' });
+  assert.match(pool.state.queries.join('\n'), /SELECT DISTINCT r\.number/, 'the requests it is attached to are found first');
+
+  const before = pool.state.queries.length;
+  assert.deepEqual(await listener({ appId: 7, appSlug: 'demo', sessionId: 51, action: 'merged' }), []);
+  assert.equal(pool.state.queries.length, before, 'any other action asks nothing');
+
+  const closed = fakePool({ plan: 'A moon button.', request: { state: 'closed' }, attached: [12] });
+  let closedCalls = 0;
+  await summary.onBoardChange(closed, { enabled: true, wait: true, generate: async () => { closedCalls += 1; return { summary: 'x' }; } })({ appId: 7, sessionId: 51, action: 'promoted' });
+  assert.equal(closedCalls, 0, 'a closed request is left alone');
+});
+
 test('only what every member can read reaches the model: shared plans, and changes up for a vote or merged', () => {
   const src = read('src/services/request-summary.js');
   assert.match(src, /AND s\.shared_to_group_at IS NOT NULL/, 'a draft plan is not read');
   assert.match(src, /AND cs\.is_headless = FALSE\s+AND cs\.status IN \('promoted', 'merging', 'merged'\)/, 'a change still in somebody\'s workspace is not read');
+  assert.match(src, /\$2::int = ANY\(cs\.linked_issues\)/, 'a change that names the request is read');
+  assert.match(src, /cs\.created_from_issue_number = \$2/, 'a change started from the request is read');
+  assert.match(src, /cs\.thread_id IN \(SELECT t\.id FROM requests r JOIN threads t ON t\.id = r\.thread_id/, 'a change on the request\'s thread is read');
+  assert.match(src, /SELECT t\.merged_into FROM requests/, 'and one on the thread it merged into');
+  assert.doesNotMatch(src, /request_summaries WHERE app_id = \$1 AND issue_number = \$2 AND input_key/, 'never a backfill sweep of every row');
   const sql = read('src/db/migrations/request-summaries.sql');
   assert.match(sql, /COMMENT ON TABLE request_summaries IS 'staging:private';/, 'a staging copy gets none of the rows');
   assert.match(sql, /PRIMARY KEY \(app_id, issue_number\)/);
+});
+
+test('the model is told to say where a listed change stands, never that nothing is built', () => {
+  const src = read('src/services/llm.js');
+  const fn = src.slice(src.indexOf('async function generateRequestSummary'), src.indexOf('const REVISED_DESCRIPTION_SCHEMA'));
+  assert.doesNotMatch(fn, /Say plainly when nothing is built yet/);
+  assert.match(fn, /When the text lists a change, say in words where it stands \(up for a vote, or merged\), and never say nothing is built\./);
+  assert.match(fn, /only when the text says "CHANGES BUILT FOR IT: none yet\."/, 'nothing built is said only when none is listed');
+  assert.match(fn, /Do not name pull request numbers/);
+});
+
+test('a change put up for a vote reaches the summary in every process', () => {
+  const server = read('server.js');
+  assert.match(server, /ws\.onBoardChange\(requestSummary\.onBoardChange\(getPool\(config\)\)\)/, 'the summary listener is registered beside the Workshop\'s');
+  const ws = read('src/services/ws.js');
+  assert.match(ws, /sessionId: data\.sessionId \?\? null/, 'noteBoardChange forwards the change\'s id');
+  assert.match(ws, /action: data\.action \?\? null/, 'and what happened to it');
+  assert.match(ws, /sessionId: data \? \(data\.sessionId \?\? null\) : null/, 'the bus relay carries them from the machine\'s push');
 });
 
 test('the model call: a helper of its own, told the text is material and never instructions', () => {

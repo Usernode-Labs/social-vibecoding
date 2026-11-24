@@ -85,7 +85,12 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       if (oversize) deliverGlobal(payload);
       else deliverGlobalScoped(payload, { appId: r.appId ?? null, appSlug: r.appSlug ?? null });
       // A card a machine moved on a board: the Workshop hears it (debounced, leased).
-      if (fromWorkflow && r.boardChange) noteBoardChange({ appId: r.appId ?? null, appSlug: r.appSlug ?? null });
+      if (fromWorkflow && r.boardChange) noteBoardChange({
+        appId: r.appId ?? null,
+        appSlug: r.appSlug ?? null,
+        sessionId: data ? (data.sessionId ?? null) : null,
+        action: data ? (data.action ?? null) : null,
+      });
       return;
     case 'admins':
       deliverToAdmins(payload);
@@ -2497,7 +2502,12 @@ function noteBoardChange(data) {
   if (!data || (data.appId == null && !data.appSlug)) return;
   for (const fn of boardChangeListeners) {
     try {
-      fn({ appId: data.appId ?? null, appSlug: data.appSlug ?? null });
+      fn({
+        appId: data.appId ?? null,
+        appSlug: data.appSlug ?? null,
+        sessionId: data.sessionId ?? null,
+        action: data.action ?? null,
+      });
     } catch (err) {
       log.warn('ws', 'board change listener failed', { message: err.message });
     }
