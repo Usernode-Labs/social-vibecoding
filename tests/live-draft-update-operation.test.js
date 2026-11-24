@@ -6,7 +6,9 @@
 // branch to the draft's head only as a fast-forward, under the proposal
 // lock, then hands the move to the head-moved machinery
 // (proposal-update.js settleLandedHead), and refuses a draft that is not the
-// requester's, not up for a vote, or whose proposal is no longer open.
+// requester's, not up for a vote, or whose proposal is no longer open or not
+// the requester's own (24 Nov 2026: a draft can be opened on a proposal it
+// did not make).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -49,6 +51,7 @@ test('draft.update moves the proposal to the draft\'s head as a fast-forward, th
   const draft = {
     id: 3, user_id: 7, app_id: 4, state: 'proposed', head_sha: HEAD, proposal_session_id: 50, proposed_head_sha: 'a'.repeat(40),
     app_slug: 'gym', repo_url: 'https://github.com/acme/gym', proposal_status: 'promoted', proposal_branch: 'dev/draft-50',
+    proposal_user_id: 7,
   };
   const pool = fakePool(draft);
   const calls = [];
@@ -82,6 +85,12 @@ test('draft.update moves the proposal to the draft\'s head as a fast-forward, th
   draft.proposal_status = 'merging';
   assert.equal((await op.authorize({ pool }, request, user)).status, 409);
   draft.proposal_status = 'promoted';
+  // 24 Nov 2026: a draft opened on a proposal it did not make moves only a
+  // proposal of its own author's, whoever made it.
+  draft.proposal_user_id = 8;
+  const theirs = await op.authorize({ pool }, request, user);
+  assert.deepEqual([theirs.status, theirs.error], [403, 'That proposal is someone else\'s, so this draft cannot update it.']);
+  draft.proposal_user_id = 7;
 
   // A proposal that moved some other way is refused, never overwritten.
   github.advanceBranchToSha = async () => { throw Object.assign(new Error('nope'), { code: 'non_fast_forward' }); };
