@@ -49,6 +49,7 @@ import { firstRowInView, scrollCorrection, type MeasuredRow, type SavedPlace } f
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
 import { InboxToEnd } from './inbox-to-end';
+import { ListDivider } from './list-divider';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
@@ -596,10 +597,11 @@ function NewMessageButton() {
 }
 
 /**
- * The list's heading (16 Oct 2026): People in small caps, and how many
- * messages from people are unread ("3 unread"). It was the second of two
- * headings until Agents left the list (16 Nov 2026), and it stays: it says
- * what the rows are, and carries the count. It does not fold.
+ * The list's heading (16 Oct 2026): DMs & groups in small caps (People until
+ * 24 Nov 2026, though it held group chats too), and how many messages from
+ * people are unread ("3 unread"). It was the second of two headings until
+ * Agents left the list (16 Nov 2026), and it stays: it says what the rows
+ * are, and carries the count. It does not fold.
  */
 function PeopleHead({ aside }: { aside: string | null }) {
   const t = useMessages('messages');
@@ -1025,6 +1027,10 @@ function ConversationList({ drawer = false }: {
         ) : null}
       </div>
       <InboxToEnd scroller={scrollRef} />
+      {/* Desktop polish 09: the line between the list and the pane beside
+          it is a handle (./list-divider.tsx). After the foot, which has to
+          stay the scroller's next sibling (app.css, the inbox's fade). */}
+      <ListDivider />
     </section>
   );
 
