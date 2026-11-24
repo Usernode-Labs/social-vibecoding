@@ -6691,6 +6691,8 @@ html:not([data-skin]) {
   --wip-ink-muted: rgb(0 0 0 / 0.6);
   --wip-ink-action: #000000;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 6px 14px -6px rgb(0 0 0 / 0.16);
+  /* A field's soft drop under its hairline: the line box, which is white on a white card. */
+  --wip-field-drop: 0 1px 2px rgb(0 0 0 / 0.06);
   /* The filled action is the kit's Cream + Black: yellow on a cream page
      would be the quietest thing on it. */
   --wip-cta-from: #000000;
@@ -6745,6 +6747,7 @@ html:not([data-skin]).dark {
   --wip-ink-muted: rgb(255 254 234 / 0.62);
   --wip-ink-action: #fffeea;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
+  --wip-field-drop: 0 1px 2px rgb(0 0 0 / 0.4);
   /* On black the filled action is the kit's Black + Yellow. */
   --wip-cta-from: #ffee6f;
   --wip-cta-via: #ffee6f;
@@ -9179,6 +9182,84 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state-ok { background-color: transparent; color: var(--wip-tag-ok-ink); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-ws-row-state-ok::before { background-color: var(--wip-tag-ok-ink); box-shadow: 0 0 0 3px var(--wip-tag-ok-bg); }
 html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="all"] #dev-kanban .dev-vote-btn { height: 2rem; padding-inline: 0.875rem 0.625rem; font-size: 0.8125rem; font-weight: 700; }
+/* THE BOARD'S VOTE PICKER (request #7065). The picker that opens on a card's
+   Still yes?, Vote or Approve on All items is portaled out of the page — to
+   <body> (.dev-vote-pop) or into the phone's kit sheet (.dev-vote-sheet) — so
+   the board's scoped rules cannot reach it, and it fell back to the shell's
+   blue. When its button stands on the board the picker's frame carries
+   data-vote-look="board" (dev-card.tsx), and its parts are painted here from
+   the board's own --wip-* tokens: the switch track is a column's tray, the
+   picked Yes and Vote yes are the page's sun pill with its ink outline and
+   hard foot, the line box is a white field with a soft edge, and the labels
+   are the look's muted ink. A No keeps the app's own red (the look has none),
+   and the tallies keep their own inks. Every rule is the standard look's
+   alone, so the brand look's own picker rules still paint there; the tokens
+   are declared on html, so the dark look follows without a rule of its own.
+   Colours, backgrounds, borders, shadows, the focus ring and the press only:
+   no size, padding, radius or type changes. */
+html:not([data-skin]) .dev-vote-pop[data-vote-look="board"] {
+  background: var(--wip-card-bg);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
+  font-family: var(--wip-font);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch {
+  background: var(--wip-tray);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-opt:not([aria-pressed="true"]):hover {
+  background: var(--wip-card-bg);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] {
+  background: var(--wip-top-cta-bg);
+  color: var(--wip-top-cta-ink);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] .dev-vote-n {
+  color: var(--wip-top-cta-ink);
+}
+html:not([data-skin]):not(.dark):not([data-app-tone="dark"]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-switch-yes[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px var(--wip-top-cta-ink);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] :is(.dev-vote-switch-label, .dev-vote-uncounted, .dev-vote-reason-label) {
+  color: var(--wip-ink-muted);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt {
+  background: var(--wip-card-bg);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt[aria-checked="true"] {
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked);
+  border-color: transparent;
+  box-shadow: none;
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-why-opt:focus-visible {
+  outline-color: var(--wip-ink-action);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-box {
+  background: var(--wip-card-bg);
+  color: var(--wip-ink);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-field-drop);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-box:focus {
+  outline-color: var(--wip-ink-action);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-cancel:hover {
+  background: var(--wip-ghost);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes {
+  background: var(--wip-top-cta-bg);
+  color: var(--wip-top-cta-ink);
+  box-shadow: var(--wip-top-cta-edge);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes:not(:disabled):hover {
+  filter: brightness(1.04);
+}
+html:not([data-skin]) :is(.dev-vote-pop, .dev-vote-sheet)[data-vote-look="board"] .dev-vote-reason-send-yes:not(:disabled):active {
+  box-shadow: var(--wip-top-cta-edge-down);
+  transform: var(--wip-top-cta-press);
+}
 /* THE BOARD'S TIES (board-links.ts): while a card is rested on, a ring
    round it and round each card it is tied to, and an arrow from a request
    to each change made for it, drawn in a layer over the page that takes no
