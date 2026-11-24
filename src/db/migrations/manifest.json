@@ -572,9 +572,14 @@
       "schemaSha256": "9521bc6ef2764c2430c56e839bc6ae5d7b3c3656ce2467e07921278b10b682d8"
     },
     {
+      "id": "live-drafts-built-on",
+      "sha256": "14dbc0de5d32e951d9200e68f0e1ac6d0f8cc934c512a0c124ce464df4a241d0",
+      "schemaSha256": "489219b9bf76852e08c517c5e95db9a96eb3ade010639ef70e7a810c8ae991f8"
+    },
+    {
       "id": "thread-mention-dismissals",
       "sha256": "d4315f556738b7a2b1ed8d1e94d81f9e514473797c6da2e37a10ed21c511f1a3",
-      "schemaSha256": "59c7aefec14a0c3159b3536996223ae20af180c48bbb2aed96e5b5b41a67e649"
+      "schemaSha256": "40bd67b5de987ee2cb8d6a5ac9d1d483e9d7951b020913dd11fe203a2d6e2dfa"
     }
   ]
 }
