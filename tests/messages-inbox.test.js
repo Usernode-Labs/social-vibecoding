@@ -423,8 +423,8 @@ test('#name is a channel only when the viewer has one; #123 stays an issue and P
   assert.deepEqual(segs.filter((s) => s.type !== 'text'), [
     { type: 'channel', handle: 'general' },
     { type: 'channel', handle: 'recipe-box' },
-    { type: 'ref', isPr: false, num: '123' },
-    { type: 'ref', isPr: true, num: '9' },
+    { type: 'ref', isPr: false, num: '123', label: '#123' },
+    { type: 'ref', isPr: true, num: '9', label: 'PR#9' },
     { type: 'mention', name: 'ada' },
   ]);
   assert.equal(segs.map((s) => s.value || '').join('').includes('#todo'), true, 'an unknown #word is left as text');

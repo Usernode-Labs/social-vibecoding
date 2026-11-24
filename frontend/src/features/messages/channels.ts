@@ -87,10 +87,23 @@ export function channelDirectory(
 export type RefSegment =
   | { type: 'text'; value: string }
   | { type: 'mention'; name: string }
-  | { type: 'ref'; isPr: boolean; num: string }
+  | { type: 'ref'; isPr: boolean; num: string; label: string }
   | { type: 'channel'; handle: string };
 
-const TOKEN = /(^|[^\w&])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
+const TOKEN = /(^|[^\w&])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|((?:change|proposal|pull request) ?#|pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
+
+/**
+ * #7066: a number the words name as a change ("Change #N", "proposal #N",
+ * "pull request #N") is a change, the rule the server's
+ * src/services/request-mentions.js already applies. A bare `#N` stays a
+ * request. `PR#N` keeps its short label; every other label keeps the
+ * writer's words.
+ */
+function refLabel(prefix: string, num: string): string {
+  if (/^pr ?#$/i.test(prefix)) return `PR#${num}`;
+  if (prefix === '#') return `#${num}`;
+  return `${prefix}${num}`;
+}
 
 export function tokenizeRefs(text: string, handles: ReadonlySet<string>): RefSegment[] {
   const segs: RefSegment[] = [];
@@ -112,7 +125,7 @@ export function tokenizeRefs(text: string, handles: ReadonlySet<string>): RefSeg
     pushText(text.slice(pos, m.index));
     pushText(m[1]);
     if (m[3] != null) segs.push({ type: 'mention', name: m[3] });
-    else if (m[5] != null) segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5] });
+    else if (m[5] != null) segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5], label: refLabel(m[4], m[5]) });
     else segs.push({ type: 'channel', handle: m[6].toLowerCase() });
     pos = m.index + m[0].length;
   }
@@ -194,7 +207,7 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
         chip.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
         chip.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
         chip.setAttribute('data-ref-number', seg.num);
-        chip.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+        chip.textContent = seg.label;
         frag.appendChild(chip);
       } else {
         const link = doc.createElement('a');

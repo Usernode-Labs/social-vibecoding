@@ -212,6 +212,39 @@ test('tokenizeMentionsAndRefs does not chip @name fused to a word char', () => {
   assert.deepEqual(Array.from(segs, (s) => s.type), ['text']);
 });
 
+// ─── #7066: a number the words name as a change is a change ────────────────
+
+test('#7066: tokenizeMentionsAndRefs treats Change #N as a change and keeps the writer’s words', () => {
+  const { tokenizeMentionsAndRefs } = loadGroupChat();
+  const segs = tokenizeMentionsAndRefs('on Change #7063; see #12', 'alice');
+  assert.deepEqual(Array.from(segs, (s) => s.type), ['text', 'ref', 'text', 'ref']);
+  assert.equal(segs[0].value, 'on ');
+  assert.equal(segs[1].isPr, true);
+  assert.equal(segs[1].num, '7063');
+  assert.equal(segs[1].label, 'Change #7063');
+  assert.equal(segs[3].isPr, false, 'a bare #N is still the request');
+  assert.equal(segs[3].num, '12');
+  assert.equal(segs[3].label, '#12');
+});
+
+test('#7066: proposal and pull request are changes too; PR# keeps its short label', () => {
+  const { tokenizeMentionsAndRefs } = loadGroupChat();
+  const segs = tokenizeMentionsAndRefs('proposal #31 pull request #32 PR #33 change#34', 'alice');
+  const refs = segs.filter((s) => s.type === 'ref');
+  assert.deepEqual(Array.from(refs, (s) => s.label),
+    ['proposal #31', 'pull request #32', 'PR#33', 'change#34']);
+  assert.deepEqual(Array.from(refs, (s) => s.num), ['31', '32', '33', '34']);
+  assert.ok(refs.every((s) => s.isPr));
+});
+
+test('#7066: a word that only ends in change is not a label', () => {
+  const { tokenizeMentionsAndRefs } = loadGroupChat();
+  const segs = tokenizeMentionsAndRefs('exchange #5', 'alice');
+  const ref = segs.find((s) => s.type === 'ref');
+  assert.equal(ref.isPr, false);
+  assert.equal(ref.label, '#5');
+});
+
 // ─── (A2) decoration walker over a marked-style tree ────────────────────────
 
 function el(document, tag, ...kids) {
@@ -299,6 +332,36 @@ test('the mounting caller\'s app names the chip\'s address, not the app view\'s'
   });
   GroupChat._app = { slug: 'other' };
   assert.match(renderWithMentions('#28'), /href="#app\/other\/dev\/issues\/28"/);
+});
+
+// ─── #7066: a labelled change ref renders as the change link ───────────────
+
+test('#7066: labelled refs render as change links that keep the writer’s words', () => {
+  const { renderWithMentions, renderMessageBody } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  for (const text of ['Change #31', 'proposal #31', 'pull request #31']) {
+    for (const out of [renderWithMentions(text), renderMessageBody(text)]) {
+      assert.match(out,
+        /<a class="gc-ref gc-ref-pr" href="#app\/lost-starways\/dev\/changes\/31" data-ref-type="pr" data-ref-number="31">/,
+        `"${text}" opens the change`);
+      assert.ok(out.includes(`>${text}</a>`), `"${text}" keeps its words`);
+    }
+  }
+  assert.match(renderWithMentions('PR #31'), />PR#31<\/a>/, 'PR #N keeps today’s short label');
+});
+
+test('#7066: exchange #N stays a request link, and a labelled ref in code stays literal', () => {
+  const { renderWithMentions, decorateMentionsAndRefs, document } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  const out = renderWithMentions('exchange #5');
+  assert.match(out,
+    /<a class="gc-ref gc-ref-issue" href="#app\/lost-starways\/dev\/issues\/5" data-ref-type="issue" data-ref-number="5">#5<\/a>/);
+  assert.doesNotMatch(out, /changes\/5/);
+  const code = el(document, 'div', el(document, 'code', 'Change #5'));
+  decorateMentionsAndRefs(code);
+  assert.equal(code.innerHTML, '<code>Change #5</code>');
 });
 
 test('with no project named, a chip stays today\'s plain span', () => {
