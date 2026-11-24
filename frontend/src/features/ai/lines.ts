@@ -23,6 +23,9 @@ import {
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
 import { cleanQuery, foundDay, markParts, type Found, type MarkPart } from './search';
+import {
+  arrivedInDone, arrivedInNeeds, movedInProgress, newCount, newFirst, sinceWords, threadIdentity, type LastVisit,
+} from './visit';
 
 /** What a row's glyph shows, by name. */
 export type Glyph =
@@ -65,6 +68,13 @@ export interface Line {
   fresh?: boolean;
   /** 18 Nov 2026: it moved while the page was up (./model.ts movedSince), so it is not folded. */
   moved?: boolean;
+  /**
+   * Mobile polish 05 (24 Nov 2026): new since your last visit (./visit.ts):
+   * it arrived in its band, moved stage in In progress, or has unread
+   * messages. Its row has the dot, sits above its band's line and counts in
+   * its heading's "2 new". Never on a first visit.
+   */
+  isNew?: boolean;
   open: () => void;
   /** #6159: a private thread's row: its ⋯ has Mark done. */
   done?: { rootId: number; mark: () => void } | null;
@@ -315,6 +325,12 @@ export interface AiLinesInput {
    * such search, for which only the threads are searched.
    */
   found?: Found | null;
+  /**
+   * Mobile polish 05: the last visit the marks are measured from
+   * (./use-visit.ts); null on a first visit, or left out by a face that
+   * draws no marks.
+   */
+  visit?: LastVisit | null;
 }
 
 /**
@@ -332,7 +348,7 @@ export function showsPicked(picked: readonly string[]): (app: AiApp | null) => b
  */
 export function useAiLines({
   query = '', lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss,
-  picked: pickedIn = [], onPick, appFor, history = null, openHistory, historyKind = null, found,
+  picked: pickedIn = [], onPick, appFor, history = null, openHistory, historyKind = null, found, visit = null,
 }: AiLinesInput) {
   const t = useMessages('messages');
   const locale = getDateLocale();
@@ -410,6 +426,7 @@ export function useAiLines({
       owe: !!row.pill,
       lit: !!lit && rowKey(row) === lit,
       fresh: row.unread > 0,
+      isNew: !!visit && (row.unread > 0 || arrivedInNeeds(visit, row)),
       open: () => openRow(row),
       done: row.rootId && onDone ? { rootId: row.rootId, mark: () => onDone(row.rootId!) } : null,
       dismiss: row.named && onDismiss ? () => onDismiss(row) : null,
@@ -442,6 +459,7 @@ export function useAiLines({
       lit: !!lit && rowKey(th) === lit,
       fresh: (th.unread || 0) > 0,
       moved: th.moved === true,
+      isNew: !!visit && ((th.unread || 0) > 0 || movedInProgress(visit, th)),
       tookPart: th.tookPart === true,
       open: () => openThread(th),
       at: th.at,
@@ -503,6 +521,8 @@ export function useAiLines({
         sub: lineOf(ended, dayWord(th.at, t, locale, false), ended),
         end: { kind: 'word', text: ended },
         past: 'solo',
+        // Mobile polish 05: marked done since the last visit.
+        isNew: arrivedInDone(visit, threadIdentity(th), th.at, true),
       };
     }
     // #6233: Live, but this tab runs the build before it: the row asks for
@@ -520,6 +540,9 @@ export function useAiLines({
       // This week's rows are filed as History will file them: a decision is
       // a vote, anything else that went live a change.
       past: th.kind === 'decision' ? 'vote' : 'change',
+      // Mobile polish 05: it went live since the last visit, or has
+      // messages you have not read.
+      isNew: !!visit && ((th.unread || 0) > 0 || arrivedInDone(visit, threadIdentity(th), th.at, true)),
     };
   }));
   const liveBehind = liveLines.some((line) => line.owe);
@@ -562,6 +585,9 @@ export function useAiLines({
       ),
       end: wentLive ? { kind: 'tick', text: t('core:work.stage.live') } : { kind: 'word', text: ended },
       past: row.kind,
+      // Mobile polish 05: finished since the last visit, which had only
+      // this week's rows in view (./visit.ts arrivedInDone).
+      isNew: arrivedInDone(visit, row.rootId ? `root:${row.rootId}` : `thread:${row.threadId}`, row.at, false),
     };
   }));
   const historyMonths = byMonth(historyLines);
@@ -571,10 +597,12 @@ export function useAiLines({
   // nobody is moving among them, each saying so (`end`). 24 Nov 2026
   // (mobile 04): your own first, then the ones you only wrote or were named
   // in, so commenting widely never buries what you asked for or build.
-  const progressLines: Line[] = ownFirst(newestFirst(kept([
+  // Mobile polish 05: what is new since your last visit before all of it,
+  // each run in that order.
+  const progressLines: Line[] = newFirst(ownFirst(newestFirst(kept([
     ...progressShown.map(threadLine(nextGlyph)),
     ...waitingShown.map(waitingLine),
-  ])));
+  ]))));
   // Done is the whole past: this week's rows (what went live, a private
   // thread marked done), then History's, each thread once, narrowed to the
   // kind its chips pick. History is read newest first and reads that kind
@@ -583,10 +611,19 @@ export function useAiLines({
   const liveIds = new Set(live.map((th) => (th.kind === 'private' ? `root:${th.rootId}` : `thread:${th.threadId}`)));
   const pastIds = new Map((history?.rows || []).map((row) => [row.key, row.rootId ? `root:${row.rootId}` : `thread:${row.threadId}`]));
   const ofKind = (line: Line) => !historyKind || line.past === historyKind;
-  const doneLines: Line[] = [
+  // Mobile polish 05: newest first puts what finished since your last visit
+  // at the top already; new first lifts only a seen row's unread messages.
+  const doneLines: Line[] = newFirst([
     ...newestFirst(liveLines).filter(ofKind),
     ...historyLines.filter((line) => !liveIds.has(pastIds.get(line.key) || '') && ofKind(line)),
-  ];
+  ]);
+  // Mobile polish 05: how many of each band's rows are new, as its heading's
+  // pill says it ("2 new"), folded or not, through the filter and a search
+  // as the band's own rows are; and the time its line names.
+  const needNew = newCount(needLines);
+  const progressNew = newCount(progressLines);
+  const doneNew = newCount(doneLines);
+  const newSince = visit ? sinceWords(visit.since, locale) : '';
   // The header's counts, as the bands' are when no search narrows them: what
   // the project filter shows. A search does not narrow them (#6744), so they
   // do not jump while you type.
@@ -645,6 +682,8 @@ export function useAiLines({
     progressShown: progressShown.length,
     // The three bands (./lists.tsx).
     progressLines, doneLines, needCount, progressCount, weekCount,
+    // Mobile polish 05: what is new since the last visit, band by band.
+    needNew, progressNew, doneNew, newSince,
   };
 }
 

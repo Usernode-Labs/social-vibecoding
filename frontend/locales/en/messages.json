@@ -5663,6 +5663,30 @@
     "text": "Show more",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Button under the Done band's rows: shows twenty more, reading older work as it runs out. It has no count because the size of the person's whole history is not known."
   },
+  "ai.row.newSpoken": {
+    "text": "New since your last visit",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Said by a screen reader on a row marked with a small blue dot because it arrived in its band, moved stage or has unread messages since the person last looked at this list. Not shown on screen."
+  },
+  "ai.band.newSince": {
+    "text": "New since {{time}}",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Small label in the accent colour at the end of a thin accent line across a band: every row above the line is new since the person's last visit to this list, every row below it they have seen. {{time}} is when that last visit was: a time of day for earlier today (\"9:40\"), a short weekday for earlier this week (\"Mon\"), else a date (\"12 Nov\"). Keep it in step with the Workshop's \"New since your last visit\". Also what a screen reader says for the line."
+  },
+  "ai.band.newCount_one": {
+    "text": "{{count}} new",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Small filled pill at the end of a band's heading: how many of its rows are new since the person's last visit ({{count}}, here 1), including rows folded behind Show more. Not added to the heading's own count."
+  },
+  "ai.band.newCount_other": {
+    "text": "{{count}} new",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Small filled pill at the end of a band's heading: how many of its rows are new since the person's last visit ({{count}}), including rows folded behind Show more. Not added to the heading's own count."
+  },
+  "ai.band.withNew_one": {
+    "text": "{{heading}}, {{count}} new",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). What a screen reader says for a band's heading when some of its rows are new since the person's last visit. {{heading}} is the heading's own spoken name, already translated (for example \"Needs you, 27 items\"); {{count}} is how many rows are new (here 1)."
+  },
+  "ai.band.withNew_other": {
+    "text": "{{heading}}, {{count}} new",
+    "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). What a screen reader says for a band's heading when some of its rows are new since the person's last visit. {{heading}} is the heading's own spoken name, already translated (for example \"Needs you, 27 items\"); {{count}} is how many rows are new."
+  },
   "ai.pill.reply": {
     "text": "Reply",
     "description": "The Homeroom bot tab's thread list, drawn as three bands: Needs you (what asks something of the person), In progress (being built, checked or waiting on somebody else) and Done (everything finished). Pill at the end of a Needs you row: Homeroom bot or somebody asked the person a question, or waits for them to decide. A verb: what the person does."

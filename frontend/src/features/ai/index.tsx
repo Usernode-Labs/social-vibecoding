@@ -140,6 +140,8 @@ import {
   standingsOf, upNext, withoutDismissed, type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
 import type { WorkStatePush } from '../../lib/work-state';
+import { useListVisit } from './use-visit';
+import { visitSeen } from './visit';
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
@@ -854,6 +856,11 @@ export function AiScreen(): ReactNode {
   const seenAt = seen && seen.showing === showings ? seen.at : null;
   const progressDrawn = useMemo(() => movedSince(seenAt, progress), [seenAt, progress]);
   const waitingDrawn = useMemo(() => movedSince(seenAt, waiting), [seenAt, waiting]);
+  // Mobile polish 05 (24 Nov 2026): your last visit, which the bands mark
+  // what is new since (./use-visit.ts, ./visit.ts), and what they hold now,
+  // which this visit leaves for the next one to measure from.
+  const listSeen = useMemo(() => visitSeen(rows, progress, waiting, live), [rows, progress, waiting, live]);
+  const lastVisit = useListVisit({ visible, session, ready: !!work && !!needs, seen: listSeen, demo: demoQuery() });
   const history = useHistory({
     showing: showings,
     signedIn: mounted && typeof window !== 'undefined' && !!(window as any).App?.user,
@@ -1336,6 +1343,7 @@ export function AiScreen(): ReactNode {
           openHistory={openHistory}
           historyRef={historyRef}
           doneOpen={toHistory}
+          visit={lastVisit}
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
