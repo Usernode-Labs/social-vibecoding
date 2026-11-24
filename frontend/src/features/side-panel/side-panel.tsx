@@ -60,6 +60,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { EllipsisHorizontalIcon, ListBulletIcon, XIcon } from '@/components/ui/icons';
@@ -594,22 +595,26 @@ export function SidePanelDivider({
       d.width = set(raw, false);
       return;
     }
-    const b = bounds(measure());
     if (d.collapsed) {
       // Back out from the hidden neighbour: the pointer has come SNAP_PX the
       // other way from where it was hidden, and the pane opens again at the
       // width last chosen.
       const base = d.collapseX ?? d.startX;
       if ((e.clientX - base) * dirSign() <= SNAP_PX) return;
-      onRestore?.();
+      // The neighbour is drawn back before the room is read (24 Nov 2026):
+      // beside a preview the list's return turns halves into three columns
+      // again, and the pane reopens inside those, not inside the halves it
+      // leaves.
+      flushSync(() => { onRestore?.(); });
       const key = resolveKey();
-      const next = reopenWidth(readStoredWidth(undefined, key), b);
+      const back = bounds(measure());
+      const next = reopenWidth(readStoredWidth(undefined, key), back);
       if (next == null) {
         applyWidth(null, undefined, key);
         settle();
       } else {
         applyWidth(next, undefined, key);
-        setRange({ now: next, ...b });
+        setRange({ now: next, ...back });
       }
       // The drag carries on from here as an ordinary one.
       d.collapsed = false;
@@ -619,6 +624,7 @@ export function SidePanelDivider({
       d.width = d.startW;
       return;
     }
+    const b = bounds(measure());
     if (raw > b.max + SNAP_PX) {
       onCollapse?.();
       d.collapsed = true;
