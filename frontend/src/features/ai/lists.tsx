@@ -50,7 +50,7 @@
  * Rows here are 14px over 12, not the shell's 15 over 13 (AGENTS.md, "Type
  * and colour"): this page's exception, recorded there.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { ReactNode } from 'react';
 
@@ -66,6 +66,7 @@ import { ThreadDoneMenu } from '../messages/private-thread-done';
 import { reload as reloadTab } from '../../lib/tab-build';
 import { Marked, followFound } from './found';
 import { BAND_FIRST, DONE_STEP, newestFirst, useAiLines, type FoundLine, type Line } from './lines';
+import { lineBefore, newFirst, type LastVisit } from './visit';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
@@ -101,9 +102,11 @@ const LIT_INK_ROW = `group relative flex min-h-[44px] w-full min-w-0 items-cente
 
 /**
  * #6262: the dot in the row's leading padding, so rows with and without one
- * stay lined up. The accent the pills use.
+ * stay lined up. The accent the pills use. Mobile polish 05 (24 Nov 2026):
+ * 7px, on every row new since your last visit as well as one with unread
+ * messages.
  */
-const DOT = 'absolute start-1 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
+const DOT = 'absolute start-1 top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full bg-violet-600 dark:bg-violet-300';
 
 // The one thing at a row's end (./lines.ts LineEnd). A pill never wraps: the
 // title truncates instead, so the pills keep one right edge down a band.
@@ -157,9 +160,10 @@ function RowButton({ line, inLitRow = false }: { line: Line; inLitRow?: boolean 
       data-ai-line={line.kind}
       data-ai-lit={line.lit ? '' : undefined}
       data-ai-fresh={line.fresh ? '' : undefined}
+      data-ai-new={line.isNew ? '' : undefined}
       aria-current={line.lit ? 'true' : undefined}
     >
-      {line.fresh ? <span className={DOT} aria-hidden="true" data-ai-dot="" /> : null}
+      {line.fresh || line.isNew ? <span className={DOT} aria-hidden="true" data-ai-dot="" /> : null}
       <RowTile app={line.app} />
       {/* The wide row's project column (app.css hides it under 520px of list). */}
       <span className="ai-row-project min-w-0 shrink-0" data-ai-row-project="">
@@ -191,6 +195,8 @@ function RowButton({ line, inLitRow = false }: { line: Line; inLitRow?: boolean 
         ) : null}
       </span>
       <RowEnd line={line} />
+      {/* Mobile polish 05: the dot, said. */}
+      {line.isNew ? <span className="sr-only" data-ai-new-spoken="">{t('messages:ai.row.newSpoken')}</span> : null}
       <span className="sr-only">{tooltip}</span>
     </button>
   );
@@ -248,12 +254,18 @@ const STRIP = 'flex min-h-[40px] items-center gap-2 rounded-[14px] px-3 py-2';
 const STRIP_OWE = `${STRIP} bg-[color:var(--accent-tint)] text-[color:var(--accent-tint-ink)]`;
 const STRIP_QUIET = `${STRIP} bg-zinc-900/[0.04] text-zinc-900 dark:bg-white/[0.06] dark:text-zinc-100`;
 const COUNT = 'inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-xs font-bold tabular-nums dark:bg-zinc-900';
+/**
+ * Mobile polish 05 (24 Nov 2026): what is new since your last visit, at the
+ * heading's end ("2 new"): a small pill filled with the accent, for what
+ * Show more hides. Beside the band's own count, never added to it.
+ */
+const NEW_COUNT = 'ms-auto inline-flex h-5 shrink-0 items-center rounded-full bg-[color:var(--accent)] px-2 text-[11px] font-bold leading-5 tabular-nums text-[color:var(--accent-ink)]';
 
 /**
  * A band's header strip: its icon, its name and its count (or what stands
  * for one), as a heading whose spoken name carries the count.
  */
-function BandHead({ owe = false, icon, name, count, aside, spoken, extra = null }: {
+function BandHead({ owe = false, icon, name, count, aside, spoken, news = 0, extra = null }: {
   owe?: boolean;
   icon: ReactNode;
   name: string;
@@ -263,8 +275,11 @@ function BandHead({ owe = false, icon, name, count, aside, spoken, extra = null 
   aside?: string | null;
   /** The heading's whole name for a screen reader: its name and its count. */
   spoken: string;
+  /** Mobile polish 05: how many of its rows are new since your last visit; zero says nothing. */
+  news?: number;
   extra?: ReactNode;
 }): ReactNode {
+  const t = useMessages('messages');
   return (
     <div className={owe ? STRIP_OWE : STRIP_QUIET} data-ai-band="">
       <h3 className="m-0 flex min-w-0 items-center gap-2 text-[15px] font-semibold leading-5">
@@ -274,8 +289,9 @@ function BandHead({ owe = false, icon, name, count, aside, spoken, extra = null 
         {aside ? (
           <span className={`truncate text-[13px] font-medium ${owe ? '' : 'text-zinc-500 dark:text-zinc-400'}`} aria-hidden="true" data-ai-band-aside="">{aside}</span>
         ) : null}
-        <span className="sr-only">{spoken}</span>
+        <span className="sr-only">{news > 0 ? t('messages:ai.band.withNew', { heading: spoken, count: news }) : spoken}</span>
       </h3>
+      {news > 0 ? <span className={NEW_COUNT} aria-hidden="true" data-ai-band-new="">{t('messages:ai.band.newCount', { count: news })}</span> : null}
       {extra}
     </div>
   );
@@ -300,6 +316,38 @@ const FOLD_SHUT = 'grid-rows-[0fr] opacity-0 [transition:grid-template-rows_300m
 const MORE = `flex w-full min-h-[44px] md:min-h-[36px] items-center justify-center gap-1 rounded-xl py-2 text-[13px] font-semibold text-violet-700 hover:bg-zinc-900/[0.035] hover:text-violet-800 active:bg-zinc-900/[0.06] disabled:opacity-60 dark:text-violet-300 dark:hover:bg-white/[0.05] dark:hover:text-violet-200 ${FOCUS}`;
 
 /**
+ * Mobile polish 05 (24 Nov 2026): the line under a band's last new row.
+ * Everything above it is new since your last visit, everything below it you
+ * have seen. A 1.5px rule in the accent across the band, inset as the rows
+ * are, with the time of the last visit at its end ("New since 9:40"). A real
+ * element, so a screen reader hears it.
+ */
+function NewLine({ since }: { since: string }): ReactNode {
+  const t = useMessages('messages');
+  const words = t('messages:ai.band.newSince', { time: since });
+  return (
+    <div role="separator" aria-label={words} className="flex items-center gap-2 px-3 py-1.5" data-ai-new-line="">
+      <span className="h-0 min-w-0 flex-1 border-t-[1.5px] border-[color:var(--accent)]" aria-hidden="true" />
+      <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold leading-[18px] text-[color:var(--accent)]" aria-hidden="true">{words}</span>
+    </div>
+  );
+}
+
+/** Rows, with the band's line before `before` (./visit.ts lineBefore) when it is one of them. */
+function RowsWithLine({ lines, before, since }: { lines: Line[]; before: string | null; since: string }): ReactNode {
+  return (
+    <>
+      {lines.map((line) => (
+        <Fragment key={line.key}>
+          {before && since && line.key === before ? <NewLine since={since} /> : null}
+          <Row line={line} />
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/**
  * A band's rows: its first few, then the rest folded under its own Show
  * more, which opens them in place (Show less shuts them). The row you are on
  * is never folded away; nor, in Needs you and In progress, is one with
@@ -307,7 +355,7 @@ const MORE = `flex w-full min-h-[44px] md:min-h-[36px] items-center justify-cent
  * past the first few they join them, in their order (./model.ts groupRows).
  * Opened, the rows that were in sight stay where they were (openRows).
  */
-function BandRows({ lines, first }: { lines: Line[]; first: number }): ReactNode {
+function BandRows({ lines, first, since = '' }: { lines: Line[]; first: number; since?: string }): ReactNode {
   const t = useMessages('messages');
   // The rows in sight when Show more was pressed, by key: open while kept.
   const [kept, setKept] = useState<string[] | null>(null);
@@ -315,9 +363,12 @@ function BandRows({ lines, first }: { lines: Line[]; first: number }): ReactNode
   const { items, shown, hidden } = kept ? openRows(lines, kept) : groupRows(lines, first, false);
   const visible = hidden ? items.slice(0, shown) : items;
   const folded = hidden ? items.slice(shown) : [];
+  // Mobile polish 05: the line goes before the first seen row after the last
+  // new one, in whichever part it is: under Show more, it opens with it.
+  const before = lineBefore(items);
   return (
     <>
-      {visible.map((line) => <Row key={line.key} line={line} />)}
+      <RowsWithLine lines={visible} before={before} since={since} />
       {hidden ? (
         <div
           className={`grid motion-reduce:transition-none ${open ? FOLD_OPEN : FOLD_SHUT}`}
@@ -326,7 +377,7 @@ function BandRows({ lines, first }: { lines: Line[]; first: number }): ReactNode
           data-ai-group-rest=""
         >
           <div className={FOLD_CLIP}>
-            {folded.map((line) => <Row key={line.key} line={line} />)}
+            <RowsWithLine lines={folded} before={before} since={since} />
           </div>
         </div>
       ) : null}
@@ -463,6 +514,7 @@ function headWords(needs: number, next: number): { id: string; values: Record<st
 export function AiLists({
   newChat = null, search = null, query = '', onQueryClear, found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
   openRow, openThread, onDone, onDismiss, picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef, doneOpen = 0,
+  visit = null,
 }: {
   /** The head's New chat (./new-chat-button.tsx), at the end of its line. */
   newChat?: ReactNode;
@@ -528,17 +580,26 @@ export function AiLists({
   historyRef?: React.Ref<HTMLDivElement>;
   /** Bumped by #homeroom-bot/history: Done opens past its first rows, its kind chips shown. */
   doneOpen?: number;
+  /**
+   * Mobile polish 05 (24 Nov 2026): your last visit (./use-visit.ts), which
+   * each band marks what is new since: a dot on each new row, the new rows
+   * first with a line under them, and a count in its heading. Null on a
+   * first visit, and until it is read: no marks.
+   */
+  visit?: LastVisit | null;
 }): ReactNode {
   const t = useMessages('messages');
   const {
     searching, ranked, picked, setOnly, toggle, needLines, progressLines, doneLines, liveBehind, onlyApp, nothingHere,
     noMatches, noneWords, foundLines, foundMore, foundFailed, needCount, progressCount, weekCount,
-  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found });
+    needNew, progressNew, doneNew, newSince,
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, onDismiss, picked: pickedIn, onPick, appFor, history, openHistory, historyKind, found, visit });
   // The project picker, open under the filter.
   const [more, setMore] = useState<DOMRect | null>(null);
   const phone = usePhone();
   // Needs you, newest first, its order held while it is being used (#6245).
-  const needs = useHeld(newestFirst(needLines));
+  // Mobile polish 05: what is new since your last visit before the rest.
+  const needs = useHeld(newFirst(newestFirst(needLines)));
 
   // DONE'S PAGING. How many of its rows are drawn: five at rest, twenty more
   // a press. A door that asks for History opens it past its first rows.
@@ -655,13 +716,14 @@ export function AiLists({
               spoken={needLines.length
                 ? t('messages:ai.work.titleCount', { count: needLines.length })
                 : ready && !failed ? t('messages:ai.band.allDoneSpoken') : t('messages:ai.work.title')}
+              news={needNew}
             />
             <div className="pt-1">
               {failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
               {needLines.length ? (
                 // Rows that arrived are drawn, under the note when the other
                 // list could not be read.
-                <BandRows lines={needs.held} first={searching ? Infinity : BAND_FIRST.needs} />
+                <BandRows lines={needs.held} first={searching ? Infinity : BAND_FIRST.needs} since={newSince} />
               ) : !ready ? (
                 // L06 (overnight audit, 2 Nov 2026): until the lists are read
                 // the band shows its rows' shape: two bars and no more, as the
@@ -705,12 +767,13 @@ export function AiLists({
               name={t('messages:ai.band.progress')}
               count={progressLines.length || null}
               spoken={progressSpoken}
+              news={progressNew}
             />
             <div className="pt-1">
               {ready && !progressLines.length ? (
                 <p className="m-0 px-3 py-3 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.band.progressEmpty')}</p>
               ) : (
-                <BandRows lines={progressLines} first={searching ? Infinity : BAND_FIRST.busy} />
+                <BandRows lines={progressLines} first={searching ? Infinity : BAND_FIRST.busy} since={newSince} />
               )}
             </div>
           </section>
@@ -726,6 +789,7 @@ export function AiLists({
               name={t('messages:ai.band.done')}
               aside={weekCount ? t('messages:ai.band.thisWeek', { count: weekCount }) : null}
               spoken={weekCount ? t('messages:ai.band.doneCount', { count: weekCount }) : t('messages:ai.band.done')}
+              news={doneNew}
               extra={searching && onQueryClear ? (
                 // #3 (phone review, 23 Nov 2026): Done is searched like every
                 // band, and the search box is far above it. So while a search
@@ -765,7 +829,10 @@ export function AiLists({
               </KindRail>
             ) : null}
             <div className="pt-1">
-              {doneDrawn.map((line) => <Row key={line.key} line={line} />)}
+              {/* Mobile polish 05: its line only where the rows drawn hold
+                  both new and seen ones; past Show more the count says how
+                  many more are new. */}
+              <RowsWithLine lines={doneDrawn} before={lineBefore(doneDrawn)} since={newSince} />
               {/* While a page loads, two bars sit where its rows will be; if
                   it fails, one line with Try again. Neither moves the rows
                   above. */}
