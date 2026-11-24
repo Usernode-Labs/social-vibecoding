@@ -187,11 +187,12 @@ test('each band is one list, newest first, with no project or day headings, and 
   assert.deepEqual(newestFirst([{ k: 'a', at: '2026-11-01T00:00:00Z' }, { k: 'b', at: null }, { k: 'c', at: '2026-11-03T00:00:00Z' }]).map((r) => r.k), ['c', 'a', 'b']);
   const lists = read('frontend/src/features/ai/lists.tsx');
   assert.doesNotMatch(lists, /byProject\(|byDay\(|data-ai-group=\{|data-ai-project-head|data-ai-day=|DayRule|GroupList/, 'no project heads and no day lines');
-  assert.match(lists, /const needs = useHeld\(newestFirst\(needLines\)\);/);
-  assert.match(lists, /<BandRows lines=\{needs\.held\} first=\{searching \? Infinity : BAND_FIRST\.needs\} \/>/);
-  assert.match(lists, /<BandRows lines=\{progressLines\} first=\{searching \? Infinity : BAND_FIRST\.busy\} \/>/);
+  // Mobile polish 05 (24 Nov 2026): what is new since your last visit before the rest (tests/ai-new-since.test.js).
+  assert.match(lists, /const needs = useHeld\(newFirst\(newestFirst\(needLines\)\)\);/);
+  assert.match(lists, /<BandRows lines=\{needs\.held\} first=\{searching \? Infinity : BAND_FIRST\.needs\} since=\{newSince\} \/>/);
+  assert.match(lists, /<BandRows lines=\{progressLines\} first=\{searching \? Infinity : BAND_FIRST\.busy\} since=\{newSince\} \/>/);
   // 24 Nov 2026 (mobile 04): newest first, your own before the threads you only wrote or were named in.
-  assert.match(read(LINES), /const progressLines: Line\[\] = ownFirst\(newestFirst\(kept\(\[/, 'In progress newest first, your own first');
+  assert.match(read(LINES), /const progressLines: Line\[\] = newFirst\(ownFirst\(newestFirst\(kept\(\[/, 'In progress newest first, your own first');
   // 1 Nov 2026: the row whose chat is in the column is never folded away:
   // past the first rows, it joins them. #6245: only while the band is
   // folded (open ? -1): an opened band keeps every row's own place.
@@ -421,7 +422,7 @@ test('#6672: Needs you orders its projects by their newest activity', () => {
   // standard list's bands have no project groups; Needs you is newest first
   // by each row's own time, so a fresh private chat leads it the same way.
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /const needs = useHeld\(newestFirst\(needLines\)\);/, 'newest first');
+  assert.match(lists, /const needs = useHeld\(newFirst\(newestFirst\(needLines\)\)\);/, 'newest first, after what is new since your last visit');
   const { newestFirst } = loadTsx(LINES);
   assert.deepEqual(newestFirst(rows).map((r) => r.key), ['private:recipe', 'private:solo', 'need:garden'], 'the private chat talked in today first');
   assert.match(read('frontend/src/features/ai/frame-list.tsx'),

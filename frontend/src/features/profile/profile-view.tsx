@@ -27,7 +27,7 @@ import { type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { k } from '@/components/ui/kit';
 import { PLANE_CARD } from '@/components/ui/grouped-list';
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, PencilSquareIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
@@ -38,6 +38,8 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
+import { ProfilePreferences, ProfileSectionLinks } from './profile-preferences';
+import { ProfileRecentActivity } from './profile-recent-activity';
 import { ProfileLiveProjects } from './profile-live-projects';
 import { ProfileDetailsCard } from './profile-details-card';
 import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
@@ -88,7 +90,7 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
  *  The `profile-id-*` classes are hooks for the standard look's header
  *  (#7072, app.css "SETTINGS AND PROFILE, THE EDITORIAL PAGES"): the card
  *  spans the page there, with a larger picture and the name in the serif. */
-function IdentityCard({ identity }: { identity: any }): ReactNode {
+function IdentityCard({ identity, editorial = false }: { identity: any; editorial?: boolean }): ReactNode {
   const t = useMessages('profile');
   return (
     <div
@@ -109,7 +111,8 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
             {/* Two lines at most, then an ellipsis: a long display name wraps
                 rather than losing its end at the first line. */}
             <div className="profile-id-name text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
-            {identity.sub ? (
+            {editorial && identity.username && identity.username !== identity.name ? <div className="profile-id-handle">{identity.username}</div> : null}
+            {!editorial && identity.sub ? (
               // Wraps rather than truncating: a fact cut off mid-word is not
               // a fact.
               <div className="profile-id-sub text-sm text-zinc-500 dark:text-zinc-400">
@@ -142,6 +145,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           {identity.bio}
         </p>
       ) : null}
+            {editorial && identity.about ? <p className="profile-id-about">{identity.about}</p> : null}
             {identity.chips.length ? (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
                 {identity.chips.map((chip: any) => (
@@ -169,6 +173,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           className="self-start ms-[68px] sm:self-auto sm:ms-0"
           onClick={() => Profile.showEditSheet()}
         >
+          {editorial ? <PencilSquareIcon aria-hidden="true" /> : null}
           {t('profile:identity.edit')}
         </Button>
       </div>
@@ -583,17 +588,20 @@ export function ProfileRoot(): ReactNode {
       {frame ? <YouInFrame view={view} tab={(state.tab || 'overview') as YouTab} friendsPending={state.friendsPending ?? null} friendsStatus={state.friendsStatus || ''} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
-          <IdentityCard identity={view.identity} />
+          <IdentityCard identity={view.identity} editorial={editorial} />
           <StatCards stats={view.stats} />
           <ActivityCard activity={view.activity} />
         </div>
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {editorial ? <ProfileSectionLinks /> : null}
           {editorial ? <ProfileLiveProjects changes={state.data?.summary?.contributions || []} /> : null}
+          {editorial ? <ProfileRecentActivity changes={state.data?.summary?.contributions || []} /> : null}
           <WorkPanel rows={view.rows} />
           <RewardsPanel rows={view.rows} />
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
           {editorial ? <ProfileDetailsCard key={`${state.user?.displayName || ''}:${state.user?.bio || ''}`} /> : null}
+          {editorial ? <ProfilePreferences /> : null}
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
           <AdminPanel />

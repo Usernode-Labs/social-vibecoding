@@ -8,6 +8,7 @@ const aiWork = require('../services/ai-work');
 const aiHistory = require('../services/ai-history');
 const aiSearch = require('../services/ai-search');
 const threadMentions = require('../services/thread-mentions');
+const aiVisits = require('../services/ai-visits');
 const log = require('../services/logger');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { appChatReadLimiter, userDirectoryLimiter } = require('../middleware/rate-limits');
@@ -321,6 +322,59 @@ function aiWorkRoutes(config = {}) {
       return res.json(await aiWork.tracksFor(pool, { user: req.user, also: typeof req.query.also === 'string' ? req.query.also : '' }));
     } catch (err) {
       log.error('ai-work', 'Failed to read the viewer\'s tracks', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Homeroom mobile polish, item 05 (24 Nov 2026): the list's visits, which
+  // say what is new since the last one (services/ai-visits.js). A browser's
+  // writes, not a connector's: on no list (services/cli-api-policy.js is
+  // fail-closed), same-origin only, never cached.
+  //
+  // POST /api/ai/visit { visit? } — the tab is showing the list. `visit` is
+  // the token this browser tab had before a reload, if any.
+  //   → { visit, since: ISO | null, seen: { needs, busy, done } | null }
+  // POST /api/ai/visit/seen { visit, seen, left? } — what the list has in
+  // view now, while it is up or (`left`) as it leaves. → { ok: true }; 400
+  // when `seen` is not one.
+  //
+  // `?demo=1` on staging answers a last visit 70 minutes ago that saw every
+  // demo row but three (ai-visits.js demoVisit), whatever the fixture account
+  // did before, and records nothing, so every shot of the page shows the marks.
+  router.post('/api/ai/visit', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') {
+        const { DEMO_NEEDS_FEED } = require('./workshop-overview');
+        const mine = await demoPrivate(pool, req.user);
+        return res.json(aiVisits.demoVisit({
+          feed: DEMO_NEEDS_FEED,
+          work: demoWork(),
+          privateRoots: mine.map((p) => p.rootId),
+        }));
+      }
+      const body = req.body || {};
+      return res.json(await aiVisits.openVisit(pool, { userId: req.user.id, token: body.visit ?? null }));
+    } catch (err) {
+      log.error('ai-work', 'Failed to open a visit to the Homeroom bot list', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/ai/visit/seen', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') return res.json({ ok: true });
+      const body = req.body || {};
+      const noted = await aiVisits.noteVisit(pool, {
+        userId: req.user.id, token: body.visit, seen: body.seen, left: body.left === true,
+      });
+      if (!noted) return res.status(400).json({ error: 'A visit token and what the list holds are required' });
+      return res.json(noted);
+    } catch (err) {
+      log.error('ai-work', 'Failed to note a visit to the Homeroom bot list', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

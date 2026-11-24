@@ -988,3 +988,219 @@ test('#6817 outside the demo the endpoint and the URL are untouched', async () =
   assert.deepEqual(sessionCalls(endpoints), ['/api/sessions/7/ensure-staging']);
   assert.equal(swaps[0].url, 'https://live.example', 'an absolute URL is passed through');
 });
+
+// ── A live draft's preview still starting waits for it (opts.waitForStart) ──
+//
+// A live draft's preview takes a minute or two to start the first time, and
+// until its address is written the read-only preview-status answers it
+// missing (then unhealthy or edge while it comes up). The draft's pane used
+// to land on "This preview isn't running right now / Somebody who works on
+// this project can start it again", parked nothing, and stayed there after
+// the preview was up. With the option the answer is a wait, parked like a
+// rebuild's, so staging_ready (or a recheck) opens it.
+
+const DRAFT_APP = { slug: 'gym' };
+const draftOpen = (over = {}) => ({ readOnly: true, app: DRAFT_APP, waitForStart: true, ...over });
+
+// preview-status answers in turn (the last one repeats); every other request
+// (the header's change row) answers empty.
+function startHarness(answers, makeOpts = {}) {
+  const endpoints = [];
+  const queue = [...answers];
+  const h = makeAppView(async (url) => {
+    endpoints.push(url);
+    if (String(url).includes('/preview-status') || String(url).includes('/ensure-staging')) {
+      const body = queue.length > 1 ? queue.shift() : queue[0];
+      return { ok: true, json: async () => body };
+    }
+    return { ok: true, json: async () => ({}) };
+  }, makeOpts);
+  return { ...h, endpoints, statusCalls: () => sessionCalls(endpoints) };
+}
+
+// Holds the start's give-up and recheck timers for the test to fire by hand.
+function holdStartTimers(sandbox) {
+  const real = { set: sandbox.setTimeout, clear: sandbox.clearTimeout };
+  const AV = sandbox.__AppView;
+  const held = new Map();
+  let next = 1;
+  sandbox.setTimeout = (fn, ms) => {
+    const kind = ms === AV.STAGING_START_GIVE_UP_MS ? 'giveUp' : ms === AV.STAGING_START_RECHECK_MS ? 'recheck' : null;
+    if (!kind) return real.set(fn, ms);
+    const id = `held-${next++}`;
+    held.set(id, { kind, fn });
+    return id;
+  };
+  sandbox.clearTimeout = (id) => { if (!held.delete(id)) real.clear(id); };
+  const live = (kind) => [...held].filter(([, t]) => t.kind === kind);
+  return {
+    count: (kind) => live(kind).length,
+    async fire(kind) {
+      const all = live(kind);
+      assert.ok(all.length, `a ${kind} timer is waiting`);
+      const [id, t] = all[all.length - 1];
+      held.delete(id);
+      await t.fn();
+      await tick();
+    },
+  };
+}
+
+test('a live draft\'s preview still starting shows a wait, parks the open read-only, and opens on staging_ready', async () => {
+  const { AppView, dom, swaps, statusCalls } = startHarness([
+    { status: 'unavailable', reason: 'missing' },
+    { status: 'ready', url: 'https://gym--s7.example', verified: true },
+  ]);
+  await AppView.ensureStaging(7, null, null, draftOpen());
+  assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.starting'));
+  assert.equal(dom.els['staging-loader-sub'].textContent, message('changes:frame.loader.startingSub'));
+  assert.equal(message('changes:frame.loader.starting'), 'Starting the preview');
+  assert.doesNotMatch(loaderText(dom), /isn.t running|Somebody who works on this project/);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'nothing to press: it opens by itself');
+  assert.equal(swaps.length, 0);
+  const parked = AppView._pendingStagingPreview;
+  assert.ok(parked, 'the open is parked as a rebuild\'s is');
+  assert.equal(parked.sessionId, 7);
+  assert.equal(parked.readOnly, true, 'still look-only');
+  assert.equal(parked.app, DRAFT_APP);
+  assert.equal(parked.waitForStart, true);
+
+  await AppView.onStagingRebuildResult(7, { url: 'https://gym--s7.example' });
+  assert.deepEqual(statusCalls(), ['/api/sessions/7/preview-status', '/api/sessions/7/preview-status'],
+    'staging_ready goes back through the read-only ready gate');
+  assert.equal(swaps.length, 1, 'it opens by itself');
+  assert.equal(swaps[0].url, 'https://gym--s7.example');
+  assert.equal(swaps[0].opts.app, DRAFT_APP);
+  assert.equal(AppView._pendingStagingPreview, null);
+});
+
+test('a start that is up but not answering yet (unhealthy, edge) waits too, and keeps waiting through staging_ready', async () => {
+  for (const reason of ['unhealthy', 'edge']) {
+    const { AppView, dom, swaps } = startHarness([
+      { status: 'unavailable', reason },
+      { status: 'unavailable', reason: 'edge' },
+      { status: 'ready', url: 'https://gym--s7.example', verified: true },
+    ]);
+    await AppView.ensureStaging(7, null, null, draftOpen());
+    assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.starting'), reason);
+    // staging_ready lands a moment before its public address answers.
+    await AppView.onStagingRebuildResult(7, { url: 'https://gym--s7.example' });
+    assert.equal(swaps.length, 0, reason);
+    assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.starting'), `${reason}: still a wait`);
+    assert.equal(AppView._pendingStagingPreview?.waitForStart, true, `${reason}: parked again`);
+    await AppView.onStagingRebuildResult(7, { url: 'https://gym--s7.example' });
+    assert.equal(swaps.length, 1, `${reason}: opens once it answers`);
+  }
+});
+
+test('without the option, and for the demo environment, the answers keep their dead ends', async () => {
+  const plain = startHarness([{ status: 'unavailable', reason: 'missing' }]);
+  await plain.AppView.ensureStaging(7, null, null, { readOnly: true, app: DRAFT_APP });
+  assert.equal(plain.dom.els['staging-loader-title'].textContent, message('changes:frame.notRunning.title'));
+  assert.equal(plain.dom.els['staging-loader-sub'].textContent, message('changes:frame.unavailable.missingReader'));
+  assert.equal(plain.AppView._pendingStagingPreview, null, 'every other caller parks nothing, as before');
+
+  const demo = startHarness([{ status: 'unavailable', reason: 'demo' }]);
+  await demo.AppView.ensureStaging(7, null, null, draftOpen());
+  assert.equal(demo.dom.els['staging-loader-title'].textContent, message('changes:frame.unavailable.title'));
+  assert.equal(demo.dom.els['staging-loader-sub'].textContent, message('changes:frame.unavailable.demo'));
+  assert.equal(demo.AppView._pendingStagingPreview, null);
+
+  const ready = startHarness([{ status: 'ready', url: 'https://gym--s7.example', verified: true }]);
+  await ready.AppView.ensureStaging(7, null, null, draftOpen());
+  assert.equal(ready.swaps.length, 1, 'a preview that is up opens at once, the option or not');
+  assert.equal(ready.AppView._pendingStagingPreview, null);
+});
+
+test('asked again for the same draft while it waits, the wait stands and the server is asked once more', async () => {
+  const { AppView, dom, swaps, statusCalls } = startHarness([
+    { status: 'unavailable', reason: 'missing' },
+    { status: 'unavailable', reason: 'missing' },
+    { status: 'ready', url: 'https://gym--s7.example', verified: true },
+  ]);
+  await AppView.ensureStaging(7, null, null, draftOpen());
+  const loadId = AppView._stagingLoadId;
+  const parked = AppView._pendingStagingPreview;
+  // The draft's reload frame (live_draft_changed, reload) opens it again.
+  await AppView.ensureStaging(7, null, null, draftOpen());
+  assert.equal(AppView._stagingLoadId, loadId, 'the open did not start over');
+  assert.equal(AppView._pendingStagingPreview, parked, 'the same wait');
+  assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.starting'), 'no flash of "Opening preview"');
+  assert.equal(statusCalls().length, 2, 'asked once more');
+  // Asked once more again, now that it is up: it opens through the ready gate.
+  await AppView.ensureStaging(7, null, null, draftOpen());
+  await tick();
+  assert.equal(swaps.length, 1);
+  assert.equal(swaps[0].url, 'https://gym--s7.example');
+
+  // Another session, or an open without the option, is a new open.
+  const other = startHarness([{ status: 'unavailable', reason: 'missing' }]);
+  await other.AppView.ensureStaging(7, null, null, draftOpen());
+  const before = other.AppView._stagingLoadId;
+  await other.AppView.ensureStaging(8, null, null, draftOpen());
+  assert.equal(other.AppView._stagingLoadId, before + 1);
+  assert.equal(other.AppView._pendingStagingPreview.sessionId, 8);
+});
+
+test('a start that misses its staging_ready is asked about every ten seconds, for a bounded time', async () => {
+  const { AppView, swaps, statusCalls, sandbox } = startHarness([
+    { status: 'unavailable', reason: 'missing' },
+    { status: 'unavailable', reason: 'missing' },
+    { status: 'rebuilding', waking: true },
+    { status: 'ready', url: 'https://gym--s7.example', verified: true },
+  ]);
+  const timers = holdStartTimers(sandbox);
+  assert.equal(AppView.STAGING_START_RECHECK_MS, 10000);
+  await AppView.ensureStaging(7, null, null, draftOpen());
+  assert.equal(timers.count('recheck'), 1);
+  await timers.fire('recheck');
+  await timers.fire('recheck');
+  assert.equal(swaps.length, 0, 'not up yet: still waiting');
+  assert.equal(timers.count('recheck'), 1, 'one recheck at a time');
+  await timers.fire('recheck');
+  assert.equal(swaps.length, 1, 'up: it opens by itself');
+  assert.equal(statusCalls().length, 5, 'the first ask, three rechecks, then the ready gate');
+  assert.equal(timers.count('recheck'), 0, 'no more asking once it opened');
+
+  // Bounded: a start that never comes up stops being asked about.
+  const stuck = startHarness([{ status: 'unavailable', reason: 'missing' }]);
+  const held = holdStartTimers(stuck.sandbox);
+  await stuck.AppView.ensureStaging(7, null, null, draftOpen());
+  for (let i = 0; i < stuck.AppView.STAGING_START_RECHECKS; i += 1) await held.fire('recheck');
+  assert.equal(held.count('recheck'), 0, 'it stops');
+  assert.equal(stuck.statusCalls().length, 1 + stuck.AppView.STAGING_START_RECHECKS);
+  assert.ok(stuck.AppView._pendingStagingPreview, 'the wait is still parked for its staging_ready');
+});
+
+test('a start past its give-up time says so with what to do, and still opens when it comes up', async () => {
+  const { AppView, dom, swaps, sandbox } = startHarness([
+    { status: 'unavailable', reason: 'missing' },
+    { status: 'ready', url: 'https://gym--s7.example', verified: true },
+  ]);
+  const timers = holdStartTimers(sandbox);
+  await AppView.ensureStaging(7, null, null, draftOpen());
+  assert.equal(AppView.STAGING_START_GIVE_UP_MS, 180000);
+  await timers.fire('giveUp');
+  assert.equal(dom.els['staging-loader-title'].textContent, message('changes:frame.loader.slow'));
+  assert.equal(dom.els['staging-loader-sub'].textContent, message('changes:frame.loader.slowStart'));
+  assert.match(message('changes:frame.loader.slowStart'), /by itself[\s\S]*ask Homeroom bot to open it again/);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'look-only: no button that could not work');
+  assert.ok(AppView._pendingStagingPreview, 'still parked');
+  await AppView.onStagingRebuildResult(7, { url: 'https://gym--s7.example' });
+  assert.equal(swaps.length, 1);
+});
+
+test('closing the preview ends the wait: a late staging_ready or recheck opens nothing', async () => {
+  const { AppView, swaps, statusCalls, sandbox } = startHarness([
+    { status: 'unavailable', reason: 'missing' },
+    { status: 'ready', url: 'https://gym--s7.example', verified: true },
+  ]);
+  const timers = holdStartTimers(sandbox);
+  await AppView.ensureStaging(7, null, null, draftOpen());
+  AppView.closeStagingOverlay();
+  assert.equal(AppView._pendingStagingPreview, null);
+  assert.equal(timers.count('recheck'), 0, 'its recheck is cleared');
+  await AppView.onStagingRebuildResult(7, { url: 'https://gym--s7.example' });
+  assert.equal(swaps.length, 0);
+  assert.equal(statusCalls().length, 1);
+});

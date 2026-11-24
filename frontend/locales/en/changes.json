@@ -7739,6 +7739,14 @@
     "text": "Nobody had opened this preview for a while, so it was asleep. Waking it up now, with nothing rebuilt. This usually takes 10 to 30 seconds.",
     "description": "Text under \"Spinning the preview back up…\" on the preview's loading screen when the preview was asleep (stopped to save resources, everything else kept) and is being started again rather than rebuilt."
   },
+  "frame.loader.starting": {
+    "text": "Starting the preview",
+    "description": "Title of the loading screen of a live draft's preview (an app being changed live with Homeroom bot) while that preview is still starting. It opens by itself once it is up."
+  },
+  "frame.loader.startingSub": {
+    "text": "This takes a minute or two the first time. It shows here by itself as soon as it is up.",
+    "description": "Text under \"Starting the preview\" on the loading screen of a live draft's preview: how long it takes, and that nothing needs to be pressed."
+  },
   "frame.loader.slow": {
     "text": "This is taking longer than expected",
     "description": "Title of the preview's loading screen when building or loading the preview has run well past the usual time."
@@ -7746,6 +7754,10 @@
   "frame.loader.slowRebuild": {
     "text": "The rebuild is still running on the server. Close this and click Preview again in a moment.",
     "description": "Text under \"This is taking longer than expected\" on the preview's loading screen when a rebuild has not finished after several minutes. \"Preview\" is the label of the button that opens the preview."
+  },
+  "frame.loader.slowStart": {
+    "text": "The preview is still starting. It shows here by itself when it is up. If it does not, ask Homeroom bot to open it again.",
+    "description": "Text under \"This is taking longer than expected\" on the loading screen of a live draft's preview (an app being changed live with Homeroom bot) when it has not started after several minutes."
   },
   "frame.loader.slowLoadFailed": {
     "text": "The preview didn’t finish loading. Close this and click Preview again in a moment.",

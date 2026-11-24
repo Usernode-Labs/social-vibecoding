@@ -865,7 +865,7 @@
       "name": "Me: the editable profile card leads, above the merged and challenges stat cards (#982; no kudos card, #5249)",
       "path": "/?demo=1#profile",
       "expectText": "Edit profile",
-      "expectSelector": "#profile-screen:not(.hidden):has(#profile-details form):has(#profile-live-projects) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
+      "expectSelector": "#profile-screen:not(.hidden):has(#profile-details form):has(#profile-live-projects):has(#profile-preferences):has(.profile-section-links):has(#profile-edit-btn svg) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
       "id": "profile.week-share",
@@ -2888,7 +2888,7 @@
     {
       "name": "A bare #settings opens the Account page, led by the Profile card",
       "path": "/#settings",
-      "expectSelector": "#settings-section-content [data-settings-section=\"profile\"]:not(.hidden) a#settings-profile-card[href=\"#profile?edit\"]",
+      "expectSelector": "#settings-section-content [data-settings-section=\"profile\"]:not(.hidden):has(#settings-profile-details form) a#settings-profile-card:has(.settings-profile-camera)[href=\"#profile?edit\"]",
       "expectText": "Edit profile"
     },
     {
@@ -4891,9 +4891,9 @@
       "expectText": "Restart build"
     },
     {
-      "name": "#6544 (#6019, #6160): the AI tab's In progress band, its own card after Needs you, holds your work under way and what waits on someone else (going live, being built, other people's votes on a change or a group decision), each ending in its grey state",
+      "name": "#6544 (#6019, #6160): the AI tab's In progress band, its own card after Needs you, holds your work under way and what waits on someone else (going live, being built, other people's votes on a change or a group decision), each ending in its grey state; mobile polish 05: with how many are new since your last visit in its heading and a line under the new ones",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"]:has([data-ai-line=\"going_live\"]):has([data-ai-line=\"building\"]) [data-ai-line=\"up_for_vote\"] [data-ai-row-end=\"state\"]",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-sheet=\"open\"] + [data-ai-sheet=\"busy\"] [data-ai-list=\"busy\"]:has([data-ai-line=\"going_live\"]):has([data-ai-line=\"building\"]):has([data-ai-band-new]):has([role=\"separator\"][data-ai-new-line]) [data-ai-line=\"up_for_vote\"] [data-ai-row-end=\"state\"]",
       "expectText": "Going live"
     },
     {

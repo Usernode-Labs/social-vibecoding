@@ -220,3 +220,16 @@ characters and a second picture for the "Friend groups" card that the page
 does not draw; they were not committed. Its soft sky behind the closing band
 was the brand kit's sky at another size, so the page draws `bg/sky.webp`
 (above) instead of a second copy.
+
+## Editorial Profile and Settings assets (24 Nov 2026)
+
+`editorial/homeroom-wordmark-black.svg` is copied verbatim from the product
+owner’s `homeroom-brand-for-ai (2).zip` (Baked Design Studio’s brand pack).
+The pack’s Source Serif 4 headline weight is 460; Geist is its UI face.
+The supplied `homeroom-brand-bg.json` sky and stars are byte-for-byte the
+existing `bg/sky.webp` and `bg/stars.webp`; the editorial pages reuse those
+original files without re-encoding them.
+
+`editorial/grass-cut.webp` is the unmodified `assets/pictures/grass-cut.webp`
+from the same pack. Profile and Settings show a small grassy section of it
+at the desktop rail’s foot.

@@ -61,6 +61,56 @@ test('the preview\'s header says where the draft stands in one short line, and o
   assert.equal(liveDraftShown(draft({ state: 'proposed' })), false, 'one proposed before drafts survived Propose is not');
 });
 
+test('a draft started on their own proposal says it is on that PR until it has a change of its own', () => {
+  const { draftHeadLine } = loadTsx(BAR);
+  const onTheirs = (over = {}) => draft({
+    state: 'proposed', editable: true, edits: 0,
+    proposal: { sessionId: 50, prNumber: 142, open: true, pending: 0, headSha: null },
+    builtOn: { sessionId: 50, prNumber: 142, open: true, merged: false, linked: true },
+    ...over,
+  });
+  assert.deepEqual(draftHeadLine(onTheirs()), { id: 'messages:liveDraft.head.onProposal', values: { number: 142 }, bad: false },
+    'not "Up for a vote with every change" before any change');
+  assert.equal(message('messages:liveDraft.head.onProposal').replace('{{number}}', '142'), 'On PR #142 · no changes yet');
+  // A change of its own, not in the proposal yet, then put in it.
+  assert.deepEqual(draftHeadLine(onTheirs({ edits: 1, proposal: { sessionId: 50, prNumber: 142, open: true, pending: 1, headSha: null } })),
+    { id: 'messages:liveDraft.head.pending', values: { count: 1 }, bad: false });
+  assert.deepEqual(draftHeadLine(onTheirs({ edits: 1 })), { id: 'messages:liveDraft.head.inProposal', bad: false });
+  // No number to say: no changes yet, which is still true.
+  assert.deepEqual(draftHeadLine(onTheirs({
+    proposal: { sessionId: 50, prNumber: null, open: true, pending: 0, headSha: null },
+    builtOn: { sessionId: 50, prNumber: null, open: true, merged: false, linked: true },
+  })), { id: 'messages:liveDraft.head.none', bad: false });
+  // On someone else's proposal the draft is open and linked to nothing: as before.
+  assert.deepEqual(draftHeadLine(draft({ builtOn: { sessionId: 60, prNumber: 150, open: true, merged: false, linked: false } })),
+    { id: 'messages:liveDraft.head.none', bad: false });
+  assert.deepEqual(draftHeadLine(onTheirs({ live: 'starting' })), { id: 'messages:liveDraft.head.starting', bad: false }, 'a start is still said first');
+});
+
+test('a draft\'s preview opens look-only and waits for a start, so it never lands on "isn\'t running"', () => {
+  const { draftPreviewOpts, openLivePreview } = loadTsx(BAR);
+  for (const live of ['starting', 'live', 'rebuilding']) {
+    assert.deepEqual(draftPreviewOpts(draft({ live })), { readOnly: true, app: { slug: 'gym' }, waitForStart: true }, live);
+  }
+  assert.deepEqual(draftPreviewOpts(draft({ live: 'failed' })), { readOnly: true, app: { slug: 'gym' } },
+    'one that could not start is not waited for: the header says it failed');
+
+  // Pressed in the Artifacts column: AppView.ensureStaging is asked with them.
+  const asked = [];
+  const had = { window: globalThis.window, fetch: globalThis.fetch };
+  globalThis.window = { AppView: { ensureStaging: (...args) => { asked.push(args); return Promise.resolve(); } } };
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ draft: null }) });
+  try {
+    openLivePreview(draft({ live: 'starting', sessionId: 41 }));
+  } finally {
+    globalThis.window = had.window;
+    globalThis.fetch = had.fetch;
+  }
+  assert.deepEqual(asked, [[41, null, null, { readOnly: true, app: { slug: 'gym' }, waitForStart: true }]]);
+  assert.match(read(BAR), /void view\.ensureStaging\(draft\.sessionId, null, null, draftPreviewOpts\(draft\)\);/,
+    'the reload frame\'s open (draftPreviewStep \'open\') goes the same way');
+});
+
 test('the controls are the preview header\'s, beside its way out; Discard draft is the title menu\'s and asks first', () => {
   const overlay = read('frontend/src/features/staging/staging-overlay.tsx');
   assert.match(overlay, /const liveDraft = useDraftForSession\(state\.open \? state\.sessionId : null\);/);

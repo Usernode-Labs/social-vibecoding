@@ -395,8 +395,11 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  * movedSince). PR 6792 was promoted with the tab open, went from In progress
  * to Waiting under three changes going live, and was folded behind Show more
  * until its checks failed: a change of yours that just moved read as gone.
+ *
+ * Mobile polish 05 (24 Nov 2026): nor is a row that is new since your last
+ * visit (`isNew`, ./visit.ts), in the same bands.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: boolean; isNew?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
   // Which rows past the first few must still be shown: the fresh ones, the
   // ones that just moved and the one you are on. They keep their order; the
@@ -404,7 +407,7 @@ export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: bo
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    if (liftFresh) items.forEach((row, i) => { if ((row.fresh || row.moved) && i >= first) lifted.add(i); });
+    if (liftFresh) items.forEach((row, i) => { if ((row.fresh || row.moved || row.isNew) && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open
