@@ -232,6 +232,8 @@ type PanelHeadView = {
   kind: 'request' | 'change';
   pill: StatusPillState | null;
   menuKey: string | null;
+  /** #7120: the title the page's bar draws in place of its plain one, when it has one. */
+  title?: string | null;
 };
 
 /** Which "Project · …" line a page's route reads as, and its number. */
@@ -267,7 +269,8 @@ function PanelHeading({ route, place, reported, label, head }: {
   const slug = panelPage(route)?.slug || null;
   const same = !!place && place.slug === slug;
   const project = slug ? ((same ? place!.name : '') || String(reported || '').trim() || slug) : '';
-  const title = (label && label.route === route && label.text) || titleFor(route, reported);
+  const title = (head && head.kind === 'request' && head.title && samePage(head.route, route) ? head.title : null)
+    || (label && label.route === route && label.text) || titleFor(route, reported);
   const where = whereOf(route);
   const link = pageLinkFor(route);
   const pill = head && head.pill && samePage(head.route, route) ? head.pill : null;

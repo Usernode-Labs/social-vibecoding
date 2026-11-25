@@ -103,6 +103,21 @@ test('branches: created, compared, advanced only forward, forced, and a bench br
   const diff = await github.getProposalDiff('apps', 'br-1', 'main...dev/a');
   assert.equal(diff.fileCount, 1);
   assert.match(diff.diff, /^diff --git a\/a\.txt b\/a\.txt\n@@ -0,0 \+1,2 @@\n\+one\n\+two\n/);
+  // A committed bundle sorts before the source and is a few very long lines.
+  // Asked to, the reader cuts those to their start, so the source is reached
+  // and the diff is not cut off (services/diff-long-lines.js).
+  await github.createBranch('apps', 'br-1', 'dev/bundle');
+  await github.pushFiles('apps', 'br-1', [
+    { path: 'public/build/app.js', content: `${'x=1;'.repeat(40000)}\n` },
+    { path: 'src/app.js', content: 'send();\n' },
+  ], { branch: 'dev/bundle', message: 'bundle' });
+  const whole = await github.getProposalDiff('apps', 'br-1', 'main...dev/bundle', 120000);
+  assert.equal(whole.truncated, true);
+  assert.doesNotMatch(whole.diff, /send\(\);/, 'as it was: the bundle uses the budget');
+  const cut = await github.getProposalDiff('apps', 'br-1', 'main...dev/bundle', 120000, { clipLongLines: true });
+  assert.deepEqual([cut.truncated, cut.clippedLines, cut.filesComplete], [false, 1, true]);
+  assert.match(cut.diff, /\+x=1;[^\n]* … \(a line of 160001 characters, not read past here\)\n/);
+  assert.match(cut.diff, /diff --git a\/src\/app\.js b\/src\/app\.js\n@@ -0,0 \+1 @@\n\+send\(\);\n/);
   const files = await github.compareFiles('apps', 'br-1', 'main...dev/a');
   assert.deepEqual(files.files, [{ filename: 'a.txt', status: 'added', additions: 2, deletions: 0, previous: null }]);
   assert.equal(files.aheadBy, 2);

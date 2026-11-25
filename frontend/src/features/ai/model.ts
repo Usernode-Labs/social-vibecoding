@@ -398,16 +398,21 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  *
  * Mobile polish 05 (24 Nov 2026): nor is a row that is new since your last
  * visit (`isNew`, ./visit.ts), in the same bands.
+ *
+ * #7138: In progress folds new rows after its first few, and lifts only the
+ * row you are on and one that moved (`liftFresh` `'moved'`). A new row is
+ * still marked and counted, but it no longer grows the band above Show more.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: boolean; isNew?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: boolean; isNew?: boolean }>(items: T[], first: number, open: boolean, liftFresh: boolean | 'moved' = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
   // Which rows past the first few must still be shown: the fresh ones, the
   // ones that just moved and the one you are on. They keep their order; the
-  // rest folds away.
+  // rest folds away. In `'moved'` mode only a row that just moved is lifted.
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    if (liftFresh) items.forEach((row, i) => { if ((row.fresh || row.moved || row.isNew) && i >= first) lifted.add(i); });
+    if (liftFresh === 'moved') items.forEach((row, i) => { if (row.moved && i >= first) lifted.add(i); });
+    else if (liftFresh) items.forEach((row, i) => { if ((row.fresh || row.moved || row.isNew) && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open

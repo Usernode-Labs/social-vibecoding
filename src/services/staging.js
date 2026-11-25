@@ -1050,6 +1050,12 @@ async function rebuildProductionInner(config, app, options = {}) {
     // the letter tile. Best-effort; needs cloneDir for the image bytes.
     await appManifest.reconcileAppIcon(prodPool, app, manifest, cloneDir)
       .catch((err) => log.warn('staging', 'Icon reconcile failed', { app: app.slug, err: err.message }));
+    // #7118: and the card picture a first version committed (`brand/card.png`)
+    // applies here, once, on the first deploy after that version merged. The
+    // icon above is what makes the logo its tile; this is its card. Best-effort
+    // like its siblings, and it needs cloneDir for the image bytes.
+    await require('./first-version-pictures').applyFirstCard(prodPool, app, manifest, cloneDir)
+      .catch((err) => log.warn('staging', 'First version card picture failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.dataEncryptionKey);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()

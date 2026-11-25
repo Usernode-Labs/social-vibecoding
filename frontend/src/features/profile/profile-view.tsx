@@ -604,7 +604,7 @@ export function ProfileRoot(): ReactNode {
           {editorial && tab === 'activity' ? <ProfileRecentActivity changes={contributions} limit={5} empty /> : null}
           {!editorial || (!onHistoryTab && tab !== 'activity') ? (
             <>
-              {editorial ? <ProfileLiveProjects changes={contributions} /> : null}
+              {editorial ? <ProfileLiveProjects projects={state.data?.summary?.projects || []} /> : null}
               {editorial ? <ProfileRecentActivity changes={contributions} /> : null}
               <WorkPanel rows={view.rows} />
               <RewardsPanel rows={view.rows} />

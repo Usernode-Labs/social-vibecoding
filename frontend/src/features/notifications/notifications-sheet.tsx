@@ -789,33 +789,41 @@ function LiveItems({ view, items, groupIds }: {
   const ids = groupIds && groupIds.length ? groupIds : [view.id];
   // The tile's left edge lines up with the words above it (the row's tile is
   // 36px plus its 16px gap, inside the row's own 16px), so the list reads as
-  // part of the row. Each line may wrap to two and then ends in an ellipsis:
-  // on a phone a long request title must not scroll the panel sideways, and
-  // a line is a tap target, so it is at least 44px tall.
+  // part of the row. Each line is a chip with a light hairline (the card line
+  // the rest of the app uses) and room around its words; the title clamps to
+  // two lines inside a span, so a long one can never reach the edge. The full
+  // title stays as the chip's tooltip and on the request's page. A line is a
+  // tap target, so it is at least 44px tall. `ui-plain` keeps the look's own
+  // heavy button outline (its `:not(.ui-plain)` escape) off a chip that is
+  // not one of its buttons.
   return (
     <ul className="flex min-w-0 flex-col gap-1 ps-12">
-      {items.map((item) => (
-        <li key={item.id} className="min-w-0">
-          <button
-            type="button"
-            data-notif-live-item={item.id}
-            data-notif-live-unread={item.unread ? '' : undefined}
-            className={'block min-h-[44px] w-full rounded-xl bg-zinc-100 px-2.5 py-2 '
-              + 'text-start text-[13px] leading-snug line-clamp-2 break-words '
-              + (item.unread ? 'font-semibold text-zinc-900 dark:text-zinc-50 ' : 'text-zinc-800 dark:text-zinc-200 ')
-              + 'hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
-              + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
-            onClick={(event) => {
-              event.stopPropagation();
-              controller()?.openGroupRow(item.id, ids);
-            }}
-          >
-            {item.number
-              ? t('notifications:row.group.liveItem', { number: item.number, title: item.title })
-              : t('notifications:row.group.liveItemUnnumbered', { title: item.title })}
-          </button>
-        </li>
-      ))}
+      {items.map((item) => {
+        const label = item.number
+          ? t('notifications:row.group.liveItem', { number: item.number, title: item.title })
+          : t('notifications:row.group.liveItemUnnumbered', { title: item.title });
+        return (
+          <li key={item.id} className="min-w-0">
+            <button
+              type="button"
+              data-notif-live-item={item.id}
+              data-notif-live-unread={item.unread ? '' : undefined}
+              title={label}
+              className={'ui-plain flex min-h-[44px] w-full items-center rounded-xl border-0 bg-zinc-100 px-3 py-2 '
+                + 'text-start text-[13px] leading-snug shadow-[inset_0_0_0_1px_var(--app-sheet-line)] '
+                + (item.unread ? 'font-semibold text-zinc-900 dark:text-zinc-50 ' : 'text-zinc-800 dark:text-zinc-200 ')
+                + 'hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
+                + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+              onClick={(event) => {
+                event.stopPropagation();
+                controller()?.openGroupRow(item.id, ids);
+              }}
+            >
+              <span className="min-w-0 line-clamp-2 break-words">{label}</span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }

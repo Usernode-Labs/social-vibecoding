@@ -454,6 +454,10 @@ async function migrate(config) {
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
+  // #7133's shots: the profile's "Projects you've helped build" shows one card
+  // per project where the capture member has a live change. A fresh staging
+  // copy has none, so the section would only have its empty state.
+  await seedStagingProfileProjects(pool);
   await seedStagingPhoneFailures(pool);
   await seedStagingPlatformMail(pool);
   // #4803: feedback is private in clones and GitHub writes are unavailable.
@@ -552,6 +556,42 @@ async function seedStagingAppGroups(pool) {
        ON CONFLICT DO NOTHING`, [group.id]);
   } catch (err) {
     log.warn('db', 'Staging app groups seed failed', { message: err.message });
+  }
+}
+
+// #7133: the profile's project cards, for their before & after shots. Three
+// obviously fake projects, each with one live merged change by the capture
+// member, so the card row has more than the demo's one project to show. The
+// merged insert trigger fills live_at. Staging only and idempotent.
+async function seedStagingProfileProjects(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const member = (await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) return;
+    const projects = [
+      { id: 900809, slug: 'staging-demo-profile-garden', name: 'Staging demo garden',
+        title: 'Staging demo: a reminder when the soil is dry', hoursAgo: 1 },
+      { id: 900810, slug: 'staging-demo-profile-tides', name: 'Staging demo tides',
+        title: 'Staging demo: the tide table in your own time', hoursAgo: 2 },
+      { id: 900811, slug: 'staging-demo-profile-notes', name: 'Staging demo notes',
+        title: 'Staging demo: pin a note to the top', hoursAgo: 3 },
+    ];
+    for (const project of projects) {
+      await pool.query(
+        `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+         VALUES ($1, $2, $3, 'running', 'private', 'private', $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [project.id, project.name, project.slug, member.id]);
+      await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at)
+         SELECT $1, $2, $3::varchar(255), $4::text, $4::text, 'merged',
+                NOW() - make_interval(hours => $5::int)
+          WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = $3::varchar(255))`,
+        [project.id, member.id, `staging-fixture/profile-${project.slug}`, project.title, project.hoursAgo]);
+    }
+  } catch (err) {
+    log.warn('db', 'Staging profile projects seed failed', { message: err.message });
   }
 }
 
@@ -3186,7 +3226,8 @@ async function seedStagingFoldedLiveNotifications(pool) {
     const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
     const rows = [
       { number: 9201, minutesAgo: 3, title: 'Staging demo: a swap calendar for the group' },
-      { number: 9202, minutesAgo: 5, title: 'Staging demo: sort the seed box by season' },
+      // #7132's shots: one title long enough for the chip's two-line clamp.
+      { number: 9202, minutesAgo: 5, title: 'Staging demo: label every seed packet by season and note where it was sown, so the next swap is quicker to pack' },
       { number: 9203, minutesAgo: 8, title: 'Staging demo: a reminder before the next swap' },
     ];
     for (const row of rows) {
@@ -8810,16 +8851,18 @@ async function seedStagingDemoAppCard(pool) {
 // The pre-sign-in page is the first thing a logged-out visitor sees, and a
 // fresh staging DB has no public running apps at all — so the grid renders
 // empty and neither the open-tile zoom nor the gated-tile signup detour can
-// be exercised. This seeds ONE open tile and ONE gated tile so both branches
-// of the `requires_login` mapping are visible side by side, plus a little
-// app_activity so the open tile's active-users badge is nonzero.
+// be exercised. This seeds ONE open tile, ONE gated tile and ONE guest-ready
+// tile whose app asks for an account (guest_shell public, anon_shell gated;
+// #7128), so every branch of the `requires_login`/`guest_ready` mapping is
+// visible side by side, plus a little app_activity so the open tile's
+// active-users badge is nonzero.
 //
 // The far-future anon_shell_checked_at is load-bearing: src/services/
 // shell-probe.js re-probes every running public app whose check is stale
 // (NULL, older than an hour, or predating last_deploy_at), and these
 // fixtures have no container behind them — a plain NOW() stamp would be
 // overwritten with 'unknown' (→ gated) inside one 5-minute sweep and the
-// open tile would silently flip. Stamping a year out keeps both fixtures
+// open tile would silently flip. Stamping a year out keeps the fixtures
 // pinned to the classification seeded here.
 //
 // Ids sit in the 9001xx range so they clear cloned prod rows and the other
@@ -8851,19 +8894,26 @@ async function seedStagingLandingDirectory(pool) {
 
     const OPEN_APP_ID = 900100;
     const GATED_APP_ID = 900101;
+    // #7128: a public project whose app answers a guest but still asks for an
+    // account (anon_shell gated, guest_shell public): Open from its page must
+    // keep Homeroom's bar around the app for a visitor with no account.
+    const GUEST_READY_APP_ID = 900102;
     await pool.query(
       `INSERT INTO apps
          (id, name, slug, status, view_visibility, created_by,
-          icon_emoji, last_deploy_at, anon_shell, anon_shell_checked_at)
+          icon_emoji, last_deploy_at, anon_shell, guest_shell, anon_shell_checked_at)
        VALUES
          ($1, '[Mock] Open demo app', 'staging-landing-open',
-          'running', 'public', $3, '🛝',
-          NOW() - INTERVAL '2 days', 'public', NOW() + INTERVAL '1 year'),
+          'running', 'public', $4, '🛝',
+          NOW() - INTERVAL '2 days', 'public', 'unknown', NOW() + INTERVAL '1 year'),
          ($2, '[Mock] Gated demo app', 'staging-landing-gated',
-          'running', 'public', $3, '🔒',
-          NOW() - INTERVAL '3 days', 'gated', NOW() + INTERVAL '1 year')
+          'running', 'public', $4, '🔒',
+          NOW() - INTERVAL '3 days', 'gated', 'unknown', NOW() + INTERVAL '1 year'),
+         ($3, '[Mock] Guest-ready demo app', 'staging-landing-guest-ready',
+          'running', 'public', $4, '🎲',
+          NOW() - INTERVAL '1 day', 'gated', 'public', NOW() + INTERVAL '1 year')
        ON CONFLICT DO NOTHING`,
-      [OPEN_APP_ID, GATED_APP_ID, OWNER_ID]
+      [OPEN_APP_ID, GATED_APP_ID, GUEST_READY_APP_ID, OWNER_ID]
     );
 
     // Re-stamp on every boot: ON CONFLICT above skips rows that already
@@ -8872,9 +8922,10 @@ async function seedStagingLandingDirectory(pool) {
     await pool.query(
       `UPDATE apps
           SET anon_shell = CASE WHEN id = $1 THEN 'public' ELSE 'gated' END,
+              guest_shell = CASE WHEN id = $3 THEN 'public' ELSE guest_shell END,
               anon_shell_checked_at = NOW() + INTERVAL '1 year'
-        WHERE id IN ($1, $2)`,
-      [OPEN_APP_ID, GATED_APP_ID]
+        WHERE id IN ($1, $2, $3)`,
+      [OPEN_APP_ID, GATED_APP_ID, GUEST_READY_APP_ID]
     );
 
     // Active-users badge: the public list counts distinct users with a
@@ -17838,6 +17889,7 @@ module.exports = {
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
   seedStagingProfileCustomization,
+  seedStagingProfileProjects,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
   // #6284: the stopped-fix change the Testing card and Homeroom bot page

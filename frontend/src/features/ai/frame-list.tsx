@@ -145,7 +145,7 @@ function MoreRow({ open, onClick, disabled, children, ...data }: {
  * You's Changes, Requests and Votes draw History with it too
  * (../profile/frame/you-history.tsx).
  */
-export function Groups({ lines, heads, first, freshStyle = false, freshProjects, dayHeads = false, foldFresh = false, where = false }: {
+export function Groups({ lines, heads, first, freshStyle = false, freshProjects, dayHeads = false, foldFresh = false, foldNew = false, where = false }: {
   lines: Line[];
   heads: boolean;
   first: number;
@@ -153,6 +153,8 @@ export function Groups({ lines, heads, first, freshStyle = false, freshProjects,
   freshProjects?: Record<string, number>;
   dayHeads?: boolean;
   foldFresh?: boolean;
+  /** #7138: fold rows that are only new since the last visit; a row that moved still lifts. */
+  foldNew?: boolean;
   /** Each row says its project and number on a phone's second line (<LineRow where/>). */
   where?: boolean;
 }): ReactNode {
@@ -165,7 +167,8 @@ export function Groups({ lines, heads, first, freshStyle = false, freshProjects,
         const key = g.app?.slug || 'none';
         const open = !!opened[key];
         // The row you are on and a row with something new are never folded away (./model.ts groupRows).
-        const { items, shown, hidden } = groupRows(dayHeads ? byDay(g.items) : g.items, first, open, !foldFresh);
+        // #7138: the busy list folds a row that is only new, lifting the one you are on and one that moved.
+        const { items, shown, hidden } = groupRows(dayHeads ? byDay(g.items) : g.items, first, open, foldFresh ? false : foldNew ? 'moved' : true);
         const freshHidden = foldFresh ? items.slice(shown).filter((line) => line.fresh).length : 0;
         const anyFresh = freshStyle && g.items.some((line) => line.fresh);
         const firstOld = anyFresh ? items.findIndex((line) => !line.fresh) : -1;
@@ -416,7 +419,7 @@ export function AiFrameList({
             <Sec label={t('messages:ai.busy.title', { count: busyLines.length + stillLines.length })} data-ai-list="busy">
               <Card>
                 <div className={k('list')}>
-                  <Groups lines={busyLines} heads={heads} first={first(GROUP_FIRST.busy)} dayHeads />
+                  <Groups lines={busyLines} heads={heads} first={first(GROUP_FIRST.busy)} dayHeads foldNew />
                   {/* #6158: the rows nobody is moving, folded at the list's end. */}
                   {stillLines.length ? (
                     <div data-ai-still-part="">
