@@ -396,6 +396,13 @@
     },
     {
       "source": "src/routes/feedback.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "aca74cdfc7794b9a7f9d",
+      "count": 1,
+      "preview": "MY_FEEDBACK_SELF_APP_SQL"
+    },
+    {
+      "source": "src/routes/feedback.js",
       "kind": "structural-template",
       "fingerprint": "d15136901fbcf6a52a60",
       "count": 1,
@@ -2115,6 +2122,27 @@
       "fingerprint": "ceaf327ad2eb29657681",
       "count": 1,
       "preview": "`SELECT w.session_id FROM work_states w WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "2eb7672a10ede70da2e0",
+      "count": 1,
+      "preview": "scorer.RULE_CHALLENGES_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "3e98fa2ae3bbef1de386",
+      "count": 1,
+      "preview": "SELF_APP_SQL"
+    },
+    {
+      "source": "src/services/topochain/challenge-items.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a77e64e7f2e320971df9",
+      "count": 1,
+      "preview": "VIEWER_FEEDBACK_SQL"
     },
     {
       "source": "src/services/topochain/challenge-onboarding.js",
