@@ -57,7 +57,7 @@ const BOOT_ORDER = [
   'seedCaptureAdminUser', 'seedStagingLongInbox', 'seedStagingDemoUser',
   'seedStagingAdminDetailsUser', 'seedStagingSupportUser', 'seedStagingDuplicateUser',
   'seedSelfApp', 'seedTermsVersions', 'seedStagingPrivateRequest',
-  'seedStagingCollabOnlyVote', 'seedStagingJoinedBuildOffer', 'seedStagingNamedInThread',
+  'seedStagingCollabOnlyVote', 'seedStagingCloseVote', 'seedStagingJoinedBuildOffer', 'seedStagingNamedInThread',
   'seedStagingBotWaitingRows', 'seedStagingBotHandedBackFix', 'seedStagingChangePictures',
   'seedStagingChangeClaim', 'seedStagingBotAlreadyWorks', 'seedStagingBotGoneCloseOffer',
   'seedStagingBotWrongProject', 'seedStagingBotOutdatedReason', 'seedStagingClosedPrivateThread',
