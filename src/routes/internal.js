@@ -290,8 +290,9 @@ function internalRoutes(_config) {
     }
     // #7160: which turn declared it, told the same way the status route tells
     // a change's running turn (the bot's follow-up names its own look, else
-    // the turn's mode). 'turn' when nothing is on record.
-    let declaredBy = 'turn';
+    // the turn's mode). Null when no turn is on record: the author is then
+    // unknown, which is not the same as a turn called "turn".
+    let declaredBy = null;
     try {
       const durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (durableTurn) {
@@ -306,7 +307,10 @@ function internalRoutes(_config) {
       // never one turn's commit. The machine holds this build turn's "none"
       // over a declaration an earlier turn made, so a fix that changes
       // nothing a person sees cannot drop the change's shots.
-      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent, { guard: true, by: declaredBy });
+      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent, {
+        guard: true,
+        ...(declaredBy ? { by: declaredBy } : {}),
+      });
     } catch (err) {
       return shotsError(res, err);
     }

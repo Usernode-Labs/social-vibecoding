@@ -2239,7 +2239,10 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     shots: (session.shots && typeof session.shots === 'object')
       ? { ...session.shots, declaration: shapeDeclaration(session.shots_declared) }
       : null,
-    yesVotes: countedYes(session),
+    // The raw tallies stay raw here; the rule's own count is in `approval`
+    // (get_change's docs promise that split, and get_proposal is the tool
+    // that reports the counted yes as yesVotes).
+    yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
     // The approvers' votes beside what the rule needs, with the advisory

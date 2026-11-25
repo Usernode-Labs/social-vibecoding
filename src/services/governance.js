@@ -746,7 +746,8 @@ function ruleRowFields(gate) {
     approval_rule: gate.shownRule || null,
     // #7160: the named groups whose votes decide, so the connector can say
     // who may approve a change.
-    approval_groups: [...new Set(gate.rules.map((r) => r.group).filter(Boolean))],
+    approval_groups: [...new Set((Array.isArray(gate.rules) ? gate.rules : [])
+      .map((r) => r && r.group).filter(Boolean))],
   };
 }
 
