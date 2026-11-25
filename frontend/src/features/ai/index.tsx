@@ -118,13 +118,13 @@ import {
 } from './door';
 // The old Main Chat addresses, and a message named without its thread: the
 // router hands them to this module's doors (window.UsernodeReact.ai.openOld).
-import './where';
+import { oldAddressPending } from './where';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { AiFrameList } from './frame-list';
 import { showsPicked } from './lines';
 import { isFrameSkin, useSkin } from '../../lib/skin';
-import { bareTab, historyAsked, isBotTabHash, kindOf, projectsOf, waitingAddress, waitingAsked, withFilter, type HistoryKind } from './filter-address';
+import { bareTab, historyAsked, isBotTabHash, kindOf, progressAddress, progressAsked, projectsOf, waitingAddress, waitingAsked, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
 import { cleanQuery, useBotSearch } from './search';
 import { clearSearchMark, currentSearchMark } from './search-mark';
@@ -242,6 +242,10 @@ function go(href: string | null): void {
 let steppingBack = false;
 function showAddress(href: string): void {
   if (typeof window === 'undefined' || !/^#(homeroom-bot|ai)(\/|\?|$)/.test(window.location.hash)) return;
+  // An address from before is still being resolved (./where.ts): the bar is
+  // the server's to rewrite until it says where the address lands, and the
+  // column's resting place (the bare tab) must not take it away first.
+  if (oldAddressPending()) return;
   // A step back is on its way (history.back() lands a task later): the
   // address is about to be the tab's, and a second write now would step
   // back twice, off the tab.
@@ -374,6 +378,11 @@ export function AiScreen(): ReactNode {
   // keeps it; Back to the bare tab leaves it.
   const [waitingOpen, setWaitingOpen] = useState(false);
   const waitingWas = useRef(false);
+  // IN PROGRESS (25 Nov 2026): the head's other count opens its own list,
+  // Waiting on you's sibling, with its own address
+  // (`#homeroom-bot/progress`). Only one of the two is open at a time.
+  const [progressOpen, setProgressOpen] = useState(false);
+  const progressWas = useRef(false);
   const historyRef = useRef<HTMLDivElement | null>(null);
   // THE SEARCH BOX DOES NOT OUTLIVE THE VISIT (phone review, 23 Nov 2026, #3
   // and S14). This screen stays mounted while another is shown, so what was
@@ -405,10 +414,22 @@ export function AiScreen(): ReactNode {
     if (askedWaiting) {
       if (!waitingWas.current) setMoved((n) => n + 1);
       setWaitingOpen(true);
+      setProgressOpen(false);
     } else if (bareTab(hash)) {
       setWaitingOpen(false);
     }
     waitingWas.current = askedWaiting;
+    // In progress opens its own list the same way, reading the lists again
+    // for the same reason (#7157).
+    const askedProgress = progressAsked(hash);
+    if (askedProgress) {
+      if (!progressWas.current) setMoved((n) => n + 1);
+      setProgressOpen(true);
+      setWaitingOpen(false);
+    } else if (bareTab(hash)) {
+      setProgressOpen(false);
+    }
+    progressWas.current = askedProgress;
   };
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -437,6 +458,8 @@ export function AiScreen(): ReactNode {
   const openWaiting = () => {
     waitingWas.current = true;
     setWaitingOpen(true);
+    progressWas.current = false;
+    setProgressOpen(false);
     setMoved((n) => n + 1);
     showAddress(waitingAddress(picked));
   };
@@ -444,6 +467,20 @@ export function AiScreen(): ReactNode {
   const closeWaiting = () => {
     waitingWas.current = false;
     setWaitingOpen(false);
+    showAddress(withFilter('#homeroom-bot', { projects: picked }));
+  };
+  // The head's In progress count opens its own list, the same way (#7157).
+  const openProgress = () => {
+    progressWas.current = true;
+    setProgressOpen(true);
+    waitingWas.current = false;
+    setWaitingOpen(false);
+    setMoved((n) => n + 1);
+    showAddress(progressAddress(picked));
+  };
+  const closeProgress = () => {
+    progressWas.current = false;
+    setProgressOpen(false);
     showAddress(withFilter('#homeroom-bot', { projects: picked }));
   };
   // A project a link picked that no list names yet: its chip, from what
@@ -1100,7 +1137,7 @@ export function AiScreen(): ReactNode {
   useEffect(() => {
     if (!mounted || !visible || !botId) return;
     const before = addressed.current;
-    const now = `${shown}|${detailSlot ? JSON.stringify(detailSlot) : ''}|${waitingOpen ? 'waiting' : ''}`;
+    const now = `${shown}|${detailSlot ? JSON.stringify(detailSlot) : ''}|${waitingOpen ? 'waiting' : ''}|${progressOpen ? 'progress' : ''}`;
     addressed.current = now;
     if (before === undefined) return;
     if (before === now) return;
@@ -1110,9 +1147,12 @@ export function AiScreen(): ReactNode {
     // layout, comes back to the list. An item in the column still writes
     // its own address; All threads writes the bare tab's itself.
     const href = columnAddress(columnShown);
-    const base = waitingOpen && href === BOT_TAB ? waitingAddress() : href;
+    const base = href !== BOT_TAB ? href
+      : waitingOpen ? waitingAddress()
+        : progressOpen ? progressAddress()
+          : href;
     showAddress(withFilter(base, { projects: filterRef.current.picked, kind: filterRef.current.historyKind }));
-  }, [mounted, visible, botId, shown, detailSlot, waitingOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mounted, visible, botId, shown, detailSlot, waitingOpen, progressOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   // A page the side panel takes is the column's: no design preview beside it.
   useEffect(() => { if (panel.open && detail?.kind === 'design') putAway(); }, [panel.open, detail]); // eslint-disable-line react-hooks/exhaustive-deps
   // On a phone the column slides back to the list; the address is the page's.
@@ -1387,6 +1427,9 @@ export function AiScreen(): ReactNode {
           waitingOpen={waitingOpen}
           onOpenWaiting={openWaiting}
           onCloseWaiting={closeWaiting}
+          progressOpen={progressOpen}
+          onOpenProgress={openProgress}
+          onCloseProgress={closeProgress}
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>

@@ -79,6 +79,10 @@ const IDS = Object.freeze({
   updateRunningProposal: 990884,
   approvedSyncingProposal: 990885,
   voteAfterUpdateProposal: 990886,
+  // 25 Nov 2026 (#7145): a live draft's working session and the change it is
+  // proposed as. The draft row itself takes its own serial id.
+  liveDraftSession: 990887,
+  liveDraftProposal: 990888,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -1479,6 +1483,134 @@ const STATES = [
         shows: [{
           state: 'Your thread with Homeroom bot that starts with your question about a weekly book club, on the Homeroom bot page: under it, the bot\'s laid-out reply with a short heading, a bulleted list and a small table. Nothing in it is unread.',
           path,
+        }],
+      };
+    },
+  },
+  {
+    // 25 Nov 2026 (#7145): a live draft open in the column beside the
+    // member's thread with Homeroom bot. A proposal changed how the draft
+    // looks in that column, and no copy starts with one: only asking the bot
+    // opens a draft, and no copy has a model. The rows are the staging live
+    // draft seed's (src/db/migrate.js seedStagingLiveDraftThread) written in
+    // the demo-state style, on the platform project every copy has: the
+    // member's ask and the bot's replies, the draft's two edits, the later
+    // one not in its proposal yet, and the draft up for a vote. The address
+    // opens the thread with the draft in the column (`…/design`, which
+    // botDetailAt reads). Nothing builds in a copy, so the preview may read
+    // as starting: the thread and the column are what the state is for.
+    id: 'shots-demo-member-bot-live-draft-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      apps: ['id', 'name', 'slug'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'thread_root_id', 'idempotency_key',
+        'metadata', 'created_at'],
+      private_threads: THREAD_COLUMNS,
+      chat_sessions: ['id', 'app_id', 'user_id', 'status', 'is_headless', 'linked_issues', 'session_title',
+        'branch_name', 'promoted_at', 'last_activity_at'],
+      live_drafts: ['id', 'app_id', 'user_id', 'private_thread_id', 'root_message_id', 'session_id', 'state',
+        'base_sha', 'head_sha', 'edits', 'live_state', 'proposal_session_id', 'proposed_head_sha', 'proposed_at',
+        'created_at', 'updated_at'],
+      live_draft_edits: ['draft_id', 'commit_sha', 'summary', 'paths', 'created_at'],
+    },
+    free: async (client, ctx) => await messagesFree(client,
+      ['shots-fixture-hrbot-live-draft-ask', 'shots-fixture-hrbot-live-draft-done',
+        'shots-fixture-hrbot-live-draft-again', 'shots-fixture-hrbot-live-draft-saved'])
+      && botChatFree(client, ctx)
+      && idsFree(client, 'chat_sessions', [IDS.liveDraftSession, IDS.liveDraftProposal]),
+    async install(client, ctx) {
+      const chat = await memberBotChat(client, ctx);
+      const app = (await client.query('SELECT slug, name FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      if (!app) throw new Error('The live draft fixture lost the platform app.');
+      const name = app.name || app.slug;
+      // Fake commits: a copy has no repository to compare them to.
+      const sha = (c) => c.repeat(40);
+      const { rows: [ask] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-live-draft-ask', '{}'::jsonb, NOW() - INTERVAL '40 minutes')
+         RETURNING id`,
+        [chat.conversationId, ctx.member.id,
+          '[shots fixture] Can you make the project list look more like a phone app\'s list?']
+      );
+      const reply = async (senderId, content, key, minutesAgo, metadata) => {
+        const { rows: [row] } = await client.query(
+          `INSERT INTO conversation_messages
+             (conversation_id, sender_id, content, thread_root_id, idempotency_key, metadata, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW() - make_interval(mins => $7))
+           RETURNING id`,
+          [chat.conversationId, senderId, content, ask.id, key, metadata, minutesAgo]
+        );
+        return row.id;
+      };
+      const botMeta = JSON.stringify({ homeroomBot: { kind: 'chat' } });
+      await reply(chat.botId,
+        '[shots fixture] Done in the preview: each project is one white row with its last change in grey under its name.',
+        'shots-fixture-hrbot-live-draft-done', 37, botMeta);
+      await reply(ctx.member.id,
+        '[shots fixture] Now line the rows up with the search box above them.',
+        'shots-fixture-hrbot-live-draft-again', 6, '{}');
+      const saved = await reply(chat.botId,
+        '[shots fixture] Done in the preview: the rows now share the search box\'s edges. That change is saved on '
+        + 'the draft and is not in the proposal yet: Update proposal in the preview\'s header puts it there, which '
+        + 'clears its votes.',
+        'shots-fixture-hrbot-live-draft-saved', 5, botMeta);
+      await client.query('UPDATE conversations SET updated_at = GREATEST(updated_at, NOW() - INTERVAL \'5 minutes\') WHERE id = $1',
+        [chat.conversationId]);
+      await client.query(
+        `UPDATE conversation_members SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0), $3)
+          WHERE conversation_id = $1 AND user_id = $2`,
+        [chat.conversationId, ctx.member.id, saved]
+      );
+      const path = await listThread(client, ctx, chat,
+        { rootId: ask.id, kind: 'ask', appId: ctx.appId, readTo: saved });
+      const { rows: [thread] } = await client.query(
+        'SELECT id FROM private_threads WHERE root_message_id = $1', [ask.id]);
+      if (!thread) throw new Error('The live draft fixture lost its thread.');
+      // The draft's working session, as asking the bot opens one, and the
+      // change it was proposed as: no pull request and no preview, which a
+      // copy cannot make.
+      const { rows: [session] } = await client.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, status, is_headless, linked_issues, session_title, branch_name, last_activity_at)
+         VALUES ($1, $2, $3, 'paused', FALSE, '{}', $4, 'shots-fixture/live-draft', NOW())
+         RETURNING id`,
+        [IDS.liveDraftSession, ctx.appId, ctx.member.id, `[shots fixture] Live draft of ${name}`]
+      );
+      const { rows: [proposal] } = await client.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, status, is_headless, linked_issues, session_title, branch_name, promoted_at,
+            last_activity_at)
+         VALUES ($1, $2, $3, 'promoted', FALSE, '{}', '[shots fixture] Project rows like a phone app',
+                 'shots-fixture/live-draft-proposal', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes')
+         RETURNING id`,
+        [IDS.liveDraftProposal, ctx.appId, ctx.member.id]
+      );
+      const { rows: [draft] } = await client.query(
+        `INSERT INTO live_drafts
+           (app_id, user_id, private_thread_id, root_message_id, session_id, state, base_sha, head_sha, edits,
+            live_state, proposal_session_id, proposed_head_sha, proposed_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'proposed', $6, $7, 2, 'live', $8, $9, NOW() - INTERVAL '30 minutes',
+                 NOW() - INTERVAL '40 minutes', NOW())
+         RETURNING id`,
+        [ctx.appId, ctx.member.id, thread.id, ask.id, session.id, sha('a'), sha('c'), proposal.id, sha('b')]
+      );
+      await client.query(
+        `INSERT INTO live_draft_edits (draft_id, commit_sha, summary, paths, created_at)
+         VALUES ($1, $2, '[shots fixture] Project rows as one list with grey last changes',
+                 ARRAY['public/index.html'], NOW() - INTERVAL '37 minutes'),
+                ($1, $3, '[shots fixture] Rows line up with the search box',
+                 ARRAY['public/index.html'], NOW() - INTERVAL '5 minutes')`,
+        [draft.id, sha('b'), sha('c')]
+      );
+      return {
+        shows: [{
+          state: `Your thread with Homeroom bot about ${name}, at the address that opens its live draft in the column beside it: the draft is up for a vote and has two edits, one of them not in its proposal yet (the header offers Update proposal and Close draft). Nothing in it is unread. The preview may still be starting: these copies build nothing, and the thread and the column are the state.`,
+          path: `${path}/design`,
         }],
       };
     },

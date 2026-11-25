@@ -269,6 +269,20 @@ test('a change being updated, one syncing with main and one back up for a vote a
   }
 });
 
+// 25 Nov 2026 (#7145): the bot tab's column with a live draft in it. The
+// copies start with no draft (only asking the bot opens one, and no copy has
+// a model), so a change to that screen is declared against a ready-made state.
+test('a live draft in the bot tab\'s column is ready-made for the member', () => {
+  const id = 'shots-demo-member-bot-live-draft-v1';
+  const state = readyStates.READY_STATES.find((each) => each.id === id);
+  assert.ok(state, id);
+  assert.deepEqual([...state.personas], ['member']);
+  const names = readyStates.declarationAdvice(
+    declare(story('draft-column', 'A live draft opens in the column beside its thread.')), { selfApp: true },
+  ).availableStates.map((each) => each.name);
+  assert.ok(names.includes(state.name), id);
+});
+
 test('a change whose steps wait for a model\'s reply is warned about whatever setup or state it names', () => {
   // PR 4536's own words: its shots ended on "I can't reach my model".
   const asked = story('close-offer', 'When you ask the Homeroom bot in chat to close a request, or say one is done '
