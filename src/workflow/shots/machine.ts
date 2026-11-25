@@ -92,6 +92,11 @@ export interface Data {
   n: number;
   cleaning: Cleaning[];
   declaredBy?: number;             // the event whose declaration stands
+  // The proposal's head when the standing declaration was made (request
+  // #7146): a later turn's "none" is held when this is not the head that
+  // turn works on, so a fix that changes nothing a person sees cannot drop
+  // the change's shots. Missing counts as an earlier turn.
+  declaredOn?: string | null;
 }
 
 const STATES = [
@@ -146,7 +151,10 @@ const clock = (p: any) => ({ runId: text(p?.runId, 64), phase: text(p?.phase, 64
 const EVENTS = {
   // A declaration of visible changes (the hosted worker's tool, submit_work,
   // a hand-off, PR import, the bot's own proposal), for `head` or the row's.
-  Declared: (p: any) => ({ ...session(p), head: optSha(p?.head, 'head'), intent: intentOf(p?.intent), ...fence(p) }),
+  // `guard` (request #7146): the hosted worker's tool only, held back over a
+  // standing declaration from an earlier turn (holdsStandingNone).
+  Declared: (p: any) => ({ ...session(p), head: optSha(p?.head, 'head'), intent: intentOf(p?.intent),
+    guard: p?.guard === true, ...fence(p) }),
   // The proposal's head moved: shots of another head no longer stand.
   HeadMoved: (p: any) => ({ ...session(p), head: reqSha(p?.head, 'head'), reason: text(p?.reason, 1000), ...fence(p) }),
   // From the preview machine.
@@ -428,7 +436,8 @@ function moveHead(s: Live, f: Facts, ctx: TransitionContext, head: string, reaso
     : d.declared.intent && !d.declared.required ? 'not_needed' : d.declared.intent ? 'waiting_for_preview' : 'undeclared';
   const next: Live = { name, data: d };
   const writes: DomainWrite[] = [{ type: 'declared', sessionId: d.sessionId, head, keepHead: true,
-    state: slot.state, detail: slot.detail, cancelCode: 'superseded', cancelReason: reason || SUPERSEDED_REASON }];
+    state: slot.state, detail: slot.detail, declaredOnHead: d.declaredOn ?? null,
+    cancelCode: 'superseded', cancelReason: reason || SUPERSEDED_REASON }];
   return { s: next, out: step(next, { writes, cancel, work, timer: null }) };
 }
 
@@ -450,6 +459,8 @@ function adopt(sessionId: number, f: Facts, ctx: TransitionContext): { s: Live; 
   const detail = slot?.detail;
   if (detail && detail.intent && typeof detail.intent === 'object') {
     d.declared = { intent: detail.intent, required: requiredForIntent(detail.intent) };
+    // The turn a standing declaration came from, as the slot recorded it.
+    d.declaredOn = typeof detail.declaredOnHead === 'string' ? detail.declaredOnHead : null;
   } else if (detail && detail.required === true) {
     d.declared = { intent: null, required: true };
   }
@@ -503,24 +514,47 @@ const merge = (a: Outcome<SState>, b: Omit<Outcome<SState>, 'next'>): Outcome<SS
   timer: a.timer !== undefined ? a.timer : b.timer,
 });
 
+// A declaration covers the whole change against main, never one turn's
+// commit (request #7146). A build turn that changes nothing a person sees
+// declares "none"; when the change already has a standing declaration from
+// an earlier turn, that "none" is held instead of replacing it. A turn that
+// really removes the visible part says so, starting its rationale with this.
+export const REMOVED_MARKER = 'Visible part removed:';
+export const HELD_DECLARATION_REASON = 'This change already declares what a person sees, from an earlier turn. A declaration covers the whole change against main, never one turn\'s commit, so the standing one was kept. To replace it, declare again with a rationale that starts with "Visible part removed:".';
+
+/** Pure: whether a declaration is a later turn's "none" over a standing one. */
+function holdsStandingNone(d: Data, f: Facts, p: any): boolean {
+  if (p?.guard !== true) return false;
+  if (String((p?.intent as any)?.impact || '') !== 'none') return false;
+  if (!d.declared?.intent) return false;
+  if (String((p?.intent as any)?.rationale || '').trim().startsWith(REMOVED_MARKER)) return false;
+  const declaredOn = d.declaredOn ?? null;
+  const turnHead = f.session?.head ?? d.head ?? null;
+  return declaredOn !== turnHead;
+}
+
 // A declaration. The same one again, for the same head, changes nothing (a
 // build tool reports it more than once); a new one ends the run under way
-// and stands for the head, which is shot at once if its preview is ready.
+// and stands for the head, which is shot at once if its preview is ready. A
+// guarded "none" over an earlier turn's declaration is held (above).
 const declared: Handler = (s, e, f, ctx, deps) => {
   const p = e.payload;
   const head = headOf(s.data, f, p.head);
   const intent = p.intent;
   const required = requiredForIntent(intent as any);
+  if (holdsStandingNone(s.data, f, p)) return step(s);
   const same = !!s.data.declared?.intent && JSON.stringify(s.data.declared.intent) === JSON.stringify(intent)
     && s.data.head === head;
   if (same) return step(s);
-  let d: Data = { ...s.data, declared: { intent, required }, head, last: null, notStarted: null, declaredBy: e.id };
+  let d: Data = { ...s.data, declared: { intent, required }, head, last: null, notStarted: null, declaredBy: e.id,
+    declaredOn: f.session?.head ?? s.data.head ?? null };
   let cancel: WorkRef[] = [];
   let work: WorkRequest[] = [];
   if (live(s)) ({ d, cancel, work } = endRun({ name: s.name, data: d } as Live, f, { worker: false }));
   const slot = slotDetail(d);
   const writes: DomainWrite[] = [{ type: 'declared', sessionId: d.sessionId, head, keepHead: false,
-    state: slot.state, detail: slot.detail, cancelCode: 'intent_changed', cancelReason: 'The author changed the declared changes.' }];
+    state: slot.state, detail: slot.detail, declaredOnHead: d.declaredOn ?? null,
+    cancelCode: 'intent_changed', cancelReason: 'The author changed the declared changes.' }];
   if (!required) return step({ name: 'not_needed', data: d }, { writes: [...writes, settledNote(d)], cancel, work: [...work, ...settledWork(d, ctx)], timer: null });
   const ready = !!head && !!f.session && OPEN.has(f.session.status) && f.session.readyHeads.includes(head);
   if (ready) return start({ name: 'waiting_for_preview', data: d }, e, f, ctx, deps, 'declared', { writes, cancel, work });
@@ -987,17 +1021,20 @@ export function shots(deps: Deps): Machine<SState, Facts> {
     },
     transitions: transitions(deps) as any,
     writes: WRITES,
-    reply: async (tx, event, after) => {
+    reply: async (tx, event, after, ctx, facts) => {
       if (after.name === NONE) return null;
       const d = (after as Live).data;
       const { rows: [s] } = await tx.query('SELECT shots_state, shots_run_id, shots_detail FROM chat_sessions WHERE id = $1', [d.sessionId]);
       // A run that just started has no row until its revision resolves: the
       // slot still shows the run before it.
       const starting = LIVE.has(after.name) && !!d.run && !d.run.base;
+      // A guarded "none" the machine held answers so, with why (request #7146).
+      const held = event.type === 'Declared' && holdsStandingNone(d, facts, event.payload);
       return { machineState: after.name, state: starting ? 'planned' : s?.shots_state ?? null,
         runId: starting ? null : s?.shots_run_id ?? null,
         detail: s?.shots_detail ?? null, required: d.declared?.required ?? null,
-        ...(event.type === 'Declared' ? { unchanged: d.declaredBy !== event.id } : {}) };
+        ...(event.type === 'Declared' ? { unchanged: d.declaredBy !== event.id } : {}),
+        ...(held ? { kept: true, reason: HELD_DECLARATION_REASON } : {}) };
     },
   });
 }
@@ -1058,7 +1095,7 @@ async function showRun(tx: Tx, ctx: any, runIdOf: string) {
   }
   const { rows: [slot] } = await tx.query(
     `SELECT shots_detail->'previous' AS previous, shots_detail->>'carriedFrom' AS carried_from,
-            shots_detail->>'headSha' AS head
+            shots_detail->>'headSha' AS head, shots_detail->>'declaredOnHead' AS declared_on
        FROM chat_sessions WHERE id = $1 AND shots_run_id = $2`, [run.session_id, run.id]);
   const kept = slot?.previous;
   const previous = run.state !== 'verified' && run.state !== 'not_required' && kept && typeof kept === 'object'
@@ -1066,6 +1103,9 @@ async function showRun(tx: Tx, ctx: any, runIdOf: string) {
   const carried = run.state === 'verified' && !!slot && slot.carried_from === run.head_sha && SHA.test(String(slot.head || ''));
   const detail = {
     ...runSummary(run, artifacts), intent: run.intent,
+    // Which turn's declaration this run shoots, kept across the run's own
+    // writes so /diagram still tells an earlier turn's diagram (request #7146).
+    ...(slot && typeof slot.declared_on === 'string' ? { declaredOnHead: slot.declared_on } : {}),
     ...(carried ? { headSha: slot.head, carriedFrom: run.head_sha } : {}),
     ...(previous ? { previous: { runId: previous.runId, headSha: previous.headSha } } : {}),
   };
@@ -1107,6 +1147,7 @@ const WRITES = {
   // shows the declaration for the head. `keepHead`: runs on this head stand.
   declared: async (tx: Tx, w: any, ctx: any) => {
     const previous = await previousFor(tx, w);
+    const detail = { ...w.detail, ...(w.declaredOnHead !== undefined ? { declaredOnHead: w.declaredOnHead } : {}) };
     await tx.query(
       `UPDATE shot_runs
           SET state = CASE WHEN ${ACTIVE_RUN} THEN 'cancelled' ELSE 'stale' END,
@@ -1118,7 +1159,7 @@ const WRITES = {
       [w.sessionId, w.head, w.cancelCode, w.cancelReason, !!w.keepHead]);
     await tx.query(
       `UPDATE chat_sessions SET shots_state = $2, shots_run_id = NULL, shots_detail = $3::jsonb, shots_updated_at = NOW()
-        WHERE id = $1`, [w.sessionId, w.state, JSON.stringify(previous ? { ...w.detail, previous } : w.detail)]);
+        WHERE id = $1`, [w.sessionId, w.state, JSON.stringify(previous ? { ...detail, previous } : detail)]);
     await tell(tx, ctx, w.sessionId, w.state);
   },
   // Published shots carried across a clean merge of main (carry): the slot

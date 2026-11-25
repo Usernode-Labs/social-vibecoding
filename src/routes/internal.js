@@ -289,9 +289,21 @@ function internalRoutes(_config) {
     }
     let result;
     try {
-      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent);
+      // Request #7146: a declaration covers the whole change against main,
+      // never one turn's commit. The machine holds this build turn's "none"
+      // over a declaration an earlier turn made, so a fix that changes
+      // nothing a person sees cannot drop the change's shots.
+      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent, { guard: true });
     } catch (err) {
       return shotsError(res, err);
+    }
+    // A held declaration changed nothing: it leaves the slot, the diagram
+    // and the description as they are, so there is nothing to advise.
+    if (result.kept) {
+      return res.json({
+        ok: true,
+        shots: { accepted: false, kept: true, state: result.state, reason: result.reason },
+      });
     }
     // Whose browser the shots agent will use, and what data the copies hold
     // (shots-ready-states.js), said while the building agent can still
@@ -346,10 +358,34 @@ function internalRoutes(_config) {
       }
       try {
         const { rows } = await pool.query(
-          "SELECT shots_detail->'intent'->>'impact' AS impact FROM chat_sessions WHERE id = $1",
+          `SELECT shots_detail->'intent'->>'impact' AS impact,
+                  pr_diagram, pr_diagram_source,
+                  shots_detail->>'declaredOnHead' AS declared_on,
+                  COALESCE(imported_pr_head_sha, reviewed_head_sha, checks_commit_sha,
+                           handoff_head_sha, staging_commit_sha) AS head
+             FROM chat_sessions WHERE id = $1`,
           [sessionId]
         );
         if (!rows[0]) return res.status(404).json({ ok: false, code: 'not_found', message: 'No such proposal session.' });
+        // Request #7146: a diagram from an earlier turn stands for the whole
+        // change, as its declaration does, and a later turn's diagram cannot
+        // replace it. The turn that declared the standing declaration is the
+        // one that may correct its diagram; a turn that replaced the
+        // declaration (or has not declared yet) may replace it too.
+        const current = rows[0].head || null;
+        const storedOn = rows[0].pr_diagram && typeof rows[0].pr_diagram === 'object'
+          ? (rows[0].pr_diagram.head || null) : null;
+        const declaredOn = rows[0].declared_on || null;
+        if (rows[0].pr_diagram_source !== 'decision' && rows[0].pr_diagram
+          && storedOn !== current && declaredOn !== current) {
+          return res.json({
+            ok: true,
+            kept: true,
+            reason: 'This change already has a diagram, from an earlier turn. A diagram covers the whole change against main, '
+              + 'never one turn\'s commit, so the standing one was kept. To replace it, declare again with a change people can see, '
+              + 'or with a rationale that starts with "Visible part removed:".',
+          });
+        }
         let record;
         try {
           record = require('../services/diagram').parseDiagram(req.body?.diagram, { impact: rows[0].impact || null });
@@ -357,7 +393,7 @@ function internalRoutes(_config) {
           return res.status(400).json({ ok: false, code: 'invalid_diagram', message: err.message });
         }
         // The row and the pull request's block it owes commit together.
-        const stored = await require('../services/proposal-diagram').storeDeclared(pool, sessionId, record);
+        const stored = await require('../services/proposal-diagram').storeDeclared(pool, sessionId, record, { head: current });
         if (!stored) return res.status(500).json({ ok: false, code: 'diagram_not_stored', message: 'The diagram could not be stored.' });
         return res.json({ ok: true, diagram: record });
       } catch (err) {
