@@ -445,6 +445,13 @@ const RETIRED_IDS = {
   'agent-files-save': 'That form\'s Save button, gone with it.',
   'agent-files-cancel': 'That form\'s Cancel button, gone with it.',
   'agent-files-status': 'The pane\'s status line, gone with it.',
+  // ── Settings › User guide is retired (#7162) ───────────────────────
+  // The page explained places and voting, but it duplicated the tour and the
+  // product's own labels, so it left with no replacement. #settings/guide
+  // resolves to the Welcome tour (PART_ALIASES), and these two ids were only
+  // ever ADDED ones.
+  'settings-guide-section': 'The User guide pane root, retired with the page (#7162).',
+  'settings-guide-voting': 'The User guide card saying how a change gets voted in, retired with the page (#7162).',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -965,9 +972,6 @@ const ADDED_IDS = {
   'settings-tour-section': 'Settings -> Welcome tour, the pane holding the replay control (#2255).',
   'settings-tour-replay': 'Clears this account\'s "finished" flag, asks for the tour and goes to Home.',
   'settings-tour-hint': 'The line under it saying where the tour starts.',
-  // #5973: Settings -> User guide, the tour's places to read.
-  'settings-guide-section': 'Settings -> User guide, the pane root inside its [data-settings-section="guide"] wrapper.',
-  'settings-guide-voting': 'The card saying how a change gets voted in; dapp.json selects on it.',
   // #session-bridge-enabled and #session-bridge-status (#1281, the
   // session-CLI bridge opt-in in Settings, Experimental) left this map with
   // the CLI's local agent they gated. They were only ever ADDED ids.

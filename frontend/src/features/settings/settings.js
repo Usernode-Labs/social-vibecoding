@@ -420,8 +420,6 @@
       // them — the Improve panel is where the same facts turn into something
       // to act on (a build in flight, a reload waiting). See sections/about.tsx.
       { key: 'tour', label: 'settings:nav.part.tour', group: 'settings:nav.group.helpAbout' },
-      // #5973: the tour's places and how a change gets voted in, to read.
-      { key: 'guide', label: 'settings:nav.part.guide', group: 'settings:nav.group.helpAbout' },
       { key: 'usernode', label: 'settings:nav.part.usernode', group: 'settings:nav.group.helpAbout', gate: 'settings-usernode-section' },
       { key: 'about', label: 'settings:nav.part.about', group: 'settings:nav.group.helpAbout' },
 
@@ -482,7 +480,6 @@
       'app-permissions': 'lock',
       developer: 'code',
       tour: 'compass',
-      guide: 'lines',
       usernode: 'window',
       about: 'info',
       experimental: 'bulb',
@@ -541,7 +538,6 @@
       'app-ai': 'settings:nav.keywords.appAi',
       'blocked-apps': 'settings:nav.keywords.blockedApps',
       tour: 'settings:nav.keywords.tour',
-      guide: 'settings:nav.keywords.guide',
       usernode: 'settings:nav.keywords.usernode',
       about: 'settings:nav.keywords.about',
       'admin-preview': 'settings:nav.keywords.adminPreview',
@@ -551,7 +547,7 @@
     // now. #settings/api-key was the Anthropic key part (task 2275 removed
     // it); links to it still exist in old messages and mail, so it opens the
     // AI usage & models page instead of falling back to the first page.
-    PART_ALIASES: Object.freeze({ 'api-key': 'ai' }),
+    PART_ALIASES: Object.freeze({ 'api-key': 'ai', guide: 'tour' }),
 
     DEFAULT_SECTION: 'account',
 
