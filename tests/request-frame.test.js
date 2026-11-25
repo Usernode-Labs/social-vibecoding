@@ -30,7 +30,7 @@ test('the page\'s head is the kit\'s: what it is in a small line over the full t
   assert.equal(html.replace(/<svg.*?<\/svg>/s, '<svg/>'),
     '<div class="fr" data-topic-frame-head=""><div class="fr-head"><div class="fr-tx"><div class="fr-cap fr-over">Request #5998 · Admin console</div><h1 class="fr-title">Simplify the admin console</h1></div><div class="fr-acts"><button type="button" class="fr-ib dev-card-menu-btn" data-card-menu="request:5998" aria-haspopup="true" aria-label="More" title="More"><svg/></button></div></div></div>');
   assert.doesNotMatch(renderComponent(FRAME, 'TopicFrameHead', { title: 'A', over: null, menu: null }, { cache: false }), /fr-acts|fr-over|fr-purpose/);
-  assert.match(read(HEAD), /if \(frame\) return <TopicFrameHead title=\{r\.title\} over=\{dotLine\(\[kicker, r\.category\]\)\}/, 'the kicker the standard bar says, with the topic that sits under its title');
+  assert.match(read(HEAD), /if \(frame\) return <TopicFrameHead title=\{shown\} over=\{dotLine\(\[kicker, r\.category\]\)\}/, 'the kicker the standard bar says, with the topic that sits under its title; #7120: the title is the one the bar draws, "Close: …" while a vote to close is open');
 });
 
 test('About and the Follow switch are gone: the product\'s page has neither, and Follow stays a row of the page\'s menu', () => {

@@ -104,6 +104,8 @@ export interface PanelHeadReport {
   kind: 'request' | 'change';
   pill: unknown | null;
   menuKey: string | null;
+  /** #7120: the title the page's bar draws in place of its plain one, or null. */
+  title?: string | null;
 }
 
 /** What the door says of the page it opens in the panel, for the column's header row. */
@@ -714,7 +716,7 @@ function embeddedHead(route: string, report: PanelHeadReport | null): void {
   const s = sidePanelStore.get();
   if (!ready || !s.frameSrc || !route) return;
   head = report && (report.kind === 'request' || report.kind === 'change')
-    ? { kind: report.kind, pill: report.pill || null, menuKey: report.menuKey || null, route }
+    ? { kind: report.kind, pill: report.pill || null, menuKey: report.menuKey || null, title: typeof report.title === 'string' ? report.title : null, route }
     : null;
   sidePanelStore.set({ head });
 }

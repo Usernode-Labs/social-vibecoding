@@ -127,6 +127,23 @@ test('the week against the full PostgreSQL schema', { timeout: 180000 }, async (
   );
   assert.deepEqual(nobodyMerged, { merged: 0, apps: [], challengesDone: 0 });
 
+  // ── "Projects you've helped build" (#7133) ─────────────────────────────
+  //
+  // One row per app where one of the viewer's changes is live, carrying that
+  // app's newest one, newest merge first. A headless merge, a merge still
+  // going live and somebody else's row are all out.
+  const projectRows = (await pool.query(
+    profile.SUMMARY_PROJECTS_SQL, [me, profile.SUMMARY_PROJECTS_LIMIT])).rows;
+  assert.deepEqual(projectRows.map((row) => row.app_slug), ['notes', 'runs', 'chess'],
+    'one per app, newest merge first, with no time window; chess\'s live change is old but real');
+  assert.equal(new Date(projectRows[0].merged_at).toISOString(), `${dayAgo(0)}T02:00:00.000Z`,
+    'notes carries its newest merge, not the first one that day');
+  assert.equal(projectRows[0].session_title, null, 'the card title falls back like a contribution\'s');
+  const oneProject = (await pool.query(profile.SUMMARY_PROJECTS_SQL, [me, 1])).rows;
+  assert.equal(oneProject.length, 1, 'bounded by the limit');
+  assert.deepEqual((await pool.query(profile.SUMMARY_PROJECTS_SQL, [someone, 100])).rows
+    .map((row) => row.app_slug), ['notes'], 'only the viewer\'s own changes');
+
   // Challenges: two are done, but only one's latest credit fell in the week.
   const { rows: [season] } = await pool.query(
     `INSERT INTO seasons (name, starts_at, ends_at, is_active)

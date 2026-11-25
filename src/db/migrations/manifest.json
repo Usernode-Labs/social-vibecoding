@@ -587,9 +587,14 @@
       "schemaSha256": "480929812e89b0eca887a83f65b142dd2021c84cea64509d1b5878c7953b9825"
     },
     {
+      "id": "first-version-pictures",
+      "sha256": "ff1f80e017dd95540f7f6219725d3e1de12f5c6030775c4f908d05c7136e2d8b",
+      "schemaSha256": "3e183e9b2878d187d26f727cb6aa21fd5962ba65bc9c6a8221a83e1952a59c43"
+    },
+    {
       "id": "issue-files",
       "sha256": "9fd570174ee5518d62a1574b737126dd4ecd665e42188f2848c920ed685af3d4",
-      "schemaSha256": "1daf4b969c894589ca07c5eea1fba426519db76de04197e354bd0b2fd79e0bab"
+      "schemaSha256": "4d1a4e89d533b1bee56d0ca42cbaa88ed32e9df8b0438138bc4bcc60ddc6fc91"
     }
   ]
 }

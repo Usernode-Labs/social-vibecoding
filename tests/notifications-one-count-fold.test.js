@@ -277,13 +277,53 @@ test('three requests that went live within an hour are one row with three items'
   assert.doesNotMatch(html, /data-notif-id="2"|data-notif-id="3"/, 'the other two are inside it');
   // Its subject says how many, and each request is a line of its own.
   assert.ok(html.includes('3 of your requests went live'));
-  assert.match(html, /data-notif-live-item="1"[^>]*>#101 · Request 1</);
-  assert.match(html, /data-notif-live-item="2"[^>]*>#102 · Request 2</);
-  assert.match(html, /data-notif-live-item="3"[^>]*>#103 · Request 3</);
+  assert.match(html, /data-notif-live-item="1"[^>]*><span[^>]*>#101 · Request 1</);
+  assert.match(html, /data-notif-live-item="2"[^>]*><span[^>]*>#102 · Request 2</);
+  assert.match(html, /data-notif-live-item="3"[^>]*><span[^>]*>#103 · Request 3</);
   // Still the app's own word for it on the kind line.
   assert.ok(html.includes('Live'));
   // The label carries the number, so no count pill says it twice.
   assert.doesNotMatch(html, /aria-label="3 notifications"/);
+});
+
+test('went-live chips look the same whatever the title\'s length', () => {
+  // #7132: a long title wrapped to three lines against the chip's heavy
+  // outline. The clamp now lives on an inner span (so the button's own
+  // display cannot beat it), the full title is the chip's tooltip, and the
+  // chip draws one light hairline with room around its words.
+  const longTitle = 'Request draft pane: read as a document, with its open questions and File it, '
+    + 'so a draft reads like the request it will become and keeps every answer it asks for '
+    + 'in one place, with a way back to the request it belongs to';
+  const html = renderSheet({
+    // All three unread: the sheet's Unread tab is the one it opens on, and
+    // the weight class is then the same on every chip.
+    list: [
+      liveRow(1, 2),
+      liveRow(2, 4, { storyRef: { number: 102, title: longTitle } }),
+      liveRow(3, 6),
+    ],
+  });
+  const chip = (id) => {
+    const at = html.indexOf(`data-notif-live-item="${id}"`);
+    assert.ok(at > -1, `chip ${id} is drawn`);
+    return html.slice(html.lastIndexOf('<button', at), html.indexOf('</button>', at));
+  };
+  const classes = [1, 2, 3].map((id) => chip(id).match(/class="([^"]*)"/)[1]);
+  assert.equal(classes[1], classes[0], 'a long title gets the same chip as a short one');
+  assert.equal(classes[2], classes[0]);
+  for (const id of [1, 2, 3]) {
+    const html2 = chip(id);
+    const cls = html2.match(/class="([^"]*)"/)[1];
+    assert.ok(cls.includes('ui-plain'), 'keeps the look\'s heavy button outline off the chip');
+    assert.ok(cls.includes('shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'), 'one light hairline');
+    assert.ok(cls.includes('px-3') && cls.includes('py-2'), 'room around the words');
+    assert.ok(cls.includes('min-h-[44px]'), 'still a comfortable tap target');
+    assert.doesNotMatch(cls, /\bline-clamp-2\b/, 'the clamp is on the label, not the button');
+    assert.doesNotMatch(cls, /\bblock\b/, 'no display class competes with the clamp');
+    assert.match(html2, /<span class="[^"]*\bline-clamp-2\b[^"]*">/, 'the label carries the clamp');
+  }
+  assert.ok(chip(2).includes(`title="#102 · ${longTitle}"`), 'the full title is the tooltip');
+  assert.ok(chip(2).includes(`>#102 · ${longTitle}</span>`), 'the words themselves are unchanged');
 });
 
 test('a "went live" two hours older stays a row of its own', () => {
