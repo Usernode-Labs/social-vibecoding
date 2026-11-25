@@ -401,8 +401,8 @@ test('#6270: a stand-in word is not an answer, and a short real one is', () => {
 });
 
 test('#6270: the last round is warned and can queue the change, and reading is capped', () => {
-  assert.equal(voice.MAX_ROUNDS, 8);
-  assert.equal(voice.MAX_READS_PER_TURN, 4);
+  assert.equal(voice.MAX_ROUNDS, 12);
+  assert.equal(voice.MAX_READS_PER_TURN, 8);
   const tools = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true });
   const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 1 }, tools });
   assert.match(prompt, /even when they say it partly as a question/);

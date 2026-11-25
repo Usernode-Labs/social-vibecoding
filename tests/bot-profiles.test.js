@@ -176,7 +176,7 @@ test('the surfaces\' limits are their profiles\'', () => {
   const voice = require('../src/services/homeroom-bot-voice');
   assert.deepEqual([mayor.MAX_ROUNDS, mayor.MAX_OFFERS], [16, 3]);
   assert.equal(mayor.MAX_ROUNDS, profiles.CHAT_LIMITS.rounds);
-  assert.deepEqual([voice.MAX_ROUNDS, voice.MAX_READS_PER_TURN], [8, 4]);
+  assert.deepEqual([voice.MAX_ROUNDS, voice.MAX_READS_PER_TURN], [12, 8]);
   assert.equal(voice.MAX_ROUNDS, profiles.THREAD_LIMITS.rounds);
   for (const [file, name] of [
     ['src/services/homeroom-bot-mayor.js', 'CHAT_LIMITS'], ['src/services/homeroom-bot-voice.js', 'THREAD_LIMITS'],

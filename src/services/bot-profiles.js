@@ -53,8 +53,11 @@ const CHAT_LIMITS = Object.freeze({
 
 // A project's thread: one reply, short and quick, by the place's rules.
 const THREAD_LIMITS = Object.freeze({
-  rounds: 8,
-  readsPerTurn: 4,
+  // #7110: a reply may look things up as often as a private chat's (8), and a
+  // round is left over to answer once they are spent (with 8 rounds, one read
+  // a round left only 7).
+  rounds: 12,
+  readsPerTurn: 8,
   // Task 2020 follow-up: a reply longer than two short lines carries its
   // laid-out copy beside its words (homeroom-bot-html.js), so a round has
   // room for both (it was 900). Room that is not written is not paid for.
