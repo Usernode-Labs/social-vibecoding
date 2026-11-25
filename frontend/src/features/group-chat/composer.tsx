@@ -35,10 +35,13 @@
  * `display:none` runs under, and for the same reason.
  */
 
+import { useRef, useState } from 'react';
+
 import { Button } from '@/components/ui/button';
 import { ChatStatusLine } from '@/components/ui/chat';
 import { ArrowUpIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
+import { SpeakButton } from '../dictation/speak-button';
 
 import { DropOverlay } from '../attachments/file-drag';
 import { BOT_CHIP_CLASS } from './bot-request';
@@ -242,6 +245,19 @@ export interface ComposerFormProps {
 export function ComposerForm({ scope, fill, placeholder, maxLength, messages = false }: ComposerFormProps) {
   const t = useMessages('chat');
   const ids = IDS[scope];
+  // A request's reply box speaks as Messages' does (design review, 25 Nov
+  // 2026): the same dictation button between the field and Send. The field
+  // is the module's (group-chat.js reads and clears it), so the words go in
+  // through its value and an `input` event, the event the module already
+  // listens to for the draft, the field's height and the typing line.
+  const field = useRef<HTMLTextAreaElement>(null);
+  const [dictating, setDictating] = useState(false);
+  const putWords = (text: string) => {
+    const el = field.current;
+    if (!el) return;
+    el.value = text;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
   // #4065: the drop zone, while a file is held over this composer or its
   // messages. The module's tracker publishes the flag; it lies over the card,
   // and takes no pointer events, so the drop still lands on the form.
@@ -263,6 +279,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
           </div>
           <input type="file" id={ids.file} className="hidden" multiple />
           <textarea
+            ref={field}
             id={ids.input}
             rows={1}
             maxLength={maxLength}
@@ -270,9 +287,15 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
             placeholder={placeholder}
             aria-label={t('chat:group.composer.page.reply')}
             className="messages-composer-input"
+            // While words are being taken down, Enter waits for them: the
+            // module's own Enter (bound on the field) would send the box
+            // half written. The dictation button stops ⌘/Ctrl+Enter and the
+            // form's submit itself.
+            onKeyDownCapture={(event) => { if (dictating && event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); } }}
           />
+          <SpeakButton scope={`chat:${scope}`} getText={() => field.current?.value || ''} onText={putWords} maxLength={maxLength} onBusyChange={setDictating} />
           {/* Keeps the field focused through the press, as Messages' Send does. */}
-          <button type="submit" className="messages-send" aria-label={t('chat:group.composer.page.send')} title={t('chat:group.composer.page.send')} onMouseDown={(event) => event.preventDefault()}>
+          <button type="submit" disabled={dictating} className="messages-send" aria-label={t('chat:group.composer.page.send')} title={t('chat:group.composer.page.send')} onMouseDown={(event) => event.preventDefault()}>
             <ArrowUpIcon aria-hidden="true" />
           </button>
         </div>
