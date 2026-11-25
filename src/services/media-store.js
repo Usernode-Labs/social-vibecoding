@@ -149,9 +149,12 @@ async function removeOrphan(pool, store, key, cutoff) {
     await tx.query('BEGIN');
     // SET LOCAL ends with the transaction, so the pooled connection goes
     // back unchanged. A timeout throws into the catch below, which rolls
-    // back and rethrows.
-    await tx.query(`SET LOCAL lock_timeout = '${ORPHAN_LOCK_TIMEOUT}'; `
-      + `SET LOCAL statement_timeout = '${ORPHAN_STATEMENT_TIMEOUT}'`);
+    // back and rethrows. Two calls, not one string: PostgreSQL's extended
+    // protocol carries one statement per Parse message, and the SQL checker
+    // (scripts/check-sql.js) prepares every static query, so a two-statement
+    // query fails the repository's own `npm run lint:sql`.
+    await tx.query(`SET LOCAL lock_timeout = '${ORPHAN_LOCK_TIMEOUT}'`);
+    await tx.query(`SET LOCAL statement_timeout = '${ORPHAN_STATEMENT_TIMEOUT}'`);
     // An upsert takes a row lock even when the key was registered before.
     await tx.query(
       `INSERT INTO media_objects (object_key) VALUES ($1)
