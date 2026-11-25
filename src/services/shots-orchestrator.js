@@ -391,6 +391,20 @@ function screenBrowsers(intent) {
       planContract.phoneScreen(viewport) ? phoneTool(story.persona) : BROWSER_TOOLS[story.persona]]))]));
 }
 
+// 25 Nov 2026: each of those browsers has a twin for the before side
+// (worker/write-shots-mcp-config.js), so the agent takes the same step on
+// both sides in one turn and saves both sides of a state in one call,
+// instead of walking the before side after the after side (about a model
+// round trip a step). None for a run that takes only the after side.
+function twinBrowsers(intent, { afterOnly = false } = {}) {
+  if (afterOnly) return [];
+  return [...new Set(Object.values(screenBrowsers(intent)).flatMap((screens) => Object.values(screens)))]
+    .filter((name) => typeof name === 'string' && name);
+}
+// The brief names the twins from the worker itself (worker/shots-mcp.js
+// get_brief), only for the ones it started: a warm worker can stay on an
+// older image with none, and its agent must not be told to use them.
+
 // Homeroom's install strip shows only in a phone browser, and every shots page
 // opens with it dismissed (worker/shots-page-init.js); a page opened with this
 // on its query shows it, for a change to the strip itself. Fixed words only.
@@ -838,7 +852,7 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'get_brief', 'save_shot', 'finish_shots', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
   'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
@@ -1284,6 +1298,7 @@ async function buildCopies(config, pool, {
       // change names them and this pair installed their fixture
       // (declaredBrowserPersonas).
       browserPersonas: declaredBrowserPersonas(intent, exploration.availableFixtures),
+      twinBrowsers: twinBrowsers(intent, { afterOnly }),
       // A child app's pages load /usernode-bridge|native|tailwind/ from the
       // platform, which the edge routes in production; the shots browser's
       // proxy does the same. The platform serves its own.
@@ -1483,6 +1498,7 @@ async function dispatchAgent(config, pool, {
         phoneClipSize: a.phoneClipSize,
         phonePersonas: a.phonePersonas || [],
         browserPersonas: Array.isArray(a.browserPersonas) ? a.browserPersonas : [],
+        twinBrowsers: Array.isArray(a.twinBrowsers) ? a.twinBrowsers : [],
         platformAssets: a.platformAssets === true,
         deviceDensity: a.deviceDensity === true,
         onProgress: onProgress ? (line) => onProgress(`Shots agent: ${line}`) : null,

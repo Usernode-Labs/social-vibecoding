@@ -35,7 +35,13 @@ const DESKTOP_DENSITY = 3;
 const PERSONA_DIRS = Object.freeze([
   'member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed',
 ]);
-const BROWSER_DIRS = Object.freeze([...PERSONA_DIRS, ...PERSONA_DIRS.map((dir) => `${dir}_phone`)]);
+// Each browser may have a twin for the before side (`member_before`,
+// `member_phone_before`; write-shots-mcp-config.js), so both sides of a state
+// are shot in the same turn. A twin saves into its own directory beside its
+// browser's.
+const SIDE_DIRS = Object.freeze([...PERSONA_DIRS, ...PERSONA_DIRS.map((dir) => `${dir}_phone`)]);
+const BROWSER_DIRS = Object.freeze([...SIDE_DIRS, ...SIDE_DIRS.map((dir) => `${dir}_before`)]);
+const isPhoneDir = (dir) => /_phone(?:_before)?$/.test(dir);
 // Each browser's observer answers upload_file on a socket of its own here,
 // named for its directory (shots-browser-observer.js startControl).
 const browserControlDir = String(process.env.SHOTS_BROWSER_CONTROL_DIR || '');
@@ -63,6 +69,8 @@ async function request(route, { method = 'GET', body = null, binary = null, time
   if (!response.ok || payload?.ok !== true) {
     const error = new Error(String(payload?.message || `Homeroom returned HTTP ${response.status}`).slice(0, 1000));
     error.code = String(payload?.code || 'shots_service_failed');
+    // The HTTP status, for a retry of an upload behind the answer (retryable).
+    error.status = response.status;
     throw error;
   }
   return payload;
@@ -123,7 +131,7 @@ function savedScreenshot(file) {
   return {
     image,
     origin: boundary.screenshotOrigin(path.join(shotsDir, found.dir), name, image),
-    density: deviceDensity ? (found.dir.endsWith('_phone') ? PHONE_DENSITY : DESKTOP_DENSITY) : 1,
+    density: deviceDensity ? (isPhoneDir(found.dir) ? PHONE_DENSITY : DESKTOP_DENSITY) : 1,
     dir: found.dir,
     name,
   };
@@ -148,14 +156,43 @@ async function elementBoxQuery(shot, { waitMs = ELEMENT_BOX_WAIT_MS } = {}) {
   }
 }
 
+// The twins this worker started for the before side
+// (write-shots-mcp-config.js reads the same SHOTS_TWIN_BROWSERS). The brief
+// names them only from here, never from the platform: a worker on an older
+// image has none, and its agent is then told none, so one browser does both
+// sides as before.
+let twinServers = [];
+try { twinServers = JSON.parse(process.env.SHOTS_TWIN_BROWSERS || '[]'); } catch { twinServers = []; }
+if (!Array.isArray(twinServers)) twinServers = [];
+// The context with the before side's browser for each change's screens, for
+// the screens whose browser has a twin here; as it was for an after-only run
+// or when none has.
+function withTwins(context) {
+  if (!context || typeof context !== 'object') return context;
+  // Whatever the platform sent under that name is not this worker's to trust.
+  const { beforeScreenBrowsers: _sent, ...own } = context;
+  if (own.afterOnly || !own.screenBrowsers || !twinServers.length) return own;
+  const before = {};
+  for (const [id, screens] of Object.entries(own.screenBrowsers)) {
+    for (const [screen, browser] of Object.entries(screens || {})) {
+      if (typeof browser !== 'string' || !twinServers.includes(browser)) continue;
+      (before[id] = before[id] || {})[screen] = `${browser}_before`;
+    }
+  }
+  return Object.keys(before).length ? { ...own, beforeScreenBrowsers: before } : own;
+}
+
 // The directory of the browser that shoots a change's screen: the persona's
 // own, or its phone browser's when the brief's screenBrowsers names that one
-// for the screen (a phone screen).
-function browserDir(context, declared, screen) {
+// for the screen (a phone screen). The before side's is its twin when this
+// worker has one (withTwins), and the same browser otherwise.
+function browserDir(context, declared, screen, side = 'after') {
   const dir = declared.persona === 'read_only_admin' ? 'admin' : declared.persona;
   if (!PERSONA_DIRS.includes(dir)) throw refused('unknown_change', `${declared.id} has no browser of its own.`);
   const browser = context?.screenBrowsers?.[declared.id]?.[screen];
-  return browser === `browser_${dir}_phone` ? `${dir}_phone` : dir;
+  const own = browser === `browser_${dir}_phone` ? `${dir}_phone` : dir;
+  const twin = context?.beforeScreenBrowsers?.[declared.id]?.[screen];
+  return side === 'before' && twin === `browser_${own}_before` ? `${own}_before` : own;
 }
 
 // The clip the screen's browser most recently finished writing: a browser
@@ -306,10 +343,9 @@ async function takeCloseups(changes, pair) {
 // came out the same in dark (it follows a URL parameter, not the system's
 // mode, or no mode at all): `inPlace` is false for the rest of the turn.
 const darkInPlace = { tried: false, works: true };
-const OBSERVED_BROWSER = /^(member|admin|full_admin|guest)(_phone)?$/;
-async function takeDarkShots(results, pair) {
-  const light = results.filter((entry) => entry.saved && entry.kind === 'screen' && entry.theme !== 'dark'
-    && entry.result?.sameAsLight !== true);
+const OBSERVED_BROWSER = /^(member|admin|full_admin|guest)(_phone)?(_before)?$/;
+async function takeDarkShots(accepted, pair) {
+  const light = accepted.filter((entry) => entry.kind === 'screen' && entry.theme !== 'dark');
   if (!light.length) return { dark: [], left: [] };
   await pairOrigins();
   if (!runDarkMode) return { dark: [], left: [] };
@@ -341,24 +377,19 @@ async function takeDarkShots(results, pair) {
     try { shot = savedScreenshot(answer.file); } catch { continue; }
     for (const entry of byFile.get(file)) {
       const { change, screen, side } = entry;
-      try {
-        requireOnApp(side, [shot.origin], pair);
-        const query = new URLSearchParams({
-          change, screen, side, kind: 'screen', theme: 'dark', ...(shot.density > 1 ? { density: String(shot.density) } : {}),
-          ...(typeof entry.showsPrivate === 'boolean' ? { showsPrivate: entry.showsPrivate ? '1' : '0' } : {}),
-        });
-        const result = (await request(`/shot?${query}`, { method: 'POST', binary: shot.image })).result;
-        if (result?.sameAsLight) {
-          darkInPlace.works = false;
-          dark.push({ change, screen, side, saved: false, sameAsLight: true });
-          continue;
-        }
-        if (result?.saved === false) continue;
-        covered.add(`${change}\u0000${screen}\u0000${side}`);
-        dark.push({ change, screen, side, saved: true });
-      } catch (error) {
+      try { requireOnApp(side, [shot.origin], pair); } catch (error) {
         dark.push({ change, screen, side, saved: false, code: String(error?.code || 'dark_failed') });
+        continue;
       }
+      const query = new URLSearchParams({
+        change, screen, side, kind: 'screen', theme: 'dark', ...(shot.density > 1 ? { density: String(shot.density) } : {}),
+        ...(typeof entry.showsPrivate === 'boolean' ? { showsPrivate: entry.showsPrivate ? '1' : '0' } : {}),
+      });
+      // Taken; Homeroom keeps it behind this answer (queueUpload), and says
+      // later when it did not (sameAsLight, or a refusal: darkLeft).
+      queueUpload({ change, screen, side, kind: 'screen', theme: 'dark', file: answer.file }, query, shot.image, { dark: true });
+      covered.add(`${change}\u0000${screen}\u0000${side}`);
+      dark.push({ change, screen, side, taken: true });
     }
   }
   return {
@@ -367,6 +398,222 @@ async function takeDarkShots(results, pair) {
     ...(restoreHint ? { restoreHint } : {}),
   };
 }
+
+// ── Saving behind the answer (25 Nov 2026) ───────────────────────────────
+//
+// A save used to upload each file, then ask for and take its close-ups, then
+// take and upload its dark shots, before it answered: 8 to 24 seconds a call
+// on one run (Outreach PR 19, six calls, about half the agent's time), with
+// the browser's next step queued behind it. Now save_shot checks what it can
+// here (the file, the site it was taken on), takes what needs the page as it
+// stands (the dark shot; a close-up's browser is held until it is taken) and
+// answers. The uploads go to Homeroom one at a time behind it, in the order
+// they were listed, so an element shot is still checked against the screen
+// shot of its state and an after shot against its before. What Homeroom says
+// about them (a refusal, the same image on both sides, an element shot not
+// part of its screen) comes back with the next save_shot as `earlier`, and
+// with finish_shots, which waits for every one: the agent calls it last.
+//
+// The runner (run-cc.sh) reads SHOTS_UPLOADS_FILE ("<pending> <failed>") and
+// does not end the turn while uploads are pending, so the run's verdict is
+// read only once they have all landed. A change whose upload never did is
+// skipped with that reason (skipUnsaved), never published from an older shot.
+const UPLOADS_FILE = String(process.env.SHOTS_UPLOADS_FILE || '');
+const UPLOAD_TRIES = 3;
+// The pause before each try again; the bridge tests set none.
+const UPLOAD_RETRY_MS = process.env.SHOTS_UPLOAD_RETRY_MS === '0' ? [0, 0] : [1000, 3000];
+const CLOSEUP_HOLD_MS = 30_000;
+const FINISH_WAIT_MS = 120_000;
+const EXIT_DRAIN_MS = 90_000;
+const uploads = {
+  queue: [], running: false, pending: 0,
+  // The slots whose last upload could not reach Homeroom, by slot.
+  unsaved: new Map(),
+  // What Homeroom said that the agent has not been told yet.
+  news: [], darkLeft: [],
+  progress: null, idle: [],
+};
+const NOTABLE = ['sameAsOtherSide', 'elementNotInScreen', 'darkDropped', 'sameAsLight'];
+
+function writeLedger() {
+  if (!UPLOADS_FILE) return;
+  try {
+    fs.writeFileSync(`${UPLOADS_FILE}.tmp`, `${uploads.pending} ${uploads.unsaved.size}\n`, { mode: 0o600 });
+    fs.renameSync(`${UPLOADS_FILE}.tmp`, UPLOADS_FILE);
+  } catch { /* the runner reads none and waits for nothing */ }
+}
+
+const uploadSlot = (entry) => [entry.change, entry.screen, entry.side, entry.kind, entry.theme || 'light'].join('\u0000');
+// Homeroom could not be reached, or failed on its side: tried again.
+const retryable = (error) => !error?.status || error.status >= 500 || error.status === 429;
+
+async function requestWithRetry(route, options) {
+  for (let attempt = 1; ; attempt += 1) {
+    try { return await request(route, options); } catch (error) {
+      if (attempt >= UPLOAD_TRIES || !retryable(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, UPLOAD_RETRY_MS[attempt - 1] || 3000));
+    }
+  }
+}
+
+// What the agent is told about one upload: the words that matter, never its
+// bytes, sizes or progress (the answer carries the latest progress once).
+function told(entry, result, error) {
+  const { showsPrivate: _private, ...shot } = entry;
+  if (error) return { ...shot, saved: false, error: { code: error.code || 'save_failed', message: String(error.message || error).slice(0, 500) } };
+  const said = {};
+  for (const key of [...NOTABLE, 'warning', 'elementWarning', 'hint']) if (result?.[key] != null) said[key] = result[key];
+  return { ...shot, saved: result?.saved !== false, ...said };
+}
+
+function settleUpload(job, result, error) {
+  uploads.pending = Math.max(0, uploads.pending - 1);
+  if (result?.progress) uploads.progress = result.progress;
+  const { change, screen, side } = job.entry;
+  if (job.dark) {
+    if (result?.sameAsLight) {
+      // The page follows a URL parameter, not the system's mode: this one,
+      // and every dark shot after it, are the agent's to take that way.
+      darkInPlace.works = false;
+      uploads.darkLeft.push({ change, screen, side });
+      uploads.news.push(told(job.entry, result));
+    } else if (error || result?.saved === false) {
+      uploads.darkLeft.push({ change, screen, side });
+      if (error) uploads.news.push(told(job.entry, null, error));
+    }
+  } else if (error || result?.saved === false || NOTABLE.some((key) => result?.[key])) {
+    uploads.news.push(told(job.entry, result, error));
+  }
+  writeLedger();
+  job.resolve({ entry: job.entry, result, error });
+}
+
+async function pumpUploads() {
+  if (uploads.running) return;
+  uploads.running = true;
+  while (uploads.queue.length) {
+    const job = uploads.queue.shift();
+    const slot = uploadSlot(job.entry);
+    try {
+      const { result } = await requestWithRetry(`/shot?${job.query}`, { method: 'POST', binary: job.image });
+      uploads.unsaved.delete(slot);
+      settleUpload(job, result, null);
+    } catch (error) {
+      // A refusal is the agent's to act on; one that never reached Homeroom
+      // leaves the slot unsaved until a later save of it lands.
+      if (retryable(error)) uploads.unsaved.set(slot, job.entry); else uploads.unsaved.delete(slot);
+      settleUpload(job, null, error);
+    }
+  }
+  uploads.running = false;
+  if (!uploads.pending) for (const done of uploads.idle.splice(0)) done();
+}
+
+function queueUpload(entry, query, image, { dark = false } = {}) {
+  uploads.pending += 1;
+  writeLedger();
+  return new Promise((resolve) => {
+    uploads.queue.push({ entry, query, image, dark, resolve });
+    pumpUploads();
+  });
+}
+
+// A piece of work behind the answer that is not an upload (a close-up),
+// counted as pending like one.
+function behind(work) {
+  uploads.pending += 1;
+  writeLedger();
+  return Promise.resolve().then(work).catch(() => {}).finally(() => {
+    uploads.pending = Math.max(0, uploads.pending - 1);
+    writeLedger();
+    if (!uploads.pending && !uploads.running) for (const done of uploads.idle.splice(0)) done();
+  });
+}
+
+function uploadsSettled(timeoutMs) {
+  if (!uploads.pending) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    uploads.idle.push(() => { clearTimeout(timer); resolve(true); });
+  });
+}
+
+function takeNews() {
+  return { earlier: uploads.news.splice(0), darkLeft: uploads.darkLeft.splice(0) };
+}
+
+// Close-ups need Homeroom to have both sides of the state (shots-closeups
+// picks them from the comparison), so they are taken behind the answer too:
+// the after browser holds the agent's next page-changing call (its observer's
+// `hold`, at most CLOSEUP_HOLD_MS) until its close-ups are taken, while the
+// other browsers, and the model, go on.
+async function scheduleCloseups(accepted, saved, pair) {
+  const afterScreens = accepted.filter((entry) => entry.side === 'after' && entry.kind === 'screen' && entry.theme !== 'dark');
+  if (!afterScreens.length) return;
+  const changes = [...new Set(accepted.map((entry) => entry.change))];
+  const dirs = new Set();
+  for (const entry of afterScreens) {
+    const found = findScreenshot(path.basename(entry.file));
+    if (found && OBSERVED_BROWSER.test(found.dir)) dirs.add(found.dir);
+  }
+  const held = [];
+  for (const dir of dirs) {
+    try {
+      const answer = await browserControl(`browser_${dir}`, { action: 'hold', ms: CLOSEUP_HOLD_MS }, 5000);
+      if (answer?.ok) held.push(dir);
+    } catch { /* not held: a close-up it misses says so */ }
+  }
+  behind(async () => {
+    try {
+      await Promise.all(saved);
+      const closeups = await takeCloseups(changes, pair);
+      const missed = closeups.filter((entry) => !entry.saved);
+      if (missed.length) {
+        uploads.news.push({
+          closeups: missed,
+          closeupHint: 'Some close-ups could not be taken because the browser no longer shows that change\'s after '
+            + 'screen. Open its after state again, take the after screen shot again and save it: the close-ups are '
+            + 'taken again with it. Leave them if that is not possible.',
+        });
+      }
+    } finally {
+      for (const dir of held) {
+        try { await browserControl(`browser_${dir}`, { action: 'release' }, 5000); } catch { /* it lets go on its own */ }
+      }
+    }
+  });
+}
+
+// The changes an upload never reached Homeroom for are skipped, with that
+// reason, so a run never publishes one of them from an older shot.
+async function skipUnsaved() {
+  const changes = new Set([...uploads.unsaved.values(), ...uploads.queue.map((job) => job.entry)]
+    .map((entry) => entry.change));
+  for (const change of changes) {
+    try {
+      await request('/skip', { method: 'POST', timeoutMs: 10_000, body: {
+        change, reason: 'Its shots were taken but did not finish uploading to Homeroom, so they are not shown.',
+      } });
+    } catch { /* Homeroom is unreachable: the runner says so */ }
+  }
+}
+
+let exiting = false;
+async function drainAndExit() {
+  if (exiting) return;
+  exiting = true;
+  const settled = await uploadsSettled(EXIT_DRAIN_MS);
+  if (!settled || uploads.unsaved.size) await skipUnsaved();
+  writeLedger();
+  process.exit(0);
+}
+// The turn ends (its client closes this server) while uploads may still be
+// going: they finish first, within EXIT_DRAIN_MS.
+if (typeof process.on === 'function') {
+  process.on('SIGTERM', () => { drainAndExit(); });
+  process.on('SIGINT', () => { drainAndExit(); });
+}
+if (process.stdin && typeof process.stdin.on === 'function') process.stdin.on('end', () => { drainAndExit(); });
 
 const annotations = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const server = new McpServer(
@@ -385,12 +632,34 @@ server.registerTool('get_brief', {
     if (!origins?.base || !origins?.head) throw new Error('The brief has no before and after addresses.');
     const eligibleHostedAppSlugs = hostedAppSlugs(process.env.SHOTS_HOSTED_ORIGINS_FILE,
       new URL(origins.base).origin, new URL(origins.head).origin);
-    return resultContent({ ...context, eligibleHostedAppSlugs });
+    return resultContent({ ...withTwins(context), eligibleHostedAppSlugs });
   } catch (error) { return toolError(error); }
 });
 
+const DARK_LEFT_HINT = 'These dark shots could not be taken where the page stands, or Homeroom did not keep them. '
+  + 'Once every light shot is saved, take them as the brief\'s darkMode says.';
+const DARK_SAME_HINT = 'This app did not change when its page was switched to dark where it stands. Once every light shot '
+  + 'is saved, take one dark shot as the brief\'s darkMode says: if Homeroom answers sameAsLight, leave '
+  + 'out the rest; if not, take the others the same way.';
+// The part of an answer every call shares: what Homeroom said since the last
+// one, the dark shots left to the agent, and how far the run has got.
+function laterNews(extraDarkLeft = []) {
+  const news = takeNews();
+  const darkLeft = [...extraDarkLeft, ...news.darkLeft];
+  return {
+    ...(news.earlier.length ? {
+      earlier: news.earlier,
+      earlierHint: 'What Homeroom answered about shots you saved before this call. Act on each one as if it had '
+        + 'come back when you saved it: a refusal or a warning means that shot is to be taken again.',
+    } : {}),
+    ...(darkLeft.length ? { darkLeft, darkHint: darkInPlace.works ? DARK_LEFT_HINT : DARK_SAME_HINT } : {}),
+    pendingUploads: uploads.pending,
+    ...(uploads.progress ? { progress: uploads.progress } : {}),
+  };
+}
+
 server.registerTool('save_shot', {
-  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot, or only an after one when the brief has afterOnly. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. When the brief has darkMode, saving a light screen shot also takes its dark one, where the page stands (the answer\'s dark); for one it lists in darkLeft, take the dark shot yourself as the brief says and pass theme "dark". Element shots and clips are always light. The answer says which saved and why any did not.',
+  description: 'Save screenshots for declared changes, several in one call: both sides of a state in one call when you shot them together. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot, or only an after one when the brief has afterOnly. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. When the brief has darkMode, saving a light screen shot also takes its dark one, where the page stands (the answer\'s dark); for one it lists in darkLeft, take the dark shot yourself as the brief says and pass theme "dark". Element shots and clips are always light. It answers as soon as the files are checked here and handed on: Homeroom stores them behind the answer, and what it says about them comes back as `earlier` in the next save_shot answer or in finish_shots. Call finish_shots once everything is saved.',
   inputSchema: {
     shots: z.array(z.object({
       change: z.string().min(1).max(96),
@@ -408,9 +677,9 @@ server.registerTool('save_shot', {
   },
   annotations,
 }, async ({ shots }) => {
-  // One upload per file, in order: a model round trip is what costs time,
-  // not these requests. A refused file does not stop the others.
   const results = [];
+  const accepted = [];
+  const saved = [];
   let pair = null;
   // Screen shots go up before element shots, so Homeroom checks each
   // element shot against the screen of the same state (shots-control
@@ -419,7 +688,6 @@ server.registerTool('save_shot', {
     .sort((a, b) => ((shots[a].kind === 'element') - (shots[b].kind === 'element')) || a - b);
   for (const index of order) {
     const { change, screen, side, kind = 'screen', theme, file, showsPrivate } = shots[index];
-    const put = (entry) => { results[index] = entry; };
     try {
       const shot = savedScreenshot(file);
       const { image, origin, density } = shot;
@@ -431,55 +699,60 @@ server.registerTool('save_shot', {
         ...(typeof showsPrivate === 'boolean' ? { showsPrivate: showsPrivate ? '1' : '0' } : {}),
         ...box,
       });
-      const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
-      put({ change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}), file, saved: true, result,
-        ...(typeof showsPrivate === 'boolean' ? { showsPrivate } : {}) });
+      const entry = { change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}), file,
+        ...(typeof showsPrivate === 'boolean' ? { showsPrivate } : {}) };
+      saved.push(queueUpload(entry, query, image));
+      accepted.push(entry);
+      results[index] = { change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}), file, accepted: true };
     } catch (error) {
-      put({
+      results[index] = {
         change, screen, side, kind, file, saved: false,
         error: { code: error.code || 'save_failed', message: String(error.message || error).slice(0, 500) },
-      });
+      };
     }
   }
-  const saved = results.filter((entry) => entry.saved).length;
-  // In a run taken at device density, the close-ups the platform wants of
-  // the changes just saved, taken while their screens most likely still
-  // show (takeCloseups).
-  let closeups = [];
-  if (deviceDensity && saved) {
-    try { closeups = await takeCloseups(results.filter((entry) => entry.saved).map((entry) => entry.change), pair); }
-    catch { closeups = []; }
-  }
-  const missed = closeups.filter((entry) => !entry.saved);
-  // The dark shots of the light screens just saved, taken where they stand.
+  // The dark shots of the light screens just handed on, taken where they
+  // stand, before this answers: the next call may move the page.
   let darkShots = { dark: [], left: [] };
-  if (saved) {
-    try { darkShots = await takeDarkShots(results, pair); } catch { darkShots = { dark: [], left: [] }; }
+  if (accepted.length) {
+    try { darkShots = await takeDarkShots(accepted, pair); } catch { darkShots = { dark: [], left: [] }; }
+  }
+  // In a run taken at device density, the close-ups of the after screens
+  // just handed on, taken behind the answer while their browser waits.
+  if (deviceDensity && accepted.length) {
+    try { await scheduleCloseups(accepted, saved, pair); } catch { /* a missed close-up says so later */ }
   }
   const content = resultContent({
-    saved, refused: results.length - saved,
-    results: results.map(({ showsPrivate: _private, ...entry }) => entry),
-    ...(closeups.length ? { closeups } : {}),
+    accepted: accepted.length, refused: results.length - accepted.length,
+    results,
     ...(darkShots.dark.length ? { dark: darkShots.dark } : {}),
-    ...(darkShots.left.length ? {
-      darkLeft: darkShots.left,
-      darkHint: darkInPlace.works
-        ? 'These dark shots could not be taken where the page stands. Once every light shot is saved, take '
-          + 'them as the brief\'s darkMode says.'
-        : 'This app did not change when its page was switched to dark where it stands. Once every light shot '
-          + 'is saved, take one dark shot as the brief\'s darkMode says: if save_shot answers sameAsLight, leave '
-          + 'out the rest; if not, take the others the same way.',
-    } : {}),
     ...(darkShots.restoreHint ? { darkRestoreHint: darkShots.restoreHint } : {}),
-    ...(missed.length ? { closeupHint: 'Some close-ups could not be taken because the browser no longer shows that '
-      + 'change\'s after screen. Open its after state again, take the after screen shot again and save it: the '
-      + 'close-ups are taken again with it. Leave them if that is not possible.' } : {}),
+    ...laterNews(darkShots.left),
   });
-  return saved ? content : { ...content, isError: true };
+  return accepted.length ? content : { ...content, isError: true };
+});
+
+server.registerTool('finish_shots', {
+  description: 'Call this last, once every shot and clip is saved. It waits until Homeroom has stored every upload and close-up, then answers what Homeroom said about them that you have not seen yet (earlier, darkLeft) and how far the run has got (progress). Act on it as on a save_shot answer: take again what it asks for, save it, and call finish_shots again. You are done when it answers pendingUploads 0 and nothing in earlier or darkLeft is left to act on.',
+  inputSchema: {},
+  annotations,
+}, async () => {
+  const settled = await uploadsSettled(FINISH_WAIT_MS);
+  const unsaved = [...uploads.unsaved.values()].map(({ showsPrivate: _private, ...entry }) => entry);
+  return resultContent({
+    settled,
+    ...laterNews(),
+    ...(unsaved.length ? {
+      notUploaded: unsaved,
+      notUploadedHint: 'Homeroom could not be reached for these. Save them again with save_shot (the files are still here), '
+        + 'then call finish_shots.',
+    } : {}),
+    ...(settled ? {} : { waitHint: 'Some uploads are still going. Call finish_shots again.' }),
+  });
 });
 
 server.registerTool('save_clip', {
-  description: 'Only for a change whose intent.animation is "motion": save the clip you just recorded. The browser records each session and writes the clip when the session ends, so, in the browser the brief\'s screenBrowsers names for that screen: browser_close, browser_resize to the screen size again, open the start path, do the steps that trigger the motion, wait for it to finish, browser_close, then call this with the change id, screen name, and side. Record the before and after sides separately.',
+  description: 'Only for a change whose intent.animation is "motion": save the clip you just recorded. The browser records each session and writes the clip when the session ends, so, in the browser the brief\'s screenBrowsers names for that screen (for the before side its twin in beforeScreenBrowsers, when the brief has one): browser_close, browser_resize to the screen size again, open the start path, do the steps that trigger the motion, wait for it to finish, browser_close, then call this with the change id, screen name, and side. Record the before and after sides separately.',
   inputSchema: {
     change: z.string().min(1).max(96),
     screen: z.string().min(1).max(32),
@@ -494,7 +767,7 @@ server.registerTool('save_clip', {
     if (declared.intent?.animation !== 'motion') {
       throw refused('clip_not_needed', `${change} is not declared as motion; save still shots for it.`);
     }
-    const file = latestClip(browserDir(context, declared, screen));
+    const file = latestClip(browserDir(withTwins(context), declared, screen, side));
     // Every page the recorded session showed must be this side's address,
     // by the record written as that session closed, after its clip.
     requireOnApp(side, boundary.sessionOrigins(path.dirname(file), { notBefore: fs.statSync(file).mtimeMs }), {
