@@ -24,402 +24,14 @@ const mailRateLimit = require('../services/mail/rate-limit');
 // them works as before. Never used for anything a person chose.
 const STAGING_FIXTURE_BCRYPT_COST = 4;
 
-// The staging fixtures, in the order a boot has always run them: an ordered,
-// frozen list so the before & after shots runner can run one seed at a time
-// against the pair's other copy (src/db/seed-other-copy.js). `background`
-// keeps a slow seed off the boot's critical path as it always was;
-// `ownCopyOnly` marks a seed that reaches beyond the database, so the other
-// copy never runs it. `phaseEnd` is a boot timing boundary that falls inside
-// the list.
+// One entry of STAGING_SEEDS (which follows migrate()). `background` keeps a
+// slow seed off the boot's critical path as it always was; `ownCopyOnly`
+// marks a seed that reaches beyond the database, so the pair's other copy
+// never runs it; `phaseEnd` is a boot timing boundary that falls inside the
+// list.
 function stagingSeed(name, run, options = {}) {
   return Object.freeze({ name, run, ...options });
 }
-
-const STAGING_SEEDS = Object.freeze([
-  stagingSeed('reservePreviewReviewerIds', (pool, config) => reservePreviewReviewerIds(pool)),
-  stagingSeed('seedAdmin', (pool, config) => seedAdmin(pool, config)),
-  stagingSeed('seedCaptureUser', (pool, config) => seedCaptureUser(pool)),
-  stagingSeed('seedCaptureAdminUser', (pool, config) => seedCaptureAdminUser(pool)),
-  stagingSeed('seedStagingLongInbox', (pool, config) => seedStagingLongInbox(pool)),
-  // Must run BEFORE every staging fixture — a dozen of them own rows via a
-  // hard-coded created_by = 900001. See seedStagingDemoUser.
-  stagingSeed('seedStagingDemoUser', (pool, config) => seedStagingDemoUser(pool)),
-  stagingSeed('seedStagingAdminDetailsUser', (pool, config) => seedStagingAdminDetailsUser(pool)),
-  stagingSeed('seedStagingSupportUser', (pool, config) => seedStagingSupportUser(pool)),
-  stagingSeed('seedStagingDuplicateUser', (pool, config) => seedStagingDuplicateUser(pool)),
-  stagingSeed('seedSelfApp', (pool, config) => seedSelfApp(pool, config)),
-  stagingSeed('seedTermsVersions', (pool, config) => seedTermsVersions(pool)),
-  stagingSeed('seedStagingPrivateRequest', (pool, config) => seedStagingPrivateRequest(pool)),
-  // #6664's shots: a project anyone may see but only its collaborators may
-  // take part in, with a vote waiting that the capture member can see and
-  // cannot cast. Obviously fake, staging only.
-  stagingSeed('seedStagingCollabOnlyVote', (pool, config) => seedStagingCollabOnlyVote(pool)),
-  // #7027's shots: an invitation to build that its person answered by
-  // joining the project another way, so the bell row reads as an offer and
-  // the member list tags them "offered to build". Obviously fake, staging
-  // only.
-  stagingSeed('seedStagingJoinedBuildOffer', (pool, config) => seedStagingJoinedBuildOffer(pool)),
-  // Mobile 04's shots (24 Nov 2026): somebody named the capture member with
-  // @ in a request's thread, so the Homeroom bot tab's Needs you has its
-  // Reply and Dismiss row. Obviously fake, staging only.
-  stagingSeed('seedStagingNamedInThread', (pool, config) => seedStagingNamedInThread(pool)),
-  // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
-  // a slot, handed back, never read, an operator task), for its shots.
-  stagingSeed('seedStagingBotWaitingRows', (pool, config) => seedStagingBotWaitingRows(pool)),
-  // #6667: a request whose bot-built change was handed back to its asker, so
-  // the Homeroom bot tab's Needs you row has a state to show.
-  stagingSeed('seedStagingBotHandedBackFix', (pool, config) => seedStagingBotHandedBackFix(pool)),
-  // #6533: a change's thread whose bot reply already holds its email pictures.
-  // #6420's shots: a change on one request's page that names another request
-  stagingSeed('seedStagingChangePictures', (pool, config) => seedStagingChangePictures(pool)),
-  // as one it closes, so that request's page shows "Change #N says it closes
-  // this" and the requester can answer it. Obviously fake, staging only.
-  stagingSeed('seedStagingChangeClaim', (pool, config) => seedStagingChangeClaim(pool)),
-  // #6306's shots: a request the bot read and found already works, so Needs
-  // you says "Already works" with Propose to close and the request's page
-  // says why. Staging has no model, so the bot's note is stored.
-  stagingSeed('seedStagingBotAlreadyWorks', (pool, config) => seedStagingBotAlreadyWorks(pool)),
-  // #6988's shots: the already-works request's bot offer once it is gone, so
-  // its thread says so and carries Propose to close, which opens the close
-  // dialog with the bot's reason already in it.
-  stagingSeed('seedStagingBotGoneCloseOffer', (pool, config) => seedStagingBotGoneCloseOffer(pool)),
-  // #6752's shots: a request the bot read as filed on the wrong project, so
-  // its page and the requester's chat say where it seems to belong and offer
-  // the close vote. Staging has no model, so the bot's note is stored.
-  stagingSeed('seedStagingBotWrongProject', (pool, config) => seedStagingBotWrongProject(pool)),
-  // #6399's shots: a request handed back over a plan the bot could not read,
-  // which a later release made readable, so its card offers a read again.
-  stagingSeed('seedStagingBotOutdatedReason', (pool, config) => seedStagingBotOutdatedReason(pool)),
-  // #6271's shots: a private thread with the bot, already marked done this
-  // week, so Live this week has a closed thread to show. Staging has no
-  // model, so the bot's reply is stored rather than asked for.
-  stagingSeed('seedStagingClosedPrivateThread', (pool, config) => seedStagingClosedPrivateThread(pool)),
-  // 24 Nov 2026's shots: an open private thread with only two messages, so
-  // the bot tab's column shows where its reply box stands under a short
-  // thread. Staging has no model, so the bot's reply is stored.
-  stagingSeed('seedStagingShortPrivateThread', (pool, config) => seedStagingShortPrivateThread(pool)),
-  // #6566's shots: the bot's reply after it filed a problem report, and its
-  // answer when asked for the link. Staging has no model, so both replies
-  // are stored messages.
-  stagingSeed('seedStagingBotReportReply', (pool, config) => seedStagingBotReportReply(pool)),
-  // #6581's shots: a request whose build failed twice, with a reply under the
-  // first failure note. The change keeps that note and posts the second note
-  // below it. Staging runs no build, so the thread is seeded.
-  stagingSeed('seedStagingBotFailureNotes', (pool, config) => seedStagingBotFailureNotes(pool)),
-  // #6426's shots: Main Chat shows "Welcome back" after a day away, so the
-  // capture member's chat with the bot has a visit old enough to show it.
-  stagingSeed('seedStagingMainChatLastVisit', (pool, config) => seedStagingMainChatLastVisit(pool)),
-  // #6441's shots: three requests gone live within an hour, so the bell's
-  // Unread shows them folded into one row that lists each.
-  stagingSeed('seedStagingFoldedLiveNotifications', (pool, config) => seedStagingFoldedLiveNotifications(pool)),
-  // #6494's shots: the bell's two storage notices, one at half full and one
-  // nearly full, each saying how much is used and what the limit is. Staging
-  // runs no sweep against a growing database, so they are seeded.
-  stagingSeed('seedStagingStorageNotices', (pool, config) => seedStagingStorageNotices(pool)),
-  // 20 Nov 2026 (live-draft review): a thread with a live draft up for a vote, for G and J's shots.
-  stagingSeed('seedStagingLiveDraftThread', (pool, config) => seedStagingLiveDraftThread(pool)),
-  // #6901's shots: while the server is full, Admin → Limits says how many
-  // people were turned away, and the bell has a refusal notice. A fresh
-  // staging copy has no run of refusals at all, and staging notifies nobody,
-  // so both are seeded with obviously fake people.
-  stagingSeed('seedStagingLimitRefusals', (pool, config) => seedStagingLimitRefusals(pool)),
-  // #6261's shots: a design thread with a version in the capture member's
-  // chat, for the comment picture's design frames.
-  stagingSeed('seedStagingDesignThread', (pool, config) => seedStagingDesignThread(pool)),
-  // #6354's shots: a design that started from a copy of the Homeroom bot
-  // page, an obviously fake one, with the bot's change as version 2.
-  stagingSeed('seedStagingCapturedPageThread', (pool, config) => seedStagingCapturedPageThread(pool)),
-  // K's shots (20 Nov 2026): one thread holding two artifacts, each with its
-  // own versions, so the artifacts column has a picker to show.
-  stagingSeed('seedStagingArtifactsThread', (pool, config) => seedStagingArtifactsThread(pool)),
-  stagingSeed('seedStagingBotPlanWaiting', (pool, config) => seedStagingBotPlanWaiting(pool)),
-  // #6860's shots: a plan whose build is over says what became of it, which
-  // a fresh staging copy has no run to show: one built into a change up for
-  // a vote, and one whose build stopped. Obviously fake; staging only.
-  stagingSeed('seedStagingBotPlanSettled', (pool, config) => seedStagingBotPlanSettled(pool)),
-  // #6264: a request whose bot kept its word, for the before & after shots
-  // of "tell me when it's done" (the promise, then the line it posted).
-  stagingSeed('seedStagingBotFollowUp', (pool, config) => seedStagingBotFollowUp(pool)),
-  // #6211's shots: a request the bot read as part of another one, so its
-  // discussion has the overlap note and its three choices. Nothing here runs
-  // a model, so the note is stored as the bot would have said it.
-  stagingSeed('seedStagingBotOverlap', (pool, config) => seedStagingBotOverlap(pool)),
-  stagingSeed('seedStagingBotOverlapBuilt', (pool, config) => seedStagingBotOverlapBuilt(pool)),
-  // #6255's shots: the member asks the bot, in Main Chat, to say when a
-  // request it is still building is made, and it agrees. Nothing here runs
-  // a model, so a fresh staging copy has no such exchange to show.
-  stagingSeed('seedStagingBotTellMeWhen', (pool, config) => seedStagingBotTellMeWhen(pool)),
-  // #6228's shots: a reply on the handed-back request #9103 (above), for the
-  // thread's status line, its track card and the Homeroom bot page's row.
-  stagingSeed('seedStagingBotReplyWaiting', (pool, config) => seedStagingBotReplyWaiting(pool)),
-  // #6263's shots: a bot-built change on a request page whose description is
-  // marked out of date, so the note under it has a state to show.
-  stagingSeed('seedStagingBotStaleDescription', (pool, config) => seedStagingBotStaleDescription(pool)),
-  stagingSeed('seedStagingClosedGoingLive', (pool, config) => seedStagingClosedGoingLive(pool)),
-  // #6284's shots: a bot change whose checks failed after the bot stopped at
-  // its own limit of three fixes, so the Testing card and the Homeroom bot
-  // page have the stopped state to show (and Let it try again).
-  stagingSeed('seedStagingBotFixesStopped', (pool, config) => seedStagingBotFixesStopped(pool)),
-  // #6388's shots: a bot change whose one failing check reports the preview
-  // answering 503, so the Testing card says the preview looks at fault (and
-  // never "Its author needs to fix this").
-  stagingSeed('seedStagingBotFixesPlatform', (pool, config) => seedStagingBotFixesPlatform(pool)),
-  // #6389's shots: the capture member's OWN change, made in Claude Code, its
-  // vote met but its tests failing and conflicting with main. A fresh
-  // staging copy has no such change (it comes from a coding agent outside
-  // Homeroom), so Needs you has the row that says what it waits on, its page
-  // the Votes card and the bot's plain reply.
-  stagingSeed('seedStagingOwnChangeWaitingOnFix', (pool, config) => seedStagingOwnChangeWaitingOnFix(pool)),
-  // The capture member's own change with its tests passed and its before &
-  // after screenshots still being taken, on that same demo project, so the
-  // Homeroom bot tab has the row that says so.
-  stagingSeed('seedStagingOwnChangeTakingScreenshots', (pool, config) => seedStagingOwnChangeTakingScreenshots(pool)),
-  // #6651's shots: the capture member's own change still waiting on a vote,
-  // which the badge counts and Needs you must list.
-  stagingSeed('seedStagingOwnChangeWaitingOnVote', (pool, config) => seedStagingOwnChangeWaitingOnVote(pool)),
-  // #6599's shots: the capture member's own built draft, ready to put up for a vote.
-  stagingSeed('seedStagingReadyDraftChange', (pool, config) => seedStagingReadyDraftChange(pool)),
-  // #6225's shots: a change of the capture member's up for a vote that
-  // closes three requests, one of them filed by someone else, so the Votes
-  // card's "Closes N requests" list (and one unconfirmed request) has a state
-  // to show on a fresh staging copy.
-  stagingSeed('seedStagingClosesListFixture', (pool, config) => seedStagingClosesListFixture(pool)),
-  // #6421's shots: one thread holding several requests, and a consent question.
-  stagingSeed('seedStagingMergedThreads', (pool, config) => seedStagingMergedThreads(pool)),
-  // #6282's shots: an update queued on that same change, so the AI tab has
-  // "Update queued" to show instead of a Vote, and its Votes card the note.
-  stagingSeed('seedStagingBotUpdateComing', (pool, config) => seedStagingBotUpdateComing(pool)),
-  stagingSeed('seedStagingNewerPlan', (pool, config) => seedStagingNewerPlan(pool)),
-  // The Homeroom bot's first-version configurations (services/bot-configs.js):
-  // the three it starts from, each written once; then, once, an untouched
-  // seeded current version moved on to its next (two review rounds in 20
-  // minutes, where the first deploy seeded three in 25).
-  stagingSeed('seedConfigs', (pool, config) => require('../services/bot-configs').seedConfigs(pool)),
-  stagingSeed('upgradeSeedConfigs', (pool, config) => require('../services/bot-configs').upgradeSeedConfigs(pool)),
-  // Once: the later changes' current version names its triage and
-  // follow-ups, which its recipe decides from now on (what they ran on).
-  stagingSeed('fillLaterStages', (pool, config) => require('../services/bot-configs').fillLaterStages(pool, config), { phaseEnd: 'coreSeedMs' }),
-  // In the background: a slow or unreachable production never holds up the
-  // preview's boot (it logs either way).
-  // It cannot reject.
-  stagingSeed('seedStagingTranslations', (pool) => seedStagingTranslations(pool), { background: true }),
-  stagingSeed('seedStagingNotifications', (pool, config) => seedStagingNotifications(pool, config)),
-  // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
-  // off a notification id that seeder owns.
-  stagingSeed('seedStagingPushDeliveries', (pool, config) => seedStagingPushDeliveries(pool, config)),
-  stagingSeed('seedStagingAdminConsoleData', (pool, config) => seedStagingAdminConsoleData(pool)),
-  stagingSeed('seedStagingHelperCalls', (pool, config) => seedStagingHelperCalls(pool)),
-  stagingSeed('seedStagingEnvProposal', (pool, config) => seedStagingEnvProposal(pool, config)),
-  stagingSeed('seedStagingMergedPrs', (pool, config) => seedStagingMergedPrs(pool, config)),
-  // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
-  // so the merged fixtures straddle the newest one (reporting-period).
-  stagingSeed('seedStagingReportSnapshots', (pool, config) => seedStagingReportSnapshots(pool, config)),
-  // Must run AFTER seedStagingMergedPrs — its tags hang off those fixtures.
-  stagingSeed('seedStagingSmallChangeTags', (pool, config) => seedStagingSmallChangeTags(pool, config)),
-  stagingSeed('seedStagingMyOpenPr', (pool, config) => seedStagingMyOpenPr(pool, config)),
-  // #5803: a change an admin voted No on, nobody voting Yes, so the card's
-  // week-long "Set aside in …" pill is reviewable on a fresh staging copy.
-  stagingSeed('seedStagingAdminNoPr', (pool, config) => seedStagingAdminNoPr(pool, config)),
-  stagingSeed('seedStagingApproverNoPr', (pool, config) => seedStagingApproverNoPr(pool, config)),
-  stagingSeed('seedStagingImportedPrProposal', (pool, config) => seedStagingImportedPrProposal(pool, config)),
-  stagingSeed('seedStagingChecksAdvisoryCard', (pool, config) => seedStagingChecksAdvisoryCard(pool, config)),
-  stagingSeed('seedStagingExternalAgentProposal', (pool, config) => seedStagingExternalAgentProposal(pool, config)),
-  stagingSeed('seedStagingRestartEligibleMerge', (pool, config) => seedStagingRestartEligibleMerge(pool, config)),
-  // #6563's shots: an approved, tested change whose merge GitHub is holding
-  // while its own required checks finish, so the change page has the Merging
-  // card to show. A fresh copy never meets it: GitHub has to refuse a merge.
-  stagingSeed('seedStagingGithubChecksHold', (pool, config) => seedStagingGithubChecksHold(pool)),
-  // The admin limits area's shots: the bot's credit under its warning line,
-  // so a full admin's Notifications sheet has a row to show.
-  stagingSeed('seedStagingPlatformLimit', (pool, config) => seedStagingPlatformLimit(pool)),
-  stagingSeed('seedStagingOtherUserProposal', (pool, config) => seedStagingOtherUserProposal(pool, config)),
-  stagingSeed('seedStagingTopicScrollThreads', (pool, config) => seedStagingTopicScrollThreads(pool, config)),
-  stagingSeed('seedStagingGroupedFollowOns', (pool, config) => seedStagingGroupedFollowOns(pool, config)),
-  stagingSeed('seedStagingArchiveProposalFixtures', (pool, config) => seedStagingArchiveProposalFixtures(pool, config)),
-  stagingSeed('seedStagingActiveSessions', (pool, config) => seedStagingActiveSessions(pool, config)),
-  stagingSeed('seedStagingSharedSession', (pool, config) => seedStagingSharedSession(pool, config)),
-  // #5007: independent of the fixtures above — its two sessions are keyed
-  // on their own branch_name.
-  stagingSeed('seedStagingChangeBuiltForRequest', (pool, config) => seedStagingChangeBuiltForRequest(pool, config)),
-  // #6224: one change that closes several requests, for the line that says so.
-  stagingSeed('seedStagingChangeAlsoCloses', (pool, config) => seedStagingChangeAlsoCloses(pool, config)),
-  // #945: must run AFTER seedStagingSharedSession — the proposal-thread
-  // half hangs off that fixture's session id.
-  stagingSeed('seedStagingDiscussionContext', (pool, config) => seedStagingDiscussionContext(pool, config)),
-  // #5351: independent of the fixtures above — its offer is keyed on its own row.
-  stagingSeed('seedStagingBotCloseOffer', (pool, config) => seedStagingBotCloseOffer(pool, config)),
-  stagingSeed('seedStagingDemoAppCard', (pool, config) => seedStagingDemoAppCard(pool)),
-  stagingSeed('seedStagingLandingDirectory', (pool, config) => seedStagingLandingDirectory(pool)),
-  // After both: it tags their demo apps with a type.
-  stagingSeed('seedStagingAppCategories', (pool, config) => seedStagingAppCategories(pool)),
-  // #6585: the kinds the directory works out for three fake public projects,
-  // so Home's kind chips have Money, Health & fitness and Food & drink to
-  // show on a fresh staging copy (which has no model key and no rows).
-  stagingSeed('seedStagingInferredCategories', (pool, config) => seedStagingInferredCategories(pool)),
-  stagingSeed('seedStagingFailedApp', (pool, config) => seedStagingFailedApp(pool, config)),
-  stagingSeed('seedStagingForkLineage', (pool, config) => seedStagingForkLineage(pool, config)),
-  // After the fork fixtures: it switches one of them into demo mode.
-  stagingSeed('seedStagingDemoMode', (pool, config) => seedStagingDemoMode(pool)),
-  stagingSeed('seedStagingMembersPanel', (pool, config) => seedStagingMembersPanel(pool)),
-  stagingSeed('seedStagingUserDirectory', (pool, config) => seedStagingUserDirectory(pool)),
-  stagingSeed('seedStagingApproverPanel', (pool, config) => seedStagingApproverPanel(pool)),
-  stagingSeed('seedStagingAppAdminsPanel', (pool, config) => seedStagingAppAdminsPanel(pool)),
-  stagingSeed('seedStagingReadonlyDevTab', (pool, config) => seedStagingReadonlyDevTab(pool)),
-  stagingSeed('seedStagingQuietDiscussion', (pool, config) => seedStagingQuietDiscussion(pool)),
-  // #5458: must run AFTER seedStagingQuietDiscussion — it clears the rows
-  // that seed's first attempt hung in the quiet app, and owns the
-  // vote-card app instead. Needs the capture member (seedCaptureAdminUser).
-  stagingSeed('seedStagingVoteCardChat', (pool, config) => seedStagingVoteCardChat(pool)),
-  // #5877: the bot's "Ready to try" row about a project, for the bell's
-  // leading tile. Needs the capture member (seedCaptureAdminUser).
-  stagingSeed('seedStagingBotProjectNotification', (pool, config) => seedStagingBotProjectNotification(pool)),
-  // #6371: the one weekly digest row in the bell, which opens This week.
-  // Needs the capture member (seedCaptureUser).
-  stagingSeed('seedStagingWeeklyDigestRow', (pool, config) => seedStagingWeeklyDigestRow(pool)),
-  // #6133's shots: the quiet "close to this week's building time" line in a
-  // request's thread. Needs the capture member (seedCaptureUser).
-  stagingSeed('seedStagingBotAllowanceWarning', (pool, config) => seedStagingBotAllowanceWarning(pool)),
-  stagingSeed('seedStagingYourApps', (pool, config) => seedStagingYourApps(pool, config)),
-  stagingSeed('seedCatalog', (pool, config) => require('../services/staging-apps').seedCatalog(pool, config)),
-  // #6811's shots: a group the project's app keeps, listed on the Who can
-  // see & change it sheet with its size and when it was sent. After the
-  // catalog, whose fake people fill it. Obviously fake, staging only, and
-  // only if the project is there.
-  stagingSeed('seedStagingAppGroups', (pool, config) => seedStagingAppGroups(pool)),
-  // A platform preview that can make projects (services/preview-projects-client.js):
-  // one ready to open for each starter this proposal changed. Nothing
-  // anywhere else; never throws.
-  stagingSeed('seedChangedStarters', (pool, config) => require('../services/preview-projects-client').seedChangedStarters(pool, config), { ownCopyOnly: true }),
-  stagingSeed('seedStagingBrowseCardBranches', (pool, config) => seedStagingBrowseCardBranches(pool, config)),
-  // #1383: must run AFTER seedStagingBrowseCardBranches (it ranks that
-  // fixture's four apps) and AFTER seedStagingMergedPrs, which owns the
-  // self-app's merged history.
-  stagingSeed('seedStagingAppSortSignals', (pool, config) => seedStagingAppSortSignals(pool)),
-  // Must run AFTER seedStagingYourApps — it features that fixture's apps.
-  stagingSeed('seedStagingFeaturedApps', (pool, config) => seedStagingFeaturedApps(pool)),
-  stagingSeed('seedStagingFeaturedKinds', (pool, config) => seedStagingFeaturedKinds(pool)),
-  stagingSeed('seedStagingAppQuotaUsers', (pool, config) => seedStagingAppQuotaUsers(pool)),
-  // Must run AFTER seedStagingYourApps (it references those demo apps) and
-  // AFTER seedStagingAppQuotaUsers (it seeds the zero-quota fixture's grid).
-  stagingSeed('seedStagingHomeLayout', (pool, config) => seedStagingHomeLayout(pool, config)),
-  stagingSeed('seedStagingViewOnlyAdmin', (pool, config) => seedStagingViewOnlyAdmin(pool)),
-  stagingSeed('seedStagingWalletUsers', (pool, config) => seedStagingWalletUsers(pool)),
-  stagingSeed('seedStagingEmailCodeAccounts', (pool, config) => seedStagingEmailCodeAccounts(pool)),
-  // #4405: must run AFTER seedCaptureAdminUser and
-  // seedStagingEmailCodeAccounts (the two accounts it makes app admins are
-  // seeded there) and AFTER seedStagingReadonlyDevTab (its live domain hangs
-  // off that app).
-  stagingSeed('seedStagingCustomDomains', (pool, config) => seedStagingCustomDomains(pool)),
-  // #6601: the shots' own waiting card-picture vote, whose proposer is the
-  // capture member, so Edit proposal and Replace the waiting change are
-  // reachable on a fresh staging copy. Obviously fake, idempotent.
-  stagingSeed('seedStagingWaitingIllustration', (pool, config) => seedStagingWaitingIllustration(pool)),
-  stagingSeed('seedStagingPublicApiContributors', (pool, config) => seedStagingPublicApiContributors(pool)),
-  stagingSeed('seedStagingVisuals', (pool, config) => seedStagingVisuals(pool)),
-  // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
-  // fixture's proposal belongs to.
-  stagingSeed('seedStagingShotsNoticed', (pool, config) => seedStagingShotsNoticed(pool)),
-  // After seedStagingDemoAppCard, whose demo app it belongs to.
-  stagingSeed('seedStagingShotsScreens', (pool, config) => seedStagingShotsScreens(pool)),
-  stagingSeed('seedStagingCompetingChanges', (pool, config) => seedStagingCompetingChanges(pool)),
-  stagingSeed('seedStagingShotsFailed', (pool, config) => seedStagingShotsFailed(pool)),
-  stagingSeed('seedStagingLeaderboardProfile', (pool, config) => seedStagingLeaderboardProfile(pool)),
-  stagingSeed('seedStagingGeneralChannel', (pool, config) => seedStagingGeneralChannel(pool)),
-  // After it: the fake speaker who cast the vote below is that seed's person.
-  // #5482's before/after shots follow a proposal_vote row about a change
-  // that has merged, and its leaving the bell's list: a fresh clone has no
-  // such row for the shots' member fixture, so one is seeded, with the news
-  // that the same change went live beside it (that row stays after).
-  stagingSeed('seedStagingMergedVoteRow', (pool, config) => seedStagingMergedVoteRow(pool, config)),
-  // After it: a private thread about that live change, for the shots'
-  // member fixture. Since a thread about a change is finished with its
-  // change, History has it ("Live") and Needs you does not.
-  stagingSeed('seedStagingLiveChangePrivateThread', (pool, config) => seedStagingLiveChangePrivateThread(pool)),
-  // A first version's thread that starts on an older message, as the move
-  // off Main Chat listed them, for the shots' member fixture: the thread the
-  // bot page could list but never open.
-  stagingSeed('seedStagingOlderFirstVersionThread', (pool, config) => seedStagingOlderFirstVersionThread(pool)),
-  // #6803's shots: a first version being built, its plan answered with Build
-  // it, so its card offers to watch the bot build it. A fresh copy has no bot
-  // mid-build, so one is seeded, for the same member.
-  stagingSeed('seedStagingFirstVersionBuildingThread', (pool, config) => seedStagingFirstVersionBuildingThread(pool)),
-  // #6816's shots: enough recent threads for the shots' member fixture that
-  // Home's card beside Pinned apps cannot list them all, so its last row has
-  // a "N more" state to show. Obviously fake, idempotent.
-  stagingSeed('seedStagingRecentThreads', (pool, config) => seedStagingRecentThreads(pool)),
-  // #6124's before/after shots follow a change renamed before it had a pull
-  // request: the correction is in proposed_pr_title and the session still
-  // carries the old name. A fresh clone has no such row for the shots'
-  // member fixture, so one is seeded on the self app.
-  stagingSeed('seedStagingRenamedChange', (pool, config) => seedStagingRenamedChange(pool, config)),
-  // After it: this thread's second speaker is that seed's fake person.
-  stagingSeed('seedStagingScrollTestThread', (pool, config) => seedStagingScrollTestThread(pool)),
-  // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
-  stagingSeed('seedStagingGroupInviteNote', (pool, config) => seedStagingGroupInviteNote(pool)),
-  // #5393: must run AFTER seedStagingGeneralChannel — its fake speakers are that seed's people.
-  stagingSeed('seedStagingGroupFacesRows', (pool, config) => seedStagingGroupFacesRows(pool)),
-  // Desktop polish 11: a run of follow-up lines from a fake person. The same people.
-  stagingSeed('seedStagingFollowUpBubbles', (pool, config) => seedStagingFollowUpBubbles(pool)),
-  stagingSeed('seedStagingOwnReviewChange', (pool, config) => seedStagingOwnReviewChange(pool, config)),
-  stagingSeed('seedStagingGroupChatAttachments', (pool, config) => seedStagingGroupChatAttachments(pool, config)),
-  stagingSeed('seedStagingAppFiles', (pool, config) => seedStagingAppFiles(pool)),
-  stagingSeed('seedStagingComplicatedPlanSpec', (pool, config) => seedStagingComplicatedPlanSpec(pool, config)),
-  stagingSeed('seedStagingSpecUserShareFixtures', (pool, config) => seedStagingSpecUserShareFixtures(pool, config)),
-  stagingSeed('seedStagingChatEditFixtures', (pool, config) => seedStagingChatEditFixtures(pool, config)),
-  stagingSeed('seedStagingBotChatRequest', (pool, config) => seedStagingBotChatRequest(pool, config)),
-  // #6763's shots: a private thread where someone asks to make a new app and
-  // the bot's reply offers New project under it. Staging runs no model, so
-  // the exchange is seeded.
-  stagingSeed('seedStagingNewProjectOfferThread', (pool, config) => seedStagingNewProjectOfferThread(pool)),
-  stagingSeed('seedStagingLlmUsage', (pool, config) => seedStagingLlmUsage(pool)),
-  stagingSeed('seedStagingWeeklyCaps', (pool, config) => seedStagingWeeklyCaps(pool)),
-  stagingSeed('seedStagingSpendDistribution', (pool, config) => seedStagingSpendDistribution(pool)),
-  stagingSeed('seedStagingCapReached', (pool, config) => seedStagingCapReached(pool, config)),
-  stagingSeed('seedStagingAppCapApps', (pool, config) => seedStagingAppCapApps(pool, config)),
-  stagingSeed('seedStagingSystemTokenUsage', (pool, config) => seedStagingSystemTokenUsage(pool)),
-  stagingSeed('seedStagingDashboardAdminSplit', (pool, config) => seedStagingDashboardAdminSplit(pool)),
-  stagingSeed('seedStagingModerationCase', (pool, config) => seedStagingModerationCase(pool)),
-  stagingSeed('seedStagingAnalyticsCharts', (pool, config) => seedStagingAnalyticsCharts(pool)),
-  stagingSeed('seedStagingTopicAttributes', (pool, config) => seedStagingTopicAttributes(pool, config)),
-  stagingSeed('seedStagingSubmittedFeatures', (pool, config) => seedStagingSubmittedFeatures(pool, config)),
-  // #6081: a message and a request in another language, with the English the
-  // translation route serves without a model key the copies do not have.
-  stagingSeed('seedStagingUserContentTranslations', (pool, config) => seedStagingUserContentTranslations(pool)),
-  stagingSeed('seedStagingDbExports', (pool, config) => seedStagingDbExports(pool)),
-  // #3654: the Homeroom bot console's Benchmark area (services/bench/demo.js).
-  // Its tables are staging:private, so a preview would otherwise show none.
-  stagingSeed('seedStagingBench', (pool, config) => require('../services/bench/demo').seedStagingBench(pool)),
-  // #3737: and its taste eval, with screenshots to look at.
-  stagingSeed('seedStagingTaste', (pool, config) => require('../services/bench/demo').seedStagingTaste(pool)),
-  // And the App bench studio's gallery, with builds side by side.
-  stagingSeed('seedStagingStudio', (pool, config) => require('../services/bench/demo').seedStagingStudio(pool)),
-  // The Homeroom bot's configurations table, with first versions to measure.
-  stagingSeed('seedStagingBotConfigs', (pool, config) => require('../services/bot-configs').seedStagingBotConfigs(pool)),
-  // A failed bot run whose reply had no verdict block, kept on the run.
-  stagingSeed('seedStagingUnreadableReply', (pool, config) => require('../services/homeroom-bot').seedStagingUnreadableReply(pool)),
-  // After the proposal seeds above: the platform-env fixture stamps a
-  // failing verdict onto an existing staging proposal.
-  stagingSeed('seedStagingPlatformEnv', (pool, config) => seedStagingPlatformEnv(pool, config)),
-  stagingSeed('seedStagingTopochain', (pool, config) => seedStagingTopochain(pool, config)),
-  // After it: it seeds the invite challenge (900504) whose "Your invites"
-  // list this fixture fills, and the viewer identities the link belongs to.
-  stagingSeed('seedStagingInviteChallengeStatuses', (pool, config) => seedStagingInviteChallengeStatuses(pool)),
-  // After it: the First challenges hang off its season-type event.
-  stagingSeed('seedStagingFirstChallenges', (pool, config) => seedStagingFirstChallenges(pool)),
-  stagingSeed('seedStagingCountedCredit', (pool, config) => seedStagingCountedCredit(pool, config)),
-  // Must run AFTER seedStagingTopochain (it decorates the same three viewer
-  // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
-  // seed's 900001 / 900002 fixture accounts).
-  stagingSeed('seedStagingProfileCustomization', (pool, config) => seedStagingProfileCustomization(pool, config)),
-  // #7133's shots: the profile's "Projects you've helped build" shows one card
-  // per project where the capture member has a live change. A fresh staging
-  // copy has none, so the section would only have its empty state.
-  stagingSeed('seedStagingProfileProjects', (pool, config) => seedStagingProfileProjects(pool)),
-  stagingSeed('seedStagingPhoneFailures', (pool, config) => seedStagingPhoneFailures(pool)),
-  stagingSeed('seedStagingPlatformMail', (pool, config) => seedStagingPlatformMail(pool)),
-  // #4803: feedback is private in clones and GitHub writes are unavailable.
-  stagingSeed('seedStagingFeedback', (pool, config) => require('../services/staging-feedback').seedStagingFeedback(pool, config)),
-]);
 
 /**
  * Run the staging seeds in order. With no `each`, exactly as a boot always
@@ -536,6 +148,401 @@ async function migrate(config) {
   log.info('db', 'Migration phases complete', timings);
   return timings;
 }
+
+// The staging fixtures in the order a boot has always run them (the calls the
+// boot made inline until #7139). The before & after shots runner runs them one
+// at a time against the pair's other copy (src/db/seed-other-copy.js), and
+// runStagingSeeds runs them all here. Each entry keeps the boot's own call
+// text, so the order and the arguments are exactly what main ran; keeping the
+// list after migrate() also keeps each call where a reader of the boot expects
+// it.
+const STAGING_SEEDS = Object.freeze([
+  stagingSeed('reservePreviewReviewerIds', async (pool, config) => { await reservePreviewReviewerIds(pool); }),
+  stagingSeed('seedAdmin', async (pool, config) => {
+    await seedAdmin(pool, config);
+  }),
+  stagingSeed('seedCaptureUser', async (pool, config) => { await seedCaptureUser(pool); }),
+  stagingSeed('seedCaptureAdminUser', async (pool, config) => { await seedCaptureAdminUser(pool); }),
+  stagingSeed('seedStagingLongInbox', async (pool, config) => { await seedStagingLongInbox(pool); }),
+  // Must run BEFORE every staging fixture — a dozen of them own rows via a
+  // hard-coded created_by = 900001. See seedStagingDemoUser.
+  stagingSeed('seedStagingDemoUser', async (pool, config) => { await seedStagingDemoUser(pool); }),
+  stagingSeed('seedStagingAdminDetailsUser', async (pool, config) => { await seedStagingAdminDetailsUser(pool); }),
+  stagingSeed('seedStagingSupportUser', async (pool, config) => { await seedStagingSupportUser(pool); }),
+  stagingSeed('seedStagingDuplicateUser', async (pool, config) => { await seedStagingDuplicateUser(pool); }),
+  stagingSeed('seedSelfApp', async (pool, config) => { await seedSelfApp(pool, config); }),
+  stagingSeed('seedTermsVersions', async (pool, config) => { await seedTermsVersions(pool); }),
+  stagingSeed('seedStagingPrivateRequest', async (pool, config) => { await seedStagingPrivateRequest(pool); }),
+  // #6664's shots: a project anyone may see but only its collaborators may
+  // take part in, with a vote waiting that the capture member can see and
+  // cannot cast. Obviously fake, staging only.
+  stagingSeed('seedStagingCollabOnlyVote', async (pool, config) => { await seedStagingCollabOnlyVote(pool); }),
+  // #7027's shots: an invitation to build that its person answered by
+  // joining the project another way, so the bell row reads as an offer and
+  // the member list tags them "offered to build". Obviously fake, staging
+  // only.
+  stagingSeed('seedStagingJoinedBuildOffer', async (pool, config) => { await seedStagingJoinedBuildOffer(pool); }),
+  // Mobile 04's shots (24 Nov 2026): somebody named the capture member with
+  // @ in a request's thread, so the Homeroom bot tab's Needs you has its
+  // Reply and Dismiss row. Obviously fake, staging only.
+  stagingSeed('seedStagingNamedInThread', async (pool, config) => { await seedStagingNamedInThread(pool); }),
+  // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
+  // a slot, handed back, never read, an operator task), for its shots.
+  stagingSeed('seedStagingBotWaitingRows', async (pool, config) => { await seedStagingBotWaitingRows(pool); }),
+  // #6667: a request whose bot-built change was handed back to its asker, so
+  // the Homeroom bot tab's Needs you row has a state to show.
+  stagingSeed('seedStagingBotHandedBackFix', async (pool, config) => { await seedStagingBotHandedBackFix(pool); }),
+  // #6533: a change's thread whose bot reply already holds its email pictures.
+  // #6420's shots: a change on one request's page that names another request
+  stagingSeed('seedStagingChangePictures', async (pool, config) => { await seedStagingChangePictures(pool); }),
+  // as one it closes, so that request's page shows "Change #N says it closes
+  // this" and the requester can answer it. Obviously fake, staging only.
+  stagingSeed('seedStagingChangeClaim', async (pool, config) => { await seedStagingChangeClaim(pool); }),
+  // #6306's shots: a request the bot read and found already works, so Needs
+  // you says "Already works" with Propose to close and the request's page
+  // says why. Staging has no model, so the bot's note is stored.
+  stagingSeed('seedStagingBotAlreadyWorks', async (pool, config) => { await seedStagingBotAlreadyWorks(pool); }),
+  // #6988's shots: the already-works request's bot offer once it is gone, so
+  // its thread says so and carries Propose to close, which opens the close
+  // dialog with the bot's reason already in it.
+  stagingSeed('seedStagingBotGoneCloseOffer', async (pool, config) => { await seedStagingBotGoneCloseOffer(pool); }),
+  // #6752's shots: a request the bot read as filed on the wrong project, so
+  // its page and the requester's chat say where it seems to belong and offer
+  // the close vote. Staging has no model, so the bot's note is stored.
+  stagingSeed('seedStagingBotWrongProject', async (pool, config) => { await seedStagingBotWrongProject(pool); }),
+  // #6399's shots: a request handed back over a plan the bot could not read,
+  // which a later release made readable, so its card offers a read again.
+  stagingSeed('seedStagingBotOutdatedReason', async (pool, config) => { await seedStagingBotOutdatedReason(pool); }),
+  // #6271's shots: a private thread with the bot, already marked done this
+  // week, so Live this week has a closed thread to show. Staging has no
+  // model, so the bot's reply is stored rather than asked for.
+  stagingSeed('seedStagingClosedPrivateThread', async (pool, config) => { await seedStagingClosedPrivateThread(pool); }),
+  // 24 Nov 2026's shots: an open private thread with only two messages, so
+  // the bot tab's column shows where its reply box stands under a short
+  // thread. Staging has no model, so the bot's reply is stored.
+  stagingSeed('seedStagingShortPrivateThread', async (pool, config) => { await seedStagingShortPrivateThread(pool); }),
+  // #6566's shots: the bot's reply after it filed a problem report, and its
+  // answer when asked for the link. Staging has no model, so both replies
+  // are stored messages.
+  stagingSeed('seedStagingBotReportReply', async (pool, config) => { await seedStagingBotReportReply(pool); }),
+  // #6581's shots: a request whose build failed twice, with a reply under the
+  // first failure note. The change keeps that note and posts the second note
+  // below it. Staging runs no build, so the thread is seeded.
+  stagingSeed('seedStagingBotFailureNotes', async (pool, config) => { await seedStagingBotFailureNotes(pool); }),
+  // #6426's shots: Main Chat shows "Welcome back" after a day away, so the
+  // capture member's chat with the bot has a visit old enough to show it.
+  stagingSeed('seedStagingMainChatLastVisit', async (pool, config) => { await seedStagingMainChatLastVisit(pool); }),
+  // #6441's shots: three requests gone live within an hour, so the bell's
+  // Unread shows them folded into one row that lists each.
+  stagingSeed('seedStagingFoldedLiveNotifications', async (pool, config) => { await seedStagingFoldedLiveNotifications(pool); }),
+  // #6494's shots: the bell's two storage notices, one at half full and one
+  // nearly full, each saying how much is used and what the limit is. Staging
+  // runs no sweep against a growing database, so they are seeded.
+  stagingSeed('seedStagingStorageNotices', async (pool, config) => { await seedStagingStorageNotices(pool); }),
+  // 20 Nov 2026 (live-draft review): a thread with a live draft up for a vote, for G and J's shots.
+  stagingSeed('seedStagingLiveDraftThread', async (pool, config) => { await seedStagingLiveDraftThread(pool); }),
+  // #6901's shots: while the server is full, Admin → Limits says how many
+  // people were turned away, and the bell has a refusal notice. A fresh
+  // staging copy has no run of refusals at all, and staging notifies nobody,
+  // so both are seeded with obviously fake people.
+  stagingSeed('seedStagingLimitRefusals', async (pool, config) => { await seedStagingLimitRefusals(pool); }),
+  // #6261's shots: a design thread with a version in the capture member's
+  // chat, for the comment picture's design frames.
+  stagingSeed('seedStagingDesignThread', async (pool, config) => { await seedStagingDesignThread(pool); }),
+  // #6354's shots: a design that started from a copy of the Homeroom bot
+  // page, an obviously fake one, with the bot's change as version 2.
+  stagingSeed('seedStagingCapturedPageThread', async (pool, config) => { await seedStagingCapturedPageThread(pool); }),
+  // K's shots (20 Nov 2026): one thread holding two artifacts, each with its
+  // own versions, so the artifacts column has a picker to show.
+  stagingSeed('seedStagingArtifactsThread', async (pool, config) => { await seedStagingArtifactsThread(pool); }),
+  stagingSeed('seedStagingBotPlanWaiting', async (pool, config) => { await seedStagingBotPlanWaiting(pool); }),
+  // #6860's shots: a plan whose build is over says what became of it, which
+  // a fresh staging copy has no run to show: one built into a change up for
+  // a vote, and one whose build stopped. Obviously fake; staging only.
+  stagingSeed('seedStagingBotPlanSettled', async (pool, config) => { await seedStagingBotPlanSettled(pool); }),
+  // #6264: a request whose bot kept its word, for the before & after shots
+  // of "tell me when it's done" (the promise, then the line it posted).
+  stagingSeed('seedStagingBotFollowUp', async (pool, config) => { await seedStagingBotFollowUp(pool); }),
+  // #6211's shots: a request the bot read as part of another one, so its
+  // discussion has the overlap note and its three choices. Nothing here runs
+  // a model, so the note is stored as the bot would have said it.
+  stagingSeed('seedStagingBotOverlap', async (pool, config) => { await seedStagingBotOverlap(pool); }),
+  stagingSeed('seedStagingBotOverlapBuilt', async (pool, config) => { await seedStagingBotOverlapBuilt(pool); }),
+  // #6255's shots: the member asks the bot, in Main Chat, to say when a
+  // request it is still building is made, and it agrees. Nothing here runs
+  // a model, so a fresh staging copy has no such exchange to show.
+  stagingSeed('seedStagingBotTellMeWhen', async (pool, config) => { await seedStagingBotTellMeWhen(pool); }),
+  // #6228's shots: a reply on the handed-back request #9103 (above), for the
+  // thread's status line, its track card and the Homeroom bot page's row.
+  stagingSeed('seedStagingBotReplyWaiting', async (pool, config) => { await seedStagingBotReplyWaiting(pool); }),
+  // #6263's shots: a bot-built change on a request page whose description is
+  // marked out of date, so the note under it has a state to show.
+  stagingSeed('seedStagingBotStaleDescription', async (pool, config) => { await seedStagingBotStaleDescription(pool); }),
+  stagingSeed('seedStagingClosedGoingLive', async (pool, config) => { await seedStagingClosedGoingLive(pool); }),
+  // #6284's shots: a bot change whose checks failed after the bot stopped at
+  // its own limit of three fixes, so the Testing card and the Homeroom bot
+  // page have the stopped state to show (and Let it try again).
+  stagingSeed('seedStagingBotFixesStopped', async (pool, config) => { await seedStagingBotFixesStopped(pool); }),
+  // #6388's shots: a bot change whose one failing check reports the preview
+  // answering 503, so the Testing card says the preview looks at fault (and
+  // never "Its author needs to fix this").
+  stagingSeed('seedStagingBotFixesPlatform', async (pool, config) => { await seedStagingBotFixesPlatform(pool); }),
+  // #6389's shots: the capture member's OWN change, made in Claude Code, its
+  // vote met but its tests failing and conflicting with main. A fresh
+  // staging copy has no such change (it comes from a coding agent outside
+  // Homeroom), so Needs you has the row that says what it waits on, its page
+  // the Votes card and the bot's plain reply.
+  stagingSeed('seedStagingOwnChangeWaitingOnFix', async (pool, config) => { await seedStagingOwnChangeWaitingOnFix(pool); }),
+  // The capture member's own change with its tests passed and its before &
+  // after screenshots still being taken, on that same demo project, so the
+  // Homeroom bot tab has the row that says so.
+  stagingSeed('seedStagingOwnChangeTakingScreenshots', async (pool, config) => { await seedStagingOwnChangeTakingScreenshots(pool); }),
+  // #6651's shots: the capture member's own change still waiting on a vote,
+  // which the badge counts and Needs you must list.
+  stagingSeed('seedStagingOwnChangeWaitingOnVote', async (pool, config) => { await seedStagingOwnChangeWaitingOnVote(pool); }),
+  // #6599's shots: the capture member's own built draft, ready to put up for a vote.
+  stagingSeed('seedStagingReadyDraftChange', async (pool, config) => { await seedStagingReadyDraftChange(pool); }),
+  // #6225's shots: a change of the capture member's up for a vote that
+  // closes three requests, one of them filed by someone else, so the Votes
+  // card's "Closes N requests" list (and one unconfirmed request) has a state
+  // to show on a fresh staging copy.
+  stagingSeed('seedStagingClosesListFixture', async (pool, config) => { await seedStagingClosesListFixture(pool); }),
+  // #6421's shots: one thread holding several requests, and a consent question.
+  stagingSeed('seedStagingMergedThreads', async (pool, config) => { await seedStagingMergedThreads(pool); }),
+  // #6282's shots: an update queued on that same change, so the AI tab has
+  // "Update queued" to show instead of a Vote, and its Votes card the note.
+  stagingSeed('seedStagingBotUpdateComing', async (pool, config) => { await seedStagingBotUpdateComing(pool); }),
+  stagingSeed('seedStagingNewerPlan', async (pool, config) => { await seedStagingNewerPlan(pool); }),
+  // The Homeroom bot's first-version configurations (services/bot-configs.js):
+  // the three it starts from, each written once; then, once, an untouched
+  // seeded current version moved on to its next (two review rounds in 20
+  // minutes, where the first deploy seeded three in 25).
+  stagingSeed('seedConfigs', async (pool, config) => { await require('../services/bot-configs').seedConfigs(pool); }),
+  stagingSeed('upgradeSeedConfigs', async (pool, config) => { await require('../services/bot-configs').upgradeSeedConfigs(pool); }),
+  // Once: the later changes' current version names its triage and
+  // follow-ups, which its recipe decides from now on (what they ran on).
+  stagingSeed('fillLaterStages', async (pool, config) => { await require('../services/bot-configs').fillLaterStages(pool, config); }, { phaseEnd: 'coreSeedMs' }),
+  // In the background: a slow or unreachable production never holds up the
+  // preview's boot (it logs either way).
+  // It cannot reject.
+  stagingSeed('seedStagingTranslations', async (pool) => { await seedStagingTranslations(pool); }, { background: true }),
+  stagingSeed('seedStagingNotifications', async (pool, config) => { await seedStagingNotifications(pool, config); }),
+  // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
+  // off a notification id that seeder owns.
+  stagingSeed('seedStagingPushDeliveries', async (pool, config) => { await seedStagingPushDeliveries(pool, config); }),
+  stagingSeed('seedStagingAdminConsoleData', async (pool, config) => { await seedStagingAdminConsoleData(pool); }),
+  stagingSeed('seedStagingHelperCalls', async (pool, config) => { await seedStagingHelperCalls(pool); }),
+  stagingSeed('seedStagingEnvProposal', async (pool, config) => { await seedStagingEnvProposal(pool, config); }),
+  stagingSeed('seedStagingMergedPrs', async (pool, config) => { await seedStagingMergedPrs(pool, config); }),
+  // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
+  // so the merged fixtures straddle the newest one (reporting-period).
+  stagingSeed('seedStagingReportSnapshots', async (pool, config) => { await seedStagingReportSnapshots(pool, config); }),
+  // Must run AFTER seedStagingMergedPrs — its tags hang off those fixtures.
+  stagingSeed('seedStagingSmallChangeTags', async (pool, config) => { await seedStagingSmallChangeTags(pool, config); }),
+  stagingSeed('seedStagingMyOpenPr', async (pool, config) => { await seedStagingMyOpenPr(pool, config); }),
+  // #5803: a change an admin voted No on, nobody voting Yes, so the card's
+  // week-long "Set aside in …" pill is reviewable on a fresh staging copy.
+  stagingSeed('seedStagingAdminNoPr', async (pool, config) => { await seedStagingAdminNoPr(pool, config); }),
+  stagingSeed('seedStagingApproverNoPr', async (pool, config) => { await seedStagingApproverNoPr(pool, config); }),
+  stagingSeed('seedStagingImportedPrProposal', async (pool, config) => { await seedStagingImportedPrProposal(pool, config); }),
+  stagingSeed('seedStagingChecksAdvisoryCard', async (pool, config) => { await seedStagingChecksAdvisoryCard(pool, config); }),
+  stagingSeed('seedStagingExternalAgentProposal', async (pool, config) => { await seedStagingExternalAgentProposal(pool, config); }),
+  stagingSeed('seedStagingRestartEligibleMerge', async (pool, config) => { await seedStagingRestartEligibleMerge(pool, config); }),
+  // #6563's shots: an approved, tested change whose merge GitHub is holding
+  // while its own required checks finish, so the change page has the Merging
+  // card to show. A fresh copy never meets it: GitHub has to refuse a merge.
+  stagingSeed('seedStagingGithubChecksHold', async (pool, config) => { await seedStagingGithubChecksHold(pool); }),
+  // The admin limits area's shots: the bot's credit under its warning line,
+  // so a full admin's Notifications sheet has a row to show.
+  stagingSeed('seedStagingPlatformLimit', async (pool, config) => { await seedStagingPlatformLimit(pool); }),
+  stagingSeed('seedStagingOtherUserProposal', async (pool, config) => { await seedStagingOtherUserProposal(pool, config); }),
+  stagingSeed('seedStagingTopicScrollThreads', async (pool, config) => { await seedStagingTopicScrollThreads(pool, config); }),
+  stagingSeed('seedStagingGroupedFollowOns', async (pool, config) => { await seedStagingGroupedFollowOns(pool, config); }),
+  stagingSeed('seedStagingArchiveProposalFixtures', async (pool, config) => { await seedStagingArchiveProposalFixtures(pool, config); }),
+  stagingSeed('seedStagingActiveSessions', async (pool, config) => { await seedStagingActiveSessions(pool, config); }),
+  stagingSeed('seedStagingSharedSession', async (pool, config) => { await seedStagingSharedSession(pool, config); }),
+  // #5007: independent of the fixtures above — its two sessions are keyed
+  // on their own branch_name.
+  stagingSeed('seedStagingChangeBuiltForRequest', async (pool, config) => { await seedStagingChangeBuiltForRequest(pool, config); }),
+  // #6224: one change that closes several requests, for the line that says so.
+  stagingSeed('seedStagingChangeAlsoCloses', async (pool, config) => { await seedStagingChangeAlsoCloses(pool, config); }),
+  // #945: must run AFTER seedStagingSharedSession — the proposal-thread
+  // half hangs off that fixture's session id.
+  stagingSeed('seedStagingDiscussionContext', async (pool, config) => { await seedStagingDiscussionContext(pool, config); }),
+  // #5351: independent of the fixtures above — its offer is keyed on its own row.
+  stagingSeed('seedStagingBotCloseOffer', async (pool, config) => { await seedStagingBotCloseOffer(pool, config); }),
+  stagingSeed('seedStagingDemoAppCard', async (pool, config) => { await seedStagingDemoAppCard(pool); }),
+  stagingSeed('seedStagingLandingDirectory', async (pool, config) => { await seedStagingLandingDirectory(pool); }),
+  // After both: it tags their demo apps with a type.
+  stagingSeed('seedStagingAppCategories', async (pool, config) => { await seedStagingAppCategories(pool); }),
+  // #6585: the kinds the directory works out for three fake public projects,
+  // so Home's kind chips have Money, Health & fitness and Food & drink to
+  // show on a fresh staging copy (which has no model key and no rows).
+  stagingSeed('seedStagingInferredCategories', async (pool, config) => { await seedStagingInferredCategories(pool); }),
+  stagingSeed('seedStagingFailedApp', async (pool, config) => { await seedStagingFailedApp(pool, config); }),
+  stagingSeed('seedStagingForkLineage', async (pool, config) => { await seedStagingForkLineage(pool, config); }),
+  // After the fork fixtures: it switches one of them into demo mode.
+  stagingSeed('seedStagingDemoMode', async (pool, config) => { await seedStagingDemoMode(pool); }),
+  stagingSeed('seedStagingMembersPanel', async (pool, config) => { await seedStagingMembersPanel(pool); }),
+  stagingSeed('seedStagingUserDirectory', async (pool, config) => { await seedStagingUserDirectory(pool); }),
+  stagingSeed('seedStagingApproverPanel', async (pool, config) => { await seedStagingApproverPanel(pool); }),
+  stagingSeed('seedStagingAppAdminsPanel', async (pool, config) => { await seedStagingAppAdminsPanel(pool); }),
+  stagingSeed('seedStagingReadonlyDevTab', async (pool, config) => { await seedStagingReadonlyDevTab(pool); }),
+  stagingSeed('seedStagingQuietDiscussion', async (pool, config) => { await seedStagingQuietDiscussion(pool); }),
+  // #5458: must run AFTER seedStagingQuietDiscussion — it clears the rows
+  // that seed's first attempt hung in the quiet app, and owns the
+  // vote-card app instead. Needs the capture member (seedCaptureAdminUser).
+  stagingSeed('seedStagingVoteCardChat', async (pool, config) => { await seedStagingVoteCardChat(pool); }),
+  // #5877: the bot's "Ready to try" row about a project, for the bell's
+  // leading tile. Needs the capture member (seedCaptureAdminUser).
+  stagingSeed('seedStagingBotProjectNotification', async (pool, config) => { await seedStagingBotProjectNotification(pool); }),
+  // #6371: the one weekly digest row in the bell, which opens This week.
+  // Needs the capture member (seedCaptureUser).
+  stagingSeed('seedStagingWeeklyDigestRow', async (pool, config) => { await seedStagingWeeklyDigestRow(pool); }),
+  // #6133's shots: the quiet "close to this week's building time" line in a
+  // request's thread. Needs the capture member (seedCaptureUser).
+  stagingSeed('seedStagingBotAllowanceWarning', async (pool, config) => { await seedStagingBotAllowanceWarning(pool); }),
+  stagingSeed('seedStagingYourApps', async (pool, config) => { await seedStagingYourApps(pool, config); }),
+  stagingSeed('seedCatalog', async (pool, config) => { await require('../services/staging-apps').seedCatalog(pool, config); }),
+  // #6811's shots: a group the project's app keeps, listed on the Who can
+  // see & change it sheet with its size and when it was sent. After the
+  // catalog, whose fake people fill it. Obviously fake, staging only, and
+  // only if the project is there.
+  stagingSeed('seedStagingAppGroups', async (pool, config) => { await seedStagingAppGroups(pool); }),
+  // A platform preview that can make projects (services/preview-projects-client.js):
+  // one ready to open for each starter this proposal changed. Nothing
+  // anywhere else; never throws.
+  stagingSeed('seedChangedStarters', async (pool, config) => { await require('../services/preview-projects-client').seedChangedStarters(pool, config); }, { ownCopyOnly: true }),
+  stagingSeed('seedStagingBrowseCardBranches', async (pool, config) => { await seedStagingBrowseCardBranches(pool, config); }),
+  // #1383: must run AFTER seedStagingBrowseCardBranches (it ranks that
+  // fixture's four apps) and AFTER seedStagingMergedPrs, which owns the
+  // self-app's merged history.
+  stagingSeed('seedStagingAppSortSignals', async (pool, config) => { await seedStagingAppSortSignals(pool); }),
+  // Must run AFTER seedStagingYourApps — it features that fixture's apps.
+  stagingSeed('seedStagingFeaturedApps', async (pool, config) => { await seedStagingFeaturedApps(pool); }),
+  stagingSeed('seedStagingFeaturedKinds', async (pool, config) => { await seedStagingFeaturedKinds(pool); }),
+  stagingSeed('seedStagingAppQuotaUsers', async (pool, config) => { await seedStagingAppQuotaUsers(pool); }),
+  // Must run AFTER seedStagingYourApps (it references those demo apps) and
+  // AFTER seedStagingAppQuotaUsers (it seeds the zero-quota fixture's grid).
+  stagingSeed('seedStagingHomeLayout', async (pool, config) => { await seedStagingHomeLayout(pool, config); }),
+  stagingSeed('seedStagingViewOnlyAdmin', async (pool, config) => { await seedStagingViewOnlyAdmin(pool); }),
+  stagingSeed('seedStagingWalletUsers', async (pool, config) => { await seedStagingWalletUsers(pool); }),
+  stagingSeed('seedStagingEmailCodeAccounts', async (pool, config) => { await seedStagingEmailCodeAccounts(pool); }),
+  // #4405: must run AFTER seedCaptureAdminUser and
+  // seedStagingEmailCodeAccounts (the two accounts it makes app admins are
+  // seeded there) and AFTER seedStagingReadonlyDevTab (its live domain hangs
+  // off that app).
+  stagingSeed('seedStagingCustomDomains', async (pool, config) => { await seedStagingCustomDomains(pool); }),
+  // #6601: the shots' own waiting card-picture vote, whose proposer is the
+  // capture member, so Edit proposal and Replace the waiting change are
+  // reachable on a fresh staging copy. Obviously fake, idempotent.
+  stagingSeed('seedStagingWaitingIllustration', async (pool, config) => { await seedStagingWaitingIllustration(pool); }),
+  stagingSeed('seedStagingPublicApiContributors', async (pool, config) => { await seedStagingPublicApiContributors(pool); }),
+  stagingSeed('seedStagingVisuals', async (pool, config) => { await seedStagingVisuals(pool); }),
+  // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
+  // fixture's proposal belongs to.
+  stagingSeed('seedStagingShotsNoticed', async (pool, config) => { await seedStagingShotsNoticed(pool); }),
+  // After seedStagingDemoAppCard, whose demo app it belongs to.
+  stagingSeed('seedStagingShotsScreens', async (pool, config) => { await seedStagingShotsScreens(pool); }),
+  stagingSeed('seedStagingCompetingChanges', async (pool, config) => { await seedStagingCompetingChanges(pool); }),
+  stagingSeed('seedStagingShotsFailed', async (pool, config) => { await seedStagingShotsFailed(pool); }),
+  stagingSeed('seedStagingLeaderboardProfile', async (pool, config) => { await seedStagingLeaderboardProfile(pool); }),
+  stagingSeed('seedStagingGeneralChannel', async (pool, config) => { await seedStagingGeneralChannel(pool); }),
+  // After it: the fake speaker who cast the vote below is that seed's person.
+  // #5482's before/after shots follow a proposal_vote row about a change
+  // that has merged, and its leaving the bell's list: a fresh clone has no
+  // such row for the shots' member fixture, so one is seeded, with the news
+  // that the same change went live beside it (that row stays after).
+  stagingSeed('seedStagingMergedVoteRow', async (pool, config) => { await seedStagingMergedVoteRow(pool, config); }),
+  // After it: a private thread about that live change, for the shots'
+  // member fixture. Since a thread about a change is finished with its
+  // change, History has it ("Live") and Needs you does not.
+  stagingSeed('seedStagingLiveChangePrivateThread', async (pool, config) => { await seedStagingLiveChangePrivateThread(pool); }),
+  // A first version's thread that starts on an older message, as the move
+  // off Main Chat listed them, for the shots' member fixture: the thread the
+  // bot page could list but never open.
+  stagingSeed('seedStagingOlderFirstVersionThread', async (pool, config) => { await seedStagingOlderFirstVersionThread(pool); }),
+  // #6803's shots: a first version being built, its plan answered with Build
+  // it, so its card offers to watch the bot build it. A fresh copy has no bot
+  // mid-build, so one is seeded, for the same member.
+  stagingSeed('seedStagingFirstVersionBuildingThread', async (pool, config) => { await seedStagingFirstVersionBuildingThread(pool); }),
+  // #6816's shots: enough recent threads for the shots' member fixture that
+  // Home's card beside Pinned apps cannot list them all, so its last row has
+  // a "N more" state to show. Obviously fake, idempotent.
+  stagingSeed('seedStagingRecentThreads', async (pool, config) => { await seedStagingRecentThreads(pool); }),
+  // #6124's before/after shots follow a change renamed before it had a pull
+  // request: the correction is in proposed_pr_title and the session still
+  // carries the old name. A fresh clone has no such row for the shots'
+  // member fixture, so one is seeded on the self app.
+  stagingSeed('seedStagingRenamedChange', async (pool, config) => { await seedStagingRenamedChange(pool, config); }),
+  // After it: this thread's second speaker is that seed's fake person.
+  stagingSeed('seedStagingScrollTestThread', async (pool, config) => { await seedStagingScrollTestThread(pool); }),
+  // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
+  stagingSeed('seedStagingGroupInviteNote', async (pool, config) => { await seedStagingGroupInviteNote(pool); }),
+  // #5393: must run AFTER seedStagingGeneralChannel — its fake speakers are that seed's people.
+  stagingSeed('seedStagingGroupFacesRows', async (pool, config) => { await seedStagingGroupFacesRows(pool); }),
+  // Desktop polish 11: a run of follow-up lines from a fake person. The same people.
+  stagingSeed('seedStagingFollowUpBubbles', async (pool, config) => { await seedStagingFollowUpBubbles(pool); }),
+  stagingSeed('seedStagingOwnReviewChange', async (pool, config) => { await seedStagingOwnReviewChange(pool, config); }),
+  stagingSeed('seedStagingGroupChatAttachments', async (pool, config) => { await seedStagingGroupChatAttachments(pool, config); }),
+  stagingSeed('seedStagingAppFiles', async (pool, config) => { await seedStagingAppFiles(pool); }),
+  stagingSeed('seedStagingComplicatedPlanSpec', async (pool, config) => { await seedStagingComplicatedPlanSpec(pool, config); }),
+  stagingSeed('seedStagingSpecUserShareFixtures', async (pool, config) => { await seedStagingSpecUserShareFixtures(pool, config); }),
+  stagingSeed('seedStagingChatEditFixtures', async (pool, config) => { await seedStagingChatEditFixtures(pool, config); }),
+  stagingSeed('seedStagingBotChatRequest', async (pool, config) => { await seedStagingBotChatRequest(pool, config); }),
+  // #6763's shots: a private thread where someone asks to make a new app and
+  // the bot's reply offers New project under it. Staging runs no model, so
+  // the exchange is seeded.
+  stagingSeed('seedStagingNewProjectOfferThread', async (pool, config) => { await seedStagingNewProjectOfferThread(pool); }),
+  stagingSeed('seedStagingLlmUsage', async (pool, config) => { await seedStagingLlmUsage(pool); }),
+  stagingSeed('seedStagingWeeklyCaps', async (pool, config) => { await seedStagingWeeklyCaps(pool); }),
+  stagingSeed('seedStagingSpendDistribution', async (pool, config) => { await seedStagingSpendDistribution(pool); }),
+  stagingSeed('seedStagingCapReached', async (pool, config) => { await seedStagingCapReached(pool, config); }),
+  stagingSeed('seedStagingAppCapApps', async (pool, config) => { await seedStagingAppCapApps(pool, config); }),
+  stagingSeed('seedStagingSystemTokenUsage', async (pool, config) => { await seedStagingSystemTokenUsage(pool); }),
+  stagingSeed('seedStagingDashboardAdminSplit', async (pool, config) => { await seedStagingDashboardAdminSplit(pool); }),
+  stagingSeed('seedStagingModerationCase', async (pool, config) => { await seedStagingModerationCase(pool); }),
+  stagingSeed('seedStagingAnalyticsCharts', async (pool, config) => { await seedStagingAnalyticsCharts(pool); }),
+  stagingSeed('seedStagingTopicAttributes', async (pool, config) => { await seedStagingTopicAttributes(pool, config); }),
+  stagingSeed('seedStagingSubmittedFeatures', async (pool, config) => { await seedStagingSubmittedFeatures(pool, config); }),
+  // #6081: a message and a request in another language, with the English the
+  // translation route serves without a model key the copies do not have.
+  stagingSeed('seedStagingUserContentTranslations', async (pool, config) => { await seedStagingUserContentTranslations(pool); }),
+  stagingSeed('seedStagingDbExports', async (pool, config) => { await seedStagingDbExports(pool); }),
+  // #3654: the Homeroom bot console's Benchmark area (services/bench/demo.js).
+  // Its tables are staging:private, so a preview would otherwise show none.
+  stagingSeed('seedStagingBench', async (pool, config) => { await require('../services/bench/demo').seedStagingBench(pool); }),
+  // #3737: and its taste eval, with screenshots to look at.
+  stagingSeed('seedStagingTaste', async (pool, config) => { await require('../services/bench/demo').seedStagingTaste(pool); }),
+  // And the App bench studio's gallery, with builds side by side.
+  stagingSeed('seedStagingStudio', async (pool, config) => { await require('../services/bench/demo').seedStagingStudio(pool); }),
+  // The Homeroom bot's configurations table, with first versions to measure.
+  stagingSeed('seedStagingBotConfigs', async (pool, config) => { await require('../services/bot-configs').seedStagingBotConfigs(pool); }),
+  // A failed bot run whose reply had no verdict block, kept on the run.
+  stagingSeed('seedStagingUnreadableReply', async (pool, config) => { await require('../services/homeroom-bot').seedStagingUnreadableReply(pool); }),
+  // After the proposal seeds above: the platform-env fixture stamps a
+  // failing verdict onto an existing staging proposal.
+  stagingSeed('seedStagingPlatformEnv', async (pool, config) => { await seedStagingPlatformEnv(pool, config); }),
+  stagingSeed('seedStagingTopochain', async (pool, config) => { await seedStagingTopochain(pool, config); }),
+  // After it: it seeds the invite challenge (900504) whose "Your invites"
+  // list this fixture fills, and the viewer identities the link belongs to.
+  stagingSeed('seedStagingInviteChallengeStatuses', async (pool, config) => { await seedStagingInviteChallengeStatuses(pool); }),
+  // After it: the First challenges hang off its season-type event.
+  stagingSeed('seedStagingFirstChallenges', async (pool, config) => { await seedStagingFirstChallenges(pool); }),
+  stagingSeed('seedStagingCountedCredit', async (pool, config) => { await seedStagingCountedCredit(pool, config); }),
+  // Must run AFTER seedStagingTopochain (it decorates the same three viewer
+  // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
+  // seed's 900001 / 900002 fixture accounts).
+  stagingSeed('seedStagingProfileCustomization', async (pool, config) => { await seedStagingProfileCustomization(pool, config); }),
+  // #7133's shots: the profile's "Projects you've helped build" shows one card
+  // per project where the capture member has a live change. A fresh staging
+  // copy has none, so the section would only have its empty state.
+  stagingSeed('seedStagingProfileProjects', async (pool, config) => { await seedStagingProfileProjects(pool); }),
+  stagingSeed('seedStagingPhoneFailures', async (pool, config) => { await seedStagingPhoneFailures(pool); }),
+  stagingSeed('seedStagingPlatformMail', async (pool, config) => { await seedStagingPlatformMail(pool); }),
+  // #4803: feedback is private in clones and GitHub writes are unavailable.
+  stagingSeed('seedStagingFeedback', async (pool, config) => { await require('../services/staging-feedback').seedStagingFeedback(pool, config); }),
+]);
 
 // 11 Nov 2026 (docs/plans/bot-one-model.md): Needs you and the vote digest
 // ask for a vote only off a change's own work state (work_states.vote_open),

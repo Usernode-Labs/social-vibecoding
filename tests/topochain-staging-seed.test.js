@@ -135,7 +135,9 @@ test('seedStagingTopochain is a strict no-op outside staging (gate is the first 
 test('the staging seed list calls seedStagingTopochain(pool, config) in its run', () => {
   // #7139 moved the boot's seed calls into STAGING_SEEDS so the before & after
   // shots runner can run them against the pair's other copy.
-  assert.match(src, /stagingSeed\('seedStagingTopochain', \(pool, config\) => seedStagingTopochain\(pool, config\)\)/);
+  // The entry keeps the boot's own call text (#7139), so the order and the
+  // arguments are the ones main ran inline.
+  assert.match(src, /stagingSeed\('seedStagingTopochain', async \(pool, config\) => \{ await seedStagingTopochain\(pool, config\); \}\)/);
   assert.match(src, /await runStagingSeeds\(pool, config, \{ onPhase: finishPhase \}\);/,
     'migrate() runs the list in the same place the seeds ran');
 });
