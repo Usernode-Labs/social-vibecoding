@@ -38867,3 +38867,27 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-vote-pop, .dev-vote-sheet, .dev-ws-vote-form) .dev-vote-reason-send-yes:not(:disabled):active {
   box-shadow: var(--bl-pill-edge-down);
 }
+
+/* ══ ONE LOOK (design review, 25 Nov 2026): "B + sticker accents" across every
+   page, on a phone and on a desktop. The standard look (html:not([data-skin]))
+   only. Each area below keeps its own rules together; they come last so they
+   settle what the earlier per-screen rules left different.
+     Shared parts: the sticker edge (ink outline, hard 2px shadow) only on a
+     page's main action and its menu chips; every other button flat; a row's
+     label (Read, Vote, Reply) a flat tag, never a button; segmented controls
+     an ink pill on a light track; the tab bar's sun pill slides; rows 16/14 on
+     a phone and 15/13 from 768px; the cream wash behind cards on every tab. ══ */
+/* ── ONE LOOK · SHARED PARTS ── */
+/* ── END ONE LOOK · SHARED PARTS ── */
+
+/* ── ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
+/* ── END ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
+
+/* ── ONE LOOK · MESSAGES AND THREADS ── */
+/* ── END ONE LOOK · MESSAGES AND THREADS ── */
+
+/* ── ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
+/* ── END ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */
+
+/* ── ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
+/* ── END ONE LOOK · HOME, COMMUNITIES, YOU, SETTINGS AND CHALLENGES ── */
