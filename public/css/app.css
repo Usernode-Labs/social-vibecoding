@@ -9107,6 +9107,17 @@ html:not([data-skin]) #dev-workshop .dev-ws[data-ws-tab="bot"] [data-ws-bot-slot
     top: var(--ws-pin-top, 0px);
   }
   html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"], [data-ws-tab="all"], [data-ws-tab="workshop"]) > .dev-ws-tabbody { padding-block-start: 0.75rem; }
+  /* THE ALL ITEMS BOARD STARTS SOONER (asked #7154). The strip above the All
+     items head was too wide: the page's top padding plus the tab body's
+     shared 0.75rem put the head's card about 40px under the top bar. Here,
+     where the place bar is already folded, All items keeps only a few pixels
+     of air: 4px of page padding under the column gap's 10px. The board is
+     the page, and its head is the first thing on it. The Hub, Needs you and
+     the Workshop keep the shared 0.75rem, and so does every other look.
+     The head's pinning offset is untouched: padding above a sticky element
+     moves where it rests, not where it pins. */
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-workshop .dev-ws[data-ws-tab="all"] > .dev-ws-tabbody { padding-block-start: 0; }
+  html:not([data-skin]) body:has(#platform-header .header-place-name) #dev-body:has(> #dev-workshop > .dev-ws[data-ws-tab="all"]) { padding-top: 4px; }
   html:not([data-skin]):not(.in-side-panel) body:has(#platform-header .header-place-name) #app-view > #app-content > .dc-lift-strip:not(:has(> .gc-tab-body > .gc-spec-side-panel-open)) > .dev-thread-place-title { display: none; }
 }
 @media (min-width: 900px) {
@@ -11280,7 +11291,8 @@ html:not([data-skin]) #profile-live-projects .profile-project-card {
 }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n+2) { background: linear-gradient(var(--ed-lit-bg), var(--ed-paper)); }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n) { background: linear-gradient(var(--ed-stat-bg), var(--ed-paper)); }
-html:not([data-skin]) #profile-live-projects .profile-project-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 0.75rem; background: var(--ed-paper); }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; font-size: 1.5rem; border-radius: 0.75rem; background: var(--ed-paper); overflow: hidden; }
+html:not([data-skin]) #profile-live-projects .profile-project-icon img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 html:not([data-skin]) #profile-live-projects h3 { font-family: var(--ed-serif); font-weight: 460; font-size: 1.375rem; line-height: 1.2; margin: 0.75rem 0 0.5rem; }
 html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.45; }
 html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1.5rem; border: 1px solid var(--ed-line); border-radius: 1rem; background: var(--ed-paper); }
@@ -11411,7 +11423,7 @@ html:not([data-skin]) #profile-live-projects .profile-project-card {
 }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n+2) { background: var(--ed-green-card); }
 html:not([data-skin]) #profile-live-projects .profile-project-card:nth-child(3n) { background: var(--ed-yellow-card); }
-html:not([data-skin]) #profile-live-projects .profile-project-icon { width: 2.75rem; height: 2.75rem; border-radius: 0.625rem; background: var(--ed-well); }
+html:not([data-skin]) #profile-live-projects .profile-project-icon { width: 2.75rem; height: 2.75rem; border-radius: 0.625rem; background: var(--ed-well); overflow: hidden; }
 html:not([data-skin]) #profile-live-projects h3 { font-weight: 460; font-size: 1.5rem; letter-spacing: -0.035em; }
 html:not([data-skin]) #profile-live-projects .profile-project-card p { font-size: 0.875rem; line-height: 1.4; }
 /* Settings' profile is the reference's portrait beside editable fields. */

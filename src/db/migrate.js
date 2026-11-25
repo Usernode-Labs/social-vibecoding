@@ -610,10 +610,35 @@ async function seedStagingAppGroups(pool) {
   }
 }
 
+// A solid-colour PNG, written by hand (IHDR, one IDAT of flat scanlines,
+// IEND) so a staging fixture's logo needs no file and no dependency. The
+// bytes are what /app-icons/:id serves, so they have to be a real PNG.
+function solidPng([r, g, b], size = 64) {
+  const zlib = require('zlib');
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; ihdr[9] = 2; // 8-bit, truecolour RGB
+  const row = Buffer.alloc(1 + size * 3);
+  for (let x = 0; x < size; x += 1) { row[1 + x * 3] = r; row[2 + x * 3] = g; row[3 + x * 3] = b; }
+  const raw = Buffer.concat(Array.from({ length: size }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
 // #7133: the profile's project cards, for their before & after shots. Three
 // obviously fake projects, each with one live merged change by the capture
 // member, so the card row has more than the demo's one project to show. The
-// merged insert trigger fills live_at. Staging only and idempotent.
+// merged insert trigger fills live_at. Each carries its own logo (#7153), so
+// the cards show the pictures the change puts there. Staging only and
+// idempotent.
 async function seedStagingProfileProjects(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -622,11 +647,14 @@ async function seedStagingProfileProjects(pool) {
     if (!member) return;
     const projects = [
       { id: 900809, slug: 'staging-demo-profile-garden', name: 'Staging demo garden',
-        title: 'Staging demo: a reminder when the soil is dry', hoursAgo: 1 },
+        title: 'Staging demo: a reminder when the soil is dry', hoursAgo: 1,
+        iconId: 'facade00facade00facade00facade11', rgb: [122, 92, 214] },
       { id: 900810, slug: 'staging-demo-profile-tides', name: 'Staging demo tides',
-        title: 'Staging demo: the tide table in your own time', hoursAgo: 2 },
+        title: 'Staging demo: the tide table in your own time', hoursAgo: 2,
+        iconId: 'facade00facade00facade00facade12', rgb: [233, 163, 91] },
       { id: 900811, slug: 'staging-demo-profile-notes', name: 'Staging demo notes',
-        title: 'Staging demo: pin a note to the top', hoursAgo: 3 },
+        title: 'Staging demo: pin a note to the top', hoursAgo: 3,
+        iconId: 'facade00facade00facade00facade13', rgb: [242, 167, 160] },
     ];
     for (const project of projects) {
       await pool.query(
@@ -634,6 +662,17 @@ async function seedStagingProfileProjects(pool) {
          VALUES ($1, $2, $3, 'running', 'private', 'private', $4)
          ON CONFLICT (id) DO NOTHING`,
         [project.id, project.name, project.slug, member.id]);
+      // app_icons.app_id is UNIQUE, so an icon an earlier boot wrote under a
+      // different id would block this insert and take the whole seed down.
+      await pool.query(
+        'DELETE FROM app_icons WHERE app_id = $1 AND id <> $2', [project.id, project.iconId]);
+      const png = solidPng(project.rgb);
+      await pool.query(
+        `INSERT INTO app_icons (id, app_id, content_type, data, sha256)
+         VALUES ($1, $2, 'image/png', $3, $4) ON CONFLICT (id) DO NOTHING`,
+        [project.iconId, project.id, png, crypto.createHash('sha256').update(png).digest('hex')]);
+      await pool.query(
+        'UPDATE apps SET icon_image_id = $2 WHERE id = $1', [project.id, project.iconId]);
       await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_title, status, merged_at)
          SELECT $1, $2, $3::varchar(255), $4::text, $4::text, 'merged',
