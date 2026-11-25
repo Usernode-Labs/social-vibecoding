@@ -10598,6 +10598,7 @@ html:not([data-skin]) {
   --wip-btn-bad-hover: #fde9e5;
   --wip-btn-link-ink: #121a0e;
   --wip-btn-link-line: #3090e1;
+  --wip-btn-link-off: #a1a1aa;                           /* a text action that cannot be pressed */
   --wip-btn-link-size: 13px;
   --wip-btn-link-weight: 500;
 }
@@ -10617,6 +10618,7 @@ html:not([data-skin]).dark {
   --wip-btn-bad-line: #ff9c8a;
   --wip-btn-bad-hover: #2b1512;
   --wip-btn-link-ink: #fffeea;
+  --wip-btn-link-off: #71717a;
 }
 html:not([data-skin]) :is(button, a, label, summary, [role="button"]):where(.bg-violet-600, .wip-cta, .rf-go, .rf-end-btn, .rf-desc-go, .gc-vote-btn-primary, .bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200, .bg-white.shadow-sm, .border.border-zinc-300):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl, .rounded-full)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)) {
   border: 1px solid var(--wip-btn-line);
@@ -10665,7 +10667,7 @@ html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red
 html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):hover:not(:disabled, [aria-disabled="true"]) { background: var(--wip-btn-bad-hover); }
 html:not([data-skin]) :is(button, a, label, summary, [role="button"]):is(.bg-red-500\/10, .bg-red-600, .border.border-red-400, .border:is(.text-red-500, .text-red-600, .text-red-700), :is(.bg-zinc-100, .bg-zinc-200):is(.text-red-500, .text-red-600, .text-red-700)):where(:not(.ui-lrow, .ui-row, .ui-plain, [role="radio"], [role="switch"], [role="tab"], [role="option"], [role="menuitem"], #platform-tabs *, #admin-screen *, .wip-fold-pill, .wip-head-more)):active:not(:disabled, [aria-disabled="true"]) { box-shadow: none; }
 /* Level 4: an action written as text. Underlined, so it does not rest on colour alone. */
-html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])) {
+html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):not(:disabled, [aria-disabled="true"]) {
   color: var(--wip-btn-link-ink);
   text-decoration: underline;
   text-decoration-color: var(--wip-btn-link-line);
@@ -10674,7 +10676,13 @@ html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .hom
 }
 /* Under a pointer only: a tapped link kept the dark underline on a phone, so
    "Add other apps" stood dark beside "Done" in blue (phone review, 23 Nov 2026). */
-@media (hover: hover) { html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):hover { text-decoration-color: currentColor; } }
+@media (hover: hover) { html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):not(:disabled, [aria-disabled="true"]):hover { text-decoration-color: currentColor; } }
+/* Disabled: muted, no underline, so it does not look pressable (request 7131). */
+html:not([data-skin]) :is(button, a):is(.text-violet-600, .text-violet-700, .home-edit-start, .home-panel-see-all, [class*="text-[color:var(--accent)]"]):where(:not([class^="bg-"], [class*=" bg-"], .border, #platform-tabs *, #platform-header *, #admin-screen *, .ui-lrow, .ui-row, .ui-plain, [role="tab"], [role="radio"])):is(:disabled, [aria-disabled="true"]) {
+  color: var(--wip-btn-link-off);
+  text-decoration: none;
+  cursor: default;
+}
 /* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
    is a level 1 button: its fill, its edge and its serif label at the block's
    own weight, not a face of its own. (The ids outrank the class rules
