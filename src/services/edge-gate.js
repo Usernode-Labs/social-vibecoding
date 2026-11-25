@@ -162,7 +162,6 @@ const platformJwt = require('./platform-jwt');
 const offlineCache = require('./offline-cache');
 const appAccess = require('./app-access');
 const accessTokens = require('./app-access-tokens');
-const communities = require('./communities');
 const log = require('./logger');
 const { USERNODE_DOMAIN } = require('./caddy');
 const { appHostIsIsolated } = require('./browser-site-isolation');
@@ -579,8 +578,8 @@ async function redeemOnce(pool, jti, expSeconds) {
 // PROVISIONAL handle on a public app (`publicApp`): the person has not
 // picked the username a public place shows (services/usernames.js), so the
 // app sees a visitor until they do, as /api/iframe-token's refusal does.
-async function mintIdentity(pool, appId, uid, { publicApp = false, platformPreview = false } = {}) {
-  const key = `${appId}:${uid}:${platformPreview}`;
+async function mintIdentity(pool, appId, uid, { publicApp = false, platformPreview = false, agent = false } = {}) {
+  const key = `${appId}:${uid}:${platformPreview}:${agent}`;
   const hit = identities.get(key);
   if (hit && Date.now() - hit.at < IDENTITY_REUSE_MS) return hit.token;
   const { rows } = await pool.query(
@@ -594,7 +593,7 @@ async function mintIdentity(pool, appId, uid, { publicApp = false, platformPrevi
   if (publicApp && user.provisional === true) return null;
   const identity = { id: user.id, username: user.username,
     usernode_pubkey: user.usernode_pubkey || null, locale: user.locale || null };
-  const token = platformJwt.signAppIdentityToken({ appId,
+  const token = platformJwt.signAppIdentityToken({ appId, agent,
     user: platformPreview ? require('./platform-preview-data-policy').previewIdentity(identity) : identity,
   });
   boundedSet(identities, key, { at: Date.now(), token });
@@ -783,7 +782,7 @@ async function handleAccess(pool, req, res) {
 
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
-  const allow = async ({ identityFor = null, guest = false, cacheApp = true } = {}) => {
+  const allow = async ({ identityFor = null, guest = false, cacheApp = true, agent = false } = {}) => {
     // A request that reaches a preview is a use of it: a preview in use
     // does not go to sleep (#6157). At most once a minute per preview, and
     // never awaited.
@@ -792,7 +791,7 @@ async function handleAccess(pool, req, res) {
       if (named) require('./preview-sleep').touchActivity(pool, named.sessionId, { slug: named.slug }).catch(() => {});
     }
     if (identityFor != null) {
-      const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG });
+      const token = await mintIdentity(pool, vis.appId, identityFor, { agent, publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG });
       if (token) res.set('X-Usernode-Identity', token);
     } else if (guest) {
       res.set('X-Usernode-Identity', guestToken(vis.appId));
@@ -982,7 +981,10 @@ async function handleAccess(pool, req, res) {
     if (!agentPath || ws) return refuseAgent();
     const held = await accessTokens.resolve(pool, bearer);
     if (!held || held.appId !== vis.appId) return refuseAgent();
-    const member = await communities.isMember(pool, vis.appId, held.userId)
+    // A member since before the token was made: somebody who left and was
+    // let back in does not get an old token back, even if nothing called
+    // with it while they were out.
+    const member = await accessTokens.heldSinceJoining(pool, held)
       && await appAccess.isViewMember(pool, vis.appId, held.userId);
     if (!member) {
       await accessTokens.revokeAllFor(pool, { appId: vis.appId, userId: held.userId });
@@ -990,10 +992,13 @@ async function handleAccess(pool, req, res) {
       return refuseAgent();
     }
     // No identity, no entry: a token never opens the app anonymously.
-    const identity = await mintIdentity(pool, vis.appId, held.userId, { publicApp: !vis.viewPrivate });
+    // The identity is marked as a token's (platform-jwt signAppIdentityToken
+    // `agent`): it names the member to the app, and no platform service
+    // takes it.
+    const identity = await mintIdentity(pool, vis.appId, held.userId, { agent: true, publicApp: !vis.viewPrivate });
     if (!identity) return refuseAgent();
     accessTokens.touch(pool, held.id);
-    return allow({ identityFor: held.userId, cacheApp: false });
+    return allow({ identityFor: held.userId, cacheApp: false, agent: true });
   }
 
   const ownToken = header(req.headers, 'x-usernode-token');

@@ -23,7 +23,13 @@
 //     visit does. Anything else is a bare 401.
 //
 // A token whose owner has left the project is revoked the first time it is
-// seen at the door, so being let back in does not bring an old token back.
+// seen at the door, and one made before its owner's current membership
+// began never counts, so being let back in does not bring an old token back.
+//
+// The identity a token's request carries is marked (`scope` in the JWT):
+// the app reads who it is, and the AI proxy, file storage and the directory
+// refuse it. A token is therefore worth exactly one thing: calling this
+// app's declared paths as that member.
 
 const crypto = require('node:crypto');
 
@@ -148,13 +154,29 @@ async function revokeAllFor(pool, { appId, userId }) {
 async function resolve(pool, token) {
   if (typeof token !== 'string' || !TOKEN_RE.test(token)) return null;
   const { rows } = await pool.query(
-    `SELECT id, app_id, user_id FROM app_access_tokens
+    `SELECT id, app_id, user_id, created_at FROM app_access_tokens
       WHERE token_hash = $1 AND revoked_at IS NULL`,
     [hashToken(token)]
   );
   const row = rows[0];
   if (!row) return null;
-  return { id: String(row.id), appId: Number(row.app_id), userId: Number(row.user_id) };
+  return { id: String(row.id), appId: Number(row.app_id), userId: Number(row.user_id), createdAt: new Date(row.created_at) };
+}
+
+// Is the token's owner a member of the app's project, and were they one
+// already when the token was made? Leaving removes the membership row and
+// coming back writes a new one, so a token from before does not count.
+async function heldSinceJoining(pool, held) {
+  const { rows } = await pool.query(
+    `SELECT m.joined_at
+       FROM apps a
+       JOIN community_members m ON m.community_id = a.community_id
+      WHERE a.id = $1 AND m.user_id = $2`,
+    [held.appId, held.userId]
+  );
+  if (!rows.length) return false;
+  const joined = rows[0].joined_at ? new Date(rows[0].joined_at).getTime() : 0;
+  return held.createdAt.getTime() >= joined;
 }
 
 // Notes that a token was used. Never awaited by the door and never fatal.
@@ -182,6 +204,7 @@ module.exports = {
   revoke,
   revokeAllFor,
   resolve,
+  heldSinceJoining,
   touch,
   resetForTest,
 };

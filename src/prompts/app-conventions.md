@@ -2628,8 +2628,10 @@ caller Homeroom has not vouched for. Do not build your own tokens for this.
 3. **Read the caller as you read anyone.** The assistant sends
    `Authorization: Bearer hrat_…` to a declared path. A request that passes
    reaches the app with that member's identity in `x-usernode-token`, so
-   `req.user` is set and `GET /members` works with it. A call on a declared
-   path is the member's assistant; anything it writes should say so.
+   `req.user` is set. That identity only names the member: the AI proxy,
+   file storage, `/users/*` and `/members` refuse it, so keep the names you
+   need from members' own visits. A call on a declared path is the member's
+   assistant; anything it writes should say so.
 
 - **The door refuses everything else with a bare 401**: no token, a wrong or
   revoked one, another app's, a path that was not declared, and a token

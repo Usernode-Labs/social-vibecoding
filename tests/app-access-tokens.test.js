@@ -57,9 +57,10 @@ const MEMBER = 10;
 const SECOND = 11;
 const OUTSIDER = 99;
 
-const state = { members: new Set(), tokens: [], nextId: 1 };
+const state = { members: new Set(), joined: new Map(), tokens: [], nextId: 1 };
 function reset() {
   state.members = new Set([`7:${MEMBER}`, `7:${SECOND}`, `8:${MEMBER}`, `9:${MEMBER}`]);
+  state.joined = new Map();
   state.tokens = [];
   state.nextId = 1;
 }
@@ -87,6 +88,11 @@ const fakePool = {
     }
     if (/SELECT is_admin FROM users WHERE id/.test(s)) return { rows: [{ is_admin: false }] };
     if (/SELECT id FROM users WHERE id = \$1/.test(s)) return { rows: [{ id: params[0] }] };
+    // app-access-tokens.heldSinceJoining
+    if (/SELECT m\.joined_at\s+FROM apps a\s+JOIN community_members m/.test(s)) {
+      const key = `${params[0]}:${params[1]}`;
+      return { rows: state.members.has(key) ? [{ joined_at: state.joined.get(key) || new Date('2026-01-01T00:00:00Z') }] : [] };
+    }
     // communities.isMember
     if (/JOIN community_members m/.test(s) && /m\.user_id = \$2/.test(s)) {
       return { rows: state.members.has(`${params[0]}:${params[1]}`) ? [{ '?column?': 1 }] : [] };
@@ -106,7 +112,7 @@ const fakePool = {
     if (/SELECT id, name, hint, created_at, last_used_at\s+FROM app_access_tokens/.test(s)) {
       return { rows: state.tokens.filter((t) => t.app_id === params[0] && t.user_id === params[1] && live(t)) };
     }
-    if (/SELECT id, app_id, user_id FROM app_access_tokens\s+WHERE token_hash = \$1 AND revoked_at IS NULL/.test(s)) {
+    if (/SELECT id, app_id, user_id, created_at FROM app_access_tokens\s+WHERE token_hash = \$1 AND revoked_at IS NULL/.test(s)) {
       return { rows: state.tokens.filter((t) => t.token_hash === params[0] && live(t)) };
     }
     if (/UPDATE app_access_tokens SET revoked_at = NOW\(\)\s+WHERE id = \$1 AND app_id = \$2 AND user_id = \$3/.test(s)) {
@@ -246,7 +252,8 @@ test('a token is 32 random bytes behind the prefix and only its hash is kept', a
   assert.equal(row.token_hash, accessTokens.hashToken(token));
   assert.equal(JSON.stringify(row).includes(token), false);
   assert.equal(row.hint, token.slice(-4));
-  assert.deepEqual(await accessTokens.resolve(fakePool, token), { id: '1', appId: 7, userId: MEMBER });
+  assert.deepEqual(await accessTokens.resolve(fakePool, token),
+    { id: '1', appId: 7, userId: MEMBER, createdAt: new Date('2026-11-25T10:00:00Z') });
   assert.equal(await accessTokens.resolve(fakePool, 'hrat_nope'), null);
   assert.equal(await accessTokens.resolve(fakePool, `${token}x`), null);
 });
@@ -261,6 +268,8 @@ test('a member\'s token opens the declared path of a private app, as that member
     const claims = platformJwt.verifyAppIdentityToken(r.headers['x-usernode-identity'], { appId: 7 });
     assert.equal(claims.id, MEMBER);
     assert.equal(claims.username, `u${MEMBER}`);
+    // Marked, so the AI proxy, storage and the directory refuse it.
+    assert.equal(claims.scope, 'access_token');
   }
   assert.ok(state.tokens[0].last_used_at, 'its use is noted');
 });
@@ -308,6 +317,29 @@ test('a member who has left is refused, and their tokens are revoked for good', 
   appAccess.invalidateAllVisibility();
   assertBare401(await gate({ bearer: token }));
   assertBare401(await gate({ bearer: second }));
+});
+
+test('a token made before its owner came back does not count, even if never seen while they were out', async () => {
+  const token = await makeToken();
+  // Left and let back in, with no call in between: a new membership row.
+  state.joined.set(`7:${MEMBER}`, new Date('2026-11-25T11:00:00Z'));
+  assertBare401(await gate({ bearer: token }));
+  assert.equal(state.tokens.every((t) => t.revoked_at), true);
+});
+
+test('the identity a token carries is refused by the platform services an app can call', async () => {
+  const token = await makeToken();
+  const passed = await gate({ bearer: token });
+  const asAgent = await request('GET', '/api/app-platform/v1/access-tokens', {
+    'x-usernode-app-token': APP_TOKEN, 'x-usernode-user-token': passed.headers['x-usernode-identity'],
+  });
+  assert.equal(asAgent.status, 403);
+  const made = await request('POST', '/api/app-platform/v1/access-tokens', {
+    'x-usernode-app-token': APP_TOKEN, 'x-usernode-user-token': passed.headers['x-usernode-identity'],
+    'content-type': 'application/json',
+  }, { name: 'another' });
+  assert.equal(made.status, 403, 'a token cannot make more tokens');
+  assert.equal(state.tokens.length, 1);
 });
 
 test('a private app with no token still treats a browser as before', async () => {
