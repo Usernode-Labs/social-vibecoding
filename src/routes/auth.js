@@ -47,6 +47,7 @@ const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
 const { shapeProfile } = require('./profile');
+const { generatedAvatarUrl } = require('../services/avatar-url');
 const socialIdentity = require('../services/social-identity');
 const {
   accountRecovery,
@@ -877,7 +878,20 @@ function authRoutes(config) {
     // middleware/auth.js's per-request session hydration — this endpoint
     // already does one users lookup, and every request paying for a join
     // it never renders would be the wrong trade.
-    let profile = { displayName: null, bio: null, avatarUrl: null, links: { github: null, x: null } };
+    //
+    // #7135: when the profile read below fails, the answer still names this
+    // account's generated picture. A signed-in account is a known account,
+    // so the header must not drop to a letter in a circle just because one
+    // read failed; `hasPhoto` stays false, which is what the editor reads.
+    const fallbackAvatarUrl = generatedAvatarUrl(req.user.id);
+    let profile = {
+      displayName: null,
+      bio: null,
+      avatarUrl: fallbackAvatarUrl,
+      hasPhoto: false,
+      generatedAvatarUrl: fallbackAvatarUrl,
+      links: { github: null, x: null },
+    };
     // App-creation quota: the same live (non-errored) app count enforced by
     // POST /api/apps and /fork. Keep the numbers as well as the derived
     // boolean so the create dialog can say "N of M used" instead of reducing
