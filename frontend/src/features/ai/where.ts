@@ -60,6 +60,27 @@ export interface WhereQuery {
 
 const NOWHERE: BotWhere = { rootId: null, earlierRootId: null };
 
+/**
+ * An address from before is being resolved. The column's own address writer
+ * (./index.tsx showAddress) must leave the bar alone until the server says
+ * where the address lands: the column's resting place is the bare tab, so a
+ * mount that settles while this read is in flight would replace
+ * `#homeroom-bot/main` with `#homeroom-bot`, and the answer would then be
+ * dropped as one the reader moved on from. The reader's own move still drops
+ * it (openOldMain's check below).
+ */
+let oldAddressReads = 0;
+
+/** Whether an address from before is still being resolved on the server. */
+export function oldAddressPending(): boolean { return oldAddressReads > 0; }
+
+/** readWhere, holding the column's address write until the answer is in. */
+function readBeforeLanding(query: WhereQuery | null): Promise<BotWhere> {
+  oldAddressReads += 1;
+  const done = () => { oldAddressReads = Math.max(0, oldAddressReads - 1); };
+  return readWhere(query).then((where) => { done(); return where; }, (err) => { done(); throw err; });
+}
+
 function id(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 2147483647 ? value : null;
 }
@@ -145,7 +166,7 @@ export function openOldMain(hash: string): void {
   const chat = botOldChatAt(hash);
   if (chat) {
     const asked = window.location.hash;
-    void readWhere(oldChatQuery(chat)).then((where) => {
+    void readBeforeLanding(oldChatQuery(chat)).then((where) => {
       if (window.location.hash !== asked) return;
       if (where.rootId) {
         const thread: BotAt = { threadRootId: where.rootId, focusMessageId: null };
@@ -161,7 +182,7 @@ export function openOldMain(hash: string): void {
   if (!at) return;
   if (at.threadRootId) { askBotTab(at); return; }
   const asked = window.location.hash;
-  void readWhere(at.focusMessageId ? { message: at.focusMessageId } : null).then((where) => {
+  void readBeforeLanding(at.focusMessageId ? { message: at.focusMessageId } : null).then((where) => {
     if (window.location.hash !== asked) return;
     const landing = oldMainLanding(at, where);
     if ('thread' in landing) {
