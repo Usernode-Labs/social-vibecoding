@@ -179,16 +179,176 @@ test('the gate applies the rule only when the platform\'s answer asks for it', a
   assert.equal(unchangedData.headers['cache-control'], 'public, max-age=0', 'data keeps the app\'s own header');
 });
 
+// ── Each build's files at addresses of their own (25 Nov 2026) ──────────
+//
+// The bridge's file check could not heal Firefox, which keeps a page's own
+// <link>/<script> loads apart from the bridge's fetches: the check compared
+// its own current copies and the page drew the old CSS and JS forever. Now
+// the gate puts the app's live build on the addresses of its pages' files,
+// so no browser asks for a kept copy of an older build's file again.
+
+const V = 'abcdef123456';
+const REWRITE_TABLE = [
+  // [what, html, expected]
+  ['a stylesheet', '<link rel="stylesheet" href="/screens.css">', `<link rel="stylesheet" href="/screens.css?un-v=${V}">`],
+  ['attributes in any order, bare rel', '<link href="/a.css" rel=stylesheet>', `<link href="/a.css?un-v=${V}" rel=stylesheet>`],
+  ['upper-case tag and attributes', '<LINK REL="Stylesheet" HREF="/a.css">', `<LINK REL="Stylesheet" HREF="/a.css?un-v=${V}">`],
+  ['a query and a fragment kept', '<link rel="stylesheet" href="/a.css?x=1#f">', `<link rel="stylesheet" href="/a.css?x=1&un-v=${V}#f">`],
+  ['single quotes', "<script src='/app.js'></script>", `<script src='/app.js?un-v=${V}'></script>`],
+  ['a bare relative script', '<script type=module src=app.js></script>', `<script type=module src="app.js?un-v=${V}"></script>`],
+  // A bare value runs to whitespace or `>`, `=` included, as browsers read it.
+  ['a bare address with = in its query', '<link rel=stylesheet href=/a.css?x=1#f>', `<link rel=stylesheet href="/a.css?x=1&un-v=${V}#f">`],
+  ['a bare address right before >', '<script src=/app.js></script>', `<script src="/app.js?un-v=${V}"></script>`],
+  ['preload and modulepreload', '<link rel="preload" as="script" href="/a.js"><link rel="modulepreload" href="./m.js">',
+    `<link rel="preload" as="script" href="/a.js?un-v=${V}"><link rel="modulepreload" href="./m.js?un-v=${V}">`],
+  ['an older version replaced', `<script src="/app.js?q=2&un-v=000000000000"></script>`, `<script src="/app.js?q=2&un-v=${V}"></script>`],
+  ['an icon is not a file the page runs on', '<link rel="icon" href="/i.png">', '<link rel="icon" href="/i.png">'],
+  ['another site', '<script src="https://cdn.example/x.js"></script><link rel="stylesheet" href="//cdn.example/a.css">',
+    '<script src="https://cdn.example/x.js"></script><link rel="stylesheet" href="//cdn.example/a.css">'],
+  ['data: and blob:', '<script src="data:text/javascript,1"></script><link rel="stylesheet" href="blob:x">',
+    '<script src="data:text/javascript,1"></script><link rel="stylesheet" href="blob:x">'],
+  ['the platform\'s shared files', '<script src="/usernode-bridge/v1/bridge.js"></script><link rel="stylesheet" href="/usernode-native/v1/native.css">',
+    '<script src="/usernode-bridge/v1/bridge.js"></script><link rel="stylesheet" href="/usernode-native/v1/native.css">'],
+  ['data and the gate\'s paths', '<script src="/api/config.js"></script><script src="/__usernode_x.js"></script>',
+    '<script src="/api/config.js"></script><script src="/__usernode_x.js"></script>'],
+  ['a data-src is not a src', '<script data-src="/x.js"></script>', '<script data-src="/x.js"></script>'],
+  ['an inline script\'s text is not markup', '<script>var s = "<script src=/x.js>";</script>', '<script>var s = "<script src=/x.js>";</script>'],
+  ['nor a style\'s or a comment\'s', '<style>/* <link rel=stylesheet href=/x.css> */</style><!-- <script src="/c.js"></script> -->',
+    '<style>/* <link rel=stylesheet href=/x.css> */</style><!-- <script src="/c.js"></script> -->'],
+];
+
+test('the page rewrite: each same-site file the page loads gets the build, and nothing else changes', () => {
+  for (const [what, html, want] of REWRITE_TABLE) {
+    assert.equal(offlineCache.versionAssetUrls(html, V), want, what);
+  }
+  const page = `<!doctype html><html><head><meta charset="utf-8"><title>Café — list</title>
+<link rel="stylesheet" href="/tailwind.css"><link rel="stylesheet" href="/screens.css">
+<script src="/usernode-bridge/v1/bridge.js"></script></head>
+<body><div id="t" class="toggle">Table</div><script src="/app.js"></script></body></html>`;
+  const once = offlineCache.versionAssetUrls(page, V);
+  assert.equal(once.replace(new RegExp(`\\?un-v=${V}`, 'g'), ''), page, 'only the addresses change');
+  assert.equal((once.match(/un-v=/g) || []).length, 3);
+  assert.equal(offlineCache.versionAssetUrls(offlineCache.versionAssetUrls(page, '000000000000'), V), once, 'run again, it replaces its own');
+  assert.equal(offlineCache.versionAssetUrls(page, ''), page, 'no version, no change');
+  assert.equal(offlineCache.versionAssetUrls(page, '"><script>'), page, 'nothing but a short build is ever written');
+  assert.equal(offlineCache.assetVersion('ABCDEF1234567890abcdef'), V);
+  assert.equal(offlineCache.assetVersion('x y'), '');
+});
+
+test('a page request is a document or a frame, or a GET that asks for HTML', () => {
+  const is = (method, headers) => offlineCache.isPageRequest({ method, headers });
+  assert.equal(is('GET', { 'sec-fetch-dest': 'document' }), true);
+  assert.equal(is('GET', { 'sec-fetch-dest': 'iframe' }), true);
+  assert.equal(is('GET', { accept: 'text/html,application/xhtml+xml' }), true);
+  assert.equal(is('GET', { 'sec-fetch-dest': 'style', accept: 'text/css,*/*' }), false);
+  assert.equal(is('GET', { 'sec-fetch-dest': 'script', accept: '*/*' }), false);
+  assert.equal(is('HEAD', { 'sec-fetch-dest': 'document' }), false);
+  assert.equal(is('POST', { accept: 'text/html' }), false);
+});
+
+test('the gate versions an app page\'s file addresses by the build the platform names', async (t) => {
+  const zlib = require('node:zlib');
+  const { createGate } = require('../scripts/app-gate');
+  const PAGE = '<!doctype html><html><head><link rel="stylesheet" href="/screens.css"><script src="/usernode-bridge/v1/bridge.js"></script></head><body><script src="/app.js"></script></body></html>';
+  const WANT = PAGE.replace('/screens.css', `/screens.css?un-v=${V}`).replace('/app.js', `/app.js?un-v=${V}`);
+  const platform = http.createServer((req, res) => {
+    const uri = req.headers['x-forwarded-uri'] || '/';
+    const headers = { 'x-usernode-upstream': 'app-a', 'x-usernode-cache': 'app' };
+    if (!uri.startsWith('/plain')) headers['x-usernode-asset-version'] = 'ABCDEF1234567890';
+    res.writeHead(200, headers);
+    res.end('ok');
+  });
+  const seen = [];
+  const app = http.createServer((req, res) => {
+    seen.push({ url: req.url, headers: { ...req.headers } });
+    const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=0', etag: 'W/"page-1"', 'last-modified': 'Wed, 25 Nov 2026 10:00:00 GMT' };
+    // An app cannot hand the visitor the platform's version header.
+    headers['x-usernode-asset-version'] = 'evil';
+    if (req.headers['if-none-match'] === 'W/"page-1"') { res.writeHead(304, headers); return res.end(); }
+    if (req.url.startsWith('/screens.css')) {
+      res.writeHead(200, { 'content-type': 'text/css', 'cache-control': 'public, max-age=0' });
+      return res.end('.t{color:red}');
+    }
+    let body = Buffer.from(PAGE);
+    if (req.url.startsWith('/big')) body = Buffer.from(PAGE + ' '.repeat(2 * 1024 * 1024 + 10));
+    if (req.url.startsWith('/gz')) { body = zlib.gzipSync(body); headers['content-encoding'] = 'gzip'; }
+    if (req.url.startsWith('/br')) { body = zlib.brotliCompressSync(body); headers['content-encoding'] = 'br'; }
+    if (req.url.startsWith('/zz')) headers['content-encoding'] = 'compress';
+    headers['content-length'] = String(body.length);
+    res.writeHead(200, headers);
+    return res.end(body);
+  });
+  const platformPort = await listen(platform);
+  const appPort = await listen(app);
+  const gate = createGate({
+    platformUrl: `http://127.0.0.1:${platformPort}`,
+    resolveUpstream: () => ({ host: '127.0.0.1', port: appPort }),
+    anonCacheMs: 0,
+    log: { error() {}, warn() {} },
+  });
+  const gatePort = await listen(gate);
+  t.after(async () => { await close(gate); await close(app); await close(platform); });
+
+  const fetchPage = (url, headers = {}) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: gatePort, path: url, method: 'GET',
+      headers: { host: 'a.apps.example', ...headers } }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ res, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  const doc = { 'sec-fetch-dest': 'iframe', 'if-none-match': 'W/"page-1"', 'if-modified-since': 'Wed, 25 Nov 2026 10:00:00 GMT',
+    'accept-encoding': 'gzip, br', 'x-usernode-asset-version': 'forged' };
+
+  const page = await fetchPage('/?token=abc', doc);
+  assert.equal(page.res.statusCode, 200, 'asked for whole, never a 304 that brings back a kept page');
+  assert.equal(page.body.toString(), WANT);
+  assert.equal(page.res.headers['content-length'], String(Buffer.byteLength(WANT)));
+  assert.equal(page.res.headers.etag, undefined, 'the app\'s validators named other bytes');
+  assert.equal(page.res.headers['last-modified'], undefined);
+  assert.equal(page.res.headers['x-usernode-asset-version'], undefined, 'never reaches the visitor');
+  const asked = seen.at(-1).headers;
+  assert.equal(asked['if-none-match'], undefined);
+  assert.equal(asked['if-modified-since'], undefined);
+  assert.equal(asked['accept-encoding'], 'identity');
+  assert.equal(asked['x-usernode-asset-version'], undefined, 'never forwarded to the app');
+
+  for (const enc of ['gz', 'br']) {
+    const packed = await fetchPage(`/${enc}`, doc);
+    assert.equal(packed.body.toString(), WANT, `${enc}: unpacked and rewritten`);
+    assert.equal(packed.res.headers['content-encoding'], undefined, `${enc}: sent plain`);
+  }
+  const odd = await fetchPage('/zz', doc);
+  assert.equal(odd.body.toString(), PAGE, 'an encoding it cannot unpack goes out as the app sent it');
+  assert.equal(odd.res.headers['content-encoding'], 'compress');
+  const big = await fetchPage('/big', doc);
+  assert.equal(big.body.length, Buffer.byteLength(PAGE) + 2 * 1024 * 1024 + 10, 'too big: passed through whole');
+  assert.ok(!big.body.toString().includes('un-v='));
+
+  const css = await fetchPage('/screens.css?un-v=abcdef123456', { 'sec-fetch-dest': 'style', 'if-none-match': 'x' });
+  assert.equal(css.body.toString(), '.t{color:red}', 'a file is never rewritten');
+  assert.equal(seen.at(-1).headers['if-none-match'], 'x', 'and keeps its conditional request');
+  assert.equal(css.res.headers['cache-control'], offlineCache.APP_CACHE_CONTROL, 'a versioned address keeps the 30 days');
+
+  const plain = await fetchPage('/plain', doc);
+  assert.equal(plain.res.statusCode, 304, 'no version from the platform: the page and its 304 as before');
+  assert.equal(seen.at(-1).headers['if-none-match'], 'W/"page-1"');
+});
+
 // ── The platform's access answer ─────────────────────────────────────────
 
 // Hosts under the apps domain parse with no database work (app-access.parseAppHost).
 const DOMAIN = require('../src/services/caddy').USERNODE_APPS_DOMAIN;
 const ACCESS_APPS = {
-  offapp: { id: 301, runtime_name: 'sv-app-301-offapp', offline: true },
-  optout: { id: 302, runtime_name: 'sv-app-302-optout', offline: false },
+  offapp: { id: 301, runtime_name: 'sv-app-301-offapp', offline: true, main_sha: 'ABCDEF1234567890abcdef1234567890abcdef12' },
+  optout: { id: 302, runtime_name: 'sv-app-302-optout', offline: false, main_sha: '1111111111111111111111111111111111111111' },
   // Two people's frames found its page did not open at the cacheable address
   // on its live build: the shell frames it the old way until it deploys again.
-  refused: { id: 303, runtime_name: 'sv-app-303-refused', offline: true, refused: true },
+  refused: { id: 303, runtime_name: 'sv-app-303-refused', offline: true, refused: true, main_sha: '2222222222222222222222222222222222222222' },
+  // Never deployed yet: no live build to version its files by.
+  fresh: { id: 304, runtime_name: 'sv-app-304-fresh', offline: true, main_sha: null },
 };
 const accessPool = {
   queries: [],
@@ -205,9 +365,10 @@ const accessPool = {
     if (/SELECT staging_runtime_name FROM chat_sessions/.test(sql)) {
       return { rows: [{ staging_runtime_name: 'sv-preview-301-s42' }] };
     }
-    if (/\(manifest_snapshot -> 'offline'\) = 'false'::jsonb AS off,[\s\S]*offline_cache_off_sha[\s\S]*main_sha[\s\S]*AS refused\s+FROM apps WHERE id = \$1/.test(sql)) {
+    if (/\(manifest_snapshot -> 'offline'\) = 'false'::jsonb AS off,[\s\S]*offline_cache_off_sha[\s\S]*AS refused,\s*main_sha, self_hosted\s+FROM apps WHERE id = \$1/.test(sql)) {
       const app = Object.values(ACCESS_APPS).find((a) => a.id === params[0]);
-      return { rows: [{ off: app ? app.offline === false : null, refused: app ? app.refused === true : null }] };
+      return { rows: [{ off: app ? app.offline === false : null, refused: app ? app.refused === true : null,
+        main_sha: app ? app.main_sha : null, self_hosted: false }] };
     }
     throw new Error(`offline-apps-cache stub: unexpected query: ${sql}`);
   },
@@ -275,6 +436,30 @@ test('the access answer asks the gate to cache a production app, only with the s
   assert.equal(res.headers.get('x-usernode-cache'), null, 'the cacheable address is off on its live build');
 });
 
+// 25 Nov 2026: each build's files at addresses of their own. The answer
+// names the app's live build for the gate to version its pages' file
+// addresses by: every production app while the switch is on, the opted-out
+// and the old-way ones included (a version is harmless where nothing is kept
+// long, and heals a copy kept before), never a preview or an app not yet
+// deployed.
+test('the access answer names a production app\'s live build for its file addresses', async (t) => {
+  const prevSignin = process.env.APP_HOST_SIGNIN;
+  process.env.APP_HOST_SIGNIN = 'off';
+  t.after(() => { if (prevSignin == null) delete process.env.APP_HOST_SIGNIN; else process.env.APP_HOST_SIGNIN = prevSignin; });
+  const { ask } = await accessServer(t);
+  const VERSION = offlineCache.VERSION_HEADER;
+
+  withEnv(t, null);
+  assert.equal((await ask(`offapp.${DOMAIN}`)).headers.get(VERSION), null, 'switch off: no version');
+
+  process.env.APP_OFFLINE_CACHE = 'on';
+  assert.equal((await ask(`offapp.${DOMAIN}`)).headers.get(VERSION), 'abcdef123456', 'its main_sha, short and lower-case');
+  assert.equal((await ask(`optout.${DOMAIN}`)).headers.get(VERSION), '111111111111', 'an opted-out app too');
+  assert.equal((await ask(`refused.${DOMAIN}`)).headers.get(VERSION), '222222222222', 'one framed the old way too');
+  assert.equal((await ask(`fresh.${DOMAIN}`)).headers.get(VERSION), null, 'no live build yet');
+  assert.equal((await ask(`offapp--s42.${DOMAIN}`)).headers.get(VERSION), null, 'a preview runs unmerged code');
+});
+
 // 25 Nov 2026: a private project showed its new page over its old
 // screens.css after every change. The shell frames a view-private app with
 // the token in its address (forApp is false for it), where the bridge's
@@ -286,8 +471,9 @@ test('the gate never keeps a view-private app\'s files, nor one framed the old w
   const gate = read('src/services/edge-gate.js');
   const decision = gate.slice(gate.indexOf('offlineCache.DECISION_HEADER, offlineCache.DECISION_APP') - 700,
     gate.indexOf('offlineCache.DECISION_HEADER, offlineCache.DECISION_APP'));
-  assert.match(decision, /cacheApp && isProduction && !vis\.viewPrivate && offlineCache\.enabled\(\)/);
-  assert.match(decision, /appAccess\.offlineCacheOff\(pool, vis\.appId\)/);
+  assert.match(decision, /isProduction && offlineCache\.enabled\(\)/);
+  assert.match(decision, /appAccess\.offlineCacheFacts\(pool, vis\.appId\)/);
+  assert.match(decision, /cacheApp && !vis\.viewPrivate && !facts\.off/);
   const access = read('src/services/app-access.js');
   assert.match(access, /offline_cache_off_sha IS NOT NULL AND lower\(offline_cache_off_sha\) = lower\(main_sha\)\) AS refused/,
     'switched off on its live build, as offlineCache.refusedOnThisBuild reads it');

@@ -34,6 +34,15 @@
 //     shell; two people on one build switch the cacheable address off for
 //     the app until its next deploy (offline-cache-refusals.js,
 //     apps.offline_cache_off_sha, read by forApp below).
+//   * Each build's files have addresses of their own (versionAssetUrls
+//     below): the access answer names the app's live build
+//     (X-Usernode-Asset-Version) and the gate adds it to every same-site
+//     <link> and <script> address on the app's pages. A copy a browser kept
+//     of an older build's file is then never asked for again, by any browser
+//     and whatever the page's address. The bridge's check could not do this
+//     in Firefox, which keeps a page's own loads apart from the bridge's
+//     fetches (25 Nov 2026): the check compared its own current copies and
+//     the page drew the old CSS and JS forever.
 //
 // THE SWITCH. APP_OFFLINE_CACHE=on (chart config.appOfflineCache). Off, the
 // access answer never asks for caching, the shared files keep their
@@ -58,6 +67,127 @@ const DECISION_HEADER = 'x-usernode-cache';
 const DECISION_APP = 'app';
 
 const SHARED_PREFIX_RE = /(^|[\\/])usernode-(?:bridge|native|tailwind)[\\/]/;
+
+// ── Each build's files at addresses of their own ─────────────────────────
+//
+// The access answer names the app's live build in VERSION_HEADER (only the
+// platform sets it: the gate discards one a visitor or an app sends), and
+// the gate adds it as VERSION_PARAM to the addresses of the files an app's
+// page loads, so the browser asks for the build's own copy. assetVersion is
+// the one form the gate accepts, short and safe to write into a page.
+const VERSION_HEADER = 'x-usernode-asset-version';
+const VERSION_PARAM = 'un-v';
+const VERSION_RE = /^[0-9a-z]{4,40}$/;
+
+function assetVersion(value) {
+  const s = String(value || '').trim().toLowerCase();
+  if (!VERSION_RE.test(s)) return '';
+  return s.slice(0, 12);
+}
+
+// The paths a page's file address is never versioned on: data reads, the
+// gate's and platform's own paths, and the platform's shared files (kept
+// stale-while-revalidate, and versioned by the platform's own releases).
+const UNVERSIONED_PATH_RE = /^\/?(?:\.\/)*(?:api(?:\/|$)|__|usernode-(?:bridge|native|tailwind)\/)/i;
+// Any scheme (http:, https:, data:, blob:, javascript:) or a protocol-
+// relative address: another site's file, or none at all.
+const OTHER_ORIGIN_RE = /^(?:[a-z][a-z0-9+.-]*:|\/\/|\\\\)/i;
+const LINK_RELS = new Set(['stylesheet', 'preload', 'modulepreload']);
+
+// One address, versioned: its query keeps everything it had but an older
+// VERSION_PARAM, and its #fragment stays last. Null for an address that is
+// not one of the app's own files.
+function versionedAddress(raw, version) {
+  const value = String(raw);
+  const lead = value.match(/^\s*/)[0];
+  const trail = value.match(/\s*$/)[0];
+  const url = value.slice(lead.length, value.length - trail.length);
+  if (!url || OTHER_ORIGIN_RE.test(url)) return null;
+  const hashAt = url.indexOf('#');
+  const beforeHash = hashAt === -1 ? url : url.slice(0, hashAt);
+  const fragment = hashAt === -1 ? '' : url.slice(hashAt);
+  const queryAt = beforeHash.indexOf('?');
+  const path = queryAt === -1 ? beforeHash : beforeHash.slice(0, queryAt);
+  if (!path || UNVERSIONED_PATH_RE.test(path)) return null;
+  const query = queryAt === -1 ? '' : beforeHash.slice(queryAt + 1);
+  const kept = query.split('&').filter((part) => part
+    && !new RegExp(`^(?:amp;)?${VERSION_PARAM}(?:=|$)`).test(part));
+  kept.push(`${VERSION_PARAM}=${version}`);
+  return `${lead}${path}?${kept.join('&')}${fragment}${trail}`;
+}
+
+// An attribute of one tag: its name (case-insensitive, after whitespace, so
+// data-href is not href) and its value, quoted either way or bare. A bare
+// value runs to the next whitespace or `>`, as browsers read it: an `=` in
+// its query (`href=/a.css?x=1`) is part of it.
+function attributeIn(tag, name) {
+  const re = new RegExp(`(\\s${name}\\s*=\\s*)("([^"]*)"|'([^']*)'|([^\\s"'>][^\\s>]*))`, 'i');
+  const m = tag.match(re);
+  if (!m) return null;
+  const quote = m[3] != null ? '"' : m[4] != null ? "'" : '';
+  const value = m[3] != null ? m[3] : m[4] != null ? m[4] : m[5];
+  return { index: m.index, length: m[0].length, prefix: m[1], quote, value };
+}
+
+function versionAttribute(tag, name, version) {
+  const attr = attributeIn(tag, name);
+  if (!attr) return tag;
+  const next = versionedAddress(attr.value, version);
+  if (next == null) return tag;
+  const quote = attr.quote || (/[\s"'=<>`]/.test(next) ? '"' : '');
+  return tag.slice(0, attr.index) + attr.prefix + quote + next + quote + tag.slice(attr.index + attr.length);
+}
+
+// The page with `un-v=<version>` on every same-site address its <link
+// rel="stylesheet|preload|modulepreload" href> and <script src> load. The
+// rest of the document is left exactly as it was: comments, and what sits
+// inside <script> and <style> elements, are skipped whole. Run again with
+// another version, it replaces the version it wrote. A version assetVersion
+// refuses leaves the page as it is.
+function versionAssetUrls(html, version) {
+  const v = assetVersion(version);
+  const text = String(html);
+  if (!v) return text;
+  const token = /<!--[\s\S]*?-->|<(link|script|style)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = token.exec(text))) {
+    if (!m[1]) continue;
+    const kind = m[1].toLowerCase();
+    const tag = m[0];
+    let next = tag;
+    if (kind === 'link') {
+      const rel = attributeIn(tag, 'rel');
+      const rels = rel ? rel.value.toLowerCase().split(/\s+/) : [];
+      if (rels.some((r) => LINK_RELS.has(r))) next = versionAttribute(tag, 'href', v);
+    } else if (kind === 'script') {
+      next = versionAttribute(tag, 'src', v);
+    }
+    if (next !== tag) {
+      out += text.slice(last, m.index) + next;
+      last = m.index + tag.length;
+    }
+    // What a <script> or <style> holds is not markup: carry on after it.
+    if ((kind === 'script' || kind === 'style') && !/\/\s*$/.test(m[2] || '')) {
+      const close = new RegExp(`</${kind}\\s*>`, 'ig');
+      close.lastIndex = token.lastIndex;
+      const end = close.exec(text);
+      token.lastIndex = end ? close.lastIndex : text.length;
+    }
+  }
+  return last === 0 ? text : out + text.slice(last);
+}
+
+// Is this request a page the gate rewrites (a document or a frame's, or one
+// that asks for HTML), as opposed to a file or a data read?
+function isPageRequest({ method, headers = {} } = {}) {
+  if (String(method || '').toUpperCase() !== 'GET') return false;
+  const dest = String(headers['sec-fetch-dest'] || '').toLowerCase();
+  if (dest === 'document' || dest === 'iframe') return true;
+  if (dest && dest !== 'empty') return false;
+  return String(headers.accept || '').toLowerCase().includes('text/html');
+}
 
 function enabled(env = process.env) {
   return String(env.APP_OFFLINE_CACHE || '').trim().toLowerCase() === 'on';
@@ -151,6 +281,12 @@ module.exports = {
   SHARED_CACHE_CONTROL,
   DECISION_HEADER,
   DECISION_APP,
+  VERSION_HEADER,
+  VERSION_PARAM,
+  assetVersion,
+  versionedAddress,
+  versionAssetUrls,
+  isPageRequest,
   enabled,
   optedOut,
   forApp,

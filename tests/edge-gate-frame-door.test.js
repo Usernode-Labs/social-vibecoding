@@ -83,6 +83,11 @@ const fakePool = {
       return { rows: params[0] === SID && params[1] === MEMBER_ID ? [{ '?column?': 1 }] : [] };
     }
     if (/UPDATE chat_sessions cs SET last_activity_at = now\(\)/.test(sql)) return { rows: [] };
+    // What the offline cache reads of an app (app-access.offlineCacheFacts):
+    // its live build names the version of its pages' file addresses.
+    if (/AS refused,\s*main_sha, self_hosted\s+FROM apps WHERE id = \$1/.test(sql)) {
+      return { rows: [{ off: false, refused: false, main_sha: 'c0ffee1234567890c0ffee1234567890c0ffee12', self_hosted: false }] };
+    }
     throw new Error(`frame-door stub: unexpected query: ${sql}`);
   },
 };
@@ -163,6 +168,9 @@ test('an opted-in private frame serves the bundled document only with a current 
   assert.deepEqual(setCookies(launch), []);
   assert.equal(launch.headers['x-usernode-upstream'], 'sv-app-7-privapp');
   assert.equal(launch.headers['x-usernode-cache'], undefined);
+  // Not kept long, but its page still names its files by the live build, so
+  // a copy a browser kept of an older build's file is never drawn.
+  assert.equal(launch.headers['x-usernode-asset-version'], 'c0ffee123456');
   delete process.env.APP_OFFLINE_CACHE;
   for (const invalid of [token(OUTSIDER_ID), token(MEMBER_ID, PUB_APP_ID)]) {
     assert.equal((await gate({ uri: `/?token=${invalid}`, dest: 'iframe', site: 'cross-site' })).status, 401);

@@ -830,9 +830,18 @@ async function handleAccess(pool, req, res) {
       // bridge's refresh never runs: a kept file there outlived every change
       // until it expired (25 Nov 2026, a private project's new page over
       // its old screens.css).
-      if (cacheApp && isProduction && !vis.viewPrivate && offlineCache.enabled()
-        && !(await appAccess.offlineCacheOff(pool, vis.appId))) {
-        res.set(offlineCache.DECISION_HEADER, offlineCache.DECISION_APP);
+      if (isProduction && offlineCache.enabled()) {
+        const facts = await appAccess.offlineCacheFacts(pool, vis.appId);
+        if (cacheApp && !vis.viewPrivate && !facts.off) {
+          res.set(offlineCache.DECISION_HEADER, offlineCache.DECISION_APP);
+        }
+        // Each build's files at addresses of their own: the gate versions
+        // the addresses on the app's pages by its live build, private apps
+        // and token-address documents included (those pages are exactly the
+        // ones that drew a kept old file), so no browser asks for a copy of
+        // an older build's file again (offlineCache.versionAssetUrls).
+        const version = facts.selfHosted ? '' : offlineCache.assetVersion(facts.build);
+        if (version) res.set(offlineCache.VERSION_HEADER, version);
       }
     } else if (viaCaddyCustom) {
       // The docker runtime's production container name (application-runtime).
