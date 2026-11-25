@@ -71,7 +71,9 @@ test('the standard profile switches its right column on the tab and keeps Projec
   assert.match(src, /<ProfileSectionLinks tab=\{tab\} \/>/);
   assert.match(src, /<ProfileHistoryList kind=\{HISTORY_KIND\[tab as keyof typeof HISTORY_KIND\]\} \/>/);
   assert.match(src, /<ProfileRecentActivity changes=\{contributions\} limit=\{5\} empty \/>/);
-  assert.match(src, /<ProfileLiveProjects changes=\{contributions\} \/>/);
+  // #7133 (merge) gave the card the summary's own projects rather than the
+  // merged changes it used to derive them from.
+  assert.match(src, /<ProfileLiveProjects projects=\{state\.data\?\.summary\?\.projects \|\| \[\]\} \/>/);
   assert.match(src, /!onHistoryTab && tab !== 'activity'/, 'the overview keeps its four blocks');
 });
 
