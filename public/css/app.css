@@ -33552,7 +33552,7 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [da
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [data-settings-section] { max-width: none; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content .ui-secblurb { margin: 0 0 8px; line-height: 1.45; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content :is(.ui-secblurb, .ui-note) + .ui-cap { margin-top: 16px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="guide"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
 /* A part's own blocks were ruled off from one another (`mt-6 pt-6
    border-t`): the kit stacks them, no hairline. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content [data-settings-section] .border-t.pt-6 { margin-top: 24px; padding-top: 0; border-top: 0; }
