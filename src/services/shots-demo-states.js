@@ -28,7 +28,11 @@
 // by either revision under test, so a state a proposal adds here reaches
 // shots only once it has merged. Data a proposal needs for its own shots
 // belongs in its staging seeds (src/db/migrate.js), which each side runs for
-// its own revision.
+// its own revision. For Homeroom itself, the run also applies a change's own
+// seeds to the OTHER copy once both have booted (seed-other-copy.js), so
+// that data is on both copies when main's schema can hold it; a seed it
+// cannot hold is rolled back there and stays after-only, with a stated
+// reason. A child app has no shared seed step, so its copies keep their own.
 
 const dbRetry = require('./db-retry');
 const shotsFixtures = require('./shots-fixtures');

@@ -47,7 +47,12 @@ const SEED_PLACE = 'the app\'s staging seed (its IS_STAGING block; for Homeroom 
 // What to do about it.
 const COPY_LIMITS_RULE = 'Before you declare a change, check that the copies can reach its state. When they cannot,'
   + ` either seed it in this same change (stored rows or a stored message, in ${SEED_PLACE}) or declare impact "none"`
-  + ' with a reason that names what the copies cannot do. Never declare a state the copies cannot reach.';
+  + ' with a reason that names what the copies cannot do. Never declare a state the copies cannot reach.'
+  // 25 Nov 2026 (#7139): a change's own staging seeds are now applied to the
+  // before copy too, when main's schema can hold them, so a state that
+  // already existed no longer needs its seed merged first.
+  + ' For Homeroom itself, a seed in this change reaches both copies when main\'s schema can hold it; a seed that'
+  + ' needs a table or column main lacks reaches the after copy only.';
 
 /**
  * The limits and, unless `rule` is false, the rule, as one paragraph. A

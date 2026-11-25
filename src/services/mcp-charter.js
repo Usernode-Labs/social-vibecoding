@@ -229,7 +229,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // own shots runs failed, most on a state the copies cannot reach).
     id: 'what-the-copies-cannot-show',
     title: 'What the before & after copies cannot show',
-    text: `Before & after shots are taken on two throwaway copies of the app, and \`visibleChanges\` should claim only what they can reach. ${copyLimitsText({ rule: false })} So before you submit, check each declared change against that list. A state the copies lack is seeded in the same change, as the work order says; one that can be neither reached nor seeded is a blocker to report in your summary, not a claim to make.`,
+    text: `Before & after shots are taken on two throwaway copies of the app, and \`visibleChanges\` should claim only what they can reach. ${copyLimitsText({ rule: false })} So before you submit, check each declared change against that list. A state the copies lack is seeded in the same change, as the work order says; for Homeroom itself that seed reaches both copies when main's schema can hold it. One that can be neither reached nor seeded is a blocker to report in your summary, not a claim to make.`,
   },
   {
     // Charter-only, and #1225's own reasoning applies to the placement: this

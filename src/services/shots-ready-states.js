@@ -255,15 +255,16 @@ const SEED_RULE = 'A seed is idempotent and obviously fake: rows for the shots\'
   + 'is the member) and fake people, never a signal the code reads to decide something.';
 
 // Which side a seed reaches, and so which proposal it belongs in.
-const SEED_SIDES = 'A seed this proposal adds reaches only the after copy, which is the side a state new in this '
-  + 'proposal needs: seed such a state in this proposal. A change to a state that already existed needs it on both '
-  + 'copies, so its seed merges first, in its own proposal. '
+const SEED_SIDES = 'A seed this proposal adds reaches the after copy, which is the side a state new in this '
+  + 'proposal needs: seed such a state in this proposal. For Homeroom itself it also reaches the before copy when '
+  + 'main\'s schema can hold it, so a change to a state that already existed can be seeded in its own proposal too; '
+  + 'for another app such a change needs it on both copies, so its seed merges first, in its own proposal. '
   // 18 Nov 2026 (#6822): said outright, because the bot declared PR #6819's
   // change for a state the copies had no data for though this answer had
   // said where data comes from.
   + 'A claim about a screen that already exists (a story whose baseState is "present") therefore needs a '
-  + 'ready-made state these copies already hold, from availableStates: declare it against one, and a seed in this '
-  + 'proposal cannot stand in for it.';
+  + 'ready-made state these copies already hold, from availableStates, or (for Homeroom itself) a seed in this '
+  + 'proposal that both copies can hold: declare it against one.';
 
 /** Pure: a declared change's own words, as one line. */
 function wordsOf(story) {
