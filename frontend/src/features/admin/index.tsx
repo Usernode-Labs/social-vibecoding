@@ -197,7 +197,7 @@ export function AdminScreen() {
             </a>
           </div>
         </div>
-        <div className="md:flex md:flex-col md:gap-8">
+        <div className="admin-console-layout md:grid md:grid-cols-[236px_minmax(0,1fr)] md:items-start md:gap-6">
           {/*
               Desktop top bar and open-section tabs (#6456), stacked above
               the content; it was a 16rem sidebar beside it. Below md there
@@ -208,10 +208,11 @@ export function AdminScreen() {
           */}
           <div
             id="admin-nav-desktop"
-            className="hidden md:block shrink-0"
+            className="hidden md:block min-w-0"
           >
           </div>
           <div className="flex-1 min-w-0">
+            <div id="admin-open-tabs" className="hidden md:block" />
             {/*
                 View-only admin banner (issue #311), same copy as /admin.
                 Ships hidden; AdminConsole._renderShell() reveals it for a

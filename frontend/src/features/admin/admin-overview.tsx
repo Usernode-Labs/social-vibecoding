@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
-import { needsYouSentence, pinnedSections } from './admin-workspace.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Operations overview — the console's landing section (#admin, #admin/overview).
@@ -50,6 +49,8 @@ interface OverviewData {
   orphanWorkers?: Array<{ name: string; appSlug?: string; uptimeSeconds?: number; sessionArchived?: boolean }>;
   llmToday?: { totalSpendCents: number; users?: Array<{ username: string; costCents: number }> };
 }
+interface AnalyticsData { users?: { total?: number }; appsTotal?: number; prs?: { promoted_all_time?: number }; wau?: number }
+interface ModerationCase { id: number; target_type: string; target_label?: string; report_count: number; reasons?: string[]; created_at: string }
 
 const TILE = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3';
 const TILE_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
@@ -59,6 +60,8 @@ const MUTED_SM = 'text-xs text-zinc-500 dark:text-zinc-400';
 
 function OverviewSection({ compact }: { compact?: boolean }) {
   const [data, setData] = useState<OverviewData | null>(null);
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [cases, setCases] = useState<ModerationCase[] | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -71,6 +74,21 @@ function OverviewSection({ compact }: { compact?: boolean }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let live = true;
+    Promise.all([
+      (window as any).AdminConsole.fetchJson('/api/admin/analytics/overview'),
+      (window as any).AdminConsole.fetchJson('/api/admin/moderation?status=new'),
+    ]).then(([a, m]) => {
+      if (!live) return;
+      if (a?.data) setAnalytics(a.data);
+      if (m?.data?.cases) setCases(m.data.cases.slice(0, 3));
+      const count = m?.data?.cases?.length || 0;
+      const badge = document.querySelector<HTMLElement>('[data-admin-moderation-count]');
+      if (badge) { badge.textContent = String(count); badge.hidden = count === 0; }
+    }).catch(() => { if (live) setCases([]); });
+    return () => { live = false; };
+  }, []);
 
   const stuck = data?.stuckApps || [];
   const orphans = data?.orphanWorkers || [];
@@ -157,78 +175,56 @@ function OverviewSection({ compact }: { compact?: boolean }) {
     </div>
   );
 
-  if (compact) return ops;
+  const shortCuts = [
+    ['overview', 'Overview'], ['reports', 'Moderation'], ['users', 'Users'],
+    ['apps', 'Content'], ['analytics', 'Analytics'],
+  ];
+  const moderation = <section className="admin-dashboard-panel admin-moderation-panel">
+    <div className="admin-dashboard-section-head"><h2>Moderation queue</h2><button type="button" data-admin-section="reports" onClick={() => (window as any).AdminConsole?.goTo?.('reports')}>View all →</button></div>
+    {cases === null ? <p className="admin-dashboard-muted">Loading reports…</p> : cases.length ? <div className="admin-queue-rows">
+      {cases.map((item) => <button type="button" className="admin-queue-row" key={item.id} onClick={() => { location.hash = `#admin/reports/${item.id}`; }}>
+        <span className="admin-queue-mark">{item.target_type === 'user' ? '♙' : item.target_type === 'app' ? '◇' : '▱'}</span>
+        <span className="admin-queue-copy"><strong>{item.target_label || `${item.target_type.replace('_', ' ')} report`}</strong><small>{(item.reasons || []).join(', ').replaceAll('_', ' ') || 'Needs review'} · {item.report_count} {item.report_count === 1 ? 'report' : 'reports'}</small></span>
+        <span className="admin-queue-age">{new Date(item.created_at).toLocaleDateString()}</span><span className="admin-queue-action">Review</span>
+      </button>)}
+    </div> : <p className="admin-dashboard-muted">No new reports to review.</p>}
+  </section>;
+  const dashboard = <div id="admin-dashboard">
+    <header className="admin-dashboard-heading"><div><h1>Admin Dashboard</h1><p>Manage users, content, and community health on Homeroom.</p></div>
+      <label className="admin-dashboard-period">◷ <select aria-label="Analytics period" defaultValue="30"><option value="30">Last 30 days</option><option value="7">Last 7 days</option></select></label>
+    </header>
+    <nav className="admin-mobile-shortcuts" aria-label="Admin areas">{shortCuts.map(([key, label]) => <button type="button" key={key} data-admin-section={key} onClick={() => (window as any).AdminConsole?.goTo?.(key)} aria-current={key === 'overview' ? 'page' : undefined}>{label}</button>)}</nav>
+    <section className="admin-metric-grid" aria-label="Admin overview">
+      {[
+        ['Users', analytics?.users?.total, 'users', 'sky'], ['Projects', analytics?.appsTotal, 'apps', 'green'],
+        ['New reports', cases?.length, 'reports', 'yellow'], ['Active this week', analytics?.wau, 'analytics', 'sky'],
+      ].map(([label, value, key, tone]) => <button type="button" className={`admin-metric-card ${tone}`} data-admin-section={key} onClick={() => (window as any).AdminConsole?.goTo?.(key)} key={label as string}>
+        <span className="admin-metric-icon" aria-hidden="true">{label === 'Users' ? '♧' : label === 'Projects' ? '◇' : label === 'New reports' ? '◯' : '⌁'}</span>
+        <span><strong>{value == null ? '—' : Number(value).toLocaleString()}</strong><small>{label}</small></span>
+      </button>)}
+    </section>
+    <div className="admin-dashboard-columns">{moderation}<section className="admin-dashboard-panel admin-health-panel"><div className="admin-dashboard-section-head"><h2>Community health</h2><button type="button" data-admin-section="analytics" onClick={() => (window as any).AdminConsole?.goTo?.('analytics')}>View analytics →</button></div>
+      <div className="admin-health-stat"><span>Weekly active users</span><strong>{analytics?.wau == null ? '—' : Number(analytics.wau).toLocaleString()}</strong></div>
+      <div className="admin-health-stat"><span>Stuck projects</span><strong>{data ? stuck.length : '—'}</strong></div>
+      <div className="admin-health-stat"><span>Orphan workers</span><strong>{data ? orphans.length : '—'}</strong></div>
+      <button type="button" className="admin-health-refresh" onClick={load}>Refresh operations</button>
+    </section></div>
+    <section className="admin-quick-actions"><h2>Quick actions</h2><div><button type="button" data-admin-section="reports" onClick={() => (window as any).AdminConsole?.goTo?.('reports')}>⚑ <span>Review queue{cases?.length ? ` (${cases.length})` : ''}</span>›</button><button type="button" data-admin-section="users" onClick={() => (window as any).AdminConsole?.goTo?.('users')}>♧ <span>Manage users</span>›</button><button type="button" data-admin-section="apps" onClick={() => (window as any).AdminConsole?.goTo?.('apps')}>◇ <span>Manage content</span>›</button><button type="button" data-admin-section="settings" onClick={() => (window as any).AdminConsole?.goTo?.('settings')}>⚙ <span>Admin settings</span>›</button></div></section>
+  </div>;
 
-  const consoleApi = (window as any).AdminConsole;
-  const visible: Section[] = consoleApi?._visibleSections?.() || [];
-  const pinned: Section[] = pinnedSections(visible);
-  const groups: Array<{ name: string; items: Section[] }> = (consoleApi?._groupedSections?.() || [])
-    .map((g: { name: string; items: Section[] }) => ({ ...g, items: g.items.filter((x) => x.key !== 'overview') }))
-    .filter((g: { items: Section[] }) => g.items.length);
-  const sentence = needsYouSentence(data);
+  if (compact) return <div className="admin-mobile-dashboard">{dashboard}</div>;
+
   const needs = (stuck.length + orphans.length) > 0;
 
   return (
     <div id="admin-home" className="space-y-10 pb-4">
-      <header>
-        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Admin home</h1>
-        <p id="admin-home-status" className={`mt-1 text-sm ${needs ? 'font-medium text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>
-          {sentence || 'Checking what needs you…'}
-        </p>
-      </header>
-      {ops}
-      {pinned.length ? (
-        <section aria-labelledby="admin-home-pinned-title">
-          <h2 id="admin-home-pinned-title" className={HOME_LABEL}>Pinned</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pinned.map((x) => (
-              <SectionCard key={x.key} section={x} large />
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <section aria-labelledby="admin-home-all-title">
-        <h2 id="admin-home-all-title" className={HOME_LABEL}>All sections</h2>
-        <div className="space-y-8">
-          {groups.map((g) => (
-            <div key={g.name} data-admin-home-group={g.name}>
-              <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-3">{g.name}</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {g.items.map((x) => <SectionCard key={x.key} section={x} />)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <p id="admin-home-status" className={`admin-dashboard-needs ${needs ? 'is-needs' : ''}`} hidden />
+      <div hidden>{ops}</div>
+      {dashboard}
     </div>
   );
 }
 
-interface Section { key: string; label: string; group?: string }
-
-const HOME_LABEL = 'text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-4';
-
-// One card per section, a real <button> carrying data-admin-section like
-// every other way into a section. Its glyph is the chassis's own NAV_ICONS
-// entry: a static string in this bundle, never anything a server sent.
-function SectionCard({ section, large }: { section: Section; large?: boolean }) {
-  const icon = (window as any).AdminConsole?.NAV_ICONS?.[section.key] || '';
-  return (
-    <button
-      type="button"
-      data-admin-section={section.key}
-      onClick={() => (window as any).AdminConsole?.goTo?.(section.key)}
-      className={`${AdminUI.card} flex items-center gap-4 w-full text-start ${large ? 'p-5' : 'px-4 py-3'} transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500`}
-    >
-      <span className={`flex items-center justify-center shrink-0 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 ${large ? 'w-11 h-11' : 'w-9 h-9'}`}
-        dangerouslySetInnerHTML={{ __html: icon }} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{section.label}</span>
-        {large && section.group ? <span className="block text-xs text-zinc-500 dark:text-zinc-400">{section.group}</span> : null}
-      </span>
-    </button>
-  );
-}
 
 let host: Element | null = null;
 

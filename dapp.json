@@ -3242,14 +3242,23 @@
       "expectText": "Operations"
     },
     {
-      "name": "Admin console opens on its home: a top bar of group menus, Home lit, with Search (#6456)",
+      "id": "admin.dashboard-reference-layout",
+      "name": "Admin console opens on its new dashboard with its workspace sidebar (#7167)",
       "path": "/#admin",
-      "expectSelector": "#admin-nav-desktop [data-admin-topnav]:has([data-admin-topnav-home][aria-current=\"page\"]):has([data-admin-topnav-group=\"Operations\"][aria-haspopup=\"menu\"]):has([data-admin-search-open]) ~ [data-admin-tabs] [data-admin-tab=\"overview\"]"
+      "expectSelector": "#admin-screen:not(.hidden):has(#admin-nav-desktop [data-admin-topnav] .admin-sidebar-primary [data-admin-section=\"overview\"][aria-current=\"page\"]) #admin-dashboard",
+      "expectText": "Admin Dashboard",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/admin/index.tsx",
+        "frontend/src/features/admin/admin-console.js",
+        "frontend/src/features/admin/admin-overview.tsx",
+        "public/css/app.css"
+      ]
     },
     {
-      "name": "Admin console marks the current group in the top bar and opens the section as a tab (#6456)",
+      "name": "Admin console marks the current section in its sidebar (#7167)",
       "path": "/#admin/users",
-      "expectSelector": "#admin-nav-desktop:has([data-admin-topnav-group=\"People\"][aria-current=\"true\"]) [data-admin-tabs] [data-admin-tab=\"users\"][aria-current=\"page\"]"
+      "expectSelector": "#admin-nav-desktop [data-admin-section=\"users\"][aria-current=\"page\"]"
     },
     {
       "name": "Admin console deep-links Overview by its explicit segment",

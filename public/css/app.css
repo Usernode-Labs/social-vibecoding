@@ -3920,6 +3920,105 @@ html[data-browser-scroller^="auth-"] :is(
 ) {
   display: none;
 }
+
+/* Admin console: give the workspace its own rail while leaving the shared
+   header intact. On phones the platform bottom bar remains visible. */
+@media (min-width: 768px) {
+  body:has(#admin-screen:not(.hidden)) { --platform-rail-w: 0px !important; }
+  body:has(#admin-screen:not(.hidden)) #platform-tabs { display: none !important; }
+  body:has(#admin-screen:not(.hidden)) #admin-screen {
+    padding-inline: clamp(18px, 2.5vw, 40px) !important;
+  }
+  #admin-root { max-width: 1800px; margin-inline: auto; }
+  .admin-console-layout { min-height: calc(100dvh - var(--platform-header-h, 72px) - 32px); }
+  #admin-nav-desktop { align-self: stretch; }
+  .admin-sidebar { position: sticky; top: 16px; max-height: calc(100dvh - var(--platform-header-h, 72px) - 32px); overflow: auto; padding: 14px !important; border-radius: 20px !important; }
+  .admin-sidebar-heading { padding: 6px 8px 14px; border-bottom: 1px solid var(--app-sheet-line, rgba(20,20,20,.12)); margin-bottom: 12px; }
+  .admin-sidebar-heading h1 { font: 700 29px/1.1 Georgia, serif; margin: 0; }
+  .admin-sidebar-heading p { margin: 5px 0 0; color: var(--text-muted, #626262); font-size: 13px; }
+  .admin-sidebar-primary { display: grid; gap: 4px; }
+  .admin-sidebar-row { display: flex; align-items: center; gap: 12px; min-height: 42px; width: 100%; padding: 8px 10px; border-radius: 13px; text-align: start; color: var(--text-primary, #171717); font-size: 15px; font-weight: 600; }
+  .admin-sidebar-row svg { width: 20px; height: 20px; }
+  .admin-sidebar-row:hover { background: color-mix(in srgb, var(--app-sheet-line, #ddd) 35%, transparent); }
+  .admin-sidebar-row.is-active { background: #ffe681; color: #111; }
+  .admin-sidebar-count { margin-inline-start: auto; min-width: 24px; padding: 2px 7px; border-radius: 999px; background: #c9f0aa; text-align: center; font-size: 12px; }
+  .admin-sidebar-all-label { margin: 18px 8px 7px; color: var(--text-muted, #666); font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .admin-sidebar-group { margin: 3px 0; }
+  .admin-sidebar-group-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 8px 9px; color: var(--text-muted, #666); font-size: 12px; font-weight: 700; text-align: start; }
+  .admin-sidebar-group-toggle svg { width: 13px; height: 13px; }
+  .admin-sidebar-group [data-admin-section] { min-height: 36px; padding-inline-start: 13px; font-size: 13px; font-weight: 500; }
+  .admin-sidebar-group [data-admin-section] svg { width: 17px; height: 17px; }
+  .admin-sidebar-tools { display: grid; gap: 8px; border-top: 1px solid var(--app-sheet-line, rgba(20,20,20,.12)); margin-top: 14px; padding: 13px 8px 3px; }
+  .admin-sidebar-search, .admin-sidebar-view-site { display: flex; align-items: center; justify-content: space-between; color: var(--text-muted, #555); font-size: 13px; }
+  .admin-dashboard-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 3px 0 25px; }
+  .admin-dashboard-heading h1 { margin: 0; font: 700 clamp(36px, 3.2vw, 48px)/1.05 Georgia, serif; letter-spacing: -.035em; }
+  .admin-dashboard-heading p { margin: 7px 0 0; color: var(--text-muted, #606060); font-size: 16px; }
+  .admin-dashboard-period { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 13px; border: 1px solid var(--app-sheet-line, #c9c5be); border-radius: 13px; background: var(--app-sheet-fill, transparent); white-space: nowrap; }
+  .admin-dashboard-period select { border: 0; background: transparent; color: inherit; outline: none; }
+  .admin-mobile-shortcuts { display: none; }
+  .admin-metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .admin-metric-card { display: flex; align-items: center; gap: 16px; min-height: 108px; padding: 17px; border-radius: 18px; text-align: start; color: #111; }
+  .admin-metric-card.sky { background: linear-gradient(135deg,#dff4ff,#d3effc); }
+  .admin-metric-card.green { background: linear-gradient(135deg,#eef8d8,#e5f4cd); }
+  .admin-metric-card.yellow { background: linear-gradient(135deg,#fff4cf,#fff0bd); }
+  .admin-metric-icon { font-size: 31px; line-height: 1; }
+  .admin-metric-card strong, .admin-metric-card small { display: block; }
+  .admin-metric-card strong { font: 700 31px/1.1 Georgia,serif; }
+  .admin-metric-card small { margin-top: 5px; font-size: 15px; }
+  .admin-dashboard-columns { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .85fr); gap: 18px; }
+  .admin-dashboard-panel { min-width: 0; padding: 19px 21px; border: 1px solid var(--app-sheet-line, #d5d0c8); border-radius: 19px; background: var(--app-sheet-fill, rgba(255,255,255,.35)); }
+  .admin-dashboard-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .admin-dashboard-section-head h2, .admin-quick-actions h2 { margin: 0; font: 700 25px/1.1 Georgia,serif; letter-spacing: -.02em; }
+  .admin-dashboard-section-head button { color: #075fd3; white-space: nowrap; }
+  .admin-queue-row { display: flex; align-items: center; gap: 13px; width: 100%; min-height: 62px; border-top: 1px solid var(--app-sheet-line,rgba(20,20,20,.12)); text-align: start; }
+  .admin-queue-mark { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 12px; background: #f2f7df; font-size: 20px; }
+  .admin-queue-copy { display: grid; flex: 1; min-width: 0; gap: 3px; }
+  .admin-queue-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 15px Georgia,serif; }
+  .admin-queue-copy small, .admin-queue-age { color: var(--text-muted,#656565); font-size: 12px; }
+  .admin-queue-action { padding: 7px 13px; border: 1px solid #222; border-radius: 11px; background: #ffe681; font-size: 13px; font-weight: 600; }
+  .admin-health-stat { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-top: 1px solid var(--app-sheet-line,rgba(20,20,20,.12)); }
+  .admin-health-stat strong { font: 700 19px Georgia,serif; }
+  .admin-health-refresh { color: #075fd3; font-size: 13px; }
+  .admin-dashboard-muted { color: var(--text-muted,#656565); padding: 16px 0; }
+  .admin-quick-actions { margin-top: 25px; }
+  .admin-quick-actions > div { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 13px; }
+  .admin-quick-actions button { display: flex; align-items: center; gap: 12px; min-height: 61px; padding: 12px 16px; border: 1px solid var(--app-sheet-line,#ddd); border-radius: 15px; background: #fff4bf; text-align: start; font-size: 20px; }
+  .admin-quick-actions button:nth-child(2) { background: #eef8d8; }
+  .admin-quick-actions button:nth-child(3) { background: #f7f2e8; }
+  .admin-quick-actions button:nth-child(4) { background: #e0f3fc; }
+  .admin-quick-actions button span { flex: 1; font: 600 16px Georgia,serif; }
+  #admin-home-status { margin: 0 0 12px; font-size: 13px; color: var(--text-muted,#666); }
+}
+@media (max-width: 767px) {
+  #admin-root { padding: 12px 14px calc(var(--platform-tabs-h, 0px) + 24px) !important; }
+  #admin-console-bar { margin-bottom: 12px; }
+  #admin-dashboard { margin: 0 -1px; }
+  .admin-dashboard-heading { margin: 4px 0 13px; }
+  .admin-dashboard-heading h1 { margin: 0; font: 700 36px/1.05 Georgia,serif; }
+  .admin-dashboard-heading p { margin: 5px 0 0; color: var(--text-muted,#555); font-size: 15px; line-height: 1.35; }
+  .admin-dashboard-period { display: none; }
+  .admin-mobile-shortcuts { display: flex; overflow-x: auto; gap: 7px; margin: 0 -14px 16px; padding: 0 14px 10px; border-bottom: 1px solid var(--app-sheet-line,rgba(20,20,20,.12)); }
+  .admin-mobile-shortcuts button { flex: 0 0 auto; min-height: 42px; padding: 8px 14px; border-radius: 13px; font-size: 14px; font-weight: 600; }
+  .admin-mobile-shortcuts button[aria-current="page"] { background: #ffe681; }
+  .admin-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin: 14px 0 22px; }
+  .admin-metric-card { min-height: 102px; gap: 10px; padding: 13px; border-radius: 17px; }
+  .admin-metric-card strong { font: 700 25px/1.05 Georgia,serif; }
+  .admin-metric-card small { font-size: 13px; }
+  .admin-metric-icon { font-size: 24px; }
+  .admin-dashboard-columns { grid-template-columns: 1fr; gap: 12px; }
+  .admin-dashboard-panel { padding: 15px; border: 1px solid var(--app-sheet-line,#ddd); border-radius: 17px; }
+  .admin-dashboard-section-head h2, .admin-quick-actions h2 { font: 700 22px/1.1 Georgia,serif; }
+  .admin-dashboard-section-head button { font-size: 13px; }
+  .admin-queue-row { gap: 9px; min-height: 69px; }
+  .admin-queue-mark { width: 34px; height: 34px; }
+  .admin-queue-age { display: none; }
+  .admin-queue-action { padding: 6px 9px; font-size: 12px; }
+  .admin-quick-actions { margin: 22px 0 12px; }
+  .admin-quick-actions > div { grid-template-columns: 1fr; gap: 8px; }
+  .admin-quick-actions button { min-height: 53px; }
+  .admin-quick-actions button span { font-size: 15px; }
+  #admin-home-status { margin: 0 0 9px; color: var(--text-muted,#666); font-size: 12px; }
+}
 /* UNDER THE SIGNED-OUT LANDING the platform header is covered (the landing
    is a fixed overlay with its own bar) but was still read out: an empty
    level-1 heading beside the page's own on a desktop (polish N10). In a
