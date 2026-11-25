@@ -122,6 +122,17 @@ export function draftAction(draft: LiveDraft): 'propose' | 'update' | null {
   return null;
 }
 
+/**
+ * Pure (request 7119): the change page a draft belongs to, the one its preview
+ * header names ("Change #145"), or null when it cannot be named. Never the
+ * proposal it was started on (`builtOn.sessionId`) nor the one it is up for a
+ * vote with (`proposal.sessionId`): those are other changes.
+ */
+export function draftChangeHref(draft: LiveDraft | null | undefined): string | null {
+  if (!draft?.sessionId || !draft.app?.slug) return null;
+  return `#app/${encodeURIComponent(draft.app.slug)}/dev/proposals/${draft.sessionId}`;
+}
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
@@ -424,7 +435,8 @@ export function useLiveDraftActs(draft: LiveDraft | null): LiveDraftActs {
 
 /**
  * G: a live draft's own controls in its preview's header, beside its ×: one
- * short line saying where the draft stands, and Propose (Update proposal
+ * short line saying where the draft stands, Open change (request 7119: the
+ * way through to the change the line names), and Propose (Update proposal
  * once it is up for a vote with changes not in it yet). Discard draft is not
  * here: it is the title menu's last entry (useLiveDraftActs). Drawn by
  * ../staging/staging-overlay.tsx only while the preview shown is this
@@ -438,6 +450,7 @@ export function LiveDraftControls({ draft, acts }: { draft: LiveDraft | null; ac
   const { busy, error, act } = acts;
   const line = draftHeadLine(draft);
   const action = draftAction(draft);
+  const changeHref = draftChangeHref(draft);
 
   return (
     <span className="staging-draft" data-live-draft={draft.id} data-live-draft-state={draft.live || ''} role="group"
@@ -446,6 +459,16 @@ export function LiveDraftControls({ draft, acts }: { draft: LiveDraft | null; ac
         title={line.bad ? t('messages:liveDraft.foot.failedSub') : undefined}>
         {error || t(line.id, line.values)}
       </span>
+      {changeHref ? (
+        <button type="button" className="staging-draft-quiet" data-live-draft-change=""
+          onClick={() => {
+            // The preview closes as its change page opens, as Discard draft does.
+            if (stagingStore.get().open) (window as any).AppView?.closeStagingOverlay?.();
+            window.location.hash = changeHref;
+          }}>
+          {t('messages:liveDraft.openChange')}
+        </button>
+      ) : null}
       {action === 'propose' ? (
         <button type="button" className="staging-draft-act" data-live-draft-propose=""
           disabled={busy === 'propose' || draft.live !== 'live'} onClick={() => void act('propose')}>

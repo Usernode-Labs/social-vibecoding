@@ -6467,6 +6467,10 @@
     "text": "Proposing…",
     "description": "The Propose button's words on a thread's live draft bar while the draft is being put up for a vote."
   },
+  "liveDraft.openChange": {
+    "text": "Open change",
+    "description": "Button in the header of a live draft's preview, beside Propose: closes the preview and opens the change page the draft belongs to, the one the header names."
+  },
   "liveDraft.close": {
     "text": "Discard draft",
     "description": "Confirm button of the question asked before a live draft is discarded (\"Discard this draft?\"): ends the draft and stops its live preview. A draft already up for a vote keeps its proposal."
