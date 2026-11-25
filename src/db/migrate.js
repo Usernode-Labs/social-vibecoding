@@ -46,31 +46,41 @@ async function runStagingSeeds(pool, config, {
 } = {}) {
   const outcomes = [];
   const boot = typeof each !== 'function';
+  // Background seeds are fired, not awaited; the report is written once when
+  // the last of them settles, not once per seed — a boot's own writes are
+  // what a check copy's first requests run beside, and N-1 of them said
+  // nothing new.
+  let pending = 0;
+  let registered = false;
   const settle = (outcome) => {
     outcomes.push(outcome);
     onOutcome?.(outcome);
     return outcome;
+  };
+  const settled = async () => {
+    pending -= 1;
+    if (boot && registered && pending === 0) await writeStagingSeedReport(pool, outcomes);
   };
   for (const entry of seeds) {
     if (typeof each === 'function') {
       if (entry.ownCopyOnly) continue;
       await each(entry);
     } else if (entry.background) {
+      pending += 1;
       void runSeedWithOutcome(entry, pool, config)
-        .then(async (outcome) => {
-          settle(outcome);
-          if (boot) await writeStagingSeedReport(pool, outcomes);
-        })
+        .then((outcome) => settle(outcome))
         .catch((error) => {
           log.warn('db', 'A background staging seed failed', { seed: entry.name, message: error?.message || String(error) });
-        });
+        })
+        .finally(() => settled());
     } else {
       settle(await runSeedWithOutcome(entry, pool, config));
     }
     if (entry.phaseEnd) onPhase?.(entry.phaseEnd);
   }
-  // After the seeds a boot waits for; a background one that settles later
-  // writes the report again with its own outcome.
+  registered = true;
+  // After the seeds a boot waits for. A background one still running when
+  // this lands writes the report again when the last of them settles.
   if (boot) await writeStagingSeedReport(pool, outcomes);
   return outcomes;
 }
