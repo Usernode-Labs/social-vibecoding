@@ -40925,7 +40925,8 @@ html:not([data-skin]) #home-create-tile .home-create-label { color: var(--one-in
 /* On a phone the tiles are four across and close: a 56px icon over a name on
    one line, 12/600 (the full name is the tile's title). */
 @media (max-width: 639.98px) {
-  html:not([data-skin]) #home-screen { --home-cell-h: 5.5rem; }
+  /* The fold counts a row as today's tile (home.js visibleRowBudget), so the closer rows hold back the same tiles. */
+  html:not([data-skin]) #home-screen { --home-cell-h: 5.5rem; --home-budget-row: var(--wip-tile-h-phone); }
   html:not([data-skin]) #app-list .app-card-title,
   html:not([data-skin]) #home-create-tile .home-create-label {
     display: block;
@@ -40945,7 +40946,7 @@ html:not([data-skin]) #home-create-tile .home-create-label { color: var(--one-in
 /* On a desktop a tile is a row: a 48px icon, then its name over one line of
    facts, "6 members · 3 contributors", in words. */
 @media (min-width: 1280px) {
-  html:not([data-skin]) #home-screen { --home-cell-h: 3.5rem; }
+  html:not([data-skin]) #home-screen { --home-cell-h: 3.5rem; --home-budget-row: var(--wip-tile-h); }
   html:not([data-skin]) #app-list > .app-card { gap: 12px; padding: 0 4px; }
   html:not([data-skin]) #app-list > .app-card > .relative,
   html:not([data-skin]) #app-list > .app-card > .relative > .app-icon-tile { width: 48px; height: 48px; }
