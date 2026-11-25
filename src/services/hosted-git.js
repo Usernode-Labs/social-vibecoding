@@ -374,12 +374,18 @@ async function getProposalDiff(owner, repo, basehead, charBudget, opts = {}) {
   // github.getProposalDiff does (services/diff-long-lines.js).
   const clip = opts && opts.clipLongLines ? require('./diff-long-lines').clipLongLines : null;
   let clippedLines = 0;
+  const longLines = [];
   let out = '';
   let truncated = false;
   for (const f of files) {
     const header = `diff --git a/${f.filename} b/${f.filename}\n`;
     let patch = await patchOf(dir, from, headSha, f);
-    if (patch && clip) { const c = clip(patch); patch = c.text; clippedLines += c.clipped; }
+    if (patch && clip) {
+      const c = clip(patch);
+      patch = c.text;
+      clippedLines += c.clipped;
+      for (const line of c.added) longLines.push({ filename: f.filename, line });
+    }
     const block = header + (patch ? `${patch}\n` : `(no textual diff — ${f.status}, +${f.additions || 0}/-${f.deletions || 0})\n`);
     if (out.length + block.length > charBudget) {
       const remaining = charBudget - out.length;
@@ -393,7 +399,7 @@ async function getProposalDiff(owner, repo, basehead, charBudget, opts = {}) {
   // #6037: the full list, the same shape github.getProposalDiff returns.
   // The local compare is not capped, so the list is always complete.
   return {
-    diff: out, fileCount: files.length, truncated, clippedLines,
+    diff: out, fileCount: files.length, truncated, clippedLines, longLines,
     files: files.map((f) => ({ filename: f.filename, previous: f.previous_filename || null })),
     filesComplete: true,
   };

@@ -32,7 +32,8 @@
 // the reason was a rebuilt bundle committed beside a few lines of source, so
 // an admin was put in front of changes that carried nothing. (25 Nov 2026:
 // such a bundle's minified lines are now cut to their start as the diff is
-// read, services/diff-long-lines.js, so it no longer makes a change unread.)
+// read, services/diff-long-lines.js, so it no longer makes a change unread
+// unless the part past the cut holds something a rule looks for.)
 // The admins are
 // still told, once for each version, by the same bell row and mail, which
 // say it is not held;
@@ -434,6 +435,16 @@ async function evaluate({
         // Cut off at the budget, or a file list the compare did not finish:
         // what was read still counts, and the admins are told about the rest.
         unread = !!d?.truncated || d?.filesComplete === false;
+        // The part of a long line past the cut is not skipped: the rules read
+        // every such added line whole, and when one of them finds something
+        // there the admins are told, as for any change not read in full. It
+        // does not hold by itself, because a bundle carries its libraries'
+        // code too (a wallet library's own sendTransaction), which is not
+        // the app sending tokens.
+        if (!unread && Array.isArray(d?.longLines) && d.longLines.length) {
+          const past = d.longLines.map((l) => `diff --git a/${l.filename} b/${l.filename}\n+${l.line}\n`).join('');
+          if (tripped({ diff: past }).length) unread = true;
+        }
       } catch (err) {
         // A change nobody could read is not passed over in silence: the
         // admins are told, like one cut off at the budget, and the next run

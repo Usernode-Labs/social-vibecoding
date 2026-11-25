@@ -42,11 +42,12 @@ test('a very long line is cut to its start and says how long it was; other lines
   assert.match(lines[3], /… \(a line of 80001 characters, not read past here\)$/);
   assert.ok(lines[2].startsWith('-b=2;'), 'a removed line stays a removed line');
   assert.ok(out.text.length < 1000, 'so it no longer uses a budget');
+  assert.deepEqual(out.added, [minified.slice(1)], 'the added line is handed back whole; the removed one is not');
 
   const edge = `+${'x'.repeat(LONG_LINE - 1)}`;
-  assert.deepEqual(clipLongLines(`${edge}\n+short`), { text: `${edge}\n+short`, clipped: 0 }, 'a line at the limit is kept');
-  assert.deepEqual(clipLongLines(''), { text: '', clipped: 0 });
-  assert.deepEqual(clipLongLines(null), { text: '', clipped: 0 });
+  assert.deepEqual(clipLongLines(`${edge}\n+short`), { text: `${edge}\n+short`, clipped: 0, added: [] }, 'a line at the limit is kept');
+  assert.deepEqual(clipLongLines(''), { text: '', clipped: 0, added: [] });
+  assert.deepEqual(clipLongLines(null), { text: '', clipped: 0, added: [] });
 });
 
 test('GitHub\'s reader: with the option the source after a bundle is read, without it nothing changes', async (t) => {
@@ -68,6 +69,7 @@ test('GitHub\'s reader: with the option the source after a bundle is read, witho
   const after = await github.getProposalDiff('acme', 'app', 'main...abc', 120000, { clipLongLines: true });
   assert.equal(after.truncated, false);
   assert.equal(after.clippedLines, 2);
+  assert.deepEqual(after.longLines, [{ filename: 'public/build/app.js', line: 'new();'.repeat(30000) }]);
   assert.match(after.diff, /diff --git a\/src\/client\/app\.js b\/src\/client\/app\.js\n@@ -1 \+1,2 @@\n const a = 1;\n\+usernode\.sendTransaction\(a, b\);\n/);
   assert.match(after.diff, /\+new\(\);[^\n]* … \(a line of 180001 characters, not read past here\)\n/);
   assert.deepEqual(holds.tripped({ diff: after.diff, unread: after.truncated }), ['wallet'],
@@ -91,6 +93,33 @@ test('the hold rules ask for it, and the check that must see whole lines does no
   });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].slice(3), [120000, { clipLongLines: true }]);
+
+  // Nothing hides past the cut. A wallet call 5,000 characters into a line
+  // is not in the text the rules read first, so they read the whole line:
+  // the admins are told, and it does not hold (a bundle carries its
+  // libraries' own code). A long line with nothing in it tells nobody.
+  const pad = 'a=1;'.repeat(1250);
+  const run = async (line, sha) => {
+    holds._resetCache();
+    const { clipLongLines: cut } = require('../src/services/diff-long-lines');
+    const c = cut(`@@ -0,0 +1 @@\n+${line}`);
+    return holds.evaluate({
+      pool: { async query(sql) { return /INSERT INTO release_holds/.test(sql) ? { rows: [{ id: 9, opened: true }], rowCount: 1 } : { rows: [], rowCount: 0 }; } },
+      session: { id: 1 }, app: { id: 2 }, repoOwner: 'o', repoName: 'r', commitHash: sha.repeat(40),
+      deps: {
+        isFirstVersion: async () => false, notify: async () => {},
+        github: { getProposalDiff: async () => ({
+          diff: `diff --git a/public/app.js b/public/app.js\n${c.text}\n`, truncated: false,
+          clippedLines: c.clipped, longLines: c.added.map((l) => ({ filename: 'public/app.js', line: l })),
+        }) },
+      },
+    });
+  };
+  const hidden = await run(`${pad}wallet.sendTransaction(a, b);`, 'd');
+  assert.deepEqual([hidden.state, hidden.rules], ['notice', ['unread']], 'told, not held and not silent');
+  const empty = await run(`${pad}${pad}`, 'e');
+  assert.ok(!empty || !(empty.rules || []).includes('unread'), 'a minified line with nothing in it is not a notice');
+
   // An outside <script> on one long line of minified HTML must still fail its
   // check, so that reader keeps every line whole.
   assert.doesNotMatch(read('src/services/outside-script-check.js'), /clipLongLines/);
