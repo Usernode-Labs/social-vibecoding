@@ -80,7 +80,6 @@ import '../improve/improve-status.js';
 // The bell's module. ../notifications/mount.ts installs the store's flush and
 // publishes the controller; this pulls both in.
 import '../notifications/mount';
-import { LookPicker } from '../frame/look-picker';
 import { PlatformLimitsDot } from '../notifications/platform-limits';
 
 // LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
@@ -706,9 +705,6 @@ export function PlatformHeader() {
               and its ⋯ (../nav-drawer/header-drawer.tsx ChatBarSlot, phone
               review #131); nothing at rest or in the prerender. */}
           <ChatBarSlot />
-          {/* An admin's look picker (../frame/look-picker.tsx), beside the bell:
-              the way out of a look as well as the way in. */}
-          <LookPicker variant="shell" />
           {/*
               NO DISC AT REST (#2798): the bell sits on the bar with no fill,
               and the periwinkle tint the other header controls wear shows
