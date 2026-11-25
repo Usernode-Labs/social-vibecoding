@@ -3276,6 +3276,35 @@ test('proposal shaping returns the platform hash route', () => {
   assert.equal(orphan.webPath, null);
 });
 
+// #7158: the deferred next step told an agent to sync the change "from its
+// page", where there is no such button, and Homeroom resolves the conflict on
+// its own. All three readers of it (Homeroom bot, the coding agent in the
+// change, an outside agent) are told what Homeroom does instead.
+test('#7158 — a deferred change says Homeroom resolves the conflict, never to sync it from its page', () => {
+  const table = SRC.slice(SRC.indexOf('const CHANGE_NEXT_STEP_WORDS'), SRC.indexOf('function changeNextStep'));
+  const deferred = [...table.matchAll(/deferred: '([^']*)'/g)].map((m) => m[1]);
+  assert.equal(deferred.length, 3, 'agent_mayor, worker_read and external');
+  for (const words of deferred) {
+    assert.match(words, /Homeroom resolves the conflict on its own/, words);
+    assert.doesNotMatch(words, /from its page/, words);
+  }
+  assert.doesNotMatch(table, /Syncing it with main from its page/);
+});
+
+// #7158: a change can read "5 of 1" by every yes cast and still wait for an
+// approver's yes, because the rule counts approvers (routes/sessions.js
+// qualified_yes_count). The connector reports the count the rule uses.
+test('#7158 — the yes count a connector reads is the one the rule decides by', () => {
+  const proposal = tools.shapeProposal({
+    id: 58, app_slug: 'recipe-box', status: 'promoted', yes_count: 5, qualified_yes_count: 1, votes_required: 1,
+  }, ORIGIN);
+  assert.equal(proposal.yesVotes, 1, 'the rule\'s count, not every yes');
+  // No qualified tally on the row (no approver roster): the raw count stands.
+  const raw = tools.shapeProposal({ id: 59, app_slug: 'recipe-box', status: 'promoted', yes_count: 2 }, ORIGIN);
+  assert.equal(raw.yesVotes, 2);
+  assert.equal(tools.shapeProposal({ id: 60, app_slug: 'recipe-box' }, ORIGIN).yesVotes, null);
+});
+
 test('tools reach the platform over loopback with the caller’s own token', () => {
   assert.match(SRC, /PLATFORM_INTERNAL_URL/, 'calls go to the in-cluster platform URL');
   assert.match(SRC, /callPlatform\(baseUrl, accessToken,/,
