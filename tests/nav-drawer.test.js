@@ -282,7 +282,8 @@ test('Messages\' drawer holds the list and conversations, on a phone only', () =
 
 test('the Messages screen: the panes are the levels, the list is alone, the arrow is the drawer\'s', () => {
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, threadWords\);/);
+  // One look (25 Nov 2026): in the standard look the bar says Messages over a conversation (barWords); the brand look names it.
+  assert.match(index, /const liveSkin = useLiveSkin\(\);\s+const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, liveSkin === 'brand' \? threadWords : barWords\);/);
   // 3 Nov 2026: no peek. The list is alone on its level, the whole screen.
   assert.match(index, /const drawerClass = drawer\.on \? ` messages-drawer\$\{drawer\.level === 0 \? ' messages-drawer-alone' : ''\}` : '';/);
   assert.match(index, /<ConversationList drawer=\{drawer\.on\} \/>\s*<ConversationThread \/>/);

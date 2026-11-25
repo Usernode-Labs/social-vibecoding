@@ -2035,6 +2035,10 @@
     "text": "Message…",
     "description": "Placeholder in the message box of a conversation. A noun: write a message here."
   },
+  "composer.placeholderTo": {
+    "text": "Message {{name}}",
+    "description": "Placeholder in the message box of a direct message or a group chat, naming who it goes to. {{name}} is the other person's username, or the group's name. \"Message\" is a verb here: write to them."
+  },
   "composer.labelThread": {
     "text": "Reply in thread",
     "description": "Accessible label of the message box of a thread."
@@ -3165,11 +3169,35 @@
   },
   "inbox.newCount_one": {
     "text": "{{count}} new",
-    "description": "At the end of a conversation's row in the Messages list, in grey: how many messages in it the person has not read yet. {{count}} is that number."
+    "description": "At the end of a conversation's row in the Messages list: how many messages in it the person has not read yet. {{count}} is that number."
   },
   "inbox.newCount_other": {
     "text": "{{count}} new",
-    "description": "At the end of a conversation's row in the Messages list, in grey: how many messages in it the person has not read yet. {{count}} is that number."
+    "description": "At the end of a conversation's row in the Messages list: how many messages in it the person has not read yet. {{count}} is that number."
+  },
+  "inbox.ago.minutes_one": {
+    "text": "{{count}}m",
+    "description": "Compact age of a conversation's latest message, after its name on a row of the Messages list, for something {{count}} minute old. 'm' abbreviates minute; keep it as short as the language allows."
+  },
+  "inbox.ago.minutes_other": {
+    "text": "{{count}}m",
+    "description": "Compact age of a conversation's latest message, after its name on a row of the Messages list, for something {{count}} minutes old (under an hour). 'm' abbreviates minutes; keep it as short as the language allows."
+  },
+  "inbox.ago.hours_one": {
+    "text": "{{count}}h",
+    "description": "Compact age of a conversation's latest message, after its name on a row of the Messages list, for something {{count}} hour old. 'h' abbreviates hour; keep it as short as the language allows."
+  },
+  "inbox.ago.hours_other": {
+    "text": "{{count}}h",
+    "description": "Compact age of a conversation's latest message, after its name on a row of the Messages list, for something {{count}} hours old (under a day). 'h' abbreviates hours; keep it as short as the language allows."
+  },
+  "inbox.ago.days_one": {
+    "text": "{{count}}d",
+    "description": "Compact age of a conversation's latest message, after its name on a row of the Messages list, for something {{count}} day old. 'd' abbreviates day; keep it as short as the language allows."
+  },
+  "inbox.ago.days_other": {
+    "text": "{{count}}d",
+    "description": "Compact age of a conversation's latest message, after its name on a row of the Messages list, for something {{count}} days old (under a week). 'd' abbreviates days; keep it as short as the language allows."
   },
   "inbox.previewBy": {
     "text": "@{{username}}: {{message}}",

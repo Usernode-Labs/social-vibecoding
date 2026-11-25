@@ -265,6 +265,25 @@ function rowPreview(
   return ownDirection(botLine || conversation.latestSummary || '') || t('messages:inbox.noMessages');
 }
 
+/**
+ * ONE LOOK (25 Nov 2026): in the standard look a row's time is the compact
+ * age the agreed mockups draw after the name ("2h", "1d", then "Nov 18"):
+ * agoStamp's own ladder (#1808), its relative steps said without "ago". Its
+ * title keeps the whole instant, as agoStamp's does. Any other look keeps
+ * agoStamp's words.
+ */
+const ROW_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+function rowStamp(value: string | null | undefined, compact: boolean): { text: string; title: string } {
+  const stamp = agoStamp(value);
+  const elapsed = Date.now() - (value ? Date.parse(value) : Number.NaN);
+  if (!compact || !stamp.text || !Number.isFinite(elapsed) || elapsed < 60_000 || elapsed >= ROW_WEEK_MS) return stamp;
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 60) return { text: translate('messages:inbox.ago.minutes', { count: minutes }), title: stamp.title };
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return { text: translate('messages:inbox.ago.hours', { count: hours }), title: stamp.title };
+  return { text: translate('messages:inbox.ago.days', { count: Math.floor(hours / 24) }), title: stamp.title };
+}
+
 const ConversationRow = memo(function ConversationRow({ conversation, active, preview = null, rowKey }: {
   conversation: ConversationSummary;
   active: boolean;
@@ -283,7 +302,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
   // #1808: the shared ago ladder, which stops being relative at a week — a
   // conversation last spoken in during March read "412d", which is a duration
   // and not information. `title` carries the unelided instant either way.
-  const activity = agoStamp(conversation.lastActivityAt);
+  const activity = rowStamp(conversation.lastActivityAt, useLiveSkin() === 'standard');
   return (
     <a
       href={`#messages/${conversation.id}`}
@@ -552,7 +571,7 @@ function NewMessageButton() {
         ref={btnRef}
         type="button"
         id="messages-new"
-        className="messages-new-btn"
+        className="messages-new-btn one-fab"
         aria-haspopup={touch ? 'dialog' : 'menu'}
         aria-expanded={open ? 'true' : 'false'}
         aria-label={t('messages:inbox.new.button')}
@@ -1182,6 +1201,16 @@ export function threadWords(active: ConversationDetail): { title: string; sub: s
   };
 }
 
+/**
+ * ONE LOOK (25 Nov 2026): what the phone's bar says over a conversation in
+ * the standard look. "Messages", the screen it is in, beside the arrow back
+ * to the list; the conversation names itself in its own title card
+ * (ThreadHeader), the way a request's page does.
+ */
+export function barWords(): { title: string; sub: string } {
+  return { title: translate('core:header.drawer.messages'), sub: '' };
+}
+
 function ThreadHeader() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -1190,8 +1219,14 @@ function ThreadHeader() {
   // Under one of the frame's looks a phone's bar says only where you are
   // (Messages, and the way back to the list), so the conversation names
   // itself here, as the tour's open-item pane does at any width (s17).
-  const frame = isFrameSkin(useLiveSkin());
-  const inDrawer = drawerOn && !frame;
+  const skin = useLiveSkin();
+  const frame = isFrameSkin(skin);
+  // ONE LOOK (25 Nov 2026): in the standard look a conversation is drawn as
+  // a request's thread is, on a phone as on a desktop: the bar says
+  // Messages (barWords, above) and the page opens on a title card of its
+  // own, with the face, "Direct message" over the name, and the discs. The
+  // brand look keeps the name and the discs in the bar (#131).
+  const inDrawer = drawerOn && !frame && skin === 'brand';
   // PHONE REVIEW #131 (23 Nov 2026): on the drawer the bar names the
   // conversation, and its discs go up beside the bell (the host the bar
   // draws, ../nav-drawer/header-drawer.tsx ChatBarSlot). Left in the page
@@ -2945,7 +2980,9 @@ export function MessagesScreen() {
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
   // THE PHONE'S DRAWER (./phone-drawer.tsx): the list, the whole screen, and
   // a conversation with people sliding in over it.
-  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, threadWords);
+  // ONE LOOK: only the brand look names the conversation in the bar.
+  const liveSkin = useLiveSkin();
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, liveSkin === 'brand' ? threadWords : barWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 ? ' messages-drawer-alone' : ''}` : '';
   // Under one of the frame's looks the phone's bar is the kit's: in a
   // conversation it says Messages, and its arrow goes back to the list.

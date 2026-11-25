@@ -46,6 +46,7 @@ import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
 import { messagesBack, messagesDepth, messagesDrawerStore, publishChatBarHost } from './messages-drawer';
 import { dirSign } from '../../lib/i18n/direction';
+import { useLiveSkin } from '../../lib/skin';
 
 type Mode = 'communities' | 'messages' | null;
 
@@ -321,8 +322,12 @@ function Untint(): ReactNode {
  */
 export function ChatBarSlot(): ReactNode {
   const { on, level, list } = useStoreState(messagesDrawerStore);
+  // ONE LOOK (25 Nov 2026): the standard look draws a conversation's discs
+  // on its own title card in the page, so only the brand look has a host.
+  // The Homeroom bot tab's New chat borrows the drawer (`list`) and has no
+  // discs to bring up in any look.
+  const skin = useLiveSkin();
   const host = useCallback((el: HTMLSpanElement | null) => { publishChatBarHost(el); }, []);
-  // One look: the Homeroom bot tab's New chat borrows the drawer (`list`) and has no discs to bring up.
-  if (!on || level !== 1 || list) return null;
+  if (!on || level !== 1 || list || skin !== 'brand') return null;
   return <span ref={host} className="nav-drawer-chat-actions" data-nav-drawer-chat-actions="" />;
 }

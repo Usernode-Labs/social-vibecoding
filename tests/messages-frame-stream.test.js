@@ -145,7 +145,8 @@ test('on a phone the conversation names itself in its own head under a look, and
   const src = read('frontend/src/features/messages/index.tsx');
   // The drawer flips on and off as a thread opens; a hook read only while it
   // is on changes the header's hook count between two renders (a crash).
-  assert.match(src, /const \{ on: drawerOn \} = useStoreState\(messagesDrawerStore\);[\s\S]{0,400}?const frame = isFrameSkin\(useLiveSkin\(\)\);\s+const inDrawer = drawerOn && !frame;/);
+  // One look (25 Nov 2026): the standard look names the conversation in its own head too; only the brand look's bar does.
+  assert.match(src, /const \{ on: drawerOn \} = useStoreState\(messagesDrawerStore\);[\s\S]{0,400}?const skin = useLiveSkin\(\);\s+const frame = isFrameSkin\(skin\);[\s\S]{0,500}?const inDrawer = drawerOn && !frame && skin === 'brand';/);
   assert.match(src, /useFramePage\(frame && snap\.route\.open && drawer\.on && drawer\.level === 1 \? \[tc\('core:tabs\.messages'\)\] : null, messagesBack\);/,
     'the bar says Messages, and its arrow is the drawer\'s own way back to the list');
   const walk = (dir) => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((e) => (
