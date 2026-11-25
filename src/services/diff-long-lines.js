@@ -40,7 +40,9 @@ function clipLongLines(patch, max = LONG_LINE, keep = KEEP) {
   const lines = text.split('\n').map((line) => {
     if (line.length <= limit) return line;
     clipped += 1;
-    if (line.startsWith('+') && !line.startsWith('+++')) added.push(line.slice(1));
+    // Every "+" line counts: the readers pass one file's hunks, which carry
+    // no "+++" header, so a line that starts "++" is added code ("++i;").
+    if (line.startsWith('+')) added.push(line.slice(1));
     return `${line.slice(0, keep)} … (a line of ${line.length} characters, not read past here)`;
   });
   return { text: clipped ? lines.join('\n') : text, clipped, added };

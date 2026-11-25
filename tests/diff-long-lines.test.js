@@ -44,6 +44,9 @@ test('a very long line is cut to its start and says how long it was; other lines
   assert.ok(out.text.length < 1000, 'so it no longer uses a budget');
   assert.deepEqual(out.added, [minified.slice(1)], 'the added line is handed back whole; the removed one is not');
 
+  const plus = `+++i;${'a=1;'.repeat(1000)}wallet.sendTransaction(a, b);`;
+  assert.deepEqual(clipLongLines(`@@ -0,0 +1 @@\n${plus}`).added, [plus.slice(1)], 'added code that starts with ++ is not taken for a header');
+
   const edge = `+${'x'.repeat(LONG_LINE - 1)}`;
   assert.deepEqual(clipLongLines(`${edge}\n+short`), { text: `${edge}\n+short`, clipped: 0, added: [] }, 'a line at the limit is kept');
   assert.deepEqual(clipLongLines(''), { text: '', clipped: 0, added: [] });
