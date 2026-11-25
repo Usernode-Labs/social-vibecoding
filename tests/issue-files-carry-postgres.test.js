@@ -211,6 +211,29 @@ test('a file attached for the bot is carried onto the request', { timeout: 18000
     assert.doesNotMatch(body, /screenshot/i);
   });
 
+  await t.test('copying refuses another person\'s file and one on a hidden or deleted message', async () => {
+    const theirs = await attach(conversationId, await say(conversationId, bo.id, 'not yours'), bo.id,
+      { filename: 'theirs.csv', kind: 'text', contentType: 'text/plain', data: Buffer.from('a,b\n') });
+    const onHidden = await attach(conversationId, await say(conversationId, ada.id, 'hid', { hidden: true }), ada.id,
+      { filename: 'hidden.csv', kind: 'text', contentType: 'text/plain', data: Buffer.from('a,b\n') });
+    const onDeleted = await attach(conversationId, await say(conversationId, ada.id, 'gone', { deleted: true }), ada.id,
+      { filename: 'deleted.csv', kind: 'text', contentType: 'text/plain', data: Buffer.from('a,b\n') });
+    const own = await attach(conversationId, await say(conversationId, ada.id, 'mine'), ada.id,
+      { filename: 'mine.csv', kind: 'text', contentType: 'text/plain', data: Buffer.from('a,b\n') });
+
+    const refused = await mayor.copyRequestFiles(pool, {
+      ids: [theirs, onHidden, onDeleted], conversationId, userId: ada.id,
+    });
+    assert.deepEqual(refused, [], 'a foreign, hidden or deleted file is never copied');
+    const kept = await mayor.copyRequestFiles(pool, { ids: [own], conversationId, userId: ada.id });
+    assert.deepEqual(kept.map((f) => f.name), ['mine.csv'], 'their own file on a visible message is copied');
+
+    const { rows } = await pool.query(
+      "SELECT filename FROM issue_files WHERE filename IN ('theirs.csv', 'hidden.csv', 'deleted.csv')",
+    );
+    assert.deepEqual(rows, [], 'nothing else reached the request');
+  });
+
   await t.test('a file named for a request but gone from the chat is skipped, not fatal', async () => {
     const out = await mayor.copyRequestFiles(pool, {
       ids: ['f'.repeat(32)], conversationId, userId: ada.id,

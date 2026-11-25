@@ -7139,10 +7139,17 @@ async function copyRequestPictures(pool, { ids, conversationId, userId }) {
 async function copyRequestFiles(pool, { ids, conversationId, userId }) {
   const wanted = Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, MAX_DRAFT_FILES) : [];
   if (!wanted.length || !conversationId) return [];
+  // The same checks draftAttachments makes before offering them: their own
+  // attachment in this chat, on a message neither deleted nor hidden. Checked
+  // again here because this is the copy that outlives the chat and reaches a
+  // build: a stale or foreign id in `fileIds` must never be carried.
   const { rows } = await pool.query(
-    `SELECT id, kind, filename, content_type, size_bytes, meta, data FROM conversation_message_attachments
-      WHERE id = ANY($1::text[]) AND conversation_id = $2`,
-    [wanted, conversationId],
+    `SELECT a.id, a.kind, a.filename, a.content_type, a.size_bytes, a.meta, a.data
+       FROM conversation_message_attachments a
+       JOIN conversation_messages m ON m.id = a.message_id
+      WHERE a.id = ANY($1::text[]) AND a.conversation_id = $2 AND a.user_id = $3
+        AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL`,
+    [wanted, conversationId, userId],
   );
   const by = new Map(rows.map((row) => [String(row.id), row]));
   const out = [];
