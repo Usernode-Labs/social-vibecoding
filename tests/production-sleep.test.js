@@ -70,6 +70,83 @@ test('only exact read-only homepage health probes are ignored; writes and upgrad
   end();
 });
 
+// A pool and locks that only count: what one request costs the database.
+function counted({ row = { asleep_at: null }, afterMs = 14 * 24 * 60 * 60 * 1000 } = {}) {
+  const c = { now: 1000, row, sql: [], locks: 0, wakes: [], fail: false };
+  const pool = { async query(text) {
+    c.sql.push(/^\s*INSERT/.test(text) ? 'record' : 'read');
+    if (c.fail) throw new Error('database unavailable');
+    return { rows: c.row ? [c.row] : [] };
+  } };
+  const deps = { clock: () => c.now,
+    locks: { async withSessionLock(_pool, _key, fn) { c.locks += 1; return fn(); } },
+    workflow: { async reportAppWake(id, key) { c.wakes.push(key); } } };
+  const config = { appRuntime: 'kubernetes', appSleepAfterMs: afterMs, kubernetes: { appGate: 'on' } };
+  c.use = (uri = '/api/list', { id = 7, request = { method: 'GET' } } = {}) => sleep.access(pool, id, uri, { config, deps, request });
+  return c;
+}
+
+test('an awake app is recorded as used once a minute; requests between take no lock and run no SQL', async () => {
+  const c = counted();
+  const first = await Promise.all(Array.from({ length: 64 }, () => c.use()));
+  assert.ok(first.every((d) => d.eligible && d.ready));
+  assert.deepEqual(c.sql, ['record'], 'requests that arrive together share one record');
+  assert.equal(c.locks, 1);
+  c.now += 59_999;
+  await c.use('/api/write', { request: { method: 'POST' } });
+  await c.use('/socket', { request: { method: 'GET', upgrade: true } });
+  assert.deepEqual(await c.use('/health'), { eligible: true, ready: true, waking: false });
+  assert.equal(c.sql.length, 1);
+  assert.equal(c.locks, 1);
+  c.now += 1;
+  await c.use();
+  assert.equal(c.sql.length, 2, 'the minute is over');
+  await c.use('/', { id: 8 });
+  assert.equal(c.sql.length, 3, 'each app has its own');
+});
+
+test('a sleeping app is asked about every time, and the first use after its wake is ready at once', async () => {
+  const c = counted({ row: { asleep_at: '2026-11-25 12:00:00+00' } });
+  const asleep = await Promise.all(Array.from({ length: 12 }, () => c.use()));
+  assert.ok(asleep.every((d) => !d.ready && d.waking));
+  assert.equal(c.locks, 1);
+  assert.equal(c.wakes.length, 1, 'requests that arrive together ask for one wake');
+  assert.equal((await c.use()).ready, false);
+  assert.equal(c.locks, 2);
+  c.row = { asleep_at: null };
+  assert.equal((await c.use()).ready, true);
+});
+
+test('what is kept never outlives the claim it rests on', async () => {
+  // A probe is not a use: nothing it reads may stand in for a recorded one.
+  const probed = counted();
+  await probed.use('/health'); await probed.use('/health');
+  assert.deepEqual(probed.sql, ['read', 'read']);
+  await probed.use();
+  assert.deepEqual(probed.sql, ['read', 'read', 'record']);
+  // Neither is an app with no row, which may get one at any time.
+  const untracked = counted({ row: null });
+  assert.equal((await untracked.use()).ready, true);
+  await untracked.use();
+  assert.equal(untracked.sql.length, 2);
+  // A short idle window shortens it: never more than a tenth of the window.
+  const short = counted({ afterMs: 5000 });
+  await short.use(); short.now += 499; await short.use();
+  assert.equal(short.sql.length, 1);
+  short.now += 1; await short.use();
+  assert.equal(short.sql.length, 2);
+  // Sleep switched off: nothing new can fall asleep, so the minute holds.
+  const off = counted({ afterMs: 0 });
+  await off.use(); off.now += 59_999; await off.use();
+  assert.equal(off.sql.length, 1);
+  // A record that failed was never made.
+  const failing = counted(); failing.fail = true;
+  await assert.rejects(failing.use(), /database unavailable/);
+  failing.fail = false;
+  assert.equal((await failing.use()).ready, true);
+  assert.equal(failing.sql.length, 2);
+});
+
 test('production sleep uses real SQL claims and session locks', { timeout: 120000 }, async (t) => {
   const dsn = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
   const admin = new Pool({ connectionString: dsn, connectionTimeoutMillis: 2000 });
@@ -337,6 +414,30 @@ test('production sleep uses real SQL claims and session locks', { timeout: 12000
     };
     await sleep.sweep(fx.config, pool, { deps: fx.deps });
     assert.equal(fx.scales.length, 0);
+  });
+
+  await t.test('a recorded use keeps the sleep claim out, so a request inside its minute cannot meet a sleeping app', async () => {
+    const fx = await fixture(); await fx.age();
+    let now = 0; fx.deps.clock = () => now;
+    const use = (from = pool) => sleep.access(from, fx.app.id, '/', { config: fx.config, deps: fx.deps });
+    assert.equal((await use()).ready, true);
+    const recorded = (await fx.row()).last_request_at.getTime();
+    // Every gate reports the app idle (their memory went with a restart): the
+    // record alone holds the claim off.
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 0);
+    assert.equal((await use()).ready, true);
+    assert.equal((await fx.row()).last_request_at.getTime(), recorded, 'the second request wrote nothing');
+    // The window passes with no use; the app sleeps. Another process sees it
+    // at once, and this one when its minute, long over by then, is.
+    await fx.age(); now = 2 * 60 * 60 * 1000;
+    assert.equal((await sleep.sweep(fx.config, pool, { deps: fx.deps })).asleep, 1);
+    const elsewhere = new Pool({ connectionString: String(url), max: 2 });
+    elsewhere.on('error', () => {});
+    try { assert.equal((await use(elsewhere)).ready, false); } finally { await elsewhere.end(); }
+    assert.equal((await use()).ready, false);
+    assert.equal(new Set(fx.wakes.map((w) => w.key)).size, 1);
+    assert.equal((await sleep.wake(fx.config, pool, fx.app.id, { deps: fx.deps })).status, 'started');
+    assert.equal((await use()).ready, true);
   });
 
   await t.test('disabling sleep schedules bounded workflow wakes even when telemetry is unavailable', async () => {
