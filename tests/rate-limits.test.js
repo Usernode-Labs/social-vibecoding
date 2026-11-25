@@ -15,9 +15,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   issueKindLimiter,
   groupChatWriteLimiter,
+  appChatReadLimiter,
+  appChatLoadLimiter,
 } = require('../src/middleware/rate-limits');
 
 let server;
@@ -43,6 +47,10 @@ test.before(async () => {
     res.json({ ok: true });
   });
   app.post('/group-chat', groupChatWriteLimiter, (_req, res) => res.status(201).json({ ok: true }));
+  // Mirrors a project page: what it reads as it opens (GET my-bot-requests,
+  // threads/yours, /api/ai/where), and the read position it moves.
+  app.get('/page-read', appChatLoadLimiter, (_req, res) => res.json({ ok: true }));
+  app.post('/read-mark', appChatReadLimiter, (_req, res) => res.json({ ok: true }));
 
   await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${server.address().port}`;
@@ -144,4 +152,45 @@ test('native discussion writes have their own bucket of 60 a minute', async () =
   // Its own bucket: the issues limiter is untouched by it.
   const issue = await post('/issues', { user, kind: 'general' });
   assert.equal(issue.status, 200, 'exhausting native discussion writes throttles nothing else');
+});
+
+// #7111, #7112: a check run opens about 250 project pages as one account in
+// under three minutes. Each page reads the viewer's own chat state as it
+// opens; while those reads spent the read-position bucket (120 a minute), the
+// page that came next got a 429, which is a console error, which failed a
+// declared check that had nothing to do with it.
+test('a check run\'s page loads do not spend the read-position bucket', async () => {
+  const user = 'check-runner';
+  const get = async () => (await fetch(`${base}/page-read`, { headers: { 'x-user-id': user } })).status;
+  for (let i = 0; i < 300; i++) {
+    assert.equal(await get(), 200, `page read #${i + 1} of a check run should pass`);
+  }
+  // The writes kept their own budget, and their own ceiling.
+  for (let i = 0; i < 120; i++) {
+    const r = await post('/read-mark', { user });
+    assert.equal(r.status, 200, `read mark #${i + 1} should pass after 300 page reads`);
+  }
+  const blocked = await post('/read-mark', { user });
+  assert.equal(blocked.status, 429, 'the read-position bucket still stops a runaway client');
+  assert.equal(await get(), 200, 'and a throttled write leaves page reads alone');
+});
+
+test('the page-load reads still have a ceiling of their own', async () => {
+  const user = 'runaway-reader';
+  const get = async () => (await fetch(`${base}/page-read`, { headers: { 'x-user-id': user } })).status;
+  for (let i = 0; i < 600; i++) await get();
+  assert.equal(await get(), 429);
+});
+
+test('what a page reads as it opens is on the page-load bucket, never the read-position one', () => {
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const aiWork = read('src/routes/ai-work.js');
+  const chat = read('src/routes/chat.js');
+  assert.match(aiWork, /router\.get\('\/api\/ai\/where', appChatLoadLimiter,/);
+  assert.match(aiWork, /router\.get\('\/api\/apps\/:slug\/threads\/yours', appChatLoadLimiter,/);
+  assert.match(chat, /router\.get\('\/api\/apps\/:slug\/my-bot-requests', appChatLoadLimiter,/);
+  // A GET added to the read-position bucket later is this bug again.
+  for (const source of [aiWork, chat]) {
+    assert.doesNotMatch(source, /router\.get\([^\n]*appChatReadLimiter/);
+  }
 });
