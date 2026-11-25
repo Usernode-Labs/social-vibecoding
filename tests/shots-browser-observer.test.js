@@ -192,7 +192,11 @@ test('the observer wraps only a shots persona\'s browser or its phone browser', 
   const { browserName } = require('../worker/shots-browser-observer');
   assert.deepEqual(browserName('member'), { persona: 'member', phone: false });
   assert.deepEqual(browserName('full_admin_phone'), { persona: 'full_admin', phone: true });
-  for (const value of ['read_only_admin', 'member_phone_phone', 'phone', 'member-phone', '', undefined]) {
+  // Each one's twin for the before side (write-shots-mcp-config.js).
+  assert.deepEqual(browserName('member_before'), { persona: 'member', phone: false, before: true });
+  assert.deepEqual(browserName('guest_phone_before'), { persona: 'guest', phone: true, before: true });
+  for (const value of ['read_only_admin', 'member_phone_phone', 'phone', 'member-phone', 'member_before_phone',
+    'member_before_before', '', undefined]) {
     assert.equal(browserName(value), null, String(value));
   }
   const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
@@ -628,6 +632,45 @@ test('a shots tool\'s own call reaches the browser in turn, and its answer goes 
   assert.deepEqual(await refused, { outcome: 'tool_error', text: 'No file chooser visible' });
   assert.deepEqual(h.answerIds(), [1, 2]);
   h.parker.close();
+});
+
+// 25 Nov 2026: save_shot takes a state's close-ups behind its answer. Until
+// they are taken, the after browser holds the agent's next call that could
+// change the page; the tools' own calls, and calls that leave the page as it
+// stands, go on.
+test('a held browser waits with the agent\'s page-changing calls, sends the tools\' own first, and lets go', async () => {
+  const h = parkerHarness();
+  assert.equal(h.parker.hold(10_000), 10_000);
+  h.parker.input.write(call(1, 'browser_navigate', { url: 'http://head.internal/next' })
+    + call(2, 'browser_snapshot'));
+  await h.tick();
+  assert.deepEqual(h.names(), [], 'the navigation waits, and what is behind it with it');
+  const closeup = h.parker.inject('browser_take_screenshot',
+    { filename: 'closeup-1.png', closeup: { x: 1, y: 1, width: 2, height: 2, scale: 4 } });
+  await h.tick();
+  assert.deepEqual(h.names(), ['browser_take_screenshot'], 'the close-up goes ahead of the held call');
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: h.forwarded[0].id, result: { content: [] } })}\n`);
+  assert.equal((await closeup).outcome, 'ok');
+  h.parker.release();
+  await h.tick();
+  assert.deepEqual(h.names(), ['browser_take_screenshot', 'browser_navigate', 'browser_snapshot'], 'released, in order');
+  h.parker.close();
+
+  // A call that leaves the page as it stands is not held; a hold lets go on its own.
+  const free = parkerHarness();
+  free.parker.hold(10_000);
+  free.parker.input.write(call(3, 'browser_snapshot'));
+  await free.tick();
+  assert.deepEqual(free.names(), ['browser_snapshot']);
+  free.parker.hold(20);
+  free.parker.input.write(call(4, 'browser_click', { element: 'Next', ref: 'e2' }));
+  await free.tick();
+  assert.deepEqual(free.names(), ['browser_snapshot']);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await free.tick();
+  assert.deepEqual(free.names(), ['browser_snapshot', 'browser_click']);
+  assert.equal(free.parker.hold(10 * 60_000), 45_000, 'never longer than the cap');
+  free.parker.close();
 });
 
 test('an injected call not answered in time is dropped when it is, and a closed browser answers at once', async () => {

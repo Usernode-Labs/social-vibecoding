@@ -555,6 +555,16 @@ elif [ "$MODE" = "shots" ]; then
   # persona's phone browser (browser_<persona>_phone, present only when a
   # declared screen is a phone's) is denied the same browser tools.
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_run_code_unsafe mcp__browser_member__browser_file_upload mcp__browser_member__browser_drop mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_run_code_unsafe mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_drop mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_run_code_unsafe mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_drop mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_run_code_unsafe mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_drop mcp__browser_member_phone__browser_evaluate mcp__browser_member_phone__browser_run_code mcp__browser_member_phone__browser_run_code_unsafe mcp__browser_member_phone__browser_file_upload mcp__browser_member_phone__browser_drop mcp__browser_admin_phone__browser_evaluate mcp__browser_admin_phone__browser_run_code mcp__browser_admin_phone__browser_run_code_unsafe mcp__browser_admin_phone__browser_file_upload mcp__browser_admin_phone__browser_drop mcp__browser_full_admin_phone__browser_evaluate mcp__browser_full_admin_phone__browser_run_code mcp__browser_full_admin_phone__browser_run_code_unsafe mcp__browser_full_admin_phone__browser_file_upload mcp__browser_full_admin_phone__browser_drop mcp__browser_guest_phone__browser_evaluate mcp__browser_guest_phone__browser_run_code mcp__browser_guest_phone__browser_run_code_unsafe mcp__browser_guest_phone__browser_file_upload mcp__browser_guest_phone__browser_drop mcp__browser_invited_member__browser_evaluate mcp__browser_invited_member__browser_run_code mcp__browser_invited_member__browser_run_code_unsafe mcp__browser_invited_member__browser_file_upload mcp__browser_invited_member__browser_drop mcp__browser_invited_member_phone__browser_evaluate mcp__browser_invited_member_phone__browser_run_code mcp__browser_invited_member_phone__browser_run_code_unsafe mcp__browser_invited_member_phone__browser_file_upload mcp__browser_invited_member_phone__browser_drop mcp__browser_invited_member_listed__browser_evaluate mcp__browser_invited_member_listed__browser_run_code mcp__browser_invited_member_listed__browser_run_code_unsafe mcp__browser_invited_member_listed__browser_file_upload mcp__browser_invited_member_listed__browser_drop mcp__browser_invited_member_listed_phone__browser_evaluate mcp__browser_invited_member_listed_phone__browser_run_code mcp__browser_invited_member_listed_phone__browser_run_code_unsafe mcp__browser_invited_member_listed_phone__browser_file_upload mcp__browser_invited_member_listed_phone__browser_drop"
+  # Each browser's twin for the before side (browser_<persona>_before and
+  # browser_<persona>_phone_before, write-shots-mcp-config.js) is denied the
+  # same browser tools.
+  for SHOTS_TWIN_PERSONA in member admin full_admin guest invited_member invited_member_listed; do
+    for SHOTS_TWIN_SERVER in "browser_${SHOTS_TWIN_PERSONA}_before" "browser_${SHOTS_TWIN_PERSONA}_phone_before"; do
+      for SHOTS_TWIN_DENIED in browser_evaluate browser_run_code browser_run_code_unsafe browser_file_upload browser_drop; do
+        PERMISSION_FLAGS="$PERMISSION_FLAGS mcp__${SHOTS_TWIN_SERVER}__${SHOTS_TWIN_DENIED}"
+      done
+    done
+  done
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
@@ -647,6 +657,9 @@ if [ "$MODE" = "shots" ]; then
   # them back by name to publish them. A phone browser saves beside its
   # persona's, in <persona>_phone, which the config writer creates.
   export SHOTS_DIR="$SHOTS_TMP/shots"
+  # The shots bridge saves behind its answers and writes "<pending> <unsaved>"
+  # here (worker/shots-mcp.js); the turn waits on it before it ends.
+  export SHOTS_UPLOADS_FILE="$SHOTS_TMP/uploads"
   mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" "$SHOTS_DIR/guest" \
     || die "could not create the shots directories"
   # The invited fixtures' browsers (#4437) save beside these, in their own
@@ -817,6 +830,30 @@ if [ -n "$STOP_GUARD_FLAGS" ]; then
   fi
 fi
 if [ -n "$STOP_GUARD_DIR" ]; then rm -rf "$STOP_GUARD_DIR" 2>/dev/null || true; fi
+
+# The shots bridge stores what the agent saved behind its answers
+# (worker/shots-mcp.js), so uploads may still be going when claude exits: the
+# turn waits for them, at most 100 s, before the run's verdict is read and
+# the files are cleaned up. A change whose upload never landed is skipped by
+# the bridge itself, with that reason, never published from an older shot.
+if [ "$MODE" = "shots" ] && [ -n "$SHOTS_UPLOADS_FILE" ]; then
+  SHOTS_UPLOAD_WAIT=0
+  SHOTS_UPLOADS_PENDING=0
+  SHOTS_UPLOADS_UNSAVED=0
+  while [ "$SHOTS_UPLOAD_WAIT" -lt 500 ]; do
+    SHOTS_UPLOADS_PENDING=0
+    SHOTS_UPLOADS_UNSAVED=0
+    [ -f "$SHOTS_UPLOADS_FILE" ] && read -r SHOTS_UPLOADS_PENDING SHOTS_UPLOADS_UNSAVED < "$SHOTS_UPLOADS_FILE"
+    case "$SHOTS_UPLOADS_PENDING" in ''|*[!0-9]*) SHOTS_UPLOADS_PENDING=0 ;; esac
+    case "$SHOTS_UPLOADS_UNSAVED" in ''|*[!0-9]*) SHOTS_UPLOADS_UNSAVED=0 ;; esac
+    [ "$SHOTS_UPLOADS_PENDING" -eq 0 ] && break
+    SHOTS_UPLOAD_WAIT=$((SHOTS_UPLOAD_WAIT + 1))
+    sleep 0.2
+  done
+  if [ "$SHOTS_UPLOADS_PENDING" -gt 0 ] || [ "$SHOTS_UPLOADS_UNSAVED" -gt 0 ]; then
+    echo "__USERNODE_WARN__ The shots agent's uploads did not all reach Homeroom (pending=$SHOTS_UPLOADS_PENDING unsaved=$SHOTS_UPLOADS_UNSAVED); their changes are skipped"
+  fi
+fi
 
 # Read once the agent is done: the most the container used by then.
 MEMORY_FIELDS=$(usernode_memory_fields)

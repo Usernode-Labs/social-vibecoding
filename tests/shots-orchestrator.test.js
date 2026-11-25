@@ -775,3 +775,36 @@ test('#7172: a copy whose seeds wrote nothing reaches the brief and the verdict'
     fs.rmSync(checkout, { recursive: true, force: true });
   }
 });
+
+// 25 Nov 2026: each browser a run shoots in has a twin for the before side
+// (worker/write-shots-mcp-config.js). The platform's brief never names the
+// twins: a warm worker can stay on an older image that has none, so the
+// worker's own bridge names the ones it started (worker/shots-mcp.js
+// get_brief). The run still asks every worker for them.
+test('the platform\'s brief never names the twins, and the run asks the worker to start them', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-twins-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Seasonal theme picker' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    assert.equal('beforeScreenBrowsers' in briefFor({}), false);
+    assert.equal('beforeScreenBrowsers' in briefFor({ afterOnly: true }), false);
+    assert.ok(Object.keys(briefFor({}).screenBrowsers).length, 'it still names each screen\'s browser');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+  // The run starts exactly those twins (services/worker.js SHOTS_TWIN_BROWSERS).
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-orchestrator.js'), 'utf8');
+  assert.match(source, /twinBrowsers: twinBrowsers\(intent, \{ afterOnly \}\),/);
+  assert.match(source, /twinBrowsers: Array\.isArray\(a\.twinBrowsers\) \? a\.twinBrowsers : \[\],/);
+});

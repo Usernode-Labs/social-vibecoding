@@ -80,12 +80,28 @@ if (!Array.isArray(phonePersonas) || !phonePersonas.every((persona) => PERSONAS.
 // A phone browser reads its persona's saved storage state, so its desktop
 // browser must have been bootstrapped for it.
 phonePersonas = phonePersonas.filter((persona) => browserPersonas.includes(persona));
-const directory = (persona, phone = false) => (
-  `${persona === 'read_only_admin' ? 'admin' : persona}${phone ? '_phone' : ''}`);
+const directory = (persona, phone = false, before = false) => (
+  `${persona === 'read_only_admin' ? 'admin' : persona}${phone ? '_phone' : ''}${before ? '_before' : ''}`);
+// The browsers that get a twin for the before side (services/worker.js
+// SHOTS_TWIN_BROWSERS): the ones the run's declared changes are shot in,
+// unless the run takes only the after side. A twin is the same browser (the
+// same persona, storage state, proxy listener and device) saving into its own
+// directory, `<…>_before`, so the agent can take the same step on both sides
+// in one turn instead of walking the before side after the after side.
+// Chromium starts only on a browser's first call, so an unused twin costs
+// one idle server process.
+let twinBrowsers;
+try { twinBrowsers = JSON.parse(process.env.SHOTS_TWIN_BROWSERS || '[]'); } catch { twinBrowsers = []; }
+if (!Array.isArray(twinBrowsers)) twinBrowsers = [];
+const twinned = (persona, phone = false) => twinBrowsers.includes(`browser_${directory(persona, phone)}`);
 for (const persona of browserPersonas) {
   fs.mkdirSync(path.join(shotsDir, directory(persona)), { recursive: true, mode: 0o700 });
+  if (twinned(persona)) fs.mkdirSync(path.join(shotsDir, directory(persona, false, true)), { recursive: true, mode: 0o700 });
   if (phonePersonas.includes(persona)) {
     fs.mkdirSync(path.join(shotsDir, directory(persona, true)), { recursive: true, mode: 0o700 });
+    if (twinned(persona, true)) {
+      fs.mkdirSync(path.join(shotsDir, directory(persona, true, true)), { recursive: true, mode: 0o700 });
+    }
   }
 }
 // Each persona's browser reaches its own proxy listener, which is how the
@@ -105,8 +121,8 @@ const proxyFor = (persona) => {
 // browser's video of each page, saved into its directory when the page
 // closes). A phone's screen comes from its --device; Playwright merges the
 // two key by key.
-const browserConfig = (persona, phone) => {
-  const observed = directory(persona, phone);
+const browserConfig = (persona, phone, before = false) => {
+  const observed = directory(persona, phone, before);
   const contextOptions = {
     ...(!phone && deviceDensity
       ? { viewport: { width: 1280, height: 720 }, deviceScaleFactor: DESKTOP_DENSITY } : {}),
@@ -118,9 +134,9 @@ const browserConfig = (persona, phone) => {
   fs.writeFileSync(file, `${JSON.stringify({ browser: { contextOptions } })}\n`, { mode: 0o600 });
   return file;
 };
-const browserArgs = (persona, { phone = false } = {}) => {
-  const observed = directory(persona, phone);
-  const settings = browserConfig(persona, phone);
+const browserArgs = (persona, { phone = false, before = false } = {}) => {
+  const observed = directory(persona, phone, before);
+  const settings = browserConfig(persona, phone, before);
   return [
     '/usr/local/bin/shots-browser-observer.js',
     observed,
@@ -169,6 +185,13 @@ const config = {
     // more browser server in the worker's memory.
     ...Object.fromEntries(phonePersonas.map((persona) => [`browser_${directory(persona, true)}`,
       { command: 'node', args: browserArgs(persona, { phone: true }), env: browserEnv }])),
+    // Their twins for the before side, the same browser saving apart.
+    ...Object.fromEntries(browserPersonas.filter((persona) => twinned(persona))
+      .map((persona) => [`browser_${directory(persona, false, true)}`,
+        { command: 'node', args: browserArgs(persona, { before: true }), env: browserEnv }])),
+    ...Object.fromEntries(phonePersonas.filter((persona) => twinned(persona, true))
+      .map((persona) => [`browser_${directory(persona, true, true)}`,
+        { command: 'node', args: browserArgs(persona, { phone: true, before: true }), env: browserEnv }])),
   },
 };
 fs.writeFileSync(output, `${JSON.stringify(config)}\n`, { mode: 0o600 });

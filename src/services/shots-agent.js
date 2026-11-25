@@ -49,6 +49,16 @@ the same persona. It presents as an iPhone running Safari, with a phone's
 user agent, touch and screen density, so the app shows what it shows on a
 phone. The brief's screenBrowsers names the browser for every change and
 screen: use that one, and never shoot a phone screen in a desktop browser.
+When the brief has beforeScreenBrowsers, every one of those browsers has a
+twin for the before side: the same name with _before (browser_member_before,
+browser_member_phone_before), signed in as the same persona on the same
+device. beforeScreenBrowsers names the twin for every change and screen. Then
+take each step on both sides at once: in one turn, the same call in the
+browser screenBrowsers names on the after address and in its twin on the
+before address. The two sides then reach the same state together, framed
+alike, and you save both sides of it in one save_shot call. Without
+beforeScreenBrowsers (an after-only run), one browser does both sides, the
+after side first.
 Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change. The one exception is phone sign-in:
 when the brief has phoneSignIn, a change whose steps go through a phone step
@@ -64,7 +74,8 @@ tool itself waits, up to three seconds, until the page's requests have
 finished and its markup has stopped changing, so do not wait before it as a
 habit.
 
-For each declared change and each of its screen sizes (viewports):
+For each declared change and each of its screen sizes (viewports), doing
+every step in the before twin too, in the same turn, when there is one:
 1. In the browser screenBrowsers names for that change and screen, call
    browser_resize with that width and height. Then open the start path
    again, even when the page is already open: some apps choose their layout
@@ -105,9 +116,10 @@ For each declared change and each of its screen sizes (viewports):
    Pick the smallest element that holds the whole change, including anything
    drawn over its edges such as a badge on a corner; for a change only a few
    pixels across, pick the bar or card around it.
-6. Save both in one save_shot call, before you leave that state: list each
-   file with the change id, the
-   screen name, side "after", and kind "screen" or "element". When the same
+6. Save them in one save_shot call, before you leave that state, with the
+   before twin's shots of the same state in the same call: list each file
+   with the change id, the screen name, its side, and
+   kind "screen" or "element". When the same
    screen also shows another declared change at this size, list the
    screenshot again for that change in the same call instead of shooting it
    twice. For each file also give showsPrivate: true if it shows a real
@@ -116,21 +128,37 @@ For each declared change and each of its screen sizes (viewports):
    usernode-capture) and obviously made-up demo content do not count. A still
    with false may be shown to people who are not signed in, so when unsure,
    say true.
-7. Do the same on the before address with side "before". Frame it like
-   the after shot: the same element scrolled into view at the same place, so
-   the two shots differ only by the change. When
-   intent.baseState is "not_present", shoot the same place where the new
-   thing appears on the after side, do not look for a different screen, and
+7. The before side: with a twin, its shots were taken in the same turns as
+   the after side's, by the same steps; without one, do the same on the
+   before address afterwards, in the same browser. Frame it like the after
+   shot: the same element scrolled into view at the same place, so the two
+   shots differ only by the change. When intent.baseState is "not_present",
+   shoot the same place where the new thing appears on the after side, do
+   not look for a different screen, and
    leave out the element shot on that side.
 8. If the change's intent.animation is "motion", a still cannot show it, so
-   also record a clip of each side in that screen's browser: call
+   also record a clip of each side in that side's browser (the twin for the
+   before side, when there is one): call
    browser_close, browser_resize to the same screen size again, open the
    start path, do only the steps that trigger the motion, wait for it to
    finish, call browser_close again, then call save_clip with the change,
    screen and side. Each browser_close ends one recording; keep clips short.
 
-Read what save_shot answers. It refuses an element shot wider than its
-screen or more than two screens tall: retake the screen after opening the
+When you have a finish_shots tool, save_shot answers as soon as it has
+checked the files here and handed them on: Homeroom stores them behind its
+answer, so go straight on to the next state. What Homeroom says about them
+comes back as earlier in the next save_shot answer, and in finish_shots.
+Treat each item in earlier as if save_shot had said it when you saved that
+shot: a refusal or a warning means going back to that state and taking it
+again. When everything is saved, call finish_shots: it waits until Homeroom
+has every upload and answers what is left. Act on it the same way, then call
+finish_shots again. With finish_shots, you are done only when it answers
+pendingUploads 0 with nothing left in earlier or darkLeft to act on. Without
+it, save_shot answers once Homeroom has the files, and that answer is all
+Homeroom says about them.
+
+Read what save_shot answers, and what comes back later as earlier. It
+refuses an element shot wider than its screen or more than two screens tall: retake the screen after opening the
 start path again, and shoot a smaller element. When it answers
 elementNotInScreen, the element shot is not part of the screen shot of the
 same side: the page moved between the two, so take both again in one state
@@ -141,12 +169,15 @@ each side and shoot again, or, if these copies cannot show the change, call
 note_change or skip_change as described below. When it answers a
 closeupHint, a small change's close-up could not be taken because the page
 had moved on: open that after state again, take its screen shot again and
-save it, which takes the close-up with it. Save each change's before side
-before its after side, so the after screen is still showing when it saves.
+save it, which takes the close-up with it. When one browser does both sides,
+save each change's before side before its after side, so the after screen is
+still showing when it saves. A close-up is taken behind save_shot's answer:
+the after browser's next step waits a moment for it, and the twin does not.
 
-Every tool call costs time, so make calls that do not depend on each other
-in the same turn (for example the screen and element screenshots of one
-state), and save everything for a state together.
+Every model turn costs time, so make calls that do not depend on each other
+in the same turn (the same step in a browser and its twin; the screen and
+element screenshots of one state, on both sides), and save everything for a
+state together.
 
 If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
@@ -251,7 +282,9 @@ beside the shots. If you cannot reach a change at all, or the shots you saved
 for it turn out not to show it, call skip_change with that change id and what
 you saw: nothing saved for that change is published. Then carry on with the
 others. You do not need to judge whether a change is good. Finish once every
-change is saved or skipped, and do not end with only prose.
+change is saved or skipped (and, when you have finish_shots, it has answered
+pendingUploads 0 with nothing left to act on), and do not end with only
+prose.
 
 When the brief has appRoles, the app is one built on Homeroom and no browser
 holds a role in it: none is its creator, owner or one of its admins, whatever
@@ -295,10 +328,14 @@ you see on the way.`;
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of
 each side for motion changes), or skip a change you cannot reach and say why.
-When the brief has afterOnly, save the after side only. When the brief has
-darkMode, save_shot takes the dark shots as you save the light ones; take
-one yourself (theme "dark") only for what its answers list in darkLeft,
-after all the light ones.`;
+When the brief has beforeScreenBrowsers, take each step on both sides at once,
+in the after browser and its before twin in the same turn, and save both
+sides of a state in one save_shot call. When the brief has afterOnly, save
+the after side only. When the brief has darkMode, save_shot takes the dark
+shots as you save the light ones; take one yourself (theme "dark") only for
+what its answers list in darkLeft, after all the light ones. When you have a
+finish_shots tool, finish by calling it, and act on what it answers until it
+has nothing left.`;
 
 // What one turn spent, from the worker's result (services/worker.js): the
 // token counts Claude Code reported on its result event, as it splits them
@@ -448,6 +485,9 @@ async function dispatchClaude(config, options, deps) {
       ? { shotsPhoneClipSize: options.phoneClipSize } : {}),
     // Who gets a phone browser: the personas with a phone screen.
     shotsPhonePersonas: Array.isArray(options.phonePersonas) ? options.phonePersonas : [],
+    // The browsers that get a twin for the before side (none when the run
+    // takes only the after side): both sides of a state in one turn.
+    shotsTwinBrowsers: Array.isArray(options.twinBrowsers) ? options.twinBrowsers : [],
     // Which desktop browsers this run starts: the four ordinary ones, plus
     // an invited fixture's when the run's declared changes name it. Left
     // out when the caller names none, so execInWorker keeps its default.
