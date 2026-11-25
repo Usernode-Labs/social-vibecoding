@@ -84,8 +84,9 @@ function kitFace(avatar: React.ReactNode): React.ReactNode {
  * against the right edge rather than reversed, with the controls at the far
  * left, and the body column stacks its children
  * against the right edge, where a bubble hugs the side that says who is
- * speaking. The caller drops the avatar for `me`; a group chat does not
- * draw your own face beside your own words.
+ * speaking. The caller decides whether `me` draws a face: a chat between
+ * two drops it, while a channel's transcript draws your own picture at the
+ * trailing edge beside your words (the row's own order puts it there).
  */
 export function ChatMessageRow({
   className, from = 'them', avatar, name, timestamp, actions, grouped = false, gutter, children, ...props
@@ -145,10 +146,10 @@ export function ChatMessageRow({
   }
   if (grouped) {
     return (
-      <div className={cn('flex gap-3 px-4 py-0.5', className)} data-grouped="" {...props}>
-        <span className="gc-msg-gutter w-11 shrink-0 pt-0.5 text-end text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
+      <div className={cn('flex gap-3 px-4 py-0.5', me && 'flex-row-reverse', className)} data-grouped="" {...props}>
+        <span className={cn('gc-msg-gutter w-11 shrink-0 pt-0.5 text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500', me ? 'text-start' : 'text-end')}>{gutter}</span>
         <div className="min-w-0 flex-1">
-          <div className="text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100">{children}</div>
+          <div className={cn('text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100', me && 'flex flex-col items-end')}>{children}</div>
         </div>
         {actions ? <span className="flex shrink-0 items-start gap-1">{actions}</span> : null}
       </div>

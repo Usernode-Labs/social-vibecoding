@@ -1326,7 +1326,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    time still read name-then-time (#2392), only against that side: a row
    runs right to left for its own author, so the head, the bubble and
    everything under it line up at the right edge. A channel keeps its named
-   rows (#2783) and is untouched by any of this. */
+   rows (#2783): no bubble or tint, but since #7163 your own row there takes
+   that same side, face and all. */
 .messages-message-bubble {
   padding: 4px 16px;
 }
@@ -1341,6 +1342,28 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 }
 .messages-message-bubble.messages-message-self > .messages-bubble-wrap { align-items: flex-end; }
 .messages-message-self .messages-message-head { justify-content: flex-end; }
+/* #7163: a CHANNEL's named row puts your own message on the right, picture
+   and all — the row runs the other way, so your face sits at the trailing
+   edge beside your words, and the head above them is already against that
+   edge. Everything under the words (pictures, a thread's chip, reactions)
+   hugs it too. Only the side changes: no bubble, no tint, and a long
+   message still reads left to right across the full width. */
+html:not([data-skin]) .messages-message.messages-message-end { flex-direction: row-reverse; }
+html:not([data-skin]) .messages-message.messages-message-end > .min-w-0 {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+/* Its continuation line borrows the padding on the right and keeps its
+   time against the words, as the bubble's own does. */
+html:not([data-skin]) .messages-message.messages-message-end > .messages-message-gutter {
+  margin-inline-start: 0;
+  margin-inline-end: -12px;
+  text-align: start;
+}
+/* The name gives way to the time as it does on the left, and both sit at
+   the row's trailing edge instead of the name filling the line. */
+html:not([data-skin]) .messages-message.messages-message-end .messages-message-author { flex: 0 1 auto; }
 .messages-bubble {
   min-width: 0;
   max-width: 78%;
@@ -14703,6 +14726,9 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .gc-reactions:empty { margin-top: 0; }
 .gc-msg-system .gc-reactions { justify-content: center; }
+/* #7163: your own row in a channel is on the right, so what hangs under it
+   (reactions, a thread's chip) hugs the right edge with it. */
+.gc-msg-end .gc-reactions { justify-content: flex-end; }
 
 /* The pill itself is @/components/ui/feed's `ReactionPill` — surface, radius,
    hover and the "yours" state (`tone="accent"`) all come from the widget
