@@ -1,5 +1,7 @@
-/** The standard profile's in-page editor. Photo and publishing keep their
- * existing sheet; saving these two fields must not consume its staged photo. */
+/** Settings › Profile's name and bio form (#7156: the profile screen edits its
+ * name and bio in place now, so this is only mounted there). Photo and
+ * publishing keep their existing sheet; saving these two fields must not
+ * consume its staged photo. */
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +24,6 @@ export function ProfileDetailsCard({ id = 'profile-details', embedded = false, u
   const [errors, setErrors] = useState<Record<string, string>>({});
   return (
     <section id={id} className="profile-details-card" data-embedded={embedded || undefined}>
-      {!embedded ? <><h2>{t('profile:details.title')}</h2><p>{t('profile:details.intro')}</p></> : null}
       <form onSubmit={async (event) => {
         event.preventDefault();
         if (saving || (embedded && !dirty)) return;
