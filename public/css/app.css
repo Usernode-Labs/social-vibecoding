@@ -38996,6 +38996,515 @@ html:not([data-skin]) .one-btn:disabled { opacity: .45; box-shadow: none; cursor
 /* ── END ONE LOOK · HOMEROOM BOT AND NEW CHAT ── */
 
 /* ── ONE LOOK · MESSAGES AND THREADS ── */
+/* Messages and a conversation, and every stream drawn like one (a request's replies, a thread with Homeroom bot):
+   features/messages/index.tsx, message-row.tsx, composer.tsx, and features/group-chat/transcript.tsx for a request's
+   replies. Shapes are the agreed mockups' (S/mockshots: messages, conversation; request for the replies).
+     THE LIST: on the cream wash, never a flush white sheet. The search field and the yellow + (.one-fab) share a row,
+       "DMs & groups" heads the rows, and the rows are ONE white card (radius 20, one hairline), at the row ramp
+       (16/14 on a phone, 15/13 from 768px), each with a 40px round face, the time trailing the name, "N new" kept.
+     A CONVERSATION: a title card (the face, "Direct message" or the group's member line over the name, the discs),
+       then ONE white card holding the whole stream with the message bar inside it at its foot. Theirs on the left in
+       cream (--one-bubble-in, its first corner square), with the face and the name and the time above; yours on the
+       right in sky tint (--one-bubble-out), with only the time. The same on a phone and beside the list on a desktop.
+   Everything a conversation does keeps its markup (reactions, threads, files, link cards, the hover bar and the
+   long-press sheet, read state, Jump to latest, who is typing, editing): only how it is drawn changes. */
+
+/* ── The list ── */
+/* The wash is the page's (the body paints it on every tab root); the drawer's pane no longer covers it in white. */
+html:not([data-skin]) #messages-screen .messages-layout:not(.messages-layout-embedded),
+html:not([data-skin]) #messages-screen .messages-layout > .messages-list-pane {
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* The search row: the field, then the page's main action, the yellow +. */
+html:not([data-skin]) #messages-screen .messages-list-pane > .messages-toolbar {
+  gap: 10px;
+  margin: 20px 16px 0;
+}
+html:not([data-skin]) #messages-screen .messages-search-input {
+  height: 40px;
+  padding-inline: 42px 14px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+  color: var(--one-ink);
+  font-size: 16px;
+}
+html:not([data-skin]) #messages-screen .messages-search-input::placeholder { color: var(--one-ink-3); }
+html:not([data-skin]) #messages-screen .messages-search-input:focus { box-shadow: inset 0 0 0 1.5px var(--one-sky); }
+html:not([data-skin]) #messages-screen .messages-search-glyph { inset-inline-start: 13px; width: 19px; height: 19px; color: var(--one-ink-3); }
+/* The + is the shared .one-fab; the old disc's own fill, edge and size give way to it. */
+html:not([data-skin]) #messages-screen .messages-new-btn.one-fab {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: var(--one-sun);
+  color: #121a0e;
+  box-shadow: var(--one-edge);
+}
+html:not([data-skin]) #messages-screen .messages-new-btn.one-fab svg { width: 21px; height: 21px; stroke-width: 2.1; }
+html:not([data-skin]) #messages-screen .messages-new-btn.one-fab:active:not(:disabled) { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+/* "DMs & groups" over the card, and the unread count at its end in the sky ink. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-list-scroll { padding: 0 16px; }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-section-head {
+  padding: 15px 6px 8px;
+  color: var(--one-ink-2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 16px;
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-section-aside {
+  color: var(--one-sky-ink);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+/* The rows: one white card. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-section-card {
+  display: block;
+  margin: 0 0 16px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row {
+  min-height: 64px;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 0;
+  color: var(--one-ink);
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row::after {
+  display: block;
+  inset-inline-start: 66px;
+  background: var(--one-line);
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:last-child::after,
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:has(+ .messages-conversation-active)::after,
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-active::after { display: none; }
+/* The conversation open beside the list (from 768px) is lit in pale sun, as a lit row inside a page is. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-active { background: var(--one-sun-pale); color: var(--one-ink); }
+@media (hover: hover) {
+  html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:not(.messages-conversation-active):hover { background: var(--one-quiet); }
+}
+/* A 40px round face; a group's two faces are the first one's circle with the second as a small square badge on its
+   corner, ringed in the card's white. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > :first-child {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  font-size: 16px;
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces { border-radius: 0; }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
+  inset: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  font-size: 16px;
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child:not(:first-child) {
+  inset: auto -3px -3px auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 9px;
+  box-shadow: 0 0 0 2px var(--one-surface);
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-active > .messages-group-faces > :last-child:not(:first-child) { box-shadow: 0 0 0 2px var(--one-sun-pale); }
+/* The two lines at the row ramp; the time trails the name. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-line { gap: 8px; align-items: baseline; }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-name { font: var(--one-row-title); color: var(--one-ink); }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-preview { margin-top: 2px; font: var(--one-row-sub); color: var(--one-ink-2); }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-preview-invited { color: var(--one-sky-ink); font-weight: 500; }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-row-time { color: var(--one-ink-2); font-size: 13px; font-weight: 400; line-height: 1; }
+/* Unread: the preview in the ink, and "N new" in the sky ink, a column of its own at the row's end. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:has(.messages-unread) .messages-row-preview { color: var(--one-ink); font-weight: 500; }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row:has(.messages-unread) { padding-inline-end: 70px; }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-unread {
+  position: absolute;
+  inset-inline-end: 14px;
+  top: 50%;
+  translate: 0 -50%;
+  margin: 0;
+  color: var(--one-sky-ink);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+}
+/* The list's own states on the wash: an empty inbox is a white card whose Start is the page's main action (the sun
+   sticker); a search that found nothing offers its way back as a secondary action, flat in sky tint. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-empty {
+  margin: 16px 0 0;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+  color: var(--one-ink-2);
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-empty h3 { color: var(--one-ink); }
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-empty button {
+  background: var(--one-sun);
+  color: #121a0e;
+  box-shadow: var(--one-edge);
+}
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-empty button:active { box-shadow: inset 0 0 0 1px var(--one-edge-line); transform: var(--one-press); }
+html:not([data-skin]) #messages-screen .messages-state { color: var(--one-ink-2); }
+html:not([data-skin]) #messages-screen .messages-state button {
+  background: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+  box-shadow: none;
+}
+html:not([data-skin]) #messages-screen .messages-state button:active { transform: scale(.97); filter: brightness(.95); }
+/* A group's member count is the members dialog's to say; the row keeps its name and its line. */
+html:not([data-skin]) #messages-screen .messages-list-pane .messages-group-tag { display: none; }
+
+/* ── A conversation: a title card, then the stream's card with the message bar inside it ── */
+/* The pane is a column on the wash: no sheet of its own. On a phone it slides in over the list, so it paints the
+   wash itself; beside the list it is clear. The stream's card is the pane's ::before, laid over the rows from the
+   transcript to the message bar (a grid, so it follows whatever the head and the bar measure, and the scroller's
+   own fade under Jump to latest never fades the card). */
+html:not([data-skin]) #messages-screen .messages-layout:not(.messages-has-reply-thread):not(.messages-has-design) > .messages-thread-pane:not(.messages-no-selection) { display: grid; }
+html:not([data-skin]) #messages-screen .messages-layout:not(.messages-design-view-preview) > .messages-reply-pane { display: grid; }
+@media (min-width: 768px) {
+  html:not([data-skin]) #messages-screen .messages-layout.messages-has-reply-thread:not(.messages-has-design) > .messages-thread-pane:not(.messages-no-selection) { display: grid; }
+  html:not([data-skin]) #messages-screen .messages-layout > .messages-reply-pane { display: grid; margin: 0; margin-inline-start: 18px; padding: 12px 0 24px; }
+  /* The handle between a conversation and its thread is in the gap between their cards: unseen until the pointer finds
+     it, as the list's handle is. */
+  html:not([data-skin]) #messages-screen .messages-layout > .messages-reply-pane > .messages-reply-resizer { inset-inline-start: -12px; }
+  html:not([data-skin]) #messages-screen .messages-layout > .messages-reply-pane > .messages-reply-resizer:not(:hover):not(:focus-visible) { background: none; }
+}
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
+  align-content: stretch;
+  justify-items: stretch;
+  align-items: stretch;
+  isolation: isolate;
+  margin: 0;
+  padding: 12px 16px calc(max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)) + 12px);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html:not([data-skin]) #messages-screen .messages-layout.messages-drawer > .messages-thread-pane:not(.messages-no-selection) {
+  background: var(--home-wallpaper);
+  box-shadow: calc(-8px * var(--rtl-sign, 1)) 0 24px rgba(0, 0, 0, 0.08);
+}
+/* direction: physical — an iPhone Duo's column of system chrome is the screen's right side, whatever the language
+   (THE SIDE STRIP): the pane's content stays clear of it, as the drawer's own rule had it. */
+html[data-side-strip="right"]:not([data-skin]) #messages-screen .messages-layout.messages-drawer > .messages-thread-pane:not(.messages-no-selection) {
+  padding-right: calc(16px + var(--platform-strip-w, 0px));
+}
+/* direction: logical */
+html.un-kb:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane),
+html.platform-kb-open:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) {
+  padding-bottom: calc(var(--un-kb-inset, 0px) + 8px);
+}
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane)::before {
+  content: '';
+  grid-row: 3 / 8;
+  grid-column: 1;
+  z-index: -1;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > :not(.messages-reply-resizer, .messages-drop-overlay) { grid-column: 1; min-width: 0; }
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-thread-header { grid-row: 1; }
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-invitation { grid-row: 2; margin: 0 0 10px; }
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > [data-transcript-overlay="top"] { grid-row: 3; }
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-thread-scroll { grid-row: 4; }
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > [data-transcript-overlay="foot"] { grid-row: 5; }
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .chat-status { grid-row: 6; }
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > :is(.messages-composer, .messages-composer-disabled) { grid-row: 7; }
+
+/* The title card: who it is with, "Direct message" (or the group's members) over the name, and the discs. */
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-thread-header {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 68px;
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-hair);
+}
+html:not([data-skin]) #messages-screen .messages-thread-header > :is(span, img, .messages-group-faces):first-child,
+html:not([data-skin]) #messages-screen .messages-thread-header > .messages-group-faces {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  font-size: 16px;
+}
+html:not([data-skin]) #messages-screen .messages-thread-header > .messages-group-faces { border-radius: 0; }
+html:not([data-skin]) #messages-screen .messages-thread-header > .messages-group-faces > :first-child { inset: 0; width: 40px; height: 40px; border-radius: 9999px; font-size: 16px; }
+html:not([data-skin]) #messages-screen .messages-thread-header > .messages-group-faces > :last-child:not(:first-child) {
+  inset: auto -3px -3px auto; width: 18px; height: 18px; border-radius: 5px; font-size: 9px; box-shadow: 0 0 0 2px var(--one-surface);
+}
+/* The name block: the line over the name (the markup keeps the name first, the declared checks read it so). */
+html:not([data-skin]) #messages-screen .messages-thread-header > button.flex-1 { display: flex; flex-direction: column; gap: 2px; }
+html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-sub { order: -1; color: var(--one-ink-2); font-size: 14px; font-weight: 400; line-height: 18px; }
+html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-name { color: var(--one-ink); font-size: 19px; font-weight: 700; line-height: 24px; letter-spacing: -0.012em; }
+/* Its discs are flat: white with one hairline. */
+html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action {
+  width: 34px;
+  height: 34px;
+  background: var(--one-surface);
+  color: var(--one-ink);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action svg { width: 18px; height: 18px; }
+@media (hover: hover) {
+  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action:hover { background: var(--one-quiet); }
+}
+
+/* "2 new messages" over the transcript's top is a secondary control: flat sky tint, lifted off the words by a soft
+   shadow alone. */
+html:not([data-skin]) #messages-screen [data-transcript-overlay="top"] [data-unread-banner] {
+  border: 0;
+  background: var(--one-sky-tint);
+  color: var(--one-sky-ink);
+  box-shadow: 0 2px 10px rgb(18 26 14 / 0.14);
+}
+html.dark:not([data-skin]) #messages-screen [data-transcript-overlay="top"] [data-unread-banner] { background: var(--one-surface); box-shadow: inset 0 0 0 1px var(--one-field-line), 0 2px 10px rgb(0 0 0 / 0.4); }
+/* The stream's card: the transcript inside it, clipped to its top corners. */
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-thread-scroll {
+  margin: 0;
+  padding-top: 6px;
+  border-radius: 20px 20px 0 0;
+}
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .chat-status { padding-inline: 16px; }
+/* The message bar, inside the card at its foot. */
+html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-composer {
+  padding: 0 12px 12px !important;
+  background: transparent;
+}
+/* The message bar's card: a white pill with one hairline and a soft lift, inside the stream's card; the same part
+   under a request's replies. */
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card {
+  padding-inline: 6px 4px;
+  border-radius: 22px;
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line), 0 6px 18px -10px rgb(18 26 14 / 0.35);
+}
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--one-sky), 0 6px 18px -10px rgb(18 26 14 / 0.35);
+}
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-input { font-size: 1rem; line-height: 1.375rem; }
+/* A name too long for the box is cut at its edge rather than wrapped onto a hidden second line. */
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-input::placeholder { color: var(--one-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-action { color: var(--one-ink-2); }
+/* Send: the sun with ink once there is something to send; a quiet grey disc while there is not. */
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card .messages-send {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: var(--one-sun);
+  color: #121a0e;
+  box-shadow: inset 0 0 0 1px rgb(18 26 14 / 0.16);
+}
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card .messages-send svg { width: 19px; height: 19px; stroke-width: 2.2; }
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card .messages-send:disabled,
+html:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send:not([data-bot-stop]) {
+  opacity: 1;
+  background: rgb(18 26 14 / 0.07);
+  color: var(--one-ink-3);
+  box-shadow: none;
+}
+html.dark:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card .messages-send:disabled,
+html.dark:not([data-skin]) :is(#messages-screen .messages-thread-pane, #messages-screen .messages-reply-pane, #dev-topic-thread .dev-request-sheet) .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send:not([data-bot-stop]) {
+  background: var(--one-quiet);
+}
+/* Shared items and files under a message: white cards with one hairline on the white stream. */
+html:not([data-skin]) #messages-screen .messages-message :is(.messages-attachment, .messages-object-card, .messages-pending-object) {
+  background: var(--one-surface);
+  box-shadow: inset 0 0 0 1px var(--one-field-line);
+}
+@media (hover: hover) {
+  html:not([data-skin]) #messages-screen .messages-message .messages-object-card:hover { background: var(--one-quiet); }
+}
+
+/* ── The stream: theirs on the left in cream, yours on the right in sky tint ── */
+/* Wherever a conversation's rows have sides: Messages, a reply thread beside it, a thread with Homeroom bot. A
+   channel keeps its named rows, and the bot's own cards keep theirs. */
+html:not([data-skin]) .messages-day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px 6px;
+  color: var(--one-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  white-space: nowrap;
+}
+html:not([data-skin]) .messages-day::before,
+html:not([data-skin]) .messages-day::after { content: ''; flex: 1 1 0; height: 1px; background: var(--one-line); }
+html:not([data-skin]) .messages-message.messages-message-bubble { gap: 10px; padding: 7px 16px; }
+html:not([data-skin]) .messages-message.messages-message-bubble.messages-message-grouped { padding-block: 1px; }
+html:not([data-skin]) .messages-message.messages-message-bubble > :is(span[aria-hidden], img):first-child {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  font-size: 14px;
+}
+html:not([data-skin]) .messages-message.messages-message-bubble > .messages-message-gutter { flex: 0 0 44px; width: 44px; }
+html:not([data-skin]) .messages-message.messages-message-bubble > .messages-bubble-wrap { gap: 3px; }
+html:not([data-skin]) .messages-message.messages-message-bubble .messages-message-head { min-height: 20px; padding-inline: 4px; gap: 0 8px; font-size: 15px; font-weight: 600; line-height: 20px; color: var(--one-ink); }
+html:not([data-skin]) .messages-message.messages-message-bubble .messages-message-head time,
+html:not([data-skin]) .messages-message.messages-message-bubble .messages-message-head time ~ span { color: var(--one-ink-2); font-size: 12px; font-weight: 400; }
+html:not([data-skin]) .messages-message.messages-message-bubble:not(.messages-message-self) .messages-bubble,
+html:not([data-skin]) .messages-message.messages-message-bubble.messages-message-self .messages-bubble {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 16px;
+  border-start-start-radius: 4px;
+  background: var(--one-bubble-in);
+  color: var(--one-ink);
+  font-size: 1rem;
+  line-height: 1.375rem;
+}
+html:not([data-skin]) .messages-message.messages-message-bubble.messages-message-self .messages-bubble {
+  max-width: 82%;
+  border-radius: 16px;
+  border-start-end-radius: 4px;
+  background: var(--one-bubble-out);
+}
+/* The same person again: the bubble keeps all four corners round. */
+html:not([data-skin]) .messages-message.messages-message-bubble.messages-message-grouped .messages-bubble { border-radius: 16px; }
+html:not([data-skin]) .messages-message.messages-message-bubble .messages-bubble .messages-markdown.gc-msg-content { color: inherit; font-size: inherit; line-height: inherit; }
+html:not([data-skin]) .messages-message.messages-message-bubble .messages-bubble.messages-bubble-rich { max-width: min(100%, 720px); }
+html:not([data-skin]) .messages-message.messages-message-bubble.messages-message-saved .messages-bubble { box-shadow: inset 0 0 0 1.5px var(--one-sky); }
+
+/* ── From 768px: the list in its card on the wash, the conversation beside it as the same two cards ── */
+@media (min-width: 768px) {
+  /* The list's column is 360px unless one was dragged; the conversation stands 18px beside it, the handle centred in
+     that gap. */
+  html:not([data-skin]) #messages-screen .messages-layout:not(.messages-list-page) > .messages-list-pane {
+    flex: 0 0 var(--messages-list-chosen-w, 22.5rem);
+    width: var(--messages-list-chosen-w, 22.5rem);
+    padding-inline-end: 0;
+  }
+  html:not([data-skin]) #messages-screen .messages-layout:not(.messages-list-page) > .messages-list-pane > .messages-list-divider { inset-inline-end: -21px; }
+  html:not([data-skin]) #messages-screen .messages-list-pane > .messages-toolbar { margin: 12px 0 0; }
+  /* With nothing open the list's search lines up with the guide's card beside it. */
+  html:not([data-skin]) #messages-screen .messages-layout.messages-list-page > .messages-list-pane > .messages-toolbar { margin-top: 8px; }
+  html:not([data-skin]) #messages-screen .messages-list-pane .messages-list-scroll { padding: 0 1px; }
+  html:not([data-skin]) #messages-screen .messages-search-input { height: 36px; font-size: 15px; }
+  html:not([data-skin]) #messages-screen .messages-new-btn.one-fab { width: 36px; height: 36px; }
+  html:not([data-skin]) #messages-screen .messages-new-btn.one-fab svg { width: 19px; height: 19px; }
+  html:not([data-skin]) #messages-screen .messages-list-pane .messages-section-head { padding: 16px 6px 8px; }
+  html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row { min-height: 58px; padding-block: 9px; }
+  html:not([data-skin]) #messages-screen .messages-list-pane .messages-conversation-row::after { inset-inline-start: 64px; }
+  html:not([data-skin]) #messages-screen .messages-layout > .messages-thread-pane:not(.messages-no-selection) { margin: 0; margin-inline-start: 18px; padding: 12px 0 24px; }
+  html:not([data-skin]) #messages-screen .messages-layout.messages-list-collapsed > .messages-thread-pane:not(.messages-no-selection) { margin-inline: auto; }
+  html:not([data-skin]) #messages-screen .messages-layout.messages-list-collapsed.messages-has-reply-thread > .messages-thread-pane:not(.messages-no-selection) { margin-inline: 0; }
+  html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-thread-header { min-height: 66px; padding: 12px 14px; margin-bottom: 12px; }
+  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-name { font-size: 18px; line-height: 22px; }
+  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-sub { font-size: 13px; line-height: 16px; }
+  html:not([data-skin]) #messages-screen .messages-thread-header .messages-thread-action { width: 32px; height: 32px; }
+  html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) > .messages-composer { padding: 0 16px 12px !important; }
+  html:not([data-skin]) #messages-screen .messages-layout > :is(.messages-thread-pane:not(.messages-no-selection), .messages-reply-pane) .messages-composer-card { padding-block: 2px; }
+  html:not([data-skin]) .messages-message.messages-message-bubble:not(.messages-message-self) .messages-bubble,
+  html:not([data-skin]) .messages-message.messages-message-bubble.messages-message-self .messages-bubble { font-size: 0.9375rem; line-height: 1.3125rem; }
+}
+
+/* ── The bar over Messages on a phone ── */
+/* Over a conversation the bar says Messages beside the way back (index.tsx barWords), alone on its line, and the way
+   back is the plain white disc with an ink chevron. */
+html:not([data-skin]) body:has(#messages-screen:not(.hidden)) #platform-header .nav-drawer-title:has(> .nav-drawer-title-page:empty) { margin-top: -10px; }
+html:not([data-skin]) body:has(#messages-screen:not(.hidden)) #platform-header :is(.nav-drawer-back, #back-btn) {
+  width: 36px;
+  height: 36px;
+  margin-block: -4px;
+  margin-inline: -8px -10px;
+  border: 0;
+  background: #ffffff;
+  color: #121a0e;
+  box-shadow: none;
+}
+
+/* ── A request's replies: the same stream, inside the stream's own card ── */
+/* features/group-chat/transcript.tsx draws a request's (and a change's) replies as `.gc-msg` rows in `.dev-request-
+   stream`, under the "30 replies" line of #gc-thread-messages, the card the page already gives the stream. They take
+   the conversation's sides: theirs on the left (round face, name and time, the words in cream), yours on the right
+   (the time alone, the words in sky tint). Homeroom bot's own rows keep the flat named row, as in Messages: its cards
+   and laid-out answers would not fit a bubble. The page's other cards are the project area's. */
+html:not([data-skin]) #messages-screen .messages-reply-pane .messages-reply-count,
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) > .messages-reply-count {
+  gap: 10px;
+  padding: 6px 16px 4px;
+  color: var(--one-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+html:not([data-skin]) #messages-screen .messages-reply-pane .messages-reply-count::before,
+html:not([data-skin]) #messages-screen .messages-reply-pane .messages-reply-count::after,
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) > .messages-reply-count::before,
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) > .messages-reply-count::after { content: ''; flex: 1 1 0; height: 1px; background: var(--one-line); }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg { gap: 10px; padding: 7px 16px; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] { padding-block: 1px; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > :is([aria-hidden="true"], [data-bot-avatar]) {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  font-size: 14px;
+}
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] > .gc-msg-gutter { width: 32px; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { padding-inline: 4px; column-gap: 8px; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 15px; font-weight: 600; line-height: 20px; color: var(--one-ink); }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 12px; line-height: 20px; color: var(--one-ink-2); }
+/* The words in a bubble, theirs cream with its first corner square. */
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg:not(:has(> [data-bot-avatar])) .gc-msg-content:not(:empty) {
+  width: fit-content;
+  max-width: 88%;
+  margin-top: 3px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  border-start-start-radius: 4px;
+  background: var(--one-bubble-in);
+  color: var(--one-ink);
+  font-size: 1rem;
+  line-height: 1.375rem;
+  overflow-wrap: anywhere;
+}
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped]:not(:has(> [data-bot-avatar])) .gc-msg-content:not(:empty) { margin-top: 0; border-radius: 16px; }
+/* Yours: on the right, no face and no name, the time over sky tint. */
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self { flex-direction: row-reverse; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > :is([aria-hidden="true"], [data-bot-avatar], .gc-msg-gutter) { display: none; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 { display: flex; flex-direction: column; align-items: flex-end; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 > .flex { justify-content: flex-end; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 > .flex > .truncate:has(.gc-msg-username-self) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self > .min-w-0 > :not(.flex) { display: flex; flex-direction: column; align-items: flex-end; max-width: 100%; }
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self .gc-msg-content:not(:empty) {
+  max-width: 82%;
+  border-radius: 16px;
+  border-start-end-radius: 4px;
+  background: var(--one-bubble-out);
+}
+html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg.gc-msg-self[data-grouped] .gc-msg-content:not(:empty) { border-radius: 16px; }
+@media (min-width: 768px) {
+  html:not([data-skin]) #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg:not(:has(> [data-bot-avatar])) .gc-msg-content:not(:empty) { font-size: 0.9375rem; line-height: 1.3125rem; }
+}
 /* ── END ONE LOOK · MESSAGES AND THREADS ── */
 
 /* ── ONE LOOK · A PROJECT'S HUB AND ITS REQUESTS ── */

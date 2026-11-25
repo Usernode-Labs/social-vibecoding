@@ -44,6 +44,7 @@ import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
 import { messagesBack, messagesDepth, messagesDrawerStore, publishChatBarHost } from './messages-drawer';
 import { dirSign } from '../../lib/i18n/direction';
+import { useLiveSkin } from '../../lib/skin';
 
 type Mode = 'communities' | 'messages' | null;
 
@@ -316,7 +317,10 @@ function Untint(): ReactNode {
  */
 export function ChatBarSlot(): ReactNode {
   const { on, level } = useStoreState(messagesDrawerStore);
+  // ONE LOOK (25 Nov 2026): the standard look draws a conversation's discs
+  // on its own title card in the page, so only the brand look has a host.
+  const skin = useLiveSkin();
   const host = useCallback((el: HTMLSpanElement | null) => { publishChatBarHost(el); }, []);
-  if (!on || level !== 1) return null;
+  if (!on || level !== 1 || skin !== 'brand') return null;
   return <span ref={host} className="nav-drawer-chat-actions" data-nav-drawer-chat-actions="" />;
 }
