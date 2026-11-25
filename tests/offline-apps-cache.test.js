@@ -362,6 +362,7 @@ function runBridge({
   const fetched = [];
   const replaced = [];
   const reloads = [];
+  const forced = [];
   const listeners = {};
   const timers = [];
   const style = { visibility: '' };
@@ -369,7 +370,7 @@ function runBridge({
   const location = {
     href: url.href, origin: url.origin, pathname: url.pathname, search: url.search, hash: url.hash,
     replace(to) { replaced.push(to); },
-    reload() { reloads.push(location.href); },
+    reload(force) { reloads.push(location.href); forced.push(force); },
   };
   const scriptSrc = script === undefined ? `${url.origin}/usernode-bridge/v1/bridge.js` : script;
   const history = {
@@ -419,7 +420,7 @@ function runBridge({
     for (const t of timers.splice(0)) t.fn();
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
   };
-  return { location, posted, fetched, replaced, reloads, style, storage, observer, listeners, timers, fireLoad };
+  return { location, posted, fetched, replaced, reloads, forced, style, storage, observer, listeners, timers, fireLoad };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 // Values built inside the vm have its realm's prototypes: compare as JSON.
@@ -456,7 +457,7 @@ test('it moves the token and theme into the query, remembers files, and says it 
   assert.equal(msgs(b), JSON.stringify([{ __usernode_offline_cache: 'open', fresh: true }]));
   await flush();
   assert.equal(b.fetched.length, 0);
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
 });
 
 test('un-refresh fetches the page and the remembered files past the cache, then reloads without it', async () => {
@@ -468,14 +469,14 @@ test('un-refresh fetches the page and the remembered files past the cache, then 
   await flush(); await flush();
   assert.deepEqual(b.fetched.map((f) => f.u).sort(), ['https://chores.apps.example/', 'https://chores.apps.example/app.js']);
   assert.ok(b.fetched.every((f) => f.opts.cache === 'reload'), 'past the cache');
-  assert.deepEqual(b.replaced, ['https://chores.apps.example/#un-token=tok1&un-theme=light'],
+  assert.deepEqual(b.reloads, ['https://chores.apps.example/#un-token=tok1&un-theme=light'],
     'the same address without the flag: the reload is the next, fresh open');
 });
 
 test('a refresh that cannot fetch the page runs on the copy there is', async () => {
   const b = runBridge({ href: 'https://chores.apps.example/#un-theme=light&un-refresh=1', pageOk: false });
   await flush(); await flush();
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
   assert.equal(b.style.visibility, '', 'shown again');
   assert.equal(msgs(b), JSON.stringify([{ __usernode_offline_cache: 'open', fresh: false }]),
     'never fresh: the shell asks again on the next open');
@@ -532,7 +533,7 @@ test('online, after load, a file the app now serves differently brings one reloa
     const modes = checks(b).filter((f) => f.u === u).map((f) => f.opts.cache);
     assert.deepEqual(modes, ['force-cache', 'no-cache'], `${u}: the kept copy, then the app's, once each`);
   }
-  assert.deepEqual(b.replaced, [`${PAGE}#un-token=tok1&un-theme=light&un-checked=1`],
+  assert.deepEqual(b.reloads, [`${PAGE}#un-token=tok1&un-theme=light&un-checked=1`],
     'one reload of the same address, marked so the reload checks nothing');
   assert.equal(b.style.visibility, 'hidden', 'the old styling is not shown while it reloads');
   const last = JSON.parse(b.storage.getItem('usernode:offline-checked'));
@@ -548,7 +549,7 @@ test('nothing changed, nothing reloads', async () => {
   const b = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: same });
   await b.fireLoad();
   assert.ok(checks(b).length > 0);
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
   assert.equal(b.style.visibility, '');
 });
 
@@ -557,7 +558,7 @@ test('the reload it made, an open offline, and a second open within ten minutes 
   await again.fireLoad();
   assert.equal((again.listeners.load || []).length, 0, 'the reload it made');
   assert.equal(checks(again).length, 0);
-  assert.equal(again.replaced.length, 0);
+  assert.equal(again.reloads.length, 0);
 
   const offline = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS, online: false });
   await offline.fireLoad();
@@ -573,14 +574,14 @@ test('the reload it made, an open offline, and a second open within ten minutes 
     href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS, checked: { page: PAGE, at: Date.now() - 11 * 60_000 },
   });
   await later.fireLoad();
-  assert.equal(later.replaced.length, 1, 'eleven minutes later it checks again');
+  assert.equal(later.reloads.length, 1, 'eleven minutes later it checks again');
 
   const newBuild = runBridge({
     href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: STALE_CSS,
     checked: { page: `${SITE}/?un-build=old999`, at: Date.now() - 60_000 },
   });
   await newBuild.fireLoad();
-  assert.equal(newBuild.replaced.length, 1, 'a new build\'s page is its own address, checked at once');
+  assert.equal(newBuild.reloads.length, 1, 'a new build\'s page is its own address, checked at once');
 });
 
 test('a file with no validator, or a check that fails, counts as unchanged', async () => {
@@ -591,7 +592,7 @@ test('a file with no validator, or a check that fails, counts as unchanged', asy
   };
   const b = runBridge({ href: `${PAGE}#un-token=tok1`, resources: RAN_ON, served: unknown });
   await b.fireLoad();
-  assert.equal(b.replaced.length, 0);
+  assert.equal(b.reloads.length, 0);
   assert.equal(b.style.visibility, '');
 });
 
@@ -601,12 +602,12 @@ test('a refresh does not also check, and the open after it does', async () => {
   });
   await flush(); await flush();
   assert.equal((refreshing.listeners.load || []).length, 0);
-  assert.deepEqual(refreshing.replaced, [`${PAGE}#un-token=tok1`], 'the refresh reloads as before');
+  assert.deepEqual(refreshing.reloads, [`${PAGE}#un-token=tok1`], 'the refresh reloads as before');
   // That reload is an ordinary open: it checks, and catches the file the
   // refresh never remembered.
-  const after = runBridge({ href: refreshing.replaced[0], resources: RAN_ON, served: STALE_CSS, files: [`${SITE}/app.js`] });
+  const after = runBridge({ href: refreshing.reloads[0], resources: RAN_ON, served: STALE_CSS, files: [`${SITE}/app.js`] });
   await after.fireLoad();
-  assert.deepEqual(after.replaced, [`${PAGE}#un-token=tok1&un-checked=1`]);
+  assert.deepEqual(after.reloads, [`${PAGE}#un-token=tok1&un-checked=1`]);
 });
 
 test('without Resource Timing it checks the files it remembered', async () => {
@@ -617,7 +618,7 @@ test('without Resource Timing it checks the files it remembered', async () => {
   });
   await b.fireLoad();
   assert.deepEqual(checkedFiles(b), [`${SITE}/app.js`, `${SITE}/screens.css`]);
-  assert.equal(b.replaced.length, 1);
+  assert.equal(b.reloads.length, 1);
 });
 
 // ── The same check anywhere else an app loads the bridge (25 Nov 2026) ───
@@ -687,6 +688,28 @@ test('Homeroom\'s own pages, which load the unversioned copy, are never checked'
   const unknown = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS, script: null });
   await unknown.fireLoad();
   assert.equal(checks(unknown).length, 0, 'a bridge that cannot tell where it was loaded from checks nothing');
+});
+
+// 25 Nov 2026: in Firefox the check put the new screens.css in the disk
+// cache, and the frame reloaded onto the old styling anyway. Firefox reuses a
+// stylesheet it has already parsed, from memory, on a plain reload and on a
+// navigation to the same page (measured in headless Firefox 160, both at the
+// cacheable address and in a frame opened the old way). Only reload(true),
+// its forceGet, draws the new one; other browsers ignore the argument.
+test('every reload the block makes goes past the browser\'s own caches', async () => {
+  const refreshing = runBridge({ href: `${PAGE}#un-token=tok1&un-refresh=1`, files: [`${SITE}/app.js`] });
+  await flush(); await flush();
+  const cacheable = runBridge({ href: `${PAGE}#un-token=tok1&un-theme=light`, resources: RAN_ON, served: STALE_CSS });
+  await cacheable.fireLoad();
+  const oldWay = runBridge({ href: OLD_WAY, resources: RAN_ON, served: STALE_CSS });
+  await oldWay.fireLoad();
+  for (const [what, b] of [['the refresh on a new build', refreshing], ['a check at the cacheable address', cacheable],
+    ['a check in a frame opened the old way', oldWay]]) {
+    assert.equal(b.reloads.length, 1, what);
+    assert.deepEqual(b.forced, [true], `${what}: reload(true)`);
+    assert.equal(b.replaced.length, 0, `${what}: never a navigation, which Firefox serves from memory`);
+  }
+  assert.doesNotMatch(BLOCK, /location\.replace\(/, 'nothing in the block navigates to reload');
 });
 
 // ── The shell ────────────────────────────────────────────────────────────
