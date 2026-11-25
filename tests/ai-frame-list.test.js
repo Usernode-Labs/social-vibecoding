@@ -119,7 +119,10 @@ test('a project folds after its first rows behind its own Show more; what is new
   assert.match(work, /<div class="fr-rule" data-ai-earlier="">Earlier<\/div><button type="button" class="fr-row fr-sm fr-item fr-plain"/, 'the line between what is new and what was seen');
   assert.match(work, /<button type="button" class="fr-row fr-sm fr-more" aria-expanded="false" data-ai-group-more=""><span class="fr-tx"><span class="fr-t">Show 3 more<\/span><\/span><svg/);
   const src = read(LIST);
-  assert.match(src, /groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, !foldFresh\)/, 'folded by the standard list\'s own rule, which never hides the row you are on');
+  // #7138: the busy list folds a row that is only new; a row that moved and
+  // the one you are on still lift.
+  assert.match(src, /groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, foldFresh \? false : foldNew \? 'moved' : true\)/, 'folded by the standard list\'s own rule, which never hides the row you are on');
+  assert.match(src, /<Groups lines=\{busyLines\}[^>]*foldNew/, 'In progress\'s list passes foldNew');
   assert.match(src, /const held = holding && drawn\.current \? holdOrder\(lines, drawn\.current\) : lines;/, '#6245: the order holds under the pointer');
 });
 

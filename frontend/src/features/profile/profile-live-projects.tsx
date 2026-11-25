@@ -1,10 +1,9 @@
-/** Real projects from the profile's existing merged-change summary. */
+/** The projects the viewer has a live change in, one card each. */
 import { useMessages } from '../../lib/i18n/react';
 
-type Change = { sessionId: number; title: string; appSlug: string; appName: string; appIconEmoji?: string | null; mergedAt?: string | null };
-export function ProfileLiveProjects({ changes }: { changes: Change[] }) {
+type Project = { sessionId: number; title: string; appSlug: string; appName: string; appIconEmoji?: string | null; mergedAt?: string | null };
+export function ProfileLiveProjects({ projects }: { projects: Project[] }) {
   const t = useMessages('profile');
-  const projects = changes.filter((change, index) => change.appSlug && changes.findIndex((other) => other.appSlug === change.appSlug) === index).slice(0, 3);
   return (
     <section id="profile-live-projects">
       <h2>{t('profile:projects.title')}</h2>

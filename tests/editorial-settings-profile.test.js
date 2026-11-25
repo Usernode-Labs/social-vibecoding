@@ -162,21 +162,23 @@ test('Profile opens on who you are, across the page', () => {
 });
 
 
-test('project cards show each real project once and keep its newest change', () => {
+test('project cards show every project with a live change, in the order given', () => {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
   const { ProfileLiveProjects } = loadTsx('frontend/src/features/profile/profile-live-projects.tsx', {
     stubs: { '../../lib/i18n/react': { useMessages: () => (id, params) => params?.title || id } },
   });
-  const html = renderToHtml(createElement(ProfileLiveProjects, { changes: [
-    { sessionId: 3, title: 'Newest <change>', appSlug: 'garden', appName: 'Garden' },
-    { sessionId: 2, title: 'Another project', appSlug: 'tides', appName: 'Tides' },
-    { sessionId: 1, title: 'Older change', appSlug: 'garden', appName: 'Garden' },
+  const html = renderToHtml(createElement(ProfileLiveProjects, { projects: [
+    { sessionId: 4, title: 'Newest <change>', appSlug: 'garden', appName: 'Garden' },
+    { sessionId: 3, title: 'Another project', appSlug: 'tides', appName: 'Tides' },
+    { sessionId: 2, title: 'Third project', appSlug: 'notes', appName: 'Notes' },
+    { sessionId: 1, title: 'Oldest project', appSlug: 'runs', appName: 'Runs' },
   ] }));
-  assert.equal((html.match(/class="profile-project-card"/g) || []).length, 2);
+  assert.equal((html.match(/class="profile-project-card"/g) || []).length, 4, 'four projects, not three');
   assert.match(html, /Newest &lt;change&gt;/);
-  assert.doesNotMatch(html, /Older change/);
-  assert.match(html, /href="#app\/garden"/);
-  const empty = renderToHtml(createElement(ProfileLiveProjects, { changes: [] }));
+  assert.match(html, /Oldest project/);
+  const slugs = [...html.matchAll(/href="#app\/([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(slugs, ['garden', 'tides', 'notes', 'runs'], 'newest first, as given');
+  const empty = renderToHtml(createElement(ProfileLiveProjects, { projects: [] }));
   assert.match(empty, /profile:projects.empty/);
   assert.doesNotMatch(empty, /class="profile-project-card"/);
 });

@@ -591,7 +591,7 @@ export function ProfileRoot(): ReactNode {
         </div>
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           {editorial ? <ProfileSectionLinks /> : null}
-          {editorial ? <ProfileLiveProjects changes={state.data?.summary?.contributions || []} /> : null}
+          {editorial ? <ProfileLiveProjects projects={state.data?.summary?.projects || []} /> : null}
           {editorial ? <ProfileRecentActivity changes={state.data?.summary?.contributions || []} /> : null}
           <WorkPanel rows={view.rows} />
           <RewardsPanel rows={view.rows} />

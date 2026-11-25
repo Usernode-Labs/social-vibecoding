@@ -190,14 +190,16 @@ test('each band is one list, newest first, with no project or day headings, and 
   // Mobile polish 05 (24 Nov 2026): what is new since your last visit before the rest (tests/ai-new-since.test.js).
   assert.match(lists, /const needs = useHeld\(newFirst\(newestFirst\(needLines\)\)\);/);
   assert.match(lists, /<BandRows lines=\{needs\.held\} first=\{searching \? Infinity : BAND_FIRST\.needs\} since=\{newSince\} \/>/);
-  assert.match(lists, /<BandRows lines=\{progressLines\} first=\{searching \? Infinity : BAND_FIRST\.busy\} since=\{newSince\} \/>/);
+  // #7138: In progress stays at its default length: only the row you are on
+  // and one that just moved are lifted past the first few.
+  assert.match(lists, /<BandRows lines=\{progressLines\} first=\{searching \? Infinity : BAND_FIRST\.busy\} since=\{newSince\} lift="moved" \/>/);
   // 24 Nov 2026 (mobile 04): newest first, your own before the threads you only wrote or were named in.
   assert.match(read(LINES), /const progressLines: Line\[\] = newFirst\(ownFirst\(newestFirst\(kept\(\[/, 'In progress newest first, your own first');
   // 1 Nov 2026: the row whose chat is in the column is never folded away:
   // past the first rows, it joins them. #6245: only while the band is
   // folded (open ? -1): an opened band keeps every row's own place.
   assert.match(read(MODEL), /const litAt = open \? -1 : items\.findIndex\(\(row\) => row\.lit\);/);
-  assert.match(lists, /const \{ items, shown, hidden \} = kept \? openRows\(lines, kept\) : groupRows\(lines, first, false\);/,
+  assert.match(lists, /const \{ items, shown, hidden \} = kept \? openRows\(lines, kept\) : groupRows\(lines, first, false, lift\);/,
     'the band draws through the pure order rules: folded, and opened with what was in sight kept');
   assert.equal(message('messages:ai.short.private'), 'Only you', 'a private thread\'s project, in no project');
 });
@@ -235,6 +237,19 @@ test('a band\'s Show more opens under the rows in sight and shuts without a blan
   const changed = openRows([...rows.filter((r) => r.key !== 'r2'), { key: 'r9' }], kept);
   assert.deepEqual(changed.items.map((r) => r.key), ['r1', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9']);
   assert.deepEqual([changed.shown, changed.hidden], [4, 4]);
+
+  // #7138: In progress calls groupRows with 'moved'. New rows past the first
+  // five stay folded, so the band keeps its default length; a row that moved,
+  // and the row you are on, are still lifted above Show more.
+  const newer = Array.from({ length: 8 }, (_, i) => ({ key: `n${i + 1}`, isNew: i >= 5 }));
+  const quiet = groupRows(newer, 5, false, 'moved');
+  assert.deepEqual([quiet.shown, quiet.hidden], [5, 3], 'three new rows past the fold do not grow it');
+  assert.deepEqual(quiet.items.map((r) => r.key), ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8'], 'the new ones open with Show more');
+  const movedOne = newer.map((r, i) => (i === 6 ? { ...r, moved: true } : r));
+  assert.deepEqual([groupRows(movedOne, 5, false, 'moved').shown], [6], 'a row that just moved is still lifted');
+  const litOne = newer.map((r, i) => (i === 7 ? { ...r, lit: true } : r));
+  assert.deepEqual(groupRows(litOne, 5, false, 'moved').items.slice(0, 6).map((r) => r.key), ['n1', 'n2', 'n3', 'n4', 'n5', 'n8'],
+    'the row you are on is still lifted');
 
   // The band keeps what was in sight when Show more is pressed.
   const lists = read('frontend/src/features/ai/lists.tsx');

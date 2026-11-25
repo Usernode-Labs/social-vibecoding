@@ -6883,6 +6883,13 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, card = nul
           + ' colours. Build from the description; where the two differ, the description wins.',
         '',
       ] : []),
+      ...(botBuilds ? [
+        // #7118: with the first version, the bot makes the app's own logo
+        // and card picture, so its tile and its card are its own from the
+        // first deploy rather than a plain emoji tile.
+        'Homeroom bot also makes its logo (`brand/icon.png`) and its card picture (`brand/card.png`, `brand/card-dark.png`).',
+        '',
+      ] : []),
       '---',
       botBuilds
         ? `${username} described this when they created the project. Homeroom bot is building its first version from it.`
