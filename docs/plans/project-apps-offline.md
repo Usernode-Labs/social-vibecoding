@@ -570,6 +570,41 @@ What it costs: one conditional request per file, per app, per device, at
 most every 10 minutes, after the app has loaded. That is what every load
 cost before the cache was turned on.
 
+#### Later the same day: private projects, which no refresh ever reached
+
+The project above was view-private, and the check did not reach it. The
+shell frames a view-private project with the token in its address
+(`forApp` is false for it: its `/` cannot load without the token), so
+nothing in the bridge's offline block ran there. Yet the gate's access
+answer asked for the 30-day lifetime for every production app. So a private
+project kept its files for a month with no refresh at all, and showed its
+new page over its old files after **every** change, not only when a refresh
+missed one.
+
+- **The gate's answer now asks `forApp`'s question.** No long lifetime for a
+  view-private app, nor for one whose cacheable address is off on its live
+  build (`offline_cache_off_sha` = `main_sha`). Their files keep the app's
+  own headers: express's `max-age=0`, a 304 on each load, as before 2 Nov.
+  They lose nothing, since they never opened offline.
+- **The bridge's check runs wherever an app loads it.** In a frame opened
+  the old way, or on the app's own domain, step 5 alone runs and reloads in
+  place. The check is recorded without the token, the gate's retry marker
+  and the theme, so a new token is the same page. With no storage it does
+  not check, since nothing else would stop a second reload. Only the apps'
+  copy, `/usernode-bridge/v1/bridge.js`, does it: Homeroom's own pages load
+  `/usernode-bridge.js` and are never checked. A browser still holding a
+  30-day copy from before heals on its first open more than 10 minutes after
+  its last check. After a month no such copy is left, and the check is a
+  cheap guard.
+
+Measured in headless Chrome, with a private-style frame (token in the
+address) and a new stylesheet:
+
+| | Old files kept 30 days, main's bridge | Same, new bridge | Gate fix |
+|---|---|---|---|
+| First open after the change | old | old, then new (one reload) | new |
+| Reopen | old | new | new |
+
 Still to do, outside this proposal:
 
 1. After the release: the simulator and emulator pass against real apps

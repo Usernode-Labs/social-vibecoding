@@ -51,30 +51,59 @@
   //      old one may be the old build's. Seen on 25 Nov 2026: a new page
   //      drew a new control with no styling over the screens.css it kept,
   //      and no reload replaced it.
+  //
+  // Anywhere else an app loads this bridge, step 5 alone runs: a frame the
+  // shell opened the old way, with the token in its address (a view-private
+  // project, or one whose cacheable address is off), or the app on its own
+  // domain. Until 25 Nov 2026 the gate kept those apps' files 30 days too,
+  // with no refresh at all, so a private project showed its new page over
+  // its old files after every change; a browser still holding such a copy
+  // heals on its next open. Only the apps' copy (/usernode-bridge/v1/) does
+  // this: Homeroom's own pages load /usernode-bridge.js and are never checked.
   (function () {
-    try {
-      if (!(window.parent && window.parent !== window)) return;
-    } catch (_) { return; }
+    var framed;
+    try { framed = !!(window.parent && window.parent !== window); } catch (_) { framed = true; }
     var hash;
     try { hash = String(location.hash || ""); } catch (_) { return; }
-    if (hash.indexOf("#un-") !== 0) return;
-    var own;
-    try { own = new URLSearchParams(hash.slice(1)); } catch (_) { return; }
-    var page = String(location.href).split("#")[0];
-    var origin = location.origin;
-    var refresh = own.get("un-refresh") === "1";
+    var cacheable = framed && hash.indexOf("#un-") === 0;
+    var appsCopy = false;
+    try { appsCopy = /\/usernode-bridge\/v1\/bridge\.js(?:[?#]|$)/.test(String(document.currentScript.src || "")); } catch (_) { /* unknown: not checked */ }
+    if (!cacheable && !appsCopy) return;
+    var own = null;
+    if (cacheable) {
+      try { own = new URLSearchParams(hash.slice(1)); } catch (_) { return; }
+    }
+    var origin;
+    try { origin = location.origin; } catch (_) { return; }
+    // The address a check is recorded under. At the cacheable address, the
+    // page as the shell opened it (its build in the query). Anywhere else,
+    // without what changes on every open of the same page: the token
+    // (renewed every 45 minutes), the gate's retry marker and the theme.
+    var page = cacheable ? String(location.href).split("#")[0] : pageKey();
+    var refresh = cacheable && own.get("un-refresh") === "1";
     var FILES_KEY = "usernode:offline-files";
     var MAX_FILES = 200;
 
-    try {
-      var query = new URLSearchParams(location.search);
-      var token = own.get("un-token");
-      if (token) query.set("token", token);
-      var theme = own.get("un-theme");
-      if (theme) query.set("un-theme", theme);
-      var qs = query.toString();
-      history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : ""));
-    } catch (_) { /* refused: the app reads no token, as on an offline load */ }
+    function pageKey() {
+      try {
+        var u = new URL(String(location.href));
+        u.hash = "";
+        ["token", "__ua", "un-theme"].forEach(function (k) { u.searchParams.delete(k); });
+        return u.toString();
+      } catch (_) { return null; }
+    }
+
+    if (cacheable) {
+      try {
+        var query = new URLSearchParams(location.search);
+        var token = own.get("un-token");
+        if (token) query.set("token", token);
+        var theme = own.get("un-theme");
+        if (theme) query.set("un-theme", theme);
+        var qs = query.toString();
+        history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : ""));
+      } catch (_) { /* refused: the app reads no token, as on an offline load */ }
+    }
 
     // A file of this app's own, as the browser keeps it: no data reads, no
     // platform paths, never an address that carries the token.
@@ -104,7 +133,7 @@
       try { localStorage.setItem(FILES_KEY, JSON.stringify(list.slice(0, MAX_FILES))); } catch (_) { /* full: kept as far as it goes */ }
     }
     try {
-      if (typeof PerformanceObserver === "function") {
+      if (cacheable && typeof PerformanceObserver === "function") {
         new PerformanceObserver(function (entries) {
           remember(entries.getEntries().map(function (e) { return e.name; }));
         }).observe({ type: "resource", buffered: true });
@@ -181,24 +210,38 @@
     function checkFiles() {
       try { if (navigator.onLine === false) return; } catch (_) { /* no navigator: try */ }
       if (checkedRecently()) return;
-      try { localStorage.setItem(CHECKED_KEY, JSON.stringify({ page: page, at: Date.now() })); } catch (_) { /* unbounded: the flag below still stops a second reload */ }
+      var recorded = false;
+      try {
+        localStorage.setItem(CHECKED_KEY, JSON.stringify({ page: page, at: Date.now() }));
+        recorded = true;
+      } catch (_) { /* unbounded: at the cacheable address the flag below still stops a second reload */ }
+      // Anywhere else nothing marks the reload but that record, so with no
+      // storage it is not checked at all rather than risk reloading again.
+      if (!cacheable && !recorded) return;
       var files = ranOn();
       if (!files.length) return;
       Promise.all(files.map(moved)).then(function (changed) {
         if (!changed.some(Boolean)) return;
+        try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* gone */ }
+        if (!cacheable) {
+          // The same address again; the record above keeps the reload from
+          // checking a second time.
+          location.reload();
+          return;
+        }
         own.delete("un-refresh");
         own.set("un-checked", "1");
-        try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* gone */ }
         location.replace(page + "#" + own.toString());
       });
     }
     function checkAfterLoad() {
-      if (own.get("un-checked") === "1") return;
+      if (!page || (own && own.get("un-checked") === "1")) return;
       try {
         window.addEventListener("load", function () { setTimeout(checkFiles, CHECK_AFTER_LOAD_MS); }, { once: true });
       } catch (_) { /* no events: unchecked, as before */ }
     }
 
+    if (!cacheable) { checkAfterLoad(); return; }
     if (!refresh) { say(true); checkAfterLoad(); return; }
     say(false);
     try { document.documentElement.style.visibility = "hidden"; } catch (_) { /* no document yet */ }

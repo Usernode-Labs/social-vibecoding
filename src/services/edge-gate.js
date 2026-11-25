@@ -823,8 +823,15 @@ async function handleAccess(pool, req, res) {
       if (isProduction) res.set('X-Usernode-Applink', chromelessUrl(slug));
       // Offline apps (services/offline-cache.js): the gate gives this app's
       // pages and files a long fresh lifetime. A production address only (a
-      // preview runs unmerged code), and only while the switch is on.
-      if (cacheApp && isProduction && offlineCache.enabled() && !(await appAccess.offlineOptedOut(pool, vis.appId))) {
+      // preview runs unmerged code), only while the switch is on, and only
+      // for an app the shell frames at its cacheable address, by forApp's
+      // rule. A view-private app, or one whose cacheable address is off on
+      // its live build, is framed with the token in its address, where the
+      // bridge's refresh never runs: a kept file there outlived every change
+      // until it expired (25 Nov 2026, a private project's new page over
+      // its old screens.css).
+      if (cacheApp && isProduction && !vis.viewPrivate && offlineCache.enabled()
+        && !(await appAccess.offlineCacheOff(pool, vis.appId))) {
         res.set(offlineCache.DECISION_HEADER, offlineCache.DECISION_APP);
       }
     } else if (viaCaddyCustom) {
