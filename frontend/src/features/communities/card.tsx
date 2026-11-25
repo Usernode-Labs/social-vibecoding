@@ -257,8 +257,10 @@ export function CommunityCardContent({ community, eager = false, name, face, fac
 }
 
 /** The compact card's insides: the icon beside the name and its week (the members, who was active, what went live), no picture. */
-export function CommunityCardCompactContent({ community, face, faceClass }: {
+export function CommunityCardCompactContent({ community, name, face, faceClass }: {
   community: CardCommunity;
+  /** Replaces the plain name (the name with the votes waiting as a tag beside it). */
+  name?: ReactNode;
   face?: ReactNode;
   faceClass?: string;
 }) {
@@ -268,7 +270,7 @@ export function CommunityCardCompactContent({ community, face, faceClass }: {
         <CommunityIcon community={community} />
         {face}
       </span>
-      <CardId community={community} week />
+      <CardId community={community} name={name} week />
     </span>
   );
 }
@@ -281,21 +283,33 @@ export function CommunityCardCompactContent({ community, face, faceClass }: {
  * the icon's corner with their words for a screen reader, and, while the
  * page is edited, the − that unpins it (the icon wiggles) or the + that
  * pins it.
+ *
+ * `voteTag` (the standard look, ONE LOOK of 25 Nov 2026): the votes waiting
+ * are a tag beside the name, in words ("2 to vote"), not a count on the
+ * icon's corner, and the words a screen reader had are the tag's own.
  */
-export function CommunityPageCard({ community, votes, editing, compact = false, onUnpin, onPin }: {
+export function CommunityPageCard({ community, votes, editing, compact = false, voteTag = false, onUnpin, onPin }: {
   community: CardCommunity;
   votes: number;
   editing: boolean;
   compact?: boolean;
+  voteTag?: boolean;
   onUnpin?: () => void;
   onPin?: () => void;
 }) {
   const t = useMessages('home');
   const tc = useMessages('communities');
   const { slug, name } = community;
+  const tagged = voteTag && votes > 0 && !editing;
+  const named = tagged ? (
+    <span className="cm-card-name-row">
+      <span className="cm-card-name">{name}</span>
+      <span className="one-tag cm-card-votes" data-home-community-votes={String(votes)}>{tc('communities:row.toVote', { count: votes })}</span>
+    </span>
+  ) : undefined;
   const face = (
     <>
-      {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
+      {votes > 0 && !editing && !voteTag ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
       {editing && onUnpin ? (
         <button
           type="button"
@@ -329,9 +343,9 @@ export function CommunityPageCard({ community, votes, editing, compact = false, 
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, slug); }}
     >
       {compact
-        ? <CommunityCardCompactContent community={community} face={face} faceClass={faceClass} />
-        : <CommunityCardContent community={community} face={face} faceClass={faceClass} />}
-      {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
+        ? <CommunityCardCompactContent community={community} name={named} face={face} faceClass={faceClass} />
+        : <CommunityCardContent community={community} name={named} face={face} faceClass={faceClass} />}
+      {votes > 0 && !tagged ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
   );
 }
