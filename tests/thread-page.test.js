@@ -403,3 +403,39 @@ test('a break-up says what it does and when; its form needs two parts', () => {
   assert.match(src, /disabled=\{busy \|\| filledParts\.length < 2\}/);
   assert.match(src, /kind: 'breakup', request: number, parts: filledParts\.map/);
 });
+
+// ── #6990: a saved group vote shows at once ───────────────────────────
+//
+// The Votes card used to show only what its slower re-read returned, so a
+// vote the server had already recorded kept reading "0 of 3 yes", with no
+// "You said yes" and both buttons still pressable, until a reload. The card
+// now applies the side castIssueVote answers with, and the rule that does it
+// is executed here; the re-read (which settles on the server's numbers) asks
+// for the current answer, and the side already chosen takes no second press.
+
+const CHANGES = 'frontend/src/features/dev-board/topic/thread-changes.tsx';
+
+test('#6990: a saved vote moves the count by exactly one, and never the wrong way', () => {
+  const { applyVote } = loadTsx(CHANGES);
+  assert.deepEqual(applyVote(0, null, 3, 'yes'), { mine: 'yes', yes: 1 }, 'a Yes adds one and shows "You said yes"');
+  assert.deepEqual(applyVote(0, null, 3, 'no'), { mine: 'no', yes: 0 }, 'a No answers without counting a yes');
+  assert.deepEqual(applyVote(2, 'no', 3, 'yes'), { mine: 'yes', yes: 3 }, 'changing from No to Yes adds one');
+  assert.deepEqual(applyVote(2, 'yes', 3, 'no'), { mine: 'no', yes: 1 }, 'changing from Yes to No takes the yes back');
+  assert.deepEqual(applyVote(2, 'yes', 3, 'yes'), { mine: 'yes', yes: 2 }, 'the same side again does not count twice');
+  assert.deepEqual(applyVote(1, 'yes', 1, 'yes'), { mine: 'yes', yes: 1 }, 'a need of 1 stays 1 of 1');
+  assert.deepEqual(applyVote(1, 'yes', 3, null), { mine: null, yes: 0 }, 'a toggle-off clears the side and its yes');
+});
+
+test('#6990: both Votes cards apply the saved vote, lock the chosen side and re-read current', () => {
+  const src = read(CHANGES);
+  assert.match(src, /const result = await av\.castIssueVote\(close\.id, side\);/, 'the request\'s card keeps what the server saved');
+  assert.match(src, /const result = await av\.castIssueVote\(g\.id, side\);/, 'and so does a decision\'s');
+  assert.match(src, /setApplied\(applyVote\(/, 'both apply it at once');
+  assert.match(src, /const mine = shownMine;/, 'the card reads the side from the applied vote first');
+  assert.match(src, /const yes = applied \? applied\.yes : row \? row\.yes : 0;/, 'and the count too');
+  assert.match(src, /if \(shownMine === \(side === 'up' \? 'yes' : 'no'\)\) return;/, 'the chosen side sends nothing');
+  assert.match(src, /aria-disabled=\{busy \|\| on \|\| undefined\}/, 'and is marked locked');
+  assert.match(src, /cache: 'no-cache'/, 'the re-read asks for the current answer, not a pre-vote copy');
+  assert.equal(src.match(/cache: 'no-cache'/g).length, 2, 'both re-reads');
+  assert.match(src, /if \(revision <= 0\) return undefined;/, 'a decision\'s first vote re-reads too');
+});

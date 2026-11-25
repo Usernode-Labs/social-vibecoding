@@ -83,7 +83,7 @@ import { gridStore } from '../../home/grid-store';
 import { homePinsStore, setHomePin } from '../../home/home-pins-store';
 import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
-import { devKanbanStore, devWorkshopStore, voteSavedStore } from '../card/cards-store';
+import { devKanbanStore, devWorkshopStore, govVoteSavedStore, voteSavedStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
@@ -2686,13 +2686,24 @@ export function savedVoteFor(
 export function withoutSavedVotes(
   queue: DevWorkshopView['queue'] | null | undefined,
   saved: Record<string, { vote: 'yes' | 'no'; epoch: number | null }> | null | undefined,
+  govSaved?: Record<string, { vote: 'yes' | 'no' }> | null,
 ): DevWorkshopView['queue'] {
   const rows = queue || [];
-  if (!saved || Object.keys(saved).length === 0) return rows;
+  const govKeys = govSaved ? Object.keys(govSaved) : [];
+  if ((!saved || Object.keys(saved).length === 0) && govKeys.length === 0) return rows;
   let out: DevWorkshopView['queue'] | null = null;
   for (let idx = 0; idx < rows.length; idx++) {
-    if (!savedVoteFor(rows[idx], saved)) {
-      if (out) out.push(rows[idx]);
+    // #6990: a group decision whose own vote was just saved — the same
+    // `askAbout.kind` needs-reel.tsx writes ('gov') — is answered too, and
+    // goes with the badge instead of waiting for the next read.
+    const row = rows[idx];
+    const ref = row && row.askAbout;
+    const refKind = ref ? String(ref.kind) : '';
+    const govAnswered = !!(govSaved && row && row.kind === 'vote' && ref
+      && (refKind === 'gov' || refKind === 'governance')
+      && govSaved[String(ref.ref)]);
+    if (!govAnswered && !savedVoteFor(row, saved)) {
+      if (out) out.push(row);
       continue;
     }
     if (!out) out = rows.slice(0, idx);
@@ -2714,13 +2725,18 @@ export function withoutSavedVotes(
 // same way at the door). A mounted deck keeps its place as today: a row it
 // voted on is held by `pinsRef`, and a row voted elsewhere is held by the
 // `drawnRef` plus `savedAll` pin.
-voteSavedStore.subscribe(() => {
+function stripSavedQueue() {
   const cur = devWorkshopStore.get();
   if (!cur.queue) return; // nothing published yet: nothing kept to strip
-  const queue = withoutSavedVotes(cur.queue, voteSavedStore.get());
+  const queue = withoutSavedVotes(cur.queue, voteSavedStore.get(), govVoteSavedStore.get());
   if (queue === cur.queue) return;
   devWorkshopStore.set({ queue });
-});
+}
+voteSavedStore.subscribe(stripSavedQueue);
+// #6990: a group decision's saved vote (cards-store.ts govVoteSavedStore)
+// strips its own row the same way, so the project's For you, its places
+// count and its Needs you deck agree with the sidebar badge at once.
+govVoteSavedStore.subscribe(stripSavedQueue);
 
 
 /**

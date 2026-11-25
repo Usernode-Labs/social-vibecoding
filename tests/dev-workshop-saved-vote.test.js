@@ -120,3 +120,50 @@ test('a saved vote before any publish paints no queue into the store', () => {
   assert.ok(!('queue' in cards.devWorkshopStore.get()),
     'nothing was published yet, so there was nothing kept to strip — the listener leaves the store alone');
 });
+
+// ── #6990: a group decision's saved vote ───────────────────────────────
+//
+// A vote to close, or a decision's own Votes card, is a governance row
+// (`askAbout.kind` 'gov', the shape needs-reel.tsx writes). Its own saved
+// vote (cards-store.ts govVoteSavedStore) strips the row the same way, so
+// the project's For you, its places count and its Needs you deck stop
+// asking with the sidebar badge instead of after the next read.
+
+const govRow = (id, kind = 'gov') => ({
+  t: 'card', key: `vote:governance:${id}`, kind: 'vote', ask: 'Close this request?',
+  askAbout: { kind, ref: id },
+  yes: { label: 'Yes', act: { fn: 'castIssueVote', args: [id, 'yes'] } },
+  no: { label: 'No', act: { fn: 'castIssueVote', args: [id, 'no'] } },
+});
+
+test('withoutSavedVotes drops a group decision named in the governance map', () => {
+  const { ws } = loadWorkshop();
+  const other = row(9, 2);
+  assert.deepEqual(
+    ws.withoutSavedVotes([govRow(4), other], {}, { 4: { vote: 'yes', seq: 1 } }),
+    [other],
+    'the decision whose vote was saved leaves; a change row is untouched',
+  );
+  assert.deepEqual(
+    ws.withoutSavedVotes([govRow(4, 'governance')], {}, { 4: { vote: 'no', seq: 1 } }),
+    [],
+    'the older kind spelling a fixture used is answered too',
+  );
+  assert.deepEqual(
+    ws.withoutSavedVotes([govRow(4)], {}, { 5: { vote: 'yes', seq: 1 } }),
+    [govRow(4)],
+    'another decision\'s vote answers nothing here',
+  );
+  assert.equal(ws.withoutSavedVotes([govRow(4)], {}, {}).length, 1, 'nothing saved, nothing stripped');
+});
+
+test('a saved group vote leaves the kept queue the moment it lands', () => {
+  const { cards } = loadWorkshop();
+  cards.devWorkshopStore.set({ queue: [govRow(4), row(9, 2)] });
+  const keys = () => cards.devWorkshopStore.get().queue.map((r) => r.key);
+  cards.publishGovVoteSaved(4, 'yes');
+  assert.deepEqual(keys(), ['vote:proposal:9@2'], 'the decision goes with the badge');
+  // A toggle-off removes the entry: the decision is owed again.
+  cards.publishGovVoteSaved(4, null);
+  assert.ok(!('4' in cards.govVoteSavedStore.get()));
+});

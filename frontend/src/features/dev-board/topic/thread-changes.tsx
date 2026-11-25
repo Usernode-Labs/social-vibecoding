@@ -1165,6 +1165,8 @@ interface CloseRow {
   yes: number;
   need: number;
   myVote: 'yes' | 'no' | null;
+  /** The revision this read was asked for (#6990: a vote's re-read settles its applied value). */
+  at: number;
 }
 
 /** A vote to close's own read (routes/issues.js GET governance/:id): its tally and the viewer's vote. */
@@ -1173,7 +1175,9 @@ function useCloseRow(slug: string | null, close: ThreadItem | null, revision: nu
   useEffect(() => {
     if (!slug || !close) { setRow(null); return undefined; }
     let live = true;
-    fetch(`/api/apps/${encodeURIComponent(slug)}/governance/${close.id}`, { credentials: 'same-origin' })
+    // #6990: a re-read after a vote asks for the CURRENT answer, not the
+    // worker's saved copy from before it.
+    fetch(`/api/apps/${encodeURIComponent(slug)}/governance/${close.id}`, { credentials: 'same-origin', cache: 'no-cache' })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         const p = json && json.proposal;
@@ -1182,12 +1186,41 @@ function useCloseRow(slug: string | null, close: ThreadItem | null, revision: nu
           yes: Number(p.qualified_yes_count ?? p.up_count) || 0,
           need: Math.max(1, Number(p.votes_required) || 1),
           myVote: p.my_vote === 'up' ? 'yes' : p.my_vote === 'down' ? 'no' : null,
+          at: revision,
         });
       })
       .catch(() => {});
     return () => { live = false; };
   }, [slug, close?.id, revision]);
   return row;
+}
+
+/** What a saved vote (#6990) asks a Votes card to show before its re-read lands. */
+export interface AppliedVote {
+  mine: 'yes' | 'no' | null;
+  yes: number;
+}
+
+/**
+ * #6990: a Votes card's own tally with the vote `castIssueVote` just saved
+ * applied to it. `yes` moves by one only when the viewer's side changes —
+ * +1 going to yes, −1 leaving yes — and stays inside 0..need, so a "need of
+ * 1" never reads 2 of 1. A null `vote` (the server toggled the same side
+ * off) clears `mine` and takes back the yes it was counting.
+ */
+export function applyVote(
+  yes: number,
+  mine: 'yes' | 'no' | null,
+  need: number,
+  vote: 'yes' | 'no' | null,
+): AppliedVote {
+  const cap = Math.max(1, Number(need) || 1);
+  const from = Math.max(0, Math.min(cap, Number(yes) || 0));
+  if (vote === null) return { mine: null, yes: mine === 'yes' ? Math.max(0, from - 1) : from };
+  let next = from;
+  if (vote === 'yes' && mine !== 'yes') next = Math.min(cap, from + 1);
+  else if (vote === 'no' && mine === 'yes') next = Math.max(0, from - 1);
+  return { mine: vote, yes: next };
 }
 
 /** A Votes card's bar, one segment per yes the rule needs. #6439: an ended card's bar is full and drawn done. */
@@ -1517,18 +1550,41 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
   const [revision, setRevision] = useState(0);
   const [all, setAll] = useState<FoldedReply[] | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
+  // #6990: the vote just saved, shown until the re-read below replaces it.
+  const [applied, setApplied] = useState<AppliedVote | null>(null);
   const row = useCloseRow(slug, close, revision);
+  // The revision the vote's own re-read will answer at; `applied` holds the
+  // card until a read asked for at least that one lands (a read already on
+  // its way from before the vote cannot overwrite it).
+  const appliedAt = useRef(-1);
   const box = useRef<HTMLDivElement>(null);
   useCloseInView(close, box);
   const done = close.status !== 'open';
+  useEffect(() => {
+    if (applied && row && row.at >= appliedAt.current) setApplied(null);
+  }, [row, applied]);
+  const shownMine = applied ? applied.mine : row ? row.myVote : close.myVote || null;
   const vote = async (side: 'up' | 'down', from: HTMLElement | null = null) => {
     const av = appView();
     if (busy || done || !av || typeof av.castIssueVote !== 'function') return;
+    // #6990: the chosen side is locked in place; a second press used to
+    // retract the vote on the server, which is what made repeated presses
+    // risky.
+    if (shownMine === (side === 'up' ? 'yes' : 'no')) return;
     // #6098: the same rule as the ballot's: the button keeps focus while the
     // vote is sent, and is found again if a redraw replaced it.
     const wasFocused = !!from && document.activeElement === from;
     setBusy(true);
-    try { await av.castIssueVote(close.id, side); } finally {
+    try {
+      const result = await av.castIssueVote(close.id, side);
+      // #6990: the server saved it — show the count and the side at once,
+      // rather than waiting for the slower re-read.
+      if (result && typeof result === 'object') {
+        const base = applied || { mine: row ? row.myVote : close.myVote || null, yes: row ? row.yes : 0 };
+        appliedAt.current = revision + 1;
+        setApplied(applyVote(base.yes, base.mine, row ? row.need : 1, result.vote ?? null));
+      }
+    } finally {
       setBusy(false);
       setRevision((n) => n + 1);
       onChanged();
@@ -1540,12 +1596,12 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
     setLoadingAll(true);
     try { setAll(await readCloseReplies(slug, close.id)); } finally { setLoadingAll(false); }
   };
-  const mine = row ? row.myVote : close.myVote || null;
+  const mine = shownMine;
   // #6987: the side this vote is on its way for, published by castIssueVote.
   // The pressed button reads "Sending…" until the server answers.
   const sendingAll = useStoreState(voteSendingStore);
   const sendingSide = sendingAll[`castIssueVote:${close.id}`] || null;
-  const yes = row ? row.yes : 0;
+  const yes = applied ? applied.yes : row ? row.yes : 0;
   const need = row ? row.need : 1;
   const folded = close.folded || [];
   const replies = all || folded;
@@ -1587,7 +1643,7 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
                     type="button"
                     className={act ? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'}
                     aria-pressed={on}
-                    aria-disabled={busy || undefined}
+                    aria-disabled={busy || on || undefined}
                     data-close-vote={side}
                     data-sending={sending ? 'true' : undefined}
                     onClick={(e) => { void vote(side, e.currentTarget); }}
@@ -1649,12 +1705,18 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
   // While the vote is open the tally is the page's own; a vote sent here
   // re-reads it, because the row the page was drawn from is now one behind.
   const [sent, setSent] = useState<GovernanceView['votes'] | null>(null);
+  // #6990: the vote just saved, shown until the re-read below replaces it.
+  const [applied, setApplied] = useState<AppliedVote | null>(null);
   useEffect(() => {
-    if (!sent) return undefined;
+    // #6990: run on every vote sent (revision > 0). This used to return while
+    // `sent` was null, so the FIRST vote on a decision never re-read its
+    // tally at all and the card kept the row it was drawn from.
+    if (revision <= 0) return undefined;
     const id = Number(g.id);
     if (!id) return undefined;
     let live = true;
-    fetch(`/api/apps/${encodeURIComponent(pageSlug() || '')}/governance/${id}`, { credentials: 'same-origin' })
+    // #6990: ask for the CURRENT answer, not the worker's pre-vote copy.
+    fetch(`/api/apps/${encodeURIComponent(pageSlug() || '')}/governance/${id}`, { credentials: 'same-origin', cache: 'no-cache' })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         const p = json && json.proposal;
@@ -1666,16 +1728,28 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
           open: g.votes.open,
           outcome: g.votes.outcome,
         });
+        // The re-read wins, even when it disagrees (someone else voted too).
+        setApplied(null);
       })
       .catch(() => {});
     return () => { live = false; };
   }, [revision]);
-  const votes = sent && sent.open === g.votes.open ? sent : g.votes;
+  const base = sent && sent.open === g.votes.open ? sent : g.votes;
+  const votes = applied ? { ...base, mine: applied.mine, yes: applied.yes } : base;
   const vote = async (side: 'up' | 'down', from: HTMLElement | null = null) => {
     if (busy || !av || typeof av.castIssueVote !== 'function') return;
+    // #6990: the side already chosen is locked; a second press does nothing.
+    if (votes.mine === (side === 'up' ? 'yes' : 'no')) return;
     const wasFocused = !!from && document.activeElement === from;
     setBusy(true);
-    try { await av.castIssueVote(g.id, side); } finally {
+    try {
+      const result = await av.castIssueVote(g.id, side);
+      // #6990: show the saved vote at once, before the slower re-read.
+      if (result && typeof result === 'object') {
+        const cur = applied || base;
+        setApplied(applyVote(cur.yes, cur.mine, base.need, result.vote ?? null));
+      }
+    } finally {
       setBusy(false);
       setRevision((n) => n + 1);
       (window as any).AppView?._renderTopicHead?.();
@@ -1727,7 +1801,7 @@ export function GovVote({ g }: { g: GovernanceView }): ReactNode {
                     type="button"
                     className={act ? 'dev-vote-btn dev-vote-btn-act' : 'dev-vote-btn dev-vote-btn-quiet'}
                     aria-pressed={on}
-                    aria-disabled={busy || undefined}
+                    aria-disabled={busy || on || undefined}
                     data-close-vote={side}
                     data-sending={sending ? 'true' : undefined}
                     onClick={(e) => { void vote(side, e.currentTarget); }}

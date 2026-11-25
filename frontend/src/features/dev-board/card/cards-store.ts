@@ -108,6 +108,53 @@ export const voteSavedStore = createStore<Record<string, VoteSavedEntry>>({});
 
 let voteSavedSeq = 0;
 
+/**
+ * #6990: a group decision (a vote to close a request, or a decision's own
+ * Votes card) the server SAVED, by governance id. `castIssueVote` publishes
+ * it from its ok branch only, so Needs you drops the decision at the moment
+ * its vote lands — the Communities page's list and counts, the project's own
+ * Needs you, and the sidebar badge move together instead of the badge
+ * leaving while the list still asks (Notifications.refresh drops the badge on
+ * its own). It is separate from `voteSavedStore` because a governance row is
+ * not a change vote: it has no approval epoch and its keys are
+ * `governance:<id>`.
+ */
+export interface GovVoteSavedEntry {
+  vote: 'yes' | 'no';
+  /** Rises with each publish, so a re-vote of the same side is seen too. */
+  seq: number;
+}
+
+export const govVoteSavedStore = createStore<Record<string, GovVoteSavedEntry>>({});
+
+let govVoteSavedSeq = 0;
+
+export function publishGovVoteSaved(issueId: number, vote: 'yes' | 'no' | null): void {
+  const id = Number(issueId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  const key = String(id);
+  // A vote toggled off is owed again: no screen may keep showing it answered.
+  if (vote === null) {
+    govVoteSavedStore.set((cur: Record<string, GovVoteSavedEntry>) => {
+      if (!(key in cur)) return cur;
+      const next: Record<string, GovVoteSavedEntry> = { ...cur };
+      delete next[key];
+      return next;
+    });
+    return;
+  }
+  if (vote !== 'yes' && vote !== 'no') return;
+  govVoteSavedStore.set((cur: Record<string, GovVoteSavedEntry>) => {
+    const next: Record<string, GovVoteSavedEntry> = { ...cur };
+    // Re-add at the end, so "newest" is the map's own order.
+    delete next[key];
+    next[key] = { vote, seq: ++govVoteSavedSeq };
+    const keys = Object.keys(next);
+    for (const k of keys.slice(0, Math.max(0, keys.length - VOTE_SAVED_MAX))) delete next[k];
+    return next;
+  });
+}
+
 export function publishVoteSaved(sessionId: number, vote: 'yes' | 'no' | null, epoch: number | null): void {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return;

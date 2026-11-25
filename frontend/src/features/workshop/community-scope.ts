@@ -67,7 +67,7 @@
 import { createStore } from '../../lib/plain-store.js';
 import { sharedJson } from '../../lib/shared-read';
 import { voteMoved } from '../../lib/work-state';
-import { voteSavedStore } from '../dev-board/card/cards-store';
+import { govVoteSavedStore, voteSavedStore } from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { navStore } from '../nav/nav-store.js';
 import { hydrateNeedsSeen, needsSeenStore, unseenNeeds } from './needs-seen';
@@ -313,14 +313,22 @@ export function setScope(slug: string | null): void {
  * card: a `proposal:<id>` or `proposal:<id>@<epoch>` key is answered when a
  * saved vote names its session id, and where either side has no epoch the id
  * alone decides — a different epoch is the change moved under the vote,
- * asking again. A `governance:` key is a group decision, which no saved vote
- * here answers.
+ * asking again. A `governance:` key is a group decision: the session store
+ * above never answers it, and `govVoteSavedStore` (#6990) does, by its id.
  */
 export function owedLessSaved(
   owed: readonly string[],
   saved: Record<string, { epoch: number | null }>,
 ): string[] {
   return owed.filter((key) => {
+    // #6990: a group decision the server SAVED (cards-store.ts
+    // govVoteSavedStore) is answered too — it has no epoch, so the id alone
+    // decides. This is what keeps the tab's badge and the Needs you list in
+    // step when a vote to close, or a decision's own card, is voted on.
+    if (key.startsWith('governance:')) {
+      const govId = key.slice('governance:'.length);
+      return !govVoteSavedStore.get()[govId];
+    }
     if (!key.startsWith('proposal:')) return true;
     const at = key.indexOf('@');
     const id = key.slice('proposal:'.length, at < 0 ? key.length : at);
@@ -606,6 +614,9 @@ needsSeenStore.subscribe(rederiveAll);
  * sidebar agree with it instead of waiting for the next read.
  */
 voteSavedStore.subscribe(rederiveAll);
+// #6990: a group decision's saved vote moves every count it was in, the same
+// way, so the sidebar's badge and the tab's number fall with the list.
+govVoteSavedStore.subscribe(rederiveAll);
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };

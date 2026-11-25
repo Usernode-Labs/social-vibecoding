@@ -29903,6 +29903,19 @@ const AppView = {
     } catch { /* paint only */ }
   },
 
+  // #6990: a GROUP DECISION the server SAVED, published once so every Needs
+  // you surface lets go of it with the sidebar's badge, and so the Votes
+  // card that cast it can show the vote before its slower re-read lands
+  // (cards-store.ts govVoteSavedStore). Paint only, as _publishVoteSaved.
+  _publishGovVoteSaved(issueId, vote) {
+    const id = Number(issueId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    const side = vote === 'yes' || vote === 'no' ? vote : null;
+    try {
+      AppView._reactDevBoard()?.publishGovVoteSaved?.(id, side);
+    } catch { /* paint only */ }
+  },
+
   // Vote on a governance proposal (env-var change, close-issue, rename,
   // maintenance campaign).
   //
@@ -30024,6 +30037,13 @@ const AppView = {
       // Anything else (vote recorded, gate not met yet, toggled off) needs no
       // toast — the refreshed card's tally / countdown pill says it all.
 
+      // #6990: the vote the server saved, published before the reads start:
+      // the card that cast it shows it at once, and Needs you (its list and
+      // its counts) lets go of the decision with the sidebar badge. A
+      // same-side vote is the server's toggle-off, so it publishes none.
+      const savedVote = data && data.toggled ? null : (vote === 'down' ? 'no' : 'yes');
+      AppView._publishGovVoteSaved(issueId, savedVote);
+
       AppView.refreshDevData('vote');
       // #6595: the view this vote came from re-reads itself at once — the
       // side panel or the bot tab's column, where refreshDevData does
@@ -30038,8 +30058,10 @@ const AppView = {
       // As castVote (#5452): the vote reaches the Kudos history as soon as
       // the server saved it.
       window.Leaderboard?.invalidateHistory?.();
-      // #6987: true only once the server took the vote, as castVote answers.
-      return true;
+      // #6987: truthy only once the server took the vote, as castVote
+      // answers. #6990: the object carries the side the server saved (null
+      // when it toggled the same side off), so the card applies it at once.
+      return { ok: true, vote: savedVote };
     } catch (err) {
       // Network/abort: the server-side apply may well have completed, so
       // park on the failure copy rather than pretending nothing happened.
