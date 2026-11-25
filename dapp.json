@@ -865,7 +865,7 @@
       "name": "Me: the name and bio are edited in the hero, above the merged and challenges stat cards (#982, #7156; no kudos card, #5249)",
       "path": "/?demo=1#profile",
       "expectText": "Edit profile",
-      "expectSelector": "#profile-screen:not(.hidden):not(:has(#profile-details)):has(#profile-name-edit):has(#profile-bio-edit) #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
+      "expectSelector": "#profile-screen:not(.hidden):not(:has(#profile-details)):has(#profile-name-edit):has(#profile-bio-edit) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
       "id": "profile.section-tabs.changes",
