@@ -998,7 +998,7 @@ function authRoutes(config) {
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
       if (storyFirstSession) waitlistIdea = await firstSession.waitlistIdea(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
-      profile = shapeProfile(rows[0], verifiedLinks);
+      profile = shapeProfile(rows[0], verifiedLinks, req.user.id);
     } catch {}
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
@@ -1126,11 +1126,16 @@ function authRoutes(config) {
         // Profile customization (#982). `username` stays the permanent
         // sign-in handle and is NOT editable anywhere on the platform;
         // `displayName` is the settable name other people see (it already
-        // feeds the standings' resolveDisplayName chain). `avatarUrl` is
-        // the content-addressed /avatars/<id> path, or null.
+        // feeds the standings' resolveDisplayName chain). `avatarUrl` is the
+        // uploaded photo's /avatars/<id> path, or (since #7135) the picture
+        // generated from the account when there is no photo. `hasPhoto` is
+        // what the editor's "Remove photo" reads; `generatedAvatarUrl` is
+        // what a staged removal previews.
         displayName: profile.displayName,
         bio: profile.bio,
         avatarUrl: profile.avatarUrl,
+        hasPhoto: profile.hasPhoto,
+        generatedAvatarUrl: profile.generatedAvatarUrl,
         links: profile.links,
         // Whether the CLI-credentials surface exists in this deployment.
         // The whole /api/me/cli-tokens + /api/cli/* family is 404'd in a

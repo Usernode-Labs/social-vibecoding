@@ -6,6 +6,7 @@ const ws = require('../services/ws');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const { rankedUsers, weekStartUtc } = require('../services/leaderboard-users');
+const { avatarUrlFor } = require('../services/avatar-url');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { kudosParked, refuseParked } = require('../services/kudos-parked');
 const {
@@ -978,7 +979,7 @@ function kudosRoutes(config) {
           WHERE av.user_id = $1 AND u.profile_disabled_at IS NULL`,
         [user.id]
       );
-      const avatarUrl = avatarRows[0] ? `/avatars/${avatarRows[0].id}` : null;
+      const avatarUrl = avatarUrlFor(avatarRows[0]?.id, user.id);
 
       // Headline stats over the FULL filtered set (pagination-agnostic).
       // kudos_merged matches the leaderboard's headline score

@@ -59,9 +59,10 @@ import type { YouTab } from './frame/you-tabs';
 import { walletSheetStore } from '../header/wallet-sheet-store';
 import { useFramePage } from '../frame/frame-page-store';
 
-/** The round picture, or the brand pair — two of Homeroom's own characters
- *  side by side — when no photo has been added (#7109). The pair is clipped
- *  to the same square (or circle, in the other looks) as a real photo. */
+/** The round picture. A person with no uploaded photo has a generated one,
+ *  so `url` is present for every known account; it is absent only where no
+ *  account is known, and then an empty neutral circle holds the frame
+ *  (#7135 — the two-character drawing is no longer a stand-in). */
 function IdentityAvatar({ url }: { url: string | null }): ReactNode {
   if (url) {
     return (
@@ -74,12 +75,9 @@ function IdentityAvatar({ url }: { url: string | null }): ReactNode {
   }
   return (
     <div
-      className="profile-id-avatar profile-id-pair w-14 h-14 rounded-full shrink-0 flex overflow-hidden bg-violet-100 dark:bg-violet-900/40"
+      className="profile-id-avatar w-14 h-14 rounded-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-800"
       aria-hidden="true"
-    >
-      <img src="/brand/groups/avatar-m3.webp" alt="" className="w-1/2 h-full object-cover" draggable={false} />
-      <img src="/brand/groups/avatar-f3.webp" alt="" className="w-1/2 h-full object-cover" draggable={false} />
-    </div>
+    />
   );
 }
 

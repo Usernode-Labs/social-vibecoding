@@ -57,6 +57,7 @@ const {
 const usernames = require('../services/usernames');
 const accountEmail = require('../services/account-email');
 const socialIdentity = require('../services/social-identity');
+const { avatarUrlFor, generatedAvatarUrl } = require('../services/avatar-url');
 const {
   buildChallengeRow,
   DONE_EXPR,
@@ -787,11 +788,20 @@ function parseProfileFields(body) {
 // Social links are passed separately because their only trusted source is the
 // OAuth-backed user_social_identities table. In particular, never fall back to
 // row.github / row.x: those legacy columns contain self-declared text.
-function shapeProfile(row, verifiedLinks = {}) {
+//
+// #7135: `avatarUrl` is always present for a known account — the uploaded
+// photo when there is one, else the picture generated from the account — so
+// the header, comments and lists need no fallback branch of their own.
+// `hasPhoto` is what the editor's "Remove photo" reads (a generated picture
+// is not a photo to remove), and `generatedAvatarUrl` is what the edit
+// preview shows while a removal is staged.
+function shapeProfile(row, verifiedLinks = {}, userId = null) {
   return {
     displayName: row?.display_name ?? null,
     bio: row?.bio ?? null,
-    avatarUrl: row?.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    avatarUrl: avatarUrlFor(row?.avatar_id, userId),
+    hasPhoto: !!row?.avatar_id,
+    generatedAvatarUrl: generatedAvatarUrl(userId),
     links: {
       github: verifiedLinks?.github ?? null,
       x: verifiedLinks?.x ?? null,
@@ -982,7 +992,7 @@ function profileRoutes(config) {
       ),
       socialIdentity.verifiedProfileLinks(pool, userId),
     ]);
-    return shapeProfile(rows[0], verifiedLinks);
+    return shapeProfile(rows[0], verifiedLinks, userId);
   }
 
   // ── PATCH /api/me/profile ────────────────────────────────────────────
@@ -1321,7 +1331,11 @@ function profileRoutes(config) {
         log.info('profile', 'Avatar uploaded', {
           userId: req.user.id, bytes: data.length, contentType: verdict.contentType,
         });
-        return res.json({ avatarUrl: `/avatars/${id}` });
+        return res.json({
+          avatarUrl: avatarUrlFor(id, req.user.id),
+          hasPhoto: true,
+          generatedAvatarUrl: generatedAvatarUrl(req.user.id),
+        });
       } catch (err) {
         log.error('profile', 'Avatar upload failed', {
           userId: req.user.id, err: err.message,
@@ -1344,7 +1358,14 @@ function profileRoutes(config) {
       try {
         await pool.query('DELETE FROM user_avatars WHERE user_id = $1', [req.user.id]);
         log.info('profile', 'Avatar removed', { userId: req.user.id });
-        return res.json({ avatarUrl: null });
+        // #7135: removing a photo brings the account's generated picture
+        // back, so the answer is the same three fields the read returns —
+        // never a bare null, which would make the client draw an initial.
+        return res.json({
+          avatarUrl: generatedAvatarUrl(req.user.id),
+          hasPhoto: false,
+          generatedAvatarUrl: generatedAvatarUrl(req.user.id),
+        });
       } catch (err) {
         log.error('profile', 'Avatar delete failed', {
           userId: req.user.id, err: err.message,

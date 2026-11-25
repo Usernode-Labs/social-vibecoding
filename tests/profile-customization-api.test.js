@@ -191,6 +191,7 @@ const {
   validateAvatarUpload, parseProfileFields, shapeProfile,
   MAX_DISPLAY_NAME, MAX_BIO, MAX_AVATAR_BYTES,
 } = require('../src/routes/profile');
+const { generatedAvatarUrl } = require('../src/services/avatar-url');
 
 test('parseProfileFields: only keys PRESENT in the body are written', () => {
   const { fields, details } = parseProfileFields({ displayName: 'Ada' });
@@ -284,13 +285,27 @@ test('validateAvatarUpload: the byte cap bites before the sniff', () => {
 test('shapeProfile: a missing row is all-nulls, never a throw', () => {
   assert.deepEqual(shapeProfile(undefined), {
     displayName: null, bio: null, avatarUrl: null,
+    hasPhoto: false, generatedAvatarUrl: null,
     links: { github: null, x: null },
   });
 });
 
 test('shapeProfile: the avatar id becomes a /avatars/ path', () => {
-  const shaped = shapeProfile({ avatar_id: 'ab'.repeat(16) });
+  const shaped = shapeProfile({ avatar_id: 'ab'.repeat(16) }, {}, 7);
   assert.equal(shaped.avatarUrl, `/avatars/${'ab'.repeat(16)}`);
+  assert.equal(shaped.hasPhoto, true);
+  assert.equal(shaped.generatedAvatarUrl, generatedAvatarUrl(7));
+});
+
+test('shapeProfile: no photo becomes the account\'s generated picture (#7135)', () => {
+  const shaped = shapeProfile({ display_name: 'Ada' }, {}, 7);
+  assert.equal(shaped.avatarUrl, generatedAvatarUrl(7),
+    'a known account always has a picture, so screens need no fallback');
+  assert.match(shaped.avatarUrl, /^\/avatars\/g\/[a-f0-9]{20}\.svg$/);
+  assert.equal(shaped.hasPhoto, false, '"Remove photo" reads this, not the generated address');
+  assert.equal(shaped.generatedAvatarUrl, shaped.avatarUrl);
+  // Two accounts never share one picture.
+  assert.notEqual(shapeProfile({}, {}, 8).avatarUrl, shaped.avatarUrl);
 });
 
 test('shapeProfile: only separately supplied verified handles become links', () => {
@@ -344,7 +359,9 @@ test('PATCH echoes the post-write profile in the /api/auth/me shape', async () =
   assert.deepEqual(res.body.profile, {
     displayName: 'Ada',
     bio: null,
-    avatarUrl: null,
+    avatarUrl: generatedAvatarUrl(USER.id),
+    hasPhoto: false,
+    generatedAvatarUrl: generatedAvatarUrl(USER.id),
     links: { github: 'octocat', x: null },
   });
 });
@@ -446,12 +463,14 @@ test('DELETE /api/me/avatar is idempotent', async () => {
   assert.ok(state.avatar);
   const first = await request(app, 'DELETE', '/api/me/avatar');
   assert.equal(first.status, 200);
-  assert.equal(first.body.avatarUrl, null);
+  // #7135: removing a photo brings the account's generated picture back.
+  assert.equal(first.body.avatarUrl, generatedAvatarUrl(USER.id));
+  assert.equal(first.body.hasPhoto, false);
   assert.equal(state.avatar, null);
   // Double-tapping "Remove photo" must not fail.
   const second = await request(app, 'DELETE', '/api/me/avatar');
   assert.equal(second.status, 200);
-  assert.equal(second.body.avatarUrl, null);
+  assert.equal(second.body.avatarUrl, generatedAvatarUrl(USER.id));
 });
 
 // ─── HTTP: the public read ────────────────────────────────────────────
