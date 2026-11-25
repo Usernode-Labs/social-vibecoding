@@ -79,6 +79,36 @@ export function visitSeen(rows: readonly WorkRow[], progress: readonly AiThread[
   return seen;
 }
 
+/** A row opened, as the visit's record learns it: its band, identity and where it stood. */
+export type OpenedEntry = [band: keyof VisitSeen, identity: string, standing: string];
+
+/**
+ * Pure: a row opened during this visit, added to what the last visit saw, so
+ * it stops being new: no dot, no share of the band's count, and it sits below
+ * the "New since" line. `since` is left where it was, so the line keeps its
+ * time for the whole visit. Null for a first visit, which marks nothing.
+ */
+export function withOpened(visit: LastVisit | null, band: keyof VisitSeen, identity: string, standing: string): LastVisit | null {
+  if (!visit) return null;
+  return { since: visit.since, seen: { ...visit.seen, [band]: { ...(visit.seen[band] || {}), [identity]: standing } } };
+}
+
+/** Pure: the record entry opening a Needs you row adds (its feed card, its private thread, or its thread). */
+export function openedNeed(row: Pick<WorkRow, 'key' | 'rootId' | 'threadId'>): OpenedEntry {
+  return ['needs', needIdentity(row), ''];
+}
+
+/** Pure: the record entry opening a thread adds: In progress keeps its list and stage, Done only that it is there. */
+export function openedThread(t: Pick<AiThread, 'threadId' | 'kind' | 'group' | 'work'> & { rootId?: number | null }): OpenedEntry {
+  if (t.group === 'next' || t.group === 'waiting') return ['busy', threadIdentity(t), standingOf(t)];
+  return ['done', threadIdentity(t), ''];
+}
+
+/** Pure: the record entry opening a History row adds, by the identity its band is keyed by. */
+export function openedHistory(row: { rootId?: number | null; threadId?: number | null }): OpenedEntry {
+  return ['done', row.rootId ? `root:${row.rootId}` : `thread:${row.threadId}`, ''];
+}
+
 /** Pure: whether a record of what the bands held has nothing in it (a list not read yet). */
 export function seenIsEmpty(seen: VisitSeen | null | undefined): boolean {
   return !seen || (!Object.keys(seen.needs).length && !Object.keys(seen.busy).length && !Object.keys(seen.done).length);

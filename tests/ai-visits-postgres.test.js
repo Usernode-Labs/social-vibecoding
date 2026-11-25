@@ -133,6 +133,33 @@ test('a person\'s visits to the Homeroom bot list', { timeout: 120000 }, async (
   assert.notEqual(afterQuiet.since, next.since);
   assert.deepEqual(afterQuiet.seen, seenB);
 
+  // 5b. A row opened: the last visit's record learns it, and a reload in
+  // the same visit returns it, so the dot does not come back. The line's
+  // time does not move.
+  const ended = await one('SELECT last_visit_seen FROM ai_list_visits WHERE user_id = $1', [ada.id]);
+  assert.ok(ended.last_visit_seen, 'the visit just left is the last one');
+  assert.deepEqual(await visits.noteOpened(pool, {
+    userId: ada.id, token: afterQuiet.visit, band: 'needs', identity: 'need:proposal:9', standing: '',
+  }), { ok: true });
+  const resumed = await visits.openVisit(pool, { userId: ada.id, token: afterQuiet.visit });
+  assert.equal(resumed.seen.needs['need:proposal:9'], '', 'a reload in the visit has the opened row');
+  assert.equal(resumed.since, afterQuiet.since, 'the line keeps its time');
+  // A first visit has no record to learn it: nothing is written.
+  const solo = await user('av_solo');
+  const soloFirst = await visits.openVisit(pool, { userId: solo.id });
+  assert.deepEqual(await visits.noteOpened(pool, {
+    userId: solo.id, token: soloFirst.visit, band: 'done', identity: 'thread:1', standing: '',
+  }), { ok: true });
+  const soloRow = await one('SELECT last_visit_seen FROM ai_list_visits WHERE user_id = $1', [solo.id]);
+  assert.equal(soloRow.last_visit_seen, null, 'a first visit writes nothing');
+  // The next visit still measures from what this one held, not the patch.
+  const seenC = { needs: {}, busy: { 'thread:9': 'next:building' }, done: {} };
+  await visits.noteVisit(pool, { userId: ada.id, token: afterQuiet.visit, seen: seenC });
+  await visits.noteVisit(pool, { userId: ada.id, token: afterQuiet.visit, seen: seenC, left: true });
+  const promoted = await visits.openVisit(pool, { userId: ada.id });
+  assert.deepEqual(promoted.seen, seenC, 'a promoted visit measures from current_seen as before');
+  assert.equal('need:proposal:9' in promoted.seen.needs, false);
+
   // A `seen` that is not one is refused and changes nothing.
   assert.equal(await visits.noteVisit(pool, { userId: ada.id, token: afterQuiet.visit, seen: { later: {} } }), null);
   assert.equal(await visits.noteVisit(pool, { userId: ada.id, token: 'short', seen: seenA }), null);
@@ -162,6 +189,19 @@ test('a person\'s visits to the Homeroom bot list', { timeout: 120000 }, async (
   const bobNext = await (await post('/api/ai/visit', bob.id, {})).json();
   assert.ok(bobNext.since);
   assert.deepEqual(bobNext.seen, seenB);
+  // A row opened through the route: 401 signed out, 400 for a row that is
+  // not one, 200 and the record learns it otherwise.
+  assert.equal((await post('/api/ai/visit/opened')).status, 401);
+  assert.equal((await post('/api/ai/visit/opened', bob.id, {
+    visit: bobNext.visit, band: 'later', identity: 'thread:1', standing: '',
+  })).status, 400);
+  const bobOpened = await post('/api/ai/visit/opened', bob.id, {
+    visit: bobNext.visit, band: 'done', identity: 'thread:77', standing: '',
+  });
+  assert.equal(bobOpened.status, 200);
+  assert.deepEqual(await bobOpened.json(), { ok: true });
+  const bobAgain = await (await post('/api/ai/visit', bob.id, { visit: bobNext.visit })).json();
+  assert.equal(bobAgain.seen.done['thread:77'], '', 'a reload in the visit has the opened row');
   // A page on a sibling subdomain cannot write a person's visits.
   const crossSite = await fetch(`${base}/api/ai/visit`, {
     method: 'POST',

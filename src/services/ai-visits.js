@@ -32,8 +32,15 @@
 // A first visit has nothing before it: `since` and `seen` are null until a
 // visit has ended, and the page marks nothing new by this rule.
 //
+// A ROW OPENED stops being new at once, for the rest of the visit (24 Nov
+// 2026, #7121): the page adds the row to the last visit's record
+// (noteOpened), and the list is drawn from it, so its dot, its share of the
+// band's count and its place above the line go. The line's time does not
+// move; a reload within the visit reads the patched record and agrees.
+//
 //   openVisit(db, { userId, token }) → { visit, since, seen }
 //   noteVisit(db, { userId, token, seen, left }) → { ok: true } | null
+//   noteOpened(db, { userId, token, band, identity, standing }) → { ok: true } | null
 //   parseSeen(raw)  → a cleaned `seen`, or null when it is not one
 //   demoVisit(lists, now) → staging's ?demo=1 answer (routes/ai-work.js)
 
@@ -223,6 +230,43 @@ async function noteVisit(pool, { userId, token: raw, seen: rawSeen, left = false
   });
 }
 
+/** Pure: a row opened, cleaned: its band, identity and standing, or null when any is not one. */
+function cleanOpened({ band, identity, standing } = {}) {
+  const name = typeof band === 'string' && BANDS.includes(band) ? band : null;
+  const key = typeof identity === 'string' && identity.length <= MAX_KEY && KEY.test(identity) ? identity : null;
+  const value = typeof standing === 'string' && standing.length <= MAX_VALUE && VALUE.test(standing) ? standing : null;
+  if (!name || !key || value == null) return null;
+  return { band: name, identity: key, standing: value };
+}
+
+/**
+ * A row was opened: the last visit's record learns it was seen, so its band
+ * no longer marks it new for the rest of the visit. A first visit has no
+ * record to learn it (`last_visit_seen` is null), so nothing is written.
+ * Null when the token, band, identity or standing is not one.
+ */
+async function noteOpened(pool, { userId, token: raw, band, identity, standing } = {}) {
+  const token = cleanToken(raw);
+  const entry = cleanOpened({ band, identity, standing });
+  if (!userId || !token || !entry) return null;
+  return transaction(pool, async (db) => {
+    const row = await lockRow(db, userId);
+    if (!row.last_visit_seen) return { ok: true };
+    const seen = parseSeen(row.last_visit_seen);
+    if (!seen) return { ok: true };
+    seen[entry.band][entry.identity] = entry.standing;
+    const clean = parseSeen(seen);
+    // A record at its bounds cannot take another row: the list is drawn from
+    // what it already had, rather than from half a list.
+    if (!clean) return { ok: true };
+    await db.query(
+      'UPDATE ai_list_visits SET last_visit_seen = $2, updated_at = NOW() WHERE user_id = $1',
+      [userId, JSON.stringify(clean)]
+    );
+    return { ok: true };
+  });
+}
+
 /**
  * Pure: staging's `?demo=1` answer (routes/ai-work.js): a last visit 70
  * minutes ago that saw every demo row but three, so the before & after shots
@@ -260,5 +304,5 @@ function demoVisit({ feed = [], work = {}, privateRoots = [] } = {}, now = Date.
 }
 
 module.exports = {
-  VISIT_GAP_MS, BANDS, MAX_ENTRIES, openVisit, noteVisit, parseSeen, openStep, liveTabs, demoVisit,
+  VISIT_GAP_MS, BANDS, MAX_ENTRIES, openVisit, noteVisit, noteOpened, parseSeen, openStep, liveTabs, demoVisit,
 };

@@ -140,8 +140,8 @@ import {
   standingsOf, upNext, withoutDismissed, type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
 import type { WorkStatePush } from '../../lib/work-state';
-import { useListVisit } from './use-visit';
-import { visitSeen } from './visit';
+import { noteOpened, useListVisit } from './use-visit';
+import { openedHistory, openedNeed, openedThread, visitSeen, withOpened, type OpenedEntry } from './visit';
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
@@ -931,6 +931,18 @@ export function AiScreen(): ReactNode {
   // which this visit leaves for the next one to measure from.
   const listSeen = useMemo(() => visitSeen(rows, progress, waiting, live), [rows, progress, waiting, live]);
   const lastVisit = useListVisit({ visible, session, ready: !!work && !!needs, seen: listSeen, demo: demoQuery() });
+  // #7121: a row opened during this visit stops being new at once: the
+  // page's copy of the last visit learns it (withOpened), and the server's
+  // does too (noteOpened), so a reload in the same visit agrees. A fresh
+  // answer from the server replaces the patched copy, with the entries it
+  // was told about already in it.
+  const [shownVisit, setShownVisit] = useState(lastVisit);
+  useEffect(() => { setShownVisit(lastVisit); }, [lastVisit]);
+  const seeOpened = (entry: OpenedEntry) => {
+    if (!lastVisit) return;
+    setShownVisit((now) => withOpened(now ?? lastVisit, ...entry));
+    noteOpened(entry[0], entry[1], entry[2], demoQuery());
+  };
   const history = useHistory({
     showing: showings,
     signedIn: mounted && typeof window !== 'undefined' && !!(window as any).App?.user,
@@ -1071,6 +1083,7 @@ export function AiScreen(): ReactNode {
     return took;
   };
   const openRow = (row: WorkRow) => {
+    seeOpened(openedNeed(row));
     markThreadRead(row.threadId, row.app, row.rootId);
     if (row.rootId) {
       openPrivate(row.rootId);
@@ -1087,6 +1100,7 @@ export function AiScreen(): ReactNode {
     if (openPage(row.href, row.app, row.title, aboutRow(row)) && messageId && slug) sidePanel()?.revealMessage?.(slug, messageId);
   };
   const openThread = (th: AiThread) => {
+    seeOpened(openedThread(th));
     markThreadRead(th.threadId, th.app, th.rootId);
     // #6153: a request filed from a private thread opens that thread, where
     // its design and its story are, rather than the request's page.
@@ -1099,6 +1113,7 @@ export function AiScreen(): ReactNode {
   // A History row opens what it names: a private thread in the column, a
   // request, a change or a decision on its page, as the lists' rows do.
   const openHistory = (row: HistoryRow) => {
+    seeOpened(openedHistory(row));
     if (row.rootId) {
       openPrivate(row.rootId);
       return;
@@ -1423,7 +1438,7 @@ export function AiScreen(): ReactNode {
           openHistory={openHistory}
           historyRef={historyRef}
           doneOpen={toHistory}
-          visit={lastVisit}
+          visit={shownVisit}
           waitingOpen={waitingOpen}
           onOpenWaiting={openWaiting}
           onCloseWaiting={closeWaiting}
