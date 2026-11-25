@@ -320,6 +320,15 @@ const POINTER_LEFT_ON_PAGE = new Set([
   'browser_mouse_down', 'browser_mouse_up',
 ]);
 const POINTER_PLACED = new Set(['browser_hover', 'browser_mouse_move_xy']);
+// While the shots tools hold this browser (startControl `hold`: its close-ups
+// are taken behind save_shot's answer), the agent's calls that could change
+// the page wait; these leave it as it stands and go on. The tools' own calls
+// (inject) always go first. A hold ends when it is released, or on its own.
+const HOLD_FREE = new Set([
+  'browser_snapshot', 'browser_take_screenshot', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests',
+]);
+const HOLD_MAX_MS = 45_000;
 const ANY_ID = /"id"\s*:\s*(?:"([^"\\]{1,120})"|(-?\d{1,16}))/g;
 
 function parkRequest(id) {
@@ -372,7 +381,10 @@ function createPointerParker({
   let resume = null;
   let flushed = null;
   let closed = false;
-  const queue = []; // { line: Buffer, tool, key, parked }
+  const queue = []; // { line: Buffer, tool, key, parked, injected }
+  let heldUntil = 0;
+  let holdTimer = null;
+  const holding = () => heldUntil > now();
   const inSplit = lineSplitter();
   const enqueue = (line) => {
     let tool = null;
@@ -435,6 +447,11 @@ function createPointerParker({
   const drain = () => {
     if (closed) return;
     while (!waiting && queue.length) {
+      if (holding() && !queue[0].injected && !HOLD_FREE.has(queue[0].tool)) {
+        const own = queue.findIndex((entry) => entry.injected);
+        if (own < 0) break;
+        queue.unshift(...queue.splice(own, 1));
+      }
       const item = queue[0];
       const parksHere = item.tool === 'browser_take_screenshot'
         || (parkBeforeClose && item.tool === 'browser_close');
@@ -607,13 +624,30 @@ function createPointerParker({
         queue.push({
           line: Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call',
             params: { name, arguments: args } })}\n`),
-          tool: name, key: JSON.stringify(id), parked: false,
+          tool: name, key: JSON.stringify(id), parked: false, injected: true,
         });
         drain();
       });
     },
+    // Hold the agent's page-changing calls for at most `ms` (HOLD_MAX_MS).
+    hold(ms) {
+      const span = Math.max(0, Math.min(Number(ms) || 0, HOLD_MAX_MS));
+      clearTimeout(holdTimer);
+      heldUntil = now() + span;
+      holdTimer = setTimeout(() => { heldUntil = 0; holdTimer = null; drain(); }, span);
+      holdTimer.unref?.();
+      return span;
+    },
+    release() {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      heldUntil = 0;
+      drain();
+    },
     // The browser is gone: stop waiting, and send nothing more.
     close() {
+      clearTimeout(holdTimer);
+      heldUntil = 0;
       closed = true;
       if (waiting) clearTimeout(waiting.timer);
       clearTimeout(placementTimer);
@@ -719,13 +753,25 @@ function closeupArgs(message) {
 
 function startControl({ dir, name, token, samplesDir, parker, emit = () => {}, browser = {}, onAnswer = null, onCloseup = null }) {
   if (!dir || !/^[0-9a-f]{64}$/.test(String(token || ''))
-      || !/^(member|admin|full_admin|guest)(_phone)?$/.test(String(name || ''))) return null;
+      || !/^(member|admin|full_admin|guest)(_phone)?(_before)?$/.test(String(name || ''))) return null;
   const socketPath = path.join(dir, `${name}.sock`);
   try { fs.unlinkSync(socketPath); } catch { /* none left over */ }
   const handle = async (line) => {
     let message;
     try { message = JSON.parse(line); } catch { return { ok: false, code: 'invalid_request' }; }
     if (!sameToken(message?.token, token)) return { ok: false, code: 'forbidden' };
+    // The shots tools take this browser's close-ups behind save_shot's
+    // answer: until they release it (or HOLD_MAX_MS), the agent's next call
+    // that could change the page waits.
+    if (message.action === 'hold') {
+      const ms = parker.hold(message.ms);
+      emit({ kind: 'browser_hold', ...browser, outcome: 'ok', durationMs: ms });
+      return { ok: true, ms };
+    }
+    if (message.action === 'release') {
+      parker.release();
+      return { ok: true };
+    }
     if (message.action === 'closeup') {
       const closeup = closeupArgs(message);
       if (!closeup) return { ok: false, code: 'invalid_closeup' };
@@ -819,7 +865,7 @@ function browserCommand(value = process.env.SHOTS_BROWSER_MCP_COMMAND) {
   return ['playwright-mcp'];
 }
 
-function start({ persona, phone = false, args, binary = null,
+function start({ persona, phone = false, before = false, args, binary = null,
   recordsClips = process.env.SHOTS_RECORD_CLIPS === '1',
   stdin = process.stdin, stdout = process.stdout, stderr = process.stderr,
   diagnosticFile = process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE,
@@ -858,7 +904,7 @@ function start({ persona, phone = false, args, binary = null,
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
   const inputTap = lineTap((line, meta) => observer.request(line, meta));
   const control = startControl({
-    dir: controlDir, name: `${safePersona}${phone === true ? '_phone' : ''}`, token: controlToken,
+    dir: controlDir, name: `${safePersona}${phone === true ? '_phone' : ''}${before === true ? '_before' : ''}`, token: controlToken,
     samplesDir, parker, emit, browser: { persona: safePersona, ...(phone === true ? { phone: true } : {}) },
     onAnswer: (answer) => observer.noteAnswer(answer.text),
     onCloseup: (file) => observer.stampCloseup(file),
@@ -893,10 +939,11 @@ function start({ persona, phone = false, args, binary = null,
 }
 
 // The browser this wrapper observes: a persona's (its output directory's
-// name), or its phone browser's, `<persona>_phone` (write-shots-mcp-config.js).
+// name), or its phone browser's, `<persona>_phone`, or either one's twin
+// for the before side, `<…>_before` (write-shots-mcp-config.js).
 function browserName(value) {
-  const match = /^(member|admin|full_admin|guest)(_phone)?$/.exec(String(value || ''));
-  return match ? { persona: match[1], phone: !!match[2] } : null;
+  const match = /^(member|admin|full_admin|guest)(_phone)?(_before)?$/.exec(String(value || ''));
+  return match ? { persona: match[1], phone: !!match[2], ...(match[3] ? { before: true } : {}) } : null;
 }
 
 if (require.main === module) {

@@ -76,7 +76,7 @@ test('planner origin list rejects stale or malformed hosted-app catalogs', () =>
   }
 });
 
-const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+const SHOTS_TOOLS = ['get_brief', 'save_shot', 'finish_shots', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
   'control_request', 'upload_file'];
 const RETIRED_TOOLS = /evidence_(?:get_context|run_plan|finish|capture|report_blocker|set_request_failure|reset_pair|reset_side)/;
 
@@ -670,12 +670,15 @@ function bridgeFixture(t, { declaredChanges, darkMode = null } = {}) {
   const { tools, serverInfo } = loadBridge(env, platformFetch);
   const call = async (name, args = {}) => {
     const result = await tools.get(name)(args);
+    // save_shot stores behind its answer (worker/shots-mcp.js): these tests
+    // read what reached Homeroom, so they wait for it as finish_shots does.
+    if (name === 'save_shot') await tools.get('finish_shots')({});
     return { isError: result.isError === true, value: JSON.parse(result.content[0].text) };
   };
   return { dir, shotsDir, runId, env, calls, tools, serverInfo, call, platformFetch };
 }
 
-test('the shots bridge offers exactly nine tools and talks only to its own run', async (t) => {
+test('the shots bridge offers exactly ten tools and talks only to its own run', async (t) => {
   const bridge = bridgeFixture(t);
   assert.equal(bridge.serverInfo.name, 'usernode-before-after-shots');
   assert.deepEqual([...bridge.tools.keys()], SHOTS_TOOLS);
@@ -766,7 +769,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
 
   const saved = await bridge.call('save_shot', { shots: [{ ...shot, file: 'invite-desktop-after.png' }] });
   assert.equal(saved.isError, false);
-  assert.equal(saved.value.saved, 1);
+  assert.equal(saved.value.accepted, 1);
   assert.deepEqual(bridge.calls.map((sent) => sent.path),
     [`/api/internal/shots/${bridge.runId}/context`, `/api/internal/shots/${bridge.runId}/shot`],
     'the run\'s own addresses come from its brief');
@@ -812,7 +815,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     { ...shot, kind: 'element', file: 'never-taken.png' },
   ] });
   assert.equal(batch.isError, false, 'something saved, so the call is not an error');
-  assert.equal(batch.value.saved, 2);
+  assert.equal(batch.value.accepted, 2);
   assert.equal(batch.value.refused, 1);
   assert.equal(batch.value.results[2].error.code, 'shot_file_not_found');
   assert.deepEqual(uploads(bridge).slice(2).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
@@ -980,6 +983,8 @@ test('a phone screen\'s shots and clips are read from its phone browser\'s direc
     : platformFetch(url, init)));
   const call = async (name, args) => {
     const result = await tools.get(name)(args);
+    // A save is stored behind its answer: wait for it, as finish_shots does.
+    if (name === 'save_shot') await tools.get('finish_shots')({});
     return { isError: result.isError === true, value: JSON.parse(result.content[0].text) };
   };
   const member = path.join(bridge.shotsDir, 'member');
@@ -1262,6 +1267,7 @@ test('in a run taken at device density each saved still says its density: 3 from
       { change: 'invite-suggestions', screen: 'phone', side: 'after', file: 'narrow.png' },
     ] });
     assert.equal(result.isError === true, false);
+    await tools.get('finish_shots')({});
     const [wide, narrow] = uploads(bridge).slice(-2);
     assert.equal(wide.query.density, expected.desktop, `desktop, ${density}`);
     assert.equal(narrow.query.density, expected.phone, `phone, ${density}`);
@@ -1281,8 +1287,10 @@ test('in a dense run, save_shot has the screen\'s browser take the close-ups wan
       if (!data.includes('\n')) return;
       const message = JSON.parse(data);
       asked.push(message);
-      const file = `closeup-${String(asked.length).padStart(16, '0')}.png`;
-      fs.writeFileSync(path.join(member, file), `close-up ${asked.length}`);
+      if (message.action !== 'closeup') { socket.end(`${JSON.stringify({ ok: true })}\n`); return; }
+      const taken = asked.filter(({ action }) => action === 'closeup').length;
+      const file = `closeup-${String(taken).padStart(16, '0')}.png`;
+      fs.writeFileSync(path.join(member, file), `close-up ${taken}`);
       stamp(bridge, 'member', file, stampAt);
       socket.end(`${JSON.stringify({ ok: true, file })}\n`);
     });
@@ -1305,7 +1313,10 @@ test('in a dense run, save_shot has the screen\'s browser take the close-ups wan
     const result = await tools.get('save_shot')({ shots: [
       { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'invite-desktop-after.png' },
     ] });
-    return JSON.parse(result.content[0].text);
+    // The close-ups are taken behind the answer: finish_shots waits for them
+    // and says which were missed.
+    const done = JSON.parse((await tools.get('finish_shots')({})).content[0].text);
+    return { ...JSON.parse(result.content[0].text), done };
   };
 
   // A run not taken at device density asks for nothing.
@@ -1314,10 +1325,13 @@ test('in a dense run, save_shot has the screen\'s browser take the close-ups wan
   assert.equal(bridge.calls.some((sent) => sent.path.endsWith('/closeups')), false);
 
   const dense = await save({ SHOTS_DEVICE_DENSITY: '1' });
-  // Only the unsaved one of the change it saved, in that change's browser.
-  assert.deepEqual(dense.closeups, [{ change: 'invite-suggestions', screen: 'desktop', part: 1, scale: 6, saved: true }]);
-  assert.equal(Object.hasOwn(dense, 'closeupHint'), false);
-  assert.deepEqual(asked.map(({ action, rect, scale }) => ({ action, rect, scale })),
+  // Only the unsaved one of the change it saved, in that change's browser,
+  // which holds the agent's next page-changing call until it is taken.
+  assert.equal(Object.hasOwn(dense, 'closeups'), false, 'the answer does not wait for them');
+  assert.equal(Object.hasOwn(dense.done, 'earlier'), false, 'none was missed');
+  assert.deepEqual(asked.map(({ action }) => action), ['hold', 'closeup', 'release']);
+  assert.equal(asked[0].ms, 30_000);
+  assert.deepEqual(asked.filter(({ action }) => action === 'closeup').map(({ action, rect, scale }) => ({ action, rect, scale })),
     [{ action: 'closeup', rect: wanted[0].rect, scale: 6 }]);
   const upload = bridge.calls.at(-1);
   assert.equal(upload.path, `/api/internal/shots/${bridge.runId}/closeup`);
@@ -1327,8 +1341,9 @@ test('in a dense run, save_shot has the screen\'s browser take the close-ups wan
   // A close-up of the before address (the page moved on) is never sent, and the agent is told how to retake it.
   stampAt = `${BASE}/`;
   const moved = await save({ SHOTS_DEVICE_DENSITY: '1' });
-  assert.deepEqual(moved.closeups, [{ change: 'invite-suggestions', screen: 'desktop', part: 1, scale: 6, saved: false, code: 'shot_not_on_app' }]);
-  assert.match(moved.closeupHint, /Open its after state again, take the after screen shot again and save it/);
+  assert.deepEqual(moved.done.earlier[0].closeups,
+    [{ change: 'invite-suggestions', screen: 'desktop', part: 1, scale: 6, saved: false, code: 'shot_not_on_app' }]);
+  assert.match(moved.done.earlier[0].closeupHint, /Open its after state again, take the after screen shot again and save it/);
   assert.equal(bridge.calls.filter((sent) => sent.path.endsWith('/closeup')).length, 1, 'still only the first');
 });
 
@@ -1375,7 +1390,12 @@ test('save_shot takes each light screen\'s dark shot where the page stands, and 
     stamp(bridge, 'member', name, `${HEAD}/`);
     fs.utimesSync(path.join(member, name), when, when);
   };
-  const save = async (shots) => JSON.parse((await tools.get('save_shot')({ shots })).content[0].text);
+  const save = async (shots) => {
+    const answer = JSON.parse((await tools.get('save_shot')({ shots })).content[0].text);
+    // What Homeroom said about the uploads behind that answer.
+    const done = JSON.parse((await tools.get('finish_shots')({})).content[0].text);
+    return { ...answer, done };
+  };
   take('first-after.png', new Date(Date.now() - 60_000));
   take('second-after.png', new Date());
   const result = await save([
@@ -1392,9 +1412,10 @@ test('save_shot takes each light screen\'s dark shot where the page stands, and 
     [['saved-toast', 'screen', '1'], ['admin-banner', 'screen', undefined]]);
   assert.equal(Buffer.from(darkUploads[0].body).toString(), 'dark still 1');
   assert.deepEqual(result.dark, [
-    { change: 'saved-toast', screen: 'desktop', side: 'after', saved: true },
-    { change: 'admin-banner', screen: 'desktop', side: 'after', saved: true },
+    { change: 'saved-toast', screen: 'desktop', side: 'after', taken: true },
+    { change: 'admin-banner', screen: 'desktop', side: 'after', taken: true },
   ]);
+  assert.equal(Object.hasOwn(result.done, 'darkLeft'), false, 'Homeroom kept both');
   // The earlier screen is no longer on show: the agent takes its dark shot.
   assert.deepEqual(result.darkLeft, [{ change: 'invite-suggestions', screen: 'desktop', side: 'after' }]);
   assert.match(result.darkHint, /could not be taken where the page stands/);
@@ -1411,8 +1432,12 @@ test('save_shot takes each light screen\'s dark shot where the page stands, and 
   platformAnswer = (query) => (query.theme === 'dark' ? { saved: false, sameAsLight: true } : { saved: true });
   take('third-after.png', new Date());
   const same = await save([{ change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'third-after.png' }]);
-  assert.deepEqual(same.dark, [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', saved: false, sameAsLight: true }]);
-  assert.match(same.darkHint, /did not change when its page was switched to dark where it stands/);
+  assert.deepEqual(same.dark, [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', taken: true }]);
+  // Homeroom's answer comes behind it: the shot was not kept, and is the agent's.
+  assert.equal(same.done.earlier[0].sameAsLight, true);
+  assert.equal(same.done.earlier[0].theme, 'dark');
+  assert.deepEqual(same.done.darkLeft, [{ change: 'invite-suggestions', screen: 'desktop', side: 'after' }]);
+  assert.match(same.done.darkHint, /did not change when its page was switched to dark where it stands/);
   take('fourth-after.png', new Date());
   const after = await save([{ change: 'saved-toast', screen: 'desktop', side: 'after', file: 'fourth-after.png' }]);
   assert.equal(asked.length, 2, 'no more dark shots are asked of the browser');
@@ -1466,4 +1491,207 @@ test('save_shot sends an element shot\'s measured box, waits for one under way, 
   assert.equal('focus' in sent['element:none.png'], false, 'no box: saved as it always was');
   assert.equal('focus' in sent['screen:bar.png'], false, 'a screen shot never carries one');
   assert.match(read('shots-mcp.js'), /const ELEMENT_BOX_WAIT_MS = 3000;/);
+});
+
+// ── 25 Nov 2026: saving behind the answer, and both sides at once ────────
+//
+// Outreach PR 19's shots spent about half the agent's time in six save_shot
+// calls of 8 to 24 seconds, with the browser's next step queued behind each,
+// and walked the before side after the after side one model turn a step.
+
+test('save_shot answers before its uploads land; what Homeroom says comes back as earlier, and finish_shots waits for it', async (t) => {
+  const bridge = bridgeFixture(t);
+  const ledger = path.join(bridge.dir, 'uploads');
+  const member = path.join(bridge.shotsDir, 'member');
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let answer = () => ({ saved: true, sameAsOtherSide: true, warning: 'This before and after are the same image.', bytes: 9 });
+  const platformFetch = async (url, init) => {
+    const parsed = new URL(url);
+    if (!parsed.pathname.endsWith('/shot')) return bridge.platformFetch(url, init);
+    bridge.calls.push({ path: parsed.pathname, query: Object.fromEntries(parsed.searchParams) });
+    await gate;
+    const result = answer(Object.fromEntries(parsed.searchParams));
+    if (result.refuse) return new Response(JSON.stringify({ ok: false, code: result.refuse, message: 'Too tall.' }), { status: 400 });
+    return new Response(JSON.stringify({ ok: true, result: { ...result, progress: { ready: 1 } } }), { status: 200 });
+  };
+  const { tools } = loadBridge({ ...bridge.env, SHOTS_UPLOADS_FILE: ledger }, platformFetch);
+  const json = async (name, args = {}) => JSON.parse((await tools.get(name)(args)).content[0].text);
+  fs.writeFileSync(path.join(member, 'a-after.png'), 'after');
+  stamp(bridge, 'member', 'a-after.png', `${HEAD}/`);
+  fs.writeFileSync(path.join(member, 'a-before.png'), 'before');
+  stamp(bridge, 'member', 'a-before.png', `${BASE}/`);
+  const both = [
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'a-after.png', showsPrivate: false },
+    { change: 'invite-suggestions', screen: 'desktop', side: 'before', file: 'a-before.png' },
+  ];
+
+  const first = await json('save_shot', { shots: both });
+  assert.equal(first.accepted, 2);
+  assert.equal(first.pendingUploads, 2, 'answered while Homeroom still has them');
+  assert.deepEqual(first.results.map((entry) => entry.accepted), [true, true]);
+  assert.equal(fs.readFileSync(ledger, 'utf8'), '2 0\n', 'the runner can see they are pending');
+  release();
+  const done = await json('finish_shots');
+  assert.equal(done.settled, true);
+  assert.equal(done.pendingUploads, 0);
+  assert.deepEqual(done.earlier.map((entry) => [entry.side, entry.sameAsOtherSide]), [['after', true], ['before', true]]);
+  assert.match(done.earlier[0].warning, /same image/);
+  assert.ok(done.earlier.every((entry) => !Object.hasOwn(entry, 'bytes') && !Object.hasOwn(entry, 'showsPrivate')),
+    'only the words that matter, and never the agent\'s own answers');
+  assert.deepEqual(done.progress, { ready: 1 });
+  assert.equal(fs.readFileSync(ledger, 'utf8'), '0 0\n');
+
+  // Said once, and a plain save says nothing.
+  answer = () => ({ saved: true });
+  await json('save_shot', { shots: [both[0]] });
+  const quiet = await json('finish_shots');
+  assert.equal(Object.hasOwn(quiet, 'earlier'), false);
+
+  // A refusal behind one answer comes back with the next save_shot.
+  answer = (query) => (query.side === 'before' ? { refuse: 'shot_too_tall' } : { saved: true });
+  await json('save_shot', { shots: [both[1]] });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const next = await json('save_shot', { shots: [both[0]] });
+  assert.deepEqual(next.earlier.map((entry) => [entry.side, entry.saved, entry.error?.code]), [['before', false, 'shot_too_tall']]);
+  assert.match(next.earlierHint, /taken again/);
+  await json('finish_shots');
+});
+
+test('an upload that cannot reach Homeroom is tried again, then left for the agent to save again', async (t) => {
+  const bridge = bridgeFixture(t);
+  const ledger = path.join(bridge.dir, 'uploads');
+  const member = path.join(bridge.shotsDir, 'member');
+  let failing = 3;
+  const platformFetch = async (url, init) => {
+    const parsed = new URL(url);
+    if (!parsed.pathname.endsWith('/shot')) return bridge.platformFetch(url, init);
+    bridge.calls.push({ path: parsed.pathname });
+    if (failing > 0) { failing -= 1; return new Response('{"ok":false}', { status: 503 }); }
+    return new Response(JSON.stringify({ ok: true, result: { saved: true } }), { status: 200 });
+  };
+  const { tools } = loadBridge({ ...bridge.env, SHOTS_UPLOADS_FILE: ledger, SHOTS_UPLOAD_RETRY_MS: '0' }, platformFetch);
+  const json = async (name, args = {}) => JSON.parse((await tools.get(name)(args)).content[0].text);
+  fs.writeFileSync(path.join(member, 'b-after.png'), 'after');
+  stamp(bridge, 'member', 'b-after.png', `${HEAD}/`);
+  const shot = { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'b-after.png' };
+  await json('save_shot', { shots: [shot] });
+  const done = await json('finish_shots');
+  assert.equal(uploads(bridge).length, 3, 'tried three times');
+  assert.deepEqual(done.notUploaded, [{ ...shot, kind: 'screen' }]);
+  assert.match(done.notUploadedHint, /Save them again/);
+  assert.equal(fs.readFileSync(ledger, 'utf8'), '0 1\n', 'the runner sees one never landed');
+  await json('save_shot', { shots: [shot] });
+  const again = await json('finish_shots');
+  assert.equal(Object.hasOwn(again, 'notUploaded'), false);
+  assert.equal(fs.readFileSync(ledger, 'utf8'), '0 0\n', 'saved again, it landed');
+});
+
+test('a before shot and clip come from the browser\'s twin for the before side, still only from the before address', async (t) => {
+  const bridge = bridgeFixture(t);
+  const twin = path.join(bridge.shotsDir, 'member_before');
+  fs.mkdirSync(twin);
+  fs.writeFileSync(path.join(twin, 'c-before.png'), 'before, from the twin');
+  stamp(bridge, 'member_before', 'c-before.png', `${BASE}/`);
+  const saved = await bridge.call('save_shot', { shots: [
+    { change: 'invite-suggestions', screen: 'desktop', side: 'before', file: 'c-before.png' },
+  ] });
+  assert.equal(saved.isError, false);
+  assert.equal(Buffer.from(uploads(bridge).at(-1).body).toString(), 'before, from the twin');
+  const wrong = await bridge.call('save_shot', { shots: [
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'c-before.png' },
+  ] });
+  assert.equal(wrong.isError, true);
+  assert.equal(wrong.value.results[0].error.code, 'shot_not_on_app', 'a twin is checked by its page, like any browser');
+
+  // The brief names a twin only where this worker started one
+  // (SHOTS_TWIN_BROWSERS): never from the platform, whose brief cannot know
+  // which image the worker runs.
+  const context = (await bridge.call('get_brief')).value;
+  context.screenBrowsers = {
+    'saved-toast': { desktop: 'browser_member', phone: 'browser_member_phone' },
+    'admin-banner': { desktop: 'browser_admin' },
+  };
+  context.beforeScreenBrowsers = { 'admin-banner': { desktop: 'browser_admin_before' } };
+  const bridgeFor = (env, served = context) => loadBridge({ ...bridge.env, ...env }, async (url, init) => (
+    new URL(url).pathname.endsWith('/context')
+      ? new Response(JSON.stringify({ ok: true, context: served }), { status: 200 })
+      : bridge.platformFetch(url, init)));
+  const briefOf = async (tools) => JSON.parse((await tools.get('get_brief')({})).content[0].text);
+  const { tools } = bridgeFor({ SHOTS_TWIN_BROWSERS: '["browser_member"]' });
+  assert.deepEqual((await briefOf(tools)).beforeScreenBrowsers, { 'saved-toast': { desktop: 'browser_member_before' } },
+    'only the twins it has, whatever the platform sent');
+  const old = bridgeFor({});
+  assert.equal(Object.hasOwn(await briefOf(old.tools), 'beforeScreenBrowsers'), false, 'an older worker names none');
+  const afterOnly = bridgeFor({ SHOTS_TWIN_BROWSERS: '["browser_member"]' }, { ...context, afterOnly: { note: 'first version' } });
+  assert.equal(Object.hasOwn(await briefOf(afterOnly.tools), 'beforeScreenBrowsers'), false, 'an after-only run has no before side');
+  // Its clip, from the twin it has.
+  const clipFile = path.join(twin, 'twin-session.webm');
+  fs.writeFileSync(clipFile, 'twin clip');
+  const when = new Date(Date.now() - 1000);
+  fs.utimesSync(clipFile, when, when);
+  boundary.recordSession(twin, [`${BASE}/`]);
+  const clip = await tools.get('save_clip')({ change: 'saved-toast', screen: 'desktop', side: 'before' });
+  assert.equal(clip.isError === true, false, clip.content[0].text);
+  assert.equal(Buffer.from(uploads(bridge).at(-1).body).toString(), 'twin clip');
+});
+
+test('a run\'s declared browsers each get a twin for the before side, the same browser saving apart', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-twins-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { config } = writeConfig(dir, {
+    SHOTS_PHONE_PERSONAS: '["member"]',
+    SHOTS_TWIN_BROWSERS: '["browser_member","browser_member_phone"]',
+  });
+  const names = Object.keys(config.mcpServers);
+  assert.ok(names.includes('browser_member_before'));
+  assert.ok(names.includes('browser_member_phone_before'));
+  assert.equal(names.includes('browser_admin_before'), false, 'only the browsers the run shoots in');
+  const own = config.mcpServers.browser_member.args;
+  const twin = config.mcpServers.browser_member_before.args;
+  const arg = (args, flag) => args[args.indexOf(flag) + 1];
+  assert.equal(twin[1], 'member_before', 'observed as the twin');
+  assert.equal(arg(twin, '--storage-state'), arg(own, '--storage-state'), 'the same persona');
+  assert.equal(arg(twin, '--proxy-server'), arg(own, '--proxy-server'));
+  assert.equal(arg(twin, '--output-dir'), path.join(dir, 'shots', 'member_before'));
+  assert.ok(fs.existsSync(path.join(dir, 'shots', 'member_before')));
+  assert.ok(config.mcpServers.browser_member_phone_before.args.includes('--device'), 'a phone twin is a phone');
+  const plain = writeConfig(dir).config;
+  assert.equal(Object.keys(plain.mcpServers).some((name) => name.endsWith('_before')), false, 'none unless named');
+
+  // The runner denies every twin the browser tools it denies its browser.
+  const runner = read('run-cc.sh');
+  assert.match(runner, /for SHOTS_TWIN_SERVER in "browser_\$\{SHOTS_TWIN_PERSONA\}_before" "browser_\$\{SHOTS_TWIN_PERSONA\}_phone_before"; do/);
+  assert.match(runner, /for SHOTS_TWIN_DENIED in browser_evaluate browser_run_code browser_run_code_unsafe browser_file_upload browser_drop; do/);
+  assert.match(runner, /for SHOTS_TWIN_PERSONA in member admin full_admin guest invited_member invited_member_listed; do/);
+  // The platform hands the list on, and refuses anything but browser servers.
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(worker, /SHOTS_TWIN_BROWSERS: JSON\.stringify\(\[\.\.\.new Set\(shotsTwinBrowsers\)\]\)/);
+  assert.match(worker, /shots twin browsers must be a list of browser servers/);
+});
+
+test('a shots turn waits for the bridge\'s uploads after claude exits, and says when some never landed', (t) => {
+  const runner = read('run-cc.sh');
+  assert.match(runner, /export SHOTS_UPLOADS_FILE="\$SHOTS_TMP\/uploads"/);
+  const start = runner.indexOf('if [ "$MODE" = "shots" ] && [ -n "$SHOTS_UPLOADS_FILE" ]; then');
+  const block = runner.slice(start, runner.indexOf('\nfi\n', start) + 4);
+  assert.ok(start > runner.lastIndexOf('run_claude --print'), 'after claude exits');
+  assert.ok(start < runner.indexOf('echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0'), 'before the turn ends');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-wait-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ledger = path.join(dir, 'uploads');
+  const run = (script) => require('node:child_process').spawnSync('bash', ['-c', script], {
+    env: { ...process.env, MODE: 'shots', SHOTS_UPLOADS_FILE: ledger }, encoding: 'utf8',
+  });
+  // Pending for a moment, then landed: it waits, and says nothing.
+  fs.writeFileSync(ledger, '1 0\n');
+  const started = Date.now();
+  const waited = run(`( sleep 0.5; printf '0 0\\n' > "${ledger}" ) & ${block}`);
+  assert.equal(waited.status, 0, waited.stderr);
+  assert.ok(Date.now() - started >= 400, 'it waited for the uploads');
+  assert.equal(waited.stdout, '');
+  // One never landed: it says so, and the turn goes on.
+  fs.writeFileSync(ledger, '0 1\n');
+  const told = run(block);
+  assert.match(told.stdout, /__USERNODE_WARN__ The shots agent's uploads did not all reach Homeroom \(pending=0 unsaved=1\)/);
 });

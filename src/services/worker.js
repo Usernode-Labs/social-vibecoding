@@ -552,7 +552,7 @@ function claudeTurnModel(mode, model) {
 // text, tool arguments/results, URLs, provider messages and journal lines can
 // contain private app data or credentials and must never enter a run trace.
 const SHOTS_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'get_brief', 'save_shot', 'finish_shots', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
   'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
@@ -566,8 +566,11 @@ const SHOTS_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 
-// Each persona's browser server, and its phone browser (`_phone`).
-const SHOTS_BROWSER_SERVER = /^browser_(member|admin|full_admin|guest|invited_member|invited_member_listed)(_phone)?$/;
+// Each persona's browser server, and its phone browser (`_phone`), and
+// either one's twin for the before side (`_before`).
+const SHOTS_BROWSER_SERVER = /^browser_(member|admin|full_admin|guest|invited_member|invited_member_listed)(_phone)?(?:_before)?$/;
+// A browser server's name as a run lists the ones to twin.
+const SHOTS_TWIN_SERVER = /^browser_(member|admin|full_admin|guest|invited_member|invited_member_listed)(_phone)?$/;
 // The personas a shots turn may give a phone browser (visible-changes.PERSONAS).
 const SHOTS_PERSONAS = new Set([
   'member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed',
@@ -3693,6 +3696,10 @@ async function execInWorker(sessionId, {
   // The desktop browser servers this run starts: the four ordinary ones,
   // plus an invited fixture's when the declared changes name it.
   shotsBrowserPersonas = null,
+  // The browser servers that get a twin for the before side, so both sides
+  // of a state are shot in one turn (write-shots-mcp-config.js): those the
+  // run's declared changes are shot in, none for an after-only run.
+  shotsTwinBrowsers = [],
   // The app under test is a child app: the shots proxy serves its
   // /usernode-bridge|native|tailwind/ requests from the platform, as the
   // production edge does. The platform's own pairs serve their own.
@@ -3900,6 +3907,10 @@ async function execInWorker(sessionId, {
             || !parseShotsBrowserPersonas(shotsBrowserPersonas))) {
       throw new Error('execInWorker: shots browser personas must be a list of personas');
     }
+    if (!Array.isArray(shotsTwinBrowsers)
+        || !shotsTwinBrowsers.every((name) => SHOTS_TWIN_SERVER.test(String(name)))) {
+      throw new Error('execInWorker: shots twin browsers must be a list of browser servers');
+    }
     if (typeof shotsPlatformAssets !== 'boolean') {
       throw new Error('execInWorker: shots platform assets must be boolean');
     }
@@ -4014,6 +4025,7 @@ async function execInWorker(sessionId, {
       ...(shotsRecordClips && shotsClipSize ? { SHOTS_CLIP_SIZE: String(shotsClipSize) } : {}),
       ...(shotsRecordClips && shotsPhoneClipSize ? { SHOTS_PHONE_CLIP_SIZE: String(shotsPhoneClipSize) } : {}),
       SHOTS_PHONE_PERSONAS: JSON.stringify([...new Set(shotsPhonePersonas)]),
+      SHOTS_TWIN_BROWSERS: JSON.stringify([...new Set(shotsTwinBrowsers)]),
       SHOTS_BROWSER_PERSONAS: JSON.stringify([...new Set(parseShotsBrowserPersonas(shotsBrowserPersonas)
         || SHOTS_BROWSER_PERSONAS_DEFAULT)]),
       // Where the listed invited member's browser records that it has been
