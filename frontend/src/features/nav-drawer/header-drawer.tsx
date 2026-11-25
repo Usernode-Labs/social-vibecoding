@@ -138,7 +138,9 @@ export function DrawerBack(): ReactNode {
   const { shown } = useStoreState(drawerStore);
   const { subTab } = useStoreState(improveStore) as { subTab: string | null };
   const topicName = useTopicBackName();
-  if (mode === 'messages') return <BackDisc mode={mode} label={t('core:header.drawer.toMessages')} onBack={messagesBack} />;
+  // One look: the drawer can be the Homeroom bot tab's, whose arrow names its own list.
+  const { back } = useStoreState(messagesDrawerStore);
+  if (mode === 'messages') return <BackDisc mode={mode} label={back || t('core:header.drawer.toMessages')} onBack={messagesBack} />;
   if (mode !== 'communities') return null;
   // A request's or a change's page has ONE back, to the place its chip names
   // (../dev-board/topic/topic-back.tsx; two arrows to two places was audit
@@ -265,7 +267,7 @@ export function DrawerTitles(): ReactNode {
     s.style.opacity = String(words.subOpacity);
     s.style.transform = translate(words.subX, words.subY);
   }, () => slot.current, redraw);
-  const outerName = messages ? t('core:header.drawer.messages') : t('core:header.communities');
+  const outerName = messages ? conversation.list || t('core:header.drawer.messages') : t('core:header.communities');
   return (
     <span ref={box} className="nav-drawer-titles" data-nav-drawer-titles="">
       <span ref={outer} className="nav-drawer-title" aria-hidden={!outerShown || undefined}>
@@ -318,8 +320,9 @@ function Untint(): ReactNode {
  * the bar's width.
  */
 export function ChatBarSlot(): ReactNode {
-  const { on, level } = useStoreState(messagesDrawerStore);
+  const { on, level, list } = useStoreState(messagesDrawerStore);
   const host = useCallback((el: HTMLSpanElement | null) => { publishChatBarHost(el); }, []);
-  if (!on || level !== 1) return null;
+  // One look: the Homeroom bot tab's New chat borrows the drawer (`list`) and has no discs to bring up.
+  if (!on || level !== 1 || list) return null;
   return <span ref={host} className="nav-drawer-chat-actions" data-nav-drawer-chat-actions="" />;
 }

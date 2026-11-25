@@ -123,7 +123,8 @@ test('the blank thread reads nothing and saves nothing in its first render, and 
     assert.match(html, new RegExp(`${escapeRe(words)}<span class="messages-start-more">…</span>`));
   }
   // Any project, on the chip over the box; the picker is not drawn until it is opened.
-  assert.match(html, new RegExp(`class="messages-project-chip" data-bot-new-thread-project=""[^>]*aria-expanded="false"[^>]*>[\\s\\S]*?${escapeRe(message('messages:newThread.anyProject'))}`));
+  // One look (25 Nov 2026): the chip is also the shared menu chip (one-chip).
+  assert.match(html, new RegExp(`class="messages-project-chip one-chip" data-bot-new-thread-project=""[^>]*aria-expanded="false"[^>]*>[\\s\\S]*?${escapeRe(message('messages:newThread.anyProject'))}`));
   assert.doesNotMatch(html, /id="bot-project-picker"/);
   assert.doesNotMatch(html, /data-bot-new-thread-draws/, 'the drawing line only once a design start begins the message');
   assert.deepEqual([...mod.CHANGE_KINDS], ['any', 'fix', 'add', 'design']);
@@ -343,16 +344,17 @@ test('who works on it: Homeroom bot by default, on a chip beside the project\'s,
   const { mod, calls } = load();
   const html = renderToHtml(createElement(mod.NewThreadPanel, { conversationId: 7 }));
   assert.deepEqual(calls, [], 'the connections are not read until the picker is opened');
-  const chip = html.match(/<button type="button" class="messages-project-chip" data-bot-new-thread-builder="homeroom"[^>]*>[\s\S]*?<\/button>/);
+  // One look (25 Nov 2026): both chips are the shared menu chip, the label its quiet lead word.
+  const chip = html.match(/<button type="button" class="messages-project-chip one-chip" data-bot-new-thread-builder="homeroom"[^>]*>[\s\S]*?<\/button>/);
   assert.ok(chip, 'the builder chip is the project chip\'s own class');
   assert.match(chip[0], /aria-haspopup="dialog" aria-expanded="false"/);
   assert.doesNotMatch(chip[0], /data-picked/, 'tinted only for a pick of the person\'s own');
   // Phone review S13: each chip says what it picks, in words that are also
   // its name for a screen reader, on one shared fill.
-  assert.match(chip[0], /<span class="messages-project-chip-name"><span class="messages-project-chip-label">With:<\/span> Homeroom bot<\/span>/);
+  assert.match(chip[0], /<span class="messages-project-chip-name"><span class="messages-project-chip-label one-chip-lead">With:<\/span> Homeroom bot<\/span>/);
   assert.doesNotMatch(chip[0], /aria-label=|title=|style=/, 'its words name it; no tint is set');
-  const project = html.match(/<button type="button" class="messages-project-chip" data-bot-new-thread-project=""[^>]*>[\s\S]*?<\/button>/);
-  assert.match(project[0], new RegExp(`<span class="messages-project-chip-label">About:</span> ${escapeRe(message('messages:newThread.anyProject'))}`));
+  const project = html.match(/<button type="button" class="messages-project-chip one-chip" data-bot-new-thread-project=""[^>]*>[\s\S]*?<\/button>/);
+  assert.match(project[0], new RegExp(`<span class="messages-project-chip-label one-chip-lead">About:</span> ${escapeRe(message('messages:newThread.anyProject'))}`));
   assert.match(chip[0], new RegExp(escapeRe(message('messages:newThread.builder.homeroom.name'))));
   assert.ok(html.indexOf('data-bot-new-thread-project=""') < html.indexOf('data-bot-new-thread-builder="homeroom"'), 'after the project\'s chip');
   // Homeroom bot's thread is as it was: its own words under the title, its send, no steps.

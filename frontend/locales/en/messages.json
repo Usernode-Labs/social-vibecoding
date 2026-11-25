@@ -4015,9 +4015,17 @@
     "text": "With Homeroom bot, only you can see it",
     "description": "Line under the title of the new chat pane: the thread it starts is private to the person."
   },
+  "newThread.barSub": {
+    "text": "Only you can see it",
+    "description": "On a phone, the small line under New chat in the top bar while a new chat with Homeroom bot is open: the thread it starts is private to the person."
+  },
   "newThread.close": {
     "text": "Close",
     "description": "Closes the new chat pane without starting anything."
+  },
+  "newThread.back": {
+    "text": "Back to Homeroom bot",
+    "description": "On a phone, the accessible name and tooltip of the back button in the top bar while a new chat with Homeroom bot is open: slides back to the Homeroom bot tab's list of threads."
   },
   "newThread.project": {
     "text": "Project",

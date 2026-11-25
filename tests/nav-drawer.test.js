@@ -309,7 +309,8 @@ test('the Messages screen: the panes are the levels, the list is alone, the arro
   assert.match(drawer, /if \(!on \|\| level === 0\) return undefined;\s*const from = level;\s*const takesEdge = pageTakesEdge\(\);/,
     'the list has nothing beside it to pan to');
   const header = read(`${DIR}/header-drawer.tsx`);
-  assert.match(header, /if \(mode === 'messages'\) return <BackDisc mode=\{mode\} label=\{t\('core:header\.drawer\.toMessages'\)\} onBack=\{messagesBack\} \/>;/);
+  // One look (25 Nov 2026): the Homeroom bot tab's New chat borrows this drawer and names its own arrow (features/ai/new-chat-bar.ts).
+  assert.match(header, /if \(mode === 'messages'\) return <BackDisc mode=\{mode\} label=\{back \|\| t\('core:header\.drawer\.toMessages'\)\} onBack=\{messagesBack\} \/>;/);
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-layout\.messages-drawer\.messages-drawer-alone > \.messages-list-pane/, 'alone, the list is the whole screen');
   assert.doesNotMatch(css, /\.messages-thread-peek|\.messages-peek-open/, 'nothing peeks');
