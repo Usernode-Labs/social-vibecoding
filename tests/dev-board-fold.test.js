@@ -1819,7 +1819,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Waiting on you, a list at `#homeroom-bot/waiting`: its own route, which no
   // check opens, so nothing could take it in a :has(). The count's new link
   // rides the #6019 check on the tab's own route. 706 leaves 174 slots.
-  checkCap.assertPinned(DAPP.tests.length, 706);
+  // 706 → 707: +1 (request 6988) a request whose Homeroom bot close offer has
+  // gone still offers Propose to close in its thread, which opens the close
+  // dialog with the bot's reason filled in; no existing check opens that
+  // seeded request's page or that state. 707 leaves 173 slots.
+  checkCap.assertPinned(DAPP.tests.length, 707);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

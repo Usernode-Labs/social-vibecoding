@@ -1666,7 +1666,8 @@ test('the divider is drawn on the line between the two halves, not inside the pa
   // #6447: below 1024px the list's 16px gutter is the gap you see between the
   // two sheets, so the handle sits in the middle of it, 8px toward the list.
   // A desktop alone keeps the pane's edge.
-  assert.match(CSS, /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/,
+  // With the list hidden there is no list to move towards (24 Nov 2026).
+  assert.match(CSS, /@media \(max-width: 1023\.98px\) \{\s*body:has\(#ai-screen:not\(\.hidden\):not\(\[data-ai-list-closed\]\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);\s*\}\s*\}/,
     'a narrow window centres the handle in the gap between the two cards');
   assert.match(CSS, /\.side-panel-divider::after \{[^}]*inset-inline-start: calc\(50% - 1\.5px\);/, 'the bar on the line too');
   // #6397: below the pane's 28px rounded top corner, not beside the curve.
@@ -1844,7 +1845,7 @@ test('a page\'s status pill is reported only for the route it was published on (
   }
 });
 
-test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in the page (#6431)', () => {
+test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in the page (#6431)', async () => {
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
   // Copy link, Open in workshop, a divider, then the page's rows — read when
   // the menu opens, and run in the panel's document.
@@ -1880,6 +1881,11 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   assert.equal(api.SidePanel.panelMenuRows()[2].disabled, true, 'a row with no action is unavailable here too');
   assert.equal(api.SidePanel.panelMenuRows()[1].title, 'Follow this thread', 'its tooltip comes with it');
   api.SidePanel.runPanelMenuRow(1, 'Notify me');
+  // #6988: the row runs on the next frame, after the column's menu has
+  // closed, so a row that opens a dialog in the page is not swallowed by the
+  // menu's own click dispatch.
+  assert.equal(following, false, 'not inside the menu row\'s click');
+  await new Promise((r) => setTimeout(r, 0));
   assert.equal(following, true, 'the row ran in the page');
   assert.equal(api.SidePanel.panelMenuRows()[1].label, 'Mute', 'and the next opening says Mute');
   // #7000: the page's ⋯ now opens with a Copy link row. The column keeps its
@@ -1900,6 +1906,31 @@ test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in t
   assert.deepEqual(api.SidePanel.panelMenuRows(), []);
   api.embeddedApi.head('app/x/dev/changes/6430', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:6430' });
   assert.deepEqual(api.SidePanel.panelMenuRows(), [], 'a head for another page lists nothing here');
+  api.sidePanelRefs.frame = null;
+  api._resetForTests();
+});
+
+test('#6988: the column\'s ⋯ runs Propose to close from the frame, opening its dialog', async () => {
+  const opened = [];
+  const list = () => [
+    { label: 'Reply to Homeroom bot', act: () => opened.push('reply') },
+    { label: 'Propose to close', act: () => opened.push('close') },
+  ];
+  const av = {
+    _cardMenuItems: () => list(),
+    _cardMenuRowItem: (all, idx, label) => all.find((x) => x.label === label) || all[idx],
+    promptCloseIssue: (n) => opened.push(`close:${n}`),
+  };
+  besideBot('app/x/dev/issues/37', { kind: 'request', pill: PILL_BUILDING, menuKey: 'request:37' });
+  api.sidePanelRefs.frame = { contentWindow: { AppView: av } };
+  // The menu's index is stale (a filtered row shifted), but the label names
+  // the row that was pressed.
+  api.SidePanel.runPanelMenuRow(1, 'Reply to Homeroom bot');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(opened, ['reply'], 'the row the label named, not its neighbour');
+  api.SidePanel.runPanelMenuRow(1, 'Propose to close');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(opened, ['reply', 'close'], 'Propose to close ran in the page');
   api.sidePanelRefs.frame = null;
   api._resetForTests();
 });

@@ -368,10 +368,20 @@ test('the identity card renders picture, name and the way in to editing', () => 
     profileViewTsx.indexOf('function StatCards(')
   );
   assert.ok(fn.length, 'IdentityCard must exist');
-  assert.match(fn, /IdentityAvatar/, 'the picture, or the initial-in-a-circle fallback');
+  assert.match(fn, /IdentityAvatar/, 'the picture, or the brand pair fallback');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
   assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
+  // #7109: with no photo the picture is the brand's boy and girl side by side,
+  // not the person's first letter.
+  const avatar = profileViewTsx.slice(
+    profileViewTsx.indexOf('function IdentityAvatar('),
+    profileViewTsx.indexOf('function IdentityCard(')
+  );
+  assert.ok(avatar.length, 'IdentityAvatar must exist');
+  assert.match(avatar, /\/brand\/groups\/avatar-m3\.webp/, 'the brand boy is the no-photo fallback');
+  assert.match(avatar, /\/brand\/groups\/avatar-f3\.webp/, 'the brand girl is the no-photo fallback');
+  assert.doesNotMatch(avatar, /\{initial\}/, 'the first letter is no longer drawn');
   // The builder-profile chip left the card: the viewer's proposed PRs are
   // Your changes now (UI overhaul; they were "See all" over Your
   // contributions, which went with it).

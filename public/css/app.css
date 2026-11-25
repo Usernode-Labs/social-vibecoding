@@ -11271,32 +11271,8 @@ html:not([data-skin]) #profile-live-projects .profile-project-empty { padding: 1
   html:not([data-skin]) #profile-root #profile-stats { grid-row: 1; align-self: end; justify-self: end; width: 42%; z-index: 1; margin: 0 1.5rem 0.75rem 0; }
   html:not([data-skin]) #profile-stats > [data-profile-stat] { padding-block: 0.5rem; }
 }
-/* The supplied brand pack: an ivory page under a fading cloud-and-star sky.
-   These are page treatments, including the navigation while either is open. */
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) {
-  --wip-nav-bg: var(--ed-ground);
-  --wip-nav-ink: var(--ed-ink);
-  --wip-nav-ink-strong: var(--ed-ink);
-  --wip-nav-mut: var(--ed-muted);
-  --wip-nav-faint: var(--ed-muted);
-  --wip-nav-hover: var(--ed-well);
-  --wip-nav-count-bg: var(--ed-lit-bg);
-  --wip-nav-count-ink: var(--ed-ink);
-  --wip-nav-foot-line: var(--ed-line);
-  --wip-nav-brand-logo: url('/brand/editorial/homeroom-wordmark-black.svg');
-  background: var(--ed-ground);
-}
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs {
-  border-inline-end: 1px solid var(--ed-rule);
-  background: var(--ed-ground);
-}
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-header {
-  border-radius: 0;
-  background: var(--ed-ground);
-  box-shadow: inset 0 -1px 0 var(--ed-rule);
-  color: var(--ed-ink);
-}
-html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs .platform-tab { font-weight: 400; }
+/* The supplied brand pack styles the Profile and Settings content only.
+   The shared header and platform navigation keep their global shell styles. */
 html:not([data-skin]) :is(#profile-screen, #settings-screen) {
   background: var(--ed-ground);
   border-radius: 0;
@@ -11307,6 +11283,26 @@ html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-ca
   padding: 0 1.75rem 3rem;
   background: var(--ed-page-veil), var(--ed-stars) center top / 100% 18rem no-repeat, var(--ed-sky) center top / 100% 18rem no-repeat;
   background-blend-mode: normal, screen, normal;
+}
+/* THE SKY MEETS THE BAR (#7107). From 768px the bar is drawn without a fill
+   and its foot line sits 8px above its box's bottom, so the screen began
+   8px below the line and that strip showed the ground above the sky. The
+   screen tucks those 8px back up under the bar's transparent foot, and the
+   root gives them back as top padding, so the sky starts at the line while
+   every card, the identity block, the Settings head and the sidebar stay
+   where they were. Below 768px the phone's bar is opaque and overlapped the
+   page already, so there is nothing to close. */
+@media (min-width: 768px) {
+  html:not([data-skin]) :is(#profile-screen:has(#profile-identity-card), #settings-screen) { margin-top: -0.5rem; }
+  html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) { padding-top: 0.5rem; }
+}
+/* Under 1024px the sky's layers are placed from the padding edge, so the top
+   padding above would hold them 8px below the line again. Their position
+   moves up the same 8px, at the same width, so the top of the sky still
+   meets the bar. From 1024px the origin is the border box and no move is
+   needed. */
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) { background-position: center -0.5rem; }
 }
 html:not([data-skin]) #profile-root #profile-identity-card {
   padding: 2rem 0 1.5rem;
@@ -11447,11 +11443,6 @@ html:not([data-skin]) #settings-section-content .ui-link { box-shadow: none; tex
   html:not([data-skin]) :is(#profile-root, #settings-root) .profile-details-card .profile-details-input { min-height: 2.75rem; }
   html:not([data-skin]) #settings-profile-details .profile-details-actions { margin-top: 1rem; }
 }
-@media (min-width: 768px) {
-  html:not([data-skin]) body:has(:is(#profile-screen, #settings-screen):not(.hidden)):has(#platform-tabs:not(.platform-tabs-folded)) #platform-header {
-    background: linear-gradient(to right, transparent var(--wip-nav-w), var(--ed-ground) var(--wip-nav-w));
-  }
-}
 html:not([data-skin]) #profile-root #profile-work .ui-lrow-tx { display: flex; align-items: center; gap: 1rem; }
 html:not([data-skin]) #profile-root #profile-work .ui-lrow-t { flex: 0 0 8rem; font-size: 0.875rem; font-weight: 500; }
 html:not([data-skin]) #profile-root #profile-work .ui-lrow-s { flex: 1; min-width: 0; margin-top: 0; font-size: 0.8125rem; }
@@ -11511,8 +11502,6 @@ html:not([data-skin]) #settings-profile-card .settings-profile-camera {
 }
 html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { width: 1.125rem; height: 1.125rem; }
 @media (min-width: 1024px) {
-  html:not([data-skin]) body:has(#profile-screen:not(.hidden)) { --wip-nav-w: 216px; }
-  html:not([data-skin]) body:has(#settings-screen:not(.hidden)) { --wip-nav-w: 202px; }
   html:not([data-skin]) :is(#profile-screen #profile-root:has(#profile-identity-card), #settings-screen #settings-root) {
     width: 100%;
     margin-inline: 0;
@@ -11557,14 +11546,6 @@ html:not([data-skin]) #settings-profile-card .settings-profile-camera svg { widt
   html:not([data-skin]) #settings-section-content > :is([data-settings-section="username"], [data-settings-section="email"], [data-settings-section="password"]) :is(.ui-glist, .ui-card.bg-white) {
     background: none;
     border-radius: 0;
-  }
-}
-@media (min-width: 1024px) and (min-height: 850px) {
-  html:not([data-skin]):not(.dark) body:has(:is(#profile-screen, #settings-screen):not(.hidden)) #platform-tabs:not(.platform-tabs-folded)::after {
-    height: 6.5rem;
-    margin-inline: 0;
-    background: var(--ed-grass) right bottom / 60rem auto no-repeat;
-    clip-path: ellipse(118% 92% at 92% 100%);
   }
 }
 @media (max-width: 639.98px) {
@@ -22975,20 +22956,28 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
 }
 /* THE LIST HIDDEN, ONE PANE (#6963). Dragging the divider past the list's
    floor hides it, and the thread takes the room the list had: `--ai-main-w`
-   is the whole room, so the pane's lane, the pane and the divider (which
-   read it) all reach the rail, and the divider stays on the thread's edge as
-   the way to pull the list back. The list's body is not drawn while it is
-   hidden; the lane rule above already pads the page by `--ai-main-w`, which
-   is now all of it. */
+   is the whole room less a 16px gap after the rail, so the pane's lane, the
+   pane and the divider (which read it) all stop 16px short of the rail, and
+   the divider stays on the thread's edge as the way to pull the list back.
+   The list's body is not drawn while it is hidden; the lane rule above
+   already pads the page by `--ai-main-w`, which is now all of it but the gap.
+   THE GAP IS THE LIST'S, FOLDED AWAY (24 Nov 2026). Reaching the rail, the
+   thread's card sat 12px from it (its own `--thread-gutter`) and the bar, on
+   the pane's edge, had no room: under 1024px it was wholly over the rail's
+   blue, above it half over the rail's edge. The 16px is the list's own card
+   margin (`mx-4`, PLANE in features/ai/lists.tsx), so the card sits 28px
+   from the rail, as it sits from the list when the list is showing, and the
+   bar is drawn in the middle of that gap (THE BAR IN THE FOLDED LIST'S GAP,
+   below). */
 #ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed] {
-  --ai-main-w: calc(var(--ai-room) - var(--ai-edge, 0px));
+  --ai-main-w: calc(var(--ai-room) - var(--ai-edge, 0px) - 16px);
 }
 #ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed] .ai-screen-body { display: none; }
 /* A page in Main's place (the shell's side panel, features/side-panel) reads
    the width from body, not from the page: while the list is hidden it takes
-   the whole room too, the way the column does. */
+   the room too, the way the column does, and leaves the same gap. */
 body:has(#ai-screen[data-ai-docked][data-ai-open][data-ai-list-closed]:not(.hidden)) {
-  --ai-main-w: calc(var(--ai-room) - var(--ai-edge, 0px));
+  --ai-main-w: calc(var(--ai-room) - var(--ai-edge, 0px) - 16px);
 }
 /* The aside stays mounted, because a thread is opened from the place it is
    handed (`at`); with nothing open beside the lists it is not drawn. */
@@ -23539,6 +23528,14 @@ body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden))
 body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="halves"][data-ai-list-closed] #ai-main-divider,
 body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden)) #side-panel-divider {
   --divider-at: calc(var(--ai-col-w) + var(--ai-preview-w) + var(--ai-edge, 0px));
+}
+/* …and the folded list leaves the same 16px gap after the rail as one pane
+   does (THE GAP IS THE LIST'S, FOLDED AWAY, above), with the bar in it. The
+   thread gives the 16px up; the preview keeps its half, and stops 16px
+   sooner at its widest, so the thread keeps its own 320px (MIN_PANEL_W). */
+body:has(#ai-screen[data-ai-preview="halves"][data-ai-list-closed]:not(.hidden)) {
+  --ai-preview-w: max(320px, min(var(--ai-preview-chosen-w, calc(var(--ai-room) / 2)), calc(var(--ai-room) - 16px - 320px)));
+  --ai-col-w: calc(var(--ai-room) - 16px - var(--ai-preview-w));
 }
 /* A phone: the whole of the page, over the drawer, its arrow back to the thread. */
 #ai-screen[data-ai-preview="full"] .ai-preview-pane {
@@ -31267,11 +31264,13 @@ body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
    on the pane's edge read as stuck to the column. Half of that gutter (8px)
    toward the list puts the line, its bar and the touch grip halfway across
    the empty space. A desktop keeps the pane's own edge above: its gap is
-   wide and a line in it would float. Same specificity as that rule, so
-   source order decides, and this block stays before the three and halves
-   rules below so those still win. */
+   wide and a line in it would float. This block stays before the three and
+   halves rules below so those still win. With the list hidden there is no
+   list to move towards: 8px that way put the bar over the rail's blue, so
+   the folded list's gap places it instead (THE BAR IN THE FOLDED LIST'S
+   GAP, 24 Nov 2026). */
 @media (max-width: 1023.98px) {
-  body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
+  body:has(#ai-screen:not(.hidden):not([data-ai-list-closed])) :is(#side-panel-divider, #ai-main-divider) {
     --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
   }
 }
@@ -35549,7 +35548,7 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-screen:not(.hidden)
    a grab does not move it, and `inset-inline-end` mirrors it in Arabic. From
    1024px only: below it the list's bar keeps #6447's own place, and the
    preview's is left as it was. With the list hidden (#6963) there is no list
-   card: the bar stays on the thread's edge, beside the rail. */
+   card: the rule below places the bar. */
 @media (min-width: 1024px) {
   html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen:not([data-ai-list-closed]) #ai-main-divider {
     inset-inline-end: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2 + (16px - 12px) / 2);
@@ -35557,6 +35556,20 @@ html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-screen:not(.hidden)
   html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .ai-preview-pane:has(> .detail-card) > #ai-preview-divider {
     inset-inline-end: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2 + (12px - 0px) / 2);
   }
+}
+/* THE BAR IN THE FOLDED LIST'S GAP (24 Nov 2026). With the list hidden the
+   pane stops 16px after the rail and the thread's card 12px inside it (THE
+   GAP IS THE LIST'S, FOLDED AWAY), so the bar moves (16px - 12px) / 2 off
+   the pane's edge towards the rail, into the middle of that 28px, at every
+   width: #6447's shift does not apply with no list to move towards. Main's
+   bar and the side panel's alike (a request, change or decision page in the
+   thread's place), in one pane and in halves beside a preview, where
+   `--divider-at` is the pane's own edge too. Unlike the rule above it is
+   not tied to a look: the gap is drawn in every look, so is its bar.
+   `inset-inline-end` mirrors it in Arabic. The grip is the one every bar
+   has, shown under the pointer and drawn at rest only on a touch screen. */
+body:has(#ai-screen[data-ai-list-closed]:not(.hidden)) :is(#ai-main-divider, #side-panel-divider) {
+  inset-inline-end: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2 + (16px - 12px) / 2);
 }
 
 /* THE LINE BETWEEN TWO COLUMNS IS A HANDLE YOU CAN SEE UNDER THE POINTER

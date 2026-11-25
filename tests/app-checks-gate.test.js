@@ -32,6 +32,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 
 const step = require('../worker/usernode-bench-capture');
 const captureMod = require('../src/services/bench/capture');
@@ -59,6 +60,35 @@ test('the declared checks are read as the platform reads them, and opened signed
   assert.equal(step.checkUrl('http://localhost:3191', '/?sheet=post', 'tok'), 'http://localhost:3191/?sheet=post&token=tok');
   assert.equal(step.checkUrl('http://localhost:3191/', '/#/votes', 'tok'), 'http://localhost:3191/?token=tok#/votes', 'a hash route keeps its hash');
   assert.equal(step.checkUrl('http://localhost:3191', '/about', null), 'http://localhost:3191/about');
+});
+
+// #7109: a turn's checkout carried an EMPTY node_modules directory, so the
+// step treated the app as installed, skipped `npm ci`, and `npm start` died on
+// `Cannot find module 'express'` after the assets had built from
+// frontend/node_modules — every screen lost. Only npm's own marker counts.
+test('an existing but empty node_modules is not an install', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'capture-install-'));
+  // A stand-in npm that succeeds without doing anything: the test is that the
+  // step RUNS an install, not that the network works.
+  fs.writeFileSync(path.join(dir, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${dir}:${oldPath}`;
+  try {
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+    fs.writeFileSync(path.join(dir, 'package-lock.json'), '{"lockfileVersion":3}');
+    assert.equal(step.dependenciesInstalled(dir), false, 'no node_modules yet');
+    fs.mkdirSync(path.join(dir, 'node_modules'));
+    assert.equal(step.dependenciesInstalled(dir), false, 'an empty directory is not an install');
+    const run = step.installDependencies(dir);
+    assert.equal(run.ran, true, 'the step installs into an empty directory');
+    assert.equal(run.ok, true, run.error || '');
+    fs.writeFileSync(path.join(dir, 'node_modules', '.package-lock.json'), '{"lockfileVersion":3}');
+    assert.equal(step.dependenciesInstalled(dir), true, 'npm\'s marker says the tree is built');
+    assert.equal(step.installDependencies(dir).ran, false, 'a built tree is left alone');
+  } finally {
+    process.env.PATH = oldPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // A browser that serves each URL as `pages` says.

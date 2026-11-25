@@ -62,6 +62,13 @@ test('every rule of the editorial pages is the standard look\'s alone', () => {
   assert.ok(!/data-skin="brand"/.test(block()), 'the brand look keeps its own drawing');
 });
 
+test('Profile and Settings leave the shared header and platform navigation untouched', () => {
+  const editorial = block();
+  assert.doesNotMatch(editorial, /#platform-(?:header|tabs)/, 'the global shell controls its own header and navigation');
+  assert.doesNotMatch(editorial, /--wip-nav-[\w-]+\s*:/, 'the pages do not override shared navigation tokens');
+  assert.doesNotMatch(editorial, /--wip-nav-w\s*:/, 'the pages do not change the shared rail width');
+});
+
 test('its colours are tokens, declared once in light and once in dark', () => {
   const all = rules();
   const [light, dark, ...rest] = all;
@@ -110,6 +117,24 @@ test('Settings opens under its name on the sky, and its parts are cards', () => 
   assert.match(src, /<header className="settings-frame-head">/, 'the head is in the document for it');
 });
 
+test('the sky starts at the top bar\'s line on a computer and a tablet', () => {
+  const b = block();
+  // The screen closes the bar's 8px foot; the root gives it back as padding,
+  // so the cards stay put and only the sky's top edge moves up.
+  assert.match(
+    b,
+    /@media \(min-width: 768px\) \{\s*html:not\(\[data-skin\]\) :is\(#profile-screen:has\(#profile-identity-card\), #settings-screen\) \{ margin-top: -0\.5rem; \}\s*html:not\(\[data-skin\]\) :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ padding-top: 0\.5rem; \}/,
+    'the screen tucks up and the root pads the same 8px back',
+  );
+  // Under 1024px the sky is placed from the padding edge, so the same 8px
+  // comes off its position; above it the border-box origin needs no move.
+  assert.match(
+    b,
+    /@media \(min-width: 768px\) and \(max-width: 1023\.98px\) \{\s*html:not\(\[data-skin\]\) :is\(#profile-screen #profile-root:has\(#profile-identity-card\), #settings-screen #settings-root\) \{ background-position: center -0\.5rem; \}/,
+    'the tablet sky is moved up with the padding',
+  );
+});
+
 test('Profile opens on who you are, across the page', () => {
   const b = block();
   assert.match(b, /#profile-root > div > div:has\(> #profile-identity-card\) \{ display: contents; \}/);
@@ -124,6 +149,17 @@ test('Profile opens on who you are, across the page', () => {
   for (const hook of ['profile-id-avatar', 'profile-id-name', 'profile-id-sub', 'profile-id-bio']) {
     assert.ok(view.includes(hook), `the card carries ${hook}`);
     assert.ok(b.includes(`.${hook}`) || hook === 'profile-id-sub', `and the block reads ${hook}`);
+  }
+  // #7109: the brand pair is clipped to the editorial square by the same
+  // avatar class and its own overflow, so it never spills past the radius.
+  assert.match(view, /profile-id-avatar profile-id-pair[^"`]*overflow-hidden/, 'the pair stays inside the square');
+  // …and each portrait fills its half of that square, so the pair fills it at
+  // --ed-face-phone / --ed-face rather than sitting letterboxed inside it.
+  const pairHalves = view.match(/<img\s+src="\/brand\/groups\/avatar-[mf]3\.webp"[^>]*>/g) || [];
+  assert.equal(pairHalves.length, 2, 'both brand portraits are drawn');
+  for (const img of pairHalves) {
+    assert.match(img, /className="w-1\/2 h-full object-cover"/, 'each portrait takes half the square, cropped to it');
+    assert.match(img, /alt=""/, 'the pair is decoration, as the initial was');
   }
   assert.match(b, /#profile-identity-card #profile-edit-btn \{[^}]*background: var\(--wip-btn-1-bg\);/, 'Edit profile is the main action');
 });
