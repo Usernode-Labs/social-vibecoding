@@ -1,7 +1,7 @@
-// The look picker beside the bell (frontend/src/features/frame/look-picker
-// .tsx): an admin's way to switch the device's look from any screen, in the
-// frame's bar under a look and in the platform's header under the standard
-// one, so a look can always be left the way it was entered. It is the same
+// The look picker in the frame's bar (frontend/src/features/frame/look-picker
+// .tsx): an admin's way to switch the device's look from under a look, so a
+// look can always be left the way it was entered. Under the standard header,
+// Settings > Experimental > Look is where a look is chosen. It is the same
 // choice as Settings > Experimental > Look (window.Skin, kept on the
 // device), offered to real admins only.
 //
@@ -30,43 +30,12 @@ test('it is one small control: a glyph, and under it the system\'s own menu of l
   assert.match(view({ variant: 'frame', skin: 'paper' }), /<option value="standard" selected="">/);
 });
 
-test('brand keeps the platform\'s header, and the menu there reads it', () => {
-  // "Paper, simplified, with brand styling" is not a look of the frame, so
-  // the picker under it is the shell's. It used to read as Standard there,
-  // when New look had a switch of its own.
-  const html = view({ variant: 'shell', skin: 'brand' });
+test('the menu reads the look that is on, and an unknown one as Standard', () => {
+  // "Paper, simplified, with brand styling" is the frame's own look.
+  const html = view({ variant: 'frame', skin: 'brand' });
   assert.match(html, /<option value="brand" selected="">Paper, simplified, with brand styling<\/option>/);
   assert.doesNotMatch(html, /<option value="standard" selected="">/);
-  assert.match(view({ variant: 'shell', skin: 'neon' }), /<option value="standard" selected="">/, 'an unknown look reads as Standard');
-});
-
-test('under the standard look it is drawn with the header\'s own classes, beside its bell', () => {
-  const html = view({ variant: 'shell', skin: 'standard' });
-  assert.match(html, /^<label class="relative w-7 h-7 flex items-center justify-center rounded-full [^"]*" title="Look" data-look-picker="shell">/);
-  assert.doesNotMatch(html, /<label[^>]*un-touch-target/, 'the label brings no hit box of its own');
-  assert.match(html, /<select aria-label="Look" class="absolute left-1\/2 top-1\/2 h-11 w-11 -translate-x-1\/2 -translate-y-1\/2 cursor-pointer opacity-0">/);
-  assert.match(html, /<option value="standard" selected="">Standard<\/option>/);
-  assert.doesNotMatch(html, /fr-ib|fr-look/, 'not the kit\'s disc: the kit\'s rules exist only under a look');
-  assert.match(html, /<svg class="fr-ic" width="20" height="20"/, 'the glyph sizes itself, with or without the kit');
-});
-
-test('under the standard look the menu itself takes the press', () => {
-  // .un-touch-target::after is a 44px box painted above the invisible select,
-  // so on the label every press stopped there and the menu never opened
-  // (#6648). The select now carries the same 44px square, centred on the
-  // 28px disc.
-  const html = view({ variant: 'shell', skin: 'standard' });
-  const label = html.match(/<label class="([^"]*)" title="Look" data-look-picker="shell">/);
-  assert.ok(label, 'the shell variant draws its label');
-  assert.doesNotMatch(label[1], /un-touch-target/, 'no hit box sits over the select');
-  const select = html.match(/<select aria-label="Look" class="([^"]*)">/);
-  assert.ok(select, 'the system\'s own menu is still the control');
-  assert.match(select[1], /\bh-11\b/);
-  assert.match(select[1], /\bw-11\b/);
-  assert.match(select[1], /left-1\/2/, 'centred on the disc');
-  assert.match(select[1], /top-1\/2/, 'centred on the disc');
-  assert.match(select[1], /-translate-x-1\/2/, 'centred on the disc');
-  assert.match(select[1], /-translate-y-1\/2/, 'centred on the disc');
+  assert.match(view({ variant: 'frame', skin: 'neon' }), /<option value="standard" selected="">/, 'an unknown look reads as Standard');
 });
 
 test('real admins only, and never on the first render', () => {
@@ -92,12 +61,11 @@ test('the head module is the one place a pick is written', () => {
   assert.match(read(PICKER), /window\.Skin\?\.set\?\.\(next\);/, 'the picker\'s pick goes through the head module');
 });
 
-test('it sits just before the bell in both bars', () => {
+test('it sits just before the bell in the frame\'s bar, and the header draws none', () => {
   const frame = read('frontend/src/features/frame/frame-app.tsx');
   assert.match(frame, /<LookPicker variant="frame" \/>\s*<button type="button" className=\{k\('ib'\)\} aria-label=\{t\('core:header\.notifications'\)\}/);
   const header = read('frontend/src/features/header/platform-header.tsx');
-  assert.match(header, /<LookPicker variant="shell" \/>[\s\S]{0,900}?id="notifications-btn"/);
-  assert.ok(header.indexOf('<LookPicker variant="shell" />') < header.indexOf('id="notifications-btn"'));
+  assert.doesNotMatch(header, /LookPicker/, 'the platform header keeps only its bell at that end');
 });
 
 test('under a look the menu lies over the glyph, unseen, and takes the press', () => {
@@ -120,10 +88,8 @@ test('beside the look, one press flips light and dark', () => {
   const picker = read('frontend/src/features/frame/look-picker.tsx');
   assert.match(picker, /data-look-fold-look=""[\s\S]*?<select aria-label=\{t\('settings:experimental\.look\.label'\)\} value=\{value\}/, 'the menu\'s Look row is the system\'s own menu of looks');
   assert.match(picker, /data-look-fold-theme="" onClick=\{onDark\}/, 'and its Theme row flips light and dark');
-  assert.doesNotMatch(view({ variant: 'shell', skin: 'standard', dark: false, onDark() {} }), /fr-lookfold/, 'the standard header keeps its two');
-  const dark = view({ variant: 'shell', skin: 'standard', dark: true, onDark() {} });
-  assert.match(dark, /<\/label><button type="button" class="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target [^"]*" aria-pressed="true" aria-label="Dark" title="Dark" data-look-theme="shell">/);
   // The glyph is where a press goes: the moon while it is light, the sun while it is dark.
+  const dark = view({ variant: 'frame', skin: 'glass', dark: true, onDark() {} });
   const icons = read('frontend/@/components/ui/kit-icons.ts');
   const d = (name) => icons.match(new RegExp(`^  ${name}: "(.*)",?$`, 'm'))[1].replace(/\\"/g, '"');
   assert.ok(light.includes(d('moon')) && !light.includes(d('sun')));
@@ -139,7 +105,7 @@ test('the toggle is the theme\'s own switch, and follows it wherever it is chang
 });
 
 test('"Homeroom brand kit (WIP)" is offered no more, and a device still answering it reads as Standard', () => {
-  const html = renderComponent(PICKER, 'LookPickerView', { variant: 'shell', skin: 'wip', onPick() {} }, { cache: false });
+  const html = renderComponent(PICKER, 'LookPickerView', { variant: 'frame', skin: 'wip', onPick() {} }, { cache: false });
   const options = [...html.matchAll(/<option value="([a-z0-9:]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]);
   assert.deepEqual(options, [
     ['standard', 'Standard', true], ['brand', 'Paper, simplified, with brand styling', false],
